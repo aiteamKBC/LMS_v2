@@ -1,3 +1,4 @@
+import { canRescheduleReconciledReview } from '../shared/resolvedReviewRows';
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import Swal from 'sweetalert2';
@@ -113,6 +114,8 @@ interface TimetableEvent {
   status: 'completed' | 'scheduled' | 'in-progress' | 'awaiting-signature' | 'confirmed' | 'pending' | 'cancelled' | 'not-scheduled';
   source?: 'mcr' | 'progress-review' | string;
   reviewSource?: 'aptem' | 'curriculum' | string;
+  calendarEventKey?: string | null;
+  reconciledReview?: boolean;
   sourceStatus?: string;
   sequence?: number;
   rawPlanned?: string;
@@ -758,7 +761,7 @@ function scheduleLearnerOptionLabel(event: TimetableEvent) {
 }
 
 function isSelectableScheduleEvent(event: TimetableEvent) {
-  if (event.reviewSource === 'aptem') return false;
+  if (event.reviewSource === 'aptem') return canRescheduleReconciledReview(event);
   if (!isSchedulableSource(event.source)) return false;
   if (event.source === 'catch-up') {
     return !['completed', 'confirmed', 'in-progress'].includes(event.status);
@@ -767,7 +770,7 @@ function isSelectableScheduleEvent(event: TimetableEvent) {
 }
 
 function canEditScheduleEvent(event: TimetableEvent | null | undefined): event is TimetableEvent {
-  if (event?.reviewSource === 'aptem') return false;
+  if (event?.reviewSource === 'aptem') return canRescheduleReconciledReview(event);
   if (!event || !isSchedulableSource(event.source)) return false;
   return !['completed', 'confirmed', 'in-progress', 'awaiting-signature'].includes(event.status);
 }
@@ -877,6 +880,9 @@ export default function CoachTimetablePage() {
   // createLearnerReviewAddition -- never a standalone calendar row.
   const [createSessionReviewTemplates, setCreateSessionReviewTemplates] = useState<LearnerAdditionReviewTemplate[]>([]);
   const [createSessionReviewTemplatesLoading, setCreateSessionReviewTemplatesLoading] = useState(false);
+  const [createSessionReviewPolicy, setCreateSessionReviewPolicy] = useState<{ learnerId: string; canAddReview: boolean; detail?: string } | null>(null);
+  const canAddLearnerReview = createSessionReviewPolicy?.learnerId === String(createSessionLearnerId)
+    && createSessionReviewPolicy.canAddReview && !createSessionReviewTemplatesLoading;
   const [createSessionReviewTemplateId, setCreateSessionReviewTemplateId] = useState('');
   const [createSessionReviewTargetDate, setCreateSessionReviewTargetDate] = useState('');
   const [createSessionReviewReasonCode, setCreateSessionReviewReasonCode] = useState<LearnerAdditionReasonCode | ''>('');
@@ -1493,15 +1499,21 @@ export default function CoachTimetablePage() {
     }
     let cancelled = false;
     const controller = new AbortController();
+    setCreateSessionReviewPolicy(null);
+    setCreateSessionReviewTemplates([]);
     setCreateSessionReviewTemplatesLoading(true);
     setCreateSessionReviewTemplateId('');
     fetchLearnerAdditionReviewTemplates(createSessionLearnerId, controller.signal)
       .then(body => {
         if (cancelled) return;
-        setCreateSessionReviewTemplates(body.templates);
+        setCreateSessionReviewPolicy({ learnerId: String(body.learnerId), canAddReview: body.canAddReview === true, detail: body.detail });
+        setCreateSessionReviewTemplates(body.canAddReview === true ? body.templates : []);
       })
       .catch(() => {
-        if (!cancelled) setCreateSessionReviewTemplates([]);
+        if (!cancelled) {
+          setCreateSessionReviewTemplates([]);
+          setCreateSessionReviewPolicy({ learnerId: String(createSessionLearnerId), canAddReview: false, detail: 'Review availability could not be checked. Please try again.' });
+        }
       })
       .finally(() => {
         if (!cancelled) setCreateSessionReviewTemplatesLoading(false);
@@ -1679,7 +1691,7 @@ export default function CoachTimetablePage() {
   // reuses the SAME scheduleCoachCalendarEvent helper any other generated
   // Review occurrence is booked through -- no duplicated Graph logic here.
   const handleAddLearnerReview = useCallback(async (alsoSchedule: boolean) => {
-    if (!createSessionLearnerId || !createSessionReviewTemplateId || !createSessionReviewTargetDate) return;
+    if (!canAddLearnerReview || !createSessionLearnerId || !createSessionReviewTemplateId || !createSessionReviewTargetDate) return;
     if (alsoSchedule && (!createSessionDate || !createSessionTime)) return;
 
     setCreateSessionBusy(true);
@@ -1721,6 +1733,7 @@ export default function CoachTimetablePage() {
       setCreateSessionBusy(false);
     }
   }, [
+    canAddLearnerReview,
     createSessionDate,
     createSessionDuration,
     createSessionLearnerId,
@@ -1745,7 +1758,7 @@ export default function CoachTimetablePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          eventKey: selectedScheduleEvent.eventKey,
+          eventKey: selectedScheduleEvent.calendarEventKey || selectedScheduleEvent.eventKey,
           scheduledDate: scheduleModalDate,
           scheduledTime: scheduleModalTime,
           durationMinutes: scheduleModalDuration,
@@ -3292,6 +3305,10 @@ export default function CoachTimetablePage() {
                 </div>
               )}
 
+              {createSessionType === 'review' && createSessionReviewPolicy?.learnerId === String(createSessionLearnerId) && createSessionReviewPolicy.detail && (
+                <p role="status" className="text-sm text-foreground-600">{createSessionReviewPolicy.detail}</p>
+              )}
+
               <div className="flex flex-wrap items-center justify-end gap-3 border-t border-background-200/70 pt-3">
                 <button
                   type="button"
@@ -3305,7 +3322,7 @@ export default function CoachTimetablePage() {
                     <button
                       type="button"
                       onClick={() => void handleAddLearnerReview(false)}
-                      disabled={createSessionBusy || !createSessionLearnerId || !createSessionReviewTemplateId || !createSessionReviewTargetDate}
+                      disabled={!canAddLearnerReview || createSessionBusy || !createSessionLearnerId || !createSessionReviewTemplateId || !createSessionReviewTargetDate}
                       className="inline-flex items-center gap-2 rounded-lg border border-primary-300 px-4 py-2.5 text-sm font-semibold text-primary-700 shadow-sm transition-smooth hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <AppIcon className={`${createSessionBusy ? 'ri-loader-4-line animate-spin' : 'ri-file-add-line'} text-base`}></AppIcon>
@@ -3315,7 +3332,7 @@ export default function CoachTimetablePage() {
                       type="button"
                       onClick={() => void handleAddLearnerReview(true)}
                       disabled={
-                        createSessionBusy || !createSessionLearnerId || !createSessionReviewTemplateId
+                        !canAddLearnerReview || createSessionBusy || !createSessionLearnerId || !createSessionReviewTemplateId
                         || !createSessionReviewTargetDate || !createSessionDate || !createSessionTime
                       }
                       className="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60"

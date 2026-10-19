@@ -114,6 +114,17 @@ DB_POOL_OPTIONS = {
     # CONN_HEALTH_CHECKS is enabled (including pooled connections).
     'max_idle': int(os.environ.get('DB_POOL_MAX_IDLE', '180')),
 }
+# Connections the ``default`` alias keeps open in each process. psycopg_pool
+# grows past min_size one connection at a time, so with one warm connection
+# the second to fourth concurrent requests of a gthread worker (4 threads)
+# queued behind serial connects (~0.5-3.7s each to Neon from a remote client).
+# Four covers the threads; the pool opens them in the background on first use
+# (Django calls pool.open() without waiting), so startup is not delayed and a
+# management command that never touches the database opens none. Other
+# aliases keep min_size 1. Clamped to [1, max_size].
+DB_POOL_DEFAULT_MIN_SIZE = max(1, min(
+    int(os.environ.get('DB_POOL_MIN_SIZE', '4')), DB_POOL_OPTIONS['max_size'],
+))
 
 
 def database_from_url(database_url):
@@ -668,7 +679,7 @@ if DATABASE_URL and not USE_SQLITE_FOR_TESTS:
     db_options = dict(parse_qsl(parsed_db.query))
     db_options.setdefault("connect_timeout", DB_CONNECT_TIMEOUT)
     if DB_POOL:
-        db_options["pool"] = dict(DB_POOL_OPTIONS)
+        db_options["pool"] = {**DB_POOL_OPTIONS, "min_size": DB_POOL_DEFAULT_MIN_SIZE}
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",

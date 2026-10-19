@@ -36,9 +36,9 @@ def _coach_review(request, review_id, *, pdf_only=False):
     return owner, definition if definition and definition.get("migratedForm") else None
 
 
-def _locked_overlay(owner, definition):
+def _locked_overlay(owner, definition, *, lock_calendar=False):
     from coach_api.views import _owned_migrated_overlay
-    return _owned_migrated_overlay(owner, definition, lock=True)
+    return _owned_migrated_overlay(owner, definition, lock=True, lock_calendar=lock_calendar)
 
 
 def _response(owner, review_id):
@@ -66,7 +66,7 @@ def migrated_review_submit(request, review_id):
     if payload is None or ("answers" in payload and not isinstance(payload["answers"], dict)):
         return JsonResponse({"detail": "answers must be an object."}, status=400)
     with transaction.atomic():
-        overlay = _locked_overlay(owner, definition)
+        overlay = _locked_overlay(owner, definition, lock_calendar=True)
         if not overlay:
             return JsonResponse({"detail": "Migrated review association mismatch."}, status=409)
         try:
@@ -211,7 +211,7 @@ def migrated_review_complete(request, review_id):
     if not definition:
         return JsonResponse({"detail": "Migrated review not found."}, status=404)
     with transaction.atomic():
-        overlay = _locked_overlay(owner, definition)
+        overlay = _locked_overlay(owner, definition, lock_calendar=True)
         if not overlay:
             return JsonResponse({"detail": "Migrated review association mismatch."}, status=409)
         try:

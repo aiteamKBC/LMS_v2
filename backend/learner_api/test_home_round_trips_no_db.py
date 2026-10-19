@@ -3,6 +3,7 @@ from datetime import date
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from django.db import DatabaseError
 from django.test import SimpleTestCase
 
 from learner_api import calendar, current_learning, home_progress, imported_review_calendar, training_plan_dashboard
@@ -24,19 +25,26 @@ def record(event_type, key, template=""):
 
 
 class NarrowedReviewEventsTests(SimpleTestCase):
-    def read(self, records, only_sources, fallback=False, **options):
-        imported = [{"eventKey": "imported-review:1", "source": "progress-review"},
-                    {"eventKey": "imported-review:2", "source": "mcr"}]
+    def read(self, records, only_sources, imported=None, **options):
+        if imported is None:
+            imported = [{"eventKey": "imported-review:1", "source": "progress-review"},
+                        {"eventKey": "imported-review:2", "source": "mcr"}]
         with patch.object(calendar.CoachCalendarEvent.objects, "filter") as stored, \
              patch("learner_api.imported_review_calendar.imported_events_for_learner",
                    return_value=imported) as read_imported, \
-             patch.object(calendar, "_curriculum_mcm_fallback", return_value=fallback) as mcm_fallback, \
-             patch.object(calendar, "_curriculum_cycle_events", return_value=[]) as cycle, \
+             patch("coach_api.views.fetch_aptem_mcm_profile_ids") as mcm_probe, \
+             patch.object(calendar, "_curriculum_cycle_events",
+                          side_effect=AssertionError("Aptem must not enter Curriculum")) as cycle, \
              patch.object(calendar, "_serialize_event",
-                          side_effect=lambda row: {"eventKey": row.event_key, "source": row.event_type}) as serialize:
-            stored.return_value.order_by.return_value = records
+                          side_effect=lambda row, **_: {"eventKey": row.event_key, "source": row.event_type}) as serialize:
+            query = stored.return_value
+            query.filter.return_value = query
+            query.defer.return_value = query
+            query.order_by.return_value = records
             events = calendar.coaching_events_for_learner(source(), profile(), only_sources=only_sources, **options)
-        return events, read_imported, mcm_fallback, cycle, serialize
+        mcm_probe.assert_not_called()
+        cycle.assert_not_called()
+        return events, read_imported, mcm_probe, cycle, serialize
 
     def test_progress_review_reader_skips_the_mcm_fallback_and_section_text(self):
         rows = [record("mcr", "native-mcm"), record("catch-up", "catch-up-1")]
@@ -52,19 +60,19 @@ class NarrowedReviewEventsTests(SimpleTestCase):
         _, read_imported, _, _, _ = self.read([], {"progress-review"}, dates_only=True)
         self.assertEqual(read_imported.call_args.kwargs, {"include_sections": False, "dates_only": True})
 
-    def test_templated_mcm_rows_keep_the_fallback_because_a_template_can_retype_them(self):
+    def test_templated_mcm_rows_never_become_an_aptem_replacement(self):
         rows = [record("mcr", "native-mcm", template="T-1")]
-        _, _, mcm_fallback, _, _ = self.read(rows, {"progress-review"}, fallback=True)
-        mcm_fallback.assert_called_once()
+        events, _, _, _, serialize = self.read(rows, {"progress-review"})
+        self.assertEqual([e["eventKey"] for e in events], ["imported-review:1", "imported-review:2"])
+        serialize.assert_not_called()
 
-    def test_readers_that_keep_mcms_still_read_the_fallback(self):
-        _, _, mcm_fallback, _, _ = self.read([], {"mcr", "progress-review"})
-        mcm_fallback.assert_called_once()
+    def test_readers_that_keep_mcms_still_use_only_imported_reviews(self):
+        events, _, _, _, _ = self.read([], {"mcr", "progress-review"})
+        self.assertEqual([e["eventKey"] for e in events], ["imported-review:1", "imported-review:2"])
 
     def test_default_calendar_reads_are_unchanged(self):
         rows = [record("catch-up", "catch-up-1")]
-        events, read_imported, mcm_fallback, _, serialize = self.read(rows, None)
-        mcm_fallback.assert_called_once()
+        events, read_imported, _, _, serialize = self.read(rows, None)
         serialize.assert_called_once()
         self.assertEqual(read_imported.call_args.kwargs, {})
         self.assertEqual(events[-1], {"eventKey": "catch-up-1", "source": "catch-up"})
@@ -74,6 +82,38 @@ class NarrowedReviewEventsTests(SimpleTestCase):
         events, _, _, _, serialize = self.read(rows, {"mcr", "progress-review", "student-support"})
         self.assertEqual(serialize.call_count, 1)
         self.assertEqual(events[-1]["eventKey"], "support-1")
+
+    def test_empty_imports_stay_empty_in_full_narrowed_month_and_header_reads(self):
+        rows = [record("mcr", "native-mcm", template="T-1"),
+                record("progress-review", "native-pr", template="T-2"),
+                record("review", "native-radar", template="T-3")]
+        for only_sources, options in [(None, {}), ({"mcr"}, {}), ({"progress-review"}, {"dates_only": True}),
+                                      (None, {"month": "2026-10"}),
+                                      ({"mcr", "progress-review"}, {"header_only": True})]:
+            with self.subTest(only_sources=only_sources, options=options):
+                events, _, _, _, serialize = self.read(rows, only_sources, imported=[], **options)
+                self.assertEqual(events, [])
+                serialize.assert_not_called()
+
+    def test_month_and_header_keep_their_imported_read_contract(self):
+        _, read, _, _, _ = self.read([], None, month="2026-10")
+        self.assertEqual(read.call_args.kwargs, {"month": "2026-10"})
+        row = record("student-support", "support-1")
+        events, read, _, _, serialize = self.read([row], {"mcr", "student-support"}, header_only=True)
+        self.assertEqual(read.call_args.kwargs,
+                         {"include_sections": False, "dates_only": True, "compact_bookings": True})
+        serialize.assert_called_once_with(row, compact=True, include_meeting_link=True)
+        self.assertEqual(events[-1]["eventKey"], "support-1")
+
+    def test_imported_read_failure_never_enters_curriculum(self):
+        with patch.object(calendar.CoachCalendarEvent.objects, "filter") as stored, \
+             patch.object(imported_review_calendar, "imported_events_for_learner",
+                          side_effect=DatabaseError("Synthetic source unavailable")), \
+             patch.object(calendar, "_curriculum_cycle_events") as cycle:
+            stored.return_value.order_by.return_value = []
+            with self.assertRaisesMessage(DatabaseError, "Synthetic source unavailable"):
+                calendar.coaching_events_for_learner(source(), profile())
+        cycle.assert_not_called()
 
     def test_training_plan_passes_its_wanted_sources(self):
         with patch("learner_api.calendar.coaching_events_for_learner", return_value=[]) as read:

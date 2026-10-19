@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from django.db import connection
 from django.test import Client, RequestFactory, SimpleTestCase, TestCase
+from coach_api.tests_support.transaction_cases import CoachTransactionTestCase
 
 from . import tutor_notifications, views
 from .ksb_coverage import build_coverage
@@ -585,13 +586,59 @@ class TeamsAttendanceRosterTests(SimpleTestCase):
         self.assertEqual(len({row['id'] for row in learner_rows}), 2)
 
 
-class CurriculumTeamsMeetingTests(TestCase):
+class CurriculumTeamsRequestTestCase(CoachTransactionTestCase):
+    # HTTP middleware closes request connections. A TestCase outer atomic is
+    # incompatible with that lifecycle and hides committed cross-alias reads.
+    databases = {'default', 'enrolment'}
+
+    def prepare_teams_fixtures(self, programme_id):
+        from coach_api.tests_support.persisted_fixtures import curriculum_session, programme
+        views.ensure_live_session_tracking_tables()
+        # Unmanaged authoring tables are not included in Django's flush. These
+        # suites own their synthetic authoring graph; delete children first.
+        self.addCleanup(self.clear_teams_fixtures)
+        self.clear_teams_fixtures()
+        programme(programme_id)
+        if programme_id == 'PROG-RESTORE':
+            programme('PROG-SUMMARY')
+            programme('PROG-WATCHED')
+        self.account = curriculum_session(self, self.client)
+        # Schedule delivery is outside these calendar/role tests. Preserve its
+        # ledger/formatting behavior and replace only the outbound mail transport.
+        mail = patch('curriculum_api.teams_schedule_delivery._send_message', return_value=('accepted', ''))
+        mail.start()
+        self.addCleanup(mail.stop)
+
+    def clear_teams_fixtures(self):
+        if connection.vendor == 'postgresql':
+            with connection.cursor() as cursor:
+                cursor.execute('DELETE FROM curriculum.session_result_jobs WHERE live_session_id IN '
+                               '(SELECT id FROM curriculum.live_sessions)')
+                cursor.execute('DELETE FROM curriculum.teams_calendar_create_claims WHERE module_key = %s',
+                               ['draft:module-draft-1'])
+        for table in (
+            views.LIVE_SESSION_RECORDING_EVENTS_TABLE, views.LIVE_SESSION_ARTIFACTS_TABLE,
+            views.LIVE_SESSION_ATTENDANCE_TABLE, views.LIVE_SESSION_JOIN_LAUNCHES_TABLE,
+            views.LIVE_SESSION_OCCURRENCES_TABLE, views.LIVE_SESSIONS_TABLE,
+            views.AUTHORING_KSB_MAPPINGS_TABLE, views.AUTHORING_COMPONENTS_TABLE,
+            views.AUTHORING_WEEKS_TABLE, views.AUTHORING_COMPLETION_TABLE,
+            views.AUTHORING_ADVANCED_TABLE, views.AUTHORING_MODULES_TABLE,
+            views.COHORT_AUTHORING_DETAILS_TABLE,
+        ):
+            views.authoring_delete(table)
+        with connection.cursor() as cursor:
+            cursor.execute(f'DELETE FROM {views.authoring_table_name("programmes")} '
+                           'WHERE programme_id IN (%s,%s,%s,%s)',
+                           ['PROG-RESTORE', 'PROG-SYNC', 'PROG-SUMMARY', 'PROG-WATCHED'])
+
+
+class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
     def setUp(self):
         self.client = Client()
         views.reset_schema_ready_flags()
         views.ensure_module_authoring_tables()
         views.ensure_live_sessions_table()
-        views.authoring_delete(views.LIVE_SESSIONS_TABLE)
+        self.prepare_teams_fixtures('PROG-RESTORE')
         # `.env` is read into os.environ at startup, and a deployment that pins
         # its Teams organizer would outrank the one every test below passes in.
         # Unpinned is the default here; the tests that mean to exercise a pinned
@@ -617,25 +664,23 @@ class CurriculumTeamsMeetingTests(TestCase):
         # Answered by path rather than by position: the create path also
         # reconciles the series' individual occurrences, and a fixed list would
         # have to be re-counted every time that reconciliation changes shape.
-        def graph_side_effect(method, path, payload=None):
-            if method == 'POST' and path.endswith('/events'):
-                return {
-                    'id': 'event-1',
-                    'webLink': 'https://outlook.office.com/calendar/item',
-                    'onlineMeeting': {'joinUrl': 'https://teams.microsoft.com/l/meetup-join/example'},
-                }
-            if method == 'GET' and 'onlineMeetings' in path:
-                return {
-                    'value': [{
-                        'id': 'meeting-1',
-                        'meetingOptionsWebUrl': 'https://teams.microsoft.com/meetingOptions/example',
-                    }],
-                }
-            if method == 'GET' and '/instances?' in path:
-                return {'value': []}
-            return {}
+        from coach_api.tests_support.graph_calendar import GraphCalendar
+        graph_request.side_effect = GraphCalendar(
+            event_id='event-1', meeting_id='meeting-1', join_suffix='example',
+            starts=['2026-07-30T12:30:00Z', '2026-08-06T12:30:00Z', '2026-08-13T12:30:00Z',
+                    '2026-08-20T12:30:00Z', '2026-08-27T12:30:00Z', '2026-09-03T12:30:00Z'],
+        )
+        verification_boundaries = []
+        verify_calendar = views.verify_teams_calendar_with_standalones
 
-        graph_request.side_effect = graph_side_effect
+        def verified_calendar(*args, **kwargs):
+            event = verify_calendar(*args, **kwargs)
+            verification_boundaries.append(graph_request.call_count)
+            return event
+
+        verifier = patch.object(views, 'verify_teams_calendar_with_standalones', side_effect=verified_calendar)
+        verifier.start()
+        self.addCleanup(verifier.stop)
         response = self.client.post(
             '/curriculum_api/curriculum/teams-meetings/',
             data=json.dumps({
@@ -678,6 +723,7 @@ class CurriculumTeamsMeetingTests(TestCase):
         )
         self.assertEqual(response.status_code, 201, response.content)
         result = response.json()
+        self.assertEqual(result['meeting']['organizerEmail'], 'tutor@example.com')
         self.assertEqual(result['meeting']['eventId'], 'event-1')
         self.assertTrue(result['meeting']['liveSessionId'].startswith('LIVE-'))
         self.assertIn('teams.microsoft.com', result['meeting']['joinUrl'])
@@ -691,7 +737,25 @@ class CurriculumTeamsMeetingTests(TestCase):
         self.assertEqual(create_call.args[:2], ('POST', 'users/tutor%40example.com/events'))
         event_payload = create_call.kwargs['payload']
         self.assertTrue(event_payload['isOnlineMeeting'])
-        self.assertEqual(len(event_payload['attendees']), 4)
+        calls = graph_request.call_args_list
+        self.assertEqual(calls[0].kwargs['payload']['attendees'], [])
+        self.assertEqual(len(verification_boundaries), 2)  # Before and after publishing.
+        publications = [
+            (index, call) for index, call in enumerate(calls)
+            if call.args[0] in {'POST', 'PATCH'} and call.kwargs.get('payload', {}).get('attendees')
+        ]
+        self.assertEqual(len(publications), 1)
+        publish_index, publish_call = publications[0]
+        self.assertEqual(publish_call.args[:2], ('PATCH', 'users/tutor%40example.com/events/event-1'))
+        self.assertGreaterEqual(publish_index, verification_boundaries[0])
+        self.assertGreater(verification_boundaries[1], publish_index)
+        self.assertCountEqual(
+            [entry['emailAddress']['address'] for entry in publish_call.kwargs['payload']['attendees']],
+            ['student1@example.com', 'student2@example.com', 'presenter@example.com', 'co-organizer@example.com'],
+        )
+        # No other invitation route can precede successful calendar verification.
+        self.assertFalse(any(call.args[1].endswith('/forward') for call in calls[:verification_boundaries[0]]))
+        self.assertTrue(all(call.args[1].startswith('users/tutor%40example.com/') for call in calls))
         self.assertEqual(event_payload['recurrence']['range']['numberOfOccurrences'], 6)
         meeting_patch = next(
             call for call in graph_request.call_args_list
@@ -708,6 +772,11 @@ class CurriculumTeamsMeetingTests(TestCase):
         self.assertEqual(meeting_patch['meetingSpokenLanguageTag'], 'en-GB')
         presenter = next(item for item in meeting_patch['participants']['attendees'] if item['upn'] == 'presenter@example.com')
         self.assertEqual(presenter['role'], 'presenter')
+        self.assertEqual(
+            {item['upn']: item['role'] for item in meeting_patch['participants']['attendees']},
+            {'student1@example.com': 'attendee', 'student2@example.com': 'attendee',
+             'presenter@example.com': 'presenter', 'co-organizer@example.com': 'coorganizer'},
+        )
         live_session = views.authoring_fetch_all(
             views.LIVE_SESSIONS_TABLE,
             'id = %s',
@@ -783,7 +852,7 @@ class CurriculumTeamsMeetingTests(TestCase):
             'organizer_email': 'tutor@example.com',
             'graph_event_id': 'event-1',
             'module_title': 'Risk module',
-            'start_datetime': '2026-08-05T08:30:00Z',
+            'start_datetime': '2026-09-02T08:30:00Z',
             'duration_minutes': 120,
             'repeat_pattern': 'weekly',
             'repeat_occurrences': 6,
@@ -794,38 +863,51 @@ class CurriculumTeamsMeetingTests(TestCase):
             'spoken_language': 'en-GB',
             'status': 'active',
         })
-        instance_reads = {'count': 0}
+        previous_dates = ['2026-09-02', '2026-09-09', '2026-09-16',
+                          '2026-09-23', '2026-09-30', '2026-10-07']
+        for number, day in enumerate(previous_dates, 1):
+            views.authoring_upsert(views.LIVE_SESSION_OCCURRENCES_TABLE, ['id'], {
+                'id': f'OCC-SHIFT-{number}', 'live_session_id': live_session_id, 'session_number': number,
+                'scheduled_start': day + 'T08:30:00Z', 'scheduled_end': day + 'T10:30:00Z',
+                'graph_event_id': 'event-1', 'join_url': 'https://teams.microsoft.com/l/meetup-join/example',
+                'status': 'scheduled',
+            })
+        previous = views.authoring_fetch_all(
+            views.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_session_id], 'session_number asc',
+        )
+        series_before = views.authoring_fetch_all(views.LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])[0]
+        # These previously delivered slots are history, not future sessions being cancelled.
+        dropped_sessions = views.sessions_a_rewrite_would_drop
+        clock = patch.object(views, 'sessions_a_rewrite_would_drop', side_effect=lambda *args, **kwargs:
+            dropped_sessions(*args, **kwargs, now=datetime(2026, 11, 1, tzinfo=timezone.utc)))
+        clock.start()
+        self.addCleanup(clock.stop)
+        from copy import deepcopy
+        graph_instances = [
+            {'id': f'instance-{number}',
+             'start': {'dateTime': day + 'T08:30:00Z', 'timeZone': 'UTC'},
+             'end': {'dateTime': day + 'T10:30:00Z', 'timeZone': 'UTC'}}
+            for number, day in enumerate(previous_dates, 1)
+        ]
 
-        def graph_side_effect(method, path, payload=None):
-            if method == 'PATCH' and path == 'users/tutor%40example.com/events/event-1':
+        def graph_side_effect(method, path, payload=None, **kwargs):
+            if method in {'GET', 'PATCH'} and path == 'users/tutor%40example.com/events/event-1':
                 return {
                     'id': 'event-1',
                     'webLink': 'https://outlook.office.com/calendar/item',
                     'onlineMeeting': {'joinUrl': 'https://teams.microsoft.com/l/meetup-join/example'},
                 }
             if method == 'GET' and path.startswith('users/tutor%40example.com/events/event-1/instances?'):
-                instance_reads['count'] += 1
-                if instance_reads['count'] > 1:
-                    return {'value': []}
-                return {
-                    'value': [
-                        {'id': f'instance-{index}', 'start': {'dateTime': value}}
-                        for index, value in enumerate([
-                            '2026-08-05T08:30:00',
-                            '2026-08-12T08:30:00',
-                            '2026-08-19T08:30:00',
-                            '2026-08-26T08:30:00',
-                            '2026-09-02T08:30:00',
-                            '2026-09-09T08:30:00',
-                        ], start=1)
-                    ],
-                }
-            # instance-4 is the one carried furthest past the end of the
-            # original series (26 Aug -> 14 Oct), so it is the occurrence Graph
-            # refuses to move across the boundary. instance-5 and instance-6
-            # already sit on wanted dates and are deliberately left alone.
+                return {'value': deepcopy(graph_instances)}
+            # All responses lie in the requested instances window. One shift
+            # succeeds (instance-5 -> 21 Oct); Graph refuses instance-4 -> 14 Oct
+            # and still returns it at 23 Sept. Refusal is not deletion.
             if method == 'PATCH' and path.endswith('/instance-4'):
                 raise RuntimeError('ErrorOccurrenceCrossingBoundary')
+            if method == 'PATCH' and '/events/instance-' in path:
+                instance = next(item for item in graph_instances if path.endswith('/' + item['id']))
+                instance.update(deepcopy(payload))
+                return deepcopy(instance)
             if method == 'GET' and 'onlineMeetings?' in path:
                 return {'value': [{'id': 'meeting-1'}]}
             if method in {'PATCH', 'POST', 'DELETE'}:
@@ -855,41 +937,51 @@ class CurriculumTeamsMeetingTests(TestCase):
                         '2026-09-02T08:30:00Z',
                         '2026-09-09T08:30:00Z',
                         '2026-09-16T08:30:00Z',
-                        '2026-09-23T08:30:00Z',
                         '2026-10-07T08:30:00Z',
                         '2026-10-14T08:30:00Z',
+                        '2026-10-21T08:30:00Z',
                     ])
                 ],
             }),
             content_type='application/json',
         )
 
-        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.status_code, 502, response.content)
         result = response.json()
-        self.assertEqual(result['meeting']['trackedOccurrences'], 6)
-        self.assertEqual(result['warnings'][0]['code'], 'teams_shifted_occurrence_not_moved')
-        self.assertFalse(any(call.args[0] == 'POST' for call in graph_request.call_args_list))
-        self.assertFalse(any(call.args[:2] == ('DELETE', 'users/tutor%40example.com/events/instance-4') for call in graph_request.call_args_list))
+        self.assertTrue(result['partial'])
+        self.assertEqual(result['liveSessionId'], live_session_id)
+        self.assertNotIn('meeting', result)  # No successful synchronization payload.
+        failure = next(error for error in result['errors'] if error['code'] == 'teams_shifted_occurrence_not_moved')
+        self.assertEqual(failure['detail'], 'ErrorOccurrenceCrossingBoundary')
+        self.assertIn('ErrorOccurrenceCrossingBoundary', result['detail'])
+        calls = graph_request.call_args_list
+        self.assertTrue(any(call.args[:2] == ('PATCH', 'users/tutor%40example.com/events/instance-4') for call in calls))
+        self.assertFalse(any(call.args[1].endswith('/cancel') for call in calls))
         occurrences = views.authoring_fetch_all(
-            views.LIVE_SESSION_OCCURRENCES_TABLE,
-            'live_session_id = %s',
-            [live_session_id],
-            'session_number asc',
+            views.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_session_id], 'session_number asc',
         )
-        self.assertEqual([row['scheduled_start'].date().isoformat() for row in occurrences], [
-            '2026-09-02',
-            '2026-09-09',
-            '2026-09-16',
-            '2026-09-23',
-            '2026-10-07',
-            '2026-10-14',
-        ])
-
-        # No occurrence receives its own event/meeting/link. The warning is safer
-        # than silently breaking the module's fixed Teams URL.
+        # Preserve the complete saved rows, including IDs, dates, status and timestamps.
+        self.assertEqual(occurrences, previous)
+        self.assertEqual([row['id'] for row in occurrences], [f'OCC-SHIFT-{n}' for n in range(1, 7)])
+        self.assertEqual([row['scheduled_start'].date().isoformat() for row in occurrences], previous_dates)
+        self.assertEqual(occurrences[3]['status'], 'scheduled')
         self.assertFalse(any(views.clean_str(row.get('online_meeting_id')) for row in occurrences))
         self.assertTrue(all(row['graph_event_id'] == 'event-1' for row in occurrences))
         self.assertTrue(all(row['join_url'] == 'https://teams.microsoft.com/l/meetup-join/example' for row in occurrences))
+        saved = views.authoring_fetch_all(views.LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])[0]
+        warnings = views.as_json_value(saved['warnings'], [])
+        self.assertIn(failure, warnings)
+        self.assertTrue(any(w['code'] == 'teams_calendar_unverified' for w in warnings))
+        self.assertEqual(
+            {key: value for key, value in saved.items() if key not in {'warnings', 'updated_at'}},
+            {key: value for key, value in series_before.items() if key not in {'warnings', 'updated_at'}},
+        )
+        self.assertEqual(next(item for item in graph_instances if item['id'] == 'instance-4')['start']['dateTime'],
+                         '2026-09-23T08:30:00Z')
+        self.assertEqual(
+            [call for call in calls if call.args[0] in {'POST', 'DELETE'}], [],
+            'A refused shift must not create a replacement or cancel an occurrence.',
+        )
 
     @patch('coach_api.views.microsoft_graph_request')
     @patch('coach_api.views.has_graph_credentials', return_value=True)
@@ -904,6 +996,11 @@ class CurriculumTeamsMeetingTests(TestCase):
             'lobby_bypass': 'invited',
             'status': 'active',
         })
+        views.authoring_upsert(views.LIVE_SESSION_OCCURRENCES_TABLE, ['id'], {
+            'id': 'OCC-MISSING-MEETING-ID', 'live_session_id': live_session_id, 'session_number': 1,
+            'scheduled_start': '2026-09-01T09:00:00Z', 'scheduled_end': '2026-09-01T10:00:00Z',
+            'status': 'scheduled',
+        })
         graph_request.side_effect = [
             {
                 'value': [{
@@ -917,12 +1014,20 @@ class CurriculumTeamsMeetingTests(TestCase):
             {'value': []},
         ]
 
-        response = self.client.post(
-            f'/curriculum_api/curriculum/teams-meetings/{live_session_id}/artifacts/',
-            data='{}',
-            content_type='application/json',
-        )
-
+        # The HTTP contract now queues durable work. Drive the real worker
+        # synchronously while keeping Graph and external archive I/O mocked.
+        from django.core.management import call_command
+        from io import StringIO
+        with patch('curriculum_api.session_results.start_requested_sync') as dispatch:
+            queued = self.client.post(
+                f'/curriculum_api/curriculum/teams-meetings/{live_session_id}/artifacts/',
+                data='{}', content_type='application/json',
+            )
+        self.assertEqual(queued.status_code, 202, queued.content)
+        dispatch.assert_called_once_with(live_session_id)
+        with patch('curriculum_api.management.commands.process_session_results.archive_series', return_value=[]):
+            call_command('process_session_results', limit=1, live_session_ids=[live_session_id], stdout=StringIO())
+        response = self.client.get(f'/curriculum_api/curriculum/teams-meetings/{live_session_id}/artifacts/')
         self.assertEqual(response.status_code, 200, response.content)
         saved = views.authoring_fetch_all(
             views.LIVE_SESSIONS_TABLE,
@@ -969,17 +1074,19 @@ class CurriculumTeamsMeetingTests(TestCase):
         # Deployments may grant the application access policy to multiple users.
         # The environment mailbox pre-fills the form but must not override the
         # organizer explicitly chosen for this new meeting.
-        def graph_side_effect(method, path, payload=None):
-            if method == 'POST' and path.endswith('/events'):
-                return {
-                    'id': 'event-pinned',
-                    'onlineMeeting': {'joinUrl': 'https://teams.microsoft.com/l/meetup-join/pinned'},
-                }
-            if method == 'GET' and 'onlineMeetings' in path:
-                return {'value': [{'id': 'meeting-pinned'}]}
-            return {}
+        from coach_api.tests_support.graph_calendar import GraphCalendar
+        graph_request.side_effect = GraphCalendar(event_id='event-pinned', meeting_id='meeting-pinned', join_suffix='pinned')
+        verification_boundaries = []
+        verify_calendar = views.verify_teams_calendar_with_standalones
 
-        graph_request.side_effect = graph_side_effect
+        def verified_calendar(*args, **kwargs):
+            event = verify_calendar(*args, **kwargs)
+            verification_boundaries.append(graph_request.call_count)
+            return event
+
+        verifier = patch.object(views, 'verify_teams_calendar_with_standalones', side_effect=verified_calendar)
+        verifier.start()
+        self.addCleanup(verifier.stop)
         with patch.dict(os.environ, {'MICROSOFT_TEAMS_ORGANIZER_EMAIL': 'organizer@example.com'}):
             response = self.client.post(
                 '/curriculum_api/curriculum/teams-meetings/',
@@ -1003,16 +1110,33 @@ class CurriculumTeamsMeetingTests(TestCase):
             graph_request.call_args_list[0].args[:2],
             ('POST', 'users/tutor%40example.com/events'),
         )
-        # The selected tutor owns the calendar and remains explicitly listed as
-        # a presenter so the meeting participant roles are applied as requested.
-        self.assertIn(
-            'tutor@example.com',
-            [entry['emailAddress']['address']
-             for entry in graph_request.call_args_list[0].kwargs['payload']['attendees']],
+        calls = graph_request.call_args_list
+        self.assertEqual(calls[0].kwargs['payload']['attendees'], [])
+        self.assertEqual(len(verification_boundaries), 2)  # Before and after publishing.
+        publications = [
+            (index, call) for index, call in enumerate(calls)
+            if call.args[0] in {'POST', 'PATCH'} and call.kwargs.get('payload', {}).get('attendees')
+        ]
+        self.assertEqual(len(publications), 1)
+        publish_index, publish_call = publications[0]
+        self.assertEqual(publish_call.args[:2], ('PATCH', 'users/tutor%40example.com/events/event-pinned'))
+        self.assertGreaterEqual(publish_index, verification_boundaries[0])
+        self.assertGreater(verification_boundaries[1], publish_index)
+        self.assertCountEqual(
+            [entry['emailAddress']['address'] for entry in publish_call.kwargs['payload']['attendees']],
+            ['student1@example.com', 'tutor@example.com'],
         )
-        self.assertTrue(
-            any(call.args[:2] == ('PATCH', 'users/tutor%40example.com/onlineMeetings/meeting-pinned')
-                for call in graph_request.call_args_list)
+        # No other invitation route can precede successful calendar verification.
+        self.assertFalse(any(call.args[1].endswith('/forward') for call in calls[:verification_boundaries[0]]))
+        self.assertTrue(all(call.args[1].startswith('users/tutor%40example.com/') for call in calls))
+        meeting_patch = next(
+            call for call in calls
+            if call.args[:2] == ('PATCH', 'users/tutor%40example.com/onlineMeetings/meeting-pinned')
+        ).kwargs['payload']
+        self.assertEqual(meeting_patch['allowedPresenters'], 'roleIsPresenter')
+        self.assertEqual(
+            {item['upn']: item['role'] for item in meeting_patch['participants']['attendees']},
+            {'student1@example.com': 'attendee', 'tutor@example.com': 'presenter'},
         )
 
     def test_configured_owner_id_does_not_override_another_organizer(self):
@@ -1053,17 +1177,8 @@ class CurriculumTeamsMeetingTests(TestCase):
         # `recordAutomatically` is what starts it without anyone in the room
         # remembering to, and `allowTranscription` is what produces the transcript
         # the module's evidence relies on. All three, or the session is lost.
-        def graph_side_effect(method, path, payload=None):
-            if method == 'POST' and path.endswith('/events'):
-                return {
-                    'id': 'event-rec',
-                    'onlineMeeting': {'joinUrl': 'https://teams.microsoft.com/l/meetup-join/rec'},
-                }
-            if method == 'GET' and 'onlineMeetings' in path:
-                return {'value': [{'id': 'meeting-rec'}]}
-            return {}
-
-        graph_request.side_effect = graph_side_effect
+        from coach_api.tests_support.graph_calendar import GraphCalendar
+        graph_request.side_effect = GraphCalendar(event_id='event-rec', meeting_id='meeting-rec', join_suffix='rec')
         response = self.client.post(
             '/curriculum_api/curriculum/teams-meetings/',
             data=json.dumps({
@@ -1124,7 +1239,11 @@ class CurriculumTeamsMeetingTests(TestCase):
             'recording': 'record-transcribe',
             'status': 'active',
         })
-        graph_request.return_value = {}
+        from coach_api.tests_support.graph_calendar import GraphCalendar
+        graph_request.side_effect = GraphCalendar(
+            event_id='event-existing', meeting_id='meeting-existing', join_suffix='existing',
+            owner='previous.tutor@example.com', starts=['2026-09-02T08:30:00Z'],
+        )
 
         with patch.dict(os.environ, {'MICROSOFT_TEAMS_ORGANIZER_EMAIL': 'organizer@example.com'}):
             response = self.client.patch(
@@ -1197,20 +1316,11 @@ class CurriculumTeamsMeetingTests(TestCase):
             'status': 'active',
         })
 
-        def graph_side_effect(method, path, payload=None):
-            if method == 'PATCH' and path == 'users/tutor%40example.com/events/event-1':
-                return {
-                    'id': 'event-1',
-                    'webLink': 'https://outlook.office.com/calendar/item',
-                    'onlineMeeting': {'joinUrl': 'https://teams.microsoft.com/l/meetup-join/example'},
-                }
-            if method == 'GET' and '/instances?' in path:
-                return {'value': []}
-            if method in {'PATCH', 'POST', 'DELETE'}:
-                return {}
-            raise AssertionError(f'Unexpected Graph call: {method} {path}')
-
-        graph_request.side_effect = graph_side_effect
+        from coach_api.tests_support.graph_calendar import GraphCalendar
+        graph_request.side_effect = GraphCalendar(
+            event_id='event-1', meeting_id='meeting-1', join_suffix='example', duration=120,
+            starts=['2026-09-02T08:30:00Z', '2026-09-09T08:30:00Z'], attendees=['learner@example.com'],
+        )
 
         response = self.client.patch(
             f'/curriculum_api/curriculum/teams-meetings/{live_session_id}/schedule/',
@@ -1292,18 +1402,11 @@ class CurriculumTeamsMeetingTests(TestCase):
             'status': 'active',
         })
 
-        def graph_side_effect(method, path, payload=None):
-            if method == 'PATCH' and path == 'users/tutor%40example.com/events/event-2':
-                return {'id': 'event-2', 'onlineMeeting': {'joinUrl': 'https://teams.microsoft.com/l/meetup-join/example'}}
-            if method == 'GET' and '/instances?' in path:
-                return {'value': []}
-            if method == 'GET' and 'onlineMeetings?' in path:
-                return {'value': [{'id': 'meeting-2'}]}
-            if method in {'PATCH', 'POST', 'DELETE'}:
-                return {}
-            raise AssertionError(f'Unexpected Graph call: {method} {path}')
-
-        graph_request.side_effect = graph_side_effect
+        from coach_api.tests_support.graph_calendar import GraphCalendar
+        graph_request.side_effect = GraphCalendar(
+            event_id='event-2', meeting_id='meeting-2', join_suffix='example', duration=120,
+            starts=['2026-09-02T08:30:00Z'], attendees=['tutor@example.com', 'learner@example.com'],
+        )
 
         response = self.client.patch(
             f'/curriculum_api/curriculum/teams-meetings/{live_session_id}/schedule/',
@@ -1509,6 +1612,14 @@ class CurriculumTeamsMeetingTests(TestCase):
             'repeat_occurrences': 6,
             'status': 'active',
         })
+        for index, day in enumerate(['2026-12-12', '2026-12-19', '2026-12-26',
+                                     '2027-01-02', '2027-01-09', '2027-01-16'], 1):
+            views.authoring_upsert(views.LIVE_SESSION_OCCURRENCES_TABLE, ['id'], {
+                'id': f'OCC-WEEKS-{index}', 'live_session_id': 'LIVE-WEEKS', 'session_number': index,
+                'scheduled_start': day + 'T09:00:00Z', 'scheduled_end': day + 'T11:00:00Z',
+                'graph_event_id': 'event-series', 'join_url': 'https://teams.microsoft.com/l/meetup-join/series',
+                'status': 'scheduled',
+            })
 
     @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_structure_payload_dates_every_week_from_the_module_plan(self, _holidays):
@@ -1594,6 +1705,8 @@ class CurriculumTeamsMeetingTests(TestCase):
         # given the seventh planned date. Asking here is what keeps that date the
         # one the structure payload will serve after the save.
         self._module_with_six_saturday_weeks()
+        stored_weeks = views.get_authoring_structure_payload('MOD-WEEKS')['weekStructure']
+        stored_module = views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', ['MOD-WEEKS'])[0]
 
         response = self.client.get(
             '/curriculum_api/curriculum/modules/MOD-WEEKS/session-plan/', {'weeks': 7},
@@ -1601,17 +1714,22 @@ class CurriculumTeamsMeetingTests(TestCase):
 
         self.assertEqual(response.status_code, 200, response.content)
         plan = response.json()
-        self.assertEqual(
-            [session['date'] for session in plan['sessions']],
-            [
-                '2026-12-12', '2027-01-02', '2027-01-09', '2027-01-16',
-                '2027-01-23', '2027-01-30', '2027-02-06',
-            ],
-        )
-        # The six weeks that already existed keep the dates the structure payload
-        # gave them: adding a week appends to the timetable, it does not shift it.
-        self.assertEqual(plan['sessions'][0]['day'], 'Saturday')
-        self.assertEqual(plan['finalEndDate'], '2027-02-06')
+        expected_dates = ['2026-12-12', '2026-12-19', '2026-12-26',
+                          '2027-01-02', '2027-01-09', '2027-01-16', '2027-01-23']
+        self.assertEqual(plan['weeks'], 7)
+        self.assertEqual(len(plan['sessions']), 7)
+        self.assertEqual([session['sessionNumber'] for session in plan['sessions']], list(range(1, 8)))
+        self.assertEqual([session['date'] for session in plan['sessions']], expected_dates)
+        self.assertEqual([week['sessionDate'] for week in stored_weeks], expected_dates[:6])
+        self.assertTrue(all(session['day'] == 'Saturday' for session in plan['sessions']))
+        self.assertEqual(plan['finalEndDate'], expected_dates[-1])
+        # A holiday annotates its authored date; it cannot manufacture a move.
+        self.assertEqual(plan['sessions'][1]['skippedHolidays'], ['2026-12-19'])
+        self.assertEqual(plan['sessions'][2]['skippedHolidays'], ['2026-12-26'])
+        self.assertEqual(plan['sessions'][0]['skippedHolidays'], [])
+        self.assertFalse(any(session.get('rescheduled') or session.get('originalDate') for session in plan['sessions']))
+        self.assertEqual(views.get_authoring_structure_payload('MOD-WEEKS')['weekStructure'], stored_weeks)
+        self.assertEqual(views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', ['MOD-WEEKS'])[0], stored_module)
 
     @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_session_plan_keeps_an_added_week_on_its_own_saturday(self, _holidays):
@@ -1637,12 +1755,29 @@ class CurriculumTeamsMeetingTests(TestCase):
     @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_session_plan_falls_back_to_the_stored_session_count(self, _holidays):
         self._module_with_six_saturday_weeks()
+        stored_weeks = views.get_authoring_structure_payload('MOD-WEEKS')['weekStructure']
+        stored_module = views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', ['MOD-WEEKS'])[0]
 
         response = self.client.get('/curriculum_api/curriculum/modules/MOD-WEEKS/session-plan/')
 
         self.assertEqual(response.status_code, 200, response.content)
-        self.assertEqual(response.json()['weeks'], 6)
-        self.assertEqual(response.json()['finalEndDate'], '2027-01-30')
+        plan = response.json()
+        expected_dates = ['2026-12-12', '2026-12-19', '2026-12-26',
+                          '2027-01-02', '2027-01-09', '2027-01-16']
+        self.assertEqual(plan['weeks'], 6)
+        self.assertEqual(len(plan['sessions']), 6)
+        self.assertEqual([session['sessionNumber'] for session in plan['sessions']], list(range(1, 7)))
+        self.assertEqual([session['date'] for session in plan['sessions']], expected_dates)
+        self.assertEqual([week['sessionDate'] for week in stored_weeks], expected_dates[:6])
+        self.assertTrue(all(session['day'] == 'Saturday' for session in plan['sessions']))
+        self.assertEqual(plan['finalEndDate'], expected_dates[-1])
+        # A holiday annotates its authored date; it cannot manufacture a move.
+        self.assertEqual(plan['sessions'][1]['skippedHolidays'], ['2026-12-19'])
+        self.assertEqual(plan['sessions'][2]['skippedHolidays'], ['2026-12-26'])
+        self.assertEqual(plan['sessions'][0]['skippedHolidays'], [])
+        self.assertFalse(any(session.get('rescheduled') or session.get('originalDate') for session in plan['sessions']))
+        self.assertEqual(views.get_authoring_structure_payload('MOD-WEEKS')['weekStructure'], stored_weeks)
+        self.assertEqual(views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', ['MOD-WEEKS'])[0], stored_module)
 
     def test_session_plan_refuses_a_module_it_cannot_find(self):
         # An empty plan would read as "these weeks have no dates", which is a
@@ -1736,6 +1871,16 @@ class CurriculumTeamsMeetingTests(TestCase):
         self.assertEqual(skip['skip_delta_seconds'], 540)
 
     def test_meeting_summary_reports_the_dates_teams_holds_when_asked(self):
+        class DateTimeType(type):
+            def __instancecheck__(cls, value):
+                return isinstance(value, datetime)
+        class BeforeSeptember(datetime, metaclass=DateTimeType):
+            @classmethod
+            def utcnow(cls):
+                return cls(2026, 9, 1)
+        clock = patch.object(views, 'datetime', BeforeSeptember)
+        clock.start()
+        self.addCleanup(clock.stop)
         views.ensure_live_session_tracking_tables()
         views.authoring_delete(views.LIVE_SESSION_OCCURRENCES_TABLE)
         views.authoring_upsert(views.AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
@@ -1799,7 +1944,7 @@ class CurriculumTeamsMeetingTests(TestCase):
         self.assertRegex(detailed_row['nextOccurrence'], r'(Z|[+-]\d{2}:\d{2})$')
 
 
-class TeamsCalendarSyncVerdictTests(TestCase):
+class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
     """The Teams Meetings badge's real verdict: the module's *current* plan,
     recomputed from the authoring rows, against what Teams actually holds.
 
@@ -1814,7 +1959,7 @@ class TeamsCalendarSyncVerdictTests(TestCase):
         views.reset_schema_ready_flags()
         views.ensure_module_authoring_tables()
         views.ensure_live_session_tracking_tables()
-        views.authoring_delete(views.LIVE_SESSIONS_TABLE)
+        self.prepare_teams_fixtures('PROG-SYNC')
         organizer_env = patch.dict(os.environ, {
             'MICROSOFT_TEAMS_ORGANIZER_EMAIL': '',
             'MICROSOFT_ORGANIZER_EMAIL': '',
@@ -1838,6 +1983,23 @@ class TeamsCalendarSyncVerdictTests(TestCase):
         }
         row.update(overrides)
         views.authoring_upsert(views.AUTHORING_MODULES_TABLE, ['module_catalogue_id'], row)
+        # A sessions_number alone is no longer an authored timetable. Persist
+        # one live component per intended delivery slot, including both slots
+        # within a Monday/Thursday week. The real resolver dates these rows.
+        per_week = len(row['session_week_day'].split(','))
+        for index in range(row['sessions_number']):
+            week_number, offset = divmod(index, per_week)
+            week_id = f'{module_id}-W{week_number + 1}'
+            views.authoring_upsert(views.AUTHORING_WEEKS_TABLE, ['id'], {
+                'id': week_id, 'module_catalogue_id': module_id,
+                'week_number': week_number + 1, 'display_order': week_number + 1,
+                'title': 'Synthetic week',
+            })
+            views.authoring_upsert(views.AUTHORING_COMPONENTS_TABLE, ['id'], {
+                'id': f'{module_id}-LIVE{index + 1}', 'week_id': week_id,
+                'module_catalogue_id': module_id, 'type': 'live_session',
+                'title': 'Synthetic session', 'display_order': offset + 1,
+            })
         return views.authoring_fetch_all(
             views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id],
         )[0]
@@ -1901,34 +2063,68 @@ class TeamsCalendarSyncVerdictTests(TestCase):
         self.assertEqual(verdict['syncState'], 'in-sync')
 
     @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
-    def test_holiday_removed_session_and_teams_matches_is_in_sync(self, _holidays):
-        # Christmas closure (ticked id 1080) covers 2026-12-19..2027-01-01, so a
-        # module starting there skips straight to the following Monday.
+    def test_holiday_keeps_authored_date_and_matching_teams_is_in_sync(self, _holidays):
+        # Case A: a holiday annotates the authored date without moving it.
         self._cohort('COHORT-SYNC-5', holiday_ids=['1080'])
         module = self._module(
             'MOD-SYNC-5', cohort_id='COHORT-SYNC-5', sessions_number=2,
             start_date='2026-12-14', session_week_day='Monday',
         )
         verdict = views.teams_calendar_sync_verdict(
-            module, self._occurrence_rows('2026-12-14T09:00:00Z', '2027-01-04T09:00:00Z'),
+            module, self._occurrence_rows('2026-12-14T09:00:00Z', '2026-12-21T09:00:00Z'),
         )
         self.assertEqual(verdict['syncState'], 'in-sync')
 
+        self.assertEqual(verdict['expectedOccurrenceCount'], 2)
+        self.assertEqual(verdict['trackedOccurrenceCount'], 2)
+        self.assertEqual(verdict['differingOccurrences'], 0)
+        self.assertEqual(verdict['syncReasons'], [])
+        plan = views.module_session_plan_for_count(module, 2)
+        self.assertEqual([session['date'] for session in plan['sessions']], ['2026-12-14', '2026-12-21'])
+        self.assertEqual(plan['sessions'][1]['skippedHolidays'], ['2026-12-21'])
+        self.assertFalse(any(session.get('rescheduled') for session in plan['sessions']))
+        self.assertFalse(views.session_overrides(module))
+
     @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
-    def test_teams_still_holding_the_closed_date_is_out_of_sync(self, _holidays):
+    def test_explicit_session_move_requires_teams_to_match_effective_date(self, _holidays):
         self._cohort('COHORT-SYNC-6', holiday_ids=['1080'])
         module = self._module(
             'MOD-SYNC-6', cohort_id='COHORT-SYNC-6', sessions_number=2,
             start_date='2026-12-14', session_week_day='Monday',
         )
-        # Teams was never told about the closure: it still holds the plain
-        # weekly slot the holiday moved the plan off.
+        before = views.module_session_plan_for_count(module, 2)
+        self.assertEqual([session['date'] for session in before['sessions']], ['2026-12-14', '2026-12-21'])
+        self.assertEqual(before['sessions'][1]['skippedHolidays'], ['2026-12-21'])
+        # An actual persisted exception, rather than holiday selection, moves session 2.
+        views.update_authoring_rows(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', ['MOD-SYNC-6'], {
+            'session_overrides': views.json_db_value({'2': {
+                'date': '2027-01-04', 'startTime': '09:00', 'endTime': '10:00', 'durationMinutes': 60,
+            }}),
+        })
+        module = views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', ['MOD-SYNC-6'])[0]
+        plan = views.module_session_plan_for_count(module, 2)
+        self.assertEqual([session['date'] for session in plan['sessions']], ['2026-12-14', '2027-01-04'])
+        self.assertTrue(plan['sessions'][1]['rescheduled'])
+        self.assertEqual(plan['sessions'][1]['originalDate'], '2026-12-21')
+        self.assertEqual(plan['sessions'][0], before['sessions'][0])
+        # Case B: Teams agrees with the explicit effective schedule.
+        matched = views.teams_calendar_sync_verdict(
+            module, self._occurrence_rows('2026-12-14T09:00:00Z', '2027-01-04T09:00:00Z'),
+        )
+        self.assertEqual(matched['syncState'], 'in-sync')
+        self.assertEqual(matched['expectedOccurrenceCount'], 2)
+        self.assertEqual(matched['trackedOccurrenceCount'], 2)
+        self.assertEqual(matched['differingOccurrences'], 0)
+        self.assertEqual(matched['syncReasons'], [])
+        # Case C: retaining the old date after that move is a real disagreement.
         verdict = views.teams_calendar_sync_verdict(
             module, self._occurrence_rows('2026-12-14T09:00:00Z', '2026-12-21T09:00:00Z'),
         )
         self.assertEqual(verdict['syncState'], 'out-of-sync')
-        self.assertIn('extra_in_teams', verdict['syncReasons'])
-        self.assertIn('missing_from_teams', verdict['syncReasons'])
+        self.assertCountEqual(verdict['syncReasons'], ['extra_in_teams', 'missing_from_teams'])
+        self.assertEqual(verdict['differingOccurrences'], 1)
+        self.assertEqual(verdict['missingFromTeams'], ['2027-01-04T09:00:00Z'])
+        self.assertEqual(verdict['extraInTeams'], ['2026-12-21T09:00:00Z'])
 
     @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_changed_start_date_is_out_of_sync(self, _holidays):
@@ -1954,7 +2150,7 @@ class TeamsCalendarSyncVerdictTests(TestCase):
                 start_date='2026-12-14', session_week_day='Monday',
             )
         occurrences_by_module = {
-            f'MOD-SYNC-8{suffix}': self._occurrence_rows('2026-12-14T09:00:00Z', '2027-01-04T09:00:00Z')
+            f'MOD-SYNC-8{suffix}': self._occurrence_rows('2026-12-14T09:00:00Z', '2026-12-21T09:00:00Z')
             for suffix in ('A', 'B', 'C')
         }
 
@@ -1963,16 +2159,33 @@ class TeamsCalendarSyncVerdictTests(TestCase):
 
         def counting_fetch_all(table, *args, **kwargs):
             if table == views.COHORT_AUTHORING_DETAILS_TABLE:
-                cohort_reads.append(1)
+                cohort_reads.append((args, kwargs))
             return original_fetch_all(table, *args, **kwargs)
 
-        with patch('curriculum_api.views.authoring_fetch_all', side_effect=counting_fetch_all):
+        with patch('curriculum_api.views.authoring_fetch_all', side_effect=counting_fetch_all), \
+             patch.object(views, 'teams_calendar_sync_verdict', wraps=views.teams_calendar_sync_verdict) as compare:
             verdicts = views.teams_calendar_sync_verdicts(
                 ['MOD-SYNC-8A', 'MOD-SYNC-8B', 'MOD-SYNC-8C'], occurrences_by_module,
             )
 
         self.assertEqual(len(cohort_reads), 1)
-        self.assertTrue(all(v['syncState'] == 'in-sync' for v in verdicts.values()))
+        self.assertEqual(cohort_reads[0][0][1], ['COHORT-SYNC-8'])
+        _holidays.assert_called_once()
+        self.assertEqual(compare.call_count, 3)
+        shared_holidays = compare.call_args_list[0].kwargs['holidays']
+        self.assertTrue(shared_holidays)
+        self.assertTrue(all(call.kwargs['holidays'] is shared_holidays for call in compare.call_args_list))
+        self.assertEqual(set(verdicts), {'MOD-SYNC-8A', 'MOD-SYNC-8B', 'MOD-SYNC-8C'})
+        for verdict in verdicts.values():
+            self.assertEqual(verdict['syncState'], 'in-sync')
+            self.assertEqual(verdict['expectedOccurrenceCount'], 2)
+            self.assertEqual(verdict['trackedOccurrenceCount'], 2)
+            self.assertEqual(verdict['differingOccurrences'], 0)
+        for call in compare.call_args_list:
+            plan = views.module_session_plan_for_count(call.args[0], 2, holidays=shared_holidays)
+            self.assertEqual([session['date'] for session in plan['sessions']], ['2026-12-14', '2026-12-21'])
+            self.assertEqual(plan['sessions'][1]['skippedHolidays'], ['2026-12-21'])
+            self.assertFalse(any(session.get('rescheduled') for session in plan['sessions']))
 
     def test_missing_verification_data_is_not_reported_as_in_sync(self):
         # A read that failed must never read as agreement.

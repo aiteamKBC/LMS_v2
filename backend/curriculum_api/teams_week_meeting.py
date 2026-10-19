@@ -49,6 +49,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 
+from django.db import transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
@@ -969,7 +970,8 @@ def curriculum_live_session_meeting_scope(request, module_catalogue_id):
     """Choose which calendar delivers one live session: the module's own, or an additional meeting.
 
     POST ``{componentId, scope}`` with ``scope`` 'main' or 'additional'. This
-    only records the choice -- nothing is sent to Microsoft. It is what keeps the
+    records the choice and inherits the main link. Imported calendar occurrences
+    are matched to the current plan; nothing is sent to Microsoft. This keeps the
     two calendars apart before either has booked the week: one chosen for the
     module calendar is refused an additional meeting, and one chosen for an
     additional meeting is left out of every date the module calendar sends.
@@ -1018,11 +1020,75 @@ def curriculum_live_session_meeting_scope(request, module_catalogue_id):
             status=409, code='live_session_already_booked',
         )
 
-    now = datetime.utcnow()
-    if v.clean_str(settings.get(v.LIVE_SESSION_MEETING_SCOPE_KEY)).lower() != scope:
-        v.update_authoring_rows(v.AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id], {
-            'settings_json': v.json_db_value({**settings, v.LIVE_SESSION_MEETING_SCOPE_KEY: scope}),
-            'updated_at': now,
-        })
-        v.invalidate_curriculum_cache()
-    return JsonResponse({'componentId': component_id, 'scope': scope})
+    from .teams_external_calendar import inherited_main_link
+    try:
+        with transaction.atomic():
+            v.lock_module_structure_row(resolved_id)
+            current = v.active_component_rows(v.authoring_fetch_all(
+                v.AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s and id = %s', [resolved_id, component_id],
+            ))
+            if not current or v.frontend_component_type(current[0].get('type')) != 'live-session':
+                return v.json_error('The live session changed. Reload the module and choose again.', status=409)
+            component_row = current[0]
+            settings = component_extra_meeting_settings(component_row, v)
+            if ((existing_additional_meeting(settings, v) and scope != 'additional')
+                    or (booked_on_module_calendar(settings, v) and scope != 'main')):
+                return v.json_error('This session was booked while you were choosing. Reload the module.', status=409)
+            changed = {**settings, v.LIVE_SESSION_MEETING_SCOPE_KEY: scope}
+            status = ''
+            owner_id = v.teams_module_owner_id(resolved_id)
+            series_rows = v.authoring_fetch_all(
+                v.LIVE_SESSIONS_TABLE, "module_catalogue_id = %s and status = 'active'", [owner_id],
+                'updated_at desc, created_at desc',
+            ) if scope == 'main' else []
+            series = series_rows[0] if series_rows else None
+            if scope == 'main' and not booked_on_module_calendar(settings, v):
+                peers = v.active_component_rows(v.authoring_fetch_all(
+                    v.AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [resolved_id],
+                ))
+                link, overridden = inherited_main_link([
+                    component_extra_meeting_settings(row, v) for row in peers
+                    if v.frontend_component_type(row.get('type')) == 'live-session' and row.get('id') != component_id
+                ], series)
+                if link:
+                    changed.update(liveSessionUrl=link, teamsMeetingUrl=link, teamsMainLinkInherited=True)
+                    if overridden:
+                        changed['liveSessionLinkOverride'] = link
+                    else:
+                        changed.pop('liveSessionLinkOverride', None)
+                changed['teamsCalendarBinding'] = 'missing'
+                status = 'pending'
+            elif scope == 'additional' and settings.get('teamsMainLinkInherited'):
+                for key in ('liveSessionUrl', 'teamsMeetingUrl', 'liveSessionLinkOverride',
+                            'teamsCalendarBinding'):
+                    changed.pop(key, None)
+                # Retain a server-owned tombstone so an older builder tab
+                # cannot restore the inherited main link on its next save.
+                changed['teamsMainLinkInherited'] = False
+            if changed != settings:
+                v.update_authoring_rows(v.AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id], {
+                    'settings_json': v.json_db_value(changed),
+                    'live_sessions_link': v.clean_str(changed.get('liveSessionUrl') or changed.get('teamsMeetingUrl')),
+                    'updated_at': datetime.utcnow(),
+                })
+                v.invalidate_curriculum_cache()
+            if (scope == 'main' and series and owner_id == resolved_id
+                    and v.clean_str(series.get('meeting_type')) == 'linked-external'):
+                occurrences = v.authoring_fetch_all(
+                    v.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [series['id']], 'session_number',
+                )
+                v.attach_teams_meeting_to_module_weeks(
+                    resolved_id, series, v.live_session_row_to_component_settings(series), occurrences,
+                )
+                saved = v.authoring_fetch_all(v.AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id])[0]
+                status = v.clean_str(component_extra_meeting_settings(saved, v).get('teamsCalendarBinding')) or 'pending'
+    except ValueError as exc:
+        return v.json_error(str(exc), status=409)
+    message = ''
+    if scope == 'main':
+        message = ('Linked to the existing calendar session on this week\'s date. No invitations were changed.'
+                   if status == 'matched' else
+                   'Module calendar selected. The meeting link is inherited where available, but this date still needs calendar confirmation. '
+                   'For an imported meeting, the organizer must update the original Teams calendar; '
+                   'new dates need to be imported before they can be confirmed in the LMS.')
+    return JsonResponse({'componentId': component_id, 'scope': scope, 'calendarStatus': status, 'message': message})
