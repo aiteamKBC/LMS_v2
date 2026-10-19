@@ -76,6 +76,25 @@ describe('quiz requirements loading', () => {
     expect(screen.queryByText('Reflection form')).not.toBeInTheDocument();
   });
 
+  it('keeps quiz answers when explicitly replacing an expired timing session', async () => {
+    mocks.detail.mockResolvedValue(detail);
+    mocks.start.mockResolvedValueOnce({ sessionId: 'old-quiz', trackingToken: 'old', startedAt: '2026-01-01T00:00:00Z', countingMode: 'active_quiz' });
+    mocks.start.mockResolvedValueOnce({ sessionId: 'new-quiz', trackingToken: 'new', startedAt: new Date().toISOString(), countingMode: 'active_quiz' });
+    mocks.submit.mockRejectedValueOnce(new Error('The activity timing session has expired. Your answers and timing draft are kept.'));
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Finish/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Keep draft and start new timer' }));
+    await screen.findByText(/A new timing session has started/);
+    const archive = JSON.parse(localStorage.getItem('learner_quiz_timer:v1:commercial:501:1:expired:old-quiz')!);
+    expect(archive.session.trackingToken).toBe('old');
+    expect(archive.answers.answers).toEqual({ '1': 1 });
+    fireEvent.click(screen.getByRole('button', { name: /Finish/ }));
+    await act(async () => {});
+    expect(mocks.submit).toHaveBeenLastCalledWith(1, 'commercial', '501', expect.objectContaining({ trackingToken: 'new', answers: { '1': 1 } }));
+  });
+
   it('retains verified previous completion and links the original result without creating an attempt', async () => {
     mocks.detail.mockResolvedValue({ ...detail, modules: ['Module'],
       week: [{ moduleId: 'M', module: 'Module', weekId: 'W', week: 'Week 1' }],

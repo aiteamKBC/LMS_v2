@@ -710,6 +710,22 @@ it('revalidates a reward draft with the server instead of discarding it for devi
   expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ elapsedSeconds: 300, session: savedSession });
 });
 
+it('archives an expired reward draft and starts a distinct zero-second session only on request', async () => {
+  const key = 'learner_activity_timer:v1:apprenticeship:1:C1';
+  const old = { sessionId: 'EXPIRED', trackingToken: 'old-token', startedAt: '2026-01-01T00:00:00Z', countingMode: 'visible_page' as const, rewardTracking: true };
+  localStorage.setItem(key, JSON.stringify({ elapsedSeconds: 300, session: old }));
+  vi.mocked(resumeTimeTracking).mockRejectedValue(Object.assign(new Error('The activity timing session has expired.'), { code: 'expired_tracking_session' }));
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [{ ...first, type: 'podcast', component: 'Podcast', audioUrl: 'https://example.test/lesson.mp3' }] } as unknown as LearnerDetail);
+  mount();
+  const restart = await screen.findByRole('button', { name: 'Keep draft and start new timer' });
+  expect(startTimeTracking).not.toHaveBeenCalled();
+  fireEvent.click(restart);
+  await waitFor(() => expect(JSON.parse(localStorage.getItem(key)!).session.sessionId).toBe('S1'));
+  expect(JSON.parse(localStorage.getItem(`${key}:expired:EXPIRED`)!)).toMatchObject({ session: old, elapsedSeconds: 300 });
+  expect(JSON.parse(localStorage.getItem(key)!).elapsedSeconds).toBe(0);
+  expect(startTimeTracking).toHaveBeenCalledTimes(1);
+});
+
 
 it.each([
   { source: 'timer', seconds: 300, clock: '00:05:00', savedClock: '05:00' },
