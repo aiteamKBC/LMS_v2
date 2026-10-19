@@ -1589,6 +1589,8 @@ export interface CurriculumSession {
  * full week structure just to inspect a live-session component's settings.
  */
 export interface CurriculumTeamsMeetingSummary {
+  meetingType?: string;
+  calendarManagement?: 'external' | 'lms';
   timeZone?: string;
   moduleCatalogueId: string;
   liveSessionId: string;
@@ -3648,6 +3650,134 @@ export function updateCurriculumKsbFramework(id: string, input: CurriculumKsbFra
 
 export function deleteCurriculumKsbFramework(id: string) {
   return deleteJson<{ deleted: boolean; id: string }>(`/curriculum/ksb-frameworks/${encodeURIComponent(id)}/`);
+}
+
+export interface ImportedMeetingPerson {
+  name: string;
+  email: string;
+}
+
+type ImportedPeopleStatus = 'available' | 'partial' | 'access_denied' | 'not_connected' | 'unavailable' | 'ambiguous';
+
+export interface ImportedMeetingParticipants {
+  checkedAt: string;
+  organizer?: {
+    status: ImportedPeopleStatus;
+    message: string;
+    source?: 'online_meeting' | 'saved_microsoft_records';
+    person?: ImportedMeetingPerson;
+    objectId?: string;
+    verifiedAt?: string;
+    evidenceAt?: string;
+  };
+  calendar: {
+    status: ImportedPeopleStatus;
+    message: string;
+    source?: 'organizer_calendar' | 'attendee_calendar';
+    organizer?: ImportedMeetingPerson;
+    attendees?: ImportedMeetingPerson[];
+    hideAttendees?: boolean;
+  };
+  roles: {
+    status: ImportedPeopleStatus;
+    message: string;
+    organizer?: ImportedMeetingPerson;
+    presenters?: ImportedMeetingPerson[];
+    coOrganizers?: ImportedMeetingPerson[];
+    allowedPresenters?: string;
+  };
+}
+
+/** Read Microsoft metadata without publishing invitations or changing the saved series. */
+export function fetchImportedMeetingParticipants(liveSessionId: string, signal?: AbortSignal) {
+  return fetchJson<ImportedMeetingParticipants>(
+    `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/imported-participants/`,
+    { signal, skipCache: true, timeoutMs: 75000 },
+  );
+}
+
+export interface ImportedCalendarPreview {
+  status: 'ready' | 'blocked' | 'up_to_date' | 'verification_pending';
+  message: string;
+  code?: string;
+  previewToken?: string;
+  currentEndDate?: string;
+  proposedEndDate?: string;
+  timeZone?: string;
+  addedSessions: { start: string; end: string }[];
+  existingInviteeCount?: number;
+  organizer?: ImportedMeetingPerson;
+  joinUrl?: string;
+  operationId?: string;
+  calendarChangeRequired?: boolean;
+  notificationScope?: string;
+  connectionRequired?: boolean;
+  connectionKind?: 'group' | 'user';
+}
+
+export interface ImportedCalendarUpdateResult {
+  status: 'confirmed' | 'verification_pending' | 'blocked';
+  message: string;
+  code?: string;
+  operationId?: string;
+  addedSessions?: number;
+  importedSessions?: number;
+  connectionRequired?: boolean;
+  connectionKind?: 'group' | 'user';
+}
+
+export interface ImportedCalendarConnection {
+  connected: boolean;
+  configured?: boolean;
+  expiresAt?: string;
+  message?: string;
+}
+
+/** Calendar writes require the session's CSRF token and must never auto-retry. */
+async function importedCalendarPost<T>(liveSessionId: string, action: string, body: unknown, timeoutMs = 90000): Promise<T> {
+  const path = `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/imported-calendar/${action}/`;
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await coachFetch(`${API_BASE_URL}${path}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body), signal: controller.signal,
+    });
+    const data = await response.json();
+    if (!response.ok) throw new CurriculumApiError(data?.error || data?.message || 'The calendar request could not be completed.', response.status, path, data);
+    if (action === 'confirm' || action === 'status') {
+      mutationEpoch += 1;
+      clearCurriculumGetCache();
+    }
+    return data;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+export async function fetchImportedCalendarConnection(liveSessionId: string): Promise<ImportedCalendarConnection> {
+  const path = `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/imported-calendar/connection/`;
+  const response = await coachFetch(`${API_BASE_URL}${path}`, { cache: 'no-store' });
+  const data = await response.json();
+  if (!response.ok) throw new CurriculumApiError(data?.error || 'The calendar connection could not be read.', response.status, path, data);
+  return data;
+}
+
+export function connectImportedCalendar(liveSessionId: string, calendarKind: 'group' | 'user') {
+  return importedCalendarPost<{ authorizationUrl: string; callbackOrigin: string }>(liveSessionId, 'connect', { calendarKind });
+}
+
+export function previewImportedCalendarUpdate(liveSessionId: string) {
+  return importedCalendarPost<ImportedCalendarPreview>(liveSessionId, 'preview', {});
+}
+
+export function confirmImportedCalendarUpdate(liveSessionId: string, previewToken: string, acknowledgeNotifications: boolean) {
+  return importedCalendarPost<ImportedCalendarUpdateResult>(liveSessionId, 'confirm', { previewToken, acknowledgeNotifications }, 120000);
+}
+
+/** Recover a result by reading Microsoft; never repeats the calendar update. */
+export function checkImportedCalendarUpdate(liveSessionId: string, operationId?: string) {
+  return importedCalendarPost<ImportedCalendarUpdateResult>(liveSessionId, 'status', { operationId });
 }
 
 export function fetchCurriculumTeamsMeetingSummaries(

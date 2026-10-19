@@ -38,7 +38,7 @@ class CurriculumProjectionPerformanceTests(SimpleTestCase):
             'programme_name': 'Programme',
         }
 
-        with patch.object(views, 'safe_authoring_module_rows', return_value=[module_row]), \
+        with patch.object(views, 'safe_module_index_rows', return_value=[module_row]), \
              patch.object(
                  views,
                  'get_authoring_structure_payloads',

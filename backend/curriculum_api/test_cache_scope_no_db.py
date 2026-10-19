@@ -450,8 +450,8 @@ class LearnerFreshnessTests(SimpleTestCase):
         from django.urls import resolve
         captured = {}
 
-        def fake_cache(key, factory, force=False, ttl=None, shared=True, scope=None):
-            captured.update(key=key, ttl=ttl, scope=scope)
+        def fake_cache(key, factory, force=False, ttl=None, shared=True, scope=None, fingerprint=None):
+            captured.update(key=key, ttl=ttl, scope=scope, fingerprint=fingerprint)
             return Mock()
 
         match = resolve(path)
@@ -496,3 +496,119 @@ class LearnerFreshnessTests(SimpleTestCase):
             self.assertEqual(get('6 learners'), '5 learners')
             clock[0] += 2
             self.assertEqual(get('6 learners'), '6 learners')
+
+    def scoped_cache(self, epochs, clock):
+        fake_datetime = Mock()
+        fake_datetime.now.return_value.timestamp.side_effect = lambda: clock[0]
+        return [
+            patch.dict(views._CURRICULUM_CACHE, {}, clear=True),
+            patch.object(views, 'datetime', fake_datetime),
+            patch.object(views, 'shared_curriculum_epoch', return_value=7),
+            patch.object(views, 'cache', Mock(get=Mock(return_value=None))),
+            patch.object(views.shared_build, 'try_acquire', return_value=(True, None)),
+            patch.object(views.shared_build, 'release'),
+            patch.object(cache_scope, 'scope_epochs', side_effect=lambda: dict(epochs)),
+            patch.object(cache_scope, 'programme_ids', return_value=frozenset({'P1'})),
+        ]
+
+    def test_only_the_shell_is_rechecked_against_its_learner_rows(self):
+        base = '/curriculum_api/curriculum/programmes/P1'
+        shell = self.captured_cache_call(f'{base}/detail/shell/')
+        self.assertIs(shell['fingerprint'], views.programme_shell_learner_fingerprint)
+        self.assertIsNone(self.captured_cache_call(f'{base}/detail/modules/')['fingerprint'])
+        self.assertIsNone(self.captured_cache_call(f'{base}/ksb-stats/')['fingerprint'])
+
+    def test_an_expired_entry_with_unchanged_learner_rows_is_served_without_a_rebuild(self):
+        import contextlib
+        epochs = {'#global': 7, '#bumps': 2, '*': 1, 'P1': 1}
+        clock = [1000.0]
+        learners = ['5 learners']
+        builds = []
+        ttl = views.CURRICULUM_LEARNER_DATA_TTL_SECONDS
+        with contextlib.ExitStack() as stack:
+            for item in self.scoped_cache(epochs, clock):
+                stack.enter_context(item)
+
+            def get():
+                def build():
+                    builds.append(learners[0])
+                    return f'built from {learners[0]}'
+                return views.cached_curriculum_value(
+                    'shell:P1', build, ttl=ttl, scope='P1', fingerprint=lambda: learners[0],
+                )
+
+            self.assertEqual(get(), 'built from 5 learners')
+            clock[0] += ttl + 1
+            # Past the ttl, learner rows unchanged: the same entry, no rebuild,
+            # and it is good for another ttl from the check.
+            self.assertEqual(get(), 'built from 5 learners')
+            clock[0] += ttl - 1
+            self.assertEqual(get(), 'built from 5 learners')
+            self.assertEqual(builds, ['5 learners'])
+            # The learner rows move: the next check rebuilds from them.
+            learners[0] = '6 learners'
+            clock[0] += 2
+            self.assertEqual(get(), 'built from 6 learners')
+            self.assertEqual(builds, ['5 learners', '6 learners'])
+
+    def test_a_moved_generation_rebuilds_even_when_the_learner_rows_match(self):
+        import contextlib
+        epochs = {'#global': 7, '#bumps': 2, '*': 1, 'P1': 1}
+        clock = [1000.0]
+        builds = []
+        ttl = views.CURRICULUM_LEARNER_DATA_TTL_SECONDS
+        with contextlib.ExitStack() as stack:
+            for item in self.scoped_cache(epochs, clock):
+                stack.enter_context(item)
+
+            def get(value):
+                def build():
+                    builds.append(value)
+                    return value
+                return views.cached_curriculum_value(
+                    'shell:P1', build, ttl=ttl, scope='P1', fingerprint=lambda: 'same learners',
+                )
+
+            self.assertEqual(get('before the save'), 'before the save')
+            epochs['P1'] = 2
+            self.assertEqual(get('after the save'), 'after the save')
+            clock[0] += ttl + 1
+            epochs['P1'] = 3
+            self.assertEqual(get('after another save'), 'after another save')
+            self.assertEqual(builds, ['before the save', 'after the save', 'after another save'])
+
+    def test_a_forced_read_rebuilds_without_consulting_the_fingerprint_check(self):
+        import contextlib
+        epochs = {'#global': 7, '#bumps': 2, '*': 1, 'P1': 1}
+        clock = [1000.0]
+        checks = []
+        ttl = views.CURRICULUM_LEARNER_DATA_TTL_SECONDS
+        with contextlib.ExitStack() as stack:
+            for item in self.scoped_cache(epochs, clock):
+                stack.enter_context(item)
+
+            def fingerprint():
+                checks.append('checked')
+                return 'same learners'
+
+            views.cached_curriculum_value('shell:P1', lambda: 'first', ttl=ttl, scope='P1', fingerprint=fingerprint)
+            clock[0] += ttl + 1
+            forced = views.cached_curriculum_value(
+                'shell:P1', lambda: 'forced', force=True, ttl=ttl, scope='P1', fingerprint=fingerprint,
+            )
+            self.assertEqual(forced, 'forced')
+            # One fingerprint per build, none for a revalidation that never ran.
+            self.assertEqual(checks, ['checked', 'checked'])
+
+    def test_the_shell_fingerprint_is_exactly_the_two_learner_count_reads(self):
+        with patch.object(views, 'active_learner_programme_counts', return_value=({'P1': 3}, {'mba': 1})), \
+                patch.object(views, 'active_learner_delivery_counts', return_value=({'C1': 2, ('p', 'c'): 1}, {'G1': 2})):
+            first = views.programme_shell_learner_fingerprint()
+        with patch.object(views, 'active_learner_programme_counts', return_value=({'P1': 3}, {'mba': 1})), \
+                patch.object(views, 'active_learner_delivery_counts', return_value=({('p', 'c'): 1, 'C1': 2}, {'G1': 2})):
+            reordered = views.programme_shell_learner_fingerprint()
+        with patch.object(views, 'active_learner_programme_counts', return_value=({'P1': 3}, {'mba': 1})), \
+                patch.object(views, 'active_learner_delivery_counts', return_value=({'C1': 2, ('p', 'c'): 1}, {'G1': 3})):
+            moved = views.programme_shell_learner_fingerprint()
+        self.assertEqual(first, reordered)
+        self.assertNotEqual(first, moved)
