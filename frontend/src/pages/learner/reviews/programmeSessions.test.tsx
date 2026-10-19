@@ -246,20 +246,21 @@ describe.each(cases)('$path programme sessions', item => {
     fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-11-07' } });
     expect(submit).toBeDisabled();
     expect(within(dialog).getByRole('alert')).toHaveTextContent('Saturdays or Sundays');
-    fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-11-09' } });
+    const editedDay = item.source === 'mcr' ? '2026-11-20' : '2026-11-09';
+    fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: editedDay } });
     const readCount = requests.length;
     fireEvent.focus(window);
     await waitFor(() => expect(requests.length).toBeGreaterThan(readCount));
-    expect(within(dialog).getByLabelText('Day')).toHaveValue('2026-11-09');
+    expect(within(dialog).getByLabelText('Day')).toHaveValue(editedDay);
     bookingError = 'That time overlaps another calendar event. Please choose another time.';
     fireEvent.click(submit);
     expect(await within(dialog).findByRole('alert')).toHaveTextContent(bookingError);
-    expect(within(dialog).getByLabelText('Day')).toHaveValue('2026-11-09');
+    expect(within(dialog).getByLabelText('Day')).toHaveValue(editedDay);
     bookingError = '';
     fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '13:30' } });
     fireEvent.click(submit);
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(bookings.at(-1)).toMatchObject({ scheduledDate: '2026-11-09', scheduledTime: '13:30' });
+    expect(bookings.at(-1)).toMatchObject({ scheduledDate: editedDay, scheduledTime: '13:30' });
   });
 
   it('does not substitute another event when the selected meeting disappears', async () => {

@@ -33,11 +33,15 @@ from .dashboard_tabs import dashboard_tab
 from .dashboard_training import training_module
 from . import module_progress, extra_activities, absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, free_courses_view, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
 from .my_learning import my_learning
+from . import progress_transfer
 
 from curriculum_api import session_results
 from .session_recovery import link_catchup
 
 urlpatterns = [
+    path('progress-transfer/requests/', progress_transfer.admin_requests),
+    path('progress-transfer/requests/<uuid:request_id>/', progress_transfer.admin_requests),
+    path('progress-transfer/<str:kind>/<int:pk>/', progress_transfer.learner_request),
     path("mobile/absence-reports/", mobile_absence.absence_reports, name="mobile-absence-reports"),
     path("mobile/", include("learner_api.mobile_urls")),
     path('migrated-reviews/csrf', migrated_review_party_csrf, name='migrated-review-party-csrf'),

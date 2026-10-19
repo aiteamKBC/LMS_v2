@@ -228,7 +228,7 @@ class MonthlyAssignmentTests(SimpleTestCase):
         record.scheduled_date = None
         self.assertFalse(booked_coaching(self.payload()))
         record.scheduled_date = date(2026, 10, 6)
-        self.assertEqual(coaching_booking_bounds("2026-12"), (date(2026, 12, 22), date(2027, 1, 5)))
+        self.assertEqual(coaching_booking_bounds("2026-12"), (date(2026, 12, 20), date(2027, 1, 5)))
         record.scheduled_date = date(2026, 9, 30)
         record.status = "cancelled"
         self.assertFalse(booked_coaching(self.payload()))
@@ -322,9 +322,9 @@ class ExtendedCoachingWindowTests(SimpleTestCase):
         from datetime import date
         from .monthly_assignment import coaching_booking_windows
         self.assertEqual(coaching_booking_windows('2026-09'), [
-            (date(2026, 9, 21), date(2026, 10, 5)),
-            (date(2026, 10, 22), date(2026, 11, 5)),
+            (date(2026, 9, 20), date(2026, 10, 5)),
+            (date(2026, 10, 20), date(2026, 11, 5)),
         ])
         self.assertEqual(coaching_booking_windows('2026-12')[1],
-                         (date(2027, 1, 22), date(2027, 2, 5)))
+                         (date(2027, 1, 20), date(2027, 2, 5)))
         self.assertEqual(coaching_booking_windows('invalid'), [])
