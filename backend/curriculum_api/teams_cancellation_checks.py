@@ -65,6 +65,8 @@ def cancellation_plan(series, occurrences, previous, read):
     previous = previous or {}
     if previous.get('management'):
         snapshot['management'] = previous['management']
+    if previous.get('importedExtension'):
+        snapshot['importedExtension'] = previous['importedExtension']
 
     def get(event_id, expand=False):
         key = (event_id, expand)

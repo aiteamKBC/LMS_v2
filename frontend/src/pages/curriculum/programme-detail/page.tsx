@@ -2659,7 +2659,7 @@ export default function ProgrammeDetailPage() {
   // reading as a deliberate assignment.
   const coverageKsbSourceApplied = Boolean(splitProgrammeKsbSource(liveProgramme.ksbProfileSourceId).sourceId);
 
-  const summaryCoverageOnly = tab === 'overview';
+  const summaryCoverageOnly = tab === 'overview' || tab === 'achievement';
   const loadBackendCoverage = useCallback((signal?: AbortSignal) => {
     if (!coverageProgrammeIds.length) return Promise.resolve();
     setBackendCoverageLoading(true);
@@ -2816,10 +2816,12 @@ export default function ProgrammeDetailPage() {
   // largest -- is only requested once a tab that lists components is opened.
   // Sticky: going back to the Overview keeps what was loaded, and does not
   // abort a read that is already on its way.
-  const [fullComponentsWanted, setFullComponentsWanted] = useState(() => tab !== 'overview');
+  // Achievement owns a paged server projection; it does not consume this list.
+  const [fullComponentsWanted, setFullComponentsWanted] = useState(() => tab !== 'overview' && tab !== 'achievement');
   useEffect(() => {
-    if (tab !== 'overview') setFullComponentsWanted(true);
+    if (tab !== 'overview' && tab !== 'achievement') setFullComponentsWanted(true);
   }, [tab]);
+  const loadFullComponents = fullComponentsWanted && tab !== 'achievement';
 
   // Counts, published counts and Expected OTJH per module/week, for every tab
   // until the full list (if it is ever wanted) has arrived.
@@ -2845,7 +2847,7 @@ export default function ProgrammeDetailPage() {
   }, [componentsScopeKey, readRevision]);
 
   useEffect(() => {
-    if (!fullComponentsWanted) return;
+    if (!loadFullComponents) return;
     const moduleCatalogueIds: string[] = JSON.parse(componentsScopeKey);
     if (!moduleCatalogueIds.length) return;
     const componentsKey = moduleCatalogueIds.join('|');
@@ -2867,7 +2869,7 @@ export default function ProgrammeDetailPage() {
       controller.abort();
       if (componentsRequestKeyRef.current === componentsKey) componentsRequestKeyRef.current = '';
     };
-  }, [componentsScopeKey, readRevision, fullComponentsWanted]);
+  }, [componentsScopeKey, readRevision, loadFullComponents]);
 
   const programmeModuleCatalogueIds = useMemo(() => {
     if (!data) return [] as string[];
@@ -2930,7 +2932,7 @@ export default function ProgrammeDetailPage() {
     if (!needsCoverage || !programmeLoaded) return undefined;
     // Overview needs the applied standard's identity and counts. Detailed KSB
     // tabs also use authored descriptions as a fallback for legacy mappings.
-    if (tab === 'overview' && explicitKsbSourceId && standardSource) return undefined;
+    if (summaryCoverageOnly && explicitKsbSourceId && standardSource) return undefined;
     if (programmeKsbSets.length) return undefined;
     const controller = new AbortController();
     fetchCurriculumKsbSets(controller.signal)
@@ -2942,7 +2944,7 @@ export default function ProgrammeDetailPage() {
         if (!controller.signal.aborted) setKsbSetsSettled(true);
       });
     return () => controller.abort();
-  }, [needsCoverage, programmeLoaded, programmeKsbSets.length, explicitKsbSourceId, standardSource, tab]);
+  }, [needsCoverage, programmeLoaded, programmeKsbSets.length, explicitKsbSourceId, standardSource, summaryCoverageOnly]);
 
   useEffect(() => {
     if (!needsCoverage) return undefined;

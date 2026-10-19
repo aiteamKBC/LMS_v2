@@ -122,6 +122,7 @@ export const coachNavItems: SidebarNavItem[] = [
   },
   { id: 'coach-inclusion', label: 'Inclusion Ticket System', icon: 'ri-heart-pulse-line', href: inclusionLoginHref, external: true },
   { id: 'coach-support-tickets', label: 'Support Tickets', icon: 'ri-lifebuoy-line', href: '/coach/support-tickets' },
+  { id: 'coach-info-source', label: 'Info Source', icon: 'ri-book-open-line', href: '/coach/info-source' },
 ];
 
 // ============================================================================

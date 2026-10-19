@@ -177,7 +177,7 @@ class AchievementSourceTests(SimpleTestCase):
     def projection(self, stored, items):
         payload = {'coverage': {'items': items, 'components': [], 'modules': []}, 'assignedLearners': [], 'consumptionSources': {'progress': []}}
         request = RequestFactory().get('/curriculum_api/curriculum/programmes/PROG-PCP-L6/ksb-achievement/')
-        with patch.object(views, 'scope_learner_ksb_impact_payload', return_value=(payload, None)), \
+        with patch.object(views, 'programme_achievement_inputs', return_value=(payload, None)), \
              patch.object(views, 'programme_row_ksb_source', return_value=stored), \
              patch.object(views, 'find_skills_england_standard', side_effect=find_standard), \
              patch.object(views, 'get_ksb_profile_rows', return_value=PROFILES):

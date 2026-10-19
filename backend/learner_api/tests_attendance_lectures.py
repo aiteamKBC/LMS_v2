@@ -252,6 +252,29 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertEqual(result[0]['module_catalogue_id'], 'destination-module')
         self.assertEqual(result[0]['attendance_status'], 'present')
 
+    def test_saved_live_register_outcome_overrides_teams_evidence(self):
+        now = timezone.now()
+        scheduled = register_row(
+            source='microsoft-teams', session_id='occ-1', occurrence_id='occ-1',
+            module_catalogue_id='module-1', live_session_id='live-1',
+            scheduled_start=now - timedelta(hours=2),
+            scheduled_end=now - timedelta(hours=1),
+            attendance_status='present', attendance_report_id='report-1',
+        )
+        evidence = {**scheduled, 'attendance_status': 'present', 'attended_seconds': 900}
+        manual = {**scheduled, 'source': 'live-register', 'attendance_status': 'absent',
+                  'attendance_report_id': '', 'updated_at': now}
+
+        result = lecture_register(
+            SimpleNamespace(id=12), records=[evidence, manual],
+            scheduled=[scheduled], apply_adjustments=False,
+        )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['attendance_status'], 'absent')
+        self.assertEqual(result[0]['source'], 'microsoft-teams')
+        self.assertEqual(result[0]['attendance_report_id'], 'report-1')
+
     def test_schedule_excludes_deleted_modules_and_superseded_or_failed_series_and_occurrences(self):
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value
