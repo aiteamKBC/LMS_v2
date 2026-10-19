@@ -4,6 +4,7 @@ from coach_api import migrated_template_views
 from system_audit import activity as system_activity
 
 from . import activity, learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
+from .archive_index import curriculum_archive_index
 from .teams_attendee_compare import teams_meeting_attendee_comparison
 from .teams_permission_check import teams_meeting_permission_check
 from .teams_dial_in import teams_meeting_dial_in
@@ -63,6 +64,8 @@ urlpatterns = [
     path('curriculum/review-types/<str:review_type_id>/', review_types.curriculum_review_type_detail, name='curriculum-review-type-detail'),
     path('curriculum/reviews/<str:review_id>/', reviews.curriculum_review_detail, name='curriculum-review-detail'),
     path('curriculum/overview/', views.curriculum_overview, name='curriculum-overview'),
+    # The Archive page's one read: every archived record, a page at a time.
+    path('curriculum/archive/', curriculum_archive_index, name='curriculum-archive-index'),
     path('curriculum/home-summary/', curriculum_home_summary, name='curriculum-home-summary'),
     path('curriculum/delivery-scope/', views.curriculum_delivery_scope, name='curriculum-delivery-scope'),
     path('curriculum/stats/', views.curriculum_stats, name='curriculum-stats'),
@@ -163,6 +166,7 @@ urlpatterns = [
     # Must precede curriculum/components/<component_id>/, or "library" would be
     # captured as a component id.
     path('curriculum/components/library/', views.curriculum_component_library, name='curriculum-component-library'),
+    path('curriculum/components/summary/', views.curriculum_component_summary, name='curriculum-component-summary'),
     path('curriculum/components/', views.curriculum_component_collection, name='curriculum-components'),
     path('curriculum/components/<str:component_id>/upload/', views.curriculum_component_upload, name='curriculum-component-upload'),
     path('curriculum/components/<str:component_id>/ksb-mappings/', views.curriculum_component_ksb_mappings, name='curriculum-component-ksb-mappings'),

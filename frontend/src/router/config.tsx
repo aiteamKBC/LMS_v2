@@ -89,7 +89,6 @@ const MigratedReviewTemplates = lazyRoute(() => import("../pages/curriculum/revi
 const CurriculumDeliveryHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumDeliveryHub })));
 const CurriculumQualityHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumQualityHub })));
 const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/free-courses/page"));
-const CurriculumKsbFrameworksPage = lazyRoute(() => import("../pages/curriculum/ksb-frameworks/page"));
 const CoachAuditTrailPage = lazyRoute(() => import("../pages/coach/audit-trail/page"));
 const CoachAuditTrailPersonPage = lazyRoute(() => import("../pages/coach/audit-trail/person/page"));
 const CurriculumAuditTrailPage = lazyRoute(() => import("../pages/curriculum/audit-trail/page"));
@@ -1353,10 +1352,6 @@ const routes: RouteObject[] = [
   {
     path: "/tutor/reports",
     element: <TutorReportsPage />,
-  },
-  {
-    path: "/curriculum/ksb-frameworks",
-    element: <CurriculumKsbFrameworksPage />,
   },
   {
     path: "/curriculum/version-control",
