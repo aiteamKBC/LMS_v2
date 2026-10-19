@@ -119,8 +119,34 @@ describe('review presentation preserves review and booking rules', () => {
   it('offers rescheduling for an active Aptem booking without treating a source date as a booking', () => {
     expect(presentReview(aptem(), undefined, today)).toMatchObject({ booked: true, past: false, canReschedule: true });
     expect(presentReview(aptem({ calendarEventKey: undefined }), undefined, today)).toMatchObject({
-      booked: false, past: true, canReschedule: false,
+      booked: false, past: false, canReschedule: false, action: 'schedule', label: 'Not scheduled',
     });
+  });
+
+  it.each(['Progress Review', 'Progress Review (+ Skills Radar)'])('keeps an unbooked Aptem %s in upcoming reviews with a booking action', type => {
+    const row = aptem({ status: 'not-scheduled', calendarEventKey: undefined, scheduledDate: null, scheduledTime: null,
+      targetDate: '2027-03-11', importedReview: { ...aptem().importedReview!, type, status: 'Not Scheduled' } });
+    const before = structuredClone(row);
+    const result = reviewOverview([row], [], today);
+    expect(result.current).toMatchObject({ session: row, action: 'schedule', label: 'Not scheduled', booked: false, canReschedule: false });
+    expect(result.upcoming).toHaveLength(1);
+    expect(result.past).toEqual([]);
+    expect(row).toEqual(before);
+    expect(presentReview(row, undefined, today, undefined, 'employer').action).toBe('view');
+  });
+
+  it.each(['completed', 'awaiting-signature', 'in-progress', 'cancelled'])('does not book an Aptem %s review despite a stale unscheduled list status', status => {
+    const row = aptem({ status: 'not-scheduled', calendarEventKey: undefined, scheduledDate: null });
+    expect(presentReview(row, undefined, today, definition(status)).action).toBe('view');
+    expect(presentReview({ ...row, importedReview: { ...row.importedReview!, status } }, undefined, today).action).toBe('view');
+    expect(presentReview({ ...row, sourceStatus: status }, undefined, today).action).toBe('view');
+  });
+
+  it('does not book completed source history, an attended occurrence, or an ordinary imported review', () => {
+    const row = aptem({ status: 'not-scheduled', calendarEventKey: undefined, scheduledDate: null });
+    expect(presentReview({ ...row, importedReview: { ...row.importedReview!, completedDate: today } }, undefined, today).action).toBe('view');
+    expect(presentReview(row, attendance(row.id, { attendanceConfirmed: true }), today).action).toBe('view');
+    expect(presentReview({ ...row, importedReview: { ...row.importedReview!, type: 'Eligibility Review & FS Discussion' } }, undefined, today).action).toBe('view');
   });
 
   it.each(['completed', 'awaiting-signature', 'in-progress', 'cancelled'])('keeps a linked Aptem %s review closed to rescheduling despite stale attendance', status => {

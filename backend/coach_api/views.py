@@ -10477,6 +10477,13 @@ def lock_learner_calendar(learner_id: int) -> None:
     )
 
 
+def ensure_coach_booking_available(owner_email, scheduled_date, scheduled_time, duration_minutes, *, exclude_record_id=None):
+    from .booking_availability import lock_coach_calendar, ensure_coach_calendar_available
+    lock_coach_calendar(owner_email)
+    ensure_coach_calendar_available(owner_email, scheduled_date, scheduled_time, duration_minutes,
+                                    exclude_record_id=exclude_record_id)
+
+
 def find_learner_calendar_conflict(
     *,
     learner_id: int,
@@ -10733,6 +10740,7 @@ def reserve_coach_calendar_booking(
                 scheduled_time=scheduled_time,
                 duration_minutes=duration_minutes,
             )
+            ensure_coach_booking_available(owner_email, scheduled_date, scheduled_time, duration_minutes)
 
             current_max = (
                 CoachCalendarEvent.objects.filter(
@@ -10922,6 +10930,8 @@ def persist_calendar_sync_reservation(
                 duration_minutes=candidate.duration_minutes,
                 exclude_record_id=candidate.pk,
             )
+            ensure_coach_booking_available(candidate.owner_email, candidate.scheduled_date, candidate.scheduled_time,
+                                           candidate.duration_minutes, exclude_record_id=candidate.pk)
         for field in mutable_fields:
             if record.review_instance_id and field in {"review_template_id", "occurrence_number"}:
                 continue
@@ -15511,6 +15521,7 @@ def coach_review_instance_book(request, instance_id):
             else:
                 if england_non_delivery_reason(scheduled_date):
                     return coach_error(request, code="BOOKING_CONFLICT", message=england_non_delivery_reason(scheduled_date), status=409)
+                ensure_coach_booking_available(owner_email, scheduled_date, scheduled_time, duration_minutes)
                 ensure_learner_calendar_available(
                     learner_id=learner_id, learner_email=clean_text(base_event.get("email")),
                     scheduled_date=scheduled_date, scheduled_time=scheduled_time,

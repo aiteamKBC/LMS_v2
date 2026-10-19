@@ -6,10 +6,10 @@ import type { LearnerKind } from '@/api/learnerDetail';
 import type { MeetingAttendance } from '@/api/meetingAttendance';
 import {
   bookLearnerCalendarSession, fetchCalendarConnections, fetchLearnerCalendarEvents, fetchPersonalCalendarAvailability,
-  rescheduleLearnerCalendarSession, type BookingCalendarRules, type BookSessionResponse,
+  rescheduleLearnerCalendarSession, ukOffsetForDate, type BookingCalendarRules, type BookSessionResponse,
   type CalendarBusySlot, type LearnerCalendarEvent, type PersonalCalendarConnection,
 } from '@/api/learnerCalendar';
-import { bookingDateRestrictionMessage, firstAvailableBookingDate, isoDate, mcmBookingDateRestrictionMessage, parseBookingDay } from './bookingDates';
+import { bookingDateRestrictionMessage, bookingInstant, bookingToday, firstAvailableBookingDate, mcmBookingDateRestrictionMessage, parseBookingDay } from './bookingDates';
 import styles from './meetingBooking.module.css';
 
 /** A list card supplies identity and optional initial values. The dialog
@@ -27,7 +27,7 @@ type Props = {
 };
 
 function bookingBounds(date: string, time: string, durationMinutes: number) {
-  const start = new Date(`${date}T${time}:00`).getTime();
+  const start = parseBookingDay(date) ? bookingInstant(date, time) : NaN;
   return Number.isFinite(start) ? { start, end: start + durationMinutes * 60_000 } : null;
 }
 
@@ -186,8 +186,9 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
       setAvailabilityError('');
       return;
     }
-    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0).toISOString();
-    const end = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59).toISOString();
+    const nextDay = new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    const start = new Date(bookingInstant(date, '00:00')).toISOString();
+    const end = new Date(bookingInstant(nextDay, '00:00')).toISOString();
     let cancelled = false;
     setAvailabilityLoading(true);
     setAvailabilityError('');
@@ -244,7 +245,7 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
         scheduledTime: time,
         durationMinutes: !update && reviewId && monthly ? 60 : Number(duration) || 60,
         notes: notes.trim() || undefined,
-        timezoneOffsetMinutes: new Date(`${date}T${time}:00`).getTimezoneOffset(),
+        timezoneOffsetMinutes: ukOffsetForDate(date),
       };
       const response = update
         ? await rescheduleLearnerCalendarSession(learner.kind, learner.id, { ...input, eventKey, reviewId })
@@ -279,19 +280,20 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
         <option value={session.id}>{sessionLabel}</option>
       </select></label>
       <div className={styles.fields}>
-        <label>Date<input aria-label="Day" type="date" required min={isoDate(new Date())} value={date} disabled={saving || Boolean(loadError)} onChange={event => { edited.current.date = true; setDate(event.target.value); setError(''); }} /></label>
+        <label>Date<input aria-label="Day" type="date" required min={bookingToday()} value={date} disabled={saving || Boolean(loadError)} onChange={event => { edited.current.date = true; setDate(event.target.value); setError(''); }} /></label>
         <label>Time<input type="time" required value={time} disabled={saving || Boolean(loadError)} onChange={event => { edited.current.time = true; setTime(event.target.value); setError(''); }} /></label>
       </div>
+      <p className={styles.description}>All booking times are UK time (Europe/London), including daylight saving time.</p>
       <div className={`${styles.calendarCheck} ${bookingConflict ? styles.calendarConflict : ''}`}>
         <AppIcon className="ri-calendar-line" />
         <div>
-          {!connections.length
+          {bookingConflict
+            ? <p>This time conflicts with {lmsConflict ? `“${lmsConflict.title}”` : 'an event in your personal calendar'}.</p>
+            : !connections.length
             ? <Link to={calendarHref}>Connect your personal calendar to prevent booking conflicts</Link>
             : availabilityLoading
               ? <p role="status">Checking your personal calendar…</p>
-              : bookingConflict
-                ? <p>This time conflicts with {lmsConflict ? `“${lmsConflict.title}”` : 'an event in your personal calendar'}.</p>
-                : <p>This time is available in your calendar.</p>}
+              : <p>This time is available in your calendar.</p>}
           {connections.length > 0 && <small>{connections.length} personal calendar{connections.length === 1 ? '' : 's'} connected</small>}
         </div>
       </div>

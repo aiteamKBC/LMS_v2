@@ -8,7 +8,8 @@ import {
 } from '@/api/learnerCalendar';
 import MeetingBookingDialog, { type MeetingBookingSession } from '../MeetingBookingDialog';
 
-vi.mock('@/api/learnerCalendar', () => ({
+vi.mock('@/api/learnerCalendar', async importOriginal => ({
+  ...await importOriginal<typeof import('@/api/learnerCalendar')>(),
   bookLearnerCalendarSession: vi.fn(),
   rescheduleLearnerCalendarSession: vi.fn(),
   fetchLearnerCalendarEvents: vi.fn(),
@@ -73,7 +74,7 @@ describe('MeetingBookingDialog', () => {
     const event = aptem(source);
     vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ events: [event], bookingCalendar: rules } as never);
     vi.mocked(fetchPersonalCalendarAvailability).mockResolvedValue({ busy: [{
-      provider: 'google', start: new Date('2026-10-20T10:00:00').toISOString(), end: new Date('2026-10-20T11:30:00').toISOString(),
+      provider: 'google', start: '2026-10-20T09:00:00.000Z', end: '2026-10-20T10:30:00.000Z',
     }], errors: [], connectedProviders: ['google'] });
     vi.mocked(rescheduleLearnerCalendarSession).mockResolvedValue({ event });
     mount(aptem(source, { durationMinutes: 60 }), undefined, { calendarEventKey: 'booking:11', durationMinutes: 60 } as MeetingAttendance);
@@ -137,8 +138,8 @@ describe('MeetingBookingDialog', () => {
       id: 'another', eventKey: 'another', scheduledDate: '2026-10-20', scheduledTime: '11:00', status: 'scheduled',
     })] : [])], bookingCalendar: rules } as never);
     vi.mocked(fetchPersonalCalendarAvailability).mockResolvedValue({ busy: [{
-      provider: 'google', start: new Date('2026-10-20T10:00:00').toISOString(), end: new Date('2026-10-20T11:30:00').toISOString(),
-    }, ...(calendar === 'personal' ? [{ provider: 'google' as const, start: new Date('2026-10-20T11:00:00').toISOString(), end: new Date('2026-10-20T12:00:00').toISOString() }] : [])], errors: [], connectedProviders: ['google'] });
+      provider: 'google', start: '2026-10-20T09:00:00.000Z', end: '2026-10-20T10:30:00.000Z',
+    }, ...(calendar === 'personal' ? [{ provider: 'google' as const, start: '2026-10-20T10:00:00.000Z', end: '2026-10-20T11:00:00.000Z' }] : [])], errors: [], connectedProviders: ['google'] });
     mount(event);
     const dialog = await screen.findByRole('dialog');
     await waitFor(() => expect(within(dialog).getByLabelText('Duration')).toHaveValue('90'));
@@ -211,8 +212,8 @@ describe('MeetingBookingDialog', () => {
     fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-10-20' } });
     await waitFor(() => expect(submit).toBeEnabled());
     const [, , start, end] = vi.mocked(fetchPersonalCalendarAvailability).mock.calls.at(-1)!;
-    expect(start).toBe(new Date(2026, 9, 20, 0, 0, 0).toISOString());
-    expect(end).toBe(new Date(2026, 9, 20, 23, 59, 59).toISOString());
+    expect(start).toBe('2026-10-19T23:00:00.000Z');
+    expect(end).toBe('2026-10-20T23:00:00.000Z');
     expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
   });
 

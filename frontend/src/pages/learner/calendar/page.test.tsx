@@ -48,6 +48,69 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('calendar event previews', () => {
+  const aptemPlan = (reviewType = 'Personal Support Plan', overrides: Partial<LearnerCalendarEvent> = {}) => event({
+    id: 'imported-plan', eventKey: 'imported-review:sample', reviewId: '41', reviewSource: 'aptem',
+    source: 'progress-review', type: 'review', title: reviewType, reviewTypeName: reviewType,
+    status: 'not-scheduled', scheduledTime: '09:00', calendarEventKey: null,
+    meetingLink: '', meetingProvider: '', invited: false, ...overrides,
+  });
+
+  it.each(['Personal Support Plan', 'Progress Review', 'Progress Review (+ Skills Radar)'])(
+    'does not count an unbooked Aptem %s plan as an existing PR or time conflict', async reviewType => {
+      setup([aptemPlan(reviewType), event({ id: 'mcm', eventKey: 'mcr:1', source: 'mcr', title: 'Booked MCM' })]);
+      await screen.findAllByRole('button', { name: /Booked MCM/ });
+      for (const card of screen.getAllByRole('button', { name: name => name.includes(reviewType) })) {
+        expect(card).not.toHaveTextContent('09:00');
+      }
+      fireEvent.click(screen.getByRole('button', { name: 'Book Coach Session' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Book a Coach Session' });
+      fireEvent.click(within(dialog).getByRole('button', { name: /PR Progress Review/ }));
+      fireEvent.change(within(dialog).getByLabelText(/Date/), { target: { value: isoDate } });
+      fireEvent.change(within(dialog).getByLabelText(/Time/), { target: { value: '09:00' } });
+      expect(within(dialog).queryByText(/already have a Progress Review booked/)).not.toBeInTheDocument();
+      expect(within(dialog).queryByText(/overlaps/)).not.toBeInTheDocument();
+      expect(within(dialog).getByRole('button', { name: 'Book Session' })).toBeEnabled();
+      expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+      // A real MCM still blocks exactly overlapping PR times, without becoming a PR.
+      fireEvent.change(within(dialog).getByLabelText(/Time/), { target: { value: '10:00' } });
+      expect(within(dialog).getByText(/overlaps another calendar event/)).toBeVisible();
+      expect(within(dialog).getByRole('button', { name: 'Book Session' })).toBeDisabled();
+      expect(within(dialog).queryByText(/already have a Progress Review booked/)).not.toBeInTheDocument();
+    },
+  );
+
+  it.each(['Week', 'Day'])('shows an unbooked Aptem plan without assigning it an hour in %s view', async view => {
+    setup([aptemPlan()]);
+    await screen.findAllByRole('button', { name: /Personal Support Plan/ });
+    fireEvent.click(screen.getByRole('button', { name: view }));
+    expect(within(screen.getByRole('region', { name: 'Sessions awaiting a time' }))
+      .getByRole('button', { name: /Personal Support Plan/ })).toBeVisible();
+    for (const card of screen.getAllByRole('button', { name: /Personal Support Plan/ })) {
+      expect(card).not.toHaveTextContent('09:00');
+    }
+  });
+
+  it.each(['not-scheduled', 'scheduled'])('still counts an Aptem PR with a local %s reservation', async status => {
+    setup([aptemPlan('Progress Review', { calendarEventKey: 'booking:41', status, bookingStatus: 'scheduled' })]);
+    await screen.findAllByRole('button', { name: /Progress Review/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Book Coach Session' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Book a Coach Session' });
+    fireEvent.click(within(dialog).getByRole('button', { name: /PR Progress Review/ }));
+    expect(within(dialog).getByText(/already have a Progress Review booked/)).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'Book Session' })).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Yes, reschedule' }));
+    expect(screen.getByRole('dialog', { name: 'Reschedule Session' })).toBeVisible();
+  });
+
+  it('preserves timed pending Native requests as real reservations', async () => {
+    setup([event({ source: 'progress-review', status: 'not-scheduled', title: 'Pending PR', invited: false })]);
+    await screen.findAllByRole('button', { name: /Pending PR/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Book Coach Session' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Book a Coach Session' });
+    fireEvent.click(within(dialog).getByRole('button', { name: /PR Progress Review/ }));
+    expect(within(dialog).getByText(/already have a Progress Review booked/)).toBeVisible();
+  });
+
   it('opens the colour customisation drawer from the learner calendar', async () => {
     setup();
     await screen.findAllByRole('button', { name: /Catch-up with your coach/ });

@@ -30,10 +30,17 @@ export function presentReview(session: LearnerCalendarEvent, attendance: Meeting
     : ['awaiting-signature', 'completed'].includes(storedStatus) ? storedStatus : bookingStatus;
   const scheduledDate = attendance ? attendance.date : session.scheduledDate;
   const date = scheduledDate || session.targetDate || session.date || null;
-  // Aptem's planned date is not a local appointment. Only an active review
-  // with a durable booking may expose booking actions; historical forms stay read-only.
+  // Aptem's planned date is not a local appointment. A durable key distinguishes
+  // rescheduling from a first booking; completed source history stays read-only.
   const imported = session.importedReview;
   const importedStatus = imported?.status.trim().toLowerCase().replace(/[ _]+/g, '-');
+  const importedProgressReview = imported && ['progress review', 'progress review (+ skills radar)'].includes(imported.type.trim().toLowerCase());
+  const hasLocalBooking = Boolean(session.calendarEventKey || attendance?.calendarEventKey);
+  const canBookImported = importedProgressReview && !hasLocalBooking && !imported.completedDate
+    && !attendance?.attendanceConfirmed && ['not-scheduled', 'scheduled'].includes(storedStatus)
+    && ![storedStatus, bookingStatus, submittedStatus, importedStatus, session.sourceStatus]
+      .some(value => ['completed', 'awaiting-signature', 'in-progress', 'cancelled', 'deleted', 'superseded']
+        .includes((value || '').trim().toLowerCase().replace(/[ _]+/g, '-')));
   const importedBooking = Boolean(imported && (session.calendarEventKey || attendance?.calendarEventKey)
     && !imported.completedDate && !['completed', 'awaiting-signature', 'cancelled'].includes(importedStatus || '')
     && ['progress review', 'progress review (+ skills radar)'].includes(imported.type.trim().toLowerCase()));
@@ -61,6 +68,7 @@ export function presentReview(session: LearnerCalendarEvent, attendance: Meeting
     if (booked) return result(isToday ? 'Today' : status === 'in-progress' ? 'In progress' : 'Scheduled', 'Review the learner’s progress and agreed next steps.', isToday && joinUrl ? 'join' : 'view', Boolean(date && date < today));
     return result(['not-scheduled', 'planned'].includes(status) ? 'Not scheduled' : 'In preparation', 'The coach is preparing this review. You can read the available details and answer any employer questions.', 'view');
   }
+  if (canBookImported) return result('Not scheduled', 'Choose a date and time with your coach. The target date is not a confirmed appointment.', 'schedule', false, Boolean(date && date < today));
   if (session.importedReview && !booked) return result(status === 'completed' ? 'Completed' : 'Archived review', 'You can read this saved review and its attachments.', 'view', true);
   if (['awaiting-signature', 'completed'].includes(status)) {
     // Match the existing detail form's signature eligibility. A calendar status

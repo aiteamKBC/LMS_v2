@@ -169,10 +169,11 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof fetch>[0]) => {
     const url = String(input);
     requested.push(url);
+    if (url.includes('/meeting-attendance/')) return new Response(JSON.stringify({ sessions: [], today: '2026-09-14', timeZone: 'Europe/London', csrfToken: 'test' }));
     if (url.includes('/review/')) return definitionError
       ? new Response(JSON.stringify({ error: definitionError }), { status: 503 })
       : new Response(JSON.stringify(blankDefinition ? { instance: null } : reviewDefinition));
-    if (url.includes('/learner_api/calendar/')) {
+    if (url.includes('/learner_api/calendar/') || url.includes('/learner_api/review-sessions/')) {
       return new Response(JSON.stringify({ learner: { kind: 'apprenticeship', id: 12 }, events }));
     }
     if (url.includes('/learner-detail/')) {
