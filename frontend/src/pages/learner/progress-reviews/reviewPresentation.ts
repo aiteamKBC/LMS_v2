@@ -30,12 +30,20 @@ export function presentReview(session: LearnerCalendarEvent, attendance: Meeting
     : ['awaiting-signature', 'completed'].includes(storedStatus) ? storedStatus : bookingStatus;
   const scheduledDate = attendance ? attendance.date : session.scheduledDate;
   const date = scheduledDate || session.targetDate || session.date || null;
-  const booked = !session.importedReview && Boolean(scheduledDate) && ['scheduled', 'in-progress'].includes(status)
+  // Aptem's planned date is not a local appointment. Only an active review
+  // with a durable booking may expose booking actions; historical forms stay read-only.
+  const imported = session.importedReview;
+  const importedStatus = imported?.status.trim().toLowerCase().replace(/[ _]+/g, '-');
+  const importedBooking = Boolean(imported && (session.calendarEventKey || attendance?.calendarEventKey)
+    && !imported.completedDate && !['completed', 'awaiting-signature', 'cancelled'].includes(importedStatus || '')
+    && ['progress review', 'progress review (+ skills radar)'].includes(imported.type.trim().toLowerCase()));
+  const booked = (!imported || importedBooking) && Boolean(scheduledDate) && ['scheduled', 'in-progress'].includes(status)
     && !['not-scheduled', 'planned', 'failed', 'unknown'].includes(bookingStatus);
   const isToday = booked && scheduledDate === today;
   const joinUrl = booked ? meetingJoinUrl({ ...session, meetingLink: attendance ? attendance.meetingLink : session.meetingLink }) : null;
   const base = { session, attendance, status, date, booked, isToday, joinUrl,
-    canReschedule: booked && status === 'scheduled' && !attendance?.attendanceConfirmed };
+    canReschedule: booked && status === 'scheduled' && !attendance?.attendanceConfirmed
+      && ![storedStatus, submittedStatus, session.bookingStatus, importedStatus].includes('in-progress') };
   const result = (label: string, description: string, action: ReviewPresentation['action'], past = false, needsAttention = false): ReviewPresentation =>
     ({ ...base, label, description, action, past, needsAttention });
 
@@ -53,7 +61,7 @@ export function presentReview(session: LearnerCalendarEvent, attendance: Meeting
     if (booked) return result(isToday ? 'Today' : status === 'in-progress' ? 'In progress' : 'Scheduled', 'Review the learner’s progress and agreed next steps.', isToday && joinUrl ? 'join' : 'view', Boolean(date && date < today));
     return result(['not-scheduled', 'planned'].includes(status) ? 'Not scheduled' : 'In preparation', 'The coach is preparing this review. You can read the available details and answer any employer questions.', 'view');
   }
-  if (session.importedReview) return result(status === 'completed' ? 'Completed' : 'Archived review', 'You can read this saved review and its attachments.', 'view', true);
+  if (session.importedReview && !booked) return result(status === 'completed' ? 'Completed' : 'Archived review', 'You can read this saved review and its attachments.', 'view', true);
   if (['awaiting-signature', 'completed'].includes(status)) {
     // Match the existing detail form's signature eligibility. A calendar status
     // alone cannot establish whose signature is required by a Curriculum form.
@@ -82,7 +90,8 @@ export function presentReview(session: LearnerCalendarEvent, attendance: Meeting
 
 export function reviewOverview(sessions: readonly LearnerCalendarEvent[], attendance: readonly MeetingAttendance[], today: string, definitions: ReviewDefinitions = {}, viewerRole: 'participant' | 'employer' = 'participant') {
   const all = sessions.map(session => presentReview(session,
-    attendance.find(item => item.id === session.id) || attendance.find(item => Boolean(item.calendarEventKey) && item.calendarEventKey === session.eventKey),
+    attendance.find(item => item.id === session.id || (session.reviewId && item.id === `imported-review:${session.reviewId}`))
+      || attendance.find(item => Boolean(item.calendarEventKey) && item.calendarEventKey === (session.calendarEventKey || session.eventKey)),
     today, definitions[session.eventKey] || definitions[session.id], viewerRole));
   // Reuse the existing featured-meeting ordering; never alter the programme
   // dates, persisted statuses, booking rules or the input event objects.

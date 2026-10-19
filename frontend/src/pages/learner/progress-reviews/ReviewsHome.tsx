@@ -111,14 +111,15 @@ export default function ReviewsHome(props: ReviewsHomeProps) {
   }
   function options(state: ReviewPresentation) {
     if (employer) return null;
-    if (state.session.importedReview && !state.attendance?.calendarEventKey) return null;
+    const hasCalendarBooking = Boolean(state.session.calendarEventKey || state.attendance?.calendarEventKey);
+    if (state.session.importedReview && !hasCalendarBooking) return null;
     const showAttendanceOptions = canUseAttendanceActions(state) && state.attendance && !state.attendance.canAttend && !state.attendance.absenceReported
       && !state.attendance.attendanceConfirmed && (state.attendance.canReportAbsence || state.attendance.missed);
     return <details className={styles.options}><summary>More options<ChevronDown size={18} aria-hidden="true"/></summary><div className={styles.optionItems}>
       {state.action === 'join' ? <Link to={detailHref(state)}>View review details</Link> : null}
-      {state.canReschedule && !state.attendance?.missed && <button type="button" disabled={!props.canAct || props.busy} onClick={() => props.onSchedule(state.session)}>Reschedule meeting</button>}
+      {state.canReschedule && (!state.attendance?.missed || state.session.importedReview) && <button type="button" disabled={!props.canAct || props.busy} onClick={() => props.onSchedule(state.session)}>Reschedule meeting</button>}
       {state.joinUrl && state.action !== 'join' && <a href={state.joinUrl} target="_blank" rel="noopener noreferrer">Open meeting link</a>}
-      {(!state.session.importedReview || state.attendance?.calendarEventKey) && <Link to={meetingCalendarHref(state.session, learner, undefined, state.attendance)}>View in calendar</Link>}
+      {(!state.session.importedReview || hasCalendarBooking) && <Link to={meetingCalendarHref(state.session, learner, undefined, state.attendance)}>View in calendar</Link>}
       {showAttendanceOptions && <MeetingAttendanceActions session={state.attendance} busy={props.busy} canAct={props.canAct}
         onAttend={() => props.onAttend(state.attendance!.id)} onReport={() => props.onReport(state.attendance!)} onReschedule={() => props.onSchedule(state.session)}/>}
     </div></details>;

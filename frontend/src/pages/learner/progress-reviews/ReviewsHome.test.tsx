@@ -254,4 +254,37 @@ describe('review learner navigation and safe actions', () => {
     fireEvent.click(screen.getByText('More options'));
     expect(screen.getAllByRole('button', { name: 'Report Absence' })).toHaveLength(1);
   });
+
+  it.each(['current', 'all', 'missed', 'preview', 'employer'])('offers the original linked Aptem booking in the %s view only when the learner can act', view => {
+    const imported = session('imported-review:11', {
+      reviewSource: 'aptem', reviewId: '11', calendarEventKey: 'booking:11', importedReview: {
+        id: '11', aptemReviewId: 'A-11', name: 'Imported review', type: 'Progress Review', reviewerName: 'Coach',
+        plannedDate: today, plannedTime: '10:00', completedDate: null, status: 'scheduled',
+        extractionStatus: 'complete', detailsAvailable: true, sections: [],
+      },
+    });
+    const props = mount({ sessions: [imported], canAct: view !== 'preview',
+      viewerRole: view === 'employer' ? 'employer' : 'participant',
+      attendance: view === 'missed' ? [attendance('local:11', { calendarEventKey: 'booking:11', missed: true })] : [],
+    }, view === 'all' ? '?view=all' : '');
+    if (view === 'employer') {
+      expect(screen.queryByText('More options')).not.toBeInTheDocument();
+      expect(props.onSchedule).not.toHaveBeenCalled();
+      return;
+    }
+    fireEvent.click(screen.getByText('More options'));
+    const reschedule = screen.getByRole('button', { name: 'Reschedule meeting' });
+    expect(screen.getByRole('link', { name: 'View in calendar' })).toHaveAttribute('href', expect.stringContaining('event=booking%3A11'));
+    if (view === 'preview') {
+      expect(reschedule).toBeDisabled();
+      fireEvent.click(reschedule);
+      expect(props.onSchedule).not.toHaveBeenCalled();
+    } else {
+      fireEvent.click(reschedule);
+      expect(props.onSchedule).toHaveBeenCalledExactlyOnceWith(imported);
+      expect(vi.mocked(props.onSchedule).mock.calls[0][0]).toBe(imported);
+    }
+    expect(props.onAttend).not.toHaveBeenCalled();
+    expect(props.onReport).not.toHaveBeenCalled();
+  });
 });

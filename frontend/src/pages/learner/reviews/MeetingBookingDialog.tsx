@@ -35,6 +35,11 @@ function overlaps(start: number, end: number, otherStart: number, otherEnd: numb
   return start < otherEnd && end > otherStart;
 }
 
+function hasExistingBooking(session: MeetingBookingSession, attendance?: MeetingAttendance) {
+  return Boolean(session.scheduledDate && session.status === 'scheduled'
+    && (session.calendarEventKey || attendance?.calendarEventKey || !session.eventKey.startsWith('imported-review:')));
+}
+
 /** Keeps a failure inside the booking form from taking the whole page down
  * (RouteErrorBoundary would otherwise replace the page). Mirrors that
  * boundary's pattern; the fallback is an inline dialog the learner can close. */
@@ -111,8 +116,8 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
   const monthly = session.source === 'mcr';
   const curriculumReview = session.source === 'review';
   const meetingType = monthly ? 'monthly coaching' : curriculumReview ? 'review' : 'progress review';
-  const rescheduling = Boolean(target?.scheduledDate && target.status === 'scheduled');
-  const isExisting = rescheduling || Boolean(session.scheduledDate && session.status === 'scheduled');
+  const rescheduling = Boolean(target && hasExistingBooking(target, attendance));
+  const isExisting = target ? rescheduling : hasExistingBooking(session, attendance);
   const durationLocked = Boolean(session.importedReview?.id && monthly);
   const dateRestriction = bookingDateRestrictionMessage(date, calendarRules) || (monthly ? mcmBookingDateRestrictionMessage(date) : '');
 
@@ -141,16 +146,16 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
       fetchCalendarConnections(learner.kind, learner.id).catch(() => ({ connections: [] })),
     ]).then(([calendar, calendarConnections]) => {
       if (cancelled) return;
-      const reviewId = session.importedReview?.id;
+      const reviewId = session.importedReview?.id || session.reviewId;
       const allowedTypes = session.source === 'mcr' ? ['monthly coaching meeting', 'monthly coaching', 'mcm'] : ['progress review', 'progress review (+ skills radar)'];
       if (session.importedReview && !allowedTypes.includes(session.importedReview.type.trim().toLowerCase())) {
         throw new Error('Choose a Monthly Coaching Meeting or Progress Review to schedule.');
       }
       const durableKey = session.calendarEventKey || attendance?.calendarEventKey || session.eventKey;
       // Resolve only this learner's exact booking. Dates are not identities.
-      const saved = calendar.events.find(event => event.source === session.source && (
-        event.eventKey === durableKey || event.calendarEventKey === durableKey || Boolean(reviewId && event.reviewId === reviewId)
-      ));
+      const candidates = calendar.events.filter(event => event.source === session.source);
+      const saved = candidates.find(event => event.eventKey === durableKey || event.calendarEventKey === durableKey)
+        || candidates.find(event => Boolean(reviewId && event.reviewId === reviewId));
       if (!saved) throw new Error('This meeting is no longer available. Close this window and refresh the page.');
       if (saved && !['scheduled', 'not-scheduled'].includes(saved.status)) {
         throw new Error('This meeting can no longer be scheduled. Close this window and refresh the page.');
@@ -208,8 +213,13 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
     const existing = bookingBounds(event.scheduledDate, event.scheduledTime, event.durationMinutes || 60);
     return existing ? overlaps(requested.start, requested.end, existing.start, existing.end) : false;
   }) : null;
+  // Match the Calendar page/server exclusion: moving this appointment must
+  // not conflict with its existing personal-calendar copy.
+  const currentBooking = rescheduling && target?.scheduledDate && target.scheduledTime
+    ? bookingBounds(target.scheduledDate, target.scheduledTime, target.durationMinutes || 60) : null;
   const personalConflict = requested ? busySlots.find(slot => {
     const start = Date.parse(slot.start), end = Date.parse(slot.end);
+    if (currentBooking && start === currentBooking.start && end === currentBooking.end) return false;
     return Number.isFinite(start) && Number.isFinite(end) && overlaps(requested.start, requested.end, start, end);
   }) : null;
   const bookingConflict = lmsConflict || personalConflict;
@@ -228,12 +238,11 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
       const eventKey = target.calendarEventKey || attendance?.calendarEventKey || target.eventKey;
       // An imported review may have a scheduled date before its first LMS
       // booking. Only a durable calendar key can be sent to reschedule.
-      const update = rescheduling && (Boolean(target.calendarEventKey) || !eventKey.startsWith('imported-review:'));
+      const update = rescheduling;
       const input = {
         scheduledDate: date,
         scheduledTime: time,
-        durationMinutes: update && target.eventKey.startsWith('imported-review:') ? attendance?.durationMinutes || Number(duration) || 60
-          : !update && reviewId && monthly ? 60 : Number(duration) || 60,
+        durationMinutes: !update && reviewId && monthly ? 60 : Number(duration) || 60,
         notes: notes.trim() || undefined,
         timezoneOffsetMinutes: new Date(`${date}T${time}:00`).getTimezoneOffset(),
       };

@@ -108,6 +108,43 @@ describe('review presentation preserves review and booking rules', () => {
     expect(result).toMatchObject({ action: 'view', booked: false, canReschedule: false, joinUrl: null, past: true });
   });
 
+  const aptem = (overrides: Partial<LearnerCalendarEvent> = {}) => session('imported-review:11', {
+    reviewId: '11', reviewSource: 'aptem', calendarEventKey: 'booking:11', importedReview: {
+      id: '11', aptemReviewId: 'A-11', name: 'Imported review', type: 'Progress Review', reviewerName: 'Coach',
+      plannedDate: today, plannedTime: '10:00', completedDate: null, status: 'scheduled',
+      extractionStatus: 'complete', detailsAvailable: true, sections: [],
+    }, ...overrides,
+  });
+
+  it('offers rescheduling for an active Aptem booking without treating a source date as a booking', () => {
+    expect(presentReview(aptem(), undefined, today)).toMatchObject({ booked: true, past: false, canReschedule: true });
+    expect(presentReview(aptem({ calendarEventKey: undefined }), undefined, today)).toMatchObject({
+      booked: false, past: true, canReschedule: false,
+    });
+  });
+
+  it.each(['completed', 'awaiting-signature', 'in-progress', 'cancelled'])('keeps a linked Aptem %s review closed to rescheduling despite stale attendance', status => {
+    expect(presentReview(aptem({ status }), attendance('imported-review:11'), today).canReschedule).toBe(false);
+  });
+
+  it.each(['completed', 'awaiting-signature', 'in-progress'])('does not reschedule a linked Aptem form with %s content', status => {
+    expect(presentReview(aptem(), attendance('imported-review:11'), today, definition(status)).canReschedule).toBe(false);
+  });
+
+  it('does not reschedule an attended Aptem booking', () => {
+    expect(presentReview(aptem(), attendance('imported-review:11', { attendanceConfirmed: true }), today).canReschedule).toBe(false);
+  });
+
+  it.each(['calendar-key', 'review-id'])('matches Aptem attendance using its %s without matching another review on the same day', match => {
+    const row = aptem({ id: 'aptem-event:A-11', calendarEventKey: match === 'calendar-key' ? 'booking:11' : undefined });
+    const matched = attendance(match === 'review-id' ? 'imported-review:11' : 'local-booking:11', {
+      calendarEventKey: 'booking:11', date: '2026-10-01', attendanceConfirmed: true,
+    });
+    const unrelated = attendance('imported-review:12', { calendarEventKey: 'booking:12' });
+    const result = reviewOverview([row], [unrelated, matched], today).all[0];
+    expect(result).toMatchObject({ attendance: matched, date: '2026-10-01', canReschedule: false });
+  });
+
   it('does not infer a missed meeting or attendance from a past date', () => {
     const row = session('past', { scheduledDate: '2026-09-01' });
     expect(presentReview(row, undefined, today)).toMatchObject({ action: 'view', label: 'Awaiting update', past: true });

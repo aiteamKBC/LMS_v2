@@ -213,6 +213,41 @@ function openMoreOptions(item: typeof cases[number]) {
 }
 
 describe.each(cases)('$path programme sessions', item => {
+  it.each(['apprenticeship', 'commercial'])('reschedules the linked Aptem appointment for a %s learner and retains its review identity after refresh', async kind => {
+    const importedReview: ImportedReview = {
+      id: '11', aptemReviewId: 'A-11', name: 'Imported meeting', type: item.source === 'mcr' ? 'Monthly Coaching Meeting' : 'Progress Review',
+      reviewerName: 'Assigned coach', plannedDate: '2026-10-01', plannedTime: '09:00', completedDate: null,
+      status: 'scheduled', extractionStatus: 'complete', detailsAvailable: true, sections: [],
+    };
+    const imported = { ...session(item.source, 1, 'scheduled'), id: 'imported-review:A-11', eventKey: 'imported-review:A-11',
+      calendarEventKey: 'imported-review:125:A-11', reviewSource: 'aptem' as const, reviewId: '11', aptemReviewId: 'A-11',
+      importedReview, scheduledDate: '2026-10-20', scheduledTime: '09:00', durationMinutes: 90 };
+    const unrelated = { ...session(item.source, 2, 'completed') };
+    events = [imported, unrelated];
+    mount(item, `?kind=${kind}&learner=125`, 'current');
+    await screen.findByText(item.source === 'mcr' ? 'Details' : 'More options', { selector: 'summary' });
+    openMoreOptions(item);
+    fireEvent.click(screen.getByRole('button', { name: item.source === 'mcr' ? 'Reschedule' : 'Reschedule meeting' }));
+    const dialog = await screen.findByRole('dialog');
+    const submit = within(dialog).getByRole('button', { name: 'Save new time' });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-10-21' } });
+    fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '14:30' } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(reschedules).toEqual([expect.objectContaining({ eventKey: imported.calendarEventKey, reviewId: '11',
+      scheduledDate: '2026-10-21', scheduledTime: '14:30', durationMinutes: 90 })]);
+    expect(requests).toContain(`/learner_api/calendar/${kind}/125/reschedule/`);
+    expect(bookings).toHaveLength(0);
+    expect(events).toContainEqual(unrelated);
+    expect(events.find(event => event.reviewId === '11')).toMatchObject({ id: imported.id, eventKey: imported.eventKey, importedReview });
+    openMoreOptions(item);
+    fireEvent.click(screen.getByRole('button', { name: item.source === 'mcr' ? 'Reschedule' : 'Reschedule meeting' }));
+    const refreshed = await screen.findByRole('dialog');
+    await waitFor(() => expect(within(refreshed).getByLabelText('Day')).toHaveValue('2026-10-21'));
+    expect(within(refreshed).getByLabelText('Time')).toHaveValue('14:30');
+  });
+
   it('uses server-owned Native occurrences without merging the legacy history stream', async () => {
     detailActivityAvailable = true;
     historyReviews = [{ id: '908', aptemReviewId: 'A-908', name: 'Old imported meeting',
