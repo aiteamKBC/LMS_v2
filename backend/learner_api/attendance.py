@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import os
+from datetime import timezone as datetime_timezone
 
 import psycopg
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
@@ -403,12 +404,28 @@ def _summarize_attendance(rows, *, now=None, overview_only=False):
 
 
 def combined_attendance_rows(source):
-    """Refresh KBC on every server read and merge actual Teams occurrences."""
+    """Refresh source attendance and apply the learner live-register outcome.
+
+    ``curriculum.live_session_learner_attendance`` is the editable learner
+    register used by Bulk Attendance.  Teams evidence remains the source for
+    join intervals, but an explicit register correction must be visible in the
+    learner workspace immediately after it is saved.
+    """
     rows = kbc_attendance_rows(source)
+    live_register = _live_register_rows(source)
     # The shared Teams reader groups reconnects by occurrence and email and
     # excludes sessions without a finished attendance report. IDs here refer
     # to LearnerProfile, so use the verified email and check enrolment linkage.
     teams = fetch_verified_teams_attendance_rows(learner_emails=[source.email]) if source.email else []
+    overridden_occurrences = {
+        str(row.get('occurrence_id') or '') for row in live_register
+        if row.get('occurrence_id')
+    }
+    teams = [
+        row for row in teams
+        if str(row.get('occurrence_id') or '') not in overridden_occurrences
+    ]
+    rows.extend(live_register)
     for row in teams:
         if str(row.get('enrolment_id')) != str(source.id):
             continue
@@ -420,6 +437,116 @@ def combined_attendance_rows(source):
         if previous is None or row['attendance_status'] in {'present', 'late'}:
             unique[key] = row
     return list(unique.values())
+
+
+def _live_register_rows(source):
+    """Return editable live-register outcomes in learner-register shape.
+
+    The live register is keyed by ``LearnerProfile`` while learner pages use
+    the enrolment source.  Resolve exactly one profile and keep this reader
+    best-effort so an unavailable optional register cannot hide KBC/Teams
+    attendance.
+    """
+    # Offline callers and pure projection tests pass lightweight source
+    # objects; only real learner models have the identity needed for this
+    # optional database read.
+    if not getattr(source, '_meta', None):
+        return []
+
+    from django.db import router
+
+    from curriculum_api.models import (
+        LiveSession,
+        LiveSessionLearnerAttendance,
+        LiveSessionOccurrence,
+    )
+    from .models import LearnerProfile
+
+    try:
+        profile_database = router.db_for_read(LearnerProfile) or 'default'
+        profiles = list(
+            LearnerProfile.objects.using(profile_database)
+            .filter(enrolment_id=source.id)
+            .only('id')
+        )
+        if len(profiles) != 1:
+            return []
+        profile_id = profiles[0].id
+        register_database = router.db_for_read(LiveSessionLearnerAttendance) or 'default'
+        register_rows = list(
+            LiveSessionLearnerAttendance.objects.using(register_database)
+            .filter(learner_profile_id=profile_id)
+            .values(
+                'occurrence_id', 'live_session_id', 'module_catalogue_id',
+                'attendance_status', 'attended_seconds', 'attendance_report_id',
+                'updated_at',
+            )
+        )
+        if not register_rows:
+            return []
+        occurrence_by_id = {
+            row['id']: row
+            for row in LiveSessionOccurrence.objects.using(register_database)
+            .filter(id__in={row['occurrence_id'] for row in register_rows})
+            .exclude(status__in=['cancelled', 'deleted'])
+            .values('id', 'scheduled_start', 'scheduled_end', 'session_number')
+        }
+        session_by_id = {
+            row['id']: row
+            for row in LiveSession.objects.using(register_database)
+            .filter(id__in={row['live_session_id'] for row in register_rows})
+            .values('id', 'module_title')
+        }
+    except DatabaseError:
+        logger.warning('Learner live attendance register unavailable.', exc_info=True)
+        return []
+
+    result = []
+    for row in register_rows:
+        status = str(row.get('attendance_status') or '').strip().lower()
+        occurrence = occurrence_by_id.get(row['occurrence_id'])
+        session = session_by_id.get(row['live_session_id'])
+        if status not in {'present', 'absent'} or occurrence is None or session is None:
+            continue
+        start = occurrence.get('scheduled_start')
+        end = occurrence.get('scheduled_end')
+        if start is None:
+            continue
+        if timezone.is_naive(start):
+            start = timezone.make_aware(start, datetime_timezone.utc)
+        if end is not None and timezone.is_naive(end):
+            end = timezone.make_aware(end, datetime_timezone.utc)
+        local_start = timezone.localtime(start)
+        local_end = timezone.localtime(end) if end is not None else None
+        module_title = str(session.get('module_title') or '').strip() or 'Live session'
+        session_number = occurrence.get('session_number')
+        lecture_title = (
+            f'{module_title} — Session {session_number}'
+            if session_number is not None else module_title
+        )
+        result.append({
+            'learner_id': source.id,
+            'learner_name': getattr(source, 'username', '') or '',
+            'learner_email': getattr(source, 'email', '') or '',
+            'session_id': row['occurrence_id'],
+            'occurrence_id': row['occurrence_id'],
+            'live_session_id': row['live_session_id'],
+            'module_catalogue_id': row['module_catalogue_id'],
+            'session_date': local_start.date(),
+            'session_start_time': local_start.time().replace(tzinfo=None),
+            'session_end_time': local_end.time().replace(tzinfo=None) if local_end else None,
+            'session_title': lecture_title,
+            'module_title': module_title,
+            'session_type': 'live_session',
+            'attendance_status': status,
+            'minutes_late': 0,
+            'catchup_completed': False,
+            'attended_seconds': max(int(row.get('attended_seconds') or 0), 0),
+            'attendance_report_id': str(row.get('attendance_report_id') or '').strip(),
+            'updated_at': row.get('updated_at'),
+            'source': 'live-register',
+        })
+    return result
 
 
 def kbc_attendance_rows(source):
