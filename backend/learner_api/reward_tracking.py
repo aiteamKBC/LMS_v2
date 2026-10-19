@@ -64,7 +64,9 @@ def observations(request):
                 "activityKind":kind,"activityId":activity_id},token=body.get("trackingToken"),
             event_id=body.get("eventId"),sequence=body.get("sequence"),observed_intervals=body.get("intervals"))
         return JsonResponse(result)
-    except TrackingSessionError:
+    except TrackingSessionError as exc:
+        if exc.code == 'expired_tracking_session':
+            raise mobile.MobileError(str(exc), 400, exc.code) from None
         raise mobile.MobileError("The timing session does not match this activity.",400,"invalid_tracking_session") from None
     except RewardError as exc:
         raise mobile.MobileError("Study time could not be confirmed. "+exc.code.replace("_"," ")+".",exc.status,exc.code) from None

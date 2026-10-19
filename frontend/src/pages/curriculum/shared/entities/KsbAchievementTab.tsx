@@ -49,7 +49,11 @@ function ConsumptionTable({ rows }: { rows: CurriculumKsbConsumption[] }) {
 export function KsbAchievementTab({ programmeId }: { programmeId: string }) {
   const [url, setUrl] = useSearchParams();
   const [view, setView] = useState<'ksb' | 'log'>('ksb');
-  const [data, setData] = useState<CurriculumKsbAchievementResponse | null>(null);
+  // Kept with the programme it answers for: a response for another programme
+  // (the page's placeholder id before it loads, or the previous programme) is
+  // never shown as this one's.
+  const [result, setResult] = useState<{ programmeId: string; response: CurriculumKsbAchievementResponse } | null>(null);
+  const data = result?.programmeId === programmeId ? result.response : null;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<CurriculumKsbAchievementItem | null>(null);
@@ -57,18 +61,31 @@ export function KsbAchievementTab({ programmeId }: { programmeId: string }) {
   const [detailLoading, setDetailLoading] = useState(false);
   const params = useMemo(() => filterParams(url), [url]);
 
+  // A request this effect has replaced settles nothing. Its rejection used to
+  // reach the unconditional `finally` and clear `loading` while the request
+  // replacing it was still on its way, so the tab fell through to "No KSB
+  // source is applied" for as long as the real read took (~90s for a large
+  // programme). StrictMode's mount-unmount-mount does that on every visit.
   useEffect(() => {
     const controller = new AbortController();
+    const current = () => !controller.signal.aborted;
     setLoading(true); setError('');
-    fetchCurriculumKsbAchievement(programmeId, params, controller.signal).then(setData).catch(err => { if (err?.name !== 'AbortError') setError(err?.message || 'Could not load KSB achievement.'); }).finally(() => setLoading(false));
+    fetchCurriculumKsbAchievement(programmeId, params, controller.signal)
+      .then(response => { if (current()) setResult({ programmeId, response }); })
+      .catch(err => { if (current() && err?.name !== 'AbortError') setError(err?.message || 'Could not load KSB achievement.'); })
+      .finally(() => { if (current()) setLoading(false); });
     return () => controller.abort();
   }, [programmeId, params]);
 
   useEffect(() => {
     if (!selected) return;
     const controller = new AbortController();
+    const current = () => !controller.signal.aborted;
     setDetailLoading(true);
-    fetchCurriculumKsbAchievementConsumptions(programmeId, selected.ksbDefinitionId, params, controller.signal).then(result => setDetail(result.items)).catch(() => setDetail([])).finally(() => setDetailLoading(false));
+    fetchCurriculumKsbAchievementConsumptions(programmeId, selected.ksbDefinitionId, params, controller.signal)
+      .then(response => { if (current()) setDetail(response.items); })
+      .catch(() => { if (current()) setDetail([]); })
+      .finally(() => { if (current()) setDetailLoading(false); });
     return () => controller.abort();
   }, [programmeId, selected, params]);
 
@@ -86,8 +103,12 @@ export function KsbAchievementTab({ programmeId }: { programmeId: string }) {
   const activeFilters = FILTER_KEYS.filter(key => url.get(key));
   const source = data?.appliedSource;
 
-  if (loading && !data) return <div className="rounded-2xl border border-background-200 bg-background-100 p-8 text-center text-sm text-foreground-500">Loading actual KSB consumption…</div>;
+  const loadingPanel = <div className="rounded-2xl border border-background-200 bg-background-100 p-8 text-center text-sm text-foreground-500">Loading actual KSB consumption…</div>;
+  if (loading && !data) return loadingPanel;
   if (error) return <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm font-semibold text-rose-700">{error}</div>;
+  // Only an answer for this programme may say it has no source; until one has
+  // arrived the tab is still reading.
+  if (!data) return loadingPanel;
   if (!source?.id) return <div className="rounded-2xl border border-amber-200 bg-amber-50 p-8"><p className="font-heading text-lg font-bold text-amber-900">No KSB source is applied to this programme.</p><p className="mt-1 text-sm text-amber-800">KSB achievement cannot be calculated until an Applied KSB Source is configured.</p></div>;
 
   return <div className="space-y-4">

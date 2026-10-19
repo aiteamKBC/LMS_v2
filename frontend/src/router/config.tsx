@@ -48,7 +48,6 @@ const BoardPage = lazyRoute(() => import("../pages/users/BoardPage"));
 const EmployerPortalPage = lazyRoute(() => import("../pages/employer/EmployerPortalPage"));
 const EmployerLearnerPage = lazyRoute(() => import("../pages/employer/EmployerLearnerPage"));
 const EventFeedbackPage = lazyRoute(() => import("../pages/event-feedback/page"));
-const SessionFeedbackPage = lazyRoute(() => import("../pages/session-feedback/page"));
 const EventRsvpPage = lazyRoute(() => import("../pages/event-rsvp/page"));
 const EventCheckInPage = lazyRoute(() => import("../pages/event-check-in/page"));
 const EmployerDocumentsPage = lazyRoute(() => import("../pages/employer/EmployerDocumentsPage"));
@@ -91,7 +90,6 @@ const CurriculumDeliveryHub = lazyRoute(() => import("../pages/curriculum/hubs/p
 const CurriculumBulkAttendance = lazyRoute(() => import("../pages/curriculum/bulk-attendance/page"));
 const CurriculumQualityHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumQualityHub })));
 const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/free-courses/page"));
-const CurriculumKsbFrameworksPage = lazyRoute(() => import("../pages/curriculum/ksb-frameworks/page"));
 const CoachAuditTrailPage = lazyRoute(() => import("../pages/coach/audit-trail/page"));
 const CoachAuditTrailPersonPage = lazyRoute(() => import("../pages/coach/audit-trail/person/page"));
 const CurriculumAuditTrailPage = lazyRoute(() => import("../pages/curriculum/audit-trail/page"));
@@ -330,10 +328,6 @@ const routes: RouteObject[] = [
   {
     path: "/event-feedback",
     element: <EventFeedbackPage />,
-  },
-  {
-    path: "/session-feedback",
-    element: <SessionFeedbackPage />,
   },
   {
     path: "/event-rsvp",
@@ -649,6 +643,10 @@ const routes: RouteObject[] = [
   {
     path: "/learner/feedback",
     element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackPage /> : <Navigate to="/workspace/learner" replace />,
+  },
+  {
+    path: "/learner/feedback/review/:reviewDeliveryId",
+    element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackFormPage /> : <Navigate to="/workspace/learner" replace />,
   },
   {
     path: "/learner/feedback/:formId",
@@ -1365,10 +1363,6 @@ const routes: RouteObject[] = [
     element: <TutorReportsPage />,
   },
   {
-    path: "/curriculum/ksb-frameworks",
-    element: <CurriculumKsbFrameworksPage />,
-  },
-  {
     path: "/curriculum/version-control",
     element: <CurriculumVersionControlPage />,
   },
@@ -1810,8 +1804,6 @@ const routes: RouteObject[] = [
  *  - "/" and "/login" are the sign-in form itself.
  *  - "/event-feedback" opens a token-scoped form for an event attendee; an LMS
  *    account is not required and the backend still validates the personal token.
- *  - "/session-feedback" opens a one-recipient Information Session or Commitment
- *    Meeting feedback link; the backend validates its personal token.
  *  - "/forgot-password", "/set-password", "/reset-password" are reached from an
  *    emailed link by someone who by definition cannot sign in yet; each carries
  *    its own single-use token, which the backend validates.
@@ -1831,7 +1823,6 @@ const PUBLIC_PATHS = new Set([
   "/",
   "/login",
   "/event-feedback",
-  "/session-feedback",
   "/event-rsvp",
   "/event-check-in",
   "/access-required",

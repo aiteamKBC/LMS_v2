@@ -83,6 +83,21 @@ class BulkWriteTests(SimpleTestCase):
         with self.assertRaises(bulk.BulkError):
             self.write([self.record(status='not_marked')])
 
+    def test_reset_clears_correction_without_deleting_source_or_metadata(self):
+        self.write([self.record()])
+        self.write([self.record(status='reset')])
+        self.assertEqual(self.saved[42, 'occ-1'].status, '')
+        self.assertFalse(self.saved[42, 'occ-1'].is_deleted)
+        self.assertNotIn('session_date', self.manager.update_or_create.call_args.kwargs['defaults'])
+        self.assertEqual(self.write([self.record(status='reset', version='old')])[0]['action'], 'unchanged')
+
+    def test_stale_reset_does_not_clear_a_new_correction(self):
+        self.write([self.record()])
+        with self.assertRaises(bulk.BulkError) as error:
+            self.write([self.record(status='reset', version='old')])
+        self.assertEqual(error.exception.status, 409)
+        self.assertEqual(self.saved[42, 'occ-1'].status, 'present')
+
     def test_absent_then_present_does_not_touch_reports(self):
         with patch('coach_api.models.CoachAbsenceReport.objects') as reports:
             self.write([self.record(status='absent')])

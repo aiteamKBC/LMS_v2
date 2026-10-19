@@ -1,3 +1,4 @@
+import { archiveTimingDraft, timingSessionExpired } from '@/lib/timingRecovery';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { observeRewardInterval, flushRewardObservations, clearRewardObservations } from '@/lib/rewardTracking';
 import { createPortal } from 'react-dom';
@@ -173,6 +174,12 @@ export default function QuizTakePage() {
   const [answers, setAnswers] = useState<Record<string, QuizAnswerValue>>({});
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [expiredTiming, setExpiredTiming] = useState(false);
+  const [recoveringTiming, setRecoveringTiming] = useState(false);
+  const [timingNotice, setTimingNotice] = useState('');
+  const recoveryInFlight = useRef(false);
+  const [timingGeneration, setTimingGeneration] = useState(0);
+  useEffect(() => { setExpiredTiming(false); setTimingNotice(''); }, [kind, id, quizId]);
   const [submitError, setSubmitError] = useState<string | null>(null);
   // Open only after the server refused the Submit click's instant.
   const [correction, setCorrection] = useState<{ reason: WorkingRuleReason | ''; holidayName: string } | null>(null);
@@ -245,7 +252,7 @@ export default function QuizTakePage() {
       last = now;
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [phase, reflectionChoiceOpen, componentAccess.open]);
+  }, [phase, reflectionChoiceOpen, componentAccess.open, timingGeneration]);
 
   useEffect(() => {
     if (phase !== 'quiz') return;
@@ -302,6 +309,20 @@ export default function QuizTakePage() {
     setAnswers({});
     setResult(null);
     setPhase('quiz');
+  };
+
+  const restartTiming = async () => {
+    if (recoveryInFlight.current || !quiz || !kind || !id || !canUseComponent) return;
+    recoveryInFlight.current = true; setRecoveringTiming(true);
+    try {
+      archiveTimingDraft(`learner_quiz_timer:v1:${kind}:${id}:${quiz.id}`, trackingSessionRef.current,
+        elapsedSeconds, { answers, reflection: lastSubmissionRef.current });
+      const session = await startTimeTracking('quiz', quiz.id, kind as LearnerKind, id, 'active_quiz');
+      trackingSessionRef.current = session; trackingPromiseRef.current = Promise.resolve(session);
+      setElapsedSeconds(0); setTimingGeneration(value => value + 1); setExpiredTiming(false); setSubmitError(null);
+      setTimingNotice('A new timing session has started. Your answers are kept. The old timing draft is saved on this device for review, separately from the new timer.');
+    } catch (error) { setSubmitError(error instanceof Error ? error.message : 'Could not restart timing. Your answers are kept.'); }
+    finally { recoveryInFlight.current = false; setRecoveringTiming(false); }
   };
 
   const viewLatestResult = () => {
@@ -383,6 +404,7 @@ export default function QuizTakePage() {
         setSubmitError(null);
         return;
       }
+      if (timingSessionExpired(e)) setExpiredTiming(true);
       setSubmitError(e instanceof Error ? e.message : 'Could not submit quiz');
     } finally {
       completionInFlightRef.current = false;
@@ -413,6 +435,11 @@ export default function QuizTakePage() {
       <div className={`p-3 md:p-6 ${phase === 'reflect' ? 'max-w-none' : showSidebar ? 'max-w-7xl' : 'max-w-5xl'} mx-auto`}>
         <div className={showSidebar ? 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-6 items-start' : ''}>
         <div className="min-w-0">
+        {expiredTiming && <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4">
+          <p>Your timing session has ended. Keep the old draft for review and start a new timer without losing your answers.</p>
+          <button type="button" disabled={recoveringTiming} onClick={restartTiming} className="mt-2 font-semibold underline">{recoveringTiming ? 'Starting...' : 'Keep draft and start new timer'}</button>
+        </div>}
+        {timingNotice && <p role="status">{timingNotice}</p>}
         {loading || detailLoading ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} avatar={false} /></div>
         ) : loadError || detailError || !quiz ? (

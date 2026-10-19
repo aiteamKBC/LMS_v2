@@ -89,7 +89,8 @@ def profile(learner_id):
     records = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
         l.programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
-        u."Planned_hours" AS programme_planned_hours
+        u."Planned_hours" AS programme_planned_hours,
+        EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
         WHERE l.enrolment_id=%s''', [learner_id])
@@ -302,6 +303,10 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             # retained in the journal learner view only.
             for record in result:
                 record['completed'] = counts_as_completed(record)
+    if owner.get('progress_transfer_active'):
+        from .progress_transfer_store import read_state
+        from .progress_transfer_policy import frozen_records
+        result = frozen_records(result, read_state(owner['enrolment_id'], include_records=True), entry_ids=entry_ids)
     return result
 
 
@@ -312,6 +317,8 @@ def weekly_hour_records(owner):
     unsynchronised direct saves need current assignment markings. Reporting
     segments are a presence gate here, never additional hour allocations.
     """
+    if owner.get('progress_transfer_active'):
+        return entries_for(owner, lineage_only=True)
     from .current_learning import project_current
     fields = ('id', 'learner_id', 'kind', 'module_ref', 'module_title', 'component_ref',
               'component_type', 'quiz_ref', 'passed', 'reported_time', 'submitted_at',
@@ -989,7 +996,10 @@ def recorded_course_items(courses, catalogue, records, *, overview_only=False, i
     Historical/component guesses do not substitute for learner source links.
     A quiz and material sharing a numeric ID remain distinct activities.
     """
-    catalogue = learner_course_catalogue(courses, catalogue)
+    from learner_api.course_catalogue_display import retain_learner_schedule
+    # Learner-specific fallback dates must not leak into another learner's
+    # shared/cached catalogue definitions.
+    catalogue = [dict(d) for d in learner_course_catalogue(courses, catalogue)]
     by_course = {str(c['source_course_ref']): [] for c in courses}
     definitions = {(str(d['source_course_ref']), d['source_activity_id']): d for d in catalogue
                    if str(d['source_course_ref']) in by_course}
@@ -1005,6 +1015,9 @@ def recorded_course_items(courses, catalogue, records, *, overview_only=False, i
         counted_courses = set()
         for definition in placements:
             course = str(definition['source_course_ref'])
+            if include_catalogue and not overview_only:
+                retain_learner_schedule(definition, record,
+                    completed=counts_as_completed(record, include_source_evidence='completed' in record))
             if overview_only:
                 by_course[course].append({'activity_id': f"record:{course}:{record['id']}",
                     'group_id': int(course),
@@ -1227,7 +1240,8 @@ def otjh_summary_bulk(learner_ids):
     candidates = {}
     for owner in query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,
         l.email,l.start_date,l.end_date,l.learner_type,
-        u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id
+        u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
+        EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
         WHERE l.enrolment_id=ANY(%s)''', [enrolment_ids]):
@@ -1272,6 +1286,8 @@ def otjh_summary_bulk(learner_ids):
             targets[int(item['learner_id'])][item['report_month']] = float(item['target_hours'])
     for enrolment_id, owner in owners.items():
         profile_id = int(owner['id'])
+        if owner.get('progress_transfer_active'):
+            records[profile_id] = entries_for(owner, lineage_only=True)
         result[enrolment_id] = {
             'profile_id': profile_id,
             'start_date': owner.get('start_date'), 'end_date': owner.get('end_date'),
@@ -1296,7 +1312,8 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
     owners = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
         l.programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
-        u."Planned_hours" AS programme_planned_hours
+        u."Planned_hours" AS programme_planned_hours,
+        EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
         WHERE l.enrolment_id=ANY(%s)''', [enrolment_ids])
@@ -1416,6 +1433,8 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
                 record['completed'] = record.get('completed', record.get('accepted')) is True or any(
                     source.get('source_system') == 'old_lms' and source.get('completed') is True
                     for source in record.get('sources') or [])
+        if owner.get('progress_transfer_active'):
+            records = entries_for(owner, lineage_only=True)
         result[enrolment_id] = metrics_from_records(
             records,
             targets_by_learner.get(int(owner['id']), {}),

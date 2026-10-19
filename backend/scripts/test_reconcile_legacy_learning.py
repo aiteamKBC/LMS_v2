@@ -154,6 +154,17 @@ class MembershipTests(unittest.TestCase):
 
 
 class CatalogueAndCompletionTests(unittest.TestCase):
+    def test_new_catalogue_retains_original_upload_without_completion_timestamp(self):
+        self.fact['created_at'] = '2026-03-14 09:33:13'
+        self.verified['21']['timezone'] = '+00:00'
+        plan = repair.catalogue_plan({9: self.verified}, self.courses, [])
+        self.assertEqual(plan['definitions'][0]['source_payload'],
+                         {'created_at_utc': '2026-03-14T09:33:13+00:00'})
+        second = deepcopy(self.verified)
+        second['21']['facts']['material:91']['created_at'] = '2026-04-14 09:33:13'
+        plan = repair.catalogue_plan({9: self.verified, 10: second}, self.courses, [])
+        self.assertEqual(plan['definitions'][0]['source_payload'], {})
+
     def test_explicit_test_course_exclusion_survives_catalogue_and_completion_recovery(self):
         self.courses[0].update(deleted_at='owner-retired', source_payload={
             'owner_exclusion': {'exclude_from_learning': True}})
@@ -265,6 +276,60 @@ class CatalogueAndCompletionTests(unittest.TestCase):
         after = {**self.state, 'modules': [{'id': 99, '_row_hash': 'removed'}]}
         with self.assertRaisesRegex(ValueError, 'native assignments'):
             repair.verify_owner(before, after, {}, {}, self.courses, [self.definition], self.scope, self.verified)
+
+    def test_projection_honours_existing_historical_learner_exclusions(self):
+        self.state['memberships'] = [{'id': 10, 'source_course_id': 1, 'deleted_at': None,
+            'source_relationship': 'historical', 'verified_catalogue_scope': {
+                'version': 1, 'basis': 'verified-legacy-account-inventory', 'course_ref': '21',
+                'excluded_activity_refs': ['material:91']}}]
+        self.assertEqual(repair.projected_items(self.state, self.courses,
+            [self.definition], self.scope, owned_only=True), [])
+        # A learner-specific exclusion cannot remove the shared definition.
+        another = {**self.state, 'memberships': [{**self.state['memberships'][0],
+            'verified_catalogue_scope': None}]}
+        self.assertEqual(len(repair.projected_items(another, self.courses,
+            [self.definition], self.scope, owned_only=True)), 1)
+        self.assertIsNone(self.definition['deleted_at'])
+
+    def test_content_alias_scope_keeps_quiz_bank_and_existing_exclusions(self):
+        member = {'id': 10, 'learner_id': 9, 'source_course_id': 1,
+            'source_relationship': 'historical', 'verified_catalogue_scope': {
+                'version': 1, 'basis': 'verified-legacy-account-inventory', 'course_ref': '21',
+                'excluded_activity_refs': ['material:92'], 'audit_run': 5}}
+        aliases = [{'course_ref': '21', 'wrong_ref': 'material:91', 'verified_ref': 'quiz:91'}]
+        updates = repair.content_alias_scopes([member], self.courses, aliases)
+        self.assertEqual(updates[0]['new_exclusions'], ['material:91'])
+        self.assertEqual(updates[0]['scope']['excluded_activity_refs'], ['material:91', 'material:92'])
+        self.assertEqual(updates[0]['scope']['audit_run'], 5)
+        self.assertEqual(member['verified_catalogue_scope']['excluded_activity_refs'], ['material:92'])
+        reapplied = {**member, 'verified_catalogue_scope': updates[0]['scope']}
+        self.assertEqual(repair.content_alias_scopes([reapplied], self.courses, aliases), [])
+        self.assertIsNone(self.definition['deleted_at'])
+
+    def test_content_alias_cannot_change_native_membership_scope(self):
+        member = {'id': 10, 'learner_id': 9, 'source_course_id': 1,
+                  'source_relationship': 'current'}
+        with self.assertRaisesRegex(ValueError, 'non-historical'):
+            repair.content_alias_scopes([member], self.courses,
+                [{'course_ref': '21', 'wrong_ref': 'material:91'}])
+
+    def test_content_alias_rejects_scope_for_another_course(self):
+        member = {'id': 10, 'learner_id': 9, 'source_course_id': 1,
+            'source_relationship': 'historical', 'verified_catalogue_scope': {
+                'version': 1, 'basis': 'verified-legacy-account-inventory', 'course_ref': '22',
+                'excluded_activity_refs': ['material:92']}}
+        with self.assertRaisesRegex(ValueError, 'scope needs review'):
+            repair.content_alias_scopes([member], self.courses,
+                [{'course_ref': '21', 'wrong_ref': 'material:91'}])
+
+    def test_owned_projection_does_not_include_another_course(self):
+        self.state['memberships'] = [{'id': 10, 'source_course_id': 1,
+            'deleted_at': None, 'source_relationship': 'historical'}]
+        self.courses.append({**self.courses[0], 'id': 2, 'source_course_ref': '22'})
+        definitions = [self.definition, {**self.definition, 'id': 6, 'source_course_id': 2}]
+        result = repair.projected_items(self.state, self.courses, definitions,
+                                       self.scope, owned_only=True)
+        self.assertEqual({item['group_id'] for item in result}, {21})
 
 
 if __name__ == '__main__':

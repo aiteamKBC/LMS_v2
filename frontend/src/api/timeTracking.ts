@@ -54,7 +54,7 @@ export async function synchronizeTimeTrackingClock(session: TimeTrackingSession,
     body: JSON.stringify({ trackingToken: session.trackingToken, activityKind, activityId }),
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || 'Study timing could not synchronize. Your draft is kept.');
+  if (!response.ok) throw Object.assign(new Error(data.error || 'Study timing could not synchronize. Your draft is kept.'), { code: data.code });
   if (data.sessionId !== session.sessionId || !Number.isSafeInteger(data.elapsedMilliseconds)) {
     throw new Error('The LMS did not confirm the timing session. Your draft is kept.');
   }

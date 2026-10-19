@@ -25,7 +25,7 @@ from .learner_detail import SOURCE_MODELS
 from .identity import learner_profile_for_source
 from .mappers import _s
 from .models import EnrolmentReview, LearnerProfile, StaffUser
-from .booking_calendar import booking_calendar_payload, booking_date_restriction
+from .booking_calendar import booking_calendar_payload, booking_date_restriction, mcm_booking_date_restriction
 # The first session's own vocabulary: its event type, and the college's today.
 # Imported rather than restated so the gate, the booking and the calendar
 # cannot disagree about either.
@@ -1826,6 +1826,8 @@ def learner_calendar_book(request, kind, pk):
     if not scheduled_time:
         return _error("scheduledTime is required.", 400)
     date_restriction = booking_date_restriction(scheduled_date)
+    if date_restriction is None and session_type == "mcr":
+        date_restriction = mcm_booking_date_restriction(scheduled_date)
     if date_restriction is not None:
         return _error(date_restriction.message, 400)
     if session_type == "catch-up":
@@ -1934,15 +1936,15 @@ def learner_calendar_book(request, kind, pk):
             return _error("reviewId is required when scheduling an imported monthly coaching review.", 400)
         if session_type == "mcr":
             from .monthly_assignment import coaching_booking_bounds, month_bounds
-            # Assignment bookings take any bookable day; the shared weekday,
-            # bank-holiday and past-date rules were already applied above.
+            # Assignment bookings use the recurring MCM window checked above;
+            # their submission month does not change the Review's identity.
             if assignment_booking:
                 if duration_minutes != 60 or not month_bounds(assignment_month)[0]:
                     return _error("Book a 60-minute MCM for a valid assignment month.", 400)
             else:
                 start, end = coaching_booking_bounds(assignment_month)
                 if duration_minutes != 60 or not (start and start <= scheduled_date <= end):
-                    return _error("Book a 60-minute MCM from the last ten days of the submission month through the 5th of the following month.", 400)
+                    return _error("Book a 60-minute MCM from the 20th of the submission month through the 5th of the following month.", 400)
             # A validated imported Aptem MCM is already the Review's identity
             # (see _assignment_imported_mcm_month) and books on the imported path below.
             if not _s(payload.get("eventKey")) and not (assignment_booking and imported_review_id):
@@ -2397,6 +2399,8 @@ def learner_calendar_reschedule(request, kind, pk):
             scheduled_date,
             allow_sunday=_s(record.event_type).lower() == "first-session",
         )
+        if date_restriction is None and _s(record.event_type).lower() == "mcr":
+            date_restriction = mcm_booking_date_restriction(scheduled_date)
         if date_restriction is not None:
             return _error(date_restriction.message, 400)
         if _s(record.event_type).lower() == "catch-up":

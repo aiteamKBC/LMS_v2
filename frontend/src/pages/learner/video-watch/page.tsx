@@ -1,4 +1,6 @@
+import { archiveTimingDraft, timingSessionExpired } from '@/lib/timingRecovery';
 import { startActivityClock } from '@/lib/activityClock';
+import { fetchAttachmentResource, fetchPdfResource } from '@/api/pdfResource';
 import { observeRewardInterval, flushRewardObservations, clearRewardObservations } from '@/lib/rewardTracking';
 import { SessionResults } from '@/components/feature/SessionResults';
 import { narrationFromHtml, narrationFromPdf, ReadingNarrationError, ReadingPdfNarrationContext, useReadingNarration, type PdfPageReader } from './readingNarration';
@@ -258,6 +260,11 @@ export default function ComponentViewPage() {
     ksbs: [], feedback: '', reportedTime: '',
   });
   const [submitting, setSubmitting] = useState(false);
+  const [expiredTiming, setExpiredTiming] = useState(false);
+  const [recoveringTiming, setRecoveringTiming] = useState(false);
+  const [timingNotice, setTimingNotice] = useState('');
+  const recoveryInFlight = useRef(false);
+  useEffect(() => { setExpiredTiming(false); setTimingNotice(''); }, [timerStorageKey]);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [record, setRecord] = useState<DoneRecord | null>(null);
   const [repeating, setRepeating] = useState(false);
@@ -539,7 +546,7 @@ export default function ComponentViewPage() {
         const resumed = resumeTimeTracking(savedSession, activityKind, componentId);
         trackingPromiseRef.current = resumed;
         resumed.then(session => { if (!cancelled) trackingSessionRef.current = session; })
-          .catch(error => { if (!cancelled) setSubmitError(error instanceof Error ? error.message : 'Study timing could not synchronize. Your draft is kept.'); });
+          .catch(error => { if (!cancelled) { setExpiredTiming(timingSessionExpired(error)); setSubmitError(error instanceof Error ? error.message : 'Study timing could not synchronize. Your draft is kept.'); } });
       } else {
         trackingSessionRef.current = savedSession;
         trackingPromiseRef.current = Promise.resolve(savedSession);
@@ -550,10 +557,11 @@ export default function ComponentViewPage() {
 
     // An expired or incompatible signed session cannot verify its old seconds.
     // Start clean rather than showing a value the server would later reject.
-    if (savedTimer) {
-      clearActivityTimer(timerStorageKey);
-      setWallElapsed(0);
-      timerRemainder.current.milliseconds = 0;
+    if (savedTimer?.session) {
+      // Let the learner explicitly preserve and replace this stale draft.
+      setExpiredTiming(true);
+      setSubmitError('This saved timing session can no longer be resumed. Your draft is kept.');
+      return () => { cancelled = true; };
     }
 
     const pending = startTimeTracking(activityKind, componentId, learnerKind, id, trackingMode);
@@ -571,13 +579,32 @@ export default function ComponentViewPage() {
     return () => { cancelled = true; };
   }, [phase, recordingAttempt, openable, componentId, kind, id, canUseComponent, isVideo, isAudio, trackingMode, timerStorageKey, trackingGeneration]);
 
+  const restartTiming = async () => {
+    if (recoveryInFlight.current || !componentId || !kind || !id || !canUseComponent) return;
+    recoveryInFlight.current = true; setRecoveringTiming(true);
+    try {
+      const saved = readActivityTimer(timerStorageKey);
+      archiveTimingDraft(timerStorageKey, trackingSessionRef.current || saved?.session || null,
+        Math.max(elapsedRef.current, saved?.elapsedSeconds || 0), { reflection: lastReflectionRef.current, manualTimeSeconds, timeSource });
+      const session = await startTimeTracking(isVideo ? 'video' : 'component', componentId, kind as LearnerKind, id, trackingMode);
+      // Archive succeeded before replacing anything. Old observations stay under the old session ID.
+      localStorage.setItem(timerStorageKey, JSON.stringify({ session, elapsedSeconds: 0 }));
+      trackingSessionRef.current = session; trackingPromiseRef.current = Promise.resolve(session);
+      elapsedRef.current = 0; setWallElapsed(0); timerRemainder.current.milliseconds = 0;
+      setManualTimeSeconds(null); setTimeSource(usesManualTimeOnly ? 'input' : 'timer');
+      setExpiredTiming(false); setSubmitError(null);
+      setTimingNotice('A new timing session has started. The previous timing draft is kept on this device for review and is not included in this session. Your saved progress is unchanged.');
+    } catch (error) { setSubmitError(error instanceof Error ? error.message : 'Could not start a new timing session. Your draft is kept.'); }
+    finally { recoveryInFlight.current = false; setRecoveringTiming(false); }
+  };
+
   // Ordinary page content counts only while visible. Media counts while it is
   // genuinely playing, even when the learner switches tab or opens another
   // application. Hidden tabs throttle intervals, so active audio/video uses
   // wall-clock deltas rather than assuming each callback is exactly one second.
   useEffect(() => {
     const activeMedia = isVideo || isAudio;
-    if (phase !== 'consume' || !recordingAttempt || !canUseComponent) return;
+    if (phase !== 'consume' || !recordingAttempt || !canUseComponent || expiredTiming) return;
     if (contentKind === 'reading' && (loading || loadError || !openable || readyReading !== readingReadyKey)) return;
     if (activeMedia ? !playerPlaying : (!unsupported && !playerPlaying)) return;
     const clock = startActivityClock({
@@ -598,7 +625,7 @@ export default function ComponentViewPage() {
     });
     timerRef.current = clock;
     return () => clock.stop();
-  }, [phase, recordingAttempt, canUseComponent, unsupported, playerPlaying, isVideo, isAudio, timerStorageKey, contentKind, loading, loadError, openable, readyReading, readingReadyKey]);
+  }, [phase, recordingAttempt, canUseComponent, unsupported, playerPlaying, isVideo, isAudio, timerStorageKey, contentKind, loading, loadError, openable, readyReading, readingReadyKey, expiredTiming]);
 
   const finishConsuming = () => {
     if (!recordingAttempt) return;
@@ -703,6 +730,7 @@ export default function ComponentViewPage() {
       setCorrection(null);
       setCorrectionError('');
     } catch (e) {
+      if (timingSessionExpired(e)) setExpiredTiming(true);
       if (e instanceof CompletionValidationError) {
         // Nothing was written. Ask for a working instant instead of reporting
         // a failure; a refusal of an instant the learner already chose is shown
@@ -773,6 +801,11 @@ export default function ComponentViewPage() {
         </button>
 
 
+        {expiredTiming && <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4">
+          <p>Your timing session has ended. Keep the previous draft for review and start a new timer. Your answers and saved progress will be kept.</p>
+          <button type="button" disabled={recoveringTiming} onClick={restartTiming} className="mt-2 font-semibold underline">{recoveringTiming ? 'Starting...' : 'Keep draft and start new timer'}</button>
+        </div>}
+        {timingNotice && <p role="status" className="rounded-xl border p-3">{timingNotice}</p>}
         {loading ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} avatar={false} /></div>
         ) : loadError ? (
@@ -2007,7 +2040,7 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
 
     async function loadPreview() {
       try {
-        const response = await fetch(previewUrl, { credentials: 'same-origin' });
+        const response = await fetchAttachmentResource(previewUrl);
         if (!response.ok) throw new Error(await fileRequestError(response));
 
         if (isWord) {
@@ -2183,12 +2216,11 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
       try {
         setStatus('loading');
         setError(null);
-        const response = await fetch(url, {
-          credentials: 'same-origin',
-          headers: { Accept: 'application/pdf,*/*' },
-        }).catch(error => { requestFailed = true; throw error; });
+        const response = await fetchPdfResource(url).catch(error => { requestFailed = true; throw error; });
         if (!response.ok) throw new Error(await fileRequestError(response));
         const buffer = await response.arrayBuffer();
+        if (!buffer.byteLength) throw new Error('The PDF response contains no file data. Please try opening the original file.');
+        if (cancelled) return;
         const { GlobalWorkerOptions, getDocument } = await import('pdfjs-dist');
         GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
         const document = await getDocument({ data: new Uint8Array(buffer) }).promise;

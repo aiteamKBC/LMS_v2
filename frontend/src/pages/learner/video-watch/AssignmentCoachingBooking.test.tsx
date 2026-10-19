@@ -133,14 +133,13 @@ it('loads own meeting artifacts without a Teams join link', async () => {
   await waitFor(() => expect(fetchLearnerMeetingArtifacts).toHaveBeenCalledWith('commercial', '1', slot.eventKey, expect.any(AbortSignal)));
 });
 
-it('allows dates outside the old monthly windows, such as October 6 for September', async () => {
+it('closes the window after the 5th while allowing the 5th itself', async () => {
   render(<AssignmentCoachingBooking {...props} />);
   fireEvent.change(await screen.findByLabelText('Monthly Coaching Meeting slot'), { target: { value: slot.eventKey } });
 
   chooseDate('2026-10-06');
-  await screen.findByRole('option', { name: '09:00' });
-  fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:00' } });
-  expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeDisabled();
+  expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
   chooseDate('2026-10-05');
   await screen.findByRole('option', { name: '09:00' });
   fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:00' } });
@@ -187,16 +186,16 @@ it('allows choosing and booking another available time when a meeting already ex
 });
 
 
-it('allows any upcoming weekday but still excludes past dates and weekends', async () => {
+it('allows upcoming MCM windows and excludes the 6th through 19th, past dates and weekends', async () => {
   render(<AssignmentCoachingBooking {...props} />);
   fireEvent.change(await screen.findByLabelText('Monthly Coaching Meeting slot'), { target: { value: slot.eventKey } });
-  for (const date of ['2026-10-14', '2026-11-18', '2026-12-10']) {
+  for (const date of ['2026-10-20', '2026-11-20', '2026-12-21']) {
     chooseDate(date);
     await screen.findByRole('option', { name: '09:00' });
     fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:00' } });
     expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeEnabled();
   }
-  for (const date of ['2026-09-11', '2026-10-17']) {
+  for (const date of ['2026-09-11', '2026-10-17', '2026-10-19', '2026-11-18', '2026-12-10']) {
     chooseDate(date);
     expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeDisabled();
     expect(screen.getByLabelText('Date')).toHaveTextContent('Select a date');
@@ -204,14 +203,14 @@ it('allows any upcoming weekday but still excludes past dates and weekends', asy
 });
 
 
-it('enables every October weekday and disables every weekend in the calendar', async () => {
+it('enables October weekdays only from the 20th through the following 5th', async () => {
   render(<AssignmentCoachingBooking {...props} />);
   fireEvent.click(await screen.findByLabelText('Date'));
   fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
   const weekends = [3, 4, 10, 11, 17, 18, 24, 25, 31];
   for (let day = 1; day <= 31; day++) {
     const button = screen.getByRole('button', { name: `2026-10-${String(day).padStart(2, '0')}` });
-    if (weekends.includes(day)) expect(button).toBeDisabled();
+    if (weekends.includes(day) || (day > 5 && day < 20)) expect(button).toBeDisabled();
     else expect(button).toBeEnabled();
   }
 });
