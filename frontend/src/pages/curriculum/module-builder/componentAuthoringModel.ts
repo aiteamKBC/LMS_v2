@@ -458,6 +458,8 @@ const LIVE_SESSION_TRACKING_SETTING_KEYS = [
   // the Teams identity and occurrence metadata while keeping the chosen link
   // through the next module-structure save.
   'liveSessionLinkOverride',
+  'teamsCalendarBinding',
+  'teamsMainLinkInherited',
 ] as const;
 
 /**

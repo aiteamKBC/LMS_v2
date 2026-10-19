@@ -140,6 +140,48 @@ describe('Module Builder keeps the reader\'s place in its address', { timeout: 1
     window.history.replaceState({}, '', '/');
   });
 
+  it('can return to all programmes after selecting a programme repeatedly', async () => {
+    const user = userEvent.setup();
+    await renderCatalogue();
+    await screen.findByText('Network Basics');
+
+    for (const programme of ['Data Analyst', 'Network Engineer']) {
+      await user.click(screen.getByLabelText('Programme'));
+      await user.click(screen.getByRole('option', { name: programme }));
+      await waitFor(() => expect(address().get('programme')).toBe(programme));
+      expect(screen.getAllByRole('article')).toHaveLength(programme === 'Data Analyst' ? 2 : 1);
+
+      await user.click(screen.getByLabelText('Programme'));
+      await user.click(screen.getByRole('option', { name: 'All programmes' }));
+      await waitFor(() => expect(screen.getByLabelText('Programme')).toHaveTextContent('All programmes'));
+      expect(address().has('programme')).toBe(false);
+      expect(screen.getAllByRole('article')).toHaveLength(3);
+    }
+  });
+
+  it.each(['programme', 'programmeId'])('clears a restored %s filter and its dependent filters with Reset', async key => {
+    const user = userEvent.setup();
+    const { unmount } = await renderCatalogue(`?${key}=PROG-DATA&programmeName=Data+Analyst&cohort=COHORT-1&group=GROUP-1&tutor=Tutor+One&q=Foundations`);
+    await waitFor(() => expect(screen.getByLabelText('Group')).toHaveTextContent('Group A'));
+    expect(screen.getByLabelText('Programme')).toHaveTextContent('Data Analyst');
+
+    await user.click(screen.getByRole('button', { name: 'Reset' }));
+    await waitFor(() => expect(screen.getByLabelText('Programme')).toHaveTextContent('All programmes'));
+    for (const param of ['programme', 'programmeId', 'programmeName', 'cohort', 'group', 'tutor', 'q']) {
+      expect(address().has(param)).toBe(false);
+    }
+    expect(screen.getByLabelText('Cohort')).toBeDisabled();
+    expect(screen.getByLabelText('Group')).toBeDisabled();
+    expect(screen.getAllByRole('article')).toHaveLength(3);
+
+    const clearedSearch = address().toString();
+    unmount();
+    await renderCatalogue(clearedSearch ? `?${clearedSearch}` : '');
+    await screen.findByText('Network Basics');
+    expect(screen.getByLabelText('Programme')).toHaveTextContent('All programmes');
+    expect(screen.getAllByRole('article')).toHaveLength(3);
+  });
+
   it('returns with the same search, filters and learner list open', async () => {
     await renderCatalogue('?programme=Data+Analyst&cohort=COHORT-1&group=GROUP-1&tutor=Tutor+One&q=Foundations&learners=MOD-1');
 

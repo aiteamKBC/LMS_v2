@@ -65,10 +65,21 @@ def eligible(row):
             and not row.get('attendance_report_id') and not row.get('participant_count'))
 
 
+def require_managed_calendar(series):
+    """Imported main meetings stay with their original Teams calendar owner."""
+    from . import views as v
+    if v.module_has_external_teams_calendar(series.get('module_catalogue_id'), series):
+        raise CalendarStateError(
+            'This module uses an imported Teams meeting. Manage dates and cancellations in the original Teams calendar; '
+            'the LMS will preserve its existing link.'
+        )
+
+
 def action_preview(live_id, payload, actor):
     from . import views as v
     from .teams_schedule_notice import schedule_snapshot
     series, rows, saved = load_calendar_state(live_id)
+    require_managed_calendar(series)
     module = load_module(series)
     previous = saved.get('management') or {}
     if previous.get('status') in ('processing', 'uncertain'):
@@ -395,6 +406,7 @@ def confirm_action(live_id, payload, actor):
     with transaction.atomic():
         series, rows, snapshot = load_calendar_state(live_id, lock=True)
         module = load_module(series, lock=True)
+        require_managed_calendar(series)
         previous = snapshot.get('management') or {}
         if previous.get('id') == operation['id']:
             return action_result(previous)
@@ -455,6 +467,8 @@ def continue_action(live_id, operation_id, send=False):
     """Status recovery only reads Microsoft; it never repeats an attempted write."""
     with transaction.atomic():
         series, rows, snapshot = load_calendar_state(live_id, lock=True)
+        if send:
+            require_managed_calendar(series)
         operation = saved_operation(snapshot, operation_id)
         if operation.get('status') in ('done', 'failed', 'incomplete'):
             return action_result(operation)
@@ -471,6 +485,7 @@ def continue_action(live_id, operation_id, send=False):
                 with transaction.atomic():
                     series, rows, snapshot = load_calendar_state(live_id, lock=True)
                     module = load_module(series, lock=True)
+                    require_managed_calendar(series)
                     operation = saved_operation(snapshot, operation_id)
                     if fingerprint(series, rows, module) != operation['version']:
                         raise CalendarStateError('The local schedule changed. Completed changes remain saved; review the remaining changes.')
