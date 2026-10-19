@@ -1226,7 +1226,7 @@ describe('coach review signature workflow', () => {
     expect(screen.getByRole('textbox')).toBeDisabled();
   });
 
-  it('signs as the coach, completes after all signatures, and shows the LMS PDF action', async () => {
+  it('keeps the manual completion fallback for previously signed migrated reviews', async () => {
     const pending = migratedDefinition('awaiting-signature');
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(pending);
     const signed = structuredClone(pending);
@@ -1240,6 +1240,22 @@ describe('coach review signature workflow', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Complete review' }));
     expect(completeMigratedReview).toHaveBeenCalledWith('imported-review:synthetic');
     expect(await screen.findByRole('button', { name: 'Download signed PDF' })).toBeVisible();
+  });
+
+  it('shows automatic completion after the coach saves the last required Aptem signature', async () => {
+    const pending = migratedDefinition('awaiting-signature');
+    pending.signatures.participant = { required: true, signed: true, signedName: 'Sample learner' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(pending);
+    const completed = migratedDefinition('completed');
+    completed.signatures = { ...pending.signatures, advisor: { required: true, signed: true, signedName: 'Sam Coach' } };
+    vi.mocked(signMigratedReviewAsCoach).mockResolvedValue(completed);
+    const { onStatusChange } = mount('imported-review:synthetic');
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm coach signature' }));
+    expect(await screen.findByText('Review completed')).toBeVisible();
+    expect(onStatusChange).toHaveBeenCalledWith('completed');
+    expect(screen.queryByRole('button', { name: 'Complete review' })).not.toBeInTheDocument();
+    expect(completeMigratedReview).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Download signed PDF' })).toBeVisible();
   });
 
   it('keeps migrated writes hidden in admin view-as mode', async () => {

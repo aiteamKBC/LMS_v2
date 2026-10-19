@@ -23,6 +23,7 @@ from .meeting_attendance import meeting_attendance, confirm_meeting_attendance
 from .attendance_mode import attendance_mode, attendance_modes, review_attendance_mode
 from .first_session_bookings import first_session_bookings
 from .first_login_details import first_login_details
+from .review_sessions import learner_review_sessions
 
 from . import certificates, monthly_assignment, legacy_assignments, quiz_reading, review_history
 from . import historical_evidence
@@ -321,6 +322,7 @@ urlpatterns = [
     path("reflection/assignment/presentation-design/", presentation_design.upload_design, name="presentation-design"),
     path("reflection/assignment/presentation/", monthly_assignment.export_presentation, name="monthly-assignment-presentation"),
     # learner calendar (coaching sessions from Coach.coach_calendar_event)
+    path("review-sessions/<str:kind>/<int:pk>/", learner_review_sessions, name="learner-review-sessions"),
     path("calendar/<str:kind>/<int:pk>/", calendar.learner_calendar, name="learner-calendar"),
     path("review-history/<str:kind>/<int:pk>/", review_history.learner_review_history, name="learner-review-history"),
     path("calendar/<str:kind>/<int:pk>/book/", calendar.learner_calendar_book, name="learner-calendar-book"),

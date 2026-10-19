@@ -4,7 +4,7 @@ import type { MeetingAttendance } from '@/api/meetingAttendance';
 /** Preserve the exact meeting identity when explicitly opening its Calendar. */
 export function meetingCalendarHref(session: LearnerCalendarEvent, learner: { kind: string; id: string }, action?: 'schedule' | 'reschedule', attendance?: MeetingAttendance): string {
   const params = new URLSearchParams({ kind: learner.kind, learner: learner.id });
-  params.set('event', attendance?.calendarEventKey || session.eventKey || session.id);
+  params.set('event', attendance?.calendarEventKey || session.calendarEventKey || session.eventKey || session.id);
   const date = session.scheduledDate || session.targetDate || session.date;
   if (date) params.set('date', date);
   if (session.importedReview) {

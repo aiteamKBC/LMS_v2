@@ -151,6 +151,10 @@ RULES = (
     # reachable by every signed-in role so Learner, Employer and Tutor pages can
     # be measured without opening the rest of curriculum_api to those roles.
     ("/curriculum_api/performance/record/", ANY),
+    # Page activity is recorded for every workspace. Only the recorder is
+    # shared; reading the audit trail remains staff-only. The view derives
+    # the actor from the authenticated session, never from the posted body.
+    ("/curriculum_api/activity/record/", ANY),
     # Learner pages subscribe to curriculum changes too. This endpoint returns
     # only the shared counter for learners, never staff change paths.
     ("/curriculum_api/curriculum/cache-epoch/", LEARNER_AND_STAFF),

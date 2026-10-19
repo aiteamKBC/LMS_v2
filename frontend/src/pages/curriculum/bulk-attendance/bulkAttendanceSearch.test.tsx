@@ -270,6 +270,41 @@ it('adds attendance through the live-session register only after a lecture is se
   }));
 });
 
+it('persists weekly register changes to the live-session attendance register', async () => {
+  mocks.overview.mockResolvedValue({
+    ...overview,
+    modules: [{ id: 'M1', moduleCatalogueId: 'MC1', name: 'Module A', programmeId: 'P1', cohortId: 'C1' }],
+  });
+  mocks.sessions.mockResolvedValue([
+    { id: 'S1', title: 'Lecture A', moduleId: 'M1', moduleCatalogueId: 'MC1', date: '2026-10-17' },
+  ]);
+  mocks.roster.mockImplementation(async (scope: string, identifier: string) => (
+    scope === 'module' && identifier === 'MC1'
+      ? { assignedLearners: [{ id: 8, email: 'alex@example.invalid', cohort: 'Autumn', cohortId: 'C1' }] }
+      : { assignedLearners: [] }
+  ));
+
+  const { container } = render(<AttendancePage />);
+  await screen.findByRole('button', { name: 'Alex Example' });
+  fireEvent.change(container.querySelector('input[type="date"]')!, { target: { value: '2026-10-17' } });
+  fireEvent.click(screen.getByRole('button', { name: /^Module\s*All Modules$/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Module A' }));
+  await waitFor(() => expect(mocks.roster).toHaveBeenCalledWith(
+    'module', 'MC1', { learnerStatus: 'all' }, expect.any(AbortSignal), { timeoutMs: 60000, compact: true },
+  ));
+
+  fireEvent.click(screen.getByRole('button', { name: 'Weekly' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Alex Example 2026-10-17 unmarked' }));
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  });
+
+  await waitFor(() => expect(mocks.addLiveDay).toHaveBeenCalledWith({
+    learnerIds: ['301'], moduleCatalogueId: 'MC1', date: '2026-10-17', attendance: 'present',
+  }));
+  expect(screen.queryByRole('button', { name: 'Save changes' })).not.toBeInTheDocument();
+});
+
 it('loads each filter roster once and reuses it when the filter is chosen again', async () => {
   mocks.overview.mockResolvedValue({
     ...overview,

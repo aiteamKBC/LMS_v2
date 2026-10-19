@@ -8,6 +8,7 @@ import { clearAllCachedResources } from '@/api/cachedRequest';
 import { rememberLearner, rememberSignedInLearner } from '@/hooks/useMyLearner';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import type { ImportedReview } from '@/api/reviewHistory';
+import type { MeetingAttendance } from '@/api/meetingAttendance';
 import { ToastProvider } from '@/hooks/useToast';
 import ProgressReviewPage, { ProgressReviewsListPage } from '../progress-reviews/page';
 import MonthlyCoachingPage, { MonthlyCoachingListPage } from '../monthly-coaching/page';
@@ -15,7 +16,8 @@ import { CurriculumReviewPage, CurriculumReviewsListPage } from './curriculumRev
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock('@/pages/coach/progress-reviews/page', () => ({ buildProgressReviewSlidesDeck: vi.fn() }));
-vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => ({ canProgress: true }) }));
+const access = vi.hoisted(() => ({ canProgress: true }));
+vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => access }));
 
 const detail = { id: '125', name: 'New learner', programme: 'Assigned programme',
   components: [], componentProgress: [], videoProgress: [], quizAttempts: [] };
@@ -31,6 +33,7 @@ let detailFails: boolean;
 let archiveFails: boolean;
 let detailActivityAvailable: boolean;
 let historyReviews: ImportedReview[];
+let attendanceSessions: MeetingAttendance[];
 let requests: string[];
 let bookingWarning: string;
 let bookings: Record<string, unknown>[];
@@ -53,9 +56,10 @@ beforeEach(() => {
   rememberSignedInLearner(undefined, undefined);
   localStorage.clear(); rememberLearner('commercial', '19');
   vi.stubGlobal('React', React); vi.stubGlobal('AppIcon', AppIcon);
-  events = []; historyReviews = []; requests = []; calendarFails = detailFails = archiveFails = detailActivityAvailable = false;
+  events = []; historyReviews = []; attendanceSessions = []; requests = []; calendarFails = detailFails = archiveFails = detailActivityAvailable = false;
   bookingWarning = ''; bookings = []; reschedules = []; bookingError = '';
   currentCoach = { name: 'Assigned coach', email: 'assigned@example.test' };
+  access.canProgress = true;
   Object.defineProperties(HTMLDialogElement.prototype, {
     showModal: { configurable: true, value: function(this: HTMLDialogElement) { this.setAttribute('open', ''); } },
     close: { configurable: true, value: function(this: HTMLDialogElement) { this.removeAttribute('open'); } },
@@ -74,6 +78,7 @@ beforeEach(() => {
       const existing = events.find(event => event.eventKey === payload.eventKey || (payload.reviewId && event.reviewId === payload.reviewId))
         || session(payload.sessionType);
       const saved = { ...existing, status: 'scheduled', date: payload.scheduledDate,
+        calendarEventKey: existing.reviewSource === 'aptem' ? existing.calendarEventKey || `booking:${existing.reviewId}` : existing.calendarEventKey,
         scheduledDate: payload.scheduledDate, scheduledTime: payload.scheduledTime, durationMinutes: payload.durationMinutes,
         reviewId: payload.reviewId, invited: !bookingWarning, syncWarning: bookingWarning, syncState: bookingWarning ? 'failed' : 'synced' } as LearnerCalendarEvent;
       events = [...events.filter(event => event.id !== saved.id), saved];
@@ -85,8 +90,13 @@ beforeEach(() => {
     if (url.includes('/curriculum/cache-epoch/')) body = { epoch: 0, changes: [] };
     else if (url.includes('/learner-detail/')) { body = { ...detail, studentActivityAvailable: detailActivityAvailable }; failed = detailFails; }
     else if (url.includes('/review-history/')) { body = { reviews: historyReviews }; failed = archiveFails; }
-    else if (url.includes('/calendar/')) { body = { events, currentCoach }; failed = calendarFails; }
-    else if (url.includes('/meeting-attendance/')) body = { sessions: [], today: '2026-09-14', timeZone: 'Europe/London', csrfToken: 'test' };
+    else if (url.includes('/calendar/') || url.includes('/review-sessions/')) {
+      body = { events: url.includes('content=summary')
+        ? events.map(event => event.importedReview ? { ...event, importedReview: { ...event.importedReview, sections: [] } } : event)
+        : events, currentCoach };
+      failed = calendarFails;
+    }
+    else if (url.includes('/meeting-attendance/')) body = { sessions: attendanceSessions, today: '2026-09-14', timeZone: 'Europe/London', csrfToken: 'test' };
     else throw new Error(`Unexpected read: ${url}`);
     return new Response(JSON.stringify(failed ? { error: 'Temporarily unavailable' } : body), { status: failed ? 503 : 200 });
   }));
@@ -104,6 +114,26 @@ it('renders server-owned Native occurrences without requiring imported history',
   expect(within(region).getAllByRole('link', { name: 'View meeting' })[0]).toBeVisible();
 });
 
+it('bounds a stalled progress-review read and shows loading again during retry', async () => {
+  const normalFetch = vi.mocked(fetch).getMockImplementation()!;
+  let finish!: (response: Response) => void;
+  vi.mocked(fetch).mockImplementation((input, init) => String(input).includes('/review-sessions/')
+    ? new Promise(resolve => { finish = resolve; }) : normalFetch(input, init));
+  vi.useFakeTimers();
+  mount(cases[0], '?kind=apprenticeship&learner=125', 'current');
+  expect(screen.getByText('Loading your reviews…')).toBeVisible();
+  expect(screen.queryByRole('link', { name: 'View all reviews (0)' })).not.toBeInTheDocument();
+  await act(async () => { await vi.advanceTimersByTimeAsync(45_000); });
+  expect(screen.getByText('Loading is taking longer than expected. Please try again.')).toBeVisible();
+  expect(screen.queryByText('No current review')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(screen.getByText('Loading your reviews…')).toBeVisible();
+  expect(screen.queryByRole('link', { name: 'View all reviews (0)' })).not.toBeInTheDocument();
+  await act(async () => { finish(new Response(JSON.stringify({ events: [session('progress-review')] }))); });
+  expect(screen.getByRole('link', { name: 'View all reviews (1)' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Book a time' })).toBeVisible();
+});
+
 it('keeps completed ordinary imported history in Reviews', async () => {
   detailActivityAvailable = true;
   historyReviews = [{
@@ -118,10 +148,134 @@ it('keeps completed ordinary imported history in Reviews', async () => {
   mount(reviewsCase);
 
   const region = await screen.findByRole('region', { name: 'Reviews sessions' });
-  fireEvent.click(within(region).getByRole('button', { name: /^Past \(/ }));
+  fireEvent.click(await within(region).findByRole('button', { name: /^Past \(/ }));
   expect((await within(region).findAllByText('Eligibility Review & FS Discussion')).at(-1)).toBeVisible();
   expect(within(region).getByRole('button', { name: 'All (1)' })).toBeVisible();
   expect(screen.getByRole('heading', { name: 'Review timeline' })).toBeVisible();
+});
+
+describe.each(['apprenticeship', 'commercial'])('%s Aptem progress review detail booking', kind => {
+  it.each(['not-scheduled', 'completed'])('offers a first booking only for an open review: %s', async status => {
+    events = [{ ...session('progress-review', 1, status), id: 'imported-review:A-11', eventKey: 'imported-review:A-11',
+      reviewSource: 'aptem', reviewId: '11', aptemReviewId: 'A-11', importedReview: {
+        id: '11', aptemReviewId: 'A-11', name: 'Progress Review 1', type: 'Progress Review', reviewerName: 'Coach',
+        plannedDate: '2026-10-31', plannedTime: null, completedDate: status === 'completed' ? '2026-09-01' : null,
+        status, extractionStatus: 'complete', detailsAvailable: false, sections: [],
+      } }];
+    mount(cases[0], `/imported-review%3AA-11?kind=${kind}&learner=125`);
+    await screen.findByRole('heading', { name: 'Progress Review 1', level: 2 });
+    if (status === 'completed') {
+      expect(screen.queryByRole('button', { name: 'Book a time' })).not.toBeInTheDocument();
+      expect(bookings).toEqual([]);
+      return;
+    }
+    const book = screen.getByRole('button', { name: 'Book a time' });
+    await waitFor(() => expect(book).toBeEnabled());
+    fireEvent.click(book);
+    const dialog = await screen.findByRole('dialog', { name: 'Book progress review' });
+    const submit = within(dialog).getByRole('button', { name: 'Book session' });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-11-02' } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(bookings).toEqual([expect.objectContaining({ reviewId: '11', sessionType: 'progress-review', scheduledDate: '2026-11-02' })]);
+    expect(reschedules).toEqual([]);
+    expect(screen.queryByRole('button', { name: 'Book a time' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Reschedule meeting' })).toBeEnabled();
+  });
+
+  it('reschedules from the detail page using the existing booking and refreshes the saved time', async () => {
+    const imported = { ...session('progress-review', 1, 'scheduled'), id: 'imported-review:A-11', eventKey: 'imported-review:A-11',
+      calendarEventKey: 'booking:11', reviewSource: 'aptem' as const, reviewId: '11', aptemReviewId: 'A-11',
+      scheduledDate: '2026-10-20', scheduledTime: '09:00', durationMinutes: 90, importedReview: {
+        id: '11', aptemReviewId: 'A-11', name: 'Progress Review 1', type: 'Progress Review', reviewerName: 'Coach',
+        plannedDate: '2026-10-01', plannedTime: '09:00', completedDate: null, status: 'scheduled',
+        extractionStatus: 'complete', detailsAvailable: false, sections: [],
+      } };
+    const unrelated = { ...session('progress-review', 2, 'scheduled'), scheduledDate: imported.scheduledDate, scheduledTime: '12:00' };
+    events = [imported, unrelated];
+    mount(cases[0], `/imported-review%3AA-11?kind=${kind}&learner=125`);
+    const reschedule = await screen.findByRole('button', { name: 'Reschedule meeting' });
+    await waitFor(() => expect(reschedule).toBeEnabled());
+    fireEvent.click(reschedule);
+    const dialog = await screen.findByRole('dialog');
+    const submit = within(dialog).getByRole('button', { name: 'Save new time' });
+    await waitFor(() => expect(submit).toBeEnabled());
+    expect(within(dialog).getByLabelText('Day')).toHaveValue('2026-10-20');
+    expect(within(dialog).getByLabelText('Time')).toHaveValue('09:00');
+    fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-10-21' } });
+    fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '14:30' } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(reschedules).toEqual([expect.objectContaining({ eventKey: 'booking:11', reviewId: '11',
+      scheduledDate: '2026-10-21', scheduledTime: '14:30', durationMinutes: 90 })]);
+    expect(bookings).toEqual([]);
+    expect(events).toContainEqual(unrelated);
+    expect(events.find(event => event.reviewId === '11')).toMatchObject({ id: imported.id, eventKey: imported.eventKey, importedReview: imported.importedReview });
+    fireEvent.click(await screen.findByRole('button', { name: 'Reschedule meeting' }));
+    const refreshed = await screen.findByRole('dialog');
+    await waitFor(() => expect(within(refreshed).getByLabelText('Day')).toHaveValue('2026-10-21'));
+    expect(within(refreshed).getByLabelText('Time')).toHaveValue('14:30');
+  });
+
+  it.each(['completed', 'awaiting-signature', 'in-progress', 'cancelled', 'attended'])('keeps a %s detail read-only for scheduling', async status => {
+    events = [{ ...session('progress-review', 1, status === 'attended' ? 'scheduled' : status),
+      id: 'imported-review:A-11', eventKey: 'imported-review:A-11', calendarEventKey: 'booking:11', reviewId: '11',
+      reviewSource: 'aptem', scheduledDate: '2026-10-20', scheduledTime: '09:00', importedReview: {
+        id: '11', aptemReviewId: 'A-11', name: 'Progress Review 1', type: 'Progress Review', reviewerName: 'Coach',
+        plannedDate: '2026-10-01', plannedTime: '09:00', completedDate: null, status: 'scheduled',
+        extractionStatus: 'complete', detailsAvailable: false, sections: [],
+      } }];
+    // A different attendance ID must still match this exact durable booking key.
+    attendanceSessions = [{ id: 'local:11', calendarEventKey: 'booking:11', title: 'Progress review', status: 'scheduled',
+      date: '2026-10-20', startTime: '09:00', durationMinutes: 60, meetingLink: '', meetingProvider: '',
+      canAttend: false, attendanceConfirmed: status === 'attended', creditedMinutes: status === 'attended' ? 60 : null,
+      canReportAbsence: false, absenceReported: false, absenceSessionId: null, missed: false }];
+    mount(cases[0], `/imported-review%3AA-11?kind=${kind}&learner=125`);
+    await screen.findByRole('heading', { name: 'Progress Review 1', level: 2 });
+    await waitFor(() => expect(requests).toContain(`/learner_api/meeting-attendance/${kind}/125/`));
+    expect(screen.queryByRole('button', { name: 'Reschedule meeting' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Book a time' })).not.toBeInTheDocument();
+    expect(bookings).toEqual([]);
+    expect(reschedules).toEqual([]);
+  });
+});
+
+it('disables detail rescheduling while attendance is pending or failed, then enables it after retry', async () => {
+  const target = { ...session('progress-review', 1, 'scheduled'), scheduledDate: '2026-10-20', scheduledTime: '09:00' };
+  events = [target];
+  const normalFetch = vi.mocked(fetch).getMockImplementation()!;
+  let finish!: (response: Response) => void;
+  vi.mocked(fetch).mockImplementation((input, init) => String(input).includes('/meeting-attendance/')
+    ? new Promise(resolve => { finish = resolve; }) : normalFetch(input, init));
+  mount(cases[0], `/${encodeURIComponent(target.id)}?kind=apprenticeship&learner=125`);
+  const reschedule = await screen.findByRole('button', { name: 'Reschedule meeting' });
+  expect(reschedule).toBeDisabled();
+  fireEvent.click(reschedule);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  // The read helper retries a 503 once; fail that request too before using the manual retry.
+  vi.mocked(fetch).mockImplementation((input, init) => String(input).includes('/meeting-attendance/')
+    ? Promise.resolve(new Response(JSON.stringify({ error: 'Attendance temporarily unavailable' }), { status: 503 })) : normalFetch(input, init));
+  await act(async () => { finish(new Response(JSON.stringify({ error: 'Attendance temporarily unavailable' }), { status: 503 })); });
+  expect(await screen.findByRole('alert')).toHaveTextContent('Attendance temporarily unavailable');
+  expect(reschedule).toBeDisabled();
+  vi.mocked(fetch).mockImplementation(normalFetch);
+  fireEvent.click(screen.getByRole('button', { name: 'Retry attendance' }));
+  await waitFor(() => expect(reschedule).toBeEnabled());
+  expect(bookings).toEqual([]);
+  expect(reschedules).toEqual([]);
+});
+
+it('keeps detail rescheduling disabled in a staff preview', async () => {
+  const target = { ...session('progress-review', 1, 'scheduled'), scheduledDate: '2026-10-20', scheduledTime: '09:00' };
+  events = [target]; access.canProgress = false;
+  mount(cases[0], `/${encodeURIComponent(target.id)}?kind=apprenticeship&learner=125`);
+  const reschedule = await screen.findByRole('button', { name: 'Reschedule meeting' });
+  expect(reschedule).toBeDisabled();
+  fireEvent.click(reschedule);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(bookings).toEqual([]);
+  expect(reschedules).toEqual([]);
 });
 
 describe.each(['apprenticeship', 'commercial'])('%s imported review classification', kind => {
@@ -138,6 +292,18 @@ describe.each(['apprenticeship', 'commercial'])('%s imported review classificati
           links: [{ text: 'Review evidence', url: 'https://example.invalid/evidence.pdf' }] }], tables: [], rawText: '' }] },
     }));
   }
+
+  it('loads Aptem historical answers only after opening a progress review', async () => {
+    events = mixedReviews();
+    mount(cases[0], `?kind=${kind}&learner=125`);
+    const list = await screen.findByRole('region', { name: 'All reviews' });
+    fireEvent.click(within(list).getAllByRole('link', { name: 'View review' })[0]);
+    expect(await screen.findByText('Synthetic saved answer')).toBeVisible();
+    expect(requests).toContain(`/learner_api/review-sessions/${kind}/125/?content=summary`);
+    expect(requests).toContain(`/learner_api/review-sessions/${kind}/125/?content=full`);
+    expect(requests.some(url => url.includes('/calendar/'))).toBe(false);
+    expect(bookings).toEqual([]);
+  });
 
   it.each([reviewsCase, ...cases])('shows only the stored category in $path', async item => {
     events = mixedReviews();
@@ -213,6 +379,65 @@ function openMoreOptions(item: typeof cases[number]) {
 }
 
 describe.each(cases)('$path programme sessions', item => {
+  it.each(['apprenticeship', 'commercial'])('books an unbooked Aptem occurrence for a %s learner from the list', async kind => {
+    const target = { ...session(item.source), id: 'imported-review:A-11', eventKey: 'imported-review:A-11',
+      reviewSource: 'aptem' as const, reviewId: '11', aptemReviewId: 'A-11', importedReview: {
+        id: '11', aptemReviewId: 'A-11', name: 'Planned review', type: item.source === 'mcr' ? 'Monthly Coaching Meeting' : 'Progress Review',
+        reviewerName: 'Coach', plannedDate: '2026-10-31', plannedTime: null, completedDate: null,
+        status: 'Not Scheduled', extractionStatus: 'complete', detailsAvailable: false, sections: [],
+      } };
+    const unrelated = { ...target, id: 'imported-review:A-12', eventKey: 'imported-review:A-12', reviewId: '12',
+      sequence: 2, importedReview: { ...target.importedReview, id: '12', aptemReviewId: 'A-12' } };
+    events = [target, unrelated];
+    mount(item, `?kind=${kind}&learner=125`);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Book a time' }))[0]);
+    const dialog = await screen.findByRole('dialog', { name: /Book (monthly coaching|progress review)/ });
+    const submit = within(dialog).getByRole('button', { name: 'Book session' });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-11-02' } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(bookings).toEqual([expect.objectContaining({ reviewId: '11', sessionType: item.source, scheduledDate: '2026-11-02' })]);
+    expect(reschedules).toEqual([]);
+    expect(events.find(event => event.reviewId === '12')).toEqual(unrelated);
+    expect(events.find(event => event.reviewId === '11')).toMatchObject({ calendarEventKey: 'booking:11', status: 'scheduled' });
+  });
+
+  it.each(['apprenticeship', 'commercial'])('reschedules the linked Aptem appointment for a %s learner and retains its review identity after refresh', async kind => {
+    const importedReview: ImportedReview = {
+      id: '11', aptemReviewId: 'A-11', name: 'Imported meeting', type: item.source === 'mcr' ? 'Monthly Coaching Meeting' : 'Progress Review',
+      reviewerName: 'Assigned coach', plannedDate: '2026-10-01', plannedTime: '09:00', completedDate: null,
+      status: 'scheduled', extractionStatus: 'complete', detailsAvailable: true, sections: [],
+    };
+    const imported = { ...session(item.source, 1, 'scheduled'), id: 'imported-review:A-11', eventKey: 'imported-review:A-11',
+      calendarEventKey: 'imported-review:125:A-11', reviewSource: 'aptem' as const, reviewId: '11', aptemReviewId: 'A-11',
+      importedReview, scheduledDate: '2026-10-20', scheduledTime: '09:00', durationMinutes: 90 };
+    const unrelated = { ...session(item.source, 2, 'completed') };
+    events = [imported, unrelated];
+    mount(item, `?kind=${kind}&learner=125`, 'current');
+    await screen.findByText(item.source === 'mcr' ? 'Details' : 'More options', { selector: 'summary' });
+    if (item.source === 'mcr') openMoreOptions(item);
+    fireEvent.click(screen.getByRole('button', { name: item.source === 'mcr' ? 'Reschedule' : 'Reschedule meeting' }));
+    const dialog = await screen.findByRole('dialog');
+    const submit = within(dialog).getByRole('button', { name: 'Save new time' });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-10-21' } });
+    fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '14:30' } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(reschedules).toEqual([expect.objectContaining({ eventKey: imported.calendarEventKey, reviewId: '11',
+      scheduledDate: '2026-10-21', scheduledTime: '14:30', durationMinutes: 90 })]);
+    expect(requests).toContain(`/learner_api/calendar/${kind}/125/reschedule/`);
+    expect(bookings).toHaveLength(0);
+    expect(events).toContainEqual(unrelated);
+    expect(events.find(event => event.reviewId === '11')).toMatchObject({ id: imported.id, eventKey: imported.eventKey, importedReview });
+    if (item.source === 'mcr') openMoreOptions(item);
+    fireEvent.click(screen.getByRole('button', { name: item.source === 'mcr' ? 'Reschedule' : 'Reschedule meeting' }));
+    const refreshed = await screen.findByRole('dialog');
+    await waitFor(() => expect(within(refreshed).getByLabelText('Day')).toHaveValue('2026-10-21'));
+    expect(within(refreshed).getByLabelText('Time')).toHaveValue('14:30');
+  });
+
   it('uses server-owned Native occurrences without merging the legacy history stream', async () => {
     detailActivityAvailable = true;
     historyReviews = [{ id: '908', aptemReviewId: 'A-908', name: 'Old imported meeting',
@@ -293,7 +518,7 @@ describe.each(cases)('$path programme sessions', item => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(bookings).toEqual([expect.objectContaining({ eventKey: target.eventKey, sessionType: item.source,
       scheduledDate: '2026-11-02', scheduledTime: '14:30', durationMinutes: 60,
-      timezoneOffsetMinutes: new Date('2026-11-02T14:30:00').getTimezoneOffset() })]);
+      timezoneOffsetMinutes: 0 })]);
     expect(reschedules).toHaveLength(0);
     expect(screen.getByRole('region', { name: item.region })).toBeVisible();
   });
@@ -330,7 +555,12 @@ describe.each(cases)('$path programme sessions', item => {
     }
     fireEvent.click(item.source === 'mcr' ? within(region).getByRole('tab', { name: /Past/ }) : reviewFilter('Past', 1));
     expect(within(region).getAllByRole('link', { name: viewAction(item) })[0]).toBeVisible();
-    expect(requests.filter(url => url.includes('/calendar/'))).toHaveLength(1);
+    const readPath = item.source === 'progress-review' ? '/review-sessions/' : '/calendar/';
+    expect(requests.filter(url => url.includes(readPath))).toHaveLength(1);
+    if (item.source === 'progress-review') {
+      expect(requests.some(url => url.includes('/calendar/'))).toBe(false);
+      expect(requests).toContain('/learner_api/review-sessions/apprenticeship/125/?content=summary');
+    }
     expect(requests.filter(url => url.startsWith('/learner_api/')).every(url => url.includes('/apprenticeship/125/'))).toBe(true);
     fireEvent.click(item.source === 'mcr' ? within(region).getByRole('tab', { name: /Upcoming/ }) : reviewFilter('Upcoming', 1));
     fireEvent.click(within(region).getByRole('button', { name: bookingAction(item) }));
@@ -374,7 +604,7 @@ describe.each(cases)('$path programme sessions', item => {
     events = [session(item.source)]; mount(item);
     await screen.findByRole('button', { name: bookingAction(item) });
     let finish!: (value: Response) => void;
-    vi.mocked(fetch).mockImplementation(input => String(input).includes('/calendar/')
+    vi.mocked(fetch).mockImplementation(input => /\/(calendar|review-sessions)\//.test(String(input))
       ? new Promise(resolve => { finish = resolve; })
       : Promise.resolve(new Response(JSON.stringify(String(input).includes('/review-history/') ? { reviews: [] } : detail))));
     fireEvent.click(screen.getByRole('button', { name: 'Switch learner' }));

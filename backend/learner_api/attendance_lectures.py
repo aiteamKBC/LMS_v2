@@ -315,8 +315,11 @@ def lecture_register(source, *, module_ids=None, records=None, learner_profile_i
     now = timezone.now()
     result = []
     attended_alternatives = set()
+    # A saved Bulk Attendance result is an explicit learner-register outcome.
+    # Process it before raw Teams evidence so it wins for the same occurrence.
+    records = sorted(records, key=lambda row: 0 if row.get('source') == 'live-register' else 1)
     for row in records:
-        if row.get('source') == 'microsoft-teams':
+        if row.get('source') in {'microsoft-teams', 'live-register'}:
             occurrence_id = str(row.get('occurrence_id') or row['session_id'])
             target_ids = ([occurrence_id] if occurrence_id in by_occurrence else []) + by_attendance_source.get(occurrence_id, [])
             target_ids = list(dict.fromkeys(target_ids))
@@ -331,7 +334,18 @@ def lecture_register(source, *, module_ids=None, records=None, learner_profile_i
                 schedule = by_occurrence.pop(target_id, None)
                 if schedule is None:
                     continue
-                if schedule['scheduled_end'] > now:
+                if row.get('source') == 'live-register':
+                    # Keep Teams/report metadata from the scheduled row while
+                    # replacing only the learner outcome saved by Bulk.
+                    projected = {
+                        **schedule,
+                        'attendance_status': row['attendance_status'],
+                        'source': 'microsoft-teams',
+                        'updated_at': _aware(row.get('updated_at')) or schedule.get('updated_at'),
+                    }
+                    if not projected.get('attendance_report_id') and row.get('attendance_report_id'):
+                        projected['attendance_report_id'] = row['attendance_report_id']
+                elif schedule['scheduled_end'] > now:
                     projected = schedule
                 else:
                     projected = {**schedule, **row}
