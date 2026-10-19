@@ -45,7 +45,9 @@ def catalogue_module_rows(cur, ids, *, identity_metadata):
     from .subject_origins import imported_course_links
     cur.execute('''SELECT m.module_catalogue_id AS id,m.title,m.cover_image_url,
         m.start_date,m.end_date,m.tutor_name,m.programme_id,m.programme_name,
-        m.cohort_name,m.group_name,m.total_otjh,m.sessions_number,m.source_type,m.source_id
+        m.cohort_name,m.group_name,m.total_otjh,m.sessions_number,m.source_type,m.source_id,
+        m.session_week_day,m.session_start_time,m.session_end_time,m.cohort_id,
+        to_jsonb(m)->'session_overrides' AS session_overrides
         FROM curriculum.modules m WHERE m.module_catalogue_id=ANY(%s)
           AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent,'')<>'')
         ORDER BY m.title''',[ids])
@@ -74,6 +76,8 @@ def catalogue_module_rows(cur, ids, *, identity_metadata):
         covers={f"current:{r['id']}":_builder_cover_url(r.get('cover_image_url')) for r in found},
         quiz_modules={r['id']:{'module':r['title'],'programmeId':r.get('programme_id') or '',
                               'programme':r.get('programme_name') or ''} for r in found},
+        schedule_modules={r['id']: {**r, 'module_catalogue_id': r['id']} for r in found},
+        schedule_components=[],
         live_credit_components=[],
         imported_courses=imported_course_links([(r['id'],r.get('source_id')) for r in found
             if r.get('source_type')=='mba-legacy' and re.fullmatch(r'[0-9]+',str(r.get('source_id') or ''))],
@@ -344,7 +348,7 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue'):
     install_request_caches(source)
     source._canonical_profile = owner
     with projection_stage('profile'):
-        profile = LearnerProfile.objects.only('id', 'enrolment_id').filter(pk=owner['id'], enrolment_id=source.pk).first()
+        profile = LearnerProfile.objects.only('id', 'enrolment_id', 'email').filter(pk=owner['id'], enrolment_id=source.pk).first()
     if profile is None:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     source._case_file_profile = profile
@@ -410,7 +414,7 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue'):
                         for c in [*native['components'],*native.get('retiredQuizComponents',[])] if c.get('componentId')))])
                 settings = dict(cur.fetchall())
         with projection_stage('activity_dates'):
-            dates = read_builder_activity_dates(cur, ids) if subject_id is None and purpose != 'search' else {}
+            dates = read_builder_activity_dates(cur, ids, **({'resolved_metadata': resolved} if resolved is not None else {})) if subject_id is None and purpose != 'search' else {}
     selected_courses = courses if subject_id is None and purpose == 'catalogue' else []
     with projection_stage('historical_facts'):
         definitions, done, started, hours, record_ids = course_facts(owner, records, selected_courses)

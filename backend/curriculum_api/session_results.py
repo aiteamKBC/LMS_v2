@@ -14,7 +14,7 @@ from django.views.decorators.http import require_GET, require_POST
 from login.permissions import require_role, learner_self_or_staff
 
 from .attendance_identity import identity_check, staff_roles
-from .attendance_link_policy import apply_reviewed_identities, identity_key, link_specs, record_key, unmatched_roster
+from .attendance_link_policy import apply_reviewed_identities, identity_key, link_specs, record_key, unmatched_roster, attendance_bot
 from .attendance_link_store import identity_rules, save_rule
 from .session_results_policy import attendance_display_name, attendance_name_key, session_roster, attendance_csv, instant, session_runs
 from .session_media_policy import hidden_artifact_ids, recording_transcript_links, transcript_timing_ready, artifact_metadata
@@ -228,12 +228,18 @@ def merge_session_register_rows(rows):
     return [by_email[email] for email in sorted(by_email)]
 
 
-def result_rows(series, *, session_number=None, email=None, identity=False, module_catalogue_id='', attendance_only=False):
+def result_rows(series, *, session_number=None, email=None, identity=False, module_catalogue_id='', attendance_only=False, occurrence_ids=None):
     params = [series['id']]
     where = ''
     if session_number is not None:
         where = ' AND session_number=%s'
         params.append(session_number)
+    if occurrence_ids is not None:
+        ids = sorted({str(value) for value in occurrence_ids if value})
+        if not ids:
+            return []
+        where += ' AND id=ANY(%s)'
+        params.append(ids)
     occurrences = read('SELECT * FROM curriculum.live_session_occurrences WHERE live_session_id=%s' + where + ' ORDER BY session_number,id', params)
     ids = [item['id'] for item in occurrences]
     if not ids:
@@ -405,6 +411,7 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
         unmatched_records = [] if email is not None else [
             row for row in reviewed_records
             if (str(row.get('email') or '').strip().casefold() not in expected or row.get('identityReviewRequired'))
+            and (str(row.get('email') or '').strip().casefold() in expected or not attendance_bot(row))
             and (str(row.get('email') or '').strip().casefold() not in known_emails
                  or str(row.get('email') or '').strip().casefold() in expected)
             and str(row.get('email') or '').strip().casefold() not in protected_emails

@@ -129,6 +129,31 @@ def projection_stage(name):
     return measurement.stage(name) if measurement is not None else nullcontext()
 
 
+LOCAL_OPERATIONS = frozenset({
+    'kbc_total', 'kbc_connect', 'kbc_execute', 'kbc_fetch', 'kbc_decode',
+    'attendance_schedule', 'attendance_sources', 'teams_reports', 'attendance_roster',
+    'attendance_profiles', 'attendance_associations', 'teams_occurrences', 'teams_evidence', 'reviewed_links',
+    'identity_rules', 'identity_matching', 'attendance_recovery', 'attendance_catchups',
+    'attendance_confirmations', 'attendance_recorded', 'attendance_corrections',
+    'shared_series', 'credit_projection', 'assignment_placement', 'assignment_query', 'other',
+})
+
+
+def projection_operation(name):
+    """Independent exclusive operation wall/CPU timing under the local gate.
+
+    Operations do not subtract time from the existing parent stage totals.
+    Non-CPU wall time can include I/O or scheduling; it is not server SQL time.
+    """
+    measurement = _local_projection.get()
+    return measurement.operation(name) if measurement is not None else nullcontext()
+
+
+def projection_call(name, function, *args, **kwargs):
+    with projection_operation(name):
+        return function(*args, **kwargs)
+
+
 def _local_trace_allowed(request):
     # A request header/query cannot enable diagnostics. Require an explicitly
     # opted-in DEBUG runserver process bound to, and accessed on, loopback.
@@ -156,6 +181,8 @@ class LocalProjectionPerformance(ProjectionPerformance):
         self.request_id = str(UUID(str(request_id)))
         self.rows = {}
         self.frames = []
+        self.operation_rows = {}
+        self.operation_frames = []
         self.started = perf_counter()
 
     def _row(self, name):
@@ -178,6 +205,28 @@ class LocalProjectionPerformance(ProjectionPerformance):
                 self.frames[-1]['children'] += elapsed
                 self.frames[-1]['child_cpu'] += cpu
 
+    @contextmanager
+    def operation(self, name):
+        name = name if name in LOCAL_OPERATIONS else 'other'
+        row = self.operation_rows.setdefault(name, {'elapsed':0.0, 'inclusive_elapsed':0.0, 'cpu':0.0, 'calls':0, 'failures':0, 'sql_calls':0, 'execute_seconds':0.0, 'execute_cpu':0.0})
+        frame = {'row':row, 'start':perf_counter(), 'cpu':thread_time(), 'children':0.0, 'child_cpu':0.0}
+        self.operation_frames.append(frame)
+        row['calls'] += 1
+        try:
+            yield
+        except BaseException:
+            row['failures'] += 1
+            raise
+        finally:
+            elapsed, cpu = perf_counter()-frame['start'], thread_time()-frame['cpu']
+            self.operation_frames.pop()
+            row['inclusive_elapsed'] += elapsed
+            row['elapsed'] += max(0.0, elapsed-frame['children'])
+            row['cpu'] += max(0.0, cpu-frame['child_cpu'])
+            if self.operation_frames:
+                self.operation_frames[-1]['children'] += elapsed
+                self.operation_frames[-1]['child_cpu'] += cpu
+
     def execute_for(self, alias, execute, sql, params, many, context):
         row = self._row(self.frames[-1]['name'] if self.frames else 'dispatch')
         # Aliases originate only in configured Django wrappers; cap collector
@@ -189,9 +238,16 @@ class LocalProjectionPerformance(ProjectionPerformance):
         try:
             return execute(sql,params,many,context)
         finally:
+            elapsed, cpu = perf_counter()-started, thread_time()-cpu_started
             database['calls'] += 1
-            database['seconds'] += perf_counter()-started
-            row['execute_cpu'] += thread_time()-cpu_started
+            database['seconds'] += elapsed
+            row['execute_cpu'] += cpu
+            if self.operation_frames:
+                operation = self.operation_frames[-1]['row']
+                operation['sql_calls'] += 1
+                operation['execute_seconds'] += elapsed
+                operation['execute_cpu'] += cpu
+
 
     def emit(self):
         stages=[]
@@ -210,7 +266,15 @@ class LocalProjectionPerformance(ProjectionPerformance):
         log.info('projection_stage %s', {'request_id':self.request_id,
             'elapsed_ms':round((perf_counter()-self.started)*1000,3),
             'serialization_ms':round(self.rows['serialize']['elapsed']*1000,3) if 'serialize' in self.rows else 'UNMEASURED',
-            'stages':stages})
+            'stages':stages,
+            'operations':[{'operation':name, 'calls':row['calls'], 'failures':row['failures'],
+                'elapsed_ms':round(row['elapsed']*1000,3), 'inclusive_elapsed_ms':round(row['inclusive_elapsed']*1000,3), 'thread_cpu_ms':round(row['cpu']*1000,3),
+                'processing_cpu_ms':round(max(0.0,row['cpu']-row['execute_cpu'])*1000,3),
+                'django_sql_calls':row['sql_calls'], 'django_client_execute_ms':round(row['execute_seconds']*1000,3),
+                'non_cpu_wall_ms':round(max(0.0,row['elapsed']-row['cpu'])*1000,3),
+                'unwrapped_wall_ms':round(max(0.0,row['elapsed']-row['execute_seconds']
+                    -max(0.0,row['cpu']-row['execute_cpu']))*1000,3)}
+                for name,row in sorted(self.operation_rows.items())]})
 
 
 def local_catalogue_trace(view):

@@ -47,6 +47,7 @@ from .learner_progression import advance_learner
 from .mappers import _normalize_free_courses, _s, get_training_plan, stored_training_plan, training_plan_field
 from .models import EnrolmentUser
 from .placement_links import placement_ids
+from .projection_performance import projection_call, projection_operation
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ def _rows(sql, params):
     # Deliberately the `default` alias: every caller reads curriculum.*, which is
     # owned by curriculum_api and migrated on `default`. Not an oversight — see
     # the note in apprenticeship_agreement._group_dates.
-    with connection.cursor() as cursor:
+    with projection_operation('assignment_query'), connection.cursor() as cursor:
         cursor.execute(sql, params)
         columns = [c[0] for c in cursor.description]
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
@@ -989,7 +990,7 @@ def _preset_ids_for(learner, cache):
     module has to keep it: writing only the ticked module would silently drop
     every other module their group teaches.
     """
-    group_id = placement_ids(learner)["group_id"]
+    group_id = projection_call('assignment_placement', placement_ids, learner)["group_id"]
     key = ("group_id", group_id) if group_id else (_s(learner.programme), _s(learner.group))
     if key not in cache:
         cache[key] = (
@@ -1009,7 +1010,7 @@ def request_preset_cache(learner):
     return cache if cache is not None else {}
 
 
-def _effective_plan_ids(learner, preset_cache):
+def _effective_plan_ids(learner, preset_cache, *, saved_plan=...):
     """The module ids this learner is currently taught: saved plan, else preset.
 
     A saved plan also picks up modules added to the learner's group since it was
@@ -1017,7 +1018,7 @@ def _effective_plan_ids(learner, preset_cache):
     same way, so a module inherited from the group reads as assigned here too
     and the picker cannot contradict the modal.
     """
-    saved = stored_training_plan(learner)
+    saved = stored_training_plan(learner) if saved_plan is ... else saved_plan
     if saved is None:
         return list(_preset_ids_for(learner, preset_cache))
     ids = [_s(entry.get("moduleId")) for entry in saved if _s(entry.get("moduleId"))]
@@ -1038,9 +1039,10 @@ def effective_training_plan(learner, preset_cache=None):
     modules. Module Builder remains authoritative for their live titles, weeks
     and components.
     """
-    plan = list(get_training_plan(learner) or [])
+    saved = stored_training_plan(learner)
+    plan = list(saved if saved is not None else (get_training_plan(learner) or []))
     effective_ids = _effective_plan_ids(
-        learner, preset_cache if preset_cache is not None else {},
+        learner, preset_cache if preset_cache is not None else {}, saved_plan=saved,
     )
     represented = {
         _s(entry.get('moduleId')) for entry in plan

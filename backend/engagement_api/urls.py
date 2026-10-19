@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import event_checkin, event_emails, event_feedback_views, event_rsvp_views, external_feedback_views, feedback, shared_reward_views, views, learning_policy_views
+from . import event_checkin, event_emails, event_feedback_views, event_rsvp_views, feedback, shared_reward_views, views, learning_policy_views
 
 urlpatterns = [
     # Reusable feedback-form engine. Staff management and learner-owned routes
@@ -25,6 +25,9 @@ urlpatterns = [
     path('feedback/my-deliveries/<int:delivery_id>/', feedback.learner_form_detail, name='feedback-my-delivery-detail'),
     path('feedback/my-deliveries/<int:delivery_id>/response/', feedback.learner_response_save, name='feedback-my-delivery-response'),
     path('feedback/my-deliveries/<int:delivery_id>/questions/<int:question_id>/photo/', feedback.learner_photo_upload, name='feedback-delivery-photo-upload'),
+    path('feedback/my-review-deliveries/<int:review_delivery_id>/', feedback.learner_form_detail, name='feedback-my-review-delivery-detail'),
+    path('feedback/my-review-deliveries/<int:review_delivery_id>/response/', feedback.learner_response_save, name='feedback-my-review-delivery-response'),
+    path('feedback/my-review-deliveries/<int:review_delivery_id>/questions/<int:question_id>/photo/', feedback.learner_photo_upload, name='feedback-review-delivery-photo-upload'),
     path('feedback/my-event-recipients/<int:event_recipient_id>/forms/<int:pk>/', feedback.learner_form_detail, name='feedback-my-event-form-detail'),
     path('feedback/my-event-recipients/<int:event_recipient_id>/forms/<int:pk>/response/', feedback.learner_response_save, name='feedback-my-event-form-response'),
     path('feedback/uploads/<uuid:upload_id>/', feedback.feedback_upload_content, name='feedback-upload-content'),
@@ -35,10 +38,6 @@ urlpatterns = [
     path('feedback/email-templates/', event_emails.email_templates, name='event-email-templates'),
     path('feedback/public-event/csrf/', event_feedback_views.public_csrf, name='feedback-public-event-csrf'),
     path('feedback/public-event/', event_feedback_views.public_event_access, name='feedback-public-event'),
-    path('feedback/external-campaigns/', external_feedback_views.campaigns, name='feedback-external-campaigns'),
-    path('feedback/external-campaigns/<int:campaign_id>/', external_feedback_views.campaign_detail, name='feedback-external-campaign-detail'),
-    path('feedback/public-session/csrf/', external_feedback_views.public_csrf, name='feedback-public-session-csrf'),
-    path('feedback/public-session/', external_feedback_views.public_access, name='feedback-public-session'),
     path('feedback/public-rsvp/csrf/', event_rsvp_views.public_csrf, name='event-rsvp-csrf'),
     path('feedback/public-rsvp/', event_rsvp_views.public_access, name='event-rsvp-public'),
     path('feedback/public-rsvp/photo/', event_rsvp_views.public_photo_upload, name='event-rsvp-photo-upload'),

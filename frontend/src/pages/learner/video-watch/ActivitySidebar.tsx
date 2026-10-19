@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import type { JourneyComponent } from '@/utils/learnerJourney';
 import { componentTypeMeta, gradePercent, hasComponentContent, isComponentComplete, resourceTypeMeta } from '@/utils/learnerJourney';
-import { overviewSchedule } from '@/api/learnerOverview';
+import { learningSchedule } from '@/api/learnerOverview';
 import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import { weekHolidayNotes } from '@/pages/learner/training-plan-timeline/model';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
@@ -121,7 +121,7 @@ export function ActivitySidebar({
   // Read the plan whenever there is a week to describe, not only when the list
   // below has more than one row: a single-week module can still fall on a
   // holiday, and its hint has to reach the learner too.
-  const schedule = useLiveLearnerRead(learnerKind, id, weeks.length > 0, overviewSchedule.read, overviewSchedule.peek);
+  const schedule = useLiveLearnerRead(learnerKind, id, weeks.length > 0, learningSchedule.read, learningSchedule.peek);
   const moduleIds = new Set(weeks.flatMap(week => week.components.flatMap(component => component.moduleId ? [component.moduleId] : [])));
   const matchingModules = (schedule.data?.modules || []).filter(module => moduleIds.size
     ? moduleIds.has(module.id) : module.title.trim().toLowerCase() === moduleTitle.trim().toLowerCase());
