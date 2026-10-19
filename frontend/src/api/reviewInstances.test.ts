@@ -36,6 +36,30 @@ describe('migrated summary transcript upload', () => {
   });
 });
 
+describe('migrated review rescheduling', () => {
+  it.each([200, 409, 502])('uses PATCH with CSRF and the exact previous booking, handling HTTP %s', async status => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ csrfToken: 'server-token' }))
+      .mockResolvedValueOnce(jsonResponse(status === 200 ? { localStatus: 'scheduled' } : { message: 'Reload or retry the booking.' }, status));
+    vi.stubGlobal('fetch', fetchMock);
+    const { rescheduleMigratedReview } = await import('./reviewInstances');
+    const previous = { booked: true, conflict: false, canBook: false, canReschedule: true,
+      eventKey: 'legacy-key', scheduledDate: '2026-11-02', scheduledTime: '10:00', durationMinutes: 60,
+      meetingLink: 'https://example.invalid/meeting', syncState: 'synced' };
+    const slot = { scheduledDate: '2026-11-03', scheduledTime: '11:00', durationMinutes: 45, timezoneOffsetMinutes: 0 };
+    const promise = rescheduleMigratedReview('imported-review:42', slot, previous);
+    if (status === 200) await expect(promise).resolves.toEqual({ localStatus: 'scheduled' });
+    else await expect(promise).rejects.toThrow('Reload or retry');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][0]).toBe('/coach_api/coach/reviews/imported-review%3A42/book');
+    const request = fetchMock.mock.calls[1][1] as RequestInit;
+    expect(request.method).toBe('PATCH');
+    expect(new Headers(request.headers).get('X-CSRFToken')).toBe('server-token');
+    expect(JSON.parse(request.body as string)).toEqual({ ...slot, expectedBooking: {
+      scheduledDate: previous.scheduledDate, scheduledTime: previous.scheduledTime, durationMinutes: previous.durationMinutes,
+    } });
+  });
+});
+
 describe('migrated progress calculation', () => {
   it('sends only the overlay version to the migrated route with CSRF', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ csrfToken: 'server-token' }))

@@ -17,7 +17,8 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from django.test import Client, TestCase
+from django.test import Client
+from .tests_support.transaction_cases import CoachTransactionTestCase
 
 from learner_api.models import StaffUser
 from login.identity import ensure_account
@@ -76,15 +77,30 @@ COACH_ENDPOINTS = (
 )
 
 
-class CoachAuthorizationSecurityTests(TestCase):
+class CoachAuthorizationSecurityTests(CoachTransactionTestCase):
+    # Real middleware performs request connection cleanup; use autocommit as
+    # production requests do, with real persisted sessions on both aliases.
     databases = {"default", "enrolment"}
 
     def setUp(self):
+        from django.core.cache import cache
+        from .models import CoachDashboardSnapshot
+        cache.clear()
+        CoachDashboardSnapshot.objects.filter(owner_email__in=['coach-a@example.com', 'coach-b@example.com']).delete()
+        from read_models.models import ReadModel
+        ReadModel.objects.filter(model_key='coach.dashboard', scope_type='coach',
+                                 scope_id__in=['coach-a@example.com', 'coach-b@example.com']).delete()
         self.client = Client(SERVER_NAME="localhost")
         self._accounts: list[LoginAccount] = []
         self._staff: list[StaffUser] = []
 
     def tearDown(self):
+        from .models import CoachDashboardSnapshot
+        CoachDashboardSnapshot.objects.filter(owner_email__in=['coach-a@example.com', 'coach-b@example.com']).delete()
+        from read_models.models import ReadModel
+        ReadModel.objects.filter(model_key='coach.dashboard', scope_type='coach',
+                                 scope_id__in=['coach-a@example.com', 'coach-b@example.com']).delete()
+        CoachAbsenceReport.objects.filter(attendance_id=5001).delete()
         account_ids = [account.id for account in self._accounts]
         if account_ids:
             LoginSession.objects.filter(account_id__in=account_ids).delete()
@@ -387,7 +403,7 @@ class CoachAuthorizationSecurityTests(TestCase):
         "coach_api.views.collect_generated_timetable",
         return_value={"events": [], "summary": {}, "owner_name": "Coach A"},
     )
-    @patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[])
+    @patch("coach_api.views.fetch_caseload_learner_profiles", return_value=[])
     def test_super_admin_view_as_reads_the_named_coachs_workspace(
         self,
         profiles,

@@ -49,6 +49,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from django.db import transaction
+from coach_api.reconciliation_links import native_write
 
 from . import reviews
 from . import review_schedule
@@ -547,6 +548,9 @@ def create_learner_review_addition(
     if existing:
         return existing
 
+    from coach_api.review_sources import require_native_review_creation
+    require_native_review_creation(learner_id)
+
     addition_id = curriculum_views.unique_prefixed_id('LRA')
     with transaction.atomic():
         try:
@@ -1035,12 +1039,21 @@ def ensure_review_instance(
 
     def _existing():
         if is_manual:
-            return find_review_instance_by_ref(review_template_id, learner_id, ref)
-        return find_review_instance(review_template_id, learner_id, occurrence_number)
+            row = find_review_instance_by_ref(review_template_id, learner_id, ref)
+        else:
+            row = find_review_instance(review_template_id, learner_id, occurrence_number)
+        if row:
+            from coach_api.reconciliation_links import for_native
+            if for_native(row['id']):
+                raise ValueError('This legacy occurrence is reconciled. Open its imported Aptem Review.')
+        return row
 
     existing = _existing()
     if existing:
         return existing
+
+    from coach_api.review_sources import require_native_review_creation
+    require_native_review_creation(learner_id)
 
     instance_id = curriculum_views.unique_prefixed_id('REVI', '', existing_review_instance_ids)
     with transaction.atomic():
@@ -1097,6 +1110,7 @@ def force_review_instance_status_for_tests(instance_id, status, *, actor='system
     return rows[0] if rows else None
 
 
+@native_write
 def mark_review_instance_scheduled(instance_id, *, actor='system'):
     """not-scheduled -> scheduled, once a real booking (date/time) exists on
     the linked CoachCalendarEvent -- see coach_api.views
@@ -1112,6 +1126,7 @@ def mark_review_instance_scheduled(instance_id, *, actor='system'):
     return rows[0] if rows else None
 
 
+@native_write
 def mark_review_instance_not_scheduled(
     instance_id,
     *,
@@ -1171,6 +1186,7 @@ def mark_review_instance_not_scheduled(
     return current
 
 
+@native_write
 def mark_review_instance_in_progress_from_attendance(instance_id, *, started_at, actor='attendance-sync'):
     """The ONLY writer of review_instances.status -> in-progress that reflects
     a real, Microsoft-Graph-confirmed Teams join by an expected coach or
@@ -1309,6 +1325,7 @@ def latest_review_instance_manual_override(review_instance_id):
     return rows[0] if rows else None
 
 
+@native_write
 def mark_review_instance_in_progress_manually(instance_row, *, reason_code, note='', started_at=None, actor='system'):
     """Authorised fallback for scheduled -> in-progress when Microsoft Teams
     attendance cannot be detected (Graph outage, a delayed attendance report,
@@ -1399,6 +1416,7 @@ def mark_review_instance_in_progress_manually(instance_row, *, reason_code, note
     return True, row
 
 
+@native_write
 def link_calendar_event(instance_id, calendar_event_id, *, actor='system'):
     return curriculum_views.update_rows(REVIEW_INSTANCES_TABLE, 'id = %s', [instance_id], {
         'calendar_event_id': calendar_event_id, 'updated_by': actor, 'updated_at': datetime.utcnow(),
@@ -1981,6 +1999,7 @@ def save_review_instance_answers_for_role(instance_row, answers, role, *, actor=
     return save_review_instance_answers(instance_row, answers, actor=actor)
 
 
+@native_write
 def save_review_instance_answers(instance_row, answers, *, actor='system'):
     """Draft save -- merges posted {fieldId: value} into whatever is already
     stored. A conditional field hidden by its parent's current answer is
@@ -2087,6 +2106,7 @@ def review_instance_progress_snapshot(instance_row):
     }
 
 
+@native_write
 def save_review_instance_progress_snapshot(instance_row, snapshot, *, actor='system'):
     """Freeze (or replace) this instance's calculated progress.
 
@@ -2298,6 +2318,7 @@ def _mirror_linked_calendar_after_signature(instance_row, *, status, completed_a
         calendar.save(update_fields=['status', 'review_completed_at', 'updated_at'])
 
 
+@native_write
 def record_review_instance_signature(instance_row, role, *, signed_by, signed_name, signature, actor='system'):
     """Record one party's sign-off and mirror its lifecycle status atomically."""
     if role not in SIGNATURE_ROLES:
@@ -2386,6 +2407,7 @@ def _complete_review_instance_status_rejection(current_status):
     return 'This review cannot be completed from its current status.'
 
 
+@native_write
 def complete_review_instance(instance_row, *, actor='system', answers=None):
     """Finishes the form: validates every visible required field is
     answered, then moves the instance to Awaiting Signature (if the
@@ -2619,6 +2641,7 @@ def _mirror_linked_calendar_after_reopen(instance_row):
     calendar.save(update_fields=['status', 'review_completed_at', 'updated_at'])
 
 
+@native_write
 def reopen_review_instance_for_editing(instance_row, *, reason_code, note='', actor='system'):
     """Authorised awaiting-signature/completed -> in-progress reopen, so a coach
     can correct a finished review and re-complete it.

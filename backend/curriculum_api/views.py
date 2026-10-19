@@ -397,6 +397,9 @@ def ensure_curriculum_epoch_table():
     the table cannot be reached at all, which is the signal to fall back to the
     process-local counter rather than fail a read.
     """
+    from config.management_safety import reconciliation_command
+    if reconciliation_command():
+        return False
     global _CURRICULUM_EPOCH_TABLE_READY
     if _CURRICULUM_EPOCH_TABLE_READY:
         return True
@@ -462,6 +465,9 @@ def shared_curriculum_epoch():
     writes straight through to that memory, so the change-log middleware still
     sees the epoch move across its own request.
     """
+    from config.management_safety import reconciliation_command
+    if reconciliation_command():
+        return 0
     now = time.monotonic()
     with _SHARED_EPOCH_LOCK:
         value = _SHARED_EPOCH_STATE['value']
@@ -913,6 +919,9 @@ def warm_curriculum_caches():
     over. curriculum.components alone is ~18k rows on a remote database and
     dominates the build, so reading it once is most of what warming saves.
     """
+    from config.management_safety import reconciliation_command
+    if reconciliation_command():
+        return
     with curriculum_read_scope():
         for visibility in ('operational', 'all'):
             payload = cached_curriculum_value(
@@ -935,6 +944,9 @@ def warm_curriculum_caches():
 
 
 def _curriculum_warm_loop():
+    from config.management_safety import reconciliation_command
+    if reconciliation_command():
+        return
     global _CURRICULUM_WARM_RUNNING, _CURRICULUM_WARM_REQUESTED
     try:
         while True:
@@ -973,7 +985,8 @@ def schedule_curriculum_warm():
     Returns whether a warm is now scheduled, so callers and tests can tell the
     disabled case from the queued one.
     """
-    if not CURRICULUM_WARM_ENABLED:
+    from config.management_safety import reconciliation_command
+    if reconciliation_command() or not CURRICULUM_WARM_ENABLED:
         return False
     global _CURRICULUM_WARM_RUNNING, _CURRICULUM_WARM_REQUESTED
     with _CURRICULUM_WARM_LOCK:

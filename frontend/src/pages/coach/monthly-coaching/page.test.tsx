@@ -95,6 +95,41 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('restored monthly coaching list', () => {
+  it('keeps valid meetings and an identity warning together through cached navigation', async () => {
+    fetchEvents.mockResolvedValue({ events: meetings, reviewGenerationIssues: [
+      { learnerId: '41', code: 'review_identity_unavailable' },
+      { learnerId: '41', code: 'review_identity_unavailable' },
+    ] });
+    const first = mount();
+    await screen.findByText('Some reviews are unavailable');
+    expect(screen.getByText(/1 learner needs an enrolment record check/)).toBeVisible();
+    expect(screen.getByText('Scheduled Learner')).toBeVisible();
+    first.unmount();
+    fetchEvents.mockImplementation(() => new Promise(() => {}));
+    const cached = mount();
+    expect(screen.getByText('Some reviews are unavailable')).toBeVisible();
+    expect(screen.getByText('Scheduled Learner')).toBeVisible();
+    cached.unmount();
+    coach.email = 'another-coach@example.invalid';
+    mount();
+    expect(screen.queryByText('Some reviews are unavailable')).toBeNull();
+    expect(screen.queryByText('Scheduled Learner')).toBeNull();
+  });
+
+  it('clears a previous identity warning when the next response has no issue', async () => {
+    fetchEvents.mockResolvedValue({ events: meetings, reviewGenerationIssues: [
+      { learnerId: '41', code: 'review_identity_unavailable' },
+    ] });
+    const first = mount();
+    await screen.findByText('Some reviews are unavailable');
+    first.unmount();
+    fetchEvents.mockResolvedValue({ events: meetings });
+    mount();
+    await act(async () => {});
+    expect(screen.queryByText('Some reviews are unavailable')).toBeNull();
+    expect(screen.getByText('Scheduled Learner')).toBeVisible();
+  });
+
   it.each([
     ['Not Scheduled', ['Overdue Learner', 'Due Soon Learner']],
     ['Scheduled', ['Scheduled Learner']],
@@ -227,6 +262,17 @@ describe('restored monthly coaching list', () => {
     expect(within(dialog).getByRole('combobox', { name: 'MCM meeting' })).toHaveValue('mcr:1');
     expect(within(dialog).getByLabelText('Date')).toHaveValue('2026-09-01');
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/monthly-coaching');
+  });
+
+  it('routes a Scheduled imported booking to its own reschedule controls', async () => {
+    fetchEvents.mockResolvedValue({ events: [meeting(31, { eventKey: 'imported-review:31',
+      learner: 'Imported booking', status: 'scheduled', scheduledDate: '2026-09-22',
+      reviewSource: 'aptem', calendarEventKey: 'imported-review:31', reviewTemplateId: undefined })] });
+    mount();
+    await screen.findByText('Imported booking');
+    fireEvent.click(rowMenu('Imported booking').getByRole('menuitem', { name: 'Reschedule' }));
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/meetings/imported-review%3A31');
+    expect(scheduleEvent).not.toHaveBeenCalled();
   });
 
   it('routes imported Aptem meetings to their own booking form', async () => {

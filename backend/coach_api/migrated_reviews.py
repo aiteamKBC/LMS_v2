@@ -13,6 +13,9 @@ FAMILY_BY_SOURCE_TYPE = {
 }
 INITIAL_STATUSES = {"not-scheduled", "scheduled"}
 EDITABLE_STATUSES = {"not-scheduled", "scheduled", "in-progress"}
+# Work after scheduling does not require the optional Start transition.
+# Keep pre-booking drafts distinct from submission and legacy summary edits.
+SCHEDULED_WORK_STATUSES = frozenset({"scheduled", "in-progress"})
 
 # Supported by captured Aptem field metadata, option lists, and saved value shapes.
 FIELD_TYPES = {
