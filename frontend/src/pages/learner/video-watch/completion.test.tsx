@@ -19,7 +19,7 @@ vi.mock('pdfjs-dist', () => ({
 (globalThis as Record<string, unknown>).AppIcon = ({ className }: { className?: string }) => <i className={className} />;
 
 const session = vi.hoisted(() => ({
-  account: { role: 'learner' as 'learner' | 'admin' | 'staff', subjectType: 'learner', subjectId: 1 },
+  account: { role: 'learner' as 'learner' | 'admin' | 'staff', subjectType: 'learner', subjectId: 1, learnerRecordId: null as number | null },
   isInitialized: true,
   outsideWorkingHours: true,
   holidayCalendarReady: true,
@@ -86,7 +86,7 @@ async function finish() {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  Object.assign(session.account, { role: 'learner', subjectType: 'learner', subjectId: 1 });
+  Object.assign(session.account, { role: 'learner', subjectType: 'learner', subjectId: 1, learnerRecordId: null });
   session.isInitialized = true;
   session.outsideWorkingHours = true;
   session.holidayCalendarReady = true;
@@ -521,8 +521,19 @@ it('opens and completes the selected learner activity for an admin using the rea
   expect(session.account.subjectId).toBe(999);
 });
 
-it('keeps an ordinary staff preview read-only without starting or saving learner progress', async () => {
-  Object.assign(session.account, { role: 'staff', subjectType: 'staff', subjectId: 999 });
+it.each(['commercial', 'apprenticeship'])('lets staff complete their own linked %s activity with their staff identity', async kind => {
+  Object.assign(session.account, { role: 'staff', subjectType: 'staff', subjectId: 999, learnerRecordId: 1 });
+  mount('C1', kind);
+  await finish();
+  expect(await screen.findByRole('status')).toHaveTextContent('Completed');
+  expect(screen.queryByText('You are viewing this learner read-only')).not.toBeInTheDocument();
+  expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({ timeTakenSeconds: 1200 }));
+  expect(session.account.role).toBe('staff');
+  expect(session.account.subjectId).toBe(999);
+});
+
+it.each([null, 2])('keeps staff with linked learner %s read-only on somebody else’s activity', async learnerRecordId => {
+  Object.assign(session.account, { role: 'staff', subjectType: 'staff', subjectId: 999, learnerRecordId });
   mount();
   expect(await screen.findByText('You are viewing this learner read-only')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Finish' })).not.toBeInTheDocument();

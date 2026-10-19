@@ -31,6 +31,10 @@ def project_replacement_hours(records, payload, modules, courses):
 
 
 def read_replacement_hours(enrolment_id, source, owner, records, payload):
+    # No owned old course can contribute successor hours. Avoid re-reading the
+    # effective assignment and replacement mapping for native-only learners.
+    if not payload.get('subjects'):
+        return {}
     from django.db import connections
     from .student_activity import _effective_current_subjects
     from .subject_origins import read_replacement_courses

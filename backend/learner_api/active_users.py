@@ -139,6 +139,21 @@ def otjh_progress_dedupe_key(record, index=0):
     return f"entry:{index}"
 
 
+def _selected_timer_seconds(record):
+    """An explicit Timer choice keeps its saved duration, including resumed time.
+
+    Older saves can retain unrelated reflection text in reported_time. The
+    selected duration is claimed_seconds; verified_seconds is separate evidence
+    capped to the signed session, which may cover only the resumed portion.
+    """
+    source = _progress_text(record, "timeTrackingSource", "time_tracking_source").lower()
+    if not source.endswith(":timer") or "import" in source:
+        return None
+    seconds = _number(record.get("claimedSeconds") if record.get("claimedSeconds") is not None
+                      else record.get("claimed_seconds"))
+    return seconds if seconds is not None and 0 <= seconds < float("inf") else None
+
+
 def _manual_claimed_seconds(record):
     claimed = _number(
         record.get("claimedSeconds") if record.get("claimedSeconds") is not None
@@ -158,6 +173,10 @@ def _manual_claimed_seconds(record):
 
 def _progress_record_minutes(record):
     """Comparable OTJ value for choosing the best attempt of one activity."""
+    timer_seconds = _selected_timer_seconds(record)
+    if timer_seconds is not None:
+        return timer_seconds / 60
+
     manual_seconds = _manual_claimed_seconds(record)
     if manual_seconds is not None:
         return manual_seconds / 60
@@ -538,9 +557,10 @@ def _normalise_component_ksb_mappings(value):
 def completed_hours_value_from_progress(progress, components=None):
     """Unrounded hours the learner has declared, for exact OTJ roll-ups.
 
-    A learner-entered Time spent value (`claimedSeconds` with input provenance)
-    is authoritative when present, followed by the reflection's `reportedTime`.
-    The server-verified timer is used only when neither input was supplied.
+    An explicit Timer choice uses its saved `claimedSeconds`. Otherwise a
+    learner-entered Time spent value (`claimedSeconds` with input provenance)
+    is authoritative, followed by the reflection's `reportedTime`. The verified
+    session timer is used only when neither input was supplied.
 
     Rows predating time tracking carry no verified time at all; those still
     fall back to the authored hours, because dropping them would silently zero
@@ -552,6 +572,10 @@ def completed_hours_value_from_progress(progress, components=None):
     hours = 0.0
     for record in dedupe_otjh_progress_records(progress):
         component_id = _s(record.get("componentId"))
+        timer_seconds = _selected_timer_seconds(record)
+        if timer_seconds is not None:
+            hours += timer_seconds / 3600
+            continue
         manual_seconds = _manual_claimed_seconds(record)
         if manual_seconds is not None:
             hours += manual_seconds / 3600

@@ -44,8 +44,9 @@ export function SlideDeckViewer({ src, title, fallback, onReady }: SlideDeckView
     setError(null);
     setIndex(0);
     fetchSlideDeck(src, controller.signal)
-      .then(setDeck)
+      .then(result => { if (!controller.signal.aborted) setDeck(result); })
       .catch((cause: unknown) => {
+        if (controller.signal.aborted) return;
         if (cause instanceof DOMException && cause.name === 'AbortError') return;
         setError(cause instanceof Error ? cause.message : 'The slides could not be loaded.');
       });

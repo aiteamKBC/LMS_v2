@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import test_session_results_no_db as base
-from curriculum_api.attendance_link_policy import apply_reviewed_identities, link_specs, unmatched_roster
+from curriculum_api.attendance_link_policy import apply_reviewed_identities, link_specs, unmatched_roster, attendance_bot
 from curriculum_api.session_results_policy import session_roster
 
 
@@ -421,6 +421,18 @@ class SharedModuleRosterTests(unittest.TestCase):
         self.assertIn('teams_shared_source_module_id', query)
         self.assertIn('learner_training_plan_modules', query)
         self.assertEqual(params, ['DEST', ['SOURCE-O']])
+
+
+class AttendanceBotReviewTests(unittest.TestCase):
+    def test_explicit_assistants_are_hidden_but_unknown_humans_are_not(self):
+        for name in ('Example Notetaker', "Example's Fathom Notetaker", 'Fireflies.ai Notetaker Example', 'Example Note-taker'):
+            with self.subTest(name=name):
+                self.assertTrue(attendance_bot({'display_name': name}))
+        for name in ('Unknown Guest', 'Aniko', 'Robert Botley', 'Fathom', 'Guest 123'):
+            with self.subTest(name=name):
+                self.assertFalse(attendance_bot({'display_name': name}))
+        self.assertTrue(attendance_bot({'email': 'recorder@fireflies.ai'}))
+        self.assertFalse(attendance_bot({'email': 'fireflies.ai@example.invalid'}))
 
 
 if __name__ == '__main__':

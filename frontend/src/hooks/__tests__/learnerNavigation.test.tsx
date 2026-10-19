@@ -5,6 +5,8 @@ import { fetchLearnerDetail, invalidateLearnerDetailCache, type LearnerDetail } 
 import { fetchStudentActivity } from '@/api/studentActivity';
 import { useLearnerDetailParam } from '../useLearnerDetailParam';
 import { usePrefetchStudentActivity } from '../usePrefetchStudentActivity';
+import { useStudentActivity } from '../useStudentActivity';
+import { StrictMode } from 'react';
 
 const learner = { id: '125', name: 'Learner', studentActivityAvailable: true, components: [] } as unknown as LearnerDetail;
 const reply = (data: unknown) => new Response(JSON.stringify(data));
@@ -19,6 +21,12 @@ beforeEach(() => {
 afterEach(() => { clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('learner navigation with the real request cache', () => {
+  it('shares the My Learning catalogue across StrictMode remounts', async () => {
+    vi.mocked(fetch).mockResolvedValue(reply({ activities: [], subjects: [] }));
+    const { result } = renderHook(() => useStudentActivity('commercial', '125', true, 'my-learning'), { wrapper: StrictMode });
+    await waitFor(() => expect(result.current.data?.activities).toEqual([]));
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it('shows the prior plan immediately after expiry while a single refresh is in flight', async () => {
     let finish!: (response: Response) => void;
     vi.mocked(fetch).mockResolvedValueOnce(reply(learner))

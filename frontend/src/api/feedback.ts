@@ -1,5 +1,5 @@
 export type FeedbackFormStatus = 'draft' | 'published' | 'closed';
-export type FeedbackFormType = 'general' | 'post_lecture' | 'post_event' | 'event_rsvp';
+export type FeedbackFormType = 'general' | 'post_lecture' | 'post_event' | 'event_rsvp' | 'post_mcm_review' | 'post_progress_review';
 export type FeedbackDeliveryScope = 'manual' | 'all_modules' | 'module';
 export type FeedbackQuestionType = 'short_text' | 'long_text' | 'yes_no' | 'single_choice' | 'multiple_choice' | 'dropdown' | 'rating' | 'likert' | 'number' | 'date' | 'name' | 'email' | 'photo_upload';
 export interface FeedbackNameAnswer { firstName: string; lastName: string }
@@ -12,7 +12,15 @@ export interface FeedbackQuestion {
   text: string;
   required: boolean;
   helpText: string;
-  config: { options?: string[]; min?: number; max?: number; minLabel?: string; maxLabel?: string };
+  config: {
+    options?: string[];
+    min?: number;
+    max?: number;
+    minLabel?: string;
+    maxLabel?: string;
+    display?: 'stars' | 'numbers';
+    labels?: string[];
+  };
   sortOrder?: number;
   answer?: FeedbackAnswerValue;
 }
@@ -56,6 +64,7 @@ export interface FeedbackForm {
   sections?: FeedbackSection[];
   response?: { id: number | null; status: LearnerFeedbackStatus; answers: Record<string, FeedbackAnswerValue>; submittedAt: string | null };
   delivery?: { id: number; occurrenceKey: string; sessionTitle: string; startsAt: string | null; endsAt: string | null } | null;
+  reviewDelivery?: { id: number; reviewType: string; reviewName: string; completedAt: string } | null;
 }
 
 export interface FeedbackFormVersion {
@@ -111,7 +120,9 @@ export interface LearnerFeedbackListItem {
   id: number; title: string; description: string; assignedAt: string | null;
   dueDate: string | null; status: LearnerFeedbackStatus; responseId: number | null;
   deliveryId: number | null; sessionTitle: string; sessionStartsAt: string | null;
+  formType: FeedbackFormType; moduleName: string;
   eventRecipientId?: number | null;
+  reviewDeliveryId?: number | null;
 }
 
 export interface FeedbackResponse {
@@ -130,7 +141,7 @@ export interface FeedbackAnalyticsData {
 export interface FeedbackLearnerOption { id: string; name: string; email: string; programme: string; cohort: string }
 export interface FeedbackRecipient {
   key: string; learnerId: string; learnerName: string; email: string; programme: string;
-  source: 'manual' | 'attendance' | 'event_attendance'; deliveryId: number | null; occurrenceKey: string;
+  source: 'manual' | 'attendance' | 'event_attendance' | 'completed_review'; deliveryId: number | null; occurrenceKey: string;
   sourceKey: string; sourceType: 'manual' | 'lecture' | 'event' | string;
   sourceLabel: string; sourceTitle: string; sourceSubtitle: string; sourceStartsAt: string | null;
   sessionTitle: string; sessionStartsAt: string | null; moduleName: string;
@@ -222,14 +233,18 @@ export const feedbackApi = {
   myForms: (learnerId?: string | number | null) => request<{ forms: LearnerFeedbackListItem[] }>(`/my-forms/${learnerPreviewQuery(learnerId)}`),
   myForm: (id: number, learnerId?: string | number | null) => request<{ form: FeedbackForm }>(`/my-forms/${id}/${learnerPreviewQuery(learnerId)}`),
   myDelivery: (id: number, learnerId?: string | number | null) => request<{ form: FeedbackForm }>(`/my-deliveries/${id}/${learnerPreviewQuery(learnerId)}`),
+  myReviewDelivery: (id: number, learnerId?: string | number | null) => request<{ form: FeedbackForm }>(`/my-review-deliveries/${id}/${learnerPreviewQuery(learnerId)}`),
   myEventForm: (recipientId: number, formId: number, learnerId?: string | number | null) => request<{ form: FeedbackForm }>(`/my-event-recipients/${recipientId}/forms/${formId}/${learnerPreviewQuery(learnerId)}`),
   saveResponse: (id: number, answers: Record<string, FeedbackAnswerValue>, submit = false) => request<{ response: { id: number; status: string; submittedAt: string | null; updatedAt: string } }>(`/my-forms/${id}/response/`, { method: 'POST', body: JSON.stringify({ answers, submit }) }),
   saveDeliveryResponse: (id: number, answers: Record<string, FeedbackAnswerValue>, submit = false) => request<{ response: { id: number; status: string; submittedAt: string | null; updatedAt: string } }>(`/my-deliveries/${id}/response/`, { method: 'POST', body: JSON.stringify({ answers, submit }) }),
+  saveReviewDeliveryResponse: (id: number, answers: Record<string, FeedbackAnswerValue>, submit = false) => request<{ response: { id: number; status: string; submittedAt: string | null; updatedAt: string } }>(`/my-review-deliveries/${id}/response/`, { method: 'POST', body: JSON.stringify({ answers, submit }) }),
   saveEventResponse: (recipientId: number, formId: number, answers: Record<string, FeedbackAnswerValue>, submit = false) => request<{ response: { id: number; status: string; submittedAt: string | null; updatedAt: string } }>(`/my-event-recipients/${recipientId}/forms/${formId}/response/`, { method: 'POST', body: JSON.stringify({ answers, submit }) }),
-  uploadPhoto: async (formId: number, questionId: number, file: File, deliveryId?: number): Promise<FeedbackPhotoAnswer> => {
+  uploadPhoto: async (formId: number, questionId: number, file: File, deliveryId?: number, reviewDeliveryId?: number): Promise<FeedbackPhotoAnswer> => {
     const formData = new FormData();
     formData.append('photo', file);
-    const path = deliveryId ? `/my-deliveries/${deliveryId}/questions/${questionId}/photo/` : `/my-forms/${formId}/questions/${questionId}/photo/`;
+    const path = reviewDeliveryId
+      ? `/my-review-deliveries/${reviewDeliveryId}/questions/${questionId}/photo/`
+      : deliveryId ? `/my-deliveries/${deliveryId}/questions/${questionId}/photo/` : `/my-forms/${formId}/questions/${questionId}/photo/`;
     const response = await fetch(`${BASE}${path}`, {
       method: 'POST', credentials: 'include', body: formData,
       headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': await csrfToken() },

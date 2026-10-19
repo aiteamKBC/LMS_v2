@@ -87,7 +87,9 @@ describe('original imported course identity', () => {
   });
 
   it.each(['commercial', 'apprenticeship'])('shows the old record once with preserved hours and source filters for %s', async kind => {
-    vi.spyOn(api, 'subjectRequest').mockResolvedValue(metadata);
+    vi.spyOn(api, 'subjectRequest').mockImplementation(async <T,>(url: string) => url.includes('subject-covers') ? metadata as T
+      : { title: 'Original lesson', reading_html: '<p>Original saved material</p>', media: [], quiz: null,
+        available: true, completed: true, can_attempt: false, history: [], historical: { answers: [] } } as T);
     const schedule = { modules: [{ id: 'IMPORTED', title, total_otjh: 2 }], moduleLinks: {}, generatedAt: '' } as LearningSchedule;
     render(<MemoryRouter><StudentActivityPanel data={history} real={real} kind={kind} learnerId="12"
       schedule={schedule} moduleProgress={{ IMPORTED: { hours: { actual: 0.5 }, ksb: { completed: 0, total: 0 }, attendance: { attended: 0, total: 0 } } }}
@@ -104,6 +106,8 @@ describe('original imported course identity', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Old LMS' }));
     expect(screen.getAllByRole('button', { name: /Open subject/ })).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: /Old LMS.*Open subject/ }));
+    expect(screen.getByRole('group', { name: 'Original lesson 1 activity' })).toHaveTextContent('Complete');
+    fireEvent.click(within(screen.getByRole('complementary', { name: 'Module activities' })).getByRole('button', { name: /Original lesson 4/ }));
     expect(screen.getByRole('group', { name: 'Original lesson 4 activity' })).toHaveTextContent('Complete');
     expect(screen.queryByText('Imported copy 1')).not.toBeInTheDocument();
   });
@@ -179,7 +183,10 @@ describe('original imported course identity', () => {
     expect(screen.getAllByRole('button', { name: /Open subject/ })).toHaveLength(1);
     expect(screen.queryByRole('button', { name: 'Open updated plan' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Old LMS.*Open subject/ }));
-    expect(screen.getByRole('group', { name: 'Imported copy 1 activity' })).toHaveTextContent('Complete');
+    const sidebar = within(screen.getByRole('complementary', { name: 'Module activities' }));
+    expect(sidebar.getByRole('button', { name: /^Reading\s*Imported copy 1$/ })).toBeVisible();
+    expect(sidebar.getByRole('button', { name: /^Reading\s*Imported copy 2$/ })).toBeVisible();
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '50');
     expect(screen.getByRole('group', { name: 'Imported copy 2 activity' })).toHaveTextContent('Not complete');
     fireEvent.click(screen.getByText('Previous learning record'));
     expect(screen.getByRole('group', { name: 'Original lesson 4 activity' })).toHaveTextContent('Complete');

@@ -12,6 +12,7 @@ from django.utils import timezone
 from login.permissions import learner_self_or_staff
 
 from .learner_detail import SOURCE_MODELS
+from .projection_performance import projection_call, projection_operation
 from .student_activity_access import student_activity_available
 from .teams_attendance import fetch_verified_teams_attendance_rows
 
@@ -116,29 +117,29 @@ def fetch_kbc_attendance_rows(*, aptem_id, learner_id, learner_name, learner_ema
         identity_sql = 'lower(trim("Email")) = %s'
         identity_param = email_key
 
-    with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10) as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                f'''
-                SELECT "key", "date", "Attendance", attendance_status,
-                       module, lecture_name, created_at AS updated_at
-                FROM public.kbc_attendance
-                WHERE {identity_sql}
-                  AND "Attendance" IN (0, 1)
-                  AND "date" IS NOT NULL
-                ORDER BY "date" DESC, "key"
-                ''',
-                [identity_param],
-            )
-            return [
-                _normalize_kbc_attendance_row(
-                    row,
-                    learner_id=learner_id,
-                    learner_name=learner_name,
-                    learner_email=learner_email,
+    with projection_operation('kbc_total'):
+        with projection_operation('kbc_connect'):
+            connection = psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10)
+        with connection as conn, conn.cursor() as cursor:
+            with projection_operation('kbc_execute'):
+                cursor.execute(
+                    f'''
+                    SELECT "key", "date", "Attendance", attendance_status,
+                           module, lecture_name, created_at AS updated_at
+                    FROM public.kbc_attendance
+                    WHERE {identity_sql}
+                      AND "Attendance" IN (0, 1)
+                      AND "date" IS NOT NULL
+                    ORDER BY "date" DESC, "key"
+                    ''',
+                    [identity_param],
                 )
-                for row in cursor.fetchall()
-            ]
+            with projection_operation('kbc_fetch'):
+                rows = cursor.fetchall()
+            with projection_operation('kbc_decode'):
+                return [_normalize_kbc_attendance_row(row, learner_id=learner_id,
+                    learner_name=learner_name, learner_email=learner_email) for row in rows]
+
 
 
 def fetch_kbc_attendance_rows_bulk(learners, *, recent_dates=None, correction_keys=()):
@@ -402,13 +403,24 @@ def _summarize_attendance(rows, *, now=None, overview_only=False):
     }
 
 
-def combined_attendance_rows(source):
+def combined_attendance_rows(source, *, credit_projection=False, register_schedule=None):
     """Refresh KBC on every server read and merge actual Teams occurrences."""
     rows = kbc_attendance_rows(source)
     # The shared Teams reader groups reconnects by occurrence and email and
     # excludes sessions without a finished attendance report. IDs here refer
     # to LearnerProfile, so use the verified email and check enrolment linkage.
-    teams = fetch_verified_teams_attendance_rows(learner_emails=[source.email]) if source.email else []
+    options = {}
+    if credit_projection:
+        profile = getattr(source, '_case_file_profile', None)
+        owner = getattr(source, '_canonical_profile', None)
+        if (profile is not None and owner is not None
+                and str(owner['id']) == str(profile.pk)
+                and str(profile.enrolment_id) == str(source.id)):
+            options['verified_profile'] = profile
+        options['include_group_metadata'] = False
+        if register_schedule is not None:
+            options['register_schedule'] = register_schedule
+    teams = projection_call('teams_reports', fetch_verified_teams_attendance_rows, learner_emails=[source.email], **options) if source.email else []
     for row in teams:
         if str(row.get('enrolment_id')) != str(source.id):
             continue

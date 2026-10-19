@@ -18,13 +18,17 @@ export function useSubjectMetadata(data: StudentActivityResponse | null, real: L
   useEffect(() => {
     if (!enabled || !learnerId) return;
     const controller = new AbortController();
-    const revalidate = retry > 0 || (previousRequest.current?.key === key && previousRequest.current.real !== real);
+    // The assigned-only endpoint resolves assignments by learner ID. Arrival
+    // of the first detail response does not change that resource. Subsequent
+    // detail refreshes can change membership and must still revalidate it.
+    const revalidate = retry > 0 || (previousRequest.current?.key === key
+      && previousRequest.current.real !== real && (!assignedOnly || previousRequest.current.real !== null));
     previousRequest.current = { key, real };
     void subjectRequest<CoverMetadata>(`/learner_api/subject-covers/${encodeURIComponent(learnerId)}/?refs=${encodeURIComponent(refs)}`, { signal: controller.signal, revalidate })
       .then((result) => { if (!controller.signal.aborted) setState({ key, real, data: result, error: '' }); })
       .catch(() => { if (!controller.signal.aborted) setState({ key, real, data: null, error: 'Could not load your subject details. Please try again.' }); });
     return () => controller.abort();
-  }, [enabled, learnerId, refs, key, retry, real]);
+  }, [enabled, learnerId, refs, key, retry, real, assignedOnly]);
   const current = state?.key === key && state.real === real ? state : null;
   return { metadata: current?.data ?? (enabled && learnerId ? peekLearnerJson<CoverMetadata>(url) : undefined), error: current?.error || '', retry: () => { setState(null); setRetry((value) => value + 1); } };
 }

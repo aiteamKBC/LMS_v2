@@ -122,6 +122,7 @@ def _attempts(learner):
         # Attempt storage has no measured duration: never copy audited hours or
         # manufacture elapsed time from the time between opening and submission.
         result.append(row(f"subject:{a['id']}", a['submitted_at'], definition.get('title'),
+                          'Quiz' if definition.get('catalogue_kind') == 'quiz' else
                           'Reading+Quiz' if definition.get('quiz') else 'Learning', results=results,
                           group=a['group_name'], note='Submitted on this platform. No activity time was recorded.'))
     return result
@@ -283,16 +284,20 @@ def activity_content(learner, item):
             WHERE id=%s AND enrolment_id=%s AND aptem_id=%s AND submitted_at IS NOT NULL''',
             [ref.split(':', 1)[1], learner['id'], learner['aptem_id']])
         if records:
-            from .student_activity import _owned_material, _definition_for, _local_pdf_urls
+            from .student_activity import _owned_material, _owned_quiz, _definition_for, _local_pdf_urls
             a = records[0]
+            definition = decoded(a['definition'], {})
             kind = (learner.get('_profile') or {}).get('learner_type') or 'apprenticeship'
-            _aptem_id, stored = _owned_material(kind, learner['id'], a['group_id'], a['activity_id'])
-            material = _local_pdf_urls(_definition_for(stored), kind, learner['id'], a['group_id'], a['activity_id'])
-            if material.get('reading_html'):
-                parts.append(_part(item, html=material['reading_html']))
-            for media in material.get('media', []):
-                parts.append(_part(item, id=item['id'] + len(parts), url=media['url'], title=media['title']))
-            html = _answers_html(decoded(a['definition'], {}), decoded(a['answers'], {}))
+            if definition.get('catalogue_kind') == 'quiz':
+                _owned_quiz(kind, learner['id'], a['group_id'], a['activity_id'])
+            else:
+                _aptem_id, stored = _owned_material(kind, learner['id'], a['group_id'], a['activity_id'])
+                material = _local_pdf_urls(_definition_for(stored), kind, learner['id'], a['group_id'], a['activity_id'])
+                if material.get('reading_html'):
+                    parts.append(_part(item, html=material['reading_html']))
+                for media in material.get('media', []):
+                    parts.append(_part(item, id=item['id'] + len(parts), url=media['url'], title=media['title']))
+            html = _answers_html(definition, decoded(a['answers'], {}))
             if html:
                 parts.append(_part(item, id=item['id'] + len(parts), title='Saved quiz attempt', html=html))
     elif item.get('component_ref'):

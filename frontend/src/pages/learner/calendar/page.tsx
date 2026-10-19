@@ -39,7 +39,7 @@ import {
 import { meetingBookingWarning } from '../reviews/meetingBooking';
 import { useImportedMeetingBooking } from '../reviews/useImportedMeetingBooking';
 import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
-import { firstAvailableBookingDate, parseBookingDay } from '../reviews/bookingDates';
+import { firstAvailableBookingDate, mcmBookingDateRestrictionMessage, parseBookingDay } from '../reviews/bookingDates';
 import CoachSessionTypePicker, { COACH_APPROVAL_SESSION_TYPES } from './CoachSessionTypePicker';
 
 /** The header's secondary-actions menu — everything that isn't booking a
@@ -833,12 +833,12 @@ function LearnerCalendarBody() {
     return null;
   }, [bankHolidayByDate, bookingCalendar, bookingToday]);
   const selectedDateRestriction = bookingDateRestriction(selectedIso);
-  const bookDateRestriction = bookingDateRestriction(bookDate);
+  const bookDateRestriction = bookingDateRestriction(bookDate) || (bookType === 'mcr' ? mcmBookingDateRestrictionMessage(bookDate) : null);
   const openBookSession = useCallback((date?: string, sourceEvent?: CalendarEvent | null) => {
     setRescheduleEvent(null);
     setBookingSourceEvent(sourceEvent || null);
     setBookType(sourceEvent?.bookingSessionType || 'catch-up');
-    setBookDate(firstAvailableBookingDate(date || bookingToday, bookingCalendar));
+    setBookDate(firstAvailableBookingDate(date || bookingToday, bookingCalendar, sourceEvent?.bookingSessionType === 'mcr'));
     setBookTime('09:00');
     setBookDuration(String(sourceEvent?.durationMinutes || 60));
     setBookNotes('');
@@ -1084,7 +1084,7 @@ function LearnerCalendarBody() {
 
   const handleBookSession = async () => {
     if (bookSubmitting) return;
-    const restrictedDate = bookingDateRestriction(bookDate);
+    const restrictedDate = bookDateRestriction;
     if (restrictedDate) {
       setBookError(restrictedDate);
       return;

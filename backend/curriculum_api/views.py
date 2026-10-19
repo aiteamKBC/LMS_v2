@@ -30239,6 +30239,27 @@ def _scope_learner_roster_payload_uncached(request, scope, identifier):
         if cohort_name and group_name:
             by_group[f'{cohort_name}||{group_name}'] += 1
 
+    # Bulk Attendance only needs the placement identity to intersect this
+    # roster with the KBC directory. Avoid serialising hours, coaching and
+    # progress fields for that screen; the compact projection keeps the same
+    # endpoint contract for every other caller while making its response much
+    # smaller over the remote database connection.
+    compact = truthy(request.GET.get('compact'))
+    assigned_learners = learners
+    if compact:
+        assigned_learners = [
+            {
+                'id': row.get('id'),
+                'name': row.get('name') or '',
+                'email': row.get('email') or '',
+                'cohort': row.get('cohort') or '',
+                'group': row.get('group') or '',
+                'cohortId': row.get('cohortId') or '',
+                'groupId': row.get('groupId') or '',
+            }
+            for row in learners
+        ]
+
     return {
         'scope': scope,
         'identifier': identifier,
@@ -30248,7 +30269,7 @@ def _scope_learner_roster_payload_uncached(request, scope, identifier):
         'source': 'enrolment',
         'editable': False,
         'assignedLearnerCount': len(learners),
-        'assignedLearners': learners,
+        'assignedLearners': assigned_learners,
         'countsByCohort': dict(by_cohort),
         'countsByGroup': dict(by_group),
     }
@@ -30278,7 +30299,8 @@ def scope_learner_roster_entry(request, scope, identifier):
     learner_status = clean_str(request.GET.get('learnerStatus') or request.GET.get('status')).lower()
     cohort = normalise(clean_str(request.GET.get('cohort')))
     group = normalise(clean_str(request.GET.get('group')))
-    key = f'learner-roster-response:{scope}:{identifier}:{learner_status}:{cohort}:{group}'
+    compact = '1' if truthy(request.GET.get('compact')) else '0'
+    key = f'learner-roster-response:{scope}:{identifier}:{learner_status}:{cohort}:{group}:{compact}'
     return cached_curriculum_value(
         key,
         lambda: encode_json_entry(_scope_learner_roster_payload_uncached(request, scope, identifier)),

@@ -7,10 +7,11 @@ import type { LearnerDetail } from '@/api/learnerDetail';
 import type { LearningSchedule } from '@/api/learnerOverview';
 import * as api from '@/api/studentActivity';
 import * as reads from '@/api/learnerRead';
-import { ModulesTab, QuizzesTab, StudentActivityPanel } from './page';
+import { QuizzesTab, StudentActivityPanel } from './page';
 import { StudentMaterial } from './StudentMaterial';
 import { buildUnifiedLearningSummary, subjectsFrom } from './learningSummary';
 import { useSubjectMetadata } from './useSubjectLearningData';
+import { CompactModules } from './CompactModules';
 
 // AppIcon is normally supplied by the app build's auto-import plugin.
 vi.stubGlobal('AppIcon', () => <span />);
@@ -43,6 +44,12 @@ function weekProgress() {
 
 describe('learner subject cards', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it('does not describe successfully verified canonical history as a failed refresh', () => {
+    render(<StudentActivityPanel data={{ ...data, source_status: 'historical', verification_status: 'verified' }} loading={false} error={null} onRetry={vi.fn()} />);
+    expect(screen.queryByText(/The latest results could not be verified/)).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Leadership' })).toBeVisible();
+  });
 
   it('labels and filters old LMS courses separately from assigned new Curriculum modules', async () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({
@@ -171,8 +178,8 @@ describe('learner subject cards', () => {
     expect(screen.queryByText('Upload image')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Updated Leadership/ }));
     selectMonthWeek('Undated activities');
-    expect(screen.getByRole('group', { name: 'Introduction activity' })).toBeVisible();
-    expect(screen.getByText('Complete')).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Reflection activity' })).toBeVisible();
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '50');
     expect(container.querySelector('input[type="file"]')).toBeNull();
   });
 
@@ -186,21 +193,7 @@ describe('learner subject cards', () => {
     expect(screen.getByRole('img', { name: 'Updated Leadership cover' })).toHaveAttribute('src', '/assets/my-learning/default-module-cover.png');
   });
 
-  it('loads on opening Modules and ignores an old learner response after navigation', async () => {
-    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
-    let resolveAnna!: (value: StudentActivityResponse) => void;
-    const fetch = vi.spyOn(api, 'fetchStudentActivity')
-      .mockImplementationOnce(() => new Promise((resolve) => { resolveAnna = resolve; }))
-      .mockResolvedValueOnce({ ...data, learner_name: 'Amy-Marie Field' });
-    const real = { studentActivityAvailable: true } as LearnerDetail;
-    const { rerender } = render(<ModulesTab key="132" real={real} loading={false} loadError={null} kind="commercial" id="132" />);
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith('commercial', '132', expect.any(AbortSignal), false));
-    rerender(<ModulesTab key="133" real={real} loading={false} loadError={null} kind="commercial" id="133" />);
-    expect(await screen.findByText('Amy-Marie Field')).toBeInTheDocument();
-    await act(async () => { resolveAnna(data); });
-    expect(screen.queryByText('Anna Rundell')).not.toBeInTheDocument();
-    expect(fetch.mock.calls[0][2]?.aborted).toBe(true);
-  });
+
   it('opens a subject card and distinguishes missing OTJH from recorded zero', () => {
     render(<StudentActivityPanel data={data} loading={false} error={null} onRetry={vi.fn()} />);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -211,7 +204,7 @@ describe('learner subject cards', () => {
     fireEvent.click(module);
     selectMonthWeek('Undated activities');
     expect(screen.getByRole('button', { name: 'All subjects' })).toBeInTheDocument();
-    expect(screen.getByText('Complete')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '50');
     expect(screen.getByText('Not complete')).toBeInTheDocument();
     expect(screen.getByRole('group', { name: 'Reflection activity' })).toBeVisible();
     expect(screen.getByText(/OTJH: Unavailable/)).toBeInTheDocument();
@@ -371,20 +364,6 @@ describe('subjects shared with Module Builder', () => {
     expect(summary.completedActivityCount).toBe(1);
   });
 
-  it('renders cached subjects immediately while activity and metadata revalidate', async () => {
-    let finishActivity!: (value: StudentActivityResponse) => void;
-    let finishMetadata!: (value: typeof linkedMetadata) => void;
-    vi.spyOn(api, 'peekStudentActivity').mockReturnValue(data);
-    vi.spyOn(reads, 'peekLearnerJson').mockReturnValue(linkedMetadata);
-    vi.spyOn(api, 'fetchStudentActivity').mockImplementation(() => new Promise(resolve => { finishActivity = resolve; }));
-    vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise(resolve => { finishMetadata = resolve; }));
-    render(<ModulesTab real={linkedReal} loading={false} loadError={null} kind="commercial" id="132" />);
-    expect(screen.getByRole('button', { name: /New LMS.*Leadership/ })).toBeVisible();
-    expect(screen.getByText('1 of 3 completed')).toBeVisible();
-    expect(screen.queryByText('Loading subjects')).not.toBeInTheDocument();
-    await act(async () => { finishActivity(data); finishMetadata(linkedMetadata); });
-    expect(screen.getByText('1 of 3 completed')).toBeVisible();
-  });
 
   it('opens a native module directly in its activity player without month or week clicks', async () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
@@ -411,9 +390,10 @@ describe('subjects shared with Module Builder', () => {
     const headings = within(screen.getByRole('complementary', { name: 'Module activities' })).getAllByRole('heading', { level: 3 });
     expect(headings[0]).toHaveTextContent('Introduction');
     expect(headings[1]).toHaveTextContent('October 2026');
-    expect(weekProgress()).toHaveAttribute('aria-valuenow', '100');
+    expect(weekProgress()).toHaveAttribute('aria-valuenow', '0');
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '50');
     selectMonthWeek('Introduction');
+    expect(weekProgress()).toHaveAttribute('aria-valuenow', '100');
     expect(screen.getByRole('group', { name: 'Welcome activity' })).toBeVisible();
     expect(screen.getByText('First lecture')).not.toBeVisible();
   });
@@ -455,24 +435,6 @@ describe('subjects shared with Module Builder', () => {
     expect(subject.activities[1].schedule.month).toBe('undated');
   });
 
-  it('loads history and metadata together, publishing cards only when both are ready', async () => {
-    let finishActivity!: (value: StudentActivityResponse) => void;
-    let finishMetadata!: (value: typeof linkedMetadata) => void;
-    vi.spyOn(api, 'fetchStudentActivity').mockImplementation(() => new Promise(resolve => { finishActivity = resolve; }));
-    const metadata = vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise(resolve => { finishMetadata = resolve; }));
-    render(<ModulesTab real={linkedReal} loading={false} loadError={null} kind="commercial" id="132" />);
-    expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
-    expect(screen.queryByRole('button', { name: /New LMS.*Leadership/ })).not.toBeInTheDocument();
-    expect(metadata).toHaveBeenCalledOnce();
-    expect(metadata).toHaveBeenCalledWith('/learner_api/subject-covers/132/?refs=', expect.objectContaining({ signal: expect.any(AbortSignal) }));
-    await act(async () => finishActivity(data));
-    expect(metadata).toHaveBeenCalledOnce();
-    expect(screen.queryByRole('region', { name: 'Your subjects' })).not.toBeInTheDocument();
-    await act(async () => finishMetadata(linkedMetadata));
-    expect(screen.getAllByRole('button', { name: /New LMS.*Leadership/ })).toHaveLength(1);
-    expect(screen.getByText('1 of 3 completed')).toBeInTheDocument();
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
-  });
 
   it.each(['legacy', 'native'])('waits for metadata even when only %s data has arrived', async source => {
     let finish!: (value: typeof linkedMetadata) => void;
@@ -485,34 +447,6 @@ describe('subjects shared with Module Builder', () => {
     expect(screen.getByRole('region', { name: 'Your subjects' })).toBeInTheDocument();
   });
 
-  it('keeps the complete cards and search while refreshed learner, activities and links arrive', async () => {
-    let finishActivity!: (value: StudentActivityResponse) => void;
-    let finishMetadata!: (value: typeof linkedMetadata) => void;
-    const activity = vi.spyOn(api, 'fetchStudentActivity').mockResolvedValueOnce(data)
-      .mockImplementationOnce(() => new Promise(resolve => { finishActivity = resolve; }));
-    const metadata = vi.spyOn(api, 'subjectRequest').mockResolvedValueOnce(linkedMetadata)
-      .mockImplementationOnce(() => new Promise(resolve => { finishMetadata = resolve; }));
-    const props = { kind: 'commercial' as const, id: '132', loadError: null };
-    const { rerender } = render(<ModulesTab {...props} real={linkedReal} loading={false} />);
-    const card = await screen.findByRole('button', { name: /New LMS.*Leadership/ });
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search modules or activities' }), { target: { value: 'Leadership' } });
-    rerender(<ModulesTab {...props} real={linkedReal} loading />);
-    expect(screen.getByRole('button', { name: /New LMS.*Leadership/ })).toBe(card);
-    const refreshed = { ...linkedReal, components: linkedReal.components.slice(0, 2) };
-    rerender(<ModulesTab {...props} real={refreshed} loading={false} />);
-    expect(screen.getByText('1 of 3 completed')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /New LMS.*Leadership/ })).toBe(card);
-    expect(metadata).toHaveBeenCalledTimes(2);
-    await act(async () => finishActivity(data));
-    expect(screen.getByText('1 of 3 completed')).toBeInTheDocument();
-    expect(metadata).toHaveBeenCalledTimes(2);
-    await act(async () => finishMetadata(linkedMetadata));
-    expect(within(screen.getByRole('button', { name: /New LMS.*Leadership/ })).getByText('1 of 2 completed')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /New LMS.*Leadership/ })).toBe(card);
-    expect(screen.getByRole('textbox', { name: 'Search modules or activities' })).toHaveValue('Leadership');
-    expect(activity).toHaveBeenCalledTimes(2);
-    expect(screen.queryByText('Loading subjects')).not.toBeInTheDocument();
-  });
 
   it('shows a metadata retry instead of misleading partial cards', async () => {
     vi.spyOn(api, 'subjectRequest').mockRejectedValueOnce(new Error('Unavailable')).mockResolvedValueOnce(linkedMetadata);
@@ -674,7 +608,44 @@ function mockMaterialRequests(material = activityMaterial, save: () => Promise<S
 }
 
 describe('subject months, weeks and completion', () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+
+  it.each(['commercial', 'apprenticeship'])('opens the dated current-week component before unfinished introduction content (%s)', async kind => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-03-03T12:00:00Z'));
+    const requests = mockMaterialRequests();
+    const current = { ...scheduledData, activities: [
+      { ...data.activities[1], activity_id: 'intro', source_activity_id: 99, month: 'undated', date_source: 'introduction', section_title: 'Introduction' },
+      ...scheduledData.activities,
+    ] };
+    render(<StudentActivityPanel data={current} kind={kind} learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
+    expect(await screen.findByRole('region', { name: 'March lesson content' })).toBeVisible();
+    expect(await screen.findByTitle('Reflection frame')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Open activity' })).not.toBeInTheDocument();
+    expect(requests.mock.calls.filter(([url]) => url.includes('/student-activity/'))).toHaveLength(1);
+    expect(requests.mock.calls.find(([url]) => url.includes('/student-activity/'))![0]).toContain('activity_id=12');
+    expect(screen.getByText('Current week')).toBeVisible();
+    selectMonthWeek('Introduction');
+    expect(screen.getByText('Selected week')).toBeVisible();
+    expect(screen.getByRole('button', { name: /Week 2.*Current/ })).toBeVisible();
+    expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(0);
+  });
+
+  it('opens completed course content for review without calling any week current', async () => {
+    mockMaterialRequests({ ...activityMaterial, completed: true, can_attempt: false });
+    const completed = { ...scheduledData, activities: scheduledData.activities.map(entry => ({ ...entry, completed: true })) };
+    render(<StudentActivityPanel data={completed} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
+    expect(await screen.findByTitle('Reflection frame')).toBeVisible();
+    expect(screen.queryByText('Current week')).not.toBeInTheDocument();
+    expect(screen.queryByText('Current', { exact: true })).not.toBeInTheDocument();
+    expect(screen.getByText('Week activities')).toBeVisible();
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '100');
+    selectMonthWeek('March 2026');
+    expect(screen.getByRole('region', { name: 'March lesson content' })).toBeVisible();
+    expect(screen.queryByText('Current', { exact: true })).not.toBeInTheDocument();
+  });
 
   it('completes a reused activity only in the course where it was submitted', async () => {
     mockMaterialRequests();
@@ -683,7 +654,7 @@ describe('subject months, weeks and completion', () => {
     render(<StudentActivityPanel data={{ ...data, activities: [first, second], count: 2, completed_count: 0, module_count: 2 }} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: /Course A/ }));
     selectMonthWeek('Undated activities');
-    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    expect(await screen.findByRole('region', { name: 'Reflection content' })).toBeVisible();
     fireEvent.click(await screen.findByRole('button', { name: 'Submit & complete' }));
     await screen.findByText('Activity completed.');
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '100');
@@ -699,19 +670,21 @@ describe('subject months, weeks and completion', () => {
     const history: StudentActivityResponse = { ...data, activities: [
       { ...data.activities[0], activity_id: 'catalogue:1:material:10', catalogue_kind: 'material', activity: 'Original reading' },
       { ...data.activities[0], activity_id: 'catalogue:1:quiz:10', catalogue_kind: 'quiz', category: 'quiz', activity: 'Original quiz', can_open_material: false },
-      { ...data.activities[1], activity: 'Unavailable quiz', catalogue_kind: 'quiz', category: 'quiz', can_open_material: false },
+      { ...data.activities[1], activity: 'Unavailable material', catalogue_kind: 'material', can_open_material: false },
     ] };
     render(<StudentActivityPanel data={history} kind={kind} learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
     const sidebar = within(screen.getByRole('complementary', { name: 'Module activities' }));
-    expect(sidebar.getByRole('button', { name: /Unavailable quiz/ })).toBeDisabled();
+    expect(sidebar.getByRole('button', { name: /Unavailable material/ })).toBeDisabled();
     fireEvent.click(sidebar.getByRole('button', { name: /Original quiz/ }));
-    expect(await screen.findByText('Saved quiz review')).toBeVisible();
+    const review = await screen.findByRole('region', { name: 'Original quiz content' });
+    expect(await within(review).findByText('Saved quiz review')).toBeVisible();
     expect(screen.getByRole('group', { name: 'Original quiz activity' })).toHaveTextContent('Complete');
     expect(screen.queryByRole('region', { name: 'Original reading content' })).not.toBeInTheDocument();
     const materialRequests = requests.mock.calls.filter(([url]) => url.includes('/student-activity/'));
-    expect(materialRequests).toHaveLength(1);
-    expect(materialRequests[0][0]).toContain(`/student-activity/${kind}/132/?group_id=1&activity_id=10&catalogue_kind=quiz`);
+    expect(materialRequests).toHaveLength(2);
+    expect(materialRequests[0][0]).toContain(`/student-activity/${kind}/132/?group_id=1&activity_id=10`);
+    expect(materialRequests[1][0]).toContain(`/student-activity/${kind}/132/?group_id=1&activity_id=10&catalogue_kind=quiz`);
     expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(0);
     expect(screen.queryByRole('button', { name: /Start quiz|Try quiz again|Submit/ })).not.toBeInTheDocument();
   });
@@ -722,20 +695,20 @@ describe('subject months, weeks and completion', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
     expect(screen.getByRole('complementary', { name: 'Module activities' })).toBeVisible();
     expect(screen.queryByRole('button', { name: /^Expand February/ })).not.toBeInTheDocument();
-    expect(screen.queryByTitle('Reflection frame')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
     const frame = await screen.findByTitle('Reflection frame');
+    expect(screen.queryByRole('button', { name: 'Open activity' })).not.toBeInTheDocument();
     expect(frame).toHaveAttribute('src', 'https://example.org/lesson');
     selectMonthWeek('March 2026');
     expect(frame).not.toBeVisible();
-    expect(screen.getByRole('button', { name: 'March lesson' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'March lesson content' })).toBeVisible();
     selectMonthWeek();
     expect(frame).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Reflection' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('region', { name: 'Reflection content' })).toBeVisible();
+    expect(requests.mock.calls.filter(([url]) => url.includes('activity_id=11'))).toHaveLength(1);
     expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(0);
     fireEvent.click(screen.getByRole('button', { name: 'All subjects' }));
     fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
-    expect(screen.queryByTitle('Reflection frame')).not.toBeInTheDocument();
+    expect(await screen.findByTitle('Reflection frame')).toBeVisible();
   });
 
   it('keeps course and week progress based on all activities while searching', () => {
@@ -777,8 +750,8 @@ describe('subject months, weeks and completion', () => {
     selectMonthWeek('Extra activities');
     fireEvent.change(screen.getByRole('textbox', { name: 'Search modules or activities' }), { target: { value: 'Extra reading' } });
     expect(weekProgress()).toHaveAttribute('aria-valuenow', '0');
-    fireEvent.click(screen.getByRole('button', { name: 'Extra reading' }));
-    expect(await screen.findByTitle('Reflection frame')).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Extra reading content' })).toBeVisible();
+    expect(await within(screen.getByRole('region', { name: 'Extra reading content' })).findByTitle('Reflection frame')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Submit & complete' }));
     await screen.findByText('Activity completed.');
     expect(weekProgress()).toHaveAttribute('aria-valuenow', '10');
@@ -811,13 +784,14 @@ describe('subject months, weeks and completion', () => {
     expect(screen.getByRole('button', { name: /^Introduction, 2 components/ })).toHaveAttribute('aria-current', 'step');
     expect(weekProgress()).toHaveAttribute('aria-valuenow', '50');
     selectMonthWeek('Introduction');
-    expect(screen.getByRole('button', { name: 'Safeguarding' })).toBeVisible();
+    fireEvent.click(within(screen.getByRole('complementary', { name: 'Module activities' })).getByRole('button', { name: /Safeguarding/ }));
+    expect(screen.getByRole('group', { name: 'Safeguarding activity' })).toBeVisible();
     expect(within(screen.getByRole('group', { name: 'Safeguarding activity' })).getByText('Complete')).toBeVisible();
     expect(screen.getByText(/Best score 80%/)).toBeVisible();
     expect(screen.queryByText(/2025-05-27|Activities awaiting a date/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'October lecture' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
-    await screen.findByTitle('Reflection frame');
+    fireEvent.click(within(screen.getByRole('complementary', { name: 'Module activities' })).getByRole('button', { name: /Reflection/ }));
+    await within(screen.getByRole('region', { name: 'Reflection content' })).findByTitle('Reflection frame');
     fireEvent.click(screen.getByRole('button', { name: 'Submit & complete' }));
     await screen.findByText('Activity completed.');
     expect(weekProgress()).toHaveAttribute('aria-valuenow', '100');
@@ -836,9 +810,10 @@ describe('subject months, weeks and completion', () => {
     fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
     selectMonthWeek();
     selectMonthWeek('March 2026');
-    expect(screen.getAllByText('Lecture: Lecture 1 - 06/02/2026')).toHaveLength(2);
+    expect(screen.getByText('Lecture: Course templates')).toBeVisible();
     expect(screen.queryByText(/Date awaiting confirmation|Date needs review|activity dates? needs? confirmation/i)).not.toBeInTheDocument();
     selectMonthWeek();
+    expect(screen.getByText('Lecture: Lecture 1 - 06/02/2026')).toBeVisible();
     expect(screen.queryByText(/Date awaiting confirmation|Date needs review|activity dates? needs? confirmation/i)).not.toBeInTheDocument();
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '33.33');
   });
@@ -847,11 +822,17 @@ describe('subject months, weeks and completion', () => {
     let finish!: (result: SubjectAttemptResult) => void;
     const pending = new Promise<SubjectAttemptResult>((resolve) => { finish = resolve; });
     const requests = mockMaterialRequests(activityMaterial, () => pending);
-    vi.spyOn(api, 'fetchStudentActivity').mockResolvedValueOnce(scheduledData).mockRejectedValueOnce(new Error('Refresh unavailable'));
-    render(<ModulesTab real={{ studentActivityAvailable: true } as LearnerDetail} loading={false} loadError={null} kind="commercial" id="132" />);
-    fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
+    vi.spyOn(reads, 'readLearnerJson').mockResolvedValueOnce({ subjectId: 'legacy:1',
+      detail: { id: '132', modules: [], components: [], week: [], quizAttempts: [], videoProgress: [], componentProgress: [] },
+      activity: scheduledData, metadata: { covers: {} }, schedule: { modules: [], moduleLinks: {}, generatedAt: '' }, sessions: [] })
+      .mockRejectedValueOnce(new Error('Refresh unavailable'));
+    renderReact(<MemoryRouter initialEntries={['/?subject=legacy%3A1']}><CompactModules kind="commercial" id="132" catalogue={{ learner: { id: '132', kind: 'commercial', name: 'Synthetic learner', programme: '', cohort: '', group: '' },
+      summary: { current: { subjects: 0, total: 0, completed: 0, percent: 0 }, previous: { subjects: 1, total: 3, completed: 1, percent: 33.33 }, subjectCount: 1 },
+      modules: [{ id: 'legacy:1', title: 'Leadership', source: 'legacy', activityCount: 3, completedActivityCount: 1, progress: 33.33, status: 'In progress', finalTestPassed: false }],
+      otjh: { actual: null, planned: null }, upcoming: [], hasMoreUpcoming: false }} loading={false} error="" refresh={vi.fn()} /></MemoryRouter>);
+    await screen.findByRole('button', { name: 'All subjects' });
     selectMonthWeek();
-    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    expect(screen.getByRole('region', { name: 'Reflection content' })).toBeVisible();
     const submit = await screen.findByRole('button', { name: 'Submit & complete' });
     const frame = screen.getByTitle('Reflection frame');
     expect(submit.compareDocumentPosition(frame) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -870,11 +851,11 @@ describe('subject months, weeks and completion', () => {
     const submitted = requests.mock.calls.find(([url]) => url.endsWith('/attempt-1/'))![1]!;
     expect(JSON.parse(submitted.body as string)).toEqual({ answers: {}, reading_confirmed: true });
     expect(submitted.headers).toMatchObject({ 'X-CSRFToken': 'csrf-value' });
-    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
-    expect(within(screen.getByRole('group', { name: 'Reflection activity' })).getByText('Complete')).toBeVisible();
+    selectMonthWeek('March 2026');
+    selectMonthWeek();
+    expect(within(screen.getByRole('region', { name: 'Reflection content' })).getByText('Complete')).toBeVisible();
     expect(within(screen.getByRole('group', { name: 'Reflection activity' })).queryByText('Not complete')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
-    await screen.findByTitle('Reflection frame');
+    expect(frame).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Submit & complete' })).not.toBeInTheDocument();
     expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(2);
     fireEvent.click(screen.getByRole('button', { name: 'All subjects' }));
@@ -887,7 +868,7 @@ describe('subject months, weeks and completion', () => {
     render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
     selectMonthWeek();
-    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    expect(screen.getByRole('region', { name: 'Reflection content' })).toBeVisible();
     fireEvent.click(await screen.findByRole('button', { name: 'Submit & complete' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not save');
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '33.33');
@@ -935,7 +916,7 @@ describe('subject months, weeks and completion', () => {
     render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
     selectMonthWeek();
-    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    expect(screen.getByRole('region', { name: 'Reflection content' })).toBeVisible();
     fireEvent.click(await screen.findByRole('button', { name: 'Start quiz' }));
     const submit = await screen.findByRole('button', { name: 'Submit answers' });
     expect(submit).toBeDisabled();
@@ -946,8 +927,8 @@ describe('subject months, weeks and completion', () => {
     selectMonthWeek('March 2026');
     expect(submit).not.toBeVisible();
     selectMonthWeek();
-    expect(screen.getByLabelText('Choice A')).toBeChecked();
-    expect(screen.getByLabelText('I have completed the reading material.')).toBeChecked();
+    expect(within(screen.getByRole('region', { name: 'Reflection content' })).getByLabelText('Choice A')).toBeChecked();
+    expect(within(screen.getByRole('region', { name: 'Reflection content' })).getByLabelText('I have completed the reading material.')).toBeChecked();
     expect(submit).toBeVisible();
     expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
     fireEvent.click(submit);
@@ -967,7 +948,7 @@ describe('subject months, weeks and completion', () => {
     render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
     selectMonthWeek();
-    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    expect(screen.getByRole('region', { name: 'Reflection content' })).toBeVisible();
     fireEvent.click(await screen.findByRole('button', { name: 'Start quiz' }));
     await waitFor(() => expect(screen.getByLabelText('Choice A')).toBeEnabled());
     fireEvent.click(screen.getByLabelText('Choice A'));
