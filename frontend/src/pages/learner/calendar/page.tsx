@@ -173,13 +173,18 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
   if (!y || !m || !d) return null;
   const dateObj = new Date(y, m - 1, d);
   const dayName = DAYS_OF_WEEK[dateObj.getDay() === 0 ? 6 : dateObj.getDay() - 1];
-  // The grid parses this, so an unbooked slot still needs a time to sit at —
-  // it is flagged below rather than dressed up as an arranged hour.
+  // Aptem can supply a planned clock time while the review is Not Scheduled.
+  // Without a local reservation, that time must not block another booking.
+  const unbookedImportedPlan = (ev.reviewSource === 'aptem' || Boolean(ev.importedReview))
+    && ev.status === 'not-scheduled' && !ev.calendarEventKey && !ev.calendarEventId;
+  const scheduledTime = unbookedImportedPlan ? null : ev.scheduledTime;
+  // Sorting helpers expect a time string; timeToBeConfirmed keeps this fallback
+  // out of booking conflict checks and the hourly grid.
   let time = '09:00–10:00';
-  if (ev.scheduledTime) {
-    const [h, min] = ev.scheduledTime.split(':').map(Number);
+  if (scheduledTime) {
+    const [h, min] = scheduledTime.split(':').map(Number);
     const end = new Date(y, m - 1, d, h || 0, (min || 0) + (ev.durationMinutes || 60));
-    time = `${ev.scheduledTime}–${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`;
+    time = `${scheduledTime}–${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`;
   }
   const isLiveSession = ev.source === 'live-session';
   const eventSourceType = ev.reviewTypeName || (BOOKABLE_COACH_SESSION_TYPES.has(ev.source as BookableSessionType)
@@ -198,7 +203,7 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
     clubId: '',
     type: isLiveSession ? 'Live Session' : eventSourceType,
     format: isLiveSession ? 'Live Teams session' : '1:1 Teams',
-    location: ev.meetingLink ? 'Microsoft Teams' : ev.scheduledTime ? 'Online' : 'To be confirmed',
+    location: ev.meetingLink ? 'Microsoft Teams' : scheduledTime ? 'Online' : 'To be confirmed',
     host: ev.coachName || (isLiveSession ? 'Your tutor' : 'Your coach'),
     points: 0,
     status: confirmed ? 'confirmed' : 'pending',
@@ -222,7 +227,7 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
     bookingSessionType: BOOKABLE_COACH_SESSION_TYPES.has(ev.source as BookableSessionType)
       ? ev.source as CalendarEvent['bookingSessionType']
       : undefined,
-    timeToBeConfirmed: !ev.scheduledTime,
+    timeToBeConfirmed: !scheduledTime,
     syncWarning: meetingBookingWarning(ev),
     bookingReviewId: ev.reviewId,
     assignmentMonth: ev.assignmentMonth,
@@ -2049,6 +2054,7 @@ function LearnerCalendarBody() {
                         </div>
                         {weekDates.map((wd, wdi) => {
                           const eventsInSlot = getEventsForDay(wd.day, wd.month, wd.year).filter((ev) => {
+                            if (ev.timeToBeConfirmed) return false;
                             const startHour = parseInt(ev.time.split(':')[0]);
                             return startHour === hour;
                           });
@@ -2095,6 +2101,7 @@ function LearnerCalendarBody() {
                 <div className="overflow-y-auto max-h-[600px]">
                   {timelineHours.map((hour) => {
                     const eventsInSlot = selectedDayEvents.filter((ev) => {
+                      if (ev.timeToBeConfirmed) return false;
                       const startHour = parseInt(ev.time.split(':')[0]);
                       return startHour === hour;
                     });
@@ -2162,7 +2169,7 @@ function LearnerCalendarBody() {
                       </div>
                       <p className="text-sm font-semibold text-foreground-900 group-hover:text-primary-700 transition-colors leading-tight truncate">{ev.title}</p>
                       <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-xs text-foreground-400">{ev.time}</span>
+                        <span className="text-xs text-foreground-400">{ev.timeToBeConfirmed ? 'Time to be confirmed' : ev.time}</span>
                       </div>
                     </div>
                   </button>

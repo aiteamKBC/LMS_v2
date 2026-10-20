@@ -114,6 +114,36 @@ class SessionDeliveryClockTests(unittest.TestCase):
         self.assertEqual([week['components'][0]['settings']['sessionDateTimeUtc'] for week in weeks],
                          ['2026-10-23T08:00:00+00:00', '2026-10-30T09:00:00+00:00'])
 
+    def test_missing_imported_occurrence_has_planned_time_without_confirmed_teams_time(self):
+        self.weeks[0]['components'][0]['settings'].update(teamsCalendarBinding='missing', teamsStartDateTimeUtc='')
+        self.weeks[1]['components'][0]['settings'].update(teamsCalendarBinding='ambiguous', teamsStartDateTimeUtc='')
+        for week in self.stamp():
+            settings = week['components'][0]['settings']
+            self.assertTrue(settings['sessionDateTimeUtc'])
+            self.assertEqual(settings['teamsStartDateTimeUtc'], '')
+
+    def test_booked_additional_primary_session_keeps_own_date_clock_and_link(self):
+        extra = self.weeks[0]['components'][0]
+        extra['settings'].update(
+            teamsMeetingScope='additional', extraTeamsMeetingUrl='https://example.invalid/masterclass',
+            liveSessionUrl='https://example.invalid/masterclass', teamsMeetingUrl='https://example.invalid/masterclass',
+            extraTeamsStartDateTimeUtc='2026-10-02T14:00:00Z',
+            sessionDate='2026-10-02', sessionTime='15:00', durationMinutes=90,
+            sessionDateTimeUtc='2026-10-02T14:00:00Z',
+        )
+        before = copy.deepcopy(extra)
+        # Insertion moves this week's main-calendar slot, and even a main
+        # reschedule must not move the independent additional event.
+        self.plan['sessions'][0].update(date='2026-10-30', rescheduled=True)
+        self.stamp()
+        self.assertEqual(self.weeks[0]['components'][0], before)
+        links = self.n['authoring_session_links_by_catalogue'](['MOD-CLOCK'])['MOD-CLOCK']
+        self.assertEqual(links[0]['date'], '2026-10-02')
+        self.assertTrue(links[0]['additionalMeeting'])
+        self.assertTrue(links[0]['bookedAtMicrosoft'])
+        sessions = self.n['build_sessions_from_authoring_modules']([self.module])
+        self.assertEqual((sessions[0]['startTime'], sessions[0]['endTime']), ('15:00', '16:30'))
+
     def test_plan_endpoint_fills_missing_module_clocks_from_its_own_group_without_mutation(self):
         self.module.pop('session_start_time')
         self.module.pop('session_end_time')

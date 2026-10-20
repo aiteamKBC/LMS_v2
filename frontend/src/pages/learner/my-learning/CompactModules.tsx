@@ -9,12 +9,14 @@ import type { Subject, UnifiedLearningSummary } from './learningSummary';
 import { recommendedLearningSubject } from './subjectLearning';
 import { formatHoursMinutes } from '@/utils/learnerJourney';
 import styles from './SubjectWorkspace.module.css';
+import { TransferProgress } from './TransferProgress';
 
 const tones = ['purple', 'navy', 'green', 'gold', 'blue', 'rose'] as const;
 
-export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading, error, refresh, showReadOnlyNotice, view = 'catalogue' }: {
+export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading, error, refresh, showReadOnlyNotice, view = 'catalogue', canRequestTransfer = false }: {
   kind?: LearnerKind; id?: string; catalogue: MyLearningCatalogue | null; loading: boolean; error: string;
   refresh: () => void; showReadOnlyNotice?: boolean; view?: 'catalogue' | 'map';
+  canRequestTransfer?: boolean;
 }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -40,7 +42,7 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
     if (!incomingCatalogue || !Object.keys(progressOverrides).length) return incomingCatalogue;
     const modules = incomingCatalogue.modules.map(card => {
       const known = progressOverrides[card.id];
-      if (!known || known.total !== card.activityCount) return card;
+      if (!known || known.total !== card.activityCount || card.transferredProgress != null || card.transferPending || card.demoProgress) return card;
       const completed = Math.max(card.completedActivityCount, known.completed);
       return { ...card, completedActivityCount: completed, progress: known.total ? Math.round(completed / known.total * 10000) / 100 : 0,
         status: completed === known.total && known.total > 0 ? 'Completed' as const : completed > 0 ? 'In progress' as const : card.status };
@@ -49,7 +51,7 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
       const rows = modules.filter(card => card.source === source);
       const total = rows.reduce((sum, card) => sum + card.activityCount, 0);
       const completed = rows.reduce((sum, card) => sum + card.completedActivityCount, 0);
-      return { subjects: rows.length, total, completed, percent: total ? Math.round(completed / total * 10000) / 100 : 0 };
+      return { subjects: rows.length, total, completed, percent: total ? Math.round(rows.reduce((sum, card) => sum + card.progress * card.activityCount, 0) / total * 100) / 100 : 0 };
     };
     return { ...incomingCatalogue, modules, summary: { ...incomingCatalogue.summary, current: count('current'), previous: count('legacy') } };
   }, [incomingCatalogue, progressOverrides]);
@@ -117,6 +119,7 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
     {upcomingLoading && <p role="status">Loading upcoming learning…</p>}
     <p className="text-sm text-foreground-500">{catalogue.learner.name}</p>
     <LearningCatalogue summary={summary} search={search} onSearch={setSearch} current={current}
+      transferAction={canRequestTransfer && kind && id ? <TransferProgress kind={kind} learnerId={id} onRequested={refresh} /> : undefined}
       total={summary.activityCount} done={summary.completedActivityCount} percent={summary.percent}
       kind={kind} learnerId={id} activityMatches={activitySearch.ids}
       upcomingLinks={upcomingState?.catalogue === incomingCatalogue ? upcomingState.links : catalogue.upcoming}

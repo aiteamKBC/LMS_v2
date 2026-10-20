@@ -85,6 +85,7 @@ export function ReplaceTeamsLinksDialog({ weeks, onClose, onApply }: ReplaceTeam
             <div className="min-w-0">
               <h2 id="replace-teams-links-title" className="text-base font-heading font-bold text-foreground-950">Replace Teams links</h2>
               <p className="mt-1 text-[12px] leading-5 text-foreground-500">Paste a new link, then choose the weeks whose live-session components should use it. It is saved straight away; the Teams meetings and invitations are not changed.</p>
+              <p className="mt-2 text-[12px] leading-5 text-foreground-600">A pasted link stays managed in its original Teams calendar. Update Teams meeting will show the saved link and calendar status; creating a replacement module meeting is blocked. Adding a week does not extend the Teams series.</p>
             </div>
           </div>
           <button type="button" onClick={close} disabled={saving} aria-label="Close" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-background-100 hover:text-foreground-900">

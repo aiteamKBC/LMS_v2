@@ -77,7 +77,7 @@ export default function ReviewTemplatesPage() {
   const toggleStandard = (template: MigratedTemplate) => void action(async () => {
     await updateMigratedTemplate(template, { is_active: !template.is_active });
     await load();
-    setNotice(template.is_active ? 'Standard Template deactivated. Reviews already started keep their saved version.' : 'Standard Template enabled for programmes without a custom version.');
+    setNotice(template.is_active ? 'Standard Template deactivated. Working reviews need an active template to continue editing. Reviews awaiting signatures or completed keep their saved version.' : 'Standard Template enabled for programmes without a custom version.');
   });
   const openImport = (family: MigratedFamily) => {
     setSourceId(''); setImportName(`${FAMILY_LABELS[family]} Standard Template`); setError(''); setImportFamily(family);
@@ -191,7 +191,7 @@ export default function ReviewTemplatesPage() {
       </div>
     </main>
     {editor && <TemplateEditor key={editor.id} template={editor} programmeName={programmeName} onClose={() => setEditor(null)} onSaved={() => {
-      setEditor(null); setNotice(editor.is_active ? 'Template saved. Reviews already started keep their saved version.' : 'Template saved but not in use. Enable this version explicitly when it is ready.'); void load();
+      setEditor(null); setNotice(editor.is_active ? 'Template saved. Working reviews synchronise when opened by the coach or checked on save. Reviews awaiting signatures or completed keep their saved version.' : 'Template saved but not in use. Enable this version explicitly when it is ready.'); void load();
     }} />}
     {preview && <Modal title={`Previewing ${templateKind(preview.template)} ${FAMILY_LABELS[preview.template.review_family]} Template`} size="max-w-5xl" onClose={() => setPreview(null)}>
       {preview.template.scope === 'PROGRAMME' && <p className="mb-4 font-semibold">{programmeName}</p>}<PreviewForm preview={preview.form} />
@@ -214,8 +214,8 @@ export default function ReviewTemplatesPage() {
       footer={<><button className={buttonClass} disabled={busy} onClick={() => setSwitchRequest(null)}>Cancel</button><button className={primaryButton} disabled={busy} onClick={confirmSwitch}>{busy ? 'Please wait…' : 'Confirm'}</button></>}>
       <p className="mb-3 font-semibold">{programmeName} · {FAMILY_LABELS[switchRequest.template.review_family]}</p>
       <p className="text-sm leading-6 text-foreground-600">{switchRequest.toStandard
-        ? 'Future or uninitialised migrated reviews will use the Standard Template. Existing reviews that already started will keep their saved version.'
-        : 'Future or uninitialised migrated reviews will use this custom version.'}</p>
+        ? 'Editable migrated reviews will use the Standard Template when opened by the coach or checked on save. Reviews awaiting signatures or completed keep their saved version.'
+        : 'Editable migrated reviews will use this custom version when opened by the coach or checked on save. Reviews awaiting signatures or completed keep their saved version.'}</p>
       {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
     </Modal>}
     {importFamily && <Modal title={`Import ${FAMILY_LABELS[importFamily]} Standard Template`} dismissible={!busy} onClose={() => setImportFamily(null)} footer={<button className={buttonClass} disabled={busy || !Number.isInteger(Number(sourceId)) || Number(sourceId) <= 0 || !importName.trim()} onClick={() => void action(async () => {

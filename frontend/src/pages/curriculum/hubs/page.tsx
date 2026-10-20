@@ -22,7 +22,7 @@ const HUB_COPY: Record<HubKind, { eyebrow: string; title: string; description: s
   library: {
     eyebrow: 'Reusable curriculum',
     title: 'Library',
-    description: 'Create and reuse modules, KSB standards and frameworks, and assessments without mixing authoring work with delivery setup.',
+    description: 'Create and reuse modules, KSB standards, and assessments without mixing authoring work with delivery setup.',
   },
   delivery: {
     eyebrow: 'Run the curriculum',
@@ -102,7 +102,6 @@ function CurriculumHub({ kind }: { kind: HubKind }) {
   const cohorts = useMemo(() => data?.cohorts ?? [], [data?.cohorts]);
   const groups = useMemo(() => data?.groups ?? [], [data?.groups]);
   const sessions = useMemo(() => data?.sessions ?? [], [data?.sessions]);
-  const frameworks = useMemo(() => data?.ksbFrameworks ?? [], [data?.ksbFrameworks]);
 
   const draftModules = modules.filter(module => normalise(module.status) !== 'published');
   const modulesWithoutKsb = modules.filter(module => Number(module.ksbCount || 0) === 0);
@@ -115,7 +114,6 @@ function CurriculumHub({ kind }: { kind: HubKind }) {
 
   const cards = hubCards(kind, {
     modules: modules.length,
-    frameworks: frameworks.length,
     cohorts: cohorts.length,
     groups: groups.length,
     sessions: sessions.length,
@@ -224,7 +222,6 @@ function CurriculumHub({ kind }: { kind: HubKind }) {
 
 function hubCards(kind: HubKind, counts: {
   modules: number;
-  frameworks: number;
   cohorts: number;
   groups: number;
   sessions: number;
@@ -237,7 +234,6 @@ function hubCards(kind: HubKind, counts: {
       { title: 'Week Templates', description: 'Prepare reusable week structures for faster authoring.', href: '/curriculum/week-builder', icon: 'ri-calendar-line', tone: 'emerald' },
       { title: 'Review Templates', description: 'Create and manage reusable migrated review forms for MCM, PR and PR + Skills Radar.', href: '/curriculum/library/review-templates', icon: 'ri-file-list-3-line', tone: 'primary' },
       { title: 'KSB Standards', description: 'Browse the published Skills England standards and their KSBs.', href: '/curriculum/standards', icon: 'ri-node-tree', tone: 'sky' },
-      { title: 'KSB Frameworks', description: 'Create and edit the reusable KSB profiles programmes are mapped to.', href: '/curriculum/ksb-frameworks', icon: 'ri-git-branch-line', meta: `${counts.frameworks} profiles`, tone: 'emerald' },
       { title: 'Quiz Workspace', description: 'Create and edit quizzes connected to curriculum components.', href: '/curriculum/quiz-xml', icon: 'ri-question-answer-line', tone: 'amber' },
       { title: 'Knowledge Base', description: 'Upload programme books once and use them to generate questions from the right chapters.', href: '/curriculum/knowledge-base', icon: 'ri-book-2-line', tone: 'primary' },
       { title: 'Question Bank', description: 'Reuse assessment questions across quizzes and modules.', href: '/curriculum/question-bank', icon: 'ri-questionnaire-line', tone: 'sky' },

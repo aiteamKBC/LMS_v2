@@ -25,6 +25,9 @@ import { ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTim
 import ProgressReviewCompletionModal from '../shared/ProgressReviewCompletionModal';
 import { reviewInstancePath, reviewInstanceRouteState } from '../shared/reviewInstanceNavigation';
 import { ReviewAge } from '../shared/ReviewAge';
+import { ReviewIdentityNotice } from '../shared/ReviewIdentityNotice';
+import ImportedReviewBookingDialog from '../shared/ImportedReviewBookingDialog';
+import type { CoachReviewGenerationIssue } from '../shared/calendarEvents';
 import {
   type CoachCalendarEvent,
   type ScheduleFormState,
@@ -995,13 +998,15 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
   const [selectedMonth, setSelectedMonth] = useState(() => monthFromQuery(searchParams.get('month')));
   const [allMonths, setAllMonths] = useState(() => searchParams.get('months') === 'all');
   const cacheKey = coachSessionKey(category, coach.email, 'all-months');
-  const initialCache = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string }>(cacheKey);
+  const initialCache = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string; issues?: CoachReviewGenerationIssue[] }>(cacheKey);
   const [events, setEvents] = useState<CoachCalendarEvent[]>(() => initialCache?.events || []);
+  const [issues, setIssues] = useState<CoachReviewGenerationIssue[]>(() => initialCache?.issues || []);
   const [ownerName, setOwnerName] = useState(() => initialCache?.ownerName || 'Coach');
   const [loading, setLoading] = useState(() => !initialCache);
   const [error, setError] = useState<string | null>(null);
   const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>(EMPTY_SCHEDULE_FORM);
   const [scheduleModalEvent, setScheduleModalEvent] = useState<CoachCalendarEvent | null>(null);
+  const [importedBookingEvent, setImportedBookingEvent] = useState<CoachCalendarEvent | null>(null);
   const [schedulePickerOpen, setSchedulePickerOpen] = useState(false);
   const [busyEventId, setBusyEventId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -1032,13 +1037,15 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
     if (!coach.isInitialized) return;
     if (!coach.email) {
       setEvents([]);
+      setIssues([]);
       setOwnerName(coach.name);
       setError(`Coach access is required to load ${reviewLabel}.`);
       setLoading(false);
       return;
     }
     const controller = new AbortController();
-    const cached = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string }>(cacheKey);
+    const cached = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string; issues?: CoachReviewGenerationIssue[] }>(cacheKey);
+    setIssues(cached?.issues || []);
 
     const loadReviews = async () => {
       if (cached) {
@@ -1055,7 +1062,9 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
           includeSchedulerQueues: false,
         });
         const reviews = sortEvents(normalizeResolvedReviews((data.events || []).filter(event => reviewCategory(event) === category)));
-        writeCoachSessionCache(cacheKey, { events: reviews, ownerName: data.owner?.name || coach.name });
+        const nextIssues = data.reviewGenerationIssues || [];
+        writeCoachSessionCache(cacheKey, { events: reviews, ownerName: data.owner?.name || coach.name, issues: nextIssues });
+        setIssues(nextIssues);
         setEvents(reviews);
         setOwnerName(data.owner?.name || coach.name);
       } catch (err) {
@@ -1187,6 +1196,11 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
   };
 
   const openScheduleModal = (event: CoachCalendarEvent) => {
+    if (event.reviewSource === 'aptem' || event.aptemReviewId) {
+      setActionNotice(null);
+      setImportedBookingEvent(event);
+      return;
+    }
     setScheduleForm(scheduleDefaults(event));
     setActionError(null);
     setActionNotice(event.syncWarning || null);
@@ -1366,6 +1380,8 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
           <img src="/coach-meetings-calendar.webp" alt="" aria-hidden="true" width={312} height={312} />
         </section>
         {error ? <EmptyState variant="error" title={`Unable to load ${reviewLabel}.`} description={error} /> : null}
+        <ReviewIdentityNotice issues={issues} />
+        {actionNotice && !scheduleModalEvent ? <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{actionNotice}</p> : null}
         <section className={styles.controlsCard} aria-label={otherReviews ? 'Review filters and summary' : 'Progress review filters and summary'}>
           <div className={styles.toolbar}>
             <div className={styles.monthNav} aria-label="Review month"><button type="button" onClick={() => changeMonth(addMonths(selectedMonth, -1))} aria-label="Previous month"><AppIcon className="ri-arrow-left-s-line text-xl" /></button><span>{selectedMonthLabel}</span><button type="button" onClick={() => changeMonth(addMonths(selectedMonth, 1))} aria-label="Next month"><AppIcon className="ri-arrow-right-s-line text-xl" /></button></div>
@@ -1417,6 +1433,19 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
           {!loading && filteredData.length > 0 ? <div className={styles.footer}><span>Showing {Math.min(filteredData.length, paginatedReviews.length)} of {filteredData.length} reviews</span>{pageCount > 1 ? <Pagination page={activePage} totalPages={pageCount} total={filteredData.length} pageSize={REVIEWS_PER_PAGE} onPageChange={setCurrentPage} noun="reviews" /> : null}</div> : null}
         </div>
 
+        {importedBookingEvent ? <ImportedReviewBookingDialog
+          key={`${coach.email}:${eventIdentity(importedBookingEvent)}`}
+          event={importedBookingEvent}
+          viewingAsCoach={coach.isViewingAsCoach}
+          onClose={() => setImportedBookingEvent(null)}
+          onSaved={(updated, notice) => {
+            const nextEvents = sortEvents(events.map(event => eventIdentity(event) === eventIdentity(updated) ? updated : event));
+            setEvents(nextEvents);
+            writeCoachSessionCache(cacheKey, { events: nextEvents, ownerName, issues });
+            setActionNotice(notice);
+            setImportedBookingEvent(null);
+          }}
+        /> : null}
         {scheduleModalEvent ? (
           <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm" onClick={() => { if (!busyEventId) setScheduleModalEvent(null); }}>
             <div role="dialog" aria-modal="true" aria-labelledby="schedule-review-title" className="w-full max-w-[620px] rounded-2xl border border-foreground-200 bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>

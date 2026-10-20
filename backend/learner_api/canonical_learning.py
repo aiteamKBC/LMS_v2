@@ -293,6 +293,12 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             item['expected_otjh'] = float(record['journal_planned_hours'])
             item['journal_planned_hours'] = float(record['journal_planned_hours'])
         loaded.append(item)
+    transfer_state = None
+    if owner.get('progress_transfer_active'):
+        from .progress_transfer_store import read_state
+        from .progress_transfer_policy import frozen_records
+        transfer_state = read_state(owner['enrolment_id'], include_records=True)
+        loaded = frozen_records(loaded, transfer_state, entry_ids=entry_ids)
     with projection_stage('ledger_reconcile'):
         current = current_records(owner, loaded)
     with projection_stage('ledger_completion'):
@@ -303,10 +309,8 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             # retained in the journal learner view only.
             for record in result:
                 record['completed'] = counts_as_completed(record)
-    if owner.get('progress_transfer_active'):
-        from .progress_transfer_store import read_state
-        from .progress_transfer_policy import frozen_records
-        result = frozen_records(result, read_state(owner['enrolment_id'], include_records=True), entry_ids=entry_ids)
+    if transfer_state is not None:
+        result = frozen_records(result, transfer_state, entry_ids=entry_ids)
     return result
 
 
@@ -830,6 +834,8 @@ def source_subjects(learner_id, summarize, *, owner=None, records=None, overview
         jsonb_build_object('quiz_id',a.source_payload->'quiz_id',
             'activity_id',a.source_payload->'activity_id','parent_activity_id',a.source_payload->'parent_activity_id',
             'section_title',a.source_payload->'section_title',
+            'section_order',coalesce(a.source_payload->'section_order',a.source_payload#>'{live_catalogue_recovery,section_order}'),
+            'component_order',coalesce(a.source_payload->'component_order',a.source_payload#>'{live_catalogue_recovery,component_order}'),
             'created_at',a.source_payload->'created_at','created_at_utc',a.source_payload->'created_at_utc') AS source_payload,
         EXISTS (SELECT 1 FROM curriculum.source_materials m
             WHERE m.material_id=a.source_material_id AND m.source_system=a.source_system
@@ -877,6 +883,12 @@ def source_subjects(learner_id, summarize, *, owner=None, records=None, overview
     else:
         monthly_targets = targets_for(owner)
         result['audit_tp_planned'] = sum(monthly_targets.values()) if monthly_targets else None
+    from coach_api.migrated_otjh import planned_hours_bulk
+    review_planned = planned_hours_bulk([owner]).get(owner['enrolment_id'], 0)
+    if review_planned:
+        result['review_planned_otjh'] = review_planned
+        if result.get('audit_tp_planned') is not None:
+            result['audit_tp_planned'] += review_planned
     return result
 
 
@@ -1165,8 +1177,11 @@ def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
     KSB points retain the shared activity/code definition; they are not a claim
     that the learner has achieved the entire programme's KSB framework.
     """
-    counted = list(records)
-    accepted = [item for item in counted if item.get('accepted') is True]
+    # A configured review allowance contributes hours, not a taught activity
+    # or a KSB achievement. Keep programme completion denominators unchanged.
+    records = list(records)
+    counted = [item for item in records if item.get('kind') != 'migrated_review']
+    accepted = [item for item in records if item.get('accepted') is True]
     completed = [item for item in counted if counts_as_completed(
         item, include_source_evidence='completed' in item)]
     ratio = point_ratio
@@ -1181,7 +1196,7 @@ def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
     planned = round(sum(monthly_targets.values()), 4) if monthly_targets or journal_sources.enabled() else None
     result = {
         'migrated': True, 'aptem_planned_total': planned,
-        'programme': {**ratio(len(completed), len(counted)), 'historicalCompleted': len(accepted)},
+        'programme': {**ratio(len(completed), len(counted)), 'historicalCompleted': sum(item.get('accepted') is True for item in counted)},
         'otjh': {'historical': actual, 'new': 0, 'actual': actual,
                  'completed_actual': actual, 'planned': planned},
         'ksb': {**ratio(sum(v[0] for v in codes.values()), sum(v[1] for v in codes.values())),
@@ -1222,7 +1237,8 @@ def metrics(learner_id, *, owner=None):
         planned = programme_planned_hours(learner_id, owner=owner)
         result['otjh']['planned'] = planned
         result['aptem_planned_total'] = planned
-    return result
+    from coach_api.migrated_otjh import planned_hours_bulk, include_planned
+    return include_planned(result, planned_hours_bulk([owner]).get(owner['enrolment_id'], 0))
 
 
 def otjh_summary_bulk(learner_ids):
@@ -1238,7 +1254,7 @@ def otjh_summary_bulk(learner_ids):
     if not enrolment_ids:
         return {}
     candidates = {}
-    for owner in query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,
+    for owner in query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.programme,
         l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
         EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active
@@ -1293,6 +1309,14 @@ def otjh_summary_bulk(learner_ids):
             'start_date': owner.get('start_date'), 'end_date': owner.get('end_date'),
             **metrics_from_records(records[profile_id], targets[profile_id])['otjh'],
         }
+    from coach_api.migrated_otjh import planned_hours_bulk
+    review_hours = planned_hours_bulk(list(owners.values()))
+    for enrolment_id, hours in review_hours.items():
+        if not hours:
+            continue
+        result[enrolment_id]['review_planned'] = hours
+        if result[enrolment_id]['planned'] is not None:
+            result[enrolment_id]['planned'] += hours
     return result
 
 
@@ -1446,6 +1470,9 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
             planned = programme_planned_hours(enrolment_id, owner=owner)
             result[enrolment_id]['otjh']['planned'] = planned
             result[enrolment_id]['aptem_planned_total'] = planned
+    from coach_api.migrated_otjh import planned_hours_bulk, include_planned
+    for enrolment_id, hours in planned_hours_bulk(list(valid_owners.values())).items():
+        include_planned(result[enrolment_id], hours)
     return result
 
 

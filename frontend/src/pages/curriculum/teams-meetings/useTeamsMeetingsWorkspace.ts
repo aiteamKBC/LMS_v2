@@ -16,6 +16,7 @@ import { type CalendarActionTarget } from './CalendarActionDialog';
 import { calendarAction, type ActionResult, type ActionReview } from './calendarActions';
 import { leftoverSlotLabel } from './leftoverSlots';
 import { normalizedClock } from './calendarTime';
+import { calendarOwnershipKnown, externalCalendarFor, EXTERNAL_CALENDAR_MESSAGE } from './externalCalendar';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
 import {
@@ -450,10 +451,13 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   const [additionalMeetings, setAdditionalMeetings] = useState<Record<string, { all: ModuleComponent[]; excluded: string[] }>>({});
   // Per module: which calendar runs each live session, for the dialog to ask about.
   const [scopeRows, setScopeRows] = useState<Record<string, LiveSessionScopeRow[]>>({});
+  const [linkReadStatus, setLinkReadStatus] = useState<Record<string, 'loading' | 'ready' | 'error'>>({});
   // Bumped after a choice is saved, so the structure is read again.
   const [scopeEpoch, setScopeEpoch] = useState(0);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailRead, setDetailRead] = useState<{ liveSessionId: string; status: 'loading' | 'ready' | 'error' } | null>(null);
+  const detailRequestId = useRef(0);
   const [artifactSyncing, setArtifactSyncing] = useState<Set<string>>(() => new Set());
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(() => {
     if (typeof window === 'undefined') return true;
@@ -767,6 +771,35 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   }, [additionalMeetings, liveComponents, plannedSessions, selected]);
   const selectedLiveId = useRef('');
   selectedLiveId.current = selected?.summary?.liveSessionId || '';
+  const selectedLinkRead = selected ? linkReadStatus[normaliseKey(selected.catalogueId)] : undefined;
+  const externalCalendar = selected
+    ? externalCalendarFor(selected.summary, additionalMeetings[normaliseKey(selected.catalogueId)]?.all, detail?.series) : null;
+  const ownershipUnknown = Boolean(selected?.summary && !externalCalendar
+    && !calendarOwnershipKnown(selected.summary, detail?.series));
+  const ownershipReadFinished = detailRead?.liveSessionId === selected?.summary?.liveSessionId
+    && detailRead?.status !== 'loading';
+  const calendarLinksLoading = Boolean(selected && (!selectedLinkRead || selectedLinkRead === 'loading'
+    || (ownershipUnknown && !ownershipReadFinished)));
+  const calendarLinksError = selectedLinkRead === 'error'
+    ? 'The saved meeting links could not be checked. Retry before creating or changing this module calendar.'
+    : ownershipUnknown && ownershipReadFinished
+      ? 'The original meeting\'s calendar ownership could not be checked. Retry before changing this module calendar.' : '';
+  const needsSavedCalendarPlan = Boolean(selected?.summary || externalCalendar);
+
+  const protectedCalendar = (row: MeetingRow) => externalCalendarFor(
+    row.summary, additionalMeetings[normaliseKey(row.catalogueId)]?.all, detail?.series,
+  );
+  const calendarWriteBlockReason = (row: MeetingRow) => protectedCalendar(row) ? EXTERNAL_CALENDAR_MESSAGE
+    : linkReadStatus[normaliseKey(row.catalogueId)] !== 'ready' || !calendarOwnershipKnown(row.summary, detail?.series)
+      ? 'The saved meeting links and calendar ownership must be checked before changing this module calendar.' : '';
+  // The cancellation-status endpoint requires an LMS-owned organiser event.
+  // Read this ref again after await: detail can identify an imported series
+  // while an older status request is still in flight.
+  const calendarSyncEligibility = useRef(new Map<string, { allowed: boolean; imported: boolean; moduleId: string }>());
+  calendarSyncEligibility.current = new Map(rows.flatMap(row => row.summary ? [[row.summary.liveSessionId, {
+    allowed: !protectedCalendar(row) && calendarOwnershipKnown(row.summary, detail?.series),
+    imported: Boolean(protectedCalendar(row)), moduleId: row.catalogueId,
+  }] as const] : []));
 
   const stats = useMemo(() => {
     const tracked = rows.filter(row => row.summary);
@@ -804,21 +837,36 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   }, [detail]);
 
   const loadDetail = useCallback(async (liveSessionId: string) => {
-    if (!liveSessionId) { setDetail(null); return; }
+    const requestId = ++detailRequestId.current;
+    if (!liveSessionId) {
+      setDetail(null); setDetailError(null); setDetailRead(null); setDetailLoading(false);
+      return;
+    }
     setDetailLoading(true);
     setDetailError(null);
+    setDetailRead({ liveSessionId, status: 'loading' });
     try {
-      setDetail(await loadTeamsMeetingArtifacts(liveSessionId));
+      const loadedDetail = await loadTeamsMeetingArtifacts(liveSessionId);
+      if (requestId !== detailRequestId.current) return;
+      setDetail(loadedDetail);
+      setDetailRead({ liveSessionId, status: 'ready' });
     } catch (err) {
+      if (requestId !== detailRequestId.current) return;
       setDetail(null);
       setDetailError(err instanceof Error ? err.message : 'Unable to load this meeting from Teams.');
+      setDetailRead({ liveSessionId, status: 'error' });
     } finally {
-      setDetailLoading(false);
+      if (requestId === detailRequestId.current) setDetailLoading(false);
     }
   }, []);
 
   const openCalendarAction = (action: CalendarActionTarget['action'], sessionNumber?: number) => {
     if (blockedReason || !selected?.summary || detailLoading || detail?.series.id !== selected.summary.liveSessionId) return;
+    const refusal = calendarWriteBlockReason(selected);
+    if (refusal) {
+      setNotice({ tone: 'warning', text: refusal, moduleId: selected.catalogueId });
+      return;
+    }
     const occurrences = sessionNumber === undefined ? detail.occurrences
       : detail.occurrences.filter(row => row.session_number === sessionNumber);
     if (!occurrences.length) return;
@@ -844,9 +892,8 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
 
   useEffect(() => {
     const liveSessionId = selected?.summary?.liveSessionId || '';
-    if (!liveSessionId) { setDetail(null); setDetailError(null); return; }
     void loadDetail(liveSessionId);
-  }, [loadDetail, selected?.summary?.liveSessionId]);
+  }, [loadDetail, selected?.summary?.liveSessionId, scopeEpoch]);
 
   // Every module's dates are named after its own live sessions, whether or not
   // its calendar is in sync -- the name is what the row is, not a symptom of
@@ -855,9 +902,12 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     const catalogueId = selected?.catalogueId;
     if (!catalogueId) return undefined;
     let cancelled = false;
+    const key = normaliseKey(catalogueId);
+    setLinkReadStatus(previous => ({ ...previous, [key]: 'loading' }));
     void loadModuleStructure(catalogueId, { skipCache: true })
       .then(module => {
         if (cancelled) return;
+        if (!module) throw new Error('Module links unavailable');
         setLiveComponents(previous => ({ ...previous, [normaliseKey(catalogueId)]: liveSessionComponents(module) }));
         const everyLiveSession = allLiveSessionComponents(module);
         const hasSeries = moduleHasBookedSeries(everyLiveSession);
@@ -871,10 +921,11 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
           },
         }));
         setScopeRows(previous => ({ ...previous, [normaliseKey(catalogueId)]: liveSessionScopeRows(module) }));
+        setLinkReadStatus(previous => ({ ...previous, [key]: 'ready' }));
       })
-      // A missing name leaves the row reading as it always did; it never blanks
-      // the dates themselves.
-      .catch(() => undefined);
+      .catch(() => {
+        if (!cancelled) setLinkReadStatus(previous => ({ ...previous, [key]: 'error' }));
+      });
     return () => { cancelled = true; };
   }, [selected?.catalogueId, scopeEpoch]);
 
@@ -885,7 +936,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   // out-of-sync: the summary can be read before the group edit's cache epoch is
   // observed, while the planner endpoint is authoritative right now.
   useEffect(() => {
-    if (!selected?.summary) return undefined;
+    if (!selected || !needsSavedCalendarPlan) return undefined;
     let cancelled = false;
     void Promise.all([fetchModuleSessionPlan(selected.catalogueId), loadModuleStructure(selected.catalogueId, { skipCache: true })])
       .then(([plan, module]) => {
@@ -897,7 +948,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       })
       .catch(() => undefined);
     return () => { cancelled = true; };
-  }, [selected, scopeEpoch]);
+  }, [selected, scopeEpoch, needsSavedCalendarPlan]);
 
   const runArtifactSync = useCallback(async (
     liveSessionId: string,
@@ -960,6 +1011,15 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   }, [loadDetail, scopeModuleId, selected?.summary?.liveSessionId]);
 
   const runCalendarSync = useCallback(async (liveSessionId: string, source: 'manual' | 'automatic') => {
+    const eligibility = calendarSyncEligibility.current.get(liveSessionId);
+    if (!eligibility?.allowed) {
+      if (source === 'manual') setNotice({ tone: 'warning', moduleId: eligibility?.moduleId,
+        text: eligibility?.imported
+          ? 'This imported meeting uses its original Teams calendar. Ask the organiser to check dates and cancellations in Teams; checking saved LMS data does not update that calendar.'
+          : 'The calendar owner has not been confirmed. Reopen this module and retry loading its existing meeting before checking calendar status.',
+      });
+      return undefined;
+    }
     if (calendarSyncInFlight.current.has(liveSessionId)) return undefined;
     const attemptedAt = calendarSyncAttempts.current.get(liveSessionId);
     if (source === 'automatic' && attemptedAt !== undefined && Date.now() - attemptedAt < AUTO_SYNC_RETRY_MS) {
@@ -970,6 +1030,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     setCalendarSyncing(current => new Set(current).add(liveSessionId));
     try {
       const result = await syncTeamsCalendarState(liveSessionId);
+      if (!calendarSyncEligibility.current.get(liveSessionId)?.allowed) return undefined;
       calendarSyncStatuses.current.set(liveSessionId, result.seriesStatus);
       if (result.changed || result.seriesStatus === 'cancelled') {
         if (selectedLiveId.current === liveSessionId) {
@@ -1012,6 +1073,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       }
       return result.seriesStatus;
     } catch (error) {
+      if (!calendarSyncEligibility.current.get(liveSessionId)?.allowed) return undefined;
       const owner = moduleByLiveSession.get(liveSessionId);
       const body = error instanceof Error ? error.message : 'Calendar status could not be checked.';
       calendarSyncStatuses.current.delete(liveSessionId);
@@ -1036,7 +1098,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   // that same durable queue immediately without transferring videos here.
   useEffect(() => {
     if (!autoSyncEnabled || !graphConfigured || teamsLoading) return undefined;
-    const candidates = rows.filter(row => row.summary);
+    const candidates = rows.filter(row => row.summary && calendarSyncEligibility.current.get(row.summary.liveSessionId)?.allowed);
     let cancelled = false;
     void (async () => {
       // Keep Graph pressure predictable: one series at a time rather than a
@@ -1051,7 +1113,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       }
     })();
     return () => { cancelled = true; };
-  }, [autoSyncEnabled, graphConfigured, now, rows, runArtifactSync, runCalendarSync, teamsLoading]);
+  }, [autoSyncEnabled, graphConfigured, now, rows, detail, additionalMeetings, runArtifactSync, runCalendarSync, teamsLoading]);
 
   // --------------------------------------------------------------- actions
 
@@ -1133,6 +1195,8 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     const update = invitationEdits(row);
     if (!update) return;
     if (blockedReason) { updateDrawer.setError(blockedReason); return; }
+    const refusal = calendarWriteBlockReason(row);
+    if (refusal) { updateDrawer.setError(refusal); return; }
     updateDrawer.setSaving(true);
     updateDrawer.setError(null);
     try {
@@ -1238,6 +1302,11 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   const pushDates = async (row: MeetingRow) => {
     const summary = row.summary;
     if (blockedReason || !summary || !row.sessions.length) return;
+    const refusal = calendarWriteBlockReason(row);
+    if (refusal) {
+      setNotice({ tone: 'warning', text: refusal, moduleId: row.catalogueId });
+      return;
+    }
     setBusy(`${row.catalogueId}:dates`);
     setNotice({
       tone: 'warning',
@@ -1385,10 +1454,19 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
    */
   const reattach = async (row: MeetingRow) => {
     if (blockedReason) return;
+    const imported = protectedCalendar(row);
+    if (!imported && calendarWriteBlockReason(row)) {
+      setNotice({ tone: 'warning', text: calendarWriteBlockReason(row), moduleId: row.catalogueId });
+      return;
+    }
+    if (imported && !imported.canReattach) {
+      setNotice({ tone: 'warning', text: 'Connect the original calendar before reattaching its saved dates. The pasted links have been kept.', moduleId: row.catalogueId });
+      return;
+    }
     setBusy(`${row.catalogueId}:reattach`);
     setNotice(null);
     try {
-      const result = await restoreModuleTeamsMeeting(row.catalogueId, { createMissingComponents: true });
+      const result = await restoreModuleTeamsMeeting(row.catalogueId, { createMissingComponents: !imported });
       const created = result.createdComponents || 0;
       const updated = result.updatedComponents || 0;
       const parts = [
@@ -1396,13 +1474,16 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
         updated ? `${updated} updated` : '',
       ].filter(Boolean);
       await showCurriculumAlert({
-        title: created ? 'Live sessions added to the module' : 'Meeting re-attached',
-        text: parts.length
+        title: imported ? 'Saved Teams data reattached' : created ? 'Live sessions added to the module' : 'Meeting re-attached',
+        text: imported
+          ? `${updated} live-session component${updated === 1 ? '' : 's'} updated from saved calendar data. Dates without a match remain awaiting confirmation. The original Teams calendar and join link were not changed.`
+          : parts.length
           ? `${parts.join(', ')} — each week now opens its own session, on its own date.`
           : 'This module has no weeks to hold a live session yet.',
         timer: 2600,
       });
       await loadTeamsState();
+      setScopeEpoch(value => value + 1);
       notifyChanged(row.catalogueId);
     } catch (err) {
       setNotice({ tone: 'error', text: err instanceof Error ? err.message : 'The meeting could not be re-attached.' });
@@ -1496,8 +1577,12 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
    */
   const openSettings = (row: MeetingRow) => {
     if (blockedReason || !row.summary) return;
+    const refusal = calendarWriteBlockReason(row);
+    if (refusal) { setNotice({ tone: 'warning', text: refusal, moduleId: row.catalogueId }); return; }
     const series = detail?.series.id === row.summary.liveSessionId ? detail.series : undefined;
-    setDrawerTarget(row);
+    // Closing the main dialog clears its detail. Retain the ownership that was
+    // verified for this exact series while its settings drawer stays open.
+    setDrawerTarget({ ...row, summary: { ...row.summary, meetingType: row.summary.meetingType || series?.meeting_type } });
     const opened = {
       recording: cleanText(series?.recording, 'none'),
       lobbyBypass: cleanText(series?.lobby_bypass, 'invited'),
@@ -1524,6 +1609,8 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     const summary = row?.summary;
     if (!row || !summary) return;
     if (blockedReason) { settingsDrawer.setError(blockedReason); return; }
+    const refusal = calendarWriteBlockReason(row);
+    if (refusal) { settingsDrawer.setError(refusal); return; }
     const held = heldSchedule(row);
     if (!held) {
       settingsDrawer.setError('The meeting dates for this series have not loaded, so saving now could shorten it. Reload and try again.');
@@ -1681,6 +1768,8 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   const cancelLeftover = async (slot: TeamsLeftoverSlot) => {
     const liveId = selected?.summary?.liveSessionId;
     if (!liveId || leftoverCancelling) return;
+    const refusal = selected ? calendarWriteBlockReason(selected) : '';
+    if (refusal) { setNotice({ tone: 'warning', text: refusal, moduleId: selected?.catalogueId }); return; }
     const what = leftoverSlotLabel(slot);
     setLeftoverCancelling(slot.eventId);
     try {
@@ -1814,6 +1903,14 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     const row = target || drawerTarget;
     if (!row) return;
     if (blockedReason) { createDrawer.setError(blockedReason); return; }
+    if (!options.checkOnly && (protectedCalendar(row) || row.summary)) {
+      createDrawer.setError(protectedCalendar(row) ? EXTERNAL_CALENDAR_MESSAGE : 'This module already has a Teams calendar. Open its existing meeting instead of creating another.');
+      return;
+    }
+    if (!options.checkOnly && linkReadStatus[normaliseKey(row.catalogueId)] !== 'ready') {
+      createDrawer.setError('Wait until the saved meeting links have been checked. If the check failed, retry it before creating a calendar.');
+      return;
+    }
     const form = createDrawer.form;
     const organizer = form.organizerEmail.trim();
     if (!organizer) {
@@ -1911,7 +2008,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   // or learner-plan addresses.
   const seededCreateRef = useRef('');
   useEffect(() => {
-    if (!selected || selected.summary || !selected.sessions.length) {
+    if (!selected || selected.summary || !selected.sessions.length || externalCalendar || calendarLinksLoading || calendarLinksError) {
       seededCreateRef.current = '';
       return;
     }
@@ -1922,7 +2019,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     // seedCreateForm is re-created every render; the ref above is what keeps
     // this from running twice for the same module.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [defaultOrganizer, selected]);
+  }, [defaultOrganizer, selected, externalCalendar, calendarLinksLoading, calendarLinksError]);
 
   // Opening the dialog for a module with a calendar fills its invitation fields
   // from that calendar. Filled again when the calendar's own read lands or the
@@ -1996,7 +2093,8 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   /**
    * Give one live session to the module calendar or to an additional meeting.
    *
-   * Only the choice is saved; nothing reaches Microsoft. Each side then refuses
+   * The choice inherits the main link and matches imported calendar dates.
+   * Nothing reaches Microsoft. Each side then refuses
    * it: the module calendar stops sending its date, or the additional-meeting
    * form stops offering the week. Read again afterwards rather than patched in
    * place, so what the dialog shows is what the server now holds.
@@ -2008,7 +2106,10 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     setBusy(`${catalogueId}:scope:${componentId}:${scope}`);
     setNotice(null);
     try {
-      await setLiveSessionMeetingScope(catalogueId, componentId, scope);
+      const result = await setLiveSessionMeetingScope(catalogueId, componentId, scope);
+      if (result.message) {
+        setNotice({ tone: result.calendarStatus === 'matched' ? 'info' : 'warning', text: result.message, moduleId: catalogueId });
+      }
       setScopeEpoch(value => value + 1);
       notifyChanged(catalogueId);
     } catch (error) {
@@ -2045,6 +2146,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     pushDates, resendSchedule, saveInvitations, addedInvitees, reattach, prefillInvitees, openSettings, saveSettings,
     comparison, comparing, comparisonError, compareAttendees, publishedInvitees,
     selectedScopeRows, chooseMeetingScope, refreshMeetingScopes,
+    externalCalendar, calendarLinksLoading, calendarLinksError,
     createCalendar, createRecovery, createProgress, updateProgress, requestCloseSelected, notifyChanged, blockedReason, drawerOpen,
   };
 }

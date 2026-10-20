@@ -78,7 +78,7 @@ export function MigratedMeetingIntelligence({
   }, []);
   const mapped = bound || Boolean(binding?.fieldKey);
   const canCheck = !viewAs && !readOnly && !checkBlocked && (status === 'scheduled' || status === 'in-progress');
-  const canEdit = !mapped && !viewAs && !readOnly && status === 'in-progress';
+  const canEdit = !mapped && !viewAs && !readOnly && (status === 'scheduled' || status === 'in-progress');
 
   return (
     <section aria-label="Meeting Intelligence" className="space-y-3 rounded-xl border border-primary-200 bg-white p-4">

@@ -10,6 +10,7 @@ from . import ksb_generation
 from django.urls import include, path
 from coach_api.migrated_completion_views import (
     migrated_review_party_csrf, migrated_review_party_detail, migrated_review_party_pdf, migrated_review_party_sign,
+    migrated_review_party_answers,
 )
 from curriculum_api import recording_views
 from . import monthly_logs
@@ -23,6 +24,7 @@ from .meeting_attendance import meeting_attendance, confirm_meeting_attendance
 from .attendance_mode import attendance_mode, attendance_modes, review_attendance_mode
 from .first_session_bookings import first_session_bookings
 from .first_login_details import first_login_details
+from .review_sessions import learner_review_sessions
 
 from . import certificates, monthly_assignment, legacy_assignments, quiz_reading, review_history
 from . import historical_evidence
@@ -34,11 +36,18 @@ from .dashboard_training import training_module
 from . import module_progress, extra_activities, absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, free_courses_view, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
 from .my_learning import my_learning
 from . import progress_transfer
+from . import support_tickets
 
 from curriculum_api import session_results
 from .session_recovery import link_catchup
 
 urlpatterns = [
+    path('support/tickets/', support_tickets.learner_tickets),
+    path('support/tickets/<uuid:ticket_id>/', support_tickets.learner_ticket),
+    path('support/tickets/<uuid:ticket_id>/attachments/<uuid:attachment_id>/', support_tickets.learner_attachment),
+    path('support/queue/', support_tickets.staff_tickets),
+    path('support/queue/<uuid:ticket_id>/', support_tickets.staff_ticket),
+    path('support/queue/<uuid:ticket_id>/attachments/<uuid:attachment_id>/', support_tickets.staff_attachment),
     path('progress-transfer/requests/', progress_transfer.admin_requests),
     path('progress-transfer/requests/<uuid:request_id>/', progress_transfer.admin_requests),
     path('progress-transfer/<str:kind>/<int:pk>/', progress_transfer.learner_request),
@@ -48,6 +57,7 @@ urlpatterns = [
     path('migrated-reviews/<str:review_id>/party', migrated_review_party_detail, name='migrated-review-party-detail'),
     path('migrated-reviews/<str:review_id>/party-pdf', migrated_review_party_pdf, name='migrated-review-party-pdf'),
     path('migrated-reviews/<str:review_id>/party-sign', migrated_review_party_sign, name='migrated-review-party-sign'),
+    path('migrated-reviews/<str:review_id>/party-answers', migrated_review_party_answers, name='migrated-review-party-answers'),
     path("reflection/extra-activities/", extra_activities.list_extra_activities, name="learner-extra-activities"),
     path('personal-learning/courses/', personal_learning.courses),
     path('personal-learning/verify/<uuid:token>/', personal_learning.verify_certificate),
@@ -314,6 +324,7 @@ urlpatterns = [
     path("reflection/assignment/presentation-design/", presentation_design.upload_design, name="presentation-design"),
     path("reflection/assignment/presentation/", monthly_assignment.export_presentation, name="monthly-assignment-presentation"),
     # learner calendar (coaching sessions from Coach.coach_calendar_event)
+    path("review-sessions/<str:kind>/<int:pk>/", learner_review_sessions, name="learner-review-sessions"),
     path("calendar/<str:kind>/<int:pk>/", calendar.learner_calendar, name="learner-calendar"),
     path("review-history/<str:kind>/<int:pk>/", review_history.learner_review_history, name="learner-review-history"),
     path("calendar/<str:kind>/<int:pk>/book/", calendar.learner_calendar_book, name="learner-calendar-book"),

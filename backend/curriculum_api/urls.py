@@ -4,8 +4,12 @@ from coach_api import migrated_template_views
 from system_audit import activity as system_activity
 
 from . import activity, learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
+from .archive_index import curriculum_archive_index
 from .teams_attendee_compare import teams_meeting_attendee_comparison
 from .teams_permission_check import teams_meeting_permission_check
+from .teams_imported_participants import imported_meeting_participants
+from .teams_imported_calendar_update import imported_calendar_update
+from .teams_imported_calendar_auth import imported_calendar_connect, imported_calendar_connection
 from .teams_dial_in import teams_meeting_dial_in
 from .teams_options_retry import teams_meeting_options_retry
 from .teams_endpoint_guard import teams_staff_required
@@ -79,6 +83,8 @@ urlpatterns = [
     path('curriculum/review-types/<str:review_type_id>/', review_types.curriculum_review_type_detail, name='curriculum-review-type-detail'),
     path('curriculum/reviews/<str:review_id>/', reviews.curriculum_review_detail, name='curriculum-review-detail'),
     path('curriculum/overview/', views.curriculum_overview, name='curriculum-overview'),
+    # The Archive page's one read: every archived record, a page at a time.
+    path('curriculum/archive/', curriculum_archive_index, name='curriculum-archive-index'),
     path('curriculum/home-summary/', curriculum_home_summary, name='curriculum-home-summary'),
     path('curriculum/delivery-scope/', views.curriculum_delivery_scope, name='curriculum-delivery-scope'),
     path('curriculum/stats/', views.curriculum_stats, name='curriculum-stats'),
@@ -179,6 +185,7 @@ urlpatterns = [
     # Must precede curriculum/components/<component_id>/, or "library" would be
     # captured as a component id.
     path('curriculum/components/library/', views.curriculum_component_library, name='curriculum-component-library'),
+    path('curriculum/components/summary/', views.curriculum_component_summary, name='curriculum-component-summary'),
     path('curriculum/components/', views.curriculum_component_collection, name='curriculum-components'),
     path('curriculum/components/<str:component_id>/upload/', views.curriculum_component_upload, name='curriculum-component-upload'),
     path('curriculum/components/<str:component_id>/ksb-mappings/', views.curriculum_component_ksb_mappings, name='curriculum-component-ksb-mappings'),
@@ -195,6 +202,12 @@ urlpatterns = [
     path('curriculum/teams-meetings/<str:live_session_id>/actions/', calendar_action, name='curriculum-teams-calendar-action'),
     path('curriculum/teams-meetings/<str:live_session_id>/compare-attendees/', teams_meeting_attendee_comparison, name='curriculum-teams-compare-attendees'),
     path('curriculum/teams-meetings/<str:live_session_id>/permission-check/', teams_meeting_permission_check, name='curriculum-teams-permission-check'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-participants/', imported_meeting_participants, name='curriculum-teams-imported-participants'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-calendar/connection/', imported_calendar_connection, name='curriculum-teams-imported-calendar-connection'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-calendar/connect/', imported_calendar_connect, name='curriculum-teams-imported-calendar-connect'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-calendar/preview/', imported_calendar_update, {'stage': 'preview'}, name='curriculum-teams-imported-calendar-preview'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-calendar/confirm/', imported_calendar_update, {'stage': 'confirm'}, name='curriculum-teams-imported-calendar-confirm'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-calendar/status/', imported_calendar_update, {'stage': 'status'}, name='curriculum-teams-imported-calendar-status'),
     path('curriculum/teams-meetings/<str:live_session_id>/dial-in/', teams_staff_required(teams_meeting_dial_in), name='curriculum-teams-dial-in'),
     path('curriculum/teams-meetings/<str:live_session_id>/retry-options/', teams_meeting_options_retry, name='curriculum-teams-retry-options'),
     path('curriculum/teams-meetings/<str:live_session_id>/occurrences/<int:session_number>/schedule/', teams_staff_required(views.curriculum_teams_meeting_occurrence_schedule), name='curriculum-teams-meeting-occurrence-schedule'),

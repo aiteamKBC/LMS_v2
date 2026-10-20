@@ -98,6 +98,7 @@ class CalendarChecksTests(unittest.TestCase):
                               resolve_authoring_catalogue_id=lambda value: value, authoring_module_exists=lambda _: True,
                               resolve_stored_module_catalogue_id=lambda value: value,
                               authoring_fetch_all=self.fetch_rows, has_column=lambda *args: True,
+                              module_has_external_teams_calendar=lambda _module, series=None: (series or {}).get('meeting_type') == 'linked-external',
                               calendar_groups=lambda *args: [], stored_calendar_series=lambda _: [],
                               teams_non_delivery_reason=lambda *args, **kwargs: '',
                               truthy=lambda value: str(value).strip().lower() in {'1', 'true', 'yes', 'on'},
@@ -117,7 +118,7 @@ class CalendarChecksTests(unittest.TestCase):
                  'teams_event_payload', 'teams_single_occurrence_payload', 'teams_calendar_minute_key',
                  'teams_shifted_occurrence_targets', 'teams_expanded_instances',
                  'teams_standalone_occurrence_meeting',
-                 'apply_teams_occurrence_shifts', 'curriculum_teams_meeting', 'curriculum_teams_meeting_schedule',
+                 'apply_teams_occurrence_shifts', 'curriculum_teams_meeting', 'curriculum_teams_meeting_schedule', 'external_teams_calendar_refusal',
                  # The occurrence-deletion rule and the sentence a refusal is reported with.
                  'parse_int', 'vacated_occurrence_keys', 'tracked_occurrence_keys', 'flag_teams_occurrence_leftovers',
                  'teams_warning_sentence',

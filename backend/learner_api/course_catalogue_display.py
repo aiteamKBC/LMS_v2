@@ -58,6 +58,7 @@ def read_export_placements(query, courses):
             section->>'section_order' AS section_order,section->>'section_title' AS section_title,
             material->>'source_component_id' AS component_id,
             material->>'component_kind' AS component_kind,material->>'post_type' AS post_type,
+            material->>'component_order' AS component_order,
             material->>'created_at_utc' AS original_created_at
         FROM exports CROSS JOIN LATERAL jsonb_array_elements(
             CASE WHEN jsonb_typeof(payload->'sections')='array'
@@ -70,6 +71,8 @@ def read_export_placements(query, courses):
 
 def catalogue_display_context(definitions, exports):
     """Use typed source IDs inside the owned course, never title matching."""
+    from .source_sections import section_metadata
+    original_sections = section_metadata(definitions, exports)
     owned = {str(item['source_course_ref']) for item in definitions}
     sections, placements, section_refs = defaultdict(dict), defaultdict(list), defaultdict(list)
     uploaded = defaultdict(set)
@@ -110,6 +113,8 @@ def catalogue_display_context(definitions, exports):
     for definition in definitions:
         item = dict(definition)
         course, ref = str(item['source_course_ref']), item['source_activity_id']
+        if (course, ref) in original_sections:
+            item['source_section'] = original_sections[(course, ref)]
         matches = list(placements.get((course, ref), []))
         # The retained catalogue also records section membership directly.
         # Attached quizzes need not appear as standalone export materials.
@@ -170,6 +175,10 @@ def catalogue_display_context(definitions, exports):
                     item['source_section_title'] = item['source_section_title'] or parent['source_section_title']
                 if parent.get('material_available'):
                     item['source_material_activity_id'] = f'catalogue:{course}:material:{parent_id}'
+                if not item.get('source_section') and not str(item.get('source_section_ref') or '').strip('0') and parent.get('source_section'):
+                    item['source_section'] = dict(parent['source_section'])
+                elif not parent.get('source_section') and not str(parent.get('source_section_ref') or '').strip('0') and item.get('source_section'):
+                    parent['source_section'] = dict(item['source_section'])
     # Resolve companion quizzes before upload fallback, so a parent's authored
     # lecture date takes precedence over the quiz's original upload date.
     for item in enriched:
@@ -224,4 +233,6 @@ def apply_catalogue_display(items, definitions):
             item.update(schedule)
         if definition.get('source_material_activity_id'):
             item['source_material_activity_id'] = definition['source_material_activity_id']
+        if definition.get('source_section'):
+            item['source_section'] = dict(definition['source_section'])
     return items

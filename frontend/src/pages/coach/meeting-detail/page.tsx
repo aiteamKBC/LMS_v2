@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -15,11 +15,12 @@ import { cn } from '@/lib/cn';
 import { statusTone } from '@/lib/statusTone';
 import { roleNavMap } from '@/mocks/navigation';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
-import { markReviewInstanceInProgressManually, openReviewInstanceForEvent } from '@/api/reviewInstances';
+import { bookMigratedReview, rescheduleMigratedReview, markReviewInstanceInProgressManually, openReviewInstanceForEvent, type ReviewInstanceFormDefinition } from '@/api/reviewInstances';
 import { MonthlyCoachingCompletionModal } from '../meetings/MonthlyCoachingCompletionModal';
 import { CoachMeetingArtifactsPanel } from '../shared/CoachMeetingArtifactsPanel';
 import ProgressReviewCompletionModal from '../shared/ProgressReviewCompletionModal';
 import { ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '../shared/ScheduleControls';
+import { loadImportedReviewForBooking } from '../shared/importedReviewBooking';
 import { reviewInstancePath, reviewInstanceRouteState } from '../shared/reviewInstanceNavigation';
 import {
   type CoachCalendarEvent,
@@ -183,6 +184,8 @@ export default function CoachMeetingDetail() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [completionEvent, setCompletionEvent] = useState<CoachCalendarEvent | null>(null);
+  const [importedReview, setImportedReview] = useState<ReviewInstanceFormDefinition | null>(null);
+  const bookingInFlightRef = useRef(false);
 
   useEffect(() => {
     if (!coach.isInitialized) return;
@@ -223,6 +226,37 @@ export default function CoachMeetingDetail() {
     return () => controller.abort();
   }, [coach.email, coach.isInitialized, coach.name, eventKey, isProgressReview]);
 
+  // An imported Aptem review carries its own booking eligibility and its own
+  // booking endpoint, neither of which is part of a calendar row. Reading it
+  // here prepares exactly the form the Review workspace would, so the controls
+  // below do not depend on which screen the coach happened to open first.
+  const importedReviewId = event?.reviewSource === 'aptem' ? eventIdentity(event) : '';
+  useEffect(() => {
+    if (!importedReviewId) {
+      setImportedReview(null);
+      return;
+    }
+    const controller = new AbortController();
+    let active = true;
+    loadImportedReviewForBooking(importedReviewId, {
+      viewingAsCoach: coach.isViewingAsCoach,
+      signal: controller.signal,
+    })
+      .then(definition => {
+        if (!active) return;
+        setImportedReview(definition);
+        if (definition.booking?.canReschedule) {
+          setScheduleForm({
+            date: definition.booking.scheduledDate || definition.instance.targetDate,
+            time: definition.booking.scheduledTime || '09:00',
+            durationMinutes: definition.booking.durationMinutes || 60,
+          });
+        }
+      })
+      .catch(() => { if (active) setImportedReview(null); });
+    return () => { active = false; controller.abort(); };
+  }, [importedReviewId, coach.isViewingAsCoach]);
+
   const updateEvent = (updatedEvent: CoachCalendarEvent) => {
     setEvent(updatedEvent);
     setScheduleForm(scheduleDefaults(updatedEvent));
@@ -261,6 +295,45 @@ export default function CoachMeetingDetail() {
     } catch (err) {
       setActionError(err instanceof Error ? err.message : `Unable to schedule ${isProgressReview ? 'review' : 'meeting'}.`);
     } finally {
+      setBusy(false);
+    }
+  };
+
+  // The imported review's own booking action. It keeps the Aptem review's
+  // identity as the booking key, so the meeting this creates is the same one
+  // the Review workspace would have created, never a second appointment.
+  const bookImportedReview = async (useExistingMeeting: boolean) => {
+    const booking = importedReview?.booking;
+    if (!event || !importedReview || !booking || bookingInFlightRef.current) return;
+    if (!(useExistingMeeting ? booking.canAttach : booking.canBook || booking.canReschedule)) return;
+    bookingInFlightRef.current = true;
+    setBusy(true);
+    setActionError(null);
+    setActionNotice(null);
+    try {
+      const slot = {
+        scheduledDate: useExistingMeeting ? booking.scheduledDate || '' : scheduleForm.date,
+        scheduledTime: useExistingMeeting ? booking.scheduledTime || '' : scheduleForm.time,
+        durationMinutes: useExistingMeeting ? booking.durationMinutes || 60 : scheduleForm.durationMinutes,
+        timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+      };
+      const updated = booking.canReschedule && !useExistingMeeting
+        ? await rescheduleMigratedReview(importedReview.instance.id, slot, booking)
+        : await bookMigratedReview(importedReview.instance.id, slot);
+      setImportedReview(updated);
+      setEvent(current => (current ? {
+        ...current,
+        status: (updated.localStatus || updated.instance.status) as CoachCalendarEvent['status'],
+        scheduledDate: updated.booking?.scheduledDate ?? current.scheduledDate,
+        scheduledTime: updated.booking?.scheduledTime ?? current.scheduledTime,
+        durationMinutes: updated.booking?.durationMinutes ?? current.durationMinutes,
+        meetingLink: updated.booking?.meetingLink ?? current.meetingLink,
+      } : current));
+      if (booking.canReschedule && !useExistingMeeting) setActionNotice('Meeting rescheduled.');
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : `Unable to book this ${isProgressReview ? 'review' : 'meeting'}.`);
+    } finally {
+      bookingInFlightRef.current = false;
       setBusy(false);
     }
   };
@@ -385,7 +458,16 @@ export default function CoachMeetingDetail() {
 
   const url = event ? meetingUrl(event) : '';
   const canEditBooking = event?.reviewSource !== 'aptem' && (event?.status === 'not-scheduled' || event?.status === 'scheduled');
-  const showMeetingActions = canEditBooking || event?.status === 'in-progress' || (event?.reviewSource === 'aptem' && event.status === 'scheduled');
+  // Aptem bookings are authorized by the imported review itself, not by the
+  // calendar row, and an admin reading another workspace never books.
+  const importedBooking = event?.reviewSource === 'aptem' ? importedReview?.booking : undefined;
+  const canBookImported = Boolean(!coach.isViewingAsCoach && importedBooking?.canBook);
+  const canRescheduleImported = Boolean(!coach.isViewingAsCoach && importedBooking?.canReschedule);
+  const canAttachImported = Boolean(!coach.isViewingAsCoach && importedBooking?.canAttach);
+  const importedBookingConflict = Boolean(importedBooking?.conflict);
+  const showScheduleFields = canEditBooking || canBookImported || canRescheduleImported;
+  const showMeetingActions = canEditBooking || event?.status === 'in-progress' || (event?.reviewSource === 'aptem' && event.status === 'scheduled')
+    || canBookImported || canAttachImported || importedBookingConflict;
   const bookingPanelTitle = event?.status === 'not-scheduled'
     ? `Schedule ${isProgressReview ? 'Review' : 'Meeting'}`
     : event?.status === 'in-progress'
@@ -454,15 +536,22 @@ export default function CoachMeetingDetail() {
                   </div>
                   <StatusBadge tone={statusTone(event.status)} label={statusLabel(event.status)} size="sm" />
                 </div>
-                {canEditBooking ? (
+                {showScheduleFields ? (
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                     <div><ScheduleFieldLabel>Meeting date</ScheduleFieldLabel><ModernDatePicker value={scheduleForm.date} onChange={(value) => setScheduleForm(current => ({ ...current, date: value }))} /></div>
                     <div><ScheduleFieldLabel>Start time</ScheduleFieldLabel><ScheduleTimeInput value={scheduleForm.time} onChange={(value) => setScheduleForm(current => ({ ...current, time: value }))} /></div>
                     <div><ScheduleFieldLabel>Duration</ScheduleFieldLabel><ModernDurationPicker value={scheduleForm.durationMinutes} onChange={(durationMinutes) => setScheduleForm(current => ({ ...current, durationMinutes }))} /></div>
                   </div>
                 ) : null}
-                <div className={cn('flex flex-wrap items-center gap-2', canEditBooking && 'mt-5 border-t border-foreground-100 pt-4')}>
+                {importedBookingConflict ? (
+                  <p role="alert" className="mt-4 text-[12px] font-semibold text-red-700">
+                    This review has a conflicting calendar association. Ask an administrator to resolve it before booking.
+                  </p>
+                ) : null}
+                <div className={cn('flex flex-wrap items-center gap-2', showScheduleFields && 'mt-5 border-t border-foreground-100 pt-4')}>
                   {canEditBooking ? <RowAction label={event.status === 'scheduled' ? 'Reschedule' : 'Schedule'} icon="ri-calendar-check-line" emphasis="primary" disabled={busy} onClick={() => { void handleSchedule(); }} /> : null}
+                  {canBookImported || canRescheduleImported ? <RowAction label={canRescheduleImported ? 'Reschedule' : isProgressReview ? 'Book Review' : 'Book Meeting'} icon="ri-calendar-check-line" emphasis="primary" disabled={busy || !scheduleForm.date || !scheduleForm.time} onClick={() => { void bookImportedReview(false); }} /> : null}
+                  {canAttachImported ? <RowAction label="Use existing meeting" icon="ri-link" disabled={busy} onClick={() => { void bookImportedReview(true); }} /> : null}
                   {event.reviewSource === 'aptem' ? <RowAction label="Open Review" icon="ri-file-list-3-line" emphasis="primary" disabled={busy} onClick={() => { void openReviewWorkflow(false); }} /> : null}
                   {(event.status === 'scheduled' || event.status === 'in-progress') && url ? <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" disabled={busy} onClick={() => { void handleJoin(); }} /> : null}
                   {event.status === 'scheduled' && event.reviewTemplateId ? <RowAction label="Mark In Progress" icon="ri-play-circle-line" disabled={busy} onClick={() => { void markReviewInProgress(); }} /> : null}

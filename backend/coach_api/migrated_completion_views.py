@@ -4,13 +4,14 @@ import json
 from django.db import connections, transaction
 from django.http import JsonResponse
 from django.middleware.csrf import get_token
-from django.views.decorators.csrf import ensure_csrf_cookie
+from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
 from coach_api.auth import authenticated_coach_email, coach_access_required
 from coach_api.migrated_completion import complete, ensure_document, required_roles, sign, submit
 from coach_api.migrated_review_pdf import stored_pdf_response
 from coach_api.migrated_reviews import review_family
+from coach_api.migrated_respondents import merge_party_answers, writable_keys
 from coach_api.models import CoachCalendarEvent, ImportedReviewInstance, MigratedReviewDocument
 from coach_api.migrated_summary_binding import AnswerConflict, check_answer_version, record_answer_edit
 from coach_api.migrated_template_sync import TemplateSyncConflict, active_answers, synchronize_definition_locked
@@ -36,9 +37,9 @@ def _coach_review(request, review_id, *, pdf_only=False):
     return owner, definition if definition and definition.get("migratedForm") else None
 
 
-def _locked_overlay(owner, definition):
+def _locked_overlay(owner, definition, *, lock_calendar=False):
     from coach_api.views import _owned_migrated_overlay
-    return _owned_migrated_overlay(owner, definition, lock=True)
+    return _owned_migrated_overlay(owner, definition, lock=True, lock_calendar=lock_calendar)
 
 
 def _response(owner, review_id):
@@ -56,6 +57,20 @@ def _mirror_status(overlay):
         CoachCalendarEvent.objects.filter(pk=calendar.pk).update(**update)
 
 
+@transaction.atomic
+def _sign_and_complete(overlay, role, *, account, signature):
+    """Caller holds learner/calendar/overlay locks; all writes succeed together.
+
+    The savepoint also rolls back the signature if completion fails and the
+    endpoint catches the validation error to return a conflict response.
+    """
+    sign(overlay, role, account=account, signature=signature)
+    signed = set(overlay.migrated_signatures.values_list("role", flat=True))
+    if not (set(required_roles(overlay)) - signed):
+        complete(overlay)
+        _mirror_status(overlay)
+
+
 @coach_access_required
 @require_POST
 def migrated_review_submit(request, review_id):
@@ -66,7 +81,7 @@ def migrated_review_submit(request, review_id):
     if payload is None or ("answers" in payload and not isinstance(payload["answers"], dict)):
         return JsonResponse({"detail": "answers must be an object."}, status=400)
     with transaction.atomic():
-        overlay = _locked_overlay(owner, definition)
+        overlay = _locked_overlay(owner, definition, lock_calendar=True)
         if not overlay:
             return JsonResponse({"detail": "Migrated review association mismatch."}, status=409)
         try:
@@ -101,19 +116,30 @@ def migrated_review_coach_sign(request, review_id):
     if payload is None:
         return JsonResponse({"detail": "Invalid JSON object."}, status=400)
     with transaction.atomic():
-        overlay = _locked_overlay(owner, definition)
+        overlay = _locked_overlay(owner, definition, lock_calendar=True)
         if not overlay:
             return JsonResponse({"detail": "Migrated review association mismatch."}, status=409)
         try:
-            sign(overlay, "advisor", account=account, signature=payload.get("signature"))
+            _sign_and_complete(overlay, "advisor", account=account, signature=payload.get("signature"))
         except ValueError as exc:
             return JsonResponse({"detail": str(exc)}, status=409)
     return _response(owner, review_id)
 
 
-def _party_overlay(review_id, account, *, lock=False):
+def _party_overlay(review_id, account, *, lock=False, lock_calendar=False):
     if not review_id.startswith("imported-review:") or account.role not in {"learner", "employer"}:
         return None
+    if lock_calendar:
+        if not lock:
+            raise ValueError("Calendar locking requires an overlay lock.")
+        owned = _party_overlay(review_id, account)
+        if owned is None:
+            return None
+        # Match submission, rescheduling and reconciliation lock order.
+        from coach_api.views import lock_learner_calendar
+        lock_learner_calendar(owned.learner_id)
+        booking_for_overlay(owned, lock=True)
+        # Revalidate the participant's ownership after acquiring parent locks.
     # The template FK is nullable. Locking a row through select_related would
     # include an outer join, which PostgreSQL cannot lock with FOR UPDATE.
     query = ImportedReviewInstance.objects
@@ -156,18 +182,69 @@ def migrated_review_party_detail(request, review_id):
     overlay = _party_overlay(review_id, account)
     if not overlay:
         return JsonResponse({"detail": "Review not found for this account."}, status=404)
-    from coach_api.views import _imported_review_definition
-    definition = _imported_review_definition(overlay.owner_email, review_id)
-    if not definition or not definition.get("migratedForm"):
+    definition = _party_definition(overlay, account)
+    if definition is None:
         return JsonResponse({"detail": "Migrated form unavailable."}, status=404)
-    definition["readOnly"] = True
+    return JsonResponse(definition)
+
+
+def _party_definition(overlay, account):
+    from coach_api.views import _imported_review_definition
+    definition = _imported_review_definition(overlay.owner_email, overlay.event_key)
+    if not definition or not definition.get("migratedForm"):
+        return None
+    role = "participant" if account.role == "learner" else "employer"
+    definition["readOnly"] = (bool(definition.get("readOnly"))
+                              or overlay.status not in {"not-scheduled", "scheduled", "in-progress"}
+                              or not writable_keys(overlay, role))
     definition["canCalculateProgress"] = False
     definition.pop("progressVersion", None)
     definition.pop("historicalReview", None)
     definition.pop("ragHistory", None)
     definition.pop("summaryBinding", None)
-    definition.pop("answerVersion", None)
-    return JsonResponse(definition)
+    if definition["readOnly"]:
+        definition.pop("answerVersion", None)
+    return definition
+
+
+@require_POST
+@csrf_protect
+def migrated_review_party_answers(request, review_id):
+    account = authenticate_request(request)
+    if account is None:
+        return JsonResponse({"detail": "Sign in to answer this review."}, status=401)
+    if account.role not in {"learner", "employer"} or request.GET.get("viewAsCoach") or request.GET.get("viewAsLearner"):
+        return JsonResponse({"detail": "This account cannot answer as a review participant."}, status=403)
+    payload = _payload(request)
+    if payload is None or not isinstance(payload.get("answers"), dict):
+        return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
+    role = "participant" if account.role == "learner" else "employer"
+    with transaction.atomic():
+        overlay = _party_overlay(review_id, account, lock=True)
+        if not overlay:
+            return JsonResponse({"detail": "Review not found for this account."}, status=404)
+        try:
+            check_answer_version(overlay, payload)
+            # Read-only party GETs never change the template. A write checks the
+            # current managed rules under the same locks as coach saves.
+            from coach_api.views import _imported_review_definition
+            definition = _imported_review_definition(overlay.owner_email, overlay.event_key)
+            if not definition or not definition.get("migratedForm") or definition.get("readOnly"):
+                return JsonResponse({"detail": "This review is read-only."}, status=409)
+            if synchronize_definition_locked(overlay, definition):
+                return JsonResponse({"detail": "The review template changed. Reopen the review to check its latest questions before saving. Your unsaved answers have been kept on screen.", "code": "template_sync_changed"}, status=409)
+            answers = merge_party_answers(overlay, payload["answers"], role)
+            record_answer_edit(overlay, active_answers(overlay.template_snapshot, answers),
+                               actor=account.email or str(account.pk), role=role, account_id=account.pk)
+            overlay.answers = answers
+            overlay.save(update_fields=["answers", "meeting_intelligence", "updated_at"])
+        except PermissionError as exc:
+            return JsonResponse({"detail": str(exc)}, status=403)
+        except (AnswerConflict, TemplateSyncConflict) as exc:
+            return JsonResponse({"detail": str(exc)}, status=409)
+        except ValueError as exc:
+            return JsonResponse({"detail": str(exc)}, status=400)
+        return JsonResponse(_party_definition(overlay, account))
 
 
 @require_GET
@@ -193,12 +270,12 @@ def migrated_review_party_sign(request, review_id):
     if payload is None:
         return JsonResponse({"detail": "Invalid JSON object."}, status=400)
     with transaction.atomic():
-        overlay = _party_overlay(review_id, account, lock=True)
+        overlay = _party_overlay(review_id, account, lock=True, lock_calendar=True)
         if not overlay:
             return JsonResponse({"detail": "Review not found for this account."}, status=404)
         role = "participant" if account.role == "learner" else "employer"
         try:
-            sign(overlay, role, account=account, signature=payload.get("signature"))
+            _sign_and_complete(overlay, role, account=account, signature=payload.get("signature"))
         except ValueError as exc:
             return JsonResponse({"detail": str(exc)}, status=409)
     return JsonResponse({"signed": True, "role": role})
@@ -211,7 +288,7 @@ def migrated_review_complete(request, review_id):
     if not definition:
         return JsonResponse({"detail": "Migrated review not found."}, status=404)
     with transaction.atomic():
-        overlay = _locked_overlay(owner, definition)
+        overlay = _locked_overlay(owner, definition, lock_calendar=True)
         if not overlay:
             return JsonResponse({"detail": "Migrated review association mismatch."}, status=409)
         try:

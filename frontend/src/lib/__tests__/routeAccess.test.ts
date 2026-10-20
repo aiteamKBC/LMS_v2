@@ -46,7 +46,6 @@ describe('mayAccessRoute', () => {
       '/engagement/clubs',
       '/leadership/ofsted',
       '/finance/budgets',
-      '/support/ticket-queue',
       '/safeguarding/reports',
       '/training-plan/learner/12',
     ];
@@ -57,6 +56,16 @@ describe('mayAccessRoute', () => {
       expect(mayAccessRoute(path, as('staff')), path).toBe(true);
       expect(mayAccessRoute(path, as('admin')), path).toBe(true);
     }
+  });
+
+  it('limits the live support queue to administrators and explicitly granted support staff', () => {
+    const path = '/support/ticket-queue';
+    for (const role of ['learner', 'employer', 'staff'] as const) {
+      expect(mayAccessRoute(path, as(role))).toBe(false);
+    }
+    expect(mayAccessRoute(path, as('admin'))).toBe(true);
+    expect(mayAccessRoute(path, { role: 'staff', access: 'support' })).toBe(true);
+    expect(mayAccessRoute(path, { role: 'staff', access: 'coach', accessWorkspaces: [{ access: 'support', home: path }] })).toBe(true);
   });
 
   it('admits only the super-admin to the admin console', () => {

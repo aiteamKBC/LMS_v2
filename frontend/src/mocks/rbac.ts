@@ -581,6 +581,7 @@ export interface RoutePermissionMap {
 }
 
 export const ROUTE_PERMISSIONS: RoutePermissionMap[] = [
+  { path: '/curriculum/progress-transfers', allowedRoles: ['tenant-admin', 'super-admin'] },
   { path: '/', allowedRoles: ['*'] },
   { path: '/login', allowedRoles: ['*'] },
   { path: '/onboarding', allowedRoles: ['learner', 'compliance', 'qa', 'tenant-admin', 'super-admin'] },
@@ -630,6 +631,7 @@ export interface NavPermissionMap {
 }
 
 export const NAV_PERMISSIONS: NavPermissionMap[] = [
+  { navId: 'curriculum-progress-transfers', allowedRoles: ['tenant-admin', 'super-admin'] },
   // Learner nav
   { navId: 'dashboard', allowedRoles: ['*'] },
   { navId: 'learning', allowedRoles: ['learner', 'coach', 'tutor', 'tenant-admin', 'super-admin'] },

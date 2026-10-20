@@ -94,6 +94,14 @@ interface CurriculumRequestInit {
    * response is written back to the client cache, so other pages benefit.
    */
   revalidate?: boolean;
+  /**
+   * Internal: aborted once every caller sharing this GET has gone. A request
+   * still waiting in the programme-statistics queue is then dropped instead of
+   * being sent; one already on the wire is left to finish. Never sent to fetch.
+   */
+  abandonSignal?: AbortSignal;
+  /** Internal: called when a queued programme-statistics request is sent. */
+  onDispatch?: () => void;
 }
 
 export class CurriculumApiError extends Error {
@@ -1581,6 +1589,8 @@ export interface CurriculumSession {
  * full week structure just to inspect a live-session component's settings.
  */
 export interface CurriculumTeamsMeetingSummary {
+  meetingType?: string;
+  calendarManagement?: 'external' | 'lms';
   timeZone?: string;
   moduleCatalogueId: string;
   liveSessionId: string;
@@ -2946,10 +2956,21 @@ async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise
   const sharedInit = init?.signal ? { ...init, signal: undefined } : init;
   const inFlight = multiTierCache.getInFlight(path) as Promise<T> | undefined;
   const inFlightIsFresh = inFlight !== undefined
-    && multiTierCache.getInFlightEpoch(path) === mutationEpoch;
+    && multiTierCache.getInFlightEpoch(path) === mutationEpoch
+    // A queued read every caller has left is dropped unsent (see
+    // fetchJsonUncached), so a newcomer starts its own instead of joining it.
+    && !readWillBeDropped(inFlightInterest.get(inFlight));
   const existing = inFlightIsFresh ? inFlight : undefined;
   const askedAt = mutationEpoch;
-  const pending = existing || fetchJsonUncached<T>(path, sharedInit).then(value => {
+  // Only a read that can be dropped needs its callers counted; every other GET
+  // is shared exactly as before.
+  const interest = existing
+    ? inFlightInterest.get(existing)
+    : (isProgrammeStatsRead(method, path) ? newReadInterest() : undefined);
+  const uncachedInit = interest
+    ? { ...sharedInit, abandonSignal: interest.controller.signal, onDispatch: () => { interest.sent = true; } }
+    : sharedInit;
+  const pending = existing || fetchJsonUncached<T>(path, uncachedInit).then(value => {
     if (!init?.skipCache && askedAt === mutationEpoch) {
       // Tag cache entries with entity type for targeted invalidation
       let entityType: string | undefined;
@@ -2980,15 +3001,62 @@ async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise
   // skipCache, so nothing stale is stored.
   if (!existing) {
     multiTierCache.setInFlight(path, pending as Promise<unknown>, mutationEpoch);
+    if (interest) inFlightInterest.set(pending as Promise<unknown>, interest);
     const clearInFlight = () => {
+      inFlightInterest.delete(pending as Promise<unknown>);
       if (multiTierCache.getInFlight(path) === (pending as Promise<unknown>)) {
         multiTierCache.clearInFlight(path);
       }
     };
     pending.then(clearInFlight, clearInFlight);
   }
+  joinReadInterest(interest, init?.signal);
 
   return settleWithCallerAbort(pending, init?.signal);
+}
+
+/**
+ * Who is still waiting on a shared programme-statistics GET. A caller without
+ * a signal can never leave, so it pins the request; each caller with one is
+ * counted until it aborts. When the count reaches zero with nothing pinning
+ * it, `controller` aborts -- the cue fetchJsonUncached reads to drop a request
+ * still queued. `sent` is set once it is on the wire, after which it is never
+ * dropped and a newcomer may join it.
+ */
+interface ReadInterest {
+  controller: AbortController;
+  waiting: number;
+  pinned: boolean;
+  sent: boolean;
+}
+
+const inFlightInterest = new WeakMap<Promise<unknown>, ReadInterest>();
+
+function newReadInterest(): ReadInterest {
+  return { controller: new AbortController(), waiting: 0, pinned: false, sent: false };
+}
+
+function readWillBeDropped(interest: ReadInterest | undefined): boolean {
+  return Boolean(interest && interest.controller.signal.aborted && !interest.sent);
+}
+
+function isProgrammeStatsRead(method: string, path: string): boolean {
+  return method === 'GET' && /\/programmes\/[^/]+\/ksb-stats\//.test(path);
+}
+
+function joinReadInterest(interest: ReadInterest | undefined, signal?: AbortSignal): void {
+  if (!interest) return;
+  if (!signal) {
+    interest.pinned = true;
+    return;
+  }
+  const leave = () => {
+    interest.waiting -= 1;
+    if (interest.waiting <= 0 && !interest.pinned) interest.controller.abort();
+  };
+  interest.waiting += 1;
+  if (signal.aborted) leave();
+  else signal.addEventListener('abort', leave, { once: true });
 }
 
 /**
@@ -3040,8 +3108,17 @@ function retryDelay(attempt: number): Promise<void> {
 let programmeStatsTail: Promise<unknown> = Promise.resolve();
 
 function fetchJsonUncached<T>(path: string, init?: CurriculumRequestInit): Promise<T> {
-  if ((init?.method || 'GET').toUpperCase() === 'GET' && /\/programmes\/[^/]+\/ksb-stats\//.test(path)) {
-    const pending = programmeStatsTail.then(() => fetchJsonWithRetries<T>(path, init));
+  if (isProgrammeStatsRead((init?.method || 'GET').toUpperCase(), path)) {
+    // A page that queued a card's numbers and was then left would otherwise
+    // still send them, one after another, ahead of the next page's own: the
+    // Archive waited behind the Programmes list's leftovers this way. Dropped
+    // only while still queued; a request already sent finishes and warms the
+    // server cache for whoever asks next.
+    const pending = programmeStatsTail.then(() => {
+      if (init?.abandonSignal?.aborted) return Promise.reject(abortError());
+      init?.onDispatch?.();
+      return fetchJsonWithRetries<T>(path, init);
+    });
     programmeStatsTail = pending.then(() => undefined, () => undefined);
     return pending;
   }
@@ -3073,7 +3150,7 @@ async function fetchJsonOnce<T>(path: string, init?: CurriculumRequestInit): Pro
   // `revalidate` is destructured out with the other non-fetch options: it is a
   // client-cache directive only and must not reach the backend, or it would
   // force the same rebuild `skipCache` does.
-  const { timeoutMs: _timeoutMs, signal: callerSignal, skipCache: _skipCache, revalidate: _revalidate, ...fetchInit } = init || {};
+  const { timeoutMs: _timeoutMs, signal: callerSignal, skipCache: _skipCache, revalidate: _revalidate, abandonSignal: _abandonSignal, onDispatch: _onDispatch, ...fetchInit } = init || {};
   const signal = callerSignal && timeoutController
     ? anySignal([callerSignal, timeoutController.signal])
     : callerSignal || timeoutController?.signal;
@@ -3185,6 +3262,36 @@ export function fetchCurriculumComponents(signal?: AbortSignal, options: { modul
 }
 
 /**
+ * The components of a set of modules, counted rather than listed: one row per
+ * module/week bucket, carrying the same matching fields every component in it
+ * has on `CurriculumComponent`, how many there are, how many are published, and
+ * their Expected OTJH as `max(0, Math.round(expectedOtjh * 60))` summed. The
+ * programme Overview reads this instead of `fetchCurriculumComponents`.
+ */
+export interface CurriculumComponentSummaryRow {
+  moduleCatalogueId: string;
+  moduleId: string;
+  weekId: string;
+  week: string;
+  weekTitle: string;
+  module: string;
+  programme: string;
+  count: number;
+  publishedCount: number;
+  otjhMinutes: number;
+  /** The bucket's first component, by display order then title. */
+  displayOrder: number | null;
+  title: string;
+}
+
+export function fetchCurriculumComponentSummary(signal?: AbortSignal, options: { moduleCatalogueIds?: string[]; skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumComponentSummaryRow[]> {
+  const moduleCatalogueIds = (options.moduleCatalogueIds || []).filter(Boolean);
+  if (!moduleCatalogueIds.length) return Promise.resolve([]);
+  const query = new URLSearchParams({ module_catalogue_ids: moduleCatalogueIds.join(',') });
+  return fetchCollection<CurriculumComponentSummaryRow>(`/curriculum/components/summary/?${query.toString()}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate });
+}
+
+/**
  * Search components available for reuse, across all programmes.
  *
  * Returns list rows only: no `settings`, no `ksbMappings`. Those are 24 MB
@@ -3252,11 +3359,11 @@ export function fetchCurriculumStats(signal?: AbortSignal): Promise<CurriculumOv
   return fetchJson<CurriculumOverview['stats']>('/curriculum/stats/', { signal });
 }
 
-export function fetchCurriculumProgrammes(signal?: AbortSignal, options: { skipCache?: boolean; revalidate?: boolean; visibility?: 'all' | 'operational' } = {}): Promise<CurriculumProgramme[]> {
+export function fetchCurriculumProgrammes(signal?: AbortSignal, options: { skipCache?: boolean; revalidate?: boolean; visibility?: 'all' | 'operational'; timeoutMs?: number } = {}): Promise<CurriculumProgramme[]> {
   const query = new URLSearchParams();
   if (options.visibility === 'all') query.set('visibility', 'all');
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchCollection<CurriculumProgramme>(`/curriculum/programmes/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate });
+  return fetchCollection<CurriculumProgramme>(`/curriculum/programmes/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs });
 }
 
 /** The KSB numbers a programme card shows, for one programme. See CurriculumProgramme.ksbMapped. */
@@ -3545,6 +3652,134 @@ export function deleteCurriculumKsbFramework(id: string) {
   return deleteJson<{ deleted: boolean; id: string }>(`/curriculum/ksb-frameworks/${encodeURIComponent(id)}/`);
 }
 
+export interface ImportedMeetingPerson {
+  name: string;
+  email: string;
+}
+
+type ImportedPeopleStatus = 'available' | 'partial' | 'access_denied' | 'not_connected' | 'unavailable' | 'ambiguous';
+
+export interface ImportedMeetingParticipants {
+  checkedAt: string;
+  organizer?: {
+    status: ImportedPeopleStatus;
+    message: string;
+    source?: 'online_meeting' | 'saved_microsoft_records';
+    person?: ImportedMeetingPerson;
+    objectId?: string;
+    verifiedAt?: string;
+    evidenceAt?: string;
+  };
+  calendar: {
+    status: ImportedPeopleStatus;
+    message: string;
+    source?: 'organizer_calendar' | 'attendee_calendar';
+    organizer?: ImportedMeetingPerson;
+    attendees?: ImportedMeetingPerson[];
+    hideAttendees?: boolean;
+  };
+  roles: {
+    status: ImportedPeopleStatus;
+    message: string;
+    organizer?: ImportedMeetingPerson;
+    presenters?: ImportedMeetingPerson[];
+    coOrganizers?: ImportedMeetingPerson[];
+    allowedPresenters?: string;
+  };
+}
+
+/** Read Microsoft metadata without publishing invitations or changing the saved series. */
+export function fetchImportedMeetingParticipants(liveSessionId: string, signal?: AbortSignal) {
+  return fetchJson<ImportedMeetingParticipants>(
+    `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/imported-participants/`,
+    { signal, skipCache: true, timeoutMs: 75000 },
+  );
+}
+
+export interface ImportedCalendarPreview {
+  status: 'ready' | 'blocked' | 'up_to_date' | 'verification_pending';
+  message: string;
+  code?: string;
+  previewToken?: string;
+  currentEndDate?: string;
+  proposedEndDate?: string;
+  timeZone?: string;
+  addedSessions: { start: string; end: string }[];
+  existingInviteeCount?: number;
+  organizer?: ImportedMeetingPerson;
+  joinUrl?: string;
+  operationId?: string;
+  calendarChangeRequired?: boolean;
+  notificationScope?: string;
+  connectionRequired?: boolean;
+  connectionKind?: 'group' | 'user';
+}
+
+export interface ImportedCalendarUpdateResult {
+  status: 'confirmed' | 'verification_pending' | 'blocked';
+  message: string;
+  code?: string;
+  operationId?: string;
+  addedSessions?: number;
+  importedSessions?: number;
+  connectionRequired?: boolean;
+  connectionKind?: 'group' | 'user';
+}
+
+export interface ImportedCalendarConnection {
+  connected: boolean;
+  configured?: boolean;
+  expiresAt?: string;
+  message?: string;
+}
+
+/** Calendar writes require the session's CSRF token and must never auto-retry. */
+async function importedCalendarPost<T>(liveSessionId: string, action: string, body: unknown, timeoutMs = 90000): Promise<T> {
+  const path = `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/imported-calendar/${action}/`;
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await coachFetch(`${API_BASE_URL}${path}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body), signal: controller.signal,
+    });
+    const data = await response.json();
+    if (!response.ok) throw new CurriculumApiError(data?.error || data?.message || 'The calendar request could not be completed.', response.status, path, data);
+    if (action === 'confirm' || action === 'status') {
+      mutationEpoch += 1;
+      clearCurriculumGetCache();
+    }
+    return data;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+export async function fetchImportedCalendarConnection(liveSessionId: string): Promise<ImportedCalendarConnection> {
+  const path = `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/imported-calendar/connection/`;
+  const response = await coachFetch(`${API_BASE_URL}${path}`, { cache: 'no-store' });
+  const data = await response.json();
+  if (!response.ok) throw new CurriculumApiError(data?.error || 'The calendar connection could not be read.', response.status, path, data);
+  return data;
+}
+
+export function connectImportedCalendar(liveSessionId: string, calendarKind: 'group' | 'user') {
+  return importedCalendarPost<{ authorizationUrl: string; callbackOrigin: string }>(liveSessionId, 'connect', { calendarKind });
+}
+
+export function previewImportedCalendarUpdate(liveSessionId: string) {
+  return importedCalendarPost<ImportedCalendarPreview>(liveSessionId, 'preview', {});
+}
+
+export function confirmImportedCalendarUpdate(liveSessionId: string, previewToken: string, acknowledgeNotifications: boolean) {
+  return importedCalendarPost<ImportedCalendarUpdateResult>(liveSessionId, 'confirm', { previewToken, acknowledgeNotifications }, 120000);
+}
+
+/** Recover a result by reading Microsoft; never repeats the calendar update. */
+export function checkImportedCalendarUpdate(liveSessionId: string, operationId?: string) {
+  return importedCalendarPost<ImportedCalendarUpdateResult>(liveSessionId, 'status', { operationId });
+}
+
 export function fetchCurriculumTeamsMeetingSummaries(
   signal?: AbortSignal,
   options: { moduleCatalogueIds?: string[]; occurrenceDates?: boolean; skipCache?: boolean; revalidate?: boolean } = {},
@@ -3675,12 +3910,11 @@ export function fetchEnglandHolidays(signal?: AbortSignal, options: { skipCache?
 // those titles; the module workspace derives its own from the authored week
 // structure. A caller that needs them must take the full response.
 export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact?: boolean; skipCache?: boolean; revalidate?: boolean; timeoutMs?: number } = {}): Promise<CurriculumOverview> {
-  // Every other collection fetcher below (modules, tutors, coaches) caps itself at
-  // 30s so a slow backend fails into its own error+Retry banner instead of hanging
-  // on the browser's own multi-minute default. This one was missing that default,
-  // so a slow overview rebuild could sit open for minutes -- and every one of its
-  // callers inherited the gap, since none of them pass their own timeoutMs.
-  return fetchJson<CurriculumOverview>(`/curriculum/overview/${options.compact ? '?compact=true' : ''}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 30000 });
+  // Capped so a slow backend fails into its own error+Retry banner instead of
+  // hanging on the browser's multi-minute default. 90s, not 30s: a forced rebuild
+  // is ~13s on its own, and behind the browser's six-per-host queue on a busy
+  // page it was being cut off at 30s before the server had answered.
+  return fetchJson<CurriculumOverview>(`/curriculum/overview/${options.compact ? '?compact=true' : ''}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 90000 });
 }
 
 // `omitComponents` leaves `flat.components` out of the response, for a caller
@@ -4220,16 +4454,85 @@ export interface CurriculumArchivedModule extends CurriculumArchiveStamp {
  * `skipCache` — these two endpoints read the tables directly rather than through
  * the cached overview payload, so there is no server-side build to force.
  */
+// A finite wait, so a request that never answers ends in the archive's error
+// and Retry rather than in a skeleton that never leaves.
+export const ARCHIVE_READ_TIMEOUT_MS = 90_000;
+
 export function fetchArchivedCurriculumCohorts(signal?: AbortSignal): Promise<CurriculumArchivedCohort[]> {
-  return fetchCollection<CurriculumArchivedCohort>('/curriculum/cohorts/archived/', { signal, revalidate: true });
+  return fetchCollection<CurriculumArchivedCohort>('/curriculum/cohorts/archived/', { signal, revalidate: true, timeoutMs: ARCHIVE_READ_TIMEOUT_MS });
 }
 
 export function fetchArchivedCurriculumGroups(signal?: AbortSignal): Promise<CurriculumArchivedGroup[]> {
-  return fetchCollection<CurriculumArchivedGroup>('/curriculum/groups/archived/', { signal, revalidate: true });
+  return fetchCollection<CurriculumArchivedGroup>('/curriculum/groups/archived/', { signal, revalidate: true, timeoutMs: ARCHIVE_READ_TIMEOUT_MS });
 }
 
 export function fetchArchivedCurriculumModules(signal?: AbortSignal): Promise<CurriculumArchivedModule[]> {
-  return fetchCollection<CurriculumArchivedModule>('/curriculum/modules/archived/', { signal, revalidate: true });
+  return fetchCollection<CurriculumArchivedModule>('/curriculum/modules/archived/', { signal, revalidate: true, timeoutMs: ARCHIVE_READ_TIMEOUT_MS });
+}
+
+/** An archived programme: the programme list's shape plus its archive stamp. */
+export type CurriculumArchivedProgramme = CurriculumProgramme & CurriculumArchiveStamp;
+
+export type CurriculumArchiveKind = 'programme' | 'cohort' | 'group' | 'module';
+
+/** One archived record, in the shape its own archive list returns. */
+export type CurriculumArchiveRecord =
+  | { kind: 'programme'; key: string; record: CurriculumArchivedProgramme }
+  | { kind: 'cohort'; key: string; record: CurriculumArchivedCohort }
+  | { kind: 'group'; key: string; record: CurriculumArchivedGroup }
+  | { kind: 'module'; key: string; record: CurriculumArchivedModule };
+
+/**
+ * A record on the archive page. `children` are the records its own archive took
+ * down with it (only when the page is not filtered to one type);
+ * `archivedWith` is the key of the listed parent that took this one down.
+ */
+export type CurriculumArchiveEntry = CurriculumArchiveRecord & {
+  archivedWith?: string | null;
+  children: Array<CurriculumArchiveRecord & { archivedWith?: string | null }>;
+};
+
+export interface CurriculumArchivePage {
+  page: number;
+  pageSize: number;
+  pages: number;
+  /** Entries on this filter -- what the pager counts. */
+  total: number;
+  /** Records per type under the programme filter and search, for the tabs. */
+  counts: Record<CurriculumArchiveKind, number>;
+  /** Every record in the archive, whatever the filters. */
+  archiveTotal: number;
+  /** Records per type in the whole archive, whatever the filters. */
+  totals: Record<CurriculumArchiveKind, number>;
+  programmes: Array<{ value: string; label: string }>;
+  results: CurriculumArchiveEntry[];
+}
+
+/**
+ * GET /curriculum/archive/ -- one page of the whole archive, built on the
+ * server from a single set of reads. Revalidated for the reason the three lists
+ * above are: the next thing the reader does is restore or delete.
+ */
+export function fetchCurriculumArchivePage(
+  params: { page: number; pageSize: number; type?: string; programme?: string; q?: string },
+  signal?: AbortSignal,
+): Promise<CurriculumArchivePage> {
+  const query = new URLSearchParams({ page: String(params.page), pageSize: String(params.pageSize) });
+  if (params.type) query.set('type', params.type);
+  if (params.programme) query.set('programme', params.programme);
+  if (params.q?.trim()) query.set('q', params.q.trim());
+  return fetchJson<CurriculumArchivePage>(`/curriculum/archive/?${query.toString()}`, {
+    signal, revalidate: true, timeoutMs: ARCHIVE_READ_TIMEOUT_MS,
+  });
+}
+
+/** One archived record by key ('module:ID'), wherever it sits; null when it is not archived. */
+export async function fetchCurriculumArchiveRecord(key: string, signal?: AbortSignal): Promise<CurriculumArchiveRecord | null> {
+  const payload = await fetchJson<{ result: CurriculumArchiveRecord | null }>(
+    `/curriculum/archive/?key=${encodeURIComponent(key)}`,
+    { signal, revalidate: true, timeoutMs: ARCHIVE_READ_TIMEOUT_MS },
+  );
+  return payload.result;
 }
 
 /**

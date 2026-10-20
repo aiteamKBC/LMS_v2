@@ -6,10 +6,10 @@ import type { LearnerKind } from '@/api/learnerDetail';
 import type { MeetingAttendance } from '@/api/meetingAttendance';
 import {
   bookLearnerCalendarSession, fetchCalendarConnections, fetchLearnerCalendarEvents, fetchPersonalCalendarAvailability,
-  rescheduleLearnerCalendarSession, type BookingCalendarRules, type BookSessionResponse,
+  rescheduleLearnerCalendarSession, ukOffsetForDate, type BookingCalendarRules, type BookSessionResponse,
   type CalendarBusySlot, type LearnerCalendarEvent, type PersonalCalendarConnection,
 } from '@/api/learnerCalendar';
-import { bookingDateRestrictionMessage, firstAvailableBookingDate, isoDate, mcmBookingDateRestrictionMessage, parseBookingDay } from './bookingDates';
+import { bookingDateRestrictionMessage, bookingInstant, bookingToday, firstAvailableBookingDate, mcmBookingDateRestrictionMessage, parseBookingDay } from './bookingDates';
 import styles from './meetingBooking.module.css';
 
 /** A list card supplies identity and optional initial values. The dialog
@@ -27,12 +27,17 @@ type Props = {
 };
 
 function bookingBounds(date: string, time: string, durationMinutes: number) {
-  const start = new Date(`${date}T${time}:00`).getTime();
+  const start = parseBookingDay(date) ? bookingInstant(date, time) : NaN;
   return Number.isFinite(start) ? { start, end: start + durationMinutes * 60_000 } : null;
 }
 
 function overlaps(start: number, end: number, otherStart: number, otherEnd: number) {
   return start < otherEnd && end > otherStart;
+}
+
+function hasExistingBooking(session: MeetingBookingSession, attendance?: MeetingAttendance) {
+  return Boolean(session.scheduledDate && session.status === 'scheduled'
+    && (session.calendarEventKey || attendance?.calendarEventKey || !session.eventKey.startsWith('imported-review:')));
 }
 
 /** Keeps a failure inside the booking form from taking the whole page down
@@ -111,8 +116,8 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
   const monthly = session.source === 'mcr';
   const curriculumReview = session.source === 'review';
   const meetingType = monthly ? 'monthly coaching' : curriculumReview ? 'review' : 'progress review';
-  const rescheduling = Boolean(target?.scheduledDate && target.status === 'scheduled');
-  const isExisting = rescheduling || Boolean(session.scheduledDate && session.status === 'scheduled');
+  const rescheduling = Boolean(target && hasExistingBooking(target, attendance));
+  const isExisting = target ? rescheduling : hasExistingBooking(session, attendance);
   const durationLocked = Boolean(session.importedReview?.id && monthly);
   const dateRestriction = bookingDateRestrictionMessage(date, calendarRules) || (monthly ? mcmBookingDateRestrictionMessage(date) : '');
 
@@ -141,16 +146,16 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
       fetchCalendarConnections(learner.kind, learner.id).catch(() => ({ connections: [] })),
     ]).then(([calendar, calendarConnections]) => {
       if (cancelled) return;
-      const reviewId = session.importedReview?.id;
+      const reviewId = session.importedReview?.id || session.reviewId;
       const allowedTypes = session.source === 'mcr' ? ['monthly coaching meeting', 'monthly coaching', 'mcm'] : ['progress review', 'progress review (+ skills radar)'];
       if (session.importedReview && !allowedTypes.includes(session.importedReview.type.trim().toLowerCase())) {
         throw new Error('Choose a Monthly Coaching Meeting or Progress Review to schedule.');
       }
       const durableKey = session.calendarEventKey || attendance?.calendarEventKey || session.eventKey;
       // Resolve only this learner's exact booking. Dates are not identities.
-      const saved = calendar.events.find(event => event.source === session.source && (
-        event.eventKey === durableKey || event.calendarEventKey === durableKey || Boolean(reviewId && event.reviewId === reviewId)
-      ));
+      const candidates = calendar.events.filter(event => event.source === session.source);
+      const saved = candidates.find(event => event.eventKey === durableKey || event.calendarEventKey === durableKey)
+        || candidates.find(event => Boolean(reviewId && event.reviewId === reviewId));
       if (!saved) throw new Error('This meeting is no longer available. Close this window and refresh the page.');
       if (saved && !['scheduled', 'not-scheduled'].includes(saved.status)) {
         throw new Error('This meeting can no longer be scheduled. Close this window and refresh the page.');
@@ -181,8 +186,9 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
       setAvailabilityError('');
       return;
     }
-    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0).toISOString();
-    const end = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59).toISOString();
+    const nextDay = new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    const start = new Date(bookingInstant(date, '00:00')).toISOString();
+    const end = new Date(bookingInstant(nextDay, '00:00')).toISOString();
     let cancelled = false;
     setAvailabilityLoading(true);
     setAvailabilityError('');
@@ -208,8 +214,13 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
     const existing = bookingBounds(event.scheduledDate, event.scheduledTime, event.durationMinutes || 60);
     return existing ? overlaps(requested.start, requested.end, existing.start, existing.end) : false;
   }) : null;
+  // Match the Calendar page/server exclusion: moving this appointment must
+  // not conflict with its existing personal-calendar copy.
+  const currentBooking = rescheduling && target?.scheduledDate && target.scheduledTime
+    ? bookingBounds(target.scheduledDate, target.scheduledTime, target.durationMinutes || 60) : null;
   const personalConflict = requested ? busySlots.find(slot => {
     const start = Date.parse(slot.start), end = Date.parse(slot.end);
+    if (currentBooking && start === currentBooking.start && end === currentBooking.end) return false;
     return Number.isFinite(start) && Number.isFinite(end) && overlaps(requested.start, requested.end, start, end);
   }) : null;
   const bookingConflict = lmsConflict || personalConflict;
@@ -228,14 +239,13 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
       const eventKey = target.calendarEventKey || attendance?.calendarEventKey || target.eventKey;
       // An imported review may have a scheduled date before its first LMS
       // booking. Only a durable calendar key can be sent to reschedule.
-      const update = rescheduling && (Boolean(target.calendarEventKey) || !eventKey.startsWith('imported-review:'));
+      const update = rescheduling;
       const input = {
         scheduledDate: date,
         scheduledTime: time,
-        durationMinutes: update && target.eventKey.startsWith('imported-review:') ? attendance?.durationMinutes || Number(duration) || 60
-          : !update && reviewId && monthly ? 60 : Number(duration) || 60,
+        durationMinutes: !update && reviewId && monthly ? 60 : Number(duration) || 60,
         notes: notes.trim() || undefined,
-        timezoneOffsetMinutes: new Date(`${date}T${time}:00`).getTimezoneOffset(),
+        timezoneOffsetMinutes: ukOffsetForDate(date),
       };
       const response = update
         ? await rescheduleLearnerCalendarSession(learner.kind, learner.id, { ...input, eventKey, reviewId })
@@ -270,19 +280,20 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
         <option value={session.id}>{sessionLabel}</option>
       </select></label>
       <div className={styles.fields}>
-        <label>Date<input aria-label="Day" type="date" required min={isoDate(new Date())} value={date} disabled={saving || Boolean(loadError)} onChange={event => { edited.current.date = true; setDate(event.target.value); setError(''); }} /></label>
+        <label>Date<input aria-label="Day" type="date" required min={bookingToday()} value={date} disabled={saving || Boolean(loadError)} onChange={event => { edited.current.date = true; setDate(event.target.value); setError(''); }} /></label>
         <label>Time<input type="time" required value={time} disabled={saving || Boolean(loadError)} onChange={event => { edited.current.time = true; setTime(event.target.value); setError(''); }} /></label>
       </div>
+      <p className={styles.description}>All booking times are UK time (Europe/London), including daylight saving time.</p>
       <div className={`${styles.calendarCheck} ${bookingConflict ? styles.calendarConflict : ''}`}>
         <AppIcon className="ri-calendar-line" />
         <div>
-          {!connections.length
+          {bookingConflict
+            ? <p>This time conflicts with {lmsConflict ? `“${lmsConflict.title}”` : 'an event in your personal calendar'}.</p>
+            : !connections.length
             ? <Link to={calendarHref}>Connect your personal calendar to prevent booking conflicts</Link>
             : availabilityLoading
               ? <p role="status">Checking your personal calendar…</p>
-              : bookingConflict
-                ? <p>This time conflicts with {lmsConflict ? `“${lmsConflict.title}”` : 'an event in your personal calendar'}.</p>
-                : <p>This time is available in your calendar.</p>}
+              : <p>This time is available in your calendar.</p>}
           {connections.length > 0 && <small>{connections.length} personal calendar{connections.length === 1 ? '' : 's'} connected</small>}
         </div>
       </div>

@@ -58,6 +58,7 @@ const sessions = [session('MOD-1', '2026-09-02'), session('MOD-1', '2026-09-09')
 
 const summaries: CurriculumTeamsMeetingSummary[] = [{
   moduleCatalogueId: 'MOD-1', liveSessionId: 'LIVE-1', status: 'active',
+  meetingType: 'live-session', calendarManagement: 'lms',
   joinUrl: 'https://teams.microsoft.com/l/meetup-join/one', organizerEmail: 'organizer@example.invalid',
   eventId: 'event-1', presenters: ['tutor@example.invalid'], coOrganizers: ['co@example.invalid'],
   attendees: ['learner@example.invalid'], repeatPattern: 'weekly', startDateTime: '2026-09-02T08:30:00Z', durationMinutes: 120,

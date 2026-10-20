@@ -9,6 +9,7 @@ import { hasImportedProgress } from '@/pages/learner/reviews/imported/presentati
 import { ImportedValue } from '@/pages/learner/reviews/imported/ImportedReviewSection';
 import {
   bookMigratedReview,
+  rescheduleMigratedReview,
   calculateReviewInstanceProgress,
   calculateMigratedReviewProgress,
   completeReviewInstance,
@@ -36,19 +37,9 @@ import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { MigratedMeetingIntelligence } from './MigratedMeetingIntelligence';
 import { MigratedSummaryActions } from './MigratedSummaryActions';
 import type { CoachMeetingArtifactsResponse } from './calendarEvents';
+import { canInitializeMigratedReview } from './importedReviewBooking';
 
 const isAbortError = (err: unknown): boolean => err instanceof DOMException && err.name === 'AbortError';
-
-function canInitializeMigratedReview(data: ReviewInstanceFormDefinition): boolean {
-  return data.source === 'aptem'
-    && data.instance.id.startsWith('imported-review:')
-    && data.canInitialize === true
-    && !data.migratedForm
-    && !data.formAvailable
-    && data.sourceStatus?.trim().toLowerCase() !== 'completed'
-    && data.instance.status.trim().toLowerCase() !== 'completed'
-    && !data.instance.completedAt;
-}
 
 /** Review Types with a signed PDF export, by the Review Type's stable code --
  *  mirrors curriculum_api.review_pdf.EXPORTABLE_REVIEW_TYPES. */
@@ -610,18 +601,26 @@ export function ReviewInstanceModal({
   };
 
   const bookMigrated = async () => {
-    if (!definition?.migratedForm || !(definition.booking?.canBook || definition.booking?.canAttach) || formReadOnly || bookingInFlightRef.current) return;
+    if (!definition?.migratedForm || !(definition.booking?.canBook || definition.booking?.canAttach || definition.booking?.canReschedule) || formReadOnly || bookingInFlightRef.current) return;
     bookingInFlightRef.current = true;
     setSaving(true);
     setError(null);
     try {
-      const updated = await bookMigratedReview(definition.instance.id, {
+      const slot = {
         scheduledDate: definition.booking.canAttach ? definition.booking.scheduledDate || '' : bookingDate,
         scheduledTime: definition.booking.canAttach ? definition.booking.scheduledTime || '' : bookingTime,
         durationMinutes: definition.booking.canAttach ? definition.booking.durationMinutes || 60 : bookingDuration,
         timezoneOffsetMinutes: new Date().getTimezoneOffset(),
-      });
-      setDefinition(updated);
+      };
+      const updated = definition.booking.canReschedule
+        ? await rescheduleMigratedReview(definition.instance.id, slot, definition.booking)
+        : await bookMigratedReview(definition.instance.id, slot);
+      // Keep draft answers and their original version: rescheduling must not
+      // accept a concurrent answer change on behalf of this editor.
+      setDefinition(current => definition.booking?.canReschedule && current ? {
+        ...current, booking: updated.booking, localStatus: updated.localStatus,
+        readOnly: updated.readOnly, instance: { ...current.instance, status: updated.instance.status },
+      } : updated);
       setBookingOpen(false);
       onStatusChanged?.(updated.localStatus || updated.instance.status);
     } catch (err) {
@@ -926,14 +925,14 @@ export function ReviewInstanceModal({
             {definition.migratedForm && definition.booking?.conflict ? (
               <p role="alert" className="text-sm text-red-700">This review has a conflicting calendar association. Ask an administrator to resolve it before booking.</p>
             ) : null}
-            {definition.migratedForm && definition.booking?.canBook && !formReadOnly ? (
-              <section aria-label="Book migrated review meeting" className="rounded-xl border border-primary-200 bg-white p-4">
-                {!bookingOpen ? <button type="button" onClick={() => { setBookingDate(definition.booking?.scheduledDate || definition.instance.targetDate); setBookingOpen(true); }} disabled={busy} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">Book Meeting</button> : (
+            {definition.migratedForm && (definition.booking?.canBook || definition.booking?.canReschedule) && !formReadOnly ? (
+              <section aria-label={definition.booking.canReschedule ? 'Reschedule migrated review meeting' : 'Book migrated review meeting'} className="rounded-xl border border-primary-200 bg-white p-4">
+                {!bookingOpen ? <button type="button" onClick={() => { setBookingDate(definition.booking?.scheduledDate || definition.instance.targetDate); setBookingTime(definition.booking?.scheduledTime || '09:00'); setBookingDuration(definition.booking?.durationMinutes || 60); setBookingOpen(true); }} disabled={busy} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{definition.booking.canReschedule ? 'Reschedule' : 'Book Meeting'}</button> : (
                   <div className="flex flex-wrap items-end gap-3">
                     <label className="text-xs font-semibold">Date<input aria-label="Meeting date" type="date" required value={bookingDate} onChange={(event) => setBookingDate(event.target.value)} className="mt-1 block rounded-lg border px-3 py-2" /></label>
                     <label className="text-xs font-semibold">Time<input aria-label="Meeting time" type="time" required value={bookingTime} onChange={(event) => setBookingTime(event.target.value)} className="mt-1 block rounded-lg border px-3 py-2" /></label>
                     <label className="text-xs font-semibold">Minutes<input aria-label="Meeting duration" type="number" min={15} max={480} value={bookingDuration} onChange={(event) => setBookingDuration(Number(event.target.value))} className="mt-1 block w-24 rounded-lg border px-3 py-2" /></label>
-                    <button type="button" onClick={() => { void bookMigrated(); }} disabled={busy || !bookingDate || !bookingTime || bookingDuration < 15 || bookingDuration > 480} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving ? 'Booking...' : 'Confirm booking'}</button>
+                    <button type="button" onClick={() => { void bookMigrated(); }} disabled={busy || !bookingDate || !bookingTime || bookingDuration < 15 || bookingDuration > 480} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving ? 'Saving...' : definition.booking.canReschedule ? 'Save new time' : 'Confirm booking'}</button>
                     <button type="button" onClick={() => setBookingOpen(false)} disabled={busy} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
                   </div>
                 )}
@@ -942,7 +941,7 @@ export function ReviewInstanceModal({
             {definition.migratedForm && definition.localStatus === 'scheduled' && definition.booking?.booked && !formReadOnly ? (
               <button type="button" onClick={() => { void startMigrated(); }} disabled={busy}
                 className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
-                Start migrated review
+                Start migrated review (optional)
               </button>
             ) : null}
             {definition.migratedForm && definition.localStatus === 'not-scheduled' && !isViewingAsCoach ? (
@@ -1084,7 +1083,7 @@ export function ReviewInstanceModal({
               </section>
             ) : null}
 
-            {definition.instance.status === 'scheduled' ? (
+            {definition.instance.status === 'scheduled' && !definition.migratedForm ? (
               <div className="flex flex-col gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-[13px] font-bold text-amber-900">Not yet in progress</p>
@@ -1346,7 +1345,7 @@ export function ReviewInstanceModal({
           <button type="button" onClick={saveDraft} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-background-300 bg-white px-5 text-xs font-bold text-foreground-700 shadow-sm transition hover:bg-background-100 disabled:opacity-60">
             <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-save-line'}></AppIcon>Save draft
           </button>
-          {(!definition?.migratedForm || definition.localStatus === 'in-progress') ? <button type="button" onClick={complete} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60">
+          {(!definition?.migratedForm || definition.localStatus === 'scheduled' || definition.localStatus === 'in-progress') ? <button type="button" onClick={complete} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60">
             <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'}></AppIcon>
             {saving ? 'Saving...' : definition?.migratedForm ? 'Submit Review' : requiredSignatures.length ? 'Send for signatures' : 'Complete review'}
           </button> : null}

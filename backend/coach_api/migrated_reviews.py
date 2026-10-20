@@ -13,6 +13,9 @@ FAMILY_BY_SOURCE_TYPE = {
 }
 INITIAL_STATUSES = {"not-scheduled", "scheduled"}
 EDITABLE_STATUSES = {"not-scheduled", "scheduled", "in-progress"}
+# Work after scheduling does not require the optional Start transition.
+# Keep pre-booking drafts distinct from submission and legacy summary edits.
+SCHEDULED_WORK_STATUSES = frozenset({"scheduled", "in-progress"})
 
 # Supported by captured Aptem field metadata, option lists, and saved value shapes.
 FIELD_TYPES = {
@@ -170,7 +173,7 @@ def validate_definition(definition):
     return definition
 
 
-def _render_field(field, answers, warnings):
+def _render_field(field, answers, warnings, answer_audit):
     aptem_type = field["aptemType"]
     field_type = FIELD_TYPES.get(aptem_type, "text_multiline")
     if aptem_type not in FIELD_TYPES:
@@ -180,6 +183,7 @@ def _render_field(field, answers, warnings):
         "aptemType": aptem_type,
         "description": field.get("description") or "",
         "options": field.get("options") or [],
+        "respondentRoles": field.get("respondentRoles") or [],
     }
     if aptem_type not in FIELD_TYPES:
         configuration["typeWarning"] = "Unverified Aptem field type; using text entry."
@@ -190,19 +194,21 @@ def _render_field(field, answers, warnings):
         "required": bool(field.get("mandatory")) and field_type != "title_description",
         "displayOrder": field.get("order", 0), "configuration": configuration,
         "parentFieldId": None, "conditionValue": None,
-        "answer": answers.get(field["key"]), "answeredBy": None, "answeredAt": None,
-        "yesFields": [_render_field(child, answers, warnings) for child in field.get("ifTrue", [])],
-        "noFields": [_render_field(child, answers, warnings) for child in field.get("ifFalse", [])],
+        "answer": answers.get(field["key"]),
+        "answeredBy": (answer_audit.get(field["key"]) or {}).get("actor"),
+        "answeredAt": (answer_audit.get(field["key"]) or {}).get("at"),
+        "yesFields": [_render_field(child, answers, warnings, answer_audit) for child in field.get("ifTrue", [])],
+        "noFields": [_render_field(child, answers, warnings, answer_audit) for child in field.get("ifFalse", [])],
     }
 
 
-def render_sections(definition, answers):
+def render_sections(definition, answers, *, answer_audit=None):
     validate_definition(definition)
     warnings = []
     sections = [{
         "id": section["key"], "title": section["title"], "estimatedMinutes": 0,
         "displayOrder": section.get("order", 0), "enabled": True,
-        "fields": [_render_field(field, answers, warnings) for field in section["fields"]],
+        "fields": [_render_field(field, answers, warnings, answer_audit or {}) for field in section["fields"]],
     } for section in definition["sections"]]
     return sections, warnings
 

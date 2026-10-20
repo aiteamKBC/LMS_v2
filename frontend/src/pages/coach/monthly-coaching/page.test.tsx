@@ -4,9 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CoachCalendarEvent } from '../shared/calendarEvents';
 import CoachMonthlyCoaching from './page';
+import { importedBookingDefinition, installDialogTestSupport, scheduledImportedBooking } from '../shared/__tests__/importedBookingFixtures';
 import CoachMeetingDetail from '../meeting-detail/page';
 
-const { fetchEvents, scheduleEvent, savePptx, openReview, coach } = vi.hoisted(() => ({
+const { fetchEvents, scheduleEvent, savePptx, openReview, fetchForm, book, reschedule, coach } = vi.hoisted(() => ({
+  fetchForm: vi.fn(), book: vi.fn(), reschedule: vi.fn(),
   fetchEvents: vi.fn(),
   scheduleEvent: vi.fn(),
   savePptx: vi.fn(),
@@ -32,7 +34,9 @@ vi.mock('../progress-reviews/components/ProgressReviewPptxModal', () => ({
     return <div role="dialog">{props.kind} slides for {props.target?.learnerName}</div>;
   },
 }));
-vi.mock('@/api/reviewInstances', () => ({ openReviewInstanceForEvent: openReview }));
+vi.mock('@/api/reviewInstances', () => ({ openReviewInstanceForEvent: openReview,
+  fetchReviewInstanceForm: fetchForm, bookMigratedReview: book, rescheduleMigratedReview: reschedule, initializeMigratedReview: vi.fn(),
+}));
 
 function meeting(index: number, overrides: Partial<CoachCalendarEvent> = {}): CoachCalendarEvent {
   return {
@@ -80,6 +84,10 @@ const visibleLearners = () => Array.from(document.querySelectorAll('.ui-action-r
   .map(row => row.textContent);
 
 beforeEach(() => {
+  installDialogTestSupport();
+  fetchForm.mockReset().mockResolvedValue(scheduledImportedBooking());
+  book.mockReset().mockResolvedValue(scheduledImportedBooking());
+  reschedule.mockReset().mockResolvedValue(scheduledImportedBooking());
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date('2026-09-14T10:00:00'));
   coach.email = 'coach@example.com';
@@ -95,6 +103,41 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('restored monthly coaching list', () => {
+  it('keeps valid meetings and an identity warning together through cached navigation', async () => {
+    fetchEvents.mockResolvedValue({ events: meetings, reviewGenerationIssues: [
+      { learnerId: '41', code: 'review_identity_unavailable' },
+      { learnerId: '41', code: 'review_identity_unavailable' },
+    ] });
+    const first = mount();
+    await screen.findByText('Some reviews are unavailable');
+    expect(screen.getByText(/1 learner needs an enrolment record check/)).toBeVisible();
+    expect(screen.getByText('Scheduled Learner')).toBeVisible();
+    first.unmount();
+    fetchEvents.mockImplementation(() => new Promise(() => {}));
+    const cached = mount();
+    expect(screen.getByText('Some reviews are unavailable')).toBeVisible();
+    expect(screen.getByText('Scheduled Learner')).toBeVisible();
+    cached.unmount();
+    coach.email = 'another-coach@example.invalid';
+    mount();
+    expect(screen.queryByText('Some reviews are unavailable')).toBeNull();
+    expect(screen.queryByText('Scheduled Learner')).toBeNull();
+  });
+
+  it('clears a previous identity warning when the next response has no issue', async () => {
+    fetchEvents.mockResolvedValue({ events: meetings, reviewGenerationIssues: [
+      { learnerId: '41', code: 'review_identity_unavailable' },
+    ] });
+    const first = mount();
+    await screen.findByText('Some reviews are unavailable');
+    first.unmount();
+    fetchEvents.mockResolvedValue({ events: meetings });
+    mount();
+    await act(async () => {});
+    expect(screen.queryByText('Some reviews are unavailable')).toBeNull();
+    expect(screen.getByText('Scheduled Learner')).toBeVisible();
+  });
+
   it.each([
     ['Not Scheduled', ['Overdue Learner', 'Due Soon Learner']],
     ['Scheduled', ['Scheduled Learner']],
@@ -229,7 +272,45 @@ describe('restored monthly coaching list', () => {
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/monthly-coaching');
   });
 
-  it('routes imported Aptem meetings to their own booking form', async () => {
+  it('opens a Scheduled imported booking in a direct reschedule dialog', async () => {
+    fetchEvents.mockResolvedValue({ events: [meeting(31, { eventKey: 'imported-review:31',
+      learner: 'Imported booking', status: 'scheduled', scheduledDate: '2026-09-22',
+      reviewSource: 'aptem', calendarEventKey: 'imported-review:31', reviewTemplateId: undefined })] });
+    mount();
+    await screen.findByText('Imported booking');
+    fireEvent.click(rowMenu('Imported booking').getByRole('menuitem', { name: 'Reschedule' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save new time' }));
+    expect(await screen.findByText('Review rescheduled.')).toBeVisible();
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/monthly-coaching');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(reschedule).toHaveBeenCalledWith('imported-review:31', expect.any(Object), scheduledImportedBooking().booking);
+    expect(scheduleEvent).not.toHaveBeenCalled();
+  });
+
+  it('books an Aptem MCM directly and shows a pending sync warning in the list', async () => {
+    fetchForm.mockResolvedValue(importedBookingDefinition());
+    const saved = scheduledImportedBooking();
+    book.mockResolvedValue({ ...saved, booking: { ...saved.booking, booked: false, syncState: 'pending' } });
+    fetchEvents.mockResolvedValue({ events: [meeting(31, { eventKey: 'imported-review:31', learner: 'Imported learner',
+      reviewSource: 'aptem', aptemReviewId: '31' }), meeting(32, { learner: 'Unaffected learner' })] });
+    const view = mount();
+    await screen.findByText('Imported learner');
+    fireEvent.click(rowMenu('Imported learner').getByRole('menuitem', { name: 'Schedule' }));
+    expect(await screen.findByRole('dialog', { name: 'Schedule monthly coaching meeting' })).toBeVisible();
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm booking' }));
+    await screen.findByText(/Microsoft calendar sync is not yet confirmed/);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(within(screen.getByText('Imported learner').closest('tr')!).getByText('Scheduled')).toBeVisible();
+    expect(within(screen.getByText('Unaffected learner').closest('tr')!).getByText('Not Scheduled')).toBeVisible();
+    expect(book).toHaveBeenCalledWith('imported-review:31', expect.any(Object));
+    expect(scheduleEvent).not.toHaveBeenCalled();
+    view.unmount();
+    fetchEvents.mockImplementation(() => new Promise(() => {}));
+    mount();
+    expect(within(screen.getByText('Imported learner').closest('tr')!).getByText('Scheduled')).toBeVisible();
+  });
+
+  it('keeps View form navigation alongside direct Aptem scheduling', async () => {
     fetchEvents.mockResolvedValue({ events: [
       meeting(20, { id: 'imported-review:20', eventKey: 'imported-review:20', learner: 'Imported Unscheduled', status: 'not-scheduled', reviewSource: 'aptem', aptemReviewId: '20', hasReviewForm: false, reviewTemplateId: undefined }),
       meeting(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Scheduled', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00', reviewSource: 'aptem', aptemReviewId: '21', hasReviewForm: false, reviewTemplateId: undefined }),
@@ -240,14 +321,14 @@ describe('restored monthly coaching list', () => {
     const unscheduledRow = within(screen.getByText('Imported Unscheduled').closest('tr')!);
     expect(unscheduledRow.getByRole('button', { name: 'View form' })).toBeVisible();
     const unscheduledMenu = rowMenu('Imported Unscheduled');
-    expect(unscheduledMenu.queryByRole('menuitem', { name: 'Schedule' })).toBeNull();
+    expect(unscheduledMenu.getByRole('menuitem', { name: 'Schedule' })).toBeVisible();
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
 
     const scheduledRow = within(screen.getByText('Imported Scheduled').closest('tr')!);
     expect(scheduledRow.getByRole('button', { name: 'View form' })).toBeVisible();
     const scheduledMenu = rowMenu('Imported Scheduled');
     expect(scheduledMenu.getAllByRole('menuitem').map(item => item.textContent)).toEqual([
-      'View details', 'View slides',
+      'View details', 'View slides', 'Schedule',
     ]);
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     fireEvent.click(scheduledRow.getByRole('button', { name: 'View form' }));

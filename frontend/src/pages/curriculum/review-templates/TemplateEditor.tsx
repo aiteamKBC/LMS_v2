@@ -23,7 +23,7 @@ function hasSummary(fields: MigratedField[]): boolean {
   return fields.some(field => field.semanticKey === 'meeting_summary' || hasSummary(field.ifTrue || []) || hasSummary(field.ifFalse || []));
 }
 
-function Fields({ fields, onChange, depth = 0, summaryMapped }: { fields: MigratedField[]; onChange: (fields: MigratedField[]) => void; depth?: number; summaryMapped: boolean }) {
+function Fields({ fields, onChange, depth = 0, summaryMapped, allowEmployer }: { fields: MigratedField[]; onChange: (fields: MigratedField[]) => void; depth?: number; summaryMapped: boolean; allowEmployer: boolean }) {
   const update = (index: number, changes: Partial<MigratedField>) => onChange(fields.map((field, i) => i === index ? { ...field, ...changes } : field));
   return <div className="space-y-3">
     {fields.map((field, index) => <fieldset key={field.key} className="space-y-3 rounded-xl border border-background-200 bg-background-100/50 p-4">
@@ -35,11 +35,23 @@ function Fields({ fields, onChange, depth = 0, summaryMapped }: { fields: Migrat
           if (field.semanticKey === 'meeting_summary' && ![1, 13].includes(aptemType)
             && !window.confirm('Changing this field type will turn off Use as AI Meeting Summary. The question will remain in the template. Continue?')) return;
           if (aptemType !== 6 && ((field.ifTrue?.length || 0) + (field.ifFalse?.length || 0)) && !window.confirm('Changing this type removes its conditional questions. Continue?')) return;
-          update(index, { aptemType, ...(![1, 13].includes(aptemType) ? { semanticKey: undefined } : {}), ...(aptemType !== 6 ? { ifTrue: [], ifFalse: [] } : {}) });
+          update(index, { aptemType, ...(aptemType === 11 ? { respondentRoles: [] } : {}), ...(![1, 13].includes(aptemType) ? { semanticKey: undefined } : {}), ...(aptemType !== 6 ? { ifTrue: [], ifFalse: [] } : {}) });
         }}>{!fieldTypes.some(([value]) => value === field.aptemType) && <option value={field.aptemType}>Unsupported type {field.aptemType}</option>}
           {fieldTypes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></FormField>
       </div>
       <FormField label="Help text"><TextAreaControl value={field.description || ''} onChange={description => update(index, { description })} rows={2} /></FormField>
+      {field.aptemType !== 11 && <fieldset className="rounded-lg border border-dashed border-background-300 bg-white p-3">
+        <legend className="px-1 text-xs font-semibold">Who can answer</legend>
+        <div className="flex flex-wrap items-center gap-4 text-sm">
+          <span className="text-foreground-500">Coach (always)</span>
+          {(['participant', 'employer'] as const).filter(role => allowEmployer || role !== 'employer').map(role => <label key={role} className="flex items-center gap-2">
+            <input type="checkbox" checked={(field.respondentRoles || []).includes(role)} onChange={event => update(index, {
+              respondentRoles: event.target.checked ? [...(field.respondentRoles || []), role] : (field.respondentRoles || []).filter(value => value !== role),
+            })} />{role === 'participant' ? 'Learner' : 'Employer'}
+          </label>)}
+        </div>
+        <p className="mt-2 text-xs text-foreground-500">Selected people can edit the same answer before submission. Signature requirements are unchanged.</p>
+      </fieldset>}
       {depth === 0 && [1, 13].includes(field.aptemType) && <div className="space-y-1 text-sm">
         <label><input type="checkbox" checked={field.semanticKey === 'meeting_summary'}
           disabled={summaryMapped && field.semanticKey !== 'meeting_summary'}
@@ -56,7 +68,7 @@ function Fields({ fields, onChange, depth = 0, summaryMapped }: { fields: Migrat
       </div>
       {field.aptemType === 6 && depth < 10 && (['ifTrue', 'ifFalse'] as const).map(branch => <div key={branch} className="border-l-2 border-primary-200 pl-3">
         <h4 className="mb-2 text-sm font-semibold">When answer is {branch === 'ifTrue' ? 'Yes' : 'No'}</h4>
-        <Fields fields={field[branch] || []} onChange={children => update(index, { [branch]: children })} depth={depth + 1} summaryMapped={summaryMapped} />
+        <Fields fields={field[branch] || []} onChange={children => update(index, { [branch]: children })} depth={depth + 1} summaryMapped={summaryMapped} allowEmployer={allowEmployer} />
       </div>)}
     </fieldset>)}
     <button type="button" className={buttonClass} onClick={() => onChange([...fields, { ...newField(), order: fields.length }])}>Add question</button>
@@ -75,6 +87,7 @@ export function PreviewForm({ preview }: { preview: TemplatePreview }) {
 export function TemplateEditor({ template, programmeName, onClose, onSaved }: { template: TemplateDetail; programmeName: string; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState(template.name);
   const [definition, setDefinition] = useState<MigratedDefinition>(() => structuredClone(template.definition));
+  const [hoursDraft, setHoursDraft] = useState(String(template.definition.otjh?.expectedHours ?? 0));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<TemplatePreview | null>(null);
@@ -87,7 +100,7 @@ export function TemplateEditor({ template, programmeName, onClose, onSaved }: { 
   }, [dirty]);
   const close = () => { if (!busy && (!dirty || window.confirm('Discard unsaved template changes?'))) onClose(); };
   const sections = definition.sections;
-  const updateSections = (next: MigratedDefinition['sections']) => setDefinition({ sections: next });
+  const updateSections = (next: MigratedDefinition['sections']) => setDefinition(current => ({ ...current, sections: next }));
   const save = async () => {
     setBusy(true); setError('');
     try { await updateMigratedTemplate(template, { name, definition }); onSaved(); }
@@ -109,12 +122,27 @@ export function TemplateEditor({ template, programmeName, onClose, onSaved }: { 
     </div>
     <div className="mb-5 rounded-xl border border-sky-100 bg-sky-50 p-3 text-sm leading-6 text-sky-900">
       {template.scope === 'GLOBAL'
-        ? 'Changes apply to future or uninitialised migrated reviews using this Standard Template. Reviews already started keep their saved version.'
-        : 'This programme-specific copy can be edited independently. Reviews already started keep their saved version.'}
+        ? 'Changes apply to migrated reviews using this Standard Template while they are still editable. Working reviews synchronise when opened by the coach or checked on save. Reviews awaiting signatures or completed keep their saved version.'
+        : 'This programme-specific copy can be edited independently. Working reviews synchronise when opened by the coach or checked on save. Reviews awaiting signatures or completed keep their saved version.'}
     </div>
     {!template.is_active && <p className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Saved but not in use. Saving your changes does not enable this version.{template.scope === 'PROGRAMME' ? ' Choose Use Custom Version when it is ready.' : ' Enable it from More when it is ready.'}</p>}
     {preview ? <PreviewForm preview={preview} /> : <fieldset disabled={busy} className="space-y-5">
       <FormField label="Template name"><TextControl value={name} onChange={setName} /></FormField>
+      <fieldset className="space-y-3 rounded-xl border border-background-200 p-4">
+        <legend className="px-1 text-sm font-semibold">Off-the-job hours</legend>
+        <FormField label="Expected OTJH (hours)">
+          <TextControl type="number" min={0} max={999999.99} step="0.01" value={hoursDraft}
+            onChange={value => { setHoursDraft(value); setDefinition(current => ({ ...current, otjh: {
+              countsTowardsOtjh: current.otjh?.countsTowardsOtjh ?? false, expectedHours: value === '' ? 0 : Number(value),
+            } })); }} />
+        </FormField>
+        <p className="text-xs text-foreground-500">Hours credited for one completed review.</p>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={definition.otjh?.countsTowardsOtjh ?? false}
+          onChange={event => setDefinition(current => ({ ...current, otjh: {
+            expectedHours: current.otjh?.expectedHours ?? 0, countsTowardsOtjh: event.target.checked,
+          } }))} />Counts towards learner's total OTJH</label>
+        <p className="text-xs text-foreground-500">Applies to editable reviews using this template. Hours are fixed when the review is submitted and credited once all required signatures are saved. Previously completed reviews are unchanged. These are configured review hours, not measured attendance.</p>
+      </fieldset>
       {sections.map((section, index) => <section key={section.key} className="space-y-3 rounded-2xl border border-background-200 p-4">
         <FormField label={`Section ${index + 1} title`}><TextControl value={section.title} onChange={title => updateSections(sections.map((s, i) => i === index ? { ...s, title } : s))} /></FormField>
         <div className="flex flex-wrap gap-2">
@@ -122,7 +150,7 @@ export function TemplateEditor({ template, programmeName, onClose, onSaved }: { 
           <button type="button" className={buttonClass} disabled={index === sections.length - 1} onClick={() => updateSections(move(sections, index, 1))}>Move section down</button>
           <button type="button" className={buttonClass} onClick={() => { if (window.confirm('Remove this section and its questions?')) updateSections(ordered(sections.filter((_, i) => i !== index))); }}>Remove section</button>
         </div>
-        <Fields fields={section.fields} onChange={fields => updateSections(sections.map((s, i) => i === index ? { ...s, fields } : s))} summaryMapped={sections.some(s => hasSummary(s.fields))} />
+        <Fields fields={section.fields} onChange={fields => updateSections(sections.map((s, i) => i === index ? { ...s, fields } : s))} summaryMapped={sections.some(s => hasSummary(s.fields))} allowEmployer={template.review_family !== 'MCM'} />
       </section>)}
       <button type="button" className={buttonClass} onClick={() => updateSections([...sections, { key: key(), title: '', order: sections.length, fields: [newField()] }])}>Add section</button>
     </fieldset>}

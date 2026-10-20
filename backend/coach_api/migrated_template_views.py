@@ -88,7 +88,7 @@ def collection(request):
             if source is None:
                 raise ValueError("An active Global template is required to create an override.")
             definition = deepcopy(source.definition_json)
-            validate_managed_definition(definition)
+            validate_managed_definition(definition, family=family)
             metadata = {"copiedFromTemplateId": source.pk, "globalSource": deepcopy(source.source_metadata)}
         else:
             source_id = payload.get("source_review_id")
@@ -124,14 +124,14 @@ def detail(request, template_id):
             if "name" in payload:
                 template.name = template_name(payload["name"])
             if "definition" in payload:
-                template.definition_json = validate_managed_definition(payload["definition"])
+                template.definition_json = validate_managed_definition(payload["definition"], family=template.review_family)
             if "is_active" in payload:
                 if type(payload["is_active"]) is not bool:
                     raise ValueError("Active state must be true or false.")
                 template.is_active = payload["is_active"]
             validate_slot(template.scope, template.review_family, template.programme_key)
             if template.is_active:
-                validate_managed_definition(template.definition_json)
+                validate_managed_definition(template.definition_json, family=template.review_family)
             template.save(update_fields=["name", "definition_json", "is_active", "updated_at"])
         response = JsonResponse(serialize_template(template, definition=True))
         response["Cache-Control"] = "no-store"

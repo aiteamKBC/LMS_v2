@@ -167,7 +167,8 @@ describe('full historical course catalogue', () => {
     ] };
     const subject = subjectsFrom(recovered, null)[0];
     expect(groupSubjectActivities(subject.activities).map(group => group.month)).toEqual(['introduction', '2026-03', 'undated']);
-    expect(subjectWeeks(subject).map(week => week.id)).toEqual(['introduction', '2026-03-02', 'undated']);
+    expect(subjectWeeks(subject).map(week => week.id)).toEqual(['introduction', '2026-03-06', 'undated']);
+    expect(subjectWeeks(subject)[1]).toMatchObject({ start: '2026-03-06', end: '2026-03-12' });
     expect(subject.activities.every(item => !item.completed)).toBe(true);
   });
 

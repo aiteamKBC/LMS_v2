@@ -99,6 +99,19 @@ class TimeTrackingSessionTests(SimpleTestCase):
                     submitted_at=self.started_at + timedelta(seconds=20))
         self.assertEqual(raised.exception.code, 'expired_tracking_session')
 
+    def test_reward_observation_expiry_keeps_its_recoverable_reason(self):
+        import inspect
+        import json
+        from types import SimpleNamespace
+        from . import reward_tracking, mobile
+        request = SimpleNamespace(body=json.dumps({'trackingToken': 'expired', 'activityKind': 'video', 'activityId': 'COMP-1'}).encode(),
+                                  mobile_context=(None, SimpleNamespace(pk=230), 'apprenticeship', SimpleNamespace(pk=23)))
+        with patch.object(reward_tracking, 'resolve', return_value={}), patch.object(reward_tracking, 'verify_tracking_session',
+                side_effect=TrackingSessionError('The activity timing session has expired.', code='expired_tracking_session')):
+            with self.assertRaises(mobile.MobileError) as raised:
+                inspect.unwrap(reward_tracking.observations)(request)
+        self.assertEqual(raised.exception.code, 'expired_tracking_session')
+
     def test_counting_mode_must_match_activity_kind(self):
         with self.assertRaisesRegex(TrackingSessionError, "not valid"):
             issue_tracking_session(
