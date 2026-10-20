@@ -15288,6 +15288,9 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         from coach_api.migrated_template_sync import snapshot_state
         definition["templateSync"] = snapshot_state(saved_instance)
         definition["answerVersion"] = answer_version(saved_instance)
+        from .migrated_reopening import revision_number, history as migrated_revision_history
+        definition["reviewRevision"] = revision_number(saved_instance)
+        definition["reopenHistory"] = migrated_revision_history(saved_instance)
         pdf_ready = saved_instance.status == ImportedReviewInstance.STATUS_COMPLETED
         definition["pdf"] = {
             "available": pdf_ready,
@@ -15750,6 +15753,10 @@ def coach_review_instance_previous(request, instance_id):
     """
     if request.method != "GET":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
+
+    if instance_id.startswith("imported-review:"):
+        from .migrated_previous import previous_review
+        return previous_review(authenticated_coach_email(request), instance_id)
 
     instance_row, error = _authorized_review_instance(request, instance_id)
     if error:

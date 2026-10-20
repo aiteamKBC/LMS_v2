@@ -10,6 +10,7 @@ import {
   type CalendarBusySlot, type LearnerCalendarEvent, type PersonalCalendarConnection,
 } from '@/api/learnerCalendar';
 import { bookingDateRestrictionMessage, bookingInstant, bookingToday, firstAvailableBookingDate, mcmBookingDateRestrictionMessage, parseBookingDay } from './bookingDates';
+import { aptemBookingSnapshot, editableBookingNotes, isAptemReview } from './meetingBooking';
 import styles from './meetingBooking.module.css';
 
 /** A list card supplies identity and optional initial values. The dialog
@@ -36,7 +37,9 @@ function overlaps(start: number, end: number, otherStart: number, otherEnd: numb
 }
 
 function hasExistingBooking(session: MeetingBookingSession, attendance?: MeetingAttendance) {
-  return Boolean(session.scheduledDate && session.status === 'scheduled'
+  const reservedImported = isAptemReview(session) && session.bookingStatus === 'scheduled'
+    && ['scheduled', 'not-scheduled'].includes(session.status || '');
+  return Boolean(session.scheduledDate && (session.status === 'scheduled' || reservedImported)
     && (session.calendarEventKey || attendance?.calendarEventKey || !session.eventKey.startsWith('imported-review:')));
 }
 
@@ -102,7 +105,7 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
   const [date, setDate] = useState(session.scheduledDate || firstAvailableBookingDate(session.targetDate || session.date, rules, session.source === 'mcr'));
   const [time, setTime] = useState(session.scheduledTime || '09:00');
   const [duration, setDuration] = useState(String(session.durationMinutes || 60));
-  const [notes, setNotes] = useState(session.notes || '');
+  const [notes, setNotes] = useState(editableBookingNotes(session));
   const [calendarEvents, setCalendarEvents] = useState<LearnerCalendarEvent[]>([]);
   const [connections, setConnections] = useState<PersonalCalendarConnection[]>([]);
   const [busySlots, setBusySlots] = useState<CalendarBusySlot[]>([]);
@@ -169,7 +172,7 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
       if (!edited.current.date) setDate(resolved.scheduledDate || firstAvailableBookingDate(resolved.targetDate || resolved.date, nextRules, resolved.source === 'mcr'));
       if (!edited.current.time) setTime(resolved.scheduledTime || '09:00');
       if (!edited.current.duration) setDuration(String(resolved.durationMinutes || 60));
-      if (!edited.current.notes) setNotes(resolved.notes || '');
+      if (!edited.current.notes) setNotes(editableBookingNotes(resolved));
     }).catch(reason => {
       if (!cancelled) setLoadError(reason instanceof Error ? reason.message : 'Could not load this booking. Please try again.');
     }).finally(() => { if (!cancelled) setLoading(false); });
@@ -240,15 +243,19 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
       // An imported review may have a scheduled date before its first LMS
       // booking. Only a durable calendar key can be sent to reschedule.
       const update = rescheduling;
+      const imported = isAptemReview(target);
       const input = {
         scheduledDate: date,
         scheduledTime: time,
         durationMinutes: !update && reviewId && monthly ? 60 : Number(duration) || 60,
-        notes: notes.trim() || undefined,
+        notes: update && imported ? notes.trim() : notes.trim() || undefined,
         timezoneOffsetMinutes: ukOffsetForDate(date),
       };
       const response = update
-        ? await rescheduleLearnerCalendarSession(learner.kind, learner.id, { ...input, eventKey, reviewId })
+        ? await rescheduleLearnerCalendarSession(learner.kind, learner.id, {
+          ...input, eventKey, reviewId,
+          ...(imported ? { expectedBooking: aptemBookingSnapshot(target) } : {}),
+        })
         : await bookLearnerCalendarSession(learner.kind, learner.id, {
           ...input, sessionType: monthly ? 'mcr' : curriculumReview ? 'review' : 'progress-review',
           eventKey: reviewId ? undefined : eventKey, reviewId,
@@ -293,7 +300,9 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
             ? <Link to={calendarHref}>Connect your personal calendar to prevent booking conflicts</Link>
             : availabilityLoading
               ? <p role="status">Checking your personal calendar…</p>
-              : <p>This time is available in your calendar.</p>}
+              : availabilityError && isAptemReview(target || session)
+                ? <p>Personal calendar availability could not be confirmed.</p>
+                : <p>This time is available in your calendar.</p>}
           {connections.length > 0 && <small>{connections.length} personal calendar{connections.length === 1 ? '' : 's'} connected</small>}
         </div>
       </div>
@@ -309,6 +318,8 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
       </label>
       {loadError && <p role="alert" className={styles.error}>{loadError} <button type="button" onClick={() => setRevision(value => value + 1)}>Try again</button></p>}
       {!loading && !loadError && (error || dateRestriction || availabilityError) && <p role="alert" className={styles.error}>{error || dateRestriction || availabilityError}</p>}
+      {error.toLowerCase().includes('refresh') && isAptemReview(target || session) && <button type="button" disabled={saving || loading}
+        onClick={() => { setError(''); setRevision(value => value + 1); }}>Refresh booking</button>}
       <footer className={styles.footer}>
         <button type="button" onClick={close} disabled={saving}>Cancel</button>
         <button type="submit" aria-label={saving ? 'Saving' : isExisting ? 'Save new time' : 'Book session'} className={styles.primary} disabled={!canSubmit}>{saving ? 'Saving…' : isExisting ? 'Save new time' : 'Send request'}</button>
