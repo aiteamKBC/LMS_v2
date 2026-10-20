@@ -7,7 +7,7 @@ import { CardGridSkeleton } from '@/components/feature/Skeletons';
 import { ProgrammeFormDrawer } from '@/pages/curriculum/shared/entities/forms';
 import { WEEKEND_DAYS, WEEKEND_HINT } from '@/pages/curriculum/shared/entities/ui';
 import { CurriculumStructureWizard, type StructureWizardCreated, type StructureWizardRecordStep } from '@/pages/curriculum/shared/entities/structureWizard';
-import { formatProgrammeLevel, sortEntities, visibleNotes, PROGRAMME_SORT_OPTIONS } from '@/pages/curriculum/shared/entities/model';
+import { sortEntities, visibleNotes, PROGRAMME_SORT_OPTIONS } from '@/pages/curriculum/shared/entities/model';
 import { SelectMenu } from '@/components/feature/SelectField';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
@@ -58,6 +58,7 @@ import {
 } from '@/lib/curriculumApi';
 
 import styles from './programmes.module.css';
+import { ProgrammeSummaryFacts } from './ProgrammeSummaryFacts';
 
 const ProgrammeDetailPage = lazy(() => import('../programme-detail/page'));
 
@@ -1130,33 +1131,9 @@ export default function CurriculumProgrammes() {
           <>
           <div className={`${styles.cards} grid grid-cols-1 items-stretch gap-5 md:grid-cols-2 xl:grid-cols-3`} role="region" aria-label="Programme list" tabIndex={0}>
             {filtered.map((prog, cardIndex) => {
-              const appliedSource = programmeKsbSources.get(prog.sourceId || prog.id) || resolveProgrammeAppliedKsbSource(prog, ksbSets, standards);
-              const hasAppliedKsbSource = Boolean(appliedSource.value);
-              // Applied but empty is its own state: the source is chosen, so the
-              // work left is authoring its codes, not picking a different one.
-              const ksbSourceIsEmpty = hasAppliedKsbSource && appliedSource.ksbCount < 1;
-              const mappingCoverage = hasAppliedKsbSource && prog.ksbTotal > 0 ? Math.round((prog.ksbMapped / prog.ksbTotal) * 100) : 0;
-              // Learner-consumed KSB progress. Read straight off the programme
-              // payload, so unlike the design-mapping figure above it does not
-              // wait on ksbSets/standards and cannot flicker to 0 mid-load.
-              const learnerKsbProgress = Math.max(0, Math.min(100, Math.round(prog.learnerKsbProgressPercentage || 0)));
-              const learnerKsbLearnerCount = prog.learnerKsbLearnerCount || 0;
-              const hasLearnerKsbDenominator = (prog.learnerKsbExpectedWeight || 0) > 0 && learnerKsbLearnerCount > 0;
               const cardColor = normaliseHex(prog.color || '#6941c6');
-              const isDraftProgramme = programmeIsDraft(prog);
-              // Clicking the card opens the programme it names. It used to start
-              // the guided setup instead, which is a different promise: the card
-              // shows what the programme already has, so the click that follows
-              // from reading it is "show me this", not "add more to this". The
-              // guided run keeps its own button in the row below.
               const openCard = () => openProgramme(prog);
               const openWizardForCard = () => setWizardRun({ from: 'cohort', programmeId: prog.sourceId || prog.id });
-              // Deep links from the figures on the card into the tab that owns
-              // each one. Stops the card click from also firing behind them.
-              const openTab = (tab: ProgrammeDetailTab, view?: ProgrammeDetailView) => (event: { stopPropagation: () => void }) => {
-                event.stopPropagation();
-                openProgramme(prog, tab, view);
-              };
               return (
               <div key={programmeKey(prog)} className={`${styles.browserCard} relative h-full`} data-selected={programmeKey(prog) === (selectedProgramme && programmeKey(selectedProgramme))}>
               {/* While the grid is being arranged the card is a thing to move,
@@ -1178,7 +1155,7 @@ export default function CurriculumProgrammes() {
                 <span aria-hidden="true">&rsaquo;</span>
               </button>
               <details className={styles.programmeTools} open={reordering || undefined} inert={reordering || undefined}>
-                <summary>Programme tools &amp; details</summary>
+                <summary>Programme tools</summary>
               <article
                 // inert, not aria-hidden: the card keeps buttons of its own, and
                 // they have to leave the tab order with it rather than stay
@@ -1198,193 +1175,6 @@ export default function CurriculumProgrammes() {
                 aria-label={`Open ${prog.name}`}
                 title={`Open ${prog.name} — its cohorts, groups, modules, sessions and KSB coverage`}
               >
-                <div className="programme-card-accent absolute inset-x-0 top-0 h-1" />
-                <div className="mb-2.5 flex items-start justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    <span className="programme-card-icon flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white shadow-sm" style={{ backgroundColor: cardColor }}>
-                      <AppIcon className="ri-book-2-line text-base"></AppIcon>
-                    </span>
-                    <div className="min-w-0">
-                      <p className="truncate text-[15px] font-heading font-bold text-foreground-950">Programme tools: {prog.name}</p>
-                      <p className="text-[11px] text-foreground-400">{formatProgrammeLevel(prog.level)}</p>
-                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                        <span className="programme-type-badge inline-flex items-center gap-1 rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-primary-700 ring-1 ring-primary-100">
-                          <AppIcon className="ri-calendar-event-line text-[10px]"></AppIcon>
-                          Programme
-                        </span>
-                        {isDraftProgramme && (
-                          <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-700 ring-1 ring-amber-200">
-                            Draft
-                          </span>
-                        )}
-                        {/* Up beside the name, because a grid of cards is read
-                            by its headings: the panel below says the same thing
-                            in full, but only once the eye has stopped here. */}
-                        {(!hasAppliedKsbSource || ksbSourceIsEmpty) && (
-                          <span className="programme-warning-badge inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-800 ring-1 ring-amber-300">
-                            <AppIcon className="ri-error-warning-line text-[10px]"></AppIcon>
-                            {ksbSourceIsEmpty ? 'Needs KSB codes' : 'Needs KSB source'}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  {/* The card is clickable; say so rather than leaving it to be
-                      discovered. Dimmed at rest so a grid of six is not six
-                      arrows competing with the programme names. */}
-                  <span
-                    aria-hidden="true"
-                    className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-foreground-300 opacity-0 transition-smooth group-hover:bg-primary-50 group-hover:text-primary-600 group-hover:opacity-100 group-focus-within:opacity-100"
-                  >
-                    <AppIcon className="ri-arrow-right-line text-sm"></AppIcon>
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={e => {
-                    e.stopPropagation();
-                    // An empty source has no KSBs to review. It is a placeholder
-                    // to move off rather than a profile to fill in, so the panel
-                    // offers the choice of a real source instead.
-                    if (ksbSourceIsEmpty) setApplyProgramme(prog);
-                    else openAppliedKsbSourceReview(prog, appliedSource);
-                  }}
-                  className={`programme-source-button mb-2.5 w-full rounded-xl border px-2 py-1.5 text-left transition-smooth focus:outline-none focus:ring-2 focus:ring-primary-200 ${hasAppliedKsbSource && !ksbSourceIsEmpty ? 'programme-source-applied' : 'programme-source-missing'}`}
-                  aria-label={!hasAppliedKsbSource
-                    ? `Set the KSB source for ${prog.name}`
-                    : ksbSourceIsEmpty
-                      ? `Choose a real KSB source for ${prog.name}`
-                      : `View KSBs for ${appliedSource.title}`}
-                >
-                  <div className="flex items-start gap-2">
-                    <span className={`programme-source-icon mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${hasAppliedKsbSource && !ksbSourceIsEmpty ? 'programme-source-applied' : 'programme-source-missing'}`}>
-                      <AppIcon className={hasAppliedKsbSource && !ksbSourceIsEmpty ? 'ri-checkbox-circle-line' : 'ri-error-warning-fill'}></AppIcon>
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className={`programme-source-label text-[9px] font-black uppercase tracking-wide ${hasAppliedKsbSource && !ksbSourceIsEmpty ? 'text-primary-700' : 'text-amber-800'}`}>
-                        {!hasAppliedKsbSource ? 'KSB Source required' : ksbSourceIsEmpty ? 'Applied KSB Source · empty' : 'Applied KSB Source'}
-                      </p>
-                      <p className="mt-0.5 truncate text-[12px] font-heading font-bold text-foreground-950">{appliedSource.title}</p>
-                      {/* Reported by what it costs, not by the word "none":
-                          "not applied" and "0 K / 0 S / 0 B" both read as a
-                          value left at its default rather than as work to do. */}
-                      <p className={`mt-0.5 text-[10px] font-semibold ${hasAppliedKsbSource && !ksbSourceIsEmpty ? 'truncate text-foreground-500' : 'text-amber-800'}`}>
-                        {!hasAppliedKsbSource
-                          ? 'Modules cannot map KSBs and coverage cannot be measured until one is applied.'
-                          : ksbSourceIsEmpty
-                            ? 'A placeholder with no KSB codes in it. Apply the programme’s real profile or standard to make it mappable.'
-                            : appliedSource.detail || appliedSource.subtitle}
-                      </p>
-                    </div>
-                    <span className={`programme-source-cta mt-1 flex h-6 shrink-0 items-center justify-center rounded-lg ${hasAppliedKsbSource && !ksbSourceIsEmpty ? 'w-6 text-primary-600' : 'gap-1 bg-amber-500 px-2 text-[10px] font-bold text-white'}`}>
-                      {hasAppliedKsbSource && !ksbSourceIsEmpty ? (
-                        <AppIcon className="ri-arrow-right-s-line"></AppIcon>
-                      ) : (
-                        <>
-                          <AppIcon className="ri-add-line text-[12px]"></AppIcon>
-                          {ksbSourceIsEmpty ? 'Replace' : 'Set'}
-                        </>
-                      )}
-                    </span>
-                  </div>
-                </button>
-                {appliedSource.standard && (
-                  <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
-                    {appliedSource.standard.minimumHours && (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[10px] font-bold text-cyan-800" title="Minimum hours for funding compliance">
-                        <AppIcon className="ri-time-line text-[11px]"></AppIcon>
-                        {appliedSource.standard.minimumHours} hrs min
-                      </span>
-                    )}
-                    {appliedSource.standard.maxFunding && (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800" title="Maximum government funding">
-                        <AppIcon className="ri-price-tag-3-line text-[11px]"></AppIcon>
-                        {appliedSource.standard.maxFunding} max funding
-                      </span>
-                    )}
-                    {appliedSource.standard.duration && (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-background-200 bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-600" title="Typical duration">
-                        <AppIcon className="ri-hourglass-line text-[11px]"></AppIcon>
-                        {appliedSource.standard.duration}
-                      </span>
-                    )}
-                    {appliedSource.standard.route && (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-background-200 bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-600" title="Route">
-                        <AppIcon className="ri-route-line text-[11px]"></AppIcon>
-                        {appliedSource.standard.route}
-                      </span>
-                    )}
-                    {appliedSource.standard.degree && (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-background-200 bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-600" title="Qualification type">
-                        <AppIcon className="ri-graduation-cap-line text-[11px]"></AppIcon>
-                        {appliedSource.standard.degree}
-                      </span>
-                    )}
-                    {appliedSource.standard.larsCode && (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-background-200 bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-600" title="LARS code">
-                        <AppIcon className="ri-barcode-line text-[11px]"></AppIcon>
-                        LARS {appliedSource.standard.larsCode}
-                      </span>
-                    )}
-                    {appliedSource.standard.eqaProvider && (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-background-200 bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-600" title="External quality assurance provider">
-                        <AppIcon className="ri-shield-check-line text-[11px]"></AppIcon>
-                        {appliedSource.standard.eqaProvider}
-                      </span>
-                    )}
-                    {appliedSource.standard.approvedForDelivery && (
-                      <span
-                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${
-                          /approved/i.test(appliedSource.standard.approvedForDelivery)
-                            ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                            : 'border-amber-200 bg-amber-50 text-amber-800'
-                        }`}
-                        title="Approved for delivery"
-                      >
-                        <AppIcon className="ri-checkbox-circle-line text-[11px]"></AppIcon>
-                        {appliedSource.standard.approvedForDelivery}
-                      </span>
-                    )}
-                  </div>
-                )}
-                {/* Every figure here is a way in, not a read-out: each opens the
-                    tab of the programme workspace that owns it. */}
-                <div className="programmes-metrics mb-3 grid grid-cols-2 gap-2.5 rounded-xl border border-primary-100/70 bg-primary-50/65 p-2.5 sm:grid-cols-5">
-                  <Metric label="Cohorts" value={String(prog.cohorts)} onOpen={openTab('delivery')} hint={`Open the ${prog.cohorts} cohorts of ${prog.name}`} />
-                  <Metric label="Groups" value={String(prog.groups || 0)} onOpen={openTab('delivery')} hint={`Open the groups of ${prog.name}`} />
-                  <Metric label="Modules" value={String(prog.modules)} onOpen={openTab('design')} hint={`Open the ${prog.modules} modules of ${prog.name}`} />
-                  <Metric label="Weeks" value={`${prog.weeks}`} onOpen={openTab('design')} hint={`Open the module plan of ${prog.name}`} />
-                  <Metric label="Learners" value={String(prog.learners)} onOpen={openTab('coverage', 'achievement')} hint={`Open learner achievement for ${prog.name}`} />
-                  <button
-                    type="button"
-                    onClick={openTab('coverage', 'mapping')}
-                    title={`Open KSB coverage for ${prog.name}`}
-                    className="col-span-2 rounded-lg px-1 py-0.5 text-left transition-smooth hover:bg-primary-100/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 sm:col-span-5"
-                  >
-                    <div className="flex items-baseline justify-between gap-2">
-                      <p className="text-[9px] text-foreground-400 uppercase">KSB Progress</p>
-                      <p className="text-[9px] font-semibold text-foreground-400">
-                        {hasLearnerKsbDenominator
-                          ? `${prog.learnerKsbCodesStarted || 0}/${prog.learnerKsbCodesTotal || 0} KSBs · ${learnerKsbLearnerCount} learner${learnerKsbLearnerCount === 1 ? '' : 's'}`
-                          : `Mapping ${hasAppliedKsbSource ? `${mappingCoverage}%` : 'not applied'}`}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      <div className="flex-1 h-1.5 bg-background-200 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full ${!hasLearnerKsbDenominator ? 'bg-background-300' : learnerKsbProgress >= 100 ? 'bg-emerald-500' : learnerKsbProgress >= 70 ? 'bg-primary-500' : learnerKsbProgress > 0 ? 'bg-amber-500' : 'bg-background-300'}`}
-                          style={{ width: `${hasLearnerKsbDenominator ? learnerKsbProgress : 0}%` }}
-                        ></div>
-                      </div>
-                      <span className="text-[10px] font-semibold">
-                        {hasLearnerKsbDenominator
-                          ? `${learnerKsbProgress}%`
-                          : learnerKsbLearnerCount === 0 ? 'No learners' : 'Needs mapping'}
-                      </span>
-                    </div>
-                  </button>
-                </div>
-                {prog.description && <p className="mb-2.5 line-clamp-2 text-[12px] leading-5 text-foreground-500">{prog.description}</p>}
                 {/* Two tiers, because six equal chips gave the reader nothing to
                     aim at. The top row is what a curriculum designer came to the
                     card to do - open the programme, or build the next piece of
@@ -1458,6 +1248,19 @@ export default function CurriculumProgrammes() {
                 programmeSnapshot={{ ...selectedProgramme, ksbProfileSourceId: programmeSourceOverrides.get(programmeKey(selectedProgramme)) ?? selectedProgramme.ksbProfileSourceId }}
                 refreshVersion={detailRefreshVersion}
                 onReloaded={() => reload({ silent: true, revalidate: true })}
+                summaryContent={<ProgrammeSummaryFacts
+                  programme={selectedProgramme}
+                  source={programmeKsbSources.get(programmeKey(selectedProgramme)) || resolveProgrammeAppliedKsbSource(selectedProgramme, ksbSets, standards)}
+                  loading={ksbSourcesLoading}
+                  error={ksbSourcesError}
+                  onRetry={() => void loadKsbSources()}
+                  onOpenSource={() => {
+                    const source = programmeKsbSources.get(programmeKey(selectedProgramme)) || resolveProgrammeAppliedKsbSource(selectedProgramme, ksbSets, standards);
+                    if (source.value && source.ksbCount < 1) setApplyProgramme(selectedProgramme);
+                    else openAppliedKsbSourceReview(selectedProgramme, source);
+                  }}
+                  onOpen={(tab, view) => openProgramme(selectedProgramme, tab, view)}
+                />}
                 embedded
               />
             </Suspense>
@@ -3633,30 +3436,4 @@ function ArchiveConfirmDialog({
   }, [open]);
 
   return null;
-}
-
-/**
- * A count on a programme card. With `onOpen` it becomes the link to the tab that
- * owns the records it counts, so the number and the way to reach them are the
- * same target rather than two.
- */
-function Metric({ label, value, onOpen, hint }: { label: string; value: string; onOpen?: (event: { stopPropagation: () => void }) => void; hint?: string }) {
-  const body = (
-    <>
-      <p className="truncate text-[9px] font-bold uppercase tracking-wide text-foreground-400">{label}</p>
-      <p className="mt-0.5 truncate text-sm font-bold text-foreground-950">{value}</p>
-    </>
-  );
-  const shell = 'programmes-metric min-w-0 rounded-lg bg-background-50 px-2.5 py-2 ring-1 ring-primary-100/80';
-  if (!onOpen) return <div className={shell}>{body}</div>;
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      title={hint}
-      className={`${shell} programmes-metric-link block w-full text-left transition-smooth hover:bg-primary-50 hover:ring-primary-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400`}
-    >
-      {body}
-    </button>
-  );
 }

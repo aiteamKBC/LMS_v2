@@ -343,7 +343,10 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     expect(screen.getByRole('button', { name: 'Edit programme' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Manage Cohorts & Groups' })).toBeInTheDocument();
     expect(screen.getByText('Guided learning hours').nextElementSibling).toHaveTextContent('Not provided');
-    expect(screen.getByRole('region', { name: 'Delivery size' })).toHaveTextContent('Cohorts1Groups1Modules2Learners12');
+    expect(screen.getByRole('region', { name: 'Delivery size' })).toHaveTextContent('Cohorts1Groups1Modules2Weeks1Learners12');
+    await userEvent.click(within(screen.getByRole('region', { name: 'Delivery size' })).getByRole('button', { name: /Weeks/ }));
+    expect(tabs.getByRole('tab', { name: 'Modules' })).toHaveAttribute('aria-selected', 'true');
+    await userEvent.click(tabs.getByRole('tab', { name: 'Overview' }));
     await userEvent.click(tabs.getByRole('tab', { name: 'Learners' }));
     await screen.findByRole('heading', { name: /Learners in Data Analyst/ });
     expect(api.fetchCurriculumScopeLearnerRoster).toHaveBeenCalledWith('programme', 'PROG-DATA', expect.objectContaining({ learnerStatus: 'all' }), expect.anything());

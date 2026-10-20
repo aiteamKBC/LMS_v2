@@ -173,7 +173,7 @@
 .extraTools > summary { cursor: pointer; font-size: 11px; padding: 5px; }
 .deliverySize { border: 1px solid #e2e2e8; border-radius: 8px; padding: 13px; background: #fafbfc; margin-bottom: 10px; }
 .deliverySize h3 { margin: 0 0 10px; font-size: 12px; font-weight: 600; }
-.sizeGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+.sizeGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 7px; }
 .page:global(#curriculum-programmes) .sizeGrid button { border: 1px solid #e3e1e8; border-radius: 6px; padding: 10px; background: #f2f2f6; color: #4d405a; text-align: center; }
 .sizeGrid span { display: block; font-size: 9px; text-transform: uppercase; color: #8d8198; }
 .sizeGrid strong { display: block; margin-top: 4px; font-size: 16px; font-weight: 600; }

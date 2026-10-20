@@ -2435,9 +2435,10 @@ interface ProgrammeDetailPresentationProps {
   programmeSnapshot?: CurriculumProgramme;
   refreshVersion?: number;
   onReloaded?: () => void | Promise<unknown>;
+  summaryContent?: ReactNode;
 }
 
-export default function ProgrammeDetailPage({ programmeId, embedded = false, programmeSnapshot, refreshVersion = 0, onReloaded }: ProgrammeDetailPresentationProps = {}) {
+export default function ProgrammeDetailPage({ programmeId, embedded = false, programmeSnapshot, refreshVersion = 0, onReloaded, summaryContent }: ProgrammeDetailPresentationProps = {}) {
   const { id: routeId } = useParams();
   const id = programmeId ?? routeId;
   const navigate = useNavigate();
@@ -4062,12 +4063,12 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
             </div><h2>{PROGRAMME.name}</h2></div>
             <small>{findProgramme(data, id || '')?.lastUpdated ? `Updated ${formatDateLabel(findProgramme(data, id || '')!.lastUpdated)}` : 'Updated date not provided'}</small>
           </div>
-          <dl className={styles.bannerMetadata}>
+          {summaryContent ? <><dl className={styles.bannerMetadata}><div><dt>Delivery window</dt><dd>{PROGRAMME.duration || 'Not set'}</dd></div></dl>{summaryContent}</> : <dl className={styles.bannerMetadata}>
             <div><dt>Guided learning hours</dt><dd>Not provided</dd></div>
             <div><dt>Funding band</dt><dd>Not provided</dd></div>
             <div><dt>Delivery window</dt><dd>{PROGRAMME.duration || 'Not set'}</dd></div>
             <div><dt>Programme planned end date</dt><dd>Not provided</dd></div>
-          </dl>
+          </dl>}
           <div className={styles.bannerActions}>
             <button type="button" onClick={() => setProgrammeDrawerOpen(true)}>Edit programme</button>
             <button type="button" onClick={() => liveCohortCount ? setTab('cohorts') : setCohortDrawerOpen(true)}>{liveCohortCount ? 'Manage Cohorts & Groups' : 'Add First Cohort'}</button>
@@ -4178,7 +4179,7 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
               <section className={styles.deliverySize} aria-label="Delivery size">
                 <h3>Delivery size</h3>
                 <div className={styles.sizeGrid}>
-                  {[{ label: 'Cohorts', value: liveCohortCount, tab: 'cohorts' }, { label: 'Groups', value: totalGroups, tab: 'groups' }, { label: 'Modules', value: modulesLoading ? '...' : activeModules.length, tab: 'modules' }, { label: 'Learners', value: totalLearners, tab: 'learners' }].map(metric => <button key={metric.label} type="button" onClick={() => setTab(metric.tab as Tab)}><span>{metric.label}</span><strong>{metric.value}</strong></button>)}
+                  {[{ label: 'Cohorts', value: liveCohortCount, tab: 'cohorts' }, { label: 'Groups', value: totalGroups, tab: 'groups' }, { label: 'Modules', value: modulesLoading ? '...' : activeModules.length, tab: 'modules' }, { label: 'Weeks', value: modulesLoading ? '...' : totalWeeks, tab: 'modules' }, { label: 'Learners', value: totalLearners, tab: 'learners' }].map(metric => <button key={metric.label} type="button" onClick={() => setTab(metric.tab as Tab)}><span>{metric.label}</span><strong>{metric.value}</strong></button>)}
                 </div>
               </section>
               {modulesLoading ? <ModulesLoadingPanel /> : <ProgrammeDeliveryTimeline runs={timelineRuns} programmeName={PROGRAMME.name} deliveryHref="/curriculum/delivery" />}

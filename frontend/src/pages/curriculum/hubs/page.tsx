@@ -6,6 +6,7 @@ import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { curriculumNavItems } from '@/mocks/navigation';
+import { LibraryLandingPage } from './LibraryLandingPage';
 
 type HubKind = 'library' | 'delivery' | 'quality';
 type HubCard = {
@@ -37,7 +38,7 @@ const HUB_COPY: Record<HubKind, { eyebrow: string; title: string; description: s
 };
 
 export function CurriculumLibraryHub() {
-  return <CurriculumHub kind="library" />;
+  return <LibraryLandingPage />;
 }
 
 export function CurriculumDeliveryHub() {

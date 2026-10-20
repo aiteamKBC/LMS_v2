@@ -23,9 +23,9 @@ vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
-// These tests exercise the browser's existing source tools. The embedded
-// workspace has its own data-contract and selection tests.
-vi.mock('@/pages/curriculum/programme-detail/page', () => ({ default: () => null }));
+// Render the supplied facts in the same presentation slot as the embedded
+// workspace; its own data loading is covered by the workspace contract tests.
+vi.mock('@/pages/curriculum/programme-detail/page', () => ({ default: ({ summaryContent }: { summaryContent?: ReactNode }) => <section aria-label="Programme summary">{summaryContent}</section> }));
 
 vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
   showCurriculumAlert: vi.fn(async () => undefined),
@@ -271,12 +271,16 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     expect(await screen.findByText('Apply KSB Source')).toBeInTheDocument();
   });
 
-  it('marks the card, and says what the gap costs rather than that a value is unset', async () => {
+  it('keeps facts in the selected programme summary and leaves browser tools as actions only', async () => {
     await renderProgrammes();
     expect(await screen.findByText('Test-Zyad')).toBeInTheDocument();
 
-    const bare = within(cardFor('Test-Zyad'));
-    expect(bare.getByText('Needs KSB source')).toBeInTheDocument();
+    const tools = within(cardFor('Test-Zyad'));
+    expect(tools.queryByText('KSB Source required')).not.toBeInTheDocument();
+    expect(tools.queryByText('KSB Progress')).not.toBeInTheDocument();
+    expect(tools.getByRole('button', { name: 'Add structure' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Test-Zyad.*learners/ }));
+    const bare = within(screen.getByRole('region', { name: 'Programme summary' }));
     expect(bare.getByText('KSB Source required')).toBeInTheDocument();
     expect(bare.getByText(/Modules cannot map KSBs/)).toBeInTheDocument();
     // The panel is the control, so it says what pressing it does.
@@ -284,8 +288,8 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
 
     // A programme that has a filled-in source stays quiet: the warning is a
     // state to clear, so it must not appear where there is nothing to clear.
-    const mapped = within(cardFor('Data Analyst'));
-    expect(mapped.queryByText('Needs KSB source')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Data Analyst.*learners/ }));
+    const mapped = within(screen.getByRole('region', { name: 'Programme summary' }));
     expect(mapped.getByText('Applied KSB Source')).toBeInTheDocument();
     expect(mapped.getByText('Project Control Professional')).toBeInTheDocument();
     expect(mapped.getByText('348 hrs min')).toBeInTheDocument();
@@ -299,8 +303,8 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     expect(await screen.findByText('Parked Programme')).toBeInTheDocument();
 
     // Applied is not ready: an empty source maps exactly as much as no source.
-    await waitFor(() => expect(screen.getByText('Needs KSB codes')).toBeInTheDocument());
-    const card = within(screen.getByText('Needs KSB codes').closest('article') as HTMLElement);
+    await waitFor(() => expect(screen.getByText('Applied KSB Source · empty')).toBeInTheDocument());
+    const card = within(screen.getByRole('region', { name: 'Programme summary' }));
     expect(card.getByText('Applied KSB Source · empty')).toBeInTheDocument();
     expect(card.getByText(/A placeholder with no KSB codes in it/)).toBeInTheDocument();
     // The placeholder is moved off, not filled in.
