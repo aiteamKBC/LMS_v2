@@ -396,7 +396,8 @@ class RegisterTests(unittest.TestCase):
         def __init__(self, **kwargs): pass
         def __or__(self, other): return self
 
-    def roster(self, records, *, assigned=True, invited=True, launched=False, complete=True, stored_attendees=None, recovery_guest=False):
+    def roster(self, records, *, assigned=True, invited=True, launched=False, complete=True, stored_attendees=None, recovery_guest=False,
+               display_name='Example Learner'):
         learner = types.SimpleNamespace(id=13, enrolment_id=7, full_name='Example Learner', email='a@example.invalid', coach_name='Coach')
         session = types.SimpleNamespace(id='S', module_catalogue_id='M', module_title='Module', attendees=['a@example.invalid'] if invited else [])
         if stored_attendees is not None:
@@ -433,7 +434,7 @@ class RegisterTests(unittest.TestCase):
              'LiveSessionOccurrence': types.SimpleNamespace(objects=self.Query(occurrences)),
              'LiveSessionAttendanceAlias': types.SimpleNamespace(objects=self.Query([])),
              'LiveSessionAttendance': types.SimpleNamespace(objects=self.Query([types.SimpleNamespace(id=f'ROW-{i}', occurrence_id='O1', graph_record_id=str(i),
-                display_name='Example Learner', email=email, role='attendee', raw_data={}, intervals=intervals, total_attendance_seconds=0) for i, (email, intervals) in enumerate(records)])),
+                display_name=display_name, email=email, role='attendee', raw_data={}, intervals=intervals, total_attendance_seconds=0) for i, (email, intervals) in enumerate(records)])),
             'ModuleAuthoringModule': types.SimpleNamespace(objects=self.Query([types.SimpleNamespace(module_catalogue_id='M', group_id='G', group_name='Group')]))}
         functions(ROOT.parent / 'learner_api/teams_attendance.py', {'_email', '_canonical_attendance_email', '_assigned_learner_emails_by_module',
             '_module_expected_emails', '_unique_exact_name_email', '_local_datetime', '_graph_datetime', '_attendance_interval_bounds',
@@ -478,6 +479,14 @@ class RegisterTests(unittest.TestCase):
         rows = self.roster([('', [visit('00:00', '03:01')])])
         self.assertEqual([row['occurrence_id'] for row in rows], ['O1', 'O2'])
         self.assertEqual([row['attendance_status'] for row in rows], ['present', 'absent'])
+
+    def test_short_name_matches_in_reporting_without_changing_another_occurrence(self):
+        for name in ['Example (Unverified)', 'Learner', 'Example L', 'Examlpe Learner']:
+            with self.subTest(name=name):
+                rows = self.roster([('', [visit('00:00', '03:01')])], display_name=name)
+                self.assertEqual([row['occurrence_id'] for row in rows], ['O1', 'O2'])
+                self.assertEqual([row['attendance_status'] for row in rows], ['present', 'absent'])
+                self.assertEqual([row['attended_seconds'] for row in rows], [181, 0])
 
 
 class SharedSessionRosterQueryTests(unittest.TestCase):

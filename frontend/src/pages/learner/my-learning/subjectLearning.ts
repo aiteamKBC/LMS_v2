@@ -167,13 +167,16 @@ export function resolveSubjectWeek(weeks: LearningWeek[], requested?: string | n
   const exact = weeks.find(week => week.id === requested);
   if (exact || !requested) return exact;
   const previous = weeks.filter(week => week.activities.some(entry =>
-    (dateKey(entry.schedule.week_start) || weekKey(entry.schedule.date || '')) === requested));
+    (dateKey(entry.schedule.week_start) || weekKey(entry.schedule.date || '')) === requested || deliveryDate(entry) === requested));
   return previous.length === 1 ? previous[0] : undefined;
 }
 
 /** Keep assigned weeks visible even before their materials have been published. */
 export function subjectMapWeeks(subject: Subject, real?: LearnerDetail | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null) {
   const weeks = subjectWeeks(subject);
+  // Before transfer, a stored source curriculum owns its sections; the new
+  // Builder plan must not append unrelated empty weeks to the old course.
+  if (subject.source === 'legacy' && subject.activities.some(entry => entry.legacy?.source_section)) return weeks;
   const moduleIds = new Set([
     subject.id.startsWith('current:') ? subject.id.slice(8) : '',
     metadata?.builder_subjects?.[subject.id]?.id, schedule?.moduleLinks?.[subject.id]?.id,
