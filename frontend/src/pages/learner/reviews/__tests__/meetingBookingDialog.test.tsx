@@ -70,6 +70,68 @@ describe('MeetingBookingDialog', () => {
     }, ...overrides,
   });
 
+  it.each(['progress-review', 'mcr'])('edits only raw Aptem %s notes and submits an explicit clear with the original booking', async source => {
+    const event = aptem(source, { bookingNotes: 'Original agenda', notes: 'Generated description. Original agenda' });
+    vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ events: [event], bookingCalendar: rules } as never);
+    vi.mocked(rescheduleLearnerCalendarSession).mockResolvedValue({ event });
+    mount(event);
+    const notes = await screen.findByRole('textbox');
+    await waitFor(() => expect(notes).toHaveValue('Original agenda'));
+    fireEvent.change(notes, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save new time' }));
+    await waitFor(() => expect(rescheduleLearnerCalendarSession).toHaveBeenCalledWith('apprenticeship', '125', expect.objectContaining({
+      notes: '',
+      expectedBooking: { scheduledDate: '2026-10-20', scheduledTime: '10:00', durationMinutes: 90, notes: 'Original agenda' },
+    })));
+  });
+
+  it('retries a reserved Aptem meeting with failed sync through reschedule, not a new booking', async () => {
+    const event = aptem('progress-review', { status: 'not-scheduled', bookingStatus: 'scheduled', syncState: 'failed' });
+    vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ events: [event], bookingCalendar: rules } as never);
+    vi.mocked(rescheduleLearnerCalendarSession).mockResolvedValue({ event });
+    mount(event);
+    const button = await screen.findByRole('button', { name: 'Save new time' });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    await waitFor(() => expect(rescheduleLearnerCalendarSession).toHaveBeenCalledWith('apprenticeship', '125', expect.objectContaining({
+      eventKey: 'booking:11', expectedBooking: expect.objectContaining({ scheduledTime: '10:00' }),
+    })));
+    expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+  });
+
+  it('refreshes the original Aptem booking after a conflict while retaining the learner draft', async () => {
+    vi.mocked(fetchLearnerCalendarEvents)
+      .mockResolvedValueOnce({ events: [aptem()], bookingCalendar: rules } as never)
+      .mockResolvedValueOnce({ events: [aptem('progress-review', { scheduledTime: '14:00', bookingNotes: 'Updated agenda' })], bookingCalendar: rules } as never);
+    vi.mocked(rescheduleLearnerCalendarSession)
+      .mockRejectedValueOnce(new Error('This booking was changed by another request. Refresh before rescheduling.'))
+      .mockResolvedValueOnce({ event: aptem() });
+    mount(aptem());
+    const button = await screen.findByRole('button', { name: 'Save new time' });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.change(screen.getByLabelText('Time'), { target: { value: '12:00' } });
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'My draft agenda' } });
+    fireEvent.click(button);
+    fireEvent.click(await screen.findByRole('button', { name: 'Refresh booking' }));
+    await waitFor(() => expect(fetchLearnerCalendarEvents).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(screen.getByLabelText('Time')).toHaveValue('12:00');
+    expect(screen.getByRole('textbox')).toHaveValue('My draft agenda');
+    fireEvent.click(button);
+    await waitFor(() => expect(rescheduleLearnerCalendarSession).toHaveBeenLastCalledWith('apprenticeship', '125', expect.objectContaining({
+      notes: 'My draft agenda', scheduledTime: '12:00',
+      expectedBooking: expect.objectContaining({ scheduledTime: '14:00', notes: 'Updated agenda' }),
+    })));
+  });
+
+  it('does not claim an Aptem slot is available when personal calendar availability failed', async () => {
+    vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ events: [aptem()], bookingCalendar: rules } as never);
+    vi.mocked(fetchPersonalCalendarAvailability).mockResolvedValue({ busy: [], errors: [{ provider: 'google', message: 'Unavailable' }], connectedProviders: ['google'] });
+    mount(aptem());
+    expect(await screen.findByText('Personal calendar availability could not be confirmed.')).toBeVisible();
+    expect(screen.queryByText('This time is available in your calendar.')).not.toBeInTheDocument();
+  });
+
   it.each(['progress-review', 'mcr'])('moves the exact Aptem %s booking using the refreshed duration, ignoring its own personal-calendar slot', async source => {
     const event = aptem(source);
     vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ events: [event], bookingCalendar: rules } as never);

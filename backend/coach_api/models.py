@@ -335,6 +335,30 @@ class MigratedReviewDocument(models.Model):
         db_table = _table_name('coach_test_migrated_review_documents', 'Coach"."coach_migrated_review_document')
 
 
+class MigratedReviewRevision(models.Model):
+    """Append-only application archive of the state replaced by a coach reopen."""
+
+    overlay = models.ForeignKey(
+        ImportedReviewInstance, on_delete=models.PROTECT, related_name="archived_revisions",
+    )
+    number = models.PositiveIntegerField()
+    snapshot = models.JSONField()
+    pdf_bytes = models.BinaryField(null=True)
+    pdf_sha256 = models.CharField(max_length=64, blank=True)
+    reason_code = models.CharField(max_length=32)
+    note = models.TextField(blank=True)
+    actor_account_id = models.BigIntegerField()
+    actor_email = models.EmailField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = _table_name('coach_test_migrated_review_revisions', 'Coach"."coach_migrated_review_revision')
+        constraints = [
+            models.UniqueConstraint(fields=["overlay", "number"], name="coach_migrated_revision_unique"),
+            models.CheckConstraint(condition=models.Q(number__gte=1), name="coach_migrated_revision_positive"),
+        ]
+
+
 class CoachCalendarSequence(models.Model):
     """Cross-process sequence allocator for a learner/session-type scope."""
 

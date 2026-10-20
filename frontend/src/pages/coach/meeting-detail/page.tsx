@@ -457,6 +457,11 @@ export default function CoachMeetingDetail() {
   };
 
   const url = event ? meetingUrl(event) : '';
+  // Unbooked imported calendar rows carry the target date in scheduledDate.
+  // Keep that date for planning, but do not present it as a booked appointment.
+  const scheduledDate = event?.reviewSource === 'aptem' && event.status === 'not-scheduled'
+    ? null
+    : event?.scheduledDate;
   const canEditBooking = event?.reviewSource !== 'aptem' && (event?.status === 'not-scheduled' || event?.status === 'scheduled');
   // Aptem bookings are authorized by the imported review itself, not by the
   // calendar row, and an admin reading another workspace never books.
@@ -566,7 +571,7 @@ export default function CoachMeetingDetail() {
                 <SectionHeading icon="ri-information-line" title={`${isProgressReview ? 'Review' : 'Meeting'} overview`} />
                 <dl className="mt-4 grid grid-cols-1 gap-x-6 sm:grid-cols-2">
                   <DetailItem label="Target date" value={formatDateLabel(event.targetDate)} icon="ri-flag-line" />
-                  <DetailItem label="Scheduled date" value={event.scheduledDate ? formatDateLabel(event.scheduledDate) : 'Not scheduled'} icon="ri-calendar-check-line" />
+                  <DetailItem label="Scheduled date" value={scheduledDate ? formatDateLabel(scheduledDate) : 'Not scheduled'} icon="ri-calendar-check-line" />
                   <DetailItem label="Time" value={formatTimeLabel(event)} icon="ri-time-line" />
                   <DetailItem label="Provider" value={providerLabel(event)} icon="ri-video-chat-line" />
                 </dl>

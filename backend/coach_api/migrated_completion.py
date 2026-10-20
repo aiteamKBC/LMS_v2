@@ -110,7 +110,10 @@ def complete(overlay):
     if set(required_roles(overlay)) - signed:
         raise ValueError("All required signatures must be saved before completion.")
     from .migrated_otjh import hours_for
-    if hours_for(overlay.template_snapshot) > 0:
+    # Reopening corrects the review document, not its original hours allocation.
+    # A previously completed zero-credit review must not be backfilled either.
+    previously_completed = (getattr(overlay, "meeting_intelligence", None) or {}).get("reopenCompletedAt")
+    if not previously_completed and hours_for(overlay.template_snapshot) > 0:
         return _complete_with_hours(overlay)
     overlay.status = ImportedReviewInstance.STATUS_COMPLETED
     overlay.completed_at = timezone.now()

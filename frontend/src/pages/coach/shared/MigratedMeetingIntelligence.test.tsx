@@ -26,6 +26,17 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('migrated meeting intelligence', () => {
+  it('updates the summary status from an uploaded binding without another Teams request', async () => {
+    const { rerender } = render(<MigratedMeetingIntelligence instanceId={id} family="aptem_mcm" status="in-progress"
+      viewAs={false} bound savedBinding={{ fieldKey: 'recap', generationStatus: 'failed' }} />);
+    await waitFor(() => expect(api.fetch).toHaveBeenCalledTimes(1));
+    rerender(<MigratedMeetingIntelligence instanceId={id} family="aptem_mcm" status="in-progress"
+      viewAs={false} bound savedBinding={{ fieldKey: 'recap', generationStatus: 'ready',
+        generationAttemptedAt: '2026-10-20T09:00:00Z' }} />);
+    expect(await screen.findByText('AI generated')).toBeVisible();
+    expect(api.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('reads locally on open and checks Graph only after a coach click', async () => {
     const user = userEvent.setup();
     render(<MigratedMeetingIntelligence instanceId={id} family="aptem_mcm" status="in-progress" viewAs={false} />);

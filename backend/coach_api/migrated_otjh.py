@@ -43,6 +43,8 @@ def frozen_hours(overlay):
     credit = (overlay.meeting_intelligence or {}).get("otjhCredit")
     if credit:
         return credit["hours"]
+    if (overlay.meeting_intelligence or {}).get("reopenCompletedAt"):
+        return 0.0
     return hours_for(overlay.template_snapshot) if overlay.status == "awaiting-signature" else 0.0
 
 
@@ -159,12 +161,14 @@ def overlays_for(profile_ids):
     from .models import ImportedReviewInstance
     for row in ImportedReviewInstance.objects.filter(learner_id__in=profile_ids).values(
             "learner_id", "source_review_id", "status", "migrated_template_id",
-            "template_snapshot__otjh", "template_snapshot__name", "meeting_intelligence__otjhCredit"):
+            "template_snapshot__otjh", "template_snapshot__name", "meeting_intelligence__otjhCredit",
+            "meeting_intelligence__reopenCompletedAt"):
         settings = row.pop("template_snapshot__otjh")
         name = row.pop("template_snapshot__name")
         receipt = row.pop("meeting_intelligence__otjhCredit")
+        reopened_completion = row.pop("meeting_intelligence__reopenCompletedAt")
         yield SimpleNamespace(**row, template_snapshot={"name": name, **({"otjh": settings} if settings is not None else {})},
-                              meeting_intelligence={"otjhCredit": receipt})
+                              meeting_intelligence={"otjhCredit": receipt, "reopenCompletedAt": reopened_completion})
 
 
 def planned_meetings(profile, window_start, window_end, *, templates=None, overlays=None, rows=None):
@@ -197,10 +201,11 @@ def planned_meetings(profile, window_start, window_end, *, templates=None, overl
         credit = (overlay.meeting_intelligence or {}).get("otjhCredit") if overlay else None
         if review["status"] == "cancelled" or ((review["status"] == "completed" or review["completedDate"]) and not credit):
             continue
-        if overlay and overlay.status == "completed" and not credit:
+        was_completed = overlay and (overlay.status == "completed" or (overlay.meeting_intelligence or {}).get("reopenCompletedAt"))
+        if was_completed and not credit:
             continue
         template = templates[family]
-        frozen = overlay and overlay.status in {"awaiting-signature", "completed"}
+        frozen = overlay and (was_completed or overlay.status == "awaiting-signature")
         definition = overlay.template_snapshot if frozen else template.definition_json if template else {}
         hours = credit["hours"] if credit else hours_for(definition)
         target = day(review["plannedDate"])
