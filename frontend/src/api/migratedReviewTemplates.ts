@@ -32,6 +32,15 @@ export interface TemplateLibrary {
 }
 export interface TemplatePreview { sections: ReviewSectionDefinition[]; readOnly: boolean }
 
+export class TemplateAnswerConflictError extends Error {
+  fields: string[];
+  constructor(message: string, fields: string[]) {
+    super(message);
+    this.name = 'TemplateAnswerConflictError';
+    this.fields = fields;
+  }
+}
+
 const root = '/curriculum/migrated-review-templates/';
 let csrfToken = '';
 
@@ -49,7 +58,11 @@ async function request<T>(path = '', method = 'GET', payload?: unknown, signal?:
     return data;
   } catch (error) {
     if (!(error instanceof CurriculumApiError)) throw error;
-    const data = error.data as { detail?: string } | undefined;
+    const data = error.data as { detail?: string; code?: string; fields?: string[] } | undefined;
+    if (error.status === 409 && data?.code === 'template_answer_conflict') {
+      throw new TemplateAnswerConflictError(data.detail || 'This change conflicts with saved review answers.',
+        Array.isArray(data.fields) ? data.fields.filter(field => typeof field === 'string') : []);
+    }
     throw new Error(error.status === 403
       ? 'Curriculum or administrator access is required to manage migrated templates.'
       : data?.detail || `Unable to load migrated templates (${error.status}).`);

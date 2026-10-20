@@ -47,6 +47,8 @@ const EXPORTABLE_REVIEW_TYPES = ['mcm', 'aptem_mcm', 'progress_review'];
 
 function MeetingSummaryInlineEditor({
   fieldId,
+  label = 'Meeting Summary',
+  maxLength,
   value,
   onChange,
   readOnly,
@@ -57,6 +59,8 @@ function MeetingSummaryInlineEditor({
   expandButtonRef,
 }: {
   fieldId: string;
+  label?: string;
+  maxLength?: number;
   value: unknown;
   onChange: (value: string) => void;
   readOnly: boolean;
@@ -84,10 +88,11 @@ function MeetingSummaryInlineEditor({
         </button>
       </div>
       <textarea
-        aria-label="Meeting Summary"
+        aria-label={label}
         aria-describedby={helpId}
         aria-invalid={invalid || undefined}
         value={stringValue}
+        maxLength={maxLength}
         onChange={(event) => onChange(event.target.value)}
         disabled={readOnly}
         className={`h-[360px] min-h-[280px] w-full resize-y rounded-xl border bg-white px-4 py-3.5 text-[15px] leading-7 text-foreground-800 outline-none transition placeholder:text-foreground-300 focus:border-primary-400 focus:ring-2 focus:ring-primary-200 disabled:cursor-not-allowed disabled:bg-background-100 ${invalid ? 'border-red-300' : 'border-background-300'}`}
@@ -101,6 +106,7 @@ function MeetingSummaryInlineEditor({
 
 function ExpandedMeetingSummaryEditor({
   reviewLabel,
+  maxLength,
   value,
   onChange,
   readOnly,
@@ -109,6 +115,7 @@ function ExpandedMeetingSummaryEditor({
   onDone,
 }: {
   reviewLabel: string;
+  maxLength?: number;
   value: unknown;
   onChange: (value: string) => void;
   readOnly: boolean;
@@ -175,6 +182,7 @@ function ExpandedMeetingSummaryEditor({
           aria-label="Expanded Meeting Summary"
           aria-invalid={invalid || undefined}
           value={stringValue}
+          maxLength={maxLength}
           onChange={(event) => onChange(event.target.value)}
           disabled={readOnly}
           className={`min-h-[50vh] w-full flex-1 resize-none rounded-xl border bg-white px-4 py-4 text-[15px] leading-7 text-foreground-800 shadow-sm outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-200 disabled:cursor-not-allowed disabled:bg-background-100 ${invalid ? 'border-red-300' : 'border-background-300'}`}
@@ -761,9 +769,10 @@ export function ReviewInstanceModal({
       <ModalShell busy={busy} onClose={closeExpandedSummary}>
         <ExpandedMeetingSummaryEditor
           reviewLabel={headingLabel}
+          maxLength={meetingSummaryField.configuration?.migrated === true ? 4000 : undefined}
           value={answers[expandedSummaryFieldId]}
           onChange={(value) => handleAnswerChange(expandedSummaryFieldId, value)}
-          readOnly={formReadOnly}
+          readOnly={formReadOnly || checkingSession}
           invalid={showErrors && missingFieldIds.has(expandedSummaryFieldId)}
           draftSaved={summaryDraftSaved}
           onDone={closeExpandedSummary}
@@ -1236,9 +1245,13 @@ export function ReviewInstanceModal({
                   </div>
                 </div>
               ) : null}
-              renderFieldInput={(field, context) => !definition.migratedForm && !isMigratedTemplatePreview && field.configuration?.semanticKey === 'meeting_summary' ? (
+              renderFieldInput={(field, context) => field.configuration?.semanticKey === 'meeting_summary' && (
+                definition.source !== 'aptem' || definition.migratedForm || isMigratedTemplatePreview
+              ) ? (
                 <MeetingSummaryInlineEditor
                   fieldId={field.id}
+                  label={definition.source === 'aptem' ? field.title : 'Meeting Summary'}
+                  maxLength={field.configuration?.migrated === true ? 4000 : undefined}
                   value={context.value}
                   onChange={(value) => context.onChange(value)}
                   readOnly={context.readOnly}

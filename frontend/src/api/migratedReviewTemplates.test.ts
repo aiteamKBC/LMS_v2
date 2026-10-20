@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearCurriculumGetCache, fetchCurriculumJson } from '@/lib/curriculumApi';
-import { getMigratedTemplate, listMigratedTemplates, previewMigratedDefinition } from './migratedReviewTemplates';
+import { TemplateAnswerConflictError, getMigratedTemplate, listMigratedTemplates, previewMigratedDefinition, updateMigratedTemplate } from './migratedReviewTemplates';
 
 describe('managed template read transport', () => {
   const fetchMock = vi.fn();
@@ -35,6 +35,23 @@ describe('managed template read transport', () => {
     fetchMock.mockResolvedValue(Response.json({ detail: 'Denied' }, { status: 403 }));
     await expect(listMigratedTemplates()).rejects.toThrow('Curriculum or administrator access is required');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps answer conflicts distinct from stale versions and carries affected question keys', async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ csrf_token: 'synthetic', templates: [] }));
+    await listMigratedTemplates();
+    const template = { id: 1, updated_at: 'before' } as Parameters<typeof updateMigratedTemplate>[0];
+    fetchMock.mockResolvedValueOnce(Response.json({
+      code: 'template_answer_conflict', detail: 'Saved answers conflict.', fields: ['question', 123],
+    }, { status: 409 }));
+    const error = await updateMigratedTemplate(template, { name: 'Draft' }).catch(error => error);
+    expect(error).toBeInstanceOf(TemplateAnswerConflictError);
+    expect(error.fields).toEqual(['question']);
+    expect(error.message).toBe('Saved answers conflict.');
+    fetchMock.mockResolvedValueOnce(Response.json({ detail: 'Another editor changed this template.' }, { status: 409 }));
+    const stale = await updateMigratedTemplate(template, { name: 'Draft' }).catch(error => error);
+    expect(stale).not.toBeInstanceOf(TemplateAnswerConflictError);
+    expect(stale.message).toBe('Another editor changed this template.');
   });
 
   it('previews a definition without invalidating unrelated curriculum reads', async () => {
