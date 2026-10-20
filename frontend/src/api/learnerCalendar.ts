@@ -141,6 +141,23 @@ export function fetchMigratedReviewForParty(eventKey: string, signal?: AbortSign
   return request<LearnerReviewDefinition>(`${migratedReviewUrl(eventKey)}/party`, { signal, credentials: 'include' });
 }
 
+export async function saveMigratedReviewPartyAnswers(
+  eventKey: string, answers: Record<string, unknown>, answerVersion?: string,
+): Promise<LearnerReviewDefinition> {
+  if (!answerVersion) throw new Error('Reopen the review to load its latest answers before saving.');
+  const csrfResponse = await fetch('/learner_api/migrated-reviews/csrf', { credentials: 'include' });
+  const csrf = await csrfResponse.json().catch(() => ({})) as { csrfToken?: string };
+  if (!csrfResponse.ok || !csrf.csrfToken) throw new Error('Unable to verify this answer request.');
+  const response = await fetch(`${migratedReviewUrl(eventKey)}/party-answers`, {
+    method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf.csrfToken },
+    body: JSON.stringify({ answers, answerVersion }),
+  });
+  const data = await response.json() as LearnerReviewDefinition & { detail?: string };
+  if (!response.ok) throw new Error(data.detail || `Saving answers failed (${response.status}).`);
+  return data;
+}
+
 export async function downloadMigratedReviewForParty(eventKey: string): Promise<void> {
   const { saveReviewPdfResponse } = await import('./reviewPdf');
   await saveReviewPdfResponse(await fetch(`${migratedReviewUrl(eventKey)}/party-pdf`, { credentials: 'include' }));

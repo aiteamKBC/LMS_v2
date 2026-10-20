@@ -31,7 +31,7 @@ class MigratedReviewTemplateForm(forms.ModelForm):
             self.add_error(None, str(exc))
         if values.get("is_active") and family:
             try:
-                validate_managed_definition(values.get("definition_json"))
+                validate_managed_definition(values.get("definition_json"), family=family)
             except ValueError as exc:
                 self.add_error("definition_json", str(exc))
             assigned = MigratedReviewTemplate.objects.filter(

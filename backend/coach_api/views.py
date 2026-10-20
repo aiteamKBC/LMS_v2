@@ -15172,7 +15172,10 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     if migrated_form:
         try:
             from coach_api.migrated_template_sync import active_answers
-            adapted_sections, field_warnings = render_migrated_sections(snapshot, active_answers(snapshot, saved_answers))
+            adapted_sections, field_warnings = render_migrated_sections(
+                snapshot, active_answers(snapshot, saved_answers),
+                answer_audit=(getattr(saved_instance, "meeting_intelligence", None) or {}).get("answerEdits", {}),
+            )
         except ValueError:
             return None
     elif is_template_preview:

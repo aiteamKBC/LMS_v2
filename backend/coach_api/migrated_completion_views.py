@@ -4,13 +4,14 @@ import json
 from django.db import connections, transaction
 from django.http import JsonResponse
 from django.middleware.csrf import get_token
-from django.views.decorators.csrf import ensure_csrf_cookie
+from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
 from coach_api.auth import authenticated_coach_email, coach_access_required
 from coach_api.migrated_completion import complete, ensure_document, required_roles, sign, submit
 from coach_api.migrated_review_pdf import stored_pdf_response
 from coach_api.migrated_reviews import review_family
+from coach_api.migrated_respondents import merge_party_answers, writable_keys
 from coach_api.models import CoachCalendarEvent, ImportedReviewInstance, MigratedReviewDocument
 from coach_api.migrated_summary_binding import AnswerConflict, check_answer_version, record_answer_edit
 from coach_api.migrated_template_sync import TemplateSyncConflict, active_answers, synchronize_definition_locked
@@ -181,18 +182,69 @@ def migrated_review_party_detail(request, review_id):
     overlay = _party_overlay(review_id, account)
     if not overlay:
         return JsonResponse({"detail": "Review not found for this account."}, status=404)
-    from coach_api.views import _imported_review_definition
-    definition = _imported_review_definition(overlay.owner_email, review_id)
-    if not definition or not definition.get("migratedForm"):
+    definition = _party_definition(overlay, account)
+    if definition is None:
         return JsonResponse({"detail": "Migrated form unavailable."}, status=404)
-    definition["readOnly"] = True
+    return JsonResponse(definition)
+
+
+def _party_definition(overlay, account):
+    from coach_api.views import _imported_review_definition
+    definition = _imported_review_definition(overlay.owner_email, overlay.event_key)
+    if not definition or not definition.get("migratedForm"):
+        return None
+    role = "participant" if account.role == "learner" else "employer"
+    definition["readOnly"] = (bool(definition.get("readOnly"))
+                              or overlay.status not in {"not-scheduled", "scheduled", "in-progress"}
+                              or not writable_keys(overlay, role))
     definition["canCalculateProgress"] = False
     definition.pop("progressVersion", None)
     definition.pop("historicalReview", None)
     definition.pop("ragHistory", None)
     definition.pop("summaryBinding", None)
-    definition.pop("answerVersion", None)
-    return JsonResponse(definition)
+    if definition["readOnly"]:
+        definition.pop("answerVersion", None)
+    return definition
+
+
+@require_POST
+@csrf_protect
+def migrated_review_party_answers(request, review_id):
+    account = authenticate_request(request)
+    if account is None:
+        return JsonResponse({"detail": "Sign in to answer this review."}, status=401)
+    if account.role not in {"learner", "employer"} or request.GET.get("viewAsCoach") or request.GET.get("viewAsLearner"):
+        return JsonResponse({"detail": "This account cannot answer as a review participant."}, status=403)
+    payload = _payload(request)
+    if payload is None or not isinstance(payload.get("answers"), dict):
+        return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
+    role = "participant" if account.role == "learner" else "employer"
+    with transaction.atomic():
+        overlay = _party_overlay(review_id, account, lock=True)
+        if not overlay:
+            return JsonResponse({"detail": "Review not found for this account."}, status=404)
+        try:
+            check_answer_version(overlay, payload)
+            # Read-only party GETs never change the template. A write checks the
+            # current managed rules under the same locks as coach saves.
+            from coach_api.views import _imported_review_definition
+            definition = _imported_review_definition(overlay.owner_email, overlay.event_key)
+            if not definition or not definition.get("migratedForm") or definition.get("readOnly"):
+                return JsonResponse({"detail": "This review is read-only."}, status=409)
+            if synchronize_definition_locked(overlay, definition):
+                return JsonResponse({"detail": "The review template changed. Reopen the review to check its latest questions before saving. Your unsaved answers have been kept on screen.", "code": "template_sync_changed"}, status=409)
+            answers = merge_party_answers(overlay, payload["answers"], role)
+            record_answer_edit(overlay, active_answers(overlay.template_snapshot, answers),
+                               actor=account.email or str(account.pk), role=role, account_id=account.pk)
+            overlay.answers = answers
+            overlay.save(update_fields=["answers", "meeting_intelligence", "updated_at"])
+        except PermissionError as exc:
+            return JsonResponse({"detail": str(exc)}, status=403)
+        except (AnswerConflict, TemplateSyncConflict) as exc:
+            return JsonResponse({"detail": str(exc)}, status=409)
+        except ValueError as exc:
+            return JsonResponse({"detail": str(exc)}, status=400)
+        return JsonResponse(_party_definition(overlay, account))
 
 
 @require_GET

@@ -49,6 +49,16 @@ class MigratedTemplateManagementTests(TestCase):
                 self.assertEqual(review_family(value), expected)
         self.assertIsNone(review_family("Progress Review Master"))
 
+    def test_mcm_template_api_rejects_employer_question_permissions(self):
+        template = self.template(family="MCM")
+        updated = copy.deepcopy(template.definition_json)
+        updated["sections"][0]["fields"][0]["respondentRoles"] = ["employer"]
+        response = self.request(api.detail, "patch", {"definition": updated, "updated_at": template.updated_at.isoformat()}, template.pk)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Progress Reviews only", json.loads(response.content)["detail"])
+        template.refresh_from_db()
+        self.assertNotIn("respondentRoles", template.definition_json["sections"][0]["fields"][0])
+
     def test_resolution_overrides_global_per_family_and_programme(self):
         pr = self.template()
         skills = self.template(family="PR_SKILLS_RADAR")
