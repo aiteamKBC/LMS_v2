@@ -70,6 +70,8 @@ export interface SessionResult {
   learningOutcome?: 'present' | 'recorded' | 'awaiting_recording' | 'upcoming' | 'in_progress' | 'unmarked';
   id: string; seriesId: string; sessionNumber: number; startsAt: string; endsAt: string;
   title?: string; actualStartsAt?: string | null; actualEndsAt?: string | null;
+  /** Title of the Course structure item linked to this session; null when none or ambiguous. */
+  itemTitle?: string | null;
   runs?: { startsAt: string; endsAt: string }[];
   state: string; reportReady: boolean; syncedAt?: string; fileCount?: number; archiveReady?: boolean;
   attendance?: SessionPerson[]; unmatchedAttendance?: SessionPerson[];
@@ -83,8 +85,24 @@ export interface ModuleSessionResults {
   series: { id: string; title: string; sessions: SessionResult[] }[];
   jobs: SessionSyncJob[];
 }
+/** Matches CATEGORIES in backend/curriculum_api/session_sync_issues.py. */
+export type SessionSyncIssueCategory = 'not_found' | 'access_denied' | 'authentication' | 'rate_limited'
+  | 'service_unavailable' | 'network' | 'storage' | 'link_repair' | 'unknown';
+/** Staff only. One outstanding problem from the last failed sync; diagnostics never include URLs or tokens. */
+export interface SessionSyncIssue {
+  category: SessionSyncIssueCategory;
+  fileType: 'recording' | 'transcript' | 'attendance' | null;
+  artifactId: string | null; sessionNumber: number | null; httpStatus: number | null;
+  stage: string | null; errorType: string | null; occurredAt: string | null; detail: string;
+  /** The course week whose live-session component links this session; null when none or ambiguous. */
+  week?: { number: number | null; title: string } | null;
+  /** Title of the linked Course structure item; null when none or ambiguous. */
+  sessionTitle?: string | null;
+}
 export interface SessionSyncJob {
   live_session_id: string; state: string; last_error: string;
+  /** Absent from servers older than the categorised errors; last_error is the fallback. */
+  issues?: SessionSyncIssue[];
   started_at?: string | null; finished_at?: string | null;
   progress?: {
     filesReady: number; totalFiles: number;
