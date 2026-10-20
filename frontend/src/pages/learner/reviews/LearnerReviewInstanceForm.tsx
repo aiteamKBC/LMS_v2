@@ -12,7 +12,10 @@ import {
 import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 import { ReviewProgressPanel } from '@/components/reviews/ReviewProgressPanel';
-import { fetchLearnerEventReviewInstance, fetchMigratedReviewForParty, type LearnerReviewDefinition } from '@/api/learnerCalendar';
+import { fetchLearnerEventReviewInstance, fetchMigratedReviewForParty, type LearnerReviewDefinition, type MonthlyLogSignatureSync } from '@/api/learnerCalendar';
+import { MonthlyLogSignatureStatus } from './MonthlyLogSignatureStatus';
+import { MigratedReviewHistory } from '@/components/reviews/MigratedReviewHistory';
+import { downloadMigratedRevisionForParty } from '@/api/learnerCalendar';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { flattenReviewFields } from '@/api/reviewInstances';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
@@ -125,7 +128,7 @@ function seedAnswersFromDefinition(definition: LearnerReviewDefinition): Record<
 
 export function LearnerReviewInstanceForm({
   definition, onSign, onDownload, signatoryName = 'Learner',
-  viewerRole = 'participant', onSaveAnswers, mcmMonthlyLog,
+  viewerRole = 'participant', onSaveAnswers, mcmMonthlyLog, monthlyLogSync, onRetryMonthlyLogSignature,
 }: {
   definition: LearnerReviewDefinition;
   onSign?: (signature: string, options?: { applyMonthlyLogSignature?: boolean }) => Promise<void>;
@@ -140,6 +143,8 @@ export function LearnerReviewInstanceForm({
   onSaveAnswers?: (answers: Record<string, unknown>, answerVersion?: string) => Promise<LearnerReviewDefinition>;
   /** The target-month log is reviewed inside the MCM signing modal, never inline. */
   mcmMonthlyLog?: { id: string; month: string; contractKind: LearnerKind };
+  monthlyLogSync?: MonthlyLogSignatureSync;
+  onRetryMonthlyLogSignature?: () => Promise<void>;
 }) {
   const [openSectionId, setOpenSectionId] = useState('');
   const [signing, setSigning] = useState(false);
@@ -195,7 +200,8 @@ export function LearnerReviewInstanceForm({
   useEffect(() => {
     setSavedSignature(definition.savedSignature || readSavedLearnerSignature(signatoryName));
     setDrawingSignature(false);
-  }, [definition.savedSignature, signatoryName]);
+    setSignatureError('');
+  }, [definition.savedSignature, definition.reviewRevision, signatoryName]);
 
   useEffect(() => {
     setApplyMonthlyLogSignature(true);
@@ -405,7 +411,11 @@ export function LearnerReviewInstanceForm({
       />
 
       <div ref={signatureSection} tabIndex={-1} aria-label="Signature step" className="scroll-mt-6 space-y-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">
+        {definition.migratedForm && definition.instance && <MigratedReviewHistory entries={definition.reopenHistory}
+          onDownload={number => downloadMigratedRevisionForParty(definition.instance!.id, number)} />}
         <ReviewSignatures signatures={definition.signatures} />
+        {viewerRole === 'participant' && monthlyLogSync && <MonthlyLogSignatureStatus sync={monthlyLogSync} onRetry={onRetryMonthlyLogSignature}
+          previousReviewVersion={Boolean(definition.reviewRevision && !definition.signatures.participant?.signed)} />}
         {(definition.source !== 'aptem' || definition.instance?.status === 'completed') && <ReviewPdfDownload
           availability={definition.migratedForm
             ? { available: definition.instance?.status === 'completed', reason: 'Available after completion.' }

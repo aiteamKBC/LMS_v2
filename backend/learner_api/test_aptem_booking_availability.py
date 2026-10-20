@@ -21,6 +21,10 @@ class AptemBookingAvailabilityTests(SimpleTestCase):
         self.outlook = self.enterContext(patch.object(booking_availability, "ensure_coach_outlook_available"))
         self.sync = self.enterContext(patch.object(views, "synchronize_reserved_calendar_event"))
         self.persist = self.enterContext(patch.object(views, "persist_calendar_sync_reservation"))
+        self.reserve_imported = self.enterContext(patch(
+            "learner_api.imported_booking.reserve_imported_booking",
+            side_effect=lambda record, event, *args, **kwargs: (self.persist(record, review_event=event), True),
+        ))
         self.enterContext(patch.object(calendar, "booking_date_restriction", return_value=None))
         self.enterContext(patch.object(calendar, "_mark_imported_review_scheduled"))
         self.enterContext(patch.object(calendar, "_record_enrolment_review"))
@@ -28,7 +32,8 @@ class AptemBookingAvailabilityTests(SimpleTestCase):
         self.enterContext(patch.object(calendar, "_booking_response_event", return_value={"eventKey": "saved"}))
 
     def payload(self):
-        return {"scheduledDate": "2026-11-20", "scheduledTime": "11:30", "durationMinutes": 60, "timezoneOffsetMinutes": -120}
+        return {"scheduledDate": "2026-11-20", "scheduledTime": "11:30", "durationMinutes": 60, "timezoneOffsetMinutes": -120,
+                "expectedBooking": {"scheduledDate": "2026-09-08", "scheduledTime": "10:00", "durationMinutes": 60}}
 
     def test_new_booking_rejects_busy_or_unknown_coach_before_any_calendar_write(self):
         for kind in ("commercial", "apprenticeship"):

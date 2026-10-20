@@ -12,8 +12,10 @@ from coach_api.migrated_completion import complete, ensure_document, required_ro
 from coach_api.migrated_review_pdf import stored_pdf_response
 from coach_api.migrated_reviews import review_family
 from coach_api.migrated_respondents import merge_party_answers, writable_keys
+from coach_api import migrated_monthly_log
 from coach_api.models import CoachCalendarEvent, ImportedReviewInstance, MigratedReviewDocument
 from coach_api.migrated_summary_binding import AnswerConflict, check_answer_version, record_answer_edit
+from coach_api.migrated_reopening import check_revision
 from coach_api.migrated_template_sync import TemplateSyncConflict, active_answers, synchronize_definition_locked
 from learner_api.models import EnrolmentUser, LearnerProfile
 from .review_sources import booking_for_overlay
@@ -120,6 +122,7 @@ def migrated_review_coach_sign(request, review_id):
         if not overlay:
             return JsonResponse({"detail": "Migrated review association mismatch."}, status=409)
         try:
+            check_revision(overlay, payload)
             _sign_and_complete(overlay, "advisor", account=account, signature=payload.get("signature"))
         except ValueError as exc:
             return JsonResponse({"detail": str(exc)}, status=409)
@@ -198,6 +201,9 @@ def _party_definition(overlay, account):
                               or overlay.status not in {"not-scheduled", "scheduled", "in-progress"}
                               or not writable_keys(overlay, role))
     definition["canCalculateProgress"] = False
+    monthly_log = migrated_monthly_log.signing_option(overlay, account, definition)
+    if monthly_log:
+        definition["mcmMonthlyLog"] = monthly_log
     definition.pop("progressVersion", None)
     definition.pop("historicalReview", None)
     definition.pop("ragHistory", None)
@@ -264,21 +270,46 @@ def migrated_review_party_sign(request, review_id):
     account = authenticate_request(request)
     if account is None:
         return JsonResponse({"detail": "Sign in to sign this review."}, status=401)
-    if account.role not in {"learner", "employer"}:
+    if account.role not in {"learner", "employer"} or request.GET.get("viewAsCoach") or request.GET.get("viewAsLearner"):
         return JsonResponse({"detail": "This account cannot sign as a review participant."}, status=403)
     payload = _payload(request)
     if payload is None:
         return JsonResponse({"detail": "Invalid JSON object."}, status=400)
+    for option in ("applyMonthlyLogSignature", "retryMonthlyLogSignature"):
+        if option in payload and type(payload[option]) is not bool:
+            return JsonResponse({"detail": f"{option} must be a boolean."}, status=400)
+    copy_log = payload.get("applyMonthlyLogSignature") is True
+    retry_log = payload.get("retryMonthlyLogSignature") is True
+    if (copy_log or retry_log) and account.role != "learner":
+        return JsonResponse({"detail": "Only the learner can sign their Monthly Log."}, status=403)
     with transaction.atomic():
         overlay = _party_overlay(review_id, account, lock=True, lock_calendar=True)
         if not overlay:
             return JsonResponse({"detail": "Review not found for this account."}, status=404)
         role = "participant" if account.role == "learner" else "employer"
         try:
-            _sign_and_complete(overlay, role, account=account, signature=payload.get("signature"))
+            already_signed = overlay.migrated_signatures.filter(role=role, signer_account_id=account.pk).exists()
+            if retry_log or (copy_log and migrated_monthly_log.saved_state(overlay) and already_signed):
+                migrated_monthly_log.validate_retry(overlay, account, payload)
+            else:
+                check_revision(overlay, payload)
+                month = None
+                if copy_log and not migrated_monthly_log.saved_state(overlay):
+                    from coach_api.views import _imported_review_definition
+                    definition = _imported_review_definition(overlay.owner_email, overlay.event_key)
+                    option = migrated_monthly_log.signing_option(overlay, account, definition or {})
+                    if not option:
+                        raise ValueError("The MCM reporting month is unavailable. Reopen the review, or sign only the MCM.")
+                    month = option["month"]
+                _sign_and_complete(overlay, role, account=account, signature=payload.get("signature"))
+                if month:
+                    migrated_monthly_log.record_request(overlay, account, month)
         except ValueError as exc:
             return JsonResponse({"detail": str(exc)}, status=409)
-    return JsonResponse({"signed": True, "role": role})
+    response = {"signed": True, "role": role}
+    if copy_log or retry_log:
+        response["monthlyLogSync"] = migrated_monthly_log.sync_request(overlay)
+    return JsonResponse(response)
 
 
 @coach_access_required
@@ -287,11 +318,15 @@ def migrated_review_complete(request, review_id):
     owner, definition = _coach_review(request, review_id)
     if not definition:
         return JsonResponse({"detail": "Migrated review not found."}, status=404)
+    payload = _payload(request)
+    if payload is None:
+        return JsonResponse({"detail": "Invalid JSON object."}, status=400)
     with transaction.atomic():
         overlay = _locked_overlay(owner, definition, lock_calendar=True)
         if not overlay:
             return JsonResponse({"detail": "Migrated review association mismatch."}, status=409)
         try:
+            check_revision(overlay, payload)
             complete(overlay)
         except ValueError as exc:
             return JsonResponse({"detail": str(exc)}, status=409)
