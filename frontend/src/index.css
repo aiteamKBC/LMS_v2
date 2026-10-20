@@ -4863,6 +4863,8 @@ table tbody td:last-child {
 /* The workspace top bar now continues the same gradient language as the
    sidebar, making the two pieces read as one navigation frame. */
 .kbc-workspace-topbar {
+  /* Keep header menus above page heroes and their positioned metric cards. */
+  z-index: 40;
   border-bottom: 0 !important;
   background: var(--kbc-chrome-color) !important;
   box-shadow: 0 10px 22px -20px rgb(76 29 149 / 0.72);
@@ -4870,7 +4872,8 @@ table tbody td:last-child {
 
 @media (max-width: 1023px) {
   .workspace-content > .kbc-workspace-topbar {
-    z-index: 10;
+    /* Stay above page content, but below the mobile sidebar backdrop (40). */
+    z-index: 39;
   }
 }
 
