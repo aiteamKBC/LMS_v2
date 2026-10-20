@@ -15,23 +15,28 @@ async function learnerFeedbackRoutes(enabled: boolean) {
     '/learner/feedback',
     '/learner/feedback/:formId',
     '/learner/feedback/delivery/:deliveryId',
+    '/learner/feedback/review/:reviewDeliveryId',
   ]);
   return (protectedLayout?.children || []).filter(route => 'path' in route && feedbackPaths.has(route.path || ''));
 }
 
 describe('learner feedback routes', () => {
-  it('redirects every learner feedback deep link in production', async () => {
+  it('opens the lecture queue and delivery, but redirects other feedback in production', async () => {
     const routes = await learnerFeedbackRoutes(false);
-    expect(routes).toHaveLength(3);
+    expect(routes).toHaveLength(4);
     for (const route of routes) {
       const element = route.element as ReactElement<{ to?: string; replace?: boolean }>;
-      expect(element.props).toMatchObject({ to: '/workspace/learner', replace: true });
+      if (route.path === '/learner/feedback' || route.path === '/learner/feedback/delivery/:deliveryId') {
+        expect(element.props.to).toBeUndefined();
+      } else {
+        expect(element.props).toMatchObject({ to: '/workspace/learner', replace: true });
+      }
     }
   });
 
   it('renders learner feedback pages during local development', async () => {
     const routes = await learnerFeedbackRoutes(true);
-    expect(routes).toHaveLength(3);
+    expect(routes).toHaveLength(4);
     for (const route of routes) {
       const element = route.element as ReactElement<{ to?: string }>;
       expect(element.props.to).toBeUndefined();

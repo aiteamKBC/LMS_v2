@@ -228,8 +228,8 @@ def _nonce_matches(request, expected_hash):
 def start(request):
     """Return the Microsoft authorization URL for the SPA to navigate to.
 
-    Normal sign-in starts at the account's home. The explicit Android download
-    intent has one fixed destination; arbitrary return paths are never accepted.
+    Normal sign-in starts at the account's home. Explicit fixed intents have
+    fixed destinations; arbitrary return paths are never accepted.
     """
     settings = config()
     if missing_settings():
@@ -243,6 +243,8 @@ def start(request):
     payload = {"n": hash_token(nonce)}
     if request.GET.get("download") == "android":
         payload["download"] = "android"
+    elif request.GET.get("intent") == "lecture-feedback":
+        payload["intent"] = "lecture-feedback"
     state = signing.dumps(payload, salt=STATE_SALT, compress=True)
     query = urlencode(
         {
@@ -398,6 +400,8 @@ def callback(request):
     destination = "/learner/home" if account.role == "learner" else "/"
     if payload.get("download") == "android" and (account.role == "learner" or staff_download_allowed(account)):
         destination = "/login?download=android"
+    elif payload.get("intent") == "lecture-feedback" and account.role == "learner":
+        destination = "/login?lectureFeedback=1"
     response = HttpResponseRedirect(f"{frontend_base_url()}{destination}")
     # Deliberately not remembered. There is no checkbox on this route to read a
     # preference from, and inventing one in the person's favour is the wrong

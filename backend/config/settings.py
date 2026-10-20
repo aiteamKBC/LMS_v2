@@ -463,6 +463,11 @@ PERFORMANCE_SAMPLE_RETENTION_DAYS = int(os.environ.get('PERFORMANCE_SAMPLE_RETEN
 LEARNER_FEEDBACK_ENABLED = (
     os.environ.get("LEARNER_FEEDBACK_ENABLED", "false").lower() == "true"
 )
+# Keep non-lecture learner feedback closed in production even when an existing
+# deployment already has the older, broad learner-feedback switch enabled.
+LEARNER_NON_LECTURE_FEEDBACK_ENABLED = (
+    os.environ.get("LEARNER_NON_LECTURE_FEEDBACK_ENABLED", "false").lower() == "true"
+)
 
 ROOT_URLCONF = 'config.urls'
 
