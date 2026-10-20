@@ -238,6 +238,35 @@ const mountProgressReview = (id: string) => render(
 );
 
 describe('Learner Review View opens the generic Curriculum form', () => {
+  it.each(['MCM', 'PR'] as const)('saves Aptem %s learner answers through the versioned party API', async family => {
+    const key = 'imported-review:learner-answer';
+    events = [event({ id: key, eventKey: key, migratedForm: true, reviewInstanceId: null, reviewTemplateId: null,
+      source: family === 'MCM' ? 'mcr' : 'progress-review', type: family === 'MCM' ? 'coaching' : 'review',
+      reviewTypeCode: family === 'MCM' ? 'mcm' : 'progress_review' })];
+    reviewDefinition = { ...reviewDefinition, migratedForm: true, source: 'aptem', readOnly: false, answerVersion: 'v1',
+      instance: { ...reviewDefinition.instance!, id: key, status: 'scheduled' }, sections: [{
+        id: 'reflection', title: 'Reflection', enabled: true, displayOrder: 0, estimatedMinutes: 0, fields: [
+          { id: 'learner-reflection', title: 'Learner reflection', fieldType: 'text', required: true, displayOrder: 0,
+            configuration: { respondentRoles: ['participant'] } },
+        ],
+      }] };
+    const original = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/migrated-reviews/csrf')) return new Response(JSON.stringify({ csrfToken: 'synthetic' }));
+      if (url.endsWith('/party-answers')) return new Response(JSON.stringify({ ...reviewDefinition, answerVersion: 'v2' }));
+      if (url.endsWith('/party')) return new Response(JSON.stringify(reviewDefinition));
+      return original(input, init);
+    });
+    if (family === 'MCM') mountMcm(key); else mountProgressReview(key);
+    const input = await screen.findByRole('textbox');
+    fireEvent.change(input, { target: { value: 'My progress this month' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save my answers' }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/learner_api/migrated-reviews/imported-review%3Alearner-answer/party-answers', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ answers: { 'learner-reflection': 'My progress this month' }, answerVersion: 'v1' }),
+    })));
+  });
+
   it.each([true, false])('keeps the MCM log out of the page until Review & sign: %s', async canProgress => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-11-15T12:00:00Z'));

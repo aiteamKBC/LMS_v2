@@ -6,7 +6,7 @@ import {
   downloadEmployerProgressReview, fetchEmployerProgressReview, fetchEmployerProgressReviews, saveEmployerReviewAnswers, signReviewAsEmployer,
 } from '@/api/employerPortal';
 import {
-  downloadMigratedReviewForParty, fetchMigratedReviewForParty, signMigratedReviewAsParty,
+  downloadMigratedReviewForParty, fetchMigratedReviewForParty, signMigratedReviewAsParty, saveMigratedReviewPartyAnswers,
   type LearnerReviewDefinition,
 } from '@/api/learnerCalendar';
 import ReviewsHome from '@/pages/learner/progress-reviews/ReviewsHome';
@@ -44,8 +44,14 @@ export function EmployerProgressReviewsTab({ employerId, kind, learnerId, employ
       Promise.resolve(onReviewChanged()),
     ]);
   };
-  const saveAnswers = async (answers: Record<string, unknown>): Promise<LearnerReviewDefinition> => {
+  const saveAnswers = async (answers: Record<string, unknown>, answerVersion?: string): Promise<LearnerReviewDefinition> => {
     if (!review || !definition?.instance) throw new Error('This review is not ready for employer answers.');
+    if (review.migratedForm) {
+      const updated = await saveMigratedReviewPartyAnswers(review.eventKey, answers, answerVersion);
+      client.setQueryData([...listKey, selectedKey], { ...detail.data, definition: updated });
+      await client.invalidateQueries({ queryKey: listKey, exact: true });
+      return updated;
+    }
     await saveEmployerReviewAnswers(employerId, kind, learnerId, definition.instance.id, answers);
     const updated = await detail.refetch();
     if (updated.error) throw updated.error;
@@ -67,7 +73,7 @@ export function EmployerProgressReviewsTab({ employerId, kind, learnerId, employ
     {detail.isPending ? <p role="status" className={styles.loading}>Loading review…</p>
       : detail.isError ? <div role="alert" className={styles.empty}><p>{errorMessage(detail.error)}</p><button type="button" className={styles.secondaryButton} onClick={() => void detail.refetch()}>Try again</button></div>
       : definition ? <LearnerReviewInstanceForm key={review?.eventKey} definition={definition} viewerRole="employer" signatoryName={employerName}
-        onSaveAnswers={!review?.migratedForm && definition.instance ? saveAnswers : undefined}
+        onSaveAnswers={definition.instance ? saveAnswers : undefined}
         onSign={sign} onDownload={review ? () => review.migratedForm
           ? downloadMigratedReviewForParty(review.eventKey)
           : downloadEmployerProgressReview(employerId, kind, learnerId, review.eventKey) : undefined} />

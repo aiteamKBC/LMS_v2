@@ -10,6 +10,7 @@ from . import ksb_generation
 from django.urls import include, path
 from coach_api.migrated_completion_views import (
     migrated_review_party_csrf, migrated_review_party_detail, migrated_review_party_pdf, migrated_review_party_sign,
+    migrated_review_party_answers,
 )
 from curriculum_api import recording_views
 from . import monthly_logs
@@ -54,6 +55,7 @@ urlpatterns = [
     path('migrated-reviews/<str:review_id>/party', migrated_review_party_detail, name='migrated-review-party-detail'),
     path('migrated-reviews/<str:review_id>/party-pdf', migrated_review_party_pdf, name='migrated-review-party-pdf'),
     path('migrated-reviews/<str:review_id>/party-sign', migrated_review_party_sign, name='migrated-review-party-sign'),
+    path('migrated-reviews/<str:review_id>/party-answers', migrated_review_party_answers, name='migrated-review-party-answers'),
     path("reflection/extra-activities/", extra_activities.list_extra_activities, name="learner-extra-activities"),
     path('personal-learning/courses/', personal_learning.courses),
     path('personal-learning/verify/<uuid:token>/', personal_learning.verify_certificate),

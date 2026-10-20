@@ -1035,6 +1035,13 @@ def _review_otjh_hours(learner_profile):
     # project into, so reviews contribute nothing rather than an arbitrary
     # horizon that would silently inflate the total.
     end_date = getattr(learner_profile, "end_date", None)
+    from coach_api.review_sources import resolve_review_source
+    if resolve_review_source(profile_aptem_id=getattr(learner_profile, "aptem_id", None)).kind == "aptem":
+        from coach_api.migrated_otjh import planned_meetings
+        planned = sum(row["hours"] for row in planned_meetings(learner_profile, start_date, end_date)) if start_date and end_date else 0
+        # Newly credited migrated reviews already exist in training_plan_progress
+        # and the canonical ledger. Only old Native credit is additional here.
+        return planned, review_otjh.completed_hours(learner_id)
     if not learner_id or not start_date or not end_date:
         return 0.0, review_otjh.completed_hours(learner_id) if learner_id else 0.0
 
