@@ -35,3 +35,14 @@ it('shows permission failures without any sample tickets', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent('Access denied');
   expect(screen.queryByText('TKT-0892')).not.toBeInTheDocument();
 });
+
+it('shows learner attachments on tickets and replies without giving staff an upload control', async () => {
+  const file = { id: 'f1', name: 'screenshot.png', size: 10, contentType: 'image/png' };
+  vi.mocked(loadSupportTickets).mockResolvedValue([{ ...ticket, attachments: [file], replies: [{ id: 'reply', sender: 'Learner',
+    senderRole: 'Learner', body: 'Details', timestamp: ticket.submitted, attachments: [{ ...file, id: 'f2', name: 'error.log' }] }] }]);
+  render(<SupportTicketQueue />);
+  fireEvent.click(await screen.findByText(ticket.title));
+  expect(screen.getByRole('link', { name: 'Download screenshot.png' })).toHaveAttribute('href', '/learner_api/support/queue/example/attachments/f1/');
+  expect(screen.getByRole('link', { name: 'Download error.log' })).toHaveAttribute('href', '/learner_api/support/queue/example/attachments/f2/');
+  expect(screen.queryByLabelText('Attachments (optional)')).not.toBeInTheDocument();
+});

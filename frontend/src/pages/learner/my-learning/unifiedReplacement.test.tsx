@@ -33,11 +33,25 @@ const history = { subjects: [{ id: 50, name: 'Original course' }],
 } as StudentActivityResponse;
 const metadata = { covers: {}, replacement_courses: { 'current:M': 'legacy:50' } };
 
-describe('unified replacement learning', () => {
-  it('shows the canonical time union against the current plan, not a sum of overlapping totals', () => {
+describe('replacement module transfer', () => {
+  it('shows explicitly simulated aggregate progress without completing old or new activities', () => {
+    const data = { ...history, activities: history.activities.map(row => ({ ...row, completed: false })) };
+    const subject = buildUnifiedLearningSummary(data, real, { ...metadata,
+      module_credits: { 'legacy:50': { progress: 40, actualHours: 0, demoProgress: true } } }).subjects[0];
+    expect(subject).toMatchObject({ source: 'legacy', demoProgress: true, aggregateProgress: 40, acceptedHours: 0 });
+    expect(subject.activities.every(activity => !activity.completed)).toBe(true);
+    render(<MemoryRouter><SubjectCard subject={subject} template={null} csrfToken="" onOpen={() => {}} /></MemoryRouter>);
+    expect(screen.getByText('Demo progress')).toBeVisible();
+    expect(screen.getByText('40%')).toBeVisible();
+    expect(screen.getByText('Completed 0m')).toBeVisible();
+  });
+
+  it('uses approved aggregate hours against the new plan without overlapping native totals', () => {
     const data = { ...history, subjects: [{ id: 50, name: 'Original course', accepted_hours: 1.5 }],
       replacement_hours: { 'current:M': { course_ref: 'legacy:50', accepted_hours: 1.75 } } };
-    const subject = buildUnifiedLearningSummary(data, real, metadata).subjects[0];
+    const approved = { ...metadata, approved_transfers: { 'current:M': 'legacy:50' },
+      module_credits: { 'current:M': { progress: 40, transferredProgress: 40, actualHours: 1.75 } } };
+    const subject = buildUnifiedLearningSummary(data, real, approved).subjects[0];
     render(<MemoryRouter><SubjectCard subject={subject} template={null} csrfToken="" onOpen={() => {}}
       planModule={{ total_otjh: 7 } as PlanModule}
       moduleProgress={{ hours: { actual: 0.75 }, ksb: { completed: 0, total: 0 }, attendance: { attended: 0, total: 0 } }} /></MemoryRouter>);
@@ -48,35 +62,38 @@ describe('unified replacement learning', () => {
   });
 
   it.each([undefined, { 'current:M': { course_ref: 'legacy:99', accepted_hours: 10 } }])(
-    'does not present a partial native total as unified hours when verified hours are unavailable', (hours) => {
+    'keeps old hours unavailable before approval even when a native total exists', (hours) => {
       const subject = buildUnifiedLearningSummary({ ...history, replacement_hours: hours }, real, metadata).subjects[0];
       expect(subject.acceptedHours).toBeUndefined();
       render(<MemoryRouter><SubjectCard subject={subject} template={null} csrfToken="" onOpen={() => {}}
         planModule={{ total_otjh: 7 } as PlanModule}
         moduleProgress={{ hours: { actual: 0.75 }, ksb: { completed: 0, total: 0 }, attendance: { attended: 0, total: 0 } }} /></MemoryRouter>);
       expect(screen.queryByText('Completed 45m')).not.toBeInTheDocument();
-      expect(screen.getByRole('progressbar', { name: 'Updated course hours progress' })).not.toHaveAttribute('aria-valuenow');
+      expect(screen.getByRole('progressbar', { name: 'Original course hours progress' })).not.toHaveAttribute('aria-valuenow');
       expect(screen.getByText('Completed Unavailable')).toBeVisible();
     },
   );
 
   it('keeps accepted zero distinct from unavailable and ignores unrelated course-hour mappings', () => {
-    const data = { ...history, replacement_hours: { 'current:M': { course_ref: 'legacy:50', accepted_hours: 0 } } };
+    const data = { ...history, subjects: [{ id: 50, name: 'Original course', accepted_hours: 0 }],
+      replacement_hours: { 'current:M': { course_ref: 'legacy:50', accepted_hours: 8 } } };
     expect(buildUnifiedLearningSummary(data, real, metadata).subjects[0].acceptedHours).toBe(0);
     const separate = buildUnifiedLearningSummary(data, real, { covers: {} });
     expect(separate.subjects.find(s => s.id === 'current:M')?.acceptedHours).toBeUndefined();
     expect(separate.subjects).toHaveLength(2);
   });
 
-  it('unions verified and native completion once using the current denominator, without changing history', () => {
+  it('includes approved matched components within aggregate credit without changing attempts or history', () => {
     const before = JSON.stringify({ real, history });
-    const summary = buildUnifiedLearningSummary(history, real, metadata);
-    expect(summary).toMatchObject({ subjectCount: 1, activityCount: 4, completedActivityCount: 3, percent: 75 });
+    const summary = buildUnifiedLearningSummary(history, real, { ...metadata,
+      approved_transfers: { 'current:M': 'legacy:50' },
+      module_credits: { 'current:M': { progress: 65, transferredProgress: 40, actualHours: 2 } } });
+    expect(summary).toMatchObject({ subjectCount: 1, activityCount: 4, completedActivityCount: 3, percent: 65 });
     expect(summary.subjects).toHaveLength(1);
     expect(summary.subjects[0].activities.map(a => [a.id, a.completed])).toEqual([
       ['C1', true], ['C2', true], ['C3', false], ['Q', true],
     ]);
-    expect(summary.subjects[0].archivedActivities).toHaveLength(3);
+    expect(summary.subjects[0].archivedActivities).toBeUndefined();
     expect(JSON.stringify({ real, history })).toBe(before);
   });
 

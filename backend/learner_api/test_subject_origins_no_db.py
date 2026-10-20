@@ -55,7 +55,8 @@ class ImportedCourseOriginTests(unittest.TestCase):
                  'read_builder_activity_dates': Mock(return_value={}),
                  '_private': lambda payload: payload, 'DatabaseError': RuntimeError}
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), 'exec'), scope)
-        with patch('learner_api.previous_learning_groups.read_previous_learning_groups', return_value={}), \
+        with patch('learner_api.progress_transfer.cover_transfer_metadata', return_value={}), \
+             patch('learner_api.previous_learning_groups.read_previous_learning_groups', return_value={}), \
              patch('learner_api.subject_origins.read_replacement_courses', return_value={'current:M1': 'legacy:50'}) as replacements:
             result = scope['subject_covers'](SimpleNamespace(GET={'refs': 'current:FOREIGN'}), 12)
         replacements.assert_called_once_with(self.cursor, [{'id': 'M1', 'title': 'Assigned'}], 12)

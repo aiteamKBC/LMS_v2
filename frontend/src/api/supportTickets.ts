@@ -1,5 +1,9 @@
+export interface TicketAttachment {
+  id: string; name: string; size: number; contentType: string;
+}
 export interface TicketReply {
   id: string; sender: string; senderRole: string; body: string; timestamp: string;
+  attachments?: TicketAttachment[];
 }
 export interface SupportTicket {
   id: string; title: string; description: string; category: string;
@@ -8,6 +12,7 @@ export interface SupportTicket {
   requester: string; submitted: string; lastUpdate: string; assignedTo: string; assignedTeam: string;
   messages: number; timeline: { event: string; timestamp: string; detail?: string }[];
   replies: TicketReply[]; feedback?: { rating: number; comment: string };
+  attachments?: TicketAttachment[];
 }
 export const TICKET_CATEGORIES = ['Technical Issue', 'Learning Support', 'Data / MIS', 'Coaching Query', 'Safeguarding Concern', 'Other'];
 type TicketResponse = { tickets?: SupportTicket[]; ticket?: SupportTicket; csrfToken: string; nextOffset?: number | null };
@@ -31,15 +36,26 @@ export async function loadSupportTickets(staff = false): Promise<SupportTicket[]
   return tickets;
 }
 
-async function post(staff: boolean, suffix: string, body: object): Promise<SupportTicket> {
+async function post(staff: boolean, suffix: string, body: object, files: File[] = []): Promise<SupportTicket> {
   const { csrfToken } = await request(path(staff));
+  const headers: Record<string, string> = { 'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest' };
+  let payload: string | FormData = JSON.stringify(body);
+  if (files.length) {
+    const form = new FormData();
+    form.append('payload', JSON.stringify(body));
+    files.forEach(file => form.append('attachments', file));
+    payload = form;
+  } else {
+    headers['Content-Type'] = 'application/json';
+  }
   const result = await request(path(staff) + suffix, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest' },
-    body: JSON.stringify(body),
+    method: 'POST', headers, body: payload,
   });
   if (!result.ticket) throw new Error('The server did not confirm the ticket. Please retry.');
   return result.ticket;
 }
-export const createSupportTicket = (body: { requestId: string; title: string; description: string; category: string; priority: string }) => post(false, '', body);
-export const updateSupportTicket = (id: string, body: object, staff = false) => post(staff, `${encodeURIComponent(id)}/`, body);
+export const createSupportTicket = (body: { requestId: string; title: string; description: string; category: string; priority: string }, files: File[] = []) => post(false, '', body, files);
+export const updateSupportTicket = (id: string, body: object, staff = false, files: File[] = []) => post(staff, `${encodeURIComponent(id)}/`, body, files);
+export const ticketAttachmentUrl = (ticketId: string, attachmentId: string, staff = false) =>
+  `${path(staff)}${encodeURIComponent(ticketId)}/attachments/${encodeURIComponent(attachmentId)}/`;
 export const ticketDate = (value: string) => new Date(value).toLocaleString('en-GB', { timeZone: 'Europe/London', dateStyle: 'medium', timeStyle: 'short' });

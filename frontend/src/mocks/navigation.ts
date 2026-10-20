@@ -122,6 +122,7 @@ export const coachNavItems: SidebarNavItem[] = [
   },
   { id: 'coach-inclusion', label: 'Inclusion Ticket System', icon: 'ri-heart-pulse-line', href: inclusionLoginHref, external: true },
   { id: 'coach-support-tickets', label: 'Support Tickets', icon: 'ri-lifebuoy-line', href: '/coach/support-tickets' },
+  { id: 'coach-info-source', label: 'Info Source', icon: 'ri-book-open-line', href: '/coach/info-source' },
 ];
 
 // ============================================================================
@@ -225,6 +226,7 @@ export const employerNavItems: SidebarNavItem[] = [
 export const curriculumNavItems: SidebarNavItem[] = [
   { id: 'curriculumNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/curriculum/coach-directory' },
   { id: 'curriculum-home', label: 'Home', icon: 'ri-home-5-line', href: '/workspace/curriculum' },
+  { id: 'curriculum-progress-transfers', label: 'Transfer Progress', icon: 'ri-arrow-left-right-line', href: '/curriculum/progress-transfers' },
   {
     id: 'curriculum-programmes',
     label: 'Programmes',

@@ -53,6 +53,7 @@ class ManagementTests(CalendarFixture):
         self.base_plan = {'sessions': [dict(sessionNumber=row['session_number'], date=row['scheduled_start'][:10],
             startTime='09:00', endTime='11:00', durationMinutes=120) for row in self.rows], 'slots': []}
         self.v = types.SimpleNamespace(graph_timezone_iana=lambda _: 'Europe/London',
+            module_has_external_teams_calendar=lambda _module, series: series.get('meeting_type') == 'linked-external',
             module_stored_session_count=lambda m: 2,
             module_session_plan_for_count=lambda m, _: apply_session_overrides(copy.deepcopy(self.base_plan), m),
             module_schedule_view=lambda m: m, find_tutor_schedule_conflicts=Mock(return_value=[]),
@@ -73,7 +74,7 @@ class ManagementTests(CalendarFixture):
             signing=types.SimpleNamespace(dumps=sign, loads=lambda token, **_: copy.deepcopy(self.tokens[token])), SALT='test',
             httpx=types.SimpleNamespace(HTTPError=TransportError), transaction=types.SimpleNamespace(atomic=nullcontext),
             __package__='curriculum_api')
-        names = ['saved_operation', 'fingerprint', 'eligible', 'action_preview', 'confirm_action', 'continue_action', 'action_result', 'verified_move']
+        names = ['saved_operation', 'fingerprint', 'eligible', 'require_managed_calendar', 'action_preview', 'confirm_action', 'continue_action', 'action_result', 'verified_move']
         functions(ROOT / 'teams_calendar_actions.py', names, self.ns)
         @contextmanager
         def reader():
@@ -135,6 +136,21 @@ class ManagementTests(CalendarFixture):
             'notifyAttendees': True,
             'acknowledgeNotifications': True,
         }, 'ACTOR-1')
+
+    def test_imported_calendar_cannot_review_a_calendar_mutation(self):
+        self.series['meeting_type'] = 'linked-external'
+        with self.assertRaisesRegex(CalendarStateError, 'original Teams calendar'):
+            self.review()
+        self.ns['graph_action'].assert_not_called()
+        self.ns['store_snapshot'].assert_not_called()
+
+    def test_replacement_after_review_blocks_confirmation_without_graph_write(self):
+        review = self.review()
+        self.v.module_has_external_teams_calendar = lambda _module, _series: True
+        with self.assertRaisesRegex(CalendarStateError, 'original Teams calendar'):
+            self.confirm(review)
+        self.ns['graph_action'].assert_not_called()
+        self.ns['store_snapshot'].assert_not_called()
 
     def test_review_is_read_only_and_uses_exact_occurrence(self):
         review = self.review()

@@ -1414,6 +1414,7 @@ export default function ModuleBuilder() {
   // programme they belong to is restored. Once everything has loaded and the
   // name matches nothing, the check runs as before.
   const programmeRestorePending = programmeFilter === 'All'
+    && !filtersTouchedRef.current
     && Boolean(requestedProgramme)
     && (loading || !curriculumProgrammes.length || Boolean(requestedProgrammeOption));
   useEffect(() => {
@@ -1428,6 +1429,10 @@ export default function ModuleBuilder() {
   useEffect(() => {
     if (!filtersTouchedRef.current) return;
     const next = new URLSearchParams(searchParams);
+    // The current filter replaces every programme alias accepted by deep links.
+    // Leaving these behind would restore a cleared programme after a reload.
+    next.delete('programmeId');
+    next.delete('programmeName');
     ([
       ['programme', programmeFilter === 'All' ? '' : programmeFilter],
       ['cohort', cohortFilter],
@@ -1823,7 +1828,9 @@ export default function ModuleBuilder() {
   }, [saveStartedAt, saving]);
 
   useEffect(() => {
-    if (!requestedProgrammeOption || loading || programmeFilter !== 'All') return;
+    // Once the reader changes filters, local state owns the selection. The URL
+    // can still contain the previous programme until the sync effect commits.
+    if (filtersTouchedRef.current || !requestedProgrammeOption || loading || programmeFilter !== 'All') return;
     setProgrammeFilter(requestedProgrammeOption);
   }, [loading, programmeFilter, requestedProgrammeOption]);
 

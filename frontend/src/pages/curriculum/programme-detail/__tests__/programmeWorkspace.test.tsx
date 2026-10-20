@@ -217,6 +217,12 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   fetchCurriculumStandards: vi.fn(async () => []),
   fetchCurriculumProgrammeKsbCoverage: vi.fn(async () => null),
   fetchCurriculumProgrammeKsbCoverageSummary: vi.fn(async () => null),
+  fetchCurriculumKsbAchievement: vi.fn(async () => ({
+    appliedSource: { type: 'standard', id: 'ST0118', label: 'Data standard', definitionCount: 1 },
+    summary: { appliedKsbCount: 1, consumedKsbCount: 0, learnerCount: 0, consumptionCount: 0 },
+    items: [], ksbPagination: { page: 1, pageSize: 25, total: 0, hasNext: false },
+    consumptionLog: { items: [], page: 1, pageSize: 50, total: 0, hasNext: false },
+  })),
   fetchCurriculumProgrammeLearnerRoster: vi.fn(async () => ({ assignedLearners: [] })),
   fetchCurriculumScopeLearnerRoster: vi.fn(async () => ({ assignedLearners: [] })),
   fetchCurriculumProgrammeLearnerKsbImpact: vi.fn(async () => null),
@@ -250,10 +256,10 @@ function mockProgrammeDetailOnce(api: typeof import('@/lib/curriculumApi'), deta
   vi.mocked(api.fetchCurriculumProgrammeDetailModules).mockResolvedValueOnce({ schema: detail.schema, flat: { modules: detailModules, sessions: detailSessions } });
 }
 
-async function renderWorkspace() {
+async function renderWorkspace(query = '') {
   const { default: ProgrammeDetailPage } = await import('../page');
   const result = render(
-    <MemoryRouter initialEntries={['/curriculum/programmes/PROG-DATA']}>
+    <MemoryRouter initialEntries={[`/curriculum/programmes/PROG-DATA${query}`]}>
       <Routes>
         <Route path="/curriculum/programmes/:id" element={<ProgrammeDetailPage />} />
       </Routes>
@@ -296,6 +302,31 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     await vi.waitFor(() => expect(api.fetchCurriculumProgrammeKsbCoverage).toHaveBeenCalledTimes(1));
     await act(async () => { finishModules({ schema: 'test', flat: { modules, sessions: [] } }); });
   });
+  it('opens Achievement with its own projection and summary reads, without the component list or coverage matrix', async () => {
+    const api = await import('@/lib/curriculumApi');
+    vi.clearAllMocks();
+    await renderWorkspace('?tab=achievement');
+    await screen.findByText('Actual KSB consumption across this programme');
+    await vi.waitFor(() => expect(api.fetchCurriculumComponentSummary).toHaveBeenCalledTimes(1));
+    expect(api.fetchCurriculumKsbAchievement).toHaveBeenCalledWith('PROG-DATA', expect.anything(), expect.anything());
+    expect(api.fetchCurriculumComponents).not.toHaveBeenCalled();
+    expect(api.fetchCurriculumProgrammeKsbCoverage).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(api.fetchCurriculumProgrammeKsbCoverageSummary).toHaveBeenCalledTimes(1));
+    const clock = skewClock();
+    try {
+      clock.advance(31_000);
+      await returnToTab();
+      await vi.waitFor(() => expect(api.fetchCurriculumComponentSummary).toHaveBeenCalledTimes(2));
+      expect(api.fetchCurriculumComponents).not.toHaveBeenCalled();
+      expect(api.fetchCurriculumProgrammeKsbCoverage).not.toHaveBeenCalled();
+    } finally {
+      clock.restore();
+    }
+    await openTab(/KSB Coverage/);
+    await vi.waitFor(() => expect(api.fetchCurriculumProgrammeKsbCoverage).toHaveBeenCalledTimes(1));
+    expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(1);
+  });
+
   it('loads only overview dependencies and does not repeat components when stats arrive', async () => {
     const api = await import('@/lib/curriculumApi');
     vi.clearAllMocks();

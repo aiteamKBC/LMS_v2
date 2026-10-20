@@ -134,6 +134,16 @@ describe('WorkspaceSwitcher', () => {
     expect(switchRole).not.toHaveBeenCalled();
   });
 
+  it('opens learner support tickets from the Super Admin dashboard', async () => {
+    signedIn();
+    const user = userEvent.setup();
+    renderAt('/workspace/admin');
+    await user.click(trigger());
+    await user.click(screen.getByText('Support'));
+    expect(path()).toBe('/support/ticket-queue');
+    expect(switchRole).not.toHaveBeenCalled();
+  });
+
   it('ticks the section you are in rather than offering it as a move', async () => {
     signedIn();
     const user = userEvent.setup();

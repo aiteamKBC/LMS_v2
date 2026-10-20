@@ -137,6 +137,8 @@ export default function AttendancePage() {
   const [detailHistoryVersion, setDetailHistoryVersion] = useState(0);
   const [detailSaving, setDetailSaving] = useState(false);
   const [detailSaveError, setDetailSaveError] = useState<string | null>(null);
+  const [registerSaving, setRegisterSaving] = useState(false);
+  const [registerSaveError, setRegisterSaveError] = useState<string | null>(null);
   const [pendingEdits, setPendingEdits] = useState<Record<string, BulkAttendanceChange>>({});
   const [kbcRecentVersion, setKbcRecentVersion] = useState(0);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -451,6 +453,7 @@ export default function AttendancePage() {
     replaceSavedStatusesForDate,
     dirty,
     pendingCount,
+    pendingStatuses,
     save,
     undo,
   } = useAttendance({
@@ -464,6 +467,7 @@ export default function AttendancePage() {
   const registerLoading = pageLoading || scopeRosterLoading;
 
   const handleGridToggle = (learnerId: string, day: string) => {
+    setRegisterSaveError(null);
     const current = getStatus(learnerId, day);
     setStatusForDate(learnerId, day, current === "present" ? "absent" : "present");
   };
@@ -659,6 +663,69 @@ export default function AttendancePage() {
       !isArchived(learner) && sessionEmails.has(learner.email.trim().toLowerCase()),
     );
   }, [learners, isArchived]);
+
+  const saveRegisterChanges = async () => {
+    const entries = Object.entries(pendingStatuses)
+      .filter(([, status]) => status === "present" || status === "absent");
+    if (entries.length === 0) {
+      save();
+      return;
+    }
+
+    setRegisterSaving(true);
+    setRegisterSaveError(null);
+    try {
+      const byDay = new Map<string, Array<[string, Extract<AttendanceStatus, "present" | "absent">]>>();
+      entries.forEach(([key, status]) => {
+        const separator = key.lastIndexOf(":");
+        const learnerId = separator >= 0 ? key.slice(0, separator) : key;
+        const day = separator >= 0 ? key.slice(separator + 1) : date;
+        const list = byDay.get(day) ?? [];
+        list.push([learnerId, status as Extract<AttendanceStatus, "present" | "absent">]);
+        byDay.set(day, list);
+      });
+
+      for (const [day, changes] of byDay) {
+        const dayLectures = lectures.filter((lecture) => lecture.sessionDate === day);
+        const lecture = selectedLecture?.sessionDate === day
+          ? selectedLecture
+          : dayLectures.length === 1 ? dayLectures[0] : null;
+        if (!lecture?.moduleCatalogueId) {
+          throw new Error(
+            dayLectures.length > 1
+              ? `Choose one lecture for ${formatShortDate(day)} before saving attendance.`
+              : "Choose a live session before saving attendance.",
+          );
+        }
+
+        const assigned = await learnersAssignedToLiveLecture(lecture);
+        const assignedById = new Map(assigned.map((learner) => [learner.id, learner]));
+        for (const status of ["present", "absent"] as const) {
+          const targets = changes
+            .filter(([, nextStatus]) => nextStatus === status)
+            .map(([learnerId]) => assignedById.get(learnerId))
+            .filter((learner): learner is Learner => Boolean(learner?.kbcId));
+          if (targets.length === 0) continue;
+          await createBulkAttendanceLiveDay({
+            learnerIds: targets.map((learner) => learner.kbcId!),
+            moduleCatalogueId: lecture.moduleCatalogueId,
+            date: day,
+            attendance: status,
+          });
+        }
+      }
+
+      save();
+      setKbcRecentVersion((version) => version + 1);
+      setDetailHistoryVersion((version) => version + 1);
+    } catch (reason) {
+      setRegisterSaveError(
+        reason instanceof Error ? reason.message : "Attendance could not be saved. Please try again.",
+      );
+    } finally {
+      setRegisterSaving(false);
+    }
+  };
 
   const addAttendanceDay = async ({
     date: attendanceDate,
@@ -1467,6 +1534,7 @@ export default function AttendancePage() {
       {dirty && (
         <div className="fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-5">
           <div className="flex w-full max-w-md flex-col items-center gap-3 rounded-lg border border-background-300 bg-background-50 p-3 sm:flex-row sm:justify-between">
+            {registerSaveError && <p className="w-full text-sm text-red-700" role="alert">{registerSaveError}</p>}
             <div className="flex items-center gap-2.5">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-100 text-accent-700">
                 <i className="ri-edit-2-line" />
@@ -1492,11 +1560,12 @@ export default function AttendancePage() {
               </button>
               <button
                 type="button"
-                onClick={save}
-                className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md bg-primary-500 px-3 py-2 text-sm font-medium text-background-50 transition-colors hover:bg-primary-600"
+                onClick={() => void saveRegisterChanges()}
+                disabled={registerSaving}
+                className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md bg-primary-500 px-3 py-2 text-sm font-medium text-background-50 transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <i className="ri-save-3-line" />
-                Save changes
+                {registerSaving ? "Saving…" : "Save changes"}
               </button>
             </div>
           </div>
