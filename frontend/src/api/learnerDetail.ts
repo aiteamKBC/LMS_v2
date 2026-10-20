@@ -73,6 +73,7 @@ export interface LearnerComponentEntry {
   videoUrl?: string | null;             // present on video components authored with a URL
   audioUrl?: string | null;             // podcast / reading voice-over
   contentHtml?: string | null;          // reading rich-text content
+  lessonContentHtml?: string | null;    // video lesson content; activity read only
   hasReadingContent?: boolean;         // list response; HTML is loaded when opened
   fileName?: string | null;             // powerpoint / document file name
   /** Every file attached to the component, in the author's order. Entry 0

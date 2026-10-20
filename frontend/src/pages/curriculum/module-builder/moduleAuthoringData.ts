@@ -840,6 +840,8 @@ export interface TeamsLinkReplacementResult {
   structureRevision: string;
   /** True when nothing else had changed the module since `expectedRevision`. */
   revisionWasCurrent: boolean;
+  /** Existing Teams evidence is read from this module when the pasted link matched it. */
+  recordingsSourceModuleId?: string;
 }
 
 /**
@@ -2175,7 +2177,7 @@ export async function loadModuleStructure(
   options: { skipCache?: boolean; revalidate?: boolean } = {},
 ): Promise<ModuleCatalogueItem | null> {
   try {
-    return recalculateModule(await fetchCurriculumJson<ModuleCatalogueItem>(
+    return adoptServerModule(await fetchCurriculumJson<ModuleCatalogueItem>(
       `/curriculum/modules/${encodeURIComponent(catalogueId)}/structure/`,
       // Full authored content can take longer on a cold remote-database read.
       { timeoutMs: 90000, skipCache: options.skipCache, revalidate: options.revalidate },
@@ -2516,9 +2518,12 @@ export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueI
   const totalOtjh = hasStructure ? componentTotalOtjh : Number(module.totalOtjh || 0);
   const totalPoints = allComponents.reduce((total, component) => total + Number(component.points || 0), 0);
   const quality = calculateQualityScore({ ...module, completionCriteria, totalOtjh, ksbCount: componentKsbCodes.size, moduleKsbMappings, weekStructure: normalisedWeeks });
+  // Transport only: the server's per-item fingerprints travel beside the module
+  // (see serverCopyOf), never inside the copy the workspace edits and compares.
+  const { itemFingerprints: _itemFingerprints, ...moduleFields } = module as ModuleCatalogueItem & { itemFingerprints?: unknown };
 
   return {
-    ...module,
+    ...moduleFields,
     completionCriteria,
     // The authored week count is derived from the structure -- adding a seventh
     // week makes this a seven-week module, and a save has to carry that rather
@@ -2663,16 +2668,31 @@ export function flattenKsbEntries(entries: CurriculumKsbEntry[] = []): KsbOption
  * payload replaces every week and component in the module, so re-sending it is
  * precisely the destruction the refusal prevented.
  */
+/** One place a refused save and the stored module disagree, as the server found it. */
+export interface ModuleSaveConflict {
+  /** `weekStructure[W1].components[C1].title`, the same paths the browser merge uses. */
+  path: string;
+  kind: 'value' | 'local-deleted' | 'remote-deleted' | 'reorder';
+  local?: unknown;
+  remote?: unknown;
+}
+
 export class ModuleStructureConflictError extends Error {
   /** What the server holds now, so the workspace can show it or re-open it. */
   currentRevision: string;
   serverModule: ModuleCatalogueItem | null;
+  /**
+   * Set when the server merged the save item by item and still found the same
+   * thing changed on both sides. Empty for the older whole-module refusal.
+   */
+  conflicts: ModuleSaveConflict[];
 
-  constructor(message: string, currentRevision: string, serverModule: ModuleCatalogueItem | null) {
+  constructor(message: string, currentRevision: string, serverModule: ModuleCatalogueItem | null, conflicts: ModuleSaveConflict[] = []) {
     super(message);
     this.name = 'ModuleStructureConflictError';
     this.currentRevision = currentRevision;
     this.serverModule = serverModule;
+    this.conflicts = conflicts;
     Object.setPrototypeOf(this, ModuleStructureConflictError.prototype);
   }
 }
@@ -2792,6 +2812,18 @@ export async function saveModuleStructure(
      * Without either, the whole structure is sent, as every other caller does.
      */
     base?: ModuleCatalogueItem | null;
+    /**
+     * The server's own copy of `base` (serverCopyOf). With it, a save that lands
+     * after someone else's is merged item by item on the server instead of being
+     * refused -- see backend/curriculum_api/module_merge.py.
+     */
+    serverCopy?: ServerStructureCopy | null;
+    /**
+     * Ids of deleted weeks or components this save may bring back: ones this
+     * workspace deleted itself, or the author chose to keep. Anything else the
+     * server finds deleted is a conflict, never a silent restore.
+     */
+    restoreIds?: string[];
   } = {},
 ) {
   const recalculated = recalculateModule(payload);
@@ -2800,13 +2832,18 @@ export async function saveModuleStructure(
   // the backend rejects a number there.
   const partial = Boolean(options.base && options.expectedRevision && options.base.catalogueId === recalculated.catalogueId);
   const { weekStructure: _weekStructure, ...moduleFields } = recalculated;
-  const body = partial
+  const delta = partial ? moduleStructureDelta(recalculateModule(options.base as ModuleCatalogueItem), recalculated) : null;
+  const body = partial && delta
     ? {
       ...moduleFields,
       weeksNumber: recalculated.weekStructure.length || recalculated.weeks,
       expectedRevision: options.expectedRevision,
       saveMode: 'partial',
-      structureDelta: moduleStructureDelta(recalculateModule(options.base as ModuleCatalogueItem), recalculated),
+      structureDelta: delta,
+      ...(options.serverCopy && options.serverCopy.revision === options.expectedRevision
+        ? { structureBase: moduleStructureBase(options.serverCopy, delta, recalculateModule(options.base as ModuleCatalogueItem)) }
+        : {}),
+      ...(options.restoreIds?.length ? { restoreIds: options.restoreIds } : {}),
     }
     : {
       ...recalculated,
@@ -2821,7 +2858,7 @@ export async function saveModuleStructure(
   if (sizeBytes > MODULE_STRUCTURE_SAVE_LIMIT_BYTES) {
     throw new ModuleStructureTooLargeError(sizeBytes, componentCount, true);
   }
-  const saved = recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/structure/`, {
+  const saved = adoptServerModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/structure/`, {
     method: 'PATCH',
     body: serialized,
     headers: { 'X-Curriculum-Save-Source': options.source || 'manual' },
@@ -2840,7 +2877,8 @@ export async function saveModuleStructure(
     throw new ModuleStructureConflictError(
       typeof err.data.error === 'string' ? err.data.error : err.message,
       String(err.data.currentRevision || ''),
-      server ? recalculateModule(server) : null,
+      server ? adoptServerModule(server) : null,
+      Array.isArray(err.data.mergeConflicts) ? err.data.mergeConflicts as ModuleSaveConflict[] : [],
     );
   }));
   // `apiJson` writes go straight to the network, so nothing above invalidates
@@ -2849,6 +2887,218 @@ export async function saveModuleStructure(
   // re-read what it had just replaced.
   invalidateCurriculumCacheByEntity('module');
   return saved;
+}
+
+// ---------------------------------------------------------------------------
+// The server's own copy of an open module.
+//
+// The workspace edits a normalised module: defaults filled in, KSB sources
+// inferred, placeholders dropped. That is the right thing to edit and the wrong
+// thing to merge against -- every default the browser added would read, on the
+// server, as a change somebody made. So beside it the workspace keeps exactly
+// what the server sent: each week and component as received, with the
+// fingerprint the server computed for it. A save sends the server's copies of
+// the items it touches, and the server can then tell precisely what anyone
+// else changed since. The changes feed rebuilds this copy from a few changed
+// items rather than re-reading the whole module.
+// ---------------------------------------------------------------------------
+
+export interface StructureFingerprints {
+  weeks: Record<string, string>;
+  components: Record<string, string>;
+}
+
+type RawRecord = Record<string, unknown>;
+
+export interface ServerStructureCopy {
+  revision: string;
+  fingerprints: StructureFingerprints;
+  /** Module fields as the server sent them, without the weeks. */
+  module: RawRecord;
+  /** Week fields as sent, without their components. */
+  weeks: Record<string, RawRecord>;
+  components: Record<string, RawRecord>;
+  weekOrder: string[];
+  componentOrder: Record<string, string[]>;
+}
+
+const serverCopies = new WeakMap<object, ServerStructureCopy>();
+
+/** The server's copy a module was read or saved as, when the server sent one. */
+export function serverCopyOf(module: object | null | undefined): ServerStructureCopy | null {
+  return module ? serverCopies.get(module) || null : null;
+}
+
+function rawStructureCopy(raw: unknown): ServerStructureCopy | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const payload = raw as RawRecord & { weekStructure?: unknown; itemFingerprints?: StructureFingerprints };
+  const prints = payload.itemFingerprints;
+  if (!prints || typeof prints !== 'object' || !prints.weeks || !prints.components) return null;
+  const { weekStructure, itemFingerprints: _prints, ...module } = payload;
+  const copy: ServerStructureCopy = {
+    revision: String(payload.structureRevision || ''),
+    fingerprints: { weeks: { ...prints.weeks }, components: { ...prints.components } },
+    module,
+    weeks: {},
+    components: {},
+    weekOrder: [],
+    componentOrder: {},
+  };
+  for (const week of Array.isArray(weekStructure) ? weekStructure as RawRecord[] : []) {
+    const weekId = String(week.id || '');
+    if (!weekId) continue;
+    const { components, ...fields } = week;
+    copy.weekOrder.push(weekId);
+    copy.weeks[weekId] = fields;
+    copy.componentOrder[weekId] = [];
+    for (const component of Array.isArray(components) ? components as RawRecord[] : []) {
+      const componentId = String(component.id || '');
+      if (!componentId) continue;
+      copy.componentOrder[weekId].push(componentId);
+      copy.components[componentId] = component;
+    }
+  }
+  return copy;
+}
+
+function rawModuleFromCopy(copy: ServerStructureCopy): RawRecord {
+  return {
+    ...copy.module,
+    structureRevision: copy.revision,
+    weekStructure: copy.weekOrder.map(weekId => ({
+      ...copy.weeks[weekId],
+      components: (copy.componentOrder[weekId] || []).map(id => copy.components[id]).filter(Boolean),
+    })),
+  };
+}
+
+/** A module from the server: normalised for the workspace, its server copy kept beside it. */
+function adoptServerModule(raw: unknown): ModuleCatalogueItem {
+  const copy = rawStructureCopy(raw);
+  const module = recalculateModule(raw as ModuleCatalogueItem);
+  if (copy) serverCopies.set(module, copy);
+  return module;
+}
+
+/**
+ * The server's copies of the items a save touches, and the copy's orders.
+ *
+ * Only the items changed or removed travel in full; everything else is named
+ * by its fingerprint, which is all the server needs to know it is untouched.
+ * Beside each server copy goes the same item as this workspace holds it
+ * (`local*`, normalised by the browser), so the server measures "did this
+ * author change it?" against the author's own copy and "did someone else?"
+ * against its own -- the browser's filled-in defaults never read as either.
+ */
+export function moduleStructureBase(copy: ServerStructureCopy, delta: ModuleStructureDelta, localBase?: ModuleCatalogueItem) {
+  const localWeeks = new Set(delta.weekOrder);
+  const localComponents = new Set(Object.values(delta.componentOrder).flat());
+  const weekIds = new Set([...Object.keys(delta.weeks), ...copy.weekOrder.filter(id => !localWeeks.has(id))]);
+  const componentIds = new Set([
+    ...Object.keys(delta.components),
+    ...Object.keys(copy.components).filter(id => !localComponents.has(id)),
+  ]);
+  const pick = (source: Record<string, RawRecord>, ids: Set<string>) => Object.fromEntries(
+    [...ids].filter(id => source[id]).map(id => [id, source[id]]),
+  );
+  const browserWeeks: Record<string, RawRecord> = {};
+  const browserComponents: Record<string, RawRecord> = {};
+  localBase?.weekStructure.forEach(week => {
+    const { components, ...fields } = week;
+    if (weekIds.has(week.id)) browserWeeks[week.id] = fields as unknown as RawRecord;
+    components.forEach(component => {
+      if (componentIds.has(component.id)) browserComponents[component.id] = component as unknown as RawRecord;
+    });
+  });
+  const localModule = localBase
+    ? (({ weekStructure: _weeks, ...fields }) => fields)(localBase) as unknown as RawRecord
+    : undefined;
+  return {
+    fingerprints: copy.fingerprints,
+    module: copy.module,
+    weekOrder: copy.weekOrder,
+    componentOrder: copy.componentOrder,
+    weeks: pick(copy.weeks, weekIds),
+    components: pick(copy.components, componentIds),
+    ...(localModule ? { localModule, localWeeks: browserWeeks, localComponents: browserComponents } : {}),
+  };
+}
+
+interface ModuleStructureChangesResponse {
+  revision: string;
+  unchanged?: boolean;
+  module?: RawRecord;
+  weekOrder?: string[];
+  componentOrder?: Record<string, string[]>;
+  weeks?: Record<string, RawRecord>;
+  components?: Record<string, RawRecord>;
+  itemFingerprints?: StructureFingerprints;
+}
+
+export type ModuleStructureChanges =
+  | { unchanged: true; revision: string }
+  | { unchanged: false; module: ModuleCatalogueItem };
+
+/**
+ * The stored module, rebuilt from only what changed since `copy`.
+ *
+ * Kilobytes instead of the whole structure: the server compares its own
+ * fingerprints with the ones this copy holds and sends back the items that
+ * differ. The result is exactly what a full read would have returned. `null`
+ * when the copy cannot be completed (the caller then reads the whole module).
+ */
+export async function loadModuleStructureChanges(
+  catalogueId: string,
+  copy: ServerStructureCopy,
+  // Off when the caller needs the module itself even if nothing moved (taking
+  // the stored version over unsaved edits): the copy is then rebuilt whole.
+  options: { allowUnchanged?: boolean } = {},
+): Promise<ModuleStructureChanges | null> {
+  const allowUnchanged = options.allowUnchanged !== false;
+  const changes = await apiJson<ModuleStructureChangesResponse>(`/curriculum/modules/${encodeURIComponent(catalogueId)}/changes/`, {
+    method: 'POST',
+    body: JSON.stringify({ revision: allowUnchanged ? copy.revision : '', fingerprints: copy.fingerprints }),
+    timeoutMs: 60000,
+  });
+  if (changes.unchanged) return { unchanged: true, revision: String(changes.revision || copy.revision) };
+  if (!changes.module || !changes.weekOrder || !changes.componentOrder || !changes.itemFingerprints) return null;
+  const next: ServerStructureCopy = {
+    revision: String(changes.revision || ''),
+    fingerprints: changes.itemFingerprints,
+    module: changes.module,
+    weeks: {},
+    components: {},
+    weekOrder: changes.weekOrder,
+    componentOrder: changes.componentOrder,
+  };
+  for (const weekId of changes.weekOrder) {
+    const week = changes.weeks?.[weekId] || copy.weeks[weekId];
+    if (!week) return null;
+    next.weeks[weekId] = week;
+    for (const componentId of changes.componentOrder[weekId] || []) {
+      const component = changes.components?.[componentId] || copy.components[componentId];
+      if (!component) return null;
+      next.components[componentId] = component;
+    }
+  }
+  const module = recalculateModule(rawModuleFromCopy(next) as unknown as ModuleCatalogueItem);
+  serverCopies.set(module, next);
+  return { unchanged: false, module };
+}
+
+export interface ModuleLiveState {
+  /** False while live sync is switched off on the server: the editor stops asking. */
+  enabled: boolean;
+  epochs?: Record<string, number>;
+  /** The estate-wide counter, used only as a slow backstop. */
+  epoch?: number;
+  pollMs?: number;
+}
+
+/** The counters for the scopes an open module watches (`module:<id>`, `group:<id>`). */
+export function readModuleLiveState(scopes: string[]): Promise<ModuleLiveState> {
+  const query = scopes.map(scope => `watch=${encodeURIComponent(scope)}`).join('&');
+  return apiJson<ModuleLiveState>(`/curriculum/live/?${query}`, { timeoutMs: 10000 });
 }
 
 export interface ComponentUploadResult {

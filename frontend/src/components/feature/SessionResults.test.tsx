@@ -504,7 +504,8 @@ describe('Saved session results', () => {
     expect(await screen.findByText('The recording and attendance for this session are saved.')).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     fireEvent.click(screen.getByText('View background sync notice'));
-    expect(screen.getByText(/The last sync for this meeting series reported an issue/)).toHaveTextContent('Recording storage needs retry.');
+    expect(screen.getByText(/The last sync for this meeting series reported an issue/)).toBeInTheDocument();
+    expect(screen.getByText('Recording storage needs retry.')).toBeInTheDocument();
     expect(screen.getByLabelText('Session recording 1')).toBe(video);
     expect(coachFetch).not.toHaveBeenCalled();
   });
@@ -580,6 +581,18 @@ describe('Module session index', () => {
     fireEvent.click(screen.getByRole('button', { name: /Session 6.*4 files/ }));
     await waitFor(() => expect(fetchMock.mock.calls.some(call => call[0].endsWith('/sessions/6/?moduleId=M1'))).toBe(true));
     expect(coachFetch).not.toHaveBeenCalled();
+  });
+
+  it('names each session by its linked Course structure item, keeping the number beside it', async () => {
+    fetchMock.mockImplementation((url: string) => ok(url.includes('/modules/')
+      ? { series: [{ id: 'S1', title: 'Example', sessions: [{ ...session, itemTitle: 'Week 01 | Join the LIVE session' },
+        { ...session, id: 'O2', sessionNumber: 2, itemTitle: null }] }], jobs: [] }
+      : { sessions: [session] }));
+    render(<ModuleSessions moduleId="M1" />);
+    expect(await screen.findByText('Week 01 | Join the LIVE session')).toBeInTheDocument();
+    expect(screen.getByText(/^Session 1 · /)).toBeInTheDocument();
+    // No single linked item: the plain number is kept, never a guessed name.
+    expect(screen.getByText('Session 2')).toBeInTheDocument();
   });
 
   it('refreshes sync status immediately while keeping session details lazy', async () => {
