@@ -465,11 +465,11 @@ describe('review reopen flow', () => {
     };
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(pending);
     mount('imported-review:view-as');
-    expect(await screen.findByRole('status')).toHaveTextContent('Read-only preview. The approved migrated form is shown for reference.');
+    expect(await screen.findByRole('status')).toHaveTextContent('Read-only preview. The approved review form is shown for reference.');
     expect(screen.getByText('Approved migrated section')).toBeVisible();
     expect(screen.getByRole('textbox')).toBeDisabled();
     expect(screen.getByRole('textbox')).toHaveValue('');
-    expect(screen.getByText('Not initialized')).toBeVisible();
+    expect(screen.getByText('Not started')).toBeVisible();
     expect(initializeMigratedReview).not.toHaveBeenCalled();
     expect(fetchReviewInstanceForm).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('button', { name: 'Retry loading form' })).not.toBeInTheDocument();
@@ -486,7 +486,7 @@ describe('review reopen flow', () => {
       sections: [],
     });
     mount('imported-review:no-template');
-    expect(await screen.findByRole('status')).toHaveTextContent('No approved migrated form configured');
+    expect(await screen.findByRole('status')).toHaveTextContent('No approved review form is configured');
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
     expect(initializeMigratedReview).not.toHaveBeenCalled();
   });
@@ -518,7 +518,7 @@ describe('review reopen flow', () => {
       sections: [],
     });
     mount('imported-review:ineligible');
-    expect(await screen.findByText('Imported Aptem review')).toBeVisible();
+    expect(await screen.findByText('This review has a summary only; no section details are available.')).toBeVisible();
     expect(initializeMigratedReview).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Initialize approved migrated form' })).not.toBeInTheDocument();
   });
@@ -572,12 +572,12 @@ describe('review reopen flow', () => {
     expect(initializeMigratedReview).toHaveBeenCalledWith('imported-review:future');
     expect(fetchReviewInstanceForm).toHaveBeenCalledTimes(2);
     expect(fetchReviewInstanceForm).toHaveBeenLastCalledWith('imported-review:future', expect.any(AbortSignal));
-    expect(screen.queryByText('This review has a summary only; no section details were imported.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Review information' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Initialize approved migrated form' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Good' })).toBeVisible();
-    expect(screen.getByText(/Aptem field type\(s\) are unverified/)).toBeVisible();
-    expect(screen.getByText(/Aptem source:/)).toHaveTextContent('Not Scheduled');
-    expect(screen.getByText(/LMS continuation:/)).toHaveTextContent('not scheduled');
+    expect(screen.getByText(/field type\(s\) are unverified/)).toBeVisible();
+    expect(screen.queryByText(/Aptem/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Review status:/)).toHaveTextContent('not scheduled');
     expect(screen.queryByText('Complete the Curriculum-defined review before closing it.')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Complete review' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save draft' })).toBeVisible();
@@ -671,7 +671,8 @@ describe('review reopen flow', () => {
     };
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(historical);
     mount('imported-review:historical');
-    expect(await screen.findByText('This review has a summary only; no section details were imported.')).toBeVisible();
+    expect(await screen.findByText('This review has a summary only; no section details are available.')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
     expect(initializeMigratedReview).not.toHaveBeenCalled();
   });
 
@@ -842,7 +843,7 @@ describe('review reopen flow', () => {
     ));
   });
 
-  it('shows separate statuses at the migrated signature boundary without native controls', async () => {
+  it('shows the current review status at the migrated signature boundary without native controls', async () => {
     const pending: ReviewInstanceFormDefinition = {
       ...definition('awaiting-signature'), source: 'aptem', migratedForm: true,
       sourceStatus: 'Scheduled', localStatus: 'awaiting-signature', readOnly: true,
@@ -856,8 +857,8 @@ describe('review reopen flow', () => {
     };
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(pending);
     mount();
-    expect(await screen.findByText(/Aptem source:/)).toHaveTextContent('Scheduled');
-    expect(screen.getByText(/LMS continuation:/)).toHaveTextContent('awaiting signature');
+    expect(await screen.findByText(/Review status:/)).toHaveTextContent('awaiting signature');
+    expect(screen.queryByText(/Aptem/i)).not.toBeInTheDocument();
     expect(screen.getByText(/Submitted answers are locked while the required parties sign/)).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Confirm coach signature' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Download.*PDF$/ })).not.toBeInTheDocument();
@@ -923,9 +924,9 @@ describe('review reopen flow', () => {
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(importedDefinition);
     vi.mocked(saveReviewInstanceAnswers).mockResolvedValue(importedDefinition);
     mount();
-    expect(await screen.findByText('Imported Aptem review')).toBeVisible();
-    expect(screen.getByDisplayValue('Review the next module')).toBeEnabled();
-    expect(screen.getByText(/The original Aptem import remains unchanged\./)).toBeVisible();
+    expect(await screen.findByDisplayValue('Review the next module')).toBeEnabled();
+    expect(screen.queryByRole('region', { name: 'Review information' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Aptem/i)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
     await waitFor(() => expect(saveReviewInstanceAnswers).toHaveBeenCalledWith(
       'imported-review:A-1',
@@ -980,7 +981,7 @@ describe('review reopen flow', () => {
 
     mount();
 
-    expect(await screen.findByText('This review has a summary only; no section details were imported.')).toBeVisible();
+    expect(await screen.findByText('This review has a summary only; no section details are available.')).toBeVisible();
     expect(screen.getByText(/there is no form to edit or complete/i)).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Save draft' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Complete review' })).not.toBeInTheDocument();
@@ -1271,7 +1272,7 @@ describe('coach review signature workflow', () => {
     expect(await screen.findByRole('textbox')).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Submit Review' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Complete review' })).not.toBeInTheDocument();
-    expect(screen.getByText(/Aptem source:/)).toHaveTextContent('Not Scheduled');
+    expect(screen.getByText(/Review status:/)).toHaveTextContent('awaiting signature');
     expect(startMigratedReview).not.toHaveBeenCalled();
     expect(bookMigratedReview).not.toHaveBeenCalled();
     expect(calculateMigratedReviewProgress).not.toHaveBeenCalled();

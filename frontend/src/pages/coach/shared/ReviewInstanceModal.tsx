@@ -839,13 +839,13 @@ export function ReviewInstanceModal({
               <p className="mt-1 text-[13px] text-white/60">{isViewingAsCoach
                 ? 'Admin view-as mode is read-only.'
                 : initializationFailed
-                ? 'The migrated form could not be opened. Use Retry below.'
+                ? 'The review form could not be opened. Use Retry below.'
                 : canInitializeMigrated
-                ? 'Initialize the approved Aptem migrated form to begin working in LMS.'
+                ? 'Open the approved form to begin this review.'
                 : definition?.migratedForm
-                ? 'Work through this migrated form and save your answers in LMS.'
+                ? 'Work through the review form and save your answers.'
                 : isSummaryOnly
-                ? 'Review the summary information retained from the imported Aptem record.'
+                ? 'Read the saved review summary.'
                 : 'Work through each Curriculum-defined step, then save or complete the review.'}</p>
             </div>
           </div>
@@ -866,9 +866,9 @@ export function ReviewInstanceModal({
           subtitle={isViewingAsCoach
             ? 'Admin view-as mode is read-only.'
             : initializationFailed
-            ? 'The migrated form could not be opened. Use Retry below.'
+            ? 'The review form could not be opened. Use Retry below.'
             : definition?.migratedForm || canInitializeMigrated
-            ? 'Review the migrated Aptem form and save answers in LMS.'
+            ? 'Work through the review form and save your answers.'
             : 'Complete the Curriculum-defined review before closing it.'}
           busy={busy}
           onClose={onClose}
@@ -886,26 +886,26 @@ export function ReviewInstanceModal({
 
         {!loading && definition ? (
           <>
-            {definition.source === 'aptem' ? (
-              <section className="rounded-2xl border border-primary-200 bg-primary-50 p-4" aria-label="Imported review">
-                <p className="text-sm font-bold text-primary-950">Imported Aptem review</p>
+            {definition.source === 'aptem' && (definition.previewOnly || definition.migratedPreviewError
+              || definition.noApprovedMigratedTemplate || isViewingAsCoach || initializationFailed
+              || canInitializeMigrated || isSummaryOnly) ? (
+              <section className="rounded-2xl border border-primary-200 bg-primary-50 p-4" aria-label="Review information">
+                <p className="text-sm font-bold text-primary-950">Review information</p>
                 <p className="mt-1 text-xs leading-5 text-primary-900">{definition.previewOnly
-                  ? 'Read-only preview of the approved Aptem migrated form.'
+                  ? 'Read-only preview of the approved review form.'
                   : definition.migratedPreviewError
-                  ? 'The approved migrated form could not be previewed.'
+                  ? 'The approved review form could not be previewed.'
                   : definition.noApprovedMigratedTemplate
-                  ? 'No approved migrated form configured for this programme and review family.'
+                  ? 'No approved review form is configured for this programme and review type.'
                   : isViewingAsCoach
-                  ? 'This Aptem review is read-only in admin view-as mode.'
+                  ? 'This review is read-only in admin view-as mode.'
                   : initializationFailed
-                  ? 'The approved migrated form could not be loaded. Retry to open it.'
+                  ? 'The approved review form could not be loaded. Retry to open it.'
                   : canInitializeMigrated
-                  ? 'The Aptem import contains a summary. An approved form is ready to initialize in LMS.'
-                  : isSummaryOnly
-                  ? 'This review has a summary only; no section details were imported.'
-                  : 'Changes are saved to this LMS review. The original Aptem import remains unchanged.'}</p>
+                  ? 'An approved form is available to begin this review.'
+                  : 'This review has a summary only; no section details are available.'}</p>
               </section>
-            ) : isSignatureStage && !isViewingAsCoach && !definition.migratedForm ? (
+            ) : definition.source !== 'aptem' && isSignatureStage && !isViewingAsCoach && !definition.migratedForm ? (
               <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4" aria-label="Edit completed review">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
@@ -921,18 +921,18 @@ export function ReviewInstanceModal({
             {isViewingAsCoach ? (
               <section role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                 {definition.previewOnly
-                  ? 'Read-only preview. The approved migrated form is shown for reference. Sign in as the assigned coach to complete this review.'
+                  ? 'Read-only preview. The approved review form is shown for reference. Sign in as the assigned coach to complete this review.'
                   : definition.migratedPreviewError
-                  ? 'The approved migrated form could not be previewed. Ask an administrator to check the template definition.'
+                  ? 'The approved review form could not be previewed. Ask an administrator to check the template definition.'
                   : definition.noApprovedMigratedTemplate
-                  ? 'No approved migrated form configured for this programme and review family.'
+                  ? 'No approved review form is configured for this programme and review type.'
                   : canInitializeMigrated
-                  ? 'This review has an approved migrated form, but admin view-as mode is read-only. Open the learner as the assigned coach to initialize and complete the form.'
+                  ? 'This review has an approved form, but admin view-as mode is read-only. Open the learner as the assigned coach to begin and complete the form.'
                   : 'Admin view-as mode is read-only. Open the learner as the assigned coach to change this review.'}
               </section>
             ) : null}
             {definition.migratedForm && isSignatureStage && !isViewingAsCoach && (
-              <section aria-label="Reopen Aptem review" className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <section aria-label="Reopen review" className="rounded-xl border border-amber-200 bg-amber-50 p-4">
                 <p className="font-semibold text-amber-950">Correct this review</p>
                 <p className="mt-1 text-sm text-amber-900">Reopen the form and collect new signatures. Previous versions are retained. Recorded hours and Monthly Log signatures stay unchanged.</p>
                 <button type="button" disabled={busy} onClick={() => setShowReopenConfirmation(true)}
@@ -1004,7 +1004,7 @@ export function ReviewInstanceModal({
             ) : null}
             {definition.migratedForm && definition.fieldWarnings?.length ? (
               <p role="status" className="text-sm text-amber-800">
-                {definition.fieldWarnings.length} Aptem field type(s) are unverified and use text entry.
+                {definition.fieldWarnings.length} field type(s) are unverified and use text entry.
               </p>
             ) : null}
             {showReopenConfirmation && !isViewingAsCoach ? (
@@ -1066,23 +1066,22 @@ export function ReviewInstanceModal({
               <span>{isViewingAsCoach
                 ? 'You can read this review in admin view-as mode. Changes must be made from the assigned Coach account.'
                 : initializationFailed
-                ? 'Initialization did not finish. Retry to load the approved form; the original Aptem review is unchanged.'
+                ? 'The review form could not be opened. Retry to load it. Saved information is unchanged.'
                 : canInitializeMigrated
-                ? 'An approved migrated form is available. Initialize it to start this review. Its questions can update until you submit it for signatures.'
+                ? 'An approved form is available to start this review. Its questions can update until you submit it for signatures.'
                 : isSummaryOnly
-                ? 'The imported summary remains available for reference, but there is no form to edit or complete.'
+                ? 'The saved summary remains available for reference, but there is no form to edit or complete.'
                 : templateSyncConflict
                 ? 'Saved answers remain available for reference while the template conflict is resolved.'
                 : isImportedReadOnly
-                ? definition.migratedForm ? 'Submitted answers are locked while the required parties sign this LMS review.' : 'These historical answers are displayed from the imported Aptem review and cannot be changed here.'
-                : definition.migratedForm ? 'Answers are saved in LMS continuation state; the original Aptem record is unchanged.'
+                ? definition.migratedForm ? 'Submitted answers are locked while the required parties sign this review.' : 'These historical review answers are read-only and cannot be changed here.'
+                : definition.migratedForm ? 'Save your answers as a draft, then submit the review when it is ready for signatures.'
                 : `These answers are saved to this ${definition.template.name} and follow the sections/questions configured in Curriculum.`}</span>
             </div>
 
             {definition.migratedForm || definition.previewOnly || canInitializeMigrated ? (
               <div className="flex flex-wrap gap-x-6 gap-y-1 text-[12px] text-foreground-600">
-                <span>Aptem source: <strong>{definition.sourceStatus || 'Unknown'}</strong></span>
-                <span>LMS continuation: <strong>{definition.localStatus ? definition.localStatus.replaceAll('-', ' ') : 'Not initialized'}</strong></span>
+                <span>Review status: <strong>{definition.localStatus ? definition.localStatus.replaceAll('-', ' ') : 'Not started'}</strong></span>
               </div>
             ) : null}
 
