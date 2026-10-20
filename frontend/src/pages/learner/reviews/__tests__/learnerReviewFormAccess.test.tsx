@@ -238,6 +238,105 @@ const mountProgressReview = (id: string) => render(
 );
 
 describe('Learner Review View opens the generic Curriculum form', () => {
+  function aptemMcm(sync?: LearnerReviewDefinition['mcmMonthlyLog']) {
+    const key = 'imported-review:monthly-log-signature';
+    events = [event({ id: key, eventKey: key, migratedForm: true, reviewInstanceId: null, reviewTemplateId: null,
+      scheduledDate: '2027-01-05', date: '2027-01-05', targetDate: '2027-01-05', status: 'awaiting-signature' })];
+    reviewDefinition = { ...reviewDefinition, source: 'aptem', migratedForm: true,
+      mcmMonthlyLog: sync || { month: '2026-12' },
+      instance: { ...reviewDefinition.instance!, id: key, status: 'awaiting-signature' } };
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/party')) return new Response(JSON.stringify(reviewDefinition));
+      if (url.endsWith('/csrf')) return new Response(JSON.stringify({ csrfToken: 'synthetic' }));
+      return originalFetch(input, init);
+    });
+    return key;
+  }
+
+  it.each([true, false])('lets the Aptem learner choose Monthly Log signing (%s) in the authoritative target month', async apply => {
+    const key = aptemMcm();
+    reviewDefinition.reviewRevision = 2;
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    const writes: unknown[] = [];
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).endsWith('/party-sign')) {
+        writes.push(JSON.parse(String(init?.body)));
+        reviewDefinition = structuredClone(reviewDefinition);
+        reviewDefinition.signatures.participant = { required: true, signed: true, signature: 'data:image/png;base64,c2F2ZWQ=', signedName: 'Synthetic learner' };
+        return new Response(JSON.stringify({ signed: true, role: 'participant',
+          ...(apply ? { monthlyLogSync: { status: 'synced', month: '2026-12' } } : {}) }));
+      }
+      return originalFetch(input, init);
+    });
+    mountMcm(key);
+    fireEvent.click(await screen.findByRole('button', { name: 'Review & sign' }));
+    expect(await screen.findByText('December 2026')).toBeVisible();
+    const choice = await screen.findByRole('checkbox', { name: /Apply my signature to this Monthly Log as well/ });
+    expect(choice).toBeChecked();
+    if (!apply) fireEvent.click(choice);
+    fireEvent.click(screen.getByRole('button', { name: 'Sign' }));
+    await screen.findByRole('img', { name: 'Learner signature' });
+    expect(writes).toEqual([{ signature: 'data:image/png;base64,c2F2ZWQ=', applyMonthlyLogSignature: apply, reviewRevision: 2 }]);
+    if (apply) expect(screen.getByText('Your signature is saved on the MCM and the Monthly Log for December 2026.')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Sign' })).not.toBeInTheDocument();
+  });
+
+  it('distinguishes the archived Monthly Log signature from the unsigned corrected review', async () => {
+    const key = aptemMcm({ month: '2026-12', sync: { status: 'synced', month: '2026-12' } });
+    reviewDefinition.reviewRevision = 1;
+    reviewDefinition.instance!.status = 'in-progress';
+    mountMcm(key);
+    expect(await screen.findByText(/This Monthly Log signature request belongs to the previous review version/)).toBeVisible();
+    expect(screen.getByText(/You must sign the corrected review again when it is submitted/)).toBeVisible();
+    expect(screen.queryByText('Your signature is saved on the MCM and the Monthly Log for December 2026.')).toBeNull();
+  });
+
+  it('shows a saved MCM signature after partial failure and retries only the Monthly Log after reload', async () => {
+    const key = aptemMcm();
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    const writes: unknown[] = [];
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).endsWith('/party-sign')) {
+        const payload = JSON.parse(String(init?.body));
+        writes.push(payload);
+        reviewDefinition = structuredClone(reviewDefinition);
+        reviewDefinition.instance!.status = 'completed';
+        reviewDefinition.signatures.participant = { required: true, signed: true, signature: 'data:image/png;base64,c2F2ZWQ=', signedName: 'Synthetic learner' };
+        reviewDefinition.signatures.advisor = { required: true, signed: true };
+        const sync = { status: payload.retryMonthlyLogSignature ? 'synced' : 'failed', month: '2026-12' } as const;
+        reviewDefinition.mcmMonthlyLog = { month: '2026-12', sync };
+        return new Response(JSON.stringify({ signed: true, role: 'participant', monthlyLogSync: sync }));
+      }
+      return originalFetch(input, init);
+    });
+    const first = mountMcm(key);
+    fireEvent.click(await screen.findByRole('button', { name: 'Review & sign' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign' }));
+    await screen.findByRole('button', { name: 'Retry Monthly Log signature' });
+    expect(screen.getByText('Your MCM signature is saved. The Monthly Log for December 2026 still needs its signature.')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Sign' })).not.toBeInTheDocument();
+    first.unmount();
+    mountMcm(key);
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry Monthly Log signature' }));
+    expect(await screen.findByText('Your signature is saved on the MCM and the Monthly Log for December 2026.')).toBeVisible();
+    expect(writes).toEqual([
+      { signature: 'data:image/png;base64,c2F2ZWQ=', applyMonthlyLogSignature: true },
+      { retryMonthlyLogSignature: true },
+    ]);
+  });
+
+  it('does not offer a Monthly Log retry to staff viewing a learner', async () => {
+    const key = aptemMcm({ month: '2026-12', sync: { status: 'failed', month: '2026-12' } });
+    access.canProgress = false;
+    reviewDefinition.signatures.participant = { required: true, signed: true };
+    mountMcm(key);
+    await screen.findByTestId('learner-review-instance-form');
+    expect(screen.queryByRole('button', { name: 'Retry Monthly Log signature' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Review & sign' })).not.toBeInTheDocument();
+  });
+
   it.each(['MCM', 'PR'] as const)('saves Aptem %s learner answers through the versioned party API', async family => {
     const key = 'imported-review:learner-answer';
     events = [event({ id: key, eventKey: key, migratedForm: true, reviewInstanceId: null, reviewTemplateId: null,

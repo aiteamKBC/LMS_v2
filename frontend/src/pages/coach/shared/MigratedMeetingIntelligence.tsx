@@ -92,7 +92,7 @@ export function MigratedMeetingIntelligence({
         <span>Attendance: <strong>{statusLabel[intelligence?.attendanceStatus || 'not-checked']}</strong></span>
         <span>Recording: <strong>{statusLabel[intelligence?.recordingStatus || 'unknown']}</strong></span>
         <span>Transcript: <strong>{statusLabel[intelligence?.transcriptStatus || 'not-checked']}</strong></span>
-        <span>AI Summary: <strong>{statusLabel[intelligence?.summaryStatus || 'not-generated']}</strong></span>
+        <span>AI Summary: <strong>{statusLabel[binding?.generationStatus || intelligence?.summaryStatus || 'not-generated']}</strong></span>
       </div>
       {viewAs ? <p className="text-xs text-amber-800">Admin view-as is read-only. Session checks and summary edits are unavailable.</p> : null}
       {checkBlocked && !viewAs && !readOnly ? <p className="text-xs text-foreground-500">Save your draft and wait for any current action to finish before checking the session.</p> : null}

@@ -50,10 +50,13 @@ export function useEmployerSigning(employerId: string, onSigned: () => void) {
   const { success, error: toastError } = useToast();
   const [signing, setSigning] = useState<SigningTarget | null>(null);
   const [reviewDefinition, setReviewDefinition] = useState<any>(null);
+  const [loadedReviewKey, setLoadedReviewKey] = useState<string | null>(null);
   // Which row is mid-open, so its button can show progress.
   const [opening, setOpening] = useState<string | null>(null);
 
   useEffect(() => {
+    setReviewDefinition(null);
+    setLoadedReviewKey(null);
     const item = signing?.item;
     if (!signing || item?.kind !== 'review' || !item.reviewInstanceId) {
       setReviewDefinition(null);
@@ -63,7 +66,12 @@ export function useEmployerSigning(employerId: string, onSigned: () => void) {
     (item.migratedForm
       ? fetchMigratedReviewForParty(item.eventKey)
       : fetchEmployerReviewInstance(employerId, signing.kind, signing.learnerId, item.eventKey))
-      .then(value => { if (active) setReviewDefinition(value); })
+      .then(value => {
+        if (active) {
+          setReviewDefinition(value);
+          setLoadedReviewKey(targetKey(signing));
+        }
+      })
       .catch(() => { if (active) setReviewDefinition(null); });
     return () => { active = false; };
   }, [employerId, signing]);
@@ -75,7 +83,10 @@ export function useEmployerSigning(employerId: string, onSigned: () => void) {
       // Curriculum review instances and legacy enrolment reviews share this
       // list but not a sign endpoint.
       if (item.migratedForm) {
-        await signMigratedReviewAsParty(item.eventKey, signature);
+        if (!reviewDefinition || loadedReviewKey !== targetKey(signing)) {
+          throw new Error('Wait for the current review to load before signing.');
+        }
+        await signMigratedReviewAsParty(item.eventKey, signature, { reviewRevision: reviewDefinition.reviewRevision });
       } else if (item.reviewInstanceId) {
         await signReviewAsEmployer(employerId, kind, learnerId, item.eventKey, { name, signature });
       } else {

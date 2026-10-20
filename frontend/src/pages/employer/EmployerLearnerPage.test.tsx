@@ -369,9 +369,10 @@ describe('EmployerLearnerPage content and review signing', () => {
   });
 
   it('signs a migrated PR through the dedicated employer endpoint', async () => {
+    mocks.fetchMigratedReviewForParty.mockResolvedValueOnce({ reviewRevision: 2 } as never);
     mocks.fetchEmployerLearner.mockResolvedValue(detail([{ ...review, eventKey: 'imported-review:C5-TEST-PR', reviewInstanceId: 'imported-review:C5-TEST-PR', migratedForm: true }]));
     await signFirstReview();
-    await waitFor(() => expect(mocks.signMigratedReviewAsParty).toHaveBeenCalledWith('imported-review:C5-TEST-PR', 'data:image/png;base64,SIG'));
+    await waitFor(() => expect(mocks.signMigratedReviewAsParty).toHaveBeenCalledWith('imported-review:C5-TEST-PR', 'data:image/png;base64,SIG', { reviewRevision: 2 }));
     expect(mocks.signReviewAsEmployer).not.toHaveBeenCalled();
     expect(mocks.signEnrolmentReviewAsEmployer).not.toHaveBeenCalled();
   });

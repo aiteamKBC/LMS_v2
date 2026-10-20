@@ -20,6 +20,17 @@ afterEach(() => {
 });
 
 describe('migrated summary transcript upload', () => {
+  it('sends the reopen reason and observed answer version with CSRF', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ csrfToken: 'token' }))
+      .mockResolvedValueOnce(jsonResponse({ localStatus: 'in-progress', reviewRevision: 1 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { reopenMigratedReview } = await import('./reviewInstances');
+    await reopenMigratedReview('imported-review:42', { reasonCode: 'other', note: 'Correct action', answerVersion: 'observed' });
+    const [url, request] = fetchMock.mock.calls[1];
+    expect(url).toBe('/coach_api/migrated-reviews/imported-review%3A42/reopen');
+    expect(JSON.parse(request.body)).toEqual({ reasonCode: 'other', note: 'Correct action', answerVersion: 'observed' });
+    expect(new Headers(request.headers).get('X-CSRFToken')).toBe('token');
+  });
   it('uses the migrated multipart route and CSRF without a Native endpoint or JSON content type', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ csrfToken: 'server-token' }))
       .mockResolvedValueOnce(jsonResponse({ artifacts: [], answerVersion: 'v2', reviewAnswers: { recap: 'Generated' } }));
