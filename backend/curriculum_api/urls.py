@@ -36,6 +36,7 @@ from . import recordings_library, session_results, tutor_notifications, recordin
 from .attendance_corrections import session_attendance_correction
 from .learner_activity_status import activity_status
 from .home_summary import curriculum_home_summary
+from .live_totals import curriculum_live_totals
 
 
 urlpatterns = [
@@ -86,6 +87,7 @@ urlpatterns = [
     # The Archive page's one read: every archived record, a page at a time.
     path('curriculum/archive/', curriculum_archive_index, name='curriculum-archive-index'),
     path('curriculum/home-summary/', curriculum_home_summary, name='curriculum-home-summary'),
+    path('curriculum/live-totals/', curriculum_live_totals, name='curriculum-live-totals'),
     path('curriculum/delivery-scope/', views.curriculum_delivery_scope, name='curriculum-delivery-scope'),
     path('curriculum/stats/', views.curriculum_stats, name='curriculum-stats'),
     # Polled by every open tab to notice a write made somewhere else. Kept next

@@ -1,0 +1,38 @@
+.preview { position: fixed; z-index: 110; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #ded5e8; border-radius: 8px; background: #fff; color: #493b57; box-shadow: 0 8px 28px #30174420; font-size: 12px; }
+.preview header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-shrink: 0; padding: 12px 15px; background: #4f2d7f; color: #fff; }
+.preview header strong { overflow-wrap: anywhere; font-size: 13px; }
+.preview header button { flex-shrink: 0; width: 28px; height: 28px; border: 0; border-radius: 8px; background: #ffffff16; color: #fff; font-size: 18px; cursor: pointer; }
+.body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 14px; }
+.context { margin: 0 0 12px; color: #786787; font-weight: 500; overflow-wrap: anywhere; }
+.preview dl { display: grid; gap: 11px; margin: 0; }
+.preview dt { margin-bottom: 3px; color: #8a7c96; font-size: 11px; }
+.preview dd { margin: 0; color: #493b57; font-weight: 500; white-space: pre-line; overflow-wrap: anywhere; }
+.totals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+.totals > div { padding: 10px; border: 1px solid #e8e1ee; border-radius: 8px; background: #faf8fc; }
+.totals span { display: block; margin-bottom: 5px; color: #81718f; font-size: 10px; }
+.totals strong { font-size: 13px; font-weight: 600; }
+.holiday { margin-top: 10px; border: 1px solid #ead8af; border-radius: 8px; padding: 10px; background: #fffbf3; }
+.holiday strong { display: block; font-size: 12px; color: #866021; }
+.holiday small { display: block; margin-top: 3px; color: #9a7a42; font-size: 10px; }
+.holiday p { margin: 5px 0 0; font-size: 11px; }
+.holiday h4 { margin: 10px 0 4px; color: #866021; font-size: 10px; font-weight: 500; }
+.note { margin: 12px 0 0; color: #8b7e95; font-size: 10px; line-height: 1.5; }
+.choices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+/* This existing dialog is shared by calendars. Only this chooser gets a
+   programme heading; all other event dialogs keep their default chrome. */
+:global([role="dialog"]):has(.choices) > div:first-child { position: relative; padding: 18px 56px 18px 24px; background: #4f2d7f; color: #e6dcee; }
+:global([role="dialog"]):has(.choices) > div:first-child > div:first-child { position: absolute; top: 10px; right: 12px; margin: 0; }
+:global([role="dialog"]):has(.choices) > div:first-child > div:first-child > span { display: none; }
+:global([role="dialog"]):has(.choices) > div:first-child button { background: #ffffff16; color: #fff; }
+:global([role="dialog"]):has(.choices) h2 { color: #fff; font-size: 18px; font-weight: 600; }
+:global([role="dialog"]):has(.choices) > div:first-child > div:last-child > span { color: #e6dcee; font-size: 12px; font-weight: 500; }
+.choices > :is(button, a) { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; min-width: 0; padding: 16px; border: 1px solid #e4deec; border-radius: 8px; background: #fff; color: #51435e; text-align: left; text-decoration: none; line-height: 1.5; transition: background .15s, border-color .15s; }
+.choices > :is(button, a):hover:not(:disabled) { border-color: #b8a2ce; background: #faf8fc; }
+.choices strong { font-size: 13px; font-weight: 600; }
+.choices > :is(button, a) > span:not(.choiceIcon) { color: #81718f; font-size: 12px; }
+.choices small { margin-top: auto; color: #8b7e95; font-size: 11px; overflow-wrap: anywhere; }
+.choices > button:disabled { opacity: .55; cursor: not-allowed; }
+.choiceIcon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; background: #f0ebf6; color: #78608d; font-size: 21px; }
+.choices > :is(button, a):focus-visible { outline: 2px solid #a78bc5; outline-offset: 2px; }
+.srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }
+@media (max-width: 600px) { .choices { grid-template-columns: minmax(0, 1fr); } .choices > :is(button, a) { padding: 12px; gap: 6px; } .choiceIcon { width: 28px; height: 28px; font-size: 18px; } }

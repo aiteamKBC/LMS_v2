@@ -1,0 +1,235 @@
+/* Curriculum content and its body-portalled controls share one control scale.
+   Header/sidebar chrome and every other workspace retain their own styles. */
+:global(.workspace-shell.dashboard-theme[data-workspace-role="curriculum"] .workspace-main),
+/* The redesigned page has ID-scoped legacy rules with !important controls. */
+:global(.workspace-shell.dashboard-theme[data-workspace-role="curriculum"] .workspace-main #curriculum-programmes),
+:global(body:has(.workspace-shell[data-workspace-role="curriculum"]) :is(.select-menu-pop, .workspace-drawer, [role="dialog"], .swal2-popup)) {
+  --curriculum-control-radius: 8px;
+  --curriculum-control-height: 36px;
+  --curriculum-control-compact-height: 32px;
+  --curriculum-control-border: var(--kbc-border, #dfd8e9);
+  --curriculum-control-surface: var(--kbc-surface, #fff);
+  --curriculum-control-text: var(--kbc-text, #3c304a);
+  --curriculum-control-primary: #4f2d7f;
+  --curriculum-filter-surface: #f8f7fb;
+  --curriculum-filter-border: #e1dce9;
+  --curriculum-filter-text: #81718f;
+
+  & :is(button, [role="button"], input[type="button"], input[type="submit"], input[type="reset"], a[class~="inline-flex"], a[class~="compact-action"], a[class*="Action"], summary):not([role="switch"]):not([role="radio"]):not([class~="rounded-full"][style*="background-color"]) {
+    border-radius: var(--curriculum-control-radius) !important;
+    box-shadow: none !important;
+  }
+
+  /* Normal actions use one height; structural card selectors and calendar
+     cells keep their layout dimensions and receive only the common radius. */
+  & :is(button, a)[class~="inline-flex"]:not([role]):not([aria-pressed]):not([aria-selected]):not([aria-expanded]) {
+    min-height: var(--curriculum-control-height) !important;
+    height: auto !important;
+    padding-block: 7px !important;
+    font-size: var(--curriculum-action-font-size, 12px) !important;
+    line-height: 1.4 !important;
+    font-weight: var(--curriculum-action-weight, 600) !important;
+    gap: 6px;
+  }
+
+  & :is(table, [role="table"]) :is(button, a)[class~="inline-flex"],
+  & :is([role="tablist"], [role="group"]) > button {
+    min-height: var(--curriculum-control-compact-height) !important;
+    height: auto !important;
+    padding-block: 5px !important;
+    font-size: 11px !important;
+    line-height: 1.4 !important;
+  }
+
+  & [id="curriculum-programmes"] [class*="headingActions"] :is(button, summary) {
+    min-height: var(--curriculum-control-height) !important;
+    height: auto !important;
+    font-size: 12px !important;
+  }
+
+  & :is([class*="bannerActions"], [class*="timelineControls"]) :is(button, a) {
+    min-height: var(--curriculum-control-compact-height) !important;
+    height: auto !important;
+    border-radius: var(--curriculum-control-radius) !important;
+  }
+
+  & :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]), select, [role="combobox"]):not([contenteditable]) {
+    height: var(--curriculum-control-height) !important;
+    min-height: var(--curriculum-control-height) !important;
+    border-radius: var(--curriculum-control-radius) !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    line-height: 1.4 !important;
+    box-shadow: none !important;
+  }
+
+  & :is(input, select, textarea, [role="combobox"]):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([aria-invalid="true"]):not([class*="border-red"]):not([class*="border-rose"]) {
+    border: 1px solid var(--curriculum-control-border) !important;
+    background-color: var(--curriculum-control-surface) !important;
+    color: var(--curriculum-control-text) !important;
+  }
+
+  & textarea {
+    border-radius: var(--curriculum-control-radius) !important;
+    font-size: 12px !important;
+    line-height: 1.6 !important;
+  }
+
+  /* Native and custom dropdowns use the same quiet treatment as Sort.
+     Exclude date inputs and invalid fields so their own states remain clear. */
+  & :is(select, button[role="combobox"], button[aria-haspopup="listbox"]):not([aria-invalid="true"]):not([class*="border-red"]):not([class*="border-rose"]) {
+    --curriculum-control-surface: var(--curriculum-filter-surface);
+    --curriculum-control-border: var(--curriculum-filter-border);
+    --curriculum-control-text: var(--curriculum-filter-text);
+    min-height: var(--curriculum-control-height) !important;
+    height: var(--curriculum-control-height) !important;
+    border: 1px solid var(--curriculum-filter-border) !important;
+    border-radius: var(--curriculum-control-radius) !important;
+    background: var(--curriculum-filter-surface) !important;
+    color: var(--curriculum-filter-text) !important;
+    padding-inline: 10px;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    box-shadow: none !important;
+
+    &:hover:not(:disabled):not([aria-disabled="true"]) {
+      --curriculum-filter-surface: #f2eef7;
+      --curriculum-filter-border: #d5c9e2;
+      background: #f2eef7 !important;
+      border-color: #d5c9e2 !important;
+    }
+  }
+
+  & :is(button[role="combobox"], button[aria-haspopup="listbox"]) > span {
+    font: inherit !important;
+    color: inherit !important;
+  }
+
+  & button[aria-haspopup="listbox"][class~="bg-primary-50"] {
+    --curriculum-filter-surface: #f2eef7;
+    --curriculum-filter-border: #d5c9e2;
+    --curriculum-filter-text: #786787;
+  }
+
+  & :is(button[role="combobox"], button[aria-haspopup="listbox"]) > :is(svg, i):last-child {
+    width: 16px;
+    height: 16px;
+    font-size: 16px;
+    color: inherit !important;
+  }
+
+  /* Match field captions without flattening checkbox/radio option labels,
+     helper messages or the red required/error indicators. */
+  & :is(label[for], label:has(input:not([type="checkbox"]):not([type="radio"]), select, textarea, [role="combobox"]), [id^="select-field-label-"], span[id^="filter-"]):not([class*="text-red"]):not([class*="text-rose"]),
+  & label:has(input:not([type="checkbox"]):not([type="radio"]), select, textarea, [role="combobox"]) > span:first-child:not(:has(input, select, textarea, [role="combobox"])):not([class*="text-red"]):not([class*="text-rose"]) {
+    color: var(--curriculum-filter-text) !important;
+    font-size: 11px !important;
+    font-weight: 500 !important;
+    letter-spacing: .02em !important;
+    text-transform: none !important;
+  }
+
+  /* These are the existing programme/cohort/group scope bars. Styling their
+     native-select structure also covers the embedded and full page views. */
+  & div[class~="border"]:has(> div[class~="items-end"] :is(label > select)) {
+    border-radius: var(--curriculum-control-radius) !important;
+    border-color: #e8e2ed !important;
+    background: #faf9fc !important;
+    box-shadow: none !important;
+
+    & > div > :is(button, span[class~="inline-flex"]),
+    & > div > span[class~="inline-flex"] > span {
+      --curriculum-action-weight: 500;
+      border-color: var(--curriculum-filter-border) !important;
+      background: #f2eef7 !important;
+      color: #786787 !important;
+      font-weight: 500 !important;
+      box-shadow: none !important;
+    }
+
+    & > div > span[class~="inline-flex"] {
+      border-radius: var(--curriculum-control-radius) !important;
+      height: auto !important;
+      min-height: var(--curriculum-control-height);
+      padding-block: 7px;
+      line-height: 1.4;
+    }
+  }
+
+  /* DatePickerField owns the border on its wrapper, not its editable input. */
+  & div:has(> input[role="combobox"][aria-haspopup="dialog"]) {
+    height: var(--curriculum-control-height) !important;
+    min-height: var(--curriculum-control-height) !important;
+    border-radius: var(--curriculum-control-radius) !important;
+    box-shadow: none !important;
+
+    & > input[role="combobox"] {
+      min-height: 0 !important;
+      height: 100% !important;
+      border: 0 !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      padding-block: 0 !important;
+      outline: none !important;
+    }
+  }
+
+  & :is(button, a)[class*="border-background"],
+  & :is(button, a)[class*="border-foreground"] {
+    border-color: var(--curriculum-control-border) !important;
+  }
+
+  & :is(button, a):is([class~="bg-primary-500"], [class~="bg-primary-600"], [class~="bg-primary-700"], [class~="primary-action"], [class*="primaryAction"]),
+  & [class*="addMenu"] > summary {
+    background: var(--curriculum-control-primary) !important;
+    border-color: var(--curriculum-control-primary) !important;
+    color: #fff !important;
+  }
+
+  & :is(button, a):is([class~="bg-primary-500"], [class~="bg-primary-600"], [class~="bg-primary-700"], [class~="primary-action"], [class*="primaryAction"]):hover:not(:disabled):not([aria-disabled="true"]),
+  & [class*="addMenu"] > summary:hover {
+    background: #60398f !important;
+  }
+
+  & :is(button, a, input, select, textarea, summary):focus-visible,
+  & [role="combobox"][aria-expanded="true"],
+  & div:has(> input[role="combobox"][aria-haspopup="dialog"]):focus-within {
+    outline: 2px solid #a78bc5 !important;
+    outline-offset: 2px;
+  }
+
+  & :is(button, input, select, textarea):disabled,
+  & [aria-disabled="true"] {
+    cursor: not-allowed;
+    opacity: .55;
+  }
+
+  /* The dropdown's search is framed by the menu; avoid a second input border. */
+  &[class~="select-menu-pop"] {
+    border-color: var(--curriculum-filter-border) !important;
+    border-radius: var(--curriculum-control-radius) !important;
+    box-shadow: 0 4px 12px #2f164010 !important;
+  }
+
+  &[class~="select-menu-pop"] input {
+    border: 0 !important;
+    background: transparent !important;
+    outline-offset: -2px;
+  }
+
+  &[class~="select-menu-pop"] [role="option"] {
+    min-height: var(--curriculum-control-height);
+    border-radius: var(--curriculum-control-radius) !important;
+    padding-block: 7px;
+
+    & > span > span:first-child { font-size: 12px; font-weight: 500; }
+    & > span > span + span { font-size: 11px; }
+    &[aria-selected="true"] { background: #f1ebf9; color: #4f2d7f; }
+  }
+}
+
+/* Keep the two sizes deliberate when page-local rules style compact actions. */
+:global(.workspace-shell.dashboard-theme[data-workspace-role="curriculum"] .workspace-main [id="curriculum-programme-reviews"] button[class~="inline-flex"]) {
+  min-height: 32px !important;
+  padding-block: 5px !important;
+}

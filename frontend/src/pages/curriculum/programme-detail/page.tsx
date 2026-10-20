@@ -1,10 +1,12 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { LearnerAssignmentDrawer } from '@/pages/curriculum/shared/entities/LearnerAssignmentDrawer';
 import type { LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
 import { useRefreshOnRemoteWrite, useRefreshOnReturn } from '@/hooks/useRefreshOnReturn';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import styles from '../programmes/programmes.module.css';
+import { ProgrammeDeliveryTimeline } from '../programmes/ProgrammeDeliveryTimeline';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
 import { findByIdentifierThenName, findModule, formatProgrammeLevel, namedCurriculumWorkspacePath, programmeIdentity, visibleNotes } from '@/pages/curriculum/shared/entities/model';
 // Editing the programme, or adding a cohort or group from this page,
@@ -2338,7 +2340,7 @@ function EnrolledLearnersPanel({
  * chrome, and every one of them now has exactly one home.
  */
 
-type Tab = 'overview' | 'cohorts' | 'groups' | 'modules' | 'sessions' | 'coverage' | 'achievement' | 'quality' | 'reviews';
+type Tab = 'learners' | 'overview' | 'cohorts' | 'groups' | 'modules' | 'sessions' | 'coverage' | 'achievement' | 'quality' | 'reviews';
 
 // Actions now carries the "Groups" jump plus Edit and Archive, so the fixed
 // 120px column that fit "Groups" alone is widened to a minmax that keeps room
@@ -2390,6 +2392,7 @@ const GROUP_GRID = 'grid grid-cols-[minmax(200px,1.35fr)_minmax(160px,1fr)_minma
 const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_70px_100px_80px_70px_minmax(340px,auto)]';
 
 const TAB_LABELS: Record<Tab, string> = {
+  learners: 'Learners',
   overview: 'Overview',
   cohorts: 'Cohorts',
   groups: 'Groups',
@@ -2416,10 +2419,47 @@ function isProgrammeDetailTab(value: string | null): value is Tab {
   return Boolean(value) && Object.prototype.hasOwnProperty.call(TAB_LABELS, value as string);
 }
 
-export default function ProgrammeDetailPage() {
-  const { id } = useParams();
+function ProgrammeDetailShell({ embedded, ...props }: ComponentProps<typeof WorkspaceShell> & { embedded?: boolean }) {
+  return embedded ? <div id="curriculum-programme-selected" className={styles.detail}>{props.children}</div> : <WorkspaceShell {...props} />;
+}
+
+// Compare metadata only. KSB stats arriving behind the list must not trigger
+// another tree request or replace the detail's operational counting rules.
+function programmePresentationRevision(programme?: CurriculumProgramme) {
+  return JSON.stringify(programme ? [programme.name, programme.standard, programme.level, programme.status, programme.owner, programme.color, programme.description, programme.structureType, programme.ksbProfileSourceId, programme.requiredOtjh] : []);
+}
+
+interface ProgrammeDetailPresentationProps {
+  programmeId?: string;
+  embedded?: boolean;
+  programmeSnapshot?: CurriculumProgramme;
+  refreshVersion?: number;
+  onReloaded?: () => void | Promise<unknown>;
+}
+
+export default function ProgrammeDetailPage({ programmeId, embedded = false, programmeSnapshot, refreshVersion = 0, onReloaded }: ProgrammeDetailPresentationProps = {}) {
+  const { id: routeId } = useParams();
+  const id = programmeId ?? routeId;
   const navigate = useNavigate();
-  const { data, loading, modulesLoading, refreshing, error, reload, readRevision, receiveReference } = useProgrammeDetailData(id || '');
+  const { data, loading, modulesLoading, refreshing, error, reload: reloadDetail, readRevision, receiveReference } = useProgrammeDetailData(id || '');
+  const reload = useCallback(async (options?: { silent?: boolean }) => {
+    const result = await reloadDetail(options);
+    if (result) await onReloaded?.();
+    return result;
+  }, [reloadDetail, onReloaded]);
+  const snapshotRevision = programmePresentationRevision(programmeSnapshot);
+  const observedPresentation = useRef({ snapshotRevision, refreshVersion });
+  useEffect(() => {
+    const previous = observedPresentation.current;
+    if (previous.snapshotRevision === snapshotRevision && previous.refreshVersion === refreshVersion) return;
+    observedPresentation.current = { snapshotRevision, refreshVersion };
+    const current = findProgramme(data, id || '');
+    if (previous.refreshVersion !== refreshVersion || snapshotRevision !== programmePresentationRevision(current || undefined)) {
+      // A change from the browser re-reads only the selected programme. It does
+      // not notify the browser again, which would create a refresh cycle.
+      void reloadDetail({ silent: true });
+    }
+  }, [snapshotRevision, refreshVersion, data, id, reloadDetail]);
   // null until loaded: an empty list is a programme with no components, and
   // only a loaded list may take over from the summary.
   const [detailComponents, setDetailComponents] = useState<CurriculumComponent[] | null>(null);
@@ -2500,6 +2540,7 @@ export default function ProgrammeDetailPage() {
       ? 'achievement'
       : requestedTab && LEGACY_TAB_MAP[requestedTab];
   const tab: Tab = compatibleTab || (isProgrammeDetailTab(requestedTab) ? requestedTab : 'overview');
+  const learnerRosterVisible = programmeLearnersOpen || tab === 'learners';
   const setTab = useCallback((next: Tab) => {
     // Replace rather than push: switching tabs is not a navigation the reader
     // should have to unwind one step at a time to get back to the card grid.
@@ -3244,11 +3285,11 @@ export default function ProgrammeDetailPage() {
   }, [PROGRAMME.name, programmeScopeId]);
 
   useEffect(() => {
-    if (!programmeLearnersOpen || !programmeLearnerScope.identifier) return undefined;
+    if (!learnerRosterVisible || !programmeLearnerScope.identifier) return undefined;
     const controller = new AbortController();
     void loadProgrammeLearnerRoster(programmeLearnerScope.scope, programmeLearnerScope.identifier, controller.signal);
     return () => controller.abort();
-  }, [loadProgrammeLearnerRoster, programmeLearnerScope.identifier, programmeLearnerScope.scope, programmeLearnersOpen]);
+  }, [loadProgrammeLearnerRoster, programmeLearnerScope.identifier, programmeLearnerScope.scope, learnerRosterVisible]);
 
   /**
    * Where each module column sits in the delivery tree.
@@ -3665,7 +3706,7 @@ export default function ProgrammeDetailPage() {
 
   if (loading && !found) {
     return (
-      <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Programme loading" pageSubtitle="Preparing live curriculum data from the database" userName="Rachel Myers" userRole="Curriculum Designer">
+      <ProgrammeDetailShell embedded={embedded} role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Programme loading" pageSubtitle="Preparing live curriculum data from the database" userName="Rachel Myers" userRole="Curriculum Designer">
         <div className="min-h-full space-y-4 bg-background-50 p-4 sm:p-5 lg:p-6">
           <div className="h-40 animate-pulse rounded-2xl border border-foreground-200/70 bg-background-100" />
           <div className="flex items-center gap-2 rounded-2xl border border-foreground-200/70 bg-background-50 p-1.5">
@@ -3675,13 +3716,13 @@ export default function ProgrammeDetailPage() {
           </div>
           <div className="h-64 animate-pulse rounded-2xl border border-foreground-200/70 bg-background-100" />
         </div>
-      </WorkspaceShell>
+      </ProgrammeDetailShell>
     );
   }
 
   if (error || !found) {
     return (
-      <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Programme unavailable" pageSubtitle="The requested curriculum programme could not be opened" userName="Rachel Myers" userRole="Curriculum Designer">
+      <ProgrammeDetailShell embedded={embedded} role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Programme unavailable" pageSubtitle="The requested curriculum programme could not be opened" userName="Rachel Myers" userRole="Curriculum Designer">
         <div className="min-h-full bg-background-50 p-4 sm:p-6">
           <EntityEmptyState
             icon={error ? 'ri-wifi-off-line' : 'ri-folder-warning-line'}
@@ -3699,7 +3740,7 @@ export default function ProgrammeDetailPage() {
             </Link>
           </div>
         </div>
-      </WorkspaceShell>
+      </ProgrammeDetailShell>
     );
   }
 
@@ -3715,108 +3756,38 @@ export default function ProgrammeDetailPage() {
     { key: 'reviews', label: TAB_LABELS.reviews, icon: 'ri-clipboard-line' },
   ];
 
-  return (
-    <WorkspaceShell
-      role="curriculum"
-      roleLabel="Curriculum Designer"
-      navItems={curriculumNavItems}
-      workspaceLabel="Curriculum Studio"
-      pageTitle={PROGRAMME.name}
-      pageSubtitle={`${PROGRAMME.duration} · ${liveCohortCount} cohorts · ${modulesLoading ? 'loading modules' : `${activeModules.length} modules`}`}
-      userName="Rachel Myers"
-      userRole="Curriculum Designer"
-    >
-      <div className="min-h-full space-y-4 bg-background-50 p-4 sm:p-5 lg:p-6">
-        {error && <InlineError message={error} onRetry={() => void reload()} />}
-        {assignmentNotice && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[12px] font-semibold text-emerald-800">{assignmentNotice}</p>}
 
-        <WorkspaceHeader
-          breadcrumbs={[
-            { label: 'Curriculum', href: '/workspace/curriculum' },
-            { label: 'Programmes', href: '/curriculum/programmes' },
-            { label: PROGRAMME.name },
-          ]}
-          eyebrow="Programme"
-          title={PROGRAMME.name}
-          subtitle={[formatProgrammeLevel(PROGRAMME.level, ''), PROGRAMME.standard, PROGRAMME.duration].map(value => clean(value)).filter(Boolean).join(' · ')}
-          accentColor={PROGRAMME.color}
-          dense
-          stats={[
-            { icon: 'ri-group-line', label: 'Cohorts', value: liveCohortCount, detail: archivedCohortCount ? `${archivedCohortCount} archived` : undefined },
-            { icon: 'ri-team-line', label: 'Groups', value: totalGroups, detail: unstaffedGroupCount ? `${unstaffedGroupCount} need a coach` : 'All coached' },
-            modulesLoading
-              ? { icon: 'ri-stack-line', label: 'Modules', value: '…', detail: 'Loading modules' }
-              : { icon: 'ri-stack-line', label: 'Modules', value: activeModules.length, detail: archivedModuleCount ? `${archivedModuleCount} archived` : untutoredModules.length ? `${untutoredModules.length} need a tutor` : 'All tutored' },
-            modulesLoading
-              ? { icon: 'ri-calendar-line', label: 'Weeks', value: '…', detail: 'Loading modules' }
-              : { icon: 'ri-calendar-line', label: 'Weeks', value: totalWeeks, detail: `${componentTotal} components` },
-            { icon: 'ri-time-line', label: 'OTJH', value: modulesLoading ? '…' : formatHoursMinutes(totalOtjh) },
-            {
-              icon: 'ri-node-tree',
-              label: 'KSB coverage',
-              value: ksbCoverageRead ? `${ksbCoverage}%` : '—',
-              detail: ksbCoverageRead
-                ? `${mappedKsbCount}/${PROGRAMME.ksbHeatmap.length} mapped`
-                : !hasKsbSource
-                  ? 'No KSB source'
-                  : backendCoverageLoading
-                    ? 'Reading coverage…'
-                    : 'Open KSB Coverage to read',
-            },
-          ]}
-          actions={(
-            <button
-              type="button"
-              onClick={() => setProgrammeDrawerOpen(true)}
-              className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700"
-            >
-              <AppIcon className="ri-edit-line text-sm"></AppIcon>
-              Edit programme
-            </button>
-          )}
-        />
-
-        {tab === 'overview' && (
-          <div className="flex flex-col gap-3 rounded-2xl border border-primary-100 bg-primary-50/45 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex min-w-0 items-start gap-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-background-50 text-primary-700 shadow-sm">
-                <AppIcon className="ri-calendar-schedule-line"></AppIcon>
-              </span>
-              <div className="min-w-0">
-                <p className="text-[11px] font-extrabold uppercase tracking-wide text-primary-700">Delivery setup</p>
-                <p className="mt-0.5 text-[11px] leading-5 text-foreground-600">
-                  Start with cohorts and groups, then assign tutors, coaches and scheduled sessions for this programme.
-                </p>
-              </div>
-            </div>
-            <div className="flex w-full flex-col gap-2 sm:w-auto sm:shrink-0 sm:flex-row">
-              <button type="button" onClick={() => liveCohortCount ? setTab('cohorts') : setCohortDrawerOpen(true)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white hover:bg-primary-700">
-                <AppIcon className="ri-group-line"></AppIcon> {liveCohortCount ? 'Manage Cohorts & Groups' : 'Add First Cohort'}
-              </button>
-              <button type="button" onClick={() => navigate(moduleBuilderProgrammeUrl)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-background-50 px-3 text-[11px] font-bold text-primary-700 hover:bg-primary-100">
-                Open Module Builder <AppIcon className="ri-arrow-right-line"></AppIcon>
-              </button>
-            </div>
-          </div>
-        )}
-
-        <WorkspaceTabs
-          tabs={tabs}
-          active={tab}
-          onChange={key => setTab(key as Tab)}
-          trailing={tab === 'modules' ? (
-            <button type="button" onClick={() => navigate(moduleBuilderProgrammeUrl)} className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white hover:bg-primary-700 sm:w-auto">
-              <AppIcon className="ri-tools-line"></AppIcon> Open Module Builder
-            </button>
-          ) : undefined}
-        />
-
-        {/* ═══════════════════════════════════════════════════════════════════
-            Overview — the only view that spans the whole programme
-        ═══════════════════════════════════════════════════════════════════ */}
-        {tab === 'overview' && (
-          <div className="space-y-5">
-            <div className="grid gap-5 xl:grid-cols-2">
+  const timelineGroups = new Map(allGroups.map(record => [record.group.id, record]));
+  const timelineRuns = activeModules.map(module => {
+    const parent = module.groupId ? timelineGroups.get(module.groupId) : undefined;
+    // Keep the placement identity: two groups can share one catalogue module.
+    // A namesake or the first canonical match must never seed this editor.
+    const record = data?.modules.find(item => item.id === module.id && clean(item.groupId) === clean(module.groupId));
+    const catalogueId = record ? moduleBuilderIdentifier(record) : '';
+    const sessions = record ? (data?.sessions || []).filter(session => {
+      const deliveryMatch = record.deliveryRowId != null && [session.deliveryRowId, session.trainingPlanId].some(value => value != null && String(value) === String(record.deliveryRowId));
+      const catalogueMatch = Boolean(catalogueId) && [session.moduleCatalogueId, session.moduleId, session.deliveryModuleId].some(value => clean(value) === catalogueId);
+      return deliveryMatch || (catalogueMatch && clean(session.groupId) === clean(record.groupId) && clean(session.cohortId) === clean(record.cohortId));
+    }) : [];
+    const schedule = record?.weeklySchedule?.length
+      ? record.weeklySchedule.map(slot => [slot.day, [slot.startTime, slot.endTime].filter(Boolean).join(' – ')].filter(Boolean).join(' · ')).join('\n')
+      : [record?.weekDays, [record?.startTime, record?.endTime].filter(Boolean).join(' – ')].filter(Boolean).join(' · ');
+    return {
+      id: module.id, name: module.name, startDate: module.startDate, endDate: module.endDate,
+      groupId: parent?.group.id, group: parent?.group.name, cohortId: parent?.cohort.id, cohort: parent?.cohort.name,
+      href: moduleBuilderUrl(module, PROGRAMME),
+      overviewHref: moduleWorkspaceUrl(module),
+      tutor: record?.tutor,
+      coach: record?.coach || parent?.group.coach,
+      schedule,
+      sessionCount: record?.sessionsNumber,
+      holidays: record?.sessionHolidays,
+      sessions,
+      onEditSchedule: record && parent && catalogueId ? () => setEditingModule(moduleFormTarget(record)) : undefined,
+    };
+  });
+  const programmeInformation = (
+<div className="grid gap-5 xl:grid-cols-2">
               <WorkspacePanel title="Programme" description="The details the programme itself owns. Everything else belongs to a record beneath it.">
                 <DetailRow label="Level" value={formatProgrammeLevel(PROGRAMME.level)} />
                 <DetailRow
@@ -3919,9 +3890,9 @@ export default function ProgrammeDetailPage() {
                 </div>
               </WorkspacePanel>
             </div>
-
-            {programmeLearnersOpen && (
-              <WorkspacePanel
+  );
+  const programmeRoster = (
+<WorkspacePanel
                 title={`Learners in ${PROGRAMME.name || 'this programme'}`}
                 description="Everyone the enrolment team placed anywhere under this programme, across every cohort and group. Curriculum owns the delivery structure, not the placements, so the roster is read-only."
                 actions={(
@@ -3969,12 +3940,15 @@ export default function ProgrammeDetailPage() {
                   />
                 )}
               </WorkspacePanel>
-            )}
-
-            <WorkspacePanel
+  );
+  const attentionPanel = (
+<WorkspacePanel
               title="Needs attention"
               description="Gaps that only show up when the whole programme is in view, each pointing at the one place it is fixed."
             >
+              {!modulesLoading && backendCoverageError && <InlineError message={backendCoverageError} onRetry={() => void reload()} />}
+              {!modulesLoading && !backendCoverageError && !backendCoverageLoading && (!hasKsbSource || !ksbCoverageRead) && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800">KSB readiness is not verified. Apply a source with KSB definitions and open Coverage to review mapping, staffing and content checks.</p>}
+              {!modulesLoading && backendCoverageLoading && <p role="status">Checking KSB coverage...</p>}
               {modulesLoading ? (
                 <p role="status" className="text-[12px] text-foreground-500">Checking the programme's modules...</p>
               ) : unstaffedGroupCount || untutoredModules.length || unlinkedModules.length || emptyWeekCount || missingKsbCount ? (
@@ -4025,15 +3999,16 @@ export default function ProgrammeDetailPage() {
                     />
                   )}
                 </ul>
-              ) : (
+              ) : backendCoverageLoading || backendCoverageError || !hasKsbSource || !ksbCoverageRead ? null : (
                 <p className="rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-[13px] font-semibold text-emerald-700">
                   <AppIcon className="ri-checkbox-circle-line mr-1.5"></AppIcon>
                   Every group has a coach, every module has a tutor, every week has content and every KSB is mapped.
                 </p>
               )}
             </WorkspacePanel>
-
-            <WorkspacePanel
+  );
+  const recordHomes = (
+<WorkspacePanel
               title="Where these records live"
               description="Cohorts, groups and modules are managed across the whole curriculum on their own pages. This workspace is the programme-scoped view of them, not a second catalogue — these links open the same records filtered to this programme."
             >
@@ -4061,8 +4036,161 @@ export default function ProgrammeDetailPage() {
                 />
               </div>
             </WorkspacePanel>
+  );
+
+  return (
+    <ProgrammeDetailShell embedded={embedded}
+      role="curriculum"
+      roleLabel="Curriculum Designer"
+      navItems={curriculumNavItems}
+      workspaceLabel="Curriculum Studio"
+      pageTitle={PROGRAMME.name}
+      pageSubtitle={`${PROGRAMME.duration} · ${liveCohortCount} cohorts · ${modulesLoading ? 'loading modules' : `${activeModules.length} modules`}`}
+      userName="Rachel Myers"
+      userRole="Curriculum Designer"
+    >
+      <div className="min-h-full space-y-4 bg-background-50 p-4 sm:p-5 lg:p-6">
+        {error && <InlineError message={error} onRetry={() => void reload()} />}
+        {assignmentNotice && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[12px] font-semibold text-emerald-800">{assignmentNotice}</p>}
+
+        {embedded ? <section className={styles.selectedBanner} aria-label="Programme summary">
+          <div className={styles.bannerHeading}>
+            <div><div className={styles.badges}>
+              <span>{formatProgrammeLevel(PROGRAMME.level)}</span>
+              <span>{PROGRAMME.structureType === 'free' ? 'Free course' : 'Programme'}</span>
+              <span>{findProgramme(data, id || '')?.status || 'Status not provided'}</span>
+            </div><h2>{PROGRAMME.name}</h2></div>
+            <small>{findProgramme(data, id || '')?.lastUpdated ? `Updated ${formatDateLabel(findProgramme(data, id || '')!.lastUpdated)}` : 'Updated date not provided'}</small>
+          </div>
+          <dl className={styles.bannerMetadata}>
+            <div><dt>Guided learning hours</dt><dd>Not provided</dd></div>
+            <div><dt>Funding band</dt><dd>Not provided</dd></div>
+            <div><dt>Delivery window</dt><dd>{PROGRAMME.duration || 'Not set'}</dd></div>
+            <div><dt>Programme planned end date</dt><dd>Not provided</dd></div>
+          </dl>
+          <div className={styles.bannerActions}>
+            <button type="button" onClick={() => setProgrammeDrawerOpen(true)}>Edit programme</button>
+            <button type="button" onClick={() => liveCohortCount ? setTab('cohorts') : setCohortDrawerOpen(true)}>{liveCohortCount ? 'Manage Cohorts & Groups' : 'Add First Cohort'}</button>
+          </div>
+        </section> : (
+        <WorkspaceHeader
+          breadcrumbs={[
+            { label: 'Curriculum', href: '/workspace/curriculum' },
+            { label: 'Programmes', href: '/curriculum/programmes' },
+            { label: PROGRAMME.name },
+          ]}
+          eyebrow="Programme"
+          title={PROGRAMME.name}
+          subtitle={[formatProgrammeLevel(PROGRAMME.level, ''), PROGRAMME.standard, PROGRAMME.duration].map(value => clean(value)).filter(Boolean).join(' · ')}
+          accentColor={PROGRAMME.color}
+          dense
+          stats={[
+            { icon: 'ri-group-line', label: 'Cohorts', value: liveCohortCount, detail: archivedCohortCount ? `${archivedCohortCount} archived` : undefined },
+            { icon: 'ri-team-line', label: 'Groups', value: totalGroups, detail: unstaffedGroupCount ? `${unstaffedGroupCount} need a coach` : 'All coached' },
+            modulesLoading
+              ? { icon: 'ri-stack-line', label: 'Modules', value: '…', detail: 'Loading modules' }
+              : { icon: 'ri-stack-line', label: 'Modules', value: activeModules.length, detail: archivedModuleCount ? `${archivedModuleCount} archived` : untutoredModules.length ? `${untutoredModules.length} need a tutor` : 'All tutored' },
+            modulesLoading
+              ? { icon: 'ri-calendar-line', label: 'Weeks', value: '…', detail: 'Loading modules' }
+              : { icon: 'ri-calendar-line', label: 'Weeks', value: totalWeeks, detail: `${componentTotal} components` },
+            { icon: 'ri-time-line', label: 'OTJH', value: modulesLoading ? '…' : formatHoursMinutes(totalOtjh) },
+            {
+              icon: 'ri-node-tree',
+              label: 'KSB coverage',
+              value: ksbCoverageRead ? `${ksbCoverage}%` : '—',
+              detail: ksbCoverageRead
+                ? `${mappedKsbCount}/${PROGRAMME.ksbHeatmap.length} mapped`
+                : !hasKsbSource
+                  ? 'No KSB source'
+                  : backendCoverageLoading
+                    ? 'Reading coverage…'
+                    : 'Open KSB Coverage to read',
+            },
+          ]}
+          actions={(
+            <button
+              type="button"
+              onClick={() => setProgrammeDrawerOpen(true)}
+              className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700"
+            >
+              <AppIcon className="ri-edit-line text-sm"></AppIcon>
+              Edit programme
+            </button>
+          )}
+        />
+        )}
+
+        {!embedded && tab === 'overview' && (
+          <div className="flex flex-col gap-3 rounded-2xl border border-primary-100 bg-primary-50/45 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-background-50 text-primary-700 shadow-sm">
+                <AppIcon className="ri-calendar-schedule-line"></AppIcon>
+              </span>
+              <div className="min-w-0">
+                <p className="text-[11px] font-extrabold uppercase tracking-wide text-primary-700">Delivery setup</p>
+                <p className="mt-0.5 text-[11px] leading-5 text-foreground-600">
+                  Start with cohorts and groups, then assign tutors, coaches and scheduled sessions for this programme.
+                </p>
+              </div>
+            </div>
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:shrink-0 sm:flex-row">
+              <button type="button" onClick={() => liveCohortCount ? setTab('cohorts') : setCohortDrawerOpen(true)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white hover:bg-primary-700">
+                <AppIcon className="ri-group-line"></AppIcon> {liveCohortCount ? 'Manage Cohorts & Groups' : 'Add First Cohort'}
+              </button>
+              <button type="button" onClick={() => navigate(moduleBuilderProgrammeUrl)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-background-50 px-3 text-[11px] font-bold text-primary-700 hover:bg-primary-100">
+                Open Module Builder <AppIcon className="ri-arrow-right-line"></AppIcon>
+              </button>
+            </div>
           </div>
         )}
+
+        {embedded ? <>
+          <div className={styles.tabBar} role="tablist" aria-label="Programme sections">
+            {['overview', 'cohorts', 'groups', 'modules', 'coverage', 'reviews', 'learners'].map(key => {
+              const item = tabs.find(item => item.key === key);
+              return <button key={key} type="button" role="tab" aria-selected={tab === key} onClick={() => setTab(key as Tab)}><AppIcon className={item?.icon || 'ri-user-line'} aria-hidden="true" />{key === 'reviews' ? 'Reviews' : TAB_LABELS[key as Tab]}</button>;
+            })}
+            {tab === 'modules' && <button type="button" onClick={() => navigate(moduleBuilderProgrammeUrl)}><AppIcon className="ri-tools-line" />Open Module Builder</button>}
+          </div>
+          <details className={styles.extraTools} open={['sessions', 'achievement', 'quality'].includes(tab) || undefined}>
+            <summary>More programme tools</summary>
+            <div className={styles.tabBar}>{tabs.filter(item => ['sessions', 'achievement', 'quality'].includes(item.key)).map(item => <button key={item.key} type="button" aria-pressed={tab === item.key} onClick={() => setTab(item.key as Tab)}><AppIcon className={item.icon} />{item.label}</button>)}</div>
+          </details>
+        </> : (
+        <WorkspaceTabs
+          tabs={tabs}
+          active={tab}
+          onChange={key => setTab(key as Tab)}
+          trailing={tab === 'modules' ? (
+            <button type="button" onClick={() => navigate(moduleBuilderProgrammeUrl)} className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white hover:bg-primary-700 sm:w-auto">
+              <AppIcon className="ri-tools-line"></AppIcon> Open Module Builder
+            </button>
+          ) : undefined}
+        />
+        )}
+
+        {/* ═══════════════════════════════════════════════════════════════════
+            Overview — the only view that spans the whole programme
+        ═══════════════════════════════════════════════════════════════════ */}
+        {tab === 'overview' && (
+          <div className="space-y-4">
+            {embedded && <>
+              <section className={styles.deliverySize} aria-label="Delivery size">
+                <h3>Delivery size</h3>
+                <div className={styles.sizeGrid}>
+                  {[{ label: 'Cohorts', value: liveCohortCount, tab: 'cohorts' }, { label: 'Groups', value: totalGroups, tab: 'groups' }, { label: 'Modules', value: modulesLoading ? '...' : activeModules.length, tab: 'modules' }, { label: 'Learners', value: totalLearners, tab: 'learners' }].map(metric => <button key={metric.label} type="button" onClick={() => setTab(metric.tab as Tab)}><span>{metric.label}</span><strong>{metric.value}</strong></button>)}
+                </div>
+              </section>
+              {modulesLoading ? <ModulesLoadingPanel /> : <ProgrammeDeliveryTimeline runs={timelineRuns} programmeName={PROGRAMME.name} deliveryHref="/curriculum/delivery" />}
+              <details className={styles.overviewDetails}><summary>Programme information, readiness and related records</summary>{programmeInformation}{recordHomes}</details>
+            </>}
+            {!embedded && programmeInformation}
+            {programmeLearnersOpen && programmeRoster}
+            {attentionPanel}
+            {!embedded && recordHomes}
+          </div>
+        )}
+        {tab === 'learners' && programmeRoster}
 
         {/* ═══════════════════════════════════════════════════════════════════
             Delivery — cohorts, and the groups under the one being read
@@ -4982,6 +5110,16 @@ export default function ProgrammeDetailPage() {
           </div>
         )}
 
+        {embedded && tab !== 'overview' && (
+          (componentSummary !== null || detailComponents !== null) && backendCoverage
+            ? attentionPanel
+            : <WorkspacePanel title="Needs attention" description="Programme-wide checks are shown after their data has been read."><button type="button" onClick={() => setTab('overview')}>Open Overview to review programme checks</button></WorkspacePanel>
+        )}
+        {embedded && <section className={styles.evidence} aria-label="Learner evidence">
+          <div><h3>Learner evidence</h3><p>Evidence and achieved KSB weights are read from learner records, separately from curriculum mapping.</p></div>
+          <button type="button" onClick={() => setTab('achievement')}>Open learner achievement &rarr;</button>
+        </section>}
+
         {tab === 'reviews' && (
           <ReviewsTab programmeId={PROGRAMME.id} programmeName={PROGRAMME.name} defaultStartDate={PROGRAMME.earliestCohortStartDate} />
         )}
@@ -5061,7 +5199,7 @@ export default function ProgrammeDetailPage() {
           onClose={() => setPlacementPreview(null)}
         />
       )}
-    </WorkspaceShell>
+    </ProgrammeDetailShell>
   );
 }
 

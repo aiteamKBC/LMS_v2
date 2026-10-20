@@ -269,6 +269,11 @@ async function renderWorkspace(query = '') {
   return result;
 }
 
+async function renderEmbeddedWorkspace() {
+  const { default: ProgrammeDetailPage } = await import('../page');
+  return render(<MemoryRouter initialEntries={['/curriculum/programmes']}><ProgrammeDetailPage programmeId="PROG-DATA" embedded /></MemoryRouter>);
+}
+
 /** The tab strip, which is the page's table of contents. */
 function tabStrip() {
   const overview = screen.getByRole('button', { name: /Overview/ });
@@ -282,6 +287,123 @@ async function openTab(name: RegExp) {
 }
 
 describe('Programme workspace', { timeout: 15000 }, () => {
+  it('keeps timeline details and its editor on the chosen placement when two groups share a catalogue module', async () => {
+    const api = await import('@/lib/curriculumApi');
+    const moduleForm = await import('@/pages/curriculum/shared/entities/moduleForm');
+    vi.clearAllMocks();
+    const secondGroup = { ...groups[0], id: 'GROUP-2', name: 'Group B', coach: 'Coach Two' };
+    const placements = [groups[0], secondGroup].map((group, index) => ({
+      ...modules[0], id: `PLACEMENT-${index + 1}`, moduleCatalogueId: 'MOD-SHARED',
+      groupId: group.id, group: group.name, tutor: `Placement Tutor ${index + 1}`,
+      startDate: '2026-09-07', endDate: '2026-09-28', sessionsNumber: 2,
+      weeklySchedule: [{ day: 'Monday', startTime: '09:00', endTime: '11:00' }],
+      sessionHolidays: [{ id: `H${index + 1}`, label: `Holiday ${index + 1}`, startDate: '2026-09-14', endDate: '2026-09-20' }],
+    }));
+    vi.mocked(api.fetchCurriculumProgrammeDetailShell).mockResolvedValueOnce({
+      schema: 'curriculum', programme, flat: { cohorts, groups: [groups[0], secondGroup], groupIds: ['GROUP-1', 'GROUP-2'], weekTemplates: [] },
+    });
+    vi.mocked(api.fetchCurriculumProgrammeDetailModules).mockResolvedValueOnce({ schema: 'curriculum', flat: {
+      modules: placements,
+      sessions: [groups[0], secondGroup].map((group, index) => ({
+        id: `S${index + 1}`, moduleCatalogueId: 'MOD-SHARED', groupId: group.id, cohortId: cohorts[0].id,
+        module: modules[0].name, programme: programme.name, title: `Group ${index + 1} session`, date: '2026-09-21',
+        skippedHolidays: ['2026-09-14'], week: 1, startTime: '09:00', endTime: '11:00',
+      } as CurriculumSession)),
+    } });
+    // Observe the record passed to the existing editor without mounting its
+    // scheduling side effects; the form's own mocked tests cover its saves.
+    const target = vi.spyOn(moduleForm, 'moduleFormTarget').mockReturnValue(null);
+    try {
+      await renderEmbeddedWorkspace();
+      await screen.findByRole('button', { name: 'Sept 2026 2 groups' });
+      await userEvent.click(screen.getByRole('button', { name: 'Sept 2026 2 groups' }));
+      const bars = screen.getAllByRole('link', { name: /Data Foundations.*7 Sept/ });
+      expect(bars).toHaveLength(2);
+      await userEvent.hover(bars[1]);
+      const preview = screen.getByRole('dialog', { name: 'Data Foundations details' });
+      expect(preview).toHaveTextContent('Placement Tutor 2');
+      expect(preview).toHaveTextContent('Coach Two'); expect(preview).toHaveTextContent('Holiday 2');
+      expect(preview).toHaveTextContent('Group 2 session');
+      expect(preview).not.toHaveTextContent('Placement Tutor 1'); expect(preview).not.toHaveTextContent('Group 1 session');
+      await userEvent.click(bars[1]);
+      await userEvent.click(within(screen.getByRole('dialog', { name: 'Choose What To Edit' })).getByRole('button', { name: /Edit schedule assignment/ }));
+      expect(target).toHaveBeenCalledWith(expect.objectContaining({ id: 'PLACEMENT-2', moduleCatalogueId: 'MOD-SHARED', groupId: 'GROUP-2' }));
+    } finally { target.mockRestore(); }
+  });
+
+  it('embeds the existing programme data with seven primary sections and retains additional tools', async () => {
+    const api = await import('@/lib/curriculumApi');
+    vi.clearAllMocks();
+    await renderEmbeddedWorkspace();
+    await screen.findByRole('heading', { name: 'Data Analyst' });
+    const tabs = within(screen.getByRole('tablist', { name: 'Programme sections' }));
+    expect(tabs.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Overview', 'Cohorts', 'Groups', 'Modules', 'KSB Coverage', 'Reviews', 'Learners']);
+    expect(screen.queryByRole('link', { name: /Open full programme workspace/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Refresh selected programme' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit programme' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Manage Cohorts & Groups' })).toBeInTheDocument();
+    expect(screen.getByText('Guided learning hours').nextElementSibling).toHaveTextContent('Not provided');
+    expect(screen.getByRole('region', { name: 'Delivery size' })).toHaveTextContent('Cohorts1Groups1Modules2Learners12');
+    await userEvent.click(tabs.getByRole('tab', { name: 'Learners' }));
+    await screen.findByRole('heading', { name: /Learners in Data Analyst/ });
+    expect(api.fetchCurriculumScopeLearnerRoster).toHaveBeenCalledWith('programme', 'PROG-DATA', expect.objectContaining({ learnerStatus: 'all' }), expect.anything());
+    await userEvent.click(screen.getByText('More programme tools'));
+    expect(screen.getByRole('button', { name: 'Sessions' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Achievement KSBs' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Quality' })).toBeInTheDocument();
+  });
+
+  it('does not claim successful readiness when coverage is unavailable', async () => {
+    const api = await import('@/lib/curriculumApi');
+    vi.mocked(api.fetchCurriculumProgrammeKsbCoverageSummary).mockRejectedValue(new Error('Coverage offline'));
+    try {
+      await renderEmbeddedWorkspace();
+      await screen.findByRole('heading', { name: 'Data Analyst' });
+      expect(await screen.findByText('Coverage offline')).toBeInTheDocument();
+      expect(screen.getByText(/not attached to a live cohort/)).toBeInTheDocument();
+      expect(screen.queryByText('Every group has a coach, every module has a tutor, every week has content and every KSB is mapped.')).not.toBeInTheDocument();
+    } finally {
+      vi.mocked(api.fetchCurriculumProgrammeKsbCoverageSummary).mockResolvedValue(null as never);
+    }
+  });
+
+  it('synchronizes browser metadata without a refresh cycle and notifies the browser after the retained quality refresh', async () => {
+    const api = await import('@/lib/curriculumApi');
+    const { default: ProgrammeDetailPage } = await import('../page');
+    vi.clearAllMocks();
+    const onReloaded = vi.fn(async () => undefined);
+    const view = render(<MemoryRouter><ProgrammeDetailPage programmeId="PROG-DATA" programmeSnapshot={programme} onReloaded={onReloaded} embedded /></MemoryRouter>);
+    await screen.findByRole('heading', { name: 'Data Analyst' });
+    const updated = { ...programme, name: 'Updated Data Analyst' };
+    vi.mocked(api.fetchCurriculumProgrammeDetailShell).mockResolvedValueOnce({ schema: 'test', programme: updated, flat: { cohorts, groups, groupIds: ['GROUP-1'], weekTemplates: [] } });
+    view.rerender(<MemoryRouter><ProgrammeDetailPage programmeId="PROG-DATA" programmeSnapshot={updated} onReloaded={onReloaded} embedded /></MemoryRouter>);
+    await screen.findByRole('heading', { name: 'Updated Data Analyst' });
+    expect(onReloaded).not.toHaveBeenCalled();
+    expect(api.fetchCurriculumProgrammeDetailShell).toHaveBeenCalledTimes(2);
+    vi.mocked(api.fetchCurriculumProgrammeDetailShell).mockResolvedValueOnce({ schema: 'test', programme: updated, flat: { cohorts, groups, groupIds: ['GROUP-1'], weekTemplates: [] } });
+    await userEvent.click(screen.getByText('More programme tools'));
+    await userEvent.click(screen.getByRole('button', { name: 'Quality', exact: true }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Refresh checks' }));
+    await vi.waitFor(() => expect(onReloaded).toHaveBeenCalledTimes(1));
+    expect(api.fetchCurriculumProgrammeDetailShell).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps late responses for the previous programme out of the selected workspace', async () => {
+    const api = await import('@/lib/curriculumApi');
+    const { default: ProgrammeDetailPage } = await import('../page');
+    let resolveOld!: (value: Awaited<ReturnType<typeof api.fetchCurriculumProgrammeDetailShell>>) => void;
+    vi.mocked(api.fetchCurriculumProgrammeDetailShell).mockReturnValueOnce(new Promise(resolve => { resolveOld = resolve; }));
+    const view = await renderEmbeddedWorkspace();
+    await vi.waitFor(() => expect(resolveOld).toBeTypeOf('function'));
+    const nextProgramme = { ...programme, id: 'PROG-NEXT', sourceId: 'PROG-NEXT', name: 'Second Programme' };
+    vi.mocked(api.fetchCurriculumProgrammeDetailShell).mockResolvedValueOnce({ schema: 'test', programme: nextProgramme, flat: { cohorts: [], groups: [], groupIds: [], weekTemplates: [] } });
+    view.rerender(<MemoryRouter initialEntries={['/curriculum/programmes']}><ProgrammeDetailPage key="PROG-NEXT" programmeId="PROG-NEXT" embedded /></MemoryRouter>);
+    await screen.findByRole('heading', { name: 'Second Programme' });
+    await act(async () => { resolveOld({ schema: 'test', programme, flat: { cohorts, groups, groupIds: ['GROUP-1'], weekTemplates: [] } }); });
+    expect(screen.getByRole('heading', { name: 'Second Programme' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Data Analyst' })).not.toBeInTheDocument();
+  });
+
   it('shows KSB summary counts while modules are still pending and loads the matrix only on its tab', async () => {
     const api = await import('@/lib/curriculumApi');
     vi.clearAllMocks();
