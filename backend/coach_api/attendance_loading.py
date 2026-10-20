@@ -5,9 +5,9 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 
 from .auth import coach_access_required
-from .attendance_selected import selected_rows
+from .bulk_register import selected_rows, group_contracts
 from .attendance_timing import AttendanceTiming
-from .attendance_group import group_contracts, compact_recent
+from .attendance_group import compact_recent
 from .bulk_attendance import BulkError, delivery_occurrences
 from learner_api.attendance_lectures import _aware
 
