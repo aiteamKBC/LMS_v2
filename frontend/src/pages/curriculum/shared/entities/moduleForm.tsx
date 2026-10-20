@@ -398,7 +398,7 @@ export function ModuleFormDrawer({
   // replaced. The token is the Module Builder's own: this drawer writes through
   // the same structure save, so a Builder save makes an open drawer stale and
   // the other way round.
-  const guard = useRecordGuard<ModuleFormTarget>('module', module?.id, open);
+  const guard = useRecordGuard<ModuleFormTarget>('module', module?.id, open, module);
   // The seeding effect below has to depend on `groups`, `cohorts` and
   // `programmes` to resolve the module's parent chain, and those arrays get a new
   // identity whenever the page refreshes them -- the Module Builder in particular

@@ -4,7 +4,6 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CurriculumApiError,
-  fetchCurriculumRevisions,
   updateCurriculumCohort,
   updateCurriculumGroup,
   updateCurriculumModule,
@@ -12,6 +11,7 @@ import {
 import type { CurriculumCohort, CurriculumGroup, CurriculumProgramme } from '@/lib/curriculumApi';
 import { CohortFormDrawer, GroupFormDrawer } from '../forms';
 import { ModuleFormDrawer, type ModuleFormTarget } from '../moduleForm';
+import { fetchCurriculumRecordSnapshot } from '../recordSnapshot';
 
 /**
  * Two editors saving before either one polls.
@@ -33,11 +33,18 @@ vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
   closeCurriculumLoading: vi.fn(),
 }));
 
+// The record and its token, read together when a drawer opens.
+vi.mock('../recordSnapshot', () => ({ fetchCurriculumRecordSnapshot: vi.fn() }));
+
+/** Answer the drawer's opening read with this record at this version. */
+function storedAt(record: unknown, revision = 'rev-10') {
+  vi.mocked(fetchCurriculumRecordSnapshot).mockResolvedValue({ revision, record } as never);
+}
+
 // Partial, so `recordConflict` and `guardedInput` -- the two pieces of the
 // guard that live in the API module -- are the real ones under test.
 vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
-  fetchCurriculumRevisions: vi.fn(),
   updateCurriculumCohort: vi.fn(),
   updateCurriculumGroup: vi.fn(),
   updateCurriculumModule: vi.fn(),
@@ -85,11 +92,11 @@ function conflict(record: unknown, currentRevision: string, kind = 'cohort') {
   });
 }
 
-function renderCohortDrawer() {
+function renderCohortDrawer(cohort = storedCohort()) {
   render(
     <CohortFormDrawer
       open
-      cohort={storedCohort()}
+      cohort={cohort}
       programmes={programmes}
       holidays={[]}
       onClose={vi.fn()}
@@ -107,13 +114,13 @@ const sentBodies = () => vi.mocked(updateCurriculumCohort).mock.calls.map(call =
 describe('cohort drawer under a stale save', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(fetchCurriculumRevisions).mockResolvedValue({ cohort: { 'COHORT-1': 'rev-10' } });
+    storedAt(storedCohort());
   });
 
   it('sends the version it read', async () => {
     vi.mocked(updateCurriculumCohort).mockResolvedValue({ updated: true, id: 'COHORT-1', revision: 'rev-11' });
     renderCohortDrawer();
-    await waitFor(() => expect(fetchCurriculumRevisions).toHaveBeenCalled());
+    await waitFor(() => expect(fetchCurriculumRecordSnapshot).toHaveBeenCalled());
 
     await userEvent.clear(nameField());
     await userEvent.type(nameField(), 'B renamed it');
@@ -131,7 +138,7 @@ describe('cohort drawer under a stale save', () => {
       .mockRejectedValueOnce(conflict(storedCohort({ durationMonths: 18 }), 'rev-11'))
       .mockResolvedValueOnce({ updated: true, id: 'COHORT-1', revision: 'rev-12' });
     renderCohortDrawer();
-    await waitFor(() => expect(fetchCurriculumRevisions).toHaveBeenCalled());
+    await waitFor(() => expect(fetchCurriculumRecordSnapshot).toHaveBeenCalled());
 
     await userEvent.clear(nameField());
     await userEvent.type(nameField(), 'B renamed it');
@@ -152,7 +159,7 @@ describe('cohort drawer under a stale save', () => {
       .mockRejectedValueOnce(conflict(storedCohort({ name: 'A renamed it' }), 'rev-11'))
       .mockResolvedValueOnce({ updated: true, id: 'COHORT-1', revision: 'rev-12' });
     renderCohortDrawer();
-    await waitFor(() => expect(fetchCurriculumRevisions).toHaveBeenCalled());
+    await waitFor(() => expect(fetchCurriculumRecordSnapshot).toHaveBeenCalled());
 
     await userEvent.clear(nameField());
     await userEvent.type(nameField(), 'B renamed it');
@@ -175,7 +182,7 @@ describe('cohort drawer under a stale save', () => {
       .mockRejectedValueOnce(conflict(storedCohort({ durationMonths: 36 }), 'rev-14'))
       .mockRejectedValue(conflict(storedCohort({ durationMonths: 42 }), 'rev-15'));
     renderCohortDrawer();
-    await waitFor(() => expect(fetchCurriculumRevisions).toHaveBeenCalled());
+    await waitFor(() => expect(fetchCurriculumRecordSnapshot).toHaveBeenCalled());
 
     await userEvent.clear(nameField());
     await userEvent.type(nameField(), 'B renamed it');
@@ -192,20 +199,75 @@ describe('cohort drawer under a stale save', () => {
     expect(nameField()).toHaveValue('B renamed it');
   });
 
-  it('saves unguarded when the version could not be read', async () => {
-    // A token that cannot be read must not stop somebody saving. They fall back
-    // to the write this screen did before any of this existed.
-    vi.mocked(fetchCurriculumRevisions).mockRejectedValue(new Error('offline'));
-    vi.mocked(updateCurriculumCohort).mockResolvedValue({ updated: true, id: 'COHORT-1' });
+  it('refuses to save unchecked when the version could not be read', async () => {
+    // Saving without a token is how a stale copy overwrites a colleague, so a
+    // read that fails (and fails again at save time) writes nothing and says so.
+    vi.mocked(fetchCurriculumRecordSnapshot).mockRejectedValue(new Error('offline'));
     renderCohortDrawer();
-    await waitFor(() => expect(fetchCurriculumRevisions).toHaveBeenCalled());
+    await waitFor(() => expect(fetchCurriculumRecordSnapshot).toHaveBeenCalled());
 
     await userEvent.clear(nameField());
     await userEvent.type(nameField(), 'B renamed it');
     await userEvent.click(saveButton());
 
+    expect(await screen.findByText(/nothing was saved/i)).toBeInTheDocument();
+    expect(updateCurriculumCohort).not.toHaveBeenCalled();
+    expect(nameField()).toHaveValue('B renamed it');
+  });
+
+  it('saves unguarded when the server says the record has no version', async () => {
+    // '' from the server is "cannot be fingerprinted", not a failed read: that
+    // record saves as it always has.
+    storedAt(null, '');
+    vi.mocked(updateCurriculumCohort).mockResolvedValue({ updated: true, id: 'COHORT-1' });
+    renderCohortDrawer();
+    await waitFor(() => expect(fetchCurriculumRecordSnapshot).toHaveBeenCalled());
+
+    await userEvent.click(saveButton());
+
     await waitFor(() => expect(updateCurriculumCohort).toHaveBeenCalled());
     expect(sentBodies()[0]).not.toHaveProperty('expectedRevision');
+  });
+});
+
+/**
+ * The reported overwrite: A saves, B's list still shows the cohort as it was,
+ * B opens it, changes nothing, and presses Save. The token B gets is fresh, so
+ * before the record was read with it the server accepted B's stale values and
+ * A's save vanished.
+ */
+describe('cohort drawer opened from a stale list', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // What A saved, at the version A's save produced.
+    storedAt(storedCohort({ name: 'A renamed it', durationMonths: 18 }), 'rev-11');
+    vi.mocked(updateCurriculumCohort).mockResolvedValue({ updated: true, id: 'COHORT-1', revision: 'rev-12' });
+  });
+
+  it('shows the saved values, not the stale row', async () => {
+    renderCohortDrawer(storedCohort());
+    await waitFor(() => expect(nameField()).toHaveValue('A renamed it'));
+  });
+
+  it('never writes the stale row back when the reader changed nothing', async () => {
+    renderCohortDrawer(storedCohort());
+    // Pressed at once, before the stored record has even arrived.
+    await userEvent.click(saveButton());
+
+    await waitFor(() => expect(updateCurriculumCohort).toHaveBeenCalled());
+    expect(updateCurriculumCohort).toHaveBeenCalledTimes(1);
+    expect(sentBodies()[0]).toMatchObject({ name: 'A renamed it', durationMonths: 18, expectedRevision: 'rev-11' });
+  });
+
+  it("keeps the colleague's fields beside this reader's own change", async () => {
+    renderCohortDrawer(storedCohort());
+    await waitFor(() => expect(nameField()).toHaveValue('A renamed it'));
+    await userEvent.clear(nameField());
+    await userEvent.type(nameField(), 'B renamed it');
+    await userEvent.click(saveButton());
+
+    await waitFor(() => expect(updateCurriculumCohort).toHaveBeenCalled());
+    expect(sentBodies()[0]).toMatchObject({ name: 'B renamed it', durationMonths: 18, expectedRevision: 'rev-11' });
   });
 });
 
@@ -232,7 +294,7 @@ function storedGroup(overrides: Partial<CurriculumGroup> = {}): CurriculumGroup 
 describe('group drawer under a stale save', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(fetchCurriculumRevisions).mockResolvedValue({ group: { 'GROUP-1': 'rev-10' } });
+    storedAt(storedGroup());
   });
 
   function renderGroupDrawer() {
@@ -257,7 +319,7 @@ describe('group drawer under a stale save', () => {
       .mockRejectedValueOnce(conflict(storedGroup({ startTime: '14:00', endTime: '16:00' }), 'rev-11', 'group'))
       .mockResolvedValueOnce({ updated: true, id: 'GROUP-1', revision: 'rev-12' });
     renderGroupDrawer();
-    await waitFor(() => expect(fetchCurriculumRevisions).toHaveBeenCalled());
+    await waitFor(() => expect(fetchCurriculumRecordSnapshot).toHaveBeenCalled());
 
     await userEvent.click(screen.getByRole('button', { name: 'Tue' }));
     await userEvent.click(screen.getByRole('button', { name: /save group/i }));
@@ -305,7 +367,7 @@ function storedModule(overrides: Partial<ModuleFormTarget> = {}): ModuleFormTarg
 describe('module drawer under a stale save', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(fetchCurriculumRevisions).mockResolvedValue({ module: { 'MOD-1': 'rev-10' } });
+    storedAt(storedModule());
   });
 
   function renderModuleDrawer() {
@@ -332,7 +394,7 @@ describe('module drawer under a stale save', () => {
       .mockRejectedValueOnce(conflict(storedModule({ status: 'active' }), 'rev-11', 'module'))
       .mockResolvedValueOnce({ updated: true, module: storedModule() as never, revision: 'rev-12' });
     renderModuleDrawer();
-    await waitFor(() => expect(fetchCurriculumRevisions).toHaveBeenCalled());
+    await waitFor(() => expect(fetchCurriculumRecordSnapshot).toHaveBeenCalled());
 
     const name = screen.getByPlaceholderText('e.g. Data Modelling');
     await userEvent.clear(name);

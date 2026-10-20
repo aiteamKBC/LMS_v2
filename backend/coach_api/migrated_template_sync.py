@@ -42,7 +42,7 @@ def lock_template_family(family):
 
 def snapshot_fingerprint(snapshot):
     # Exclude bookkeeping and retained field history from the definition version.
-    return fingerprint({key: snapshot.get(key) for key in ("sections", "name", "templateSource")})
+    return fingerprint({key: snapshot.get(key) for key in ("sections", "name", "templateSource", "otjh")})
 
 
 def snapshot_state(overlay):
@@ -72,7 +72,7 @@ def merge_snapshot(previous, answers, template, family):
     if template.review_family != family or (previous.get("templateSource") or {}).get("family", family) != family:
         raise TemplateSyncConflict("The resolved template does not match this review family.")
     try:
-        validate_managed_definition(template.definition_json)
+        validate_managed_definition(template.definition_json, family=family)
     except ValueError as exc:
         raise TemplateSyncConflict("The resolved migrated template is invalid. Ask a template administrator to correct it.") from exc
     latest = snapshot_for(template)

@@ -9,8 +9,10 @@ export interface MigratedField {
   mandatory?: boolean; description?: string; options?: string[];
   ifTrue?: MigratedField[]; ifFalse?: MigratedField[];
   semanticKey?: 'meeting_summary';
+  respondentRoles?: Array<'participant' | 'employer'>;
 }
 export interface MigratedDefinition {
+  otjh?: { expectedHours: number; countsTowardsOtjh: boolean };
   sections: { key: string; title: string; order: number; fields: MigratedField[] }[];
 }
 export interface MigratedTemplate {

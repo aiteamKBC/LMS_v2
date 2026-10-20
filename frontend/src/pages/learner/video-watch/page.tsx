@@ -58,7 +58,8 @@ import { AssignmentSubmissionWizard, type AssignmentAnswers } from './Assignment
 import { AssignmentBriefPanel } from './AssignmentBriefSections';
 import { useSavedAssignmentAccess } from './useSavedAssignmentAccess';
 import { absoluteDocUrl, resolveDocEmbed } from '@/lib/docEmbed';
-import { normalizeReadingHtml } from '@/lib/readingHtml';
+import { normalizeAuthoredHtml, sanitizeCurriculumHtml } from '@/lib/curriculumHtml';
+import { AuthoredContent } from '@/components/feature/AuthoredContent';
 import { downloadReadingPdf, readingFiles } from './readingDownloads';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
 import {
@@ -1047,7 +1048,7 @@ export default function ComponentViewPage() {
               {component.description && (
                 <div className="mt-4 rounded-xl border border-background-300 bg-white p-4">
                   <h2 className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-2">Description</h2>
-                  <p className="text-sm text-foreground-700 leading-relaxed whitespace-pre-line">{component.description}</p>
+                  <AuthoredContent value={component.description} className="text-sm text-foreground-700 leading-relaxed" />
                 </div>
               )}
 
@@ -1507,14 +1508,6 @@ const DEFAULT_READING_PREFERENCES: ReadingPreferences = {
   ruler: false,
 };
 
-/** A saved reading is the authored HTML plus the learner's <mark>s. DOMPurify's
- * defaults drop <iframe>, so every embedded video vanished once a learner had
- * saved highlights; keep the embeds the live reading shows. */
-const SAVED_READING_SANITIZE = {
-  ADD_TAGS: ['iframe'],
-  ADD_ATTR: ['allow', 'allowfullscreen', 'frameborder', 'scrolling', 'target'],
-};
-
 /** What to tell the learner when a file request fails. The server's own
  * message ("Learning activities open on 1 October…", "This file is empty…")
  * says what to do; a bare status code does not. */
@@ -1644,16 +1637,18 @@ function AccessibleReadingMaterial({
   onReady?: () => void;
 }) {
   const componentId = component.componentId || title;
-  const sourceHtml = normalizeReadingHtml(component.contentHtml || '');
+  const sourceHtml = normalizeAuthoredHtml(component.contentHtml || '');
   const files = useMemo(() => readingFiles(component.resourceUrl, component.fileName, sourceHtml, component.files), [component.resourceUrl, component.fileName, sourceHtml, component.files]);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [downloadError, setDownloadError] = useState('');
   const savedDocument = readStoredJson(readingStorageKey(componentId, 'document'), { sourceHtml: '', html: '' });
-  const [html, setHtml] = useState(
-    savedDocument.sourceHtml === sourceHtml && savedDocument.html
-      ? DOMPurify.sanitize(savedDocument.html, SAVED_READING_SANITIZE)
-      : sourceHtml,
-  );
+  // The authored HTML and a saved copy with the learner's <mark>s go through
+  // the same curriculum sanitiser: scripts, event handlers and unsafe links
+  // never reach the page, while embeds, tables and file links stay.
+  const [html, setHtml] = useState(() => sanitizeCurriculumHtml(
+    savedDocument.sourceHtml === sourceHtml && savedDocument.html ? savedDocument.html : sourceHtml,
+    { openLinksInNewTab: true },
+  ));
   // React 19 re-applies innerHTML whenever this object's identity changes, so a
   // fresh literal on every render (the parent re-renders each second for the
   // activity timer) would tear down and recreate any embedded <video>/<iframe>.
@@ -1803,7 +1798,7 @@ function AccessibleReadingMaterial({
           <div
             ref={contentRef}
             data-reading-text
-            className="relative z-0 max-w-none [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:font-heading [&_h2]:text-lg [&_h2]:font-bold [&_h3]:mb-1.5 [&_h3]:mt-3 [&_h3]:font-heading [&_h3]:text-base [&_h3]:font-semibold [&_p]:mb-3 [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5 [&_li]:mb-1 [&_strong]:font-semibold [&_em]:italic [&_a]:text-blue-600 [&_a]:underline"
+            className="curriculum-html relative z-0 max-w-none [&_h1]:font-heading [&_h2]:font-heading [&_h3]:font-heading"
             dangerouslySetInnerHTML={innerHtml}
           />
         </div>
@@ -2604,12 +2599,22 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
     return () => { clearTimeout(timer); window.removeEventListener('focus', tick); };
   }, [sessionEnd, preview]);
   if (contentKind === 'video' && parsed) {
+    // The video's "Component content" from the Module Builder, shown under the
+    // player. Its own field: title, description and video URL are unchanged.
+    const lessonContent = component.lessonContentHtml?.trim() ? component.lessonContentHtml : '';
     return (
-      <div className="rounded-2xl overflow-hidden bg-black shadow-sm ring-1 ring-background-300">
-        <div className="relative w-full mx-auto" style={{ aspectRatio: '16 / 9', maxHeight: 'calc(100vh - 14rem)' }}>
-          <VideoPlayer parsed={parsed} title={title} onDuration={onDuration} onProgress={onProgress} onPlayingChange={onPlayingChange} onEnded={onEnded} onUnsupported={onUnsupported} />
+      <>
+        <div className="rounded-2xl overflow-hidden bg-black shadow-sm ring-1 ring-background-300">
+          <div className="relative w-full mx-auto" style={{ aspectRatio: '16 / 9', maxHeight: 'calc(100vh - 14rem)' }}>
+            <VideoPlayer parsed={parsed} title={title} onDuration={onDuration} onProgress={onProgress} onPlayingChange={onPlayingChange} onEnded={onEnded} onUnsupported={onUnsupported} />
+          </div>
         </div>
-      </div>
+        {lessonContent && (
+          <section aria-label="Lesson content" className="mt-4 rounded-2xl border border-background-300 bg-white p-5 text-sm leading-relaxed text-foreground-800">
+            <AuthoredContent value={lessonContent} />
+          </section>
+        )}
+      </>
     );
   }
 
