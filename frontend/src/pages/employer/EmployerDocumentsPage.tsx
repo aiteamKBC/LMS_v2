@@ -14,6 +14,7 @@ import { PageContainer } from '@/components/ui/PageContainer';
 import { fetchEmployerDocuments, type EmployerDocuments } from '@/api/employerPortal';
 import { btnSecondary } from '@/pages/users/components/ui';
 import { SignModal } from './EmployerDocumentRows';
+import { EmployerDocumentPreview } from './EmployerDocumentPreview';
 import { documentState as stateOf, useEmployerSigning } from './useEmployerSigning';
 import { EmployerDocumentsTable } from './EmployerDocumentsTable';
 import { useEmployerPortalChrome } from './employerPortalNav';
@@ -65,7 +66,8 @@ export default function EmployerDocumentsPage() {
   const signingActions = useEmployerSigning(employerId, load);
   const { shell } = useEmployerPortalChrome(employerId, data?.employer.name);
 
-  const items = data?.items ?? [];
+  // This document queue starts at signing readiness; unfinished reviews stay in Progress reviews.
+  const items = (data?.items ?? []).filter(item => item.signable || item.signed);
   const counts = { 'to-sign': 0, waiting: 0, signed: 0, all: items.length };
   for (const item of items) counts[stateOf(item)] += 1;
 
@@ -132,6 +134,9 @@ export default function EmployerDocumentsPage() {
           )}
         </div>
       </PageContainer>
+
+      {signingActions.preview && <EmployerDocumentPreview employerId={employerId}
+        target={signingActions.preview} onClose={signingActions.closePreview} />}
 
       {signingActions.signing && data && (
         <SignModal

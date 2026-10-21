@@ -194,7 +194,7 @@ def planned_meetings(profile, window_start, window_end, *, templates=None, overl
         review = _serialize_review(row, {})
         reference = review["aptemReviewId"]
         family = review_family(review["type"])
-        if not reference or reference in seen or not family:
+        if not reference or reference in seen or family not in {"MCM", "PR", "PR_SKILLS_RADAR"}:
             continue
         seen.add(reference)
         overlay = overlays.get(row["id"])

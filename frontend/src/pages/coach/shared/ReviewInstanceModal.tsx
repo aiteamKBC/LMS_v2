@@ -470,14 +470,28 @@ export function ReviewInstanceModal({
   );
   const advisorSignatureSaved = Boolean(definition && advisorSignature?.required && advisorSignature.signed);
   const requiredSignatures = definition ? Object.values(definition.signatures).filter(state => state.required) : [];
+  const personalSupportForm = Boolean(definition?.migratedForm && definition.template.reviewTypeCode === 'aptem_psp');
   const allRequiredSignaturesSaved = requiredSignatures.length > 0 && requiredSignatures.every(state => state.signed);
   const waitingForOtherSignatures = Boolean(
     definition
+    && !personalSupportForm
     && isSignatureStage
     && !advisorSignaturePending
     && !allRequiredSignaturesSaved,
   );
   const formReadOnly = isViewingAsCoach || isImportedReadOnly || isSignatureStage || templateSyncConflict;
+  // PSP appointments can be managed while their imported form remains read-only.
+  const independentBooking = definition?.source === 'aptem' && definition.booking?.formRequired === false;
+  const hasImportedBooking = Boolean(definition?.migratedForm || independentBooking);
+  const bookingReadOnly = independentBooking
+    ? Boolean(isViewingAsCoach || definition?.previewOnly || templateSyncConflict || definition?.booking?.conflict
+      || isSignatureStage || definition?.instance.completedAt
+      || ['in-progress', 'awaiting-signature', 'completed', 'cancelled'].includes(
+        definition?.booking?.status || definition?.localStatus || definition?.instance.status || ''))
+    : formReadOnly;
+  const displayedReviewStatus = independentBooking
+    ? definition?.booking?.status || definition?.localStatus || definition?.instance.status
+    : definition?.localStatus;
   // Admin previews can show the action without an initialized overlay. The
   // separate execution gate still requires the assigned coach and eligibility.
   const showMigratedCoachActions = Boolean(isViewingAsCoach && definition && !templateSyncConflict
@@ -552,6 +566,7 @@ export function ReviewInstanceModal({
         if (answersRef.current[key] === answers[key]) editedFieldsRef.current.delete(key);
       }
       setDefinition(updated);
+      if (personalSupportForm) onStatusChanged?.(updated.instance.status);
       if (meetingSummaryFieldId) {
         const savedCurrentSummary = answersRef.current[meetingSummaryFieldId] === summaryValueAtSave;
         setSummaryDraftSaved(savedCurrentSummary);
@@ -628,7 +643,7 @@ export function ReviewInstanceModal({
   };
 
   const bookMigrated = async () => {
-    if (!definition?.migratedForm || !(definition.booking?.canBook || definition.booking?.canAttach || definition.booking?.canReschedule) || formReadOnly || bookingInFlightRef.current) return;
+    if (!definition || !hasImportedBooking || !(definition.booking?.canBook || definition.booking?.canAttach || definition.booking?.canReschedule) || bookingReadOnly || bookingInFlightRef.current) return;
     bookingInFlightRef.current = true;
     setSaving(true);
     setError(null);
@@ -649,7 +664,7 @@ export function ReviewInstanceModal({
         readOnly: updated.readOnly, instance: { ...current.instance, status: updated.instance.status },
       } : updated);
       setBookingOpen(false);
-      onStatusChanged?.(updated.localStatus || updated.instance.status);
+      onStatusChanged?.(updated.booking?.status || updated.localStatus || updated.instance.status);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to book this migrated review.');
     } finally {
@@ -844,6 +859,8 @@ export function ReviewInstanceModal({
                 ? 'Open the approved form to begin this review.'
                 : definition?.migratedForm
                 ? 'Work through the review form and save your answers.'
+                : independentBooking
+                ? 'Manage the meeting booking and read the saved review summary.'
                 : isSummaryOnly
                 ? 'Read the saved review summary.'
                 : 'Work through each Curriculum-defined step, then save or complete the review.'}</p>
@@ -869,6 +886,8 @@ export function ReviewInstanceModal({
             ? 'The review form could not be opened. Use Retry below.'
             : definition?.migratedForm || canInitializeMigrated
             ? 'Work through the review form and save your answers.'
+            : independentBooking
+            ? 'Manage the meeting booking and read the saved review summary.'
             : 'Complete the Curriculum-defined review before closing it.'}
           busy={busy}
           onClose={onClose}
@@ -934,13 +953,13 @@ export function ReviewInstanceModal({
             {definition.migratedForm && isSignatureStage && !isViewingAsCoach && (
               <section aria-label="Reopen review" className="rounded-xl border border-amber-200 bg-amber-50 p-4">
                 <p className="font-semibold text-amber-950">Correct this review</p>
-                <p className="mt-1 text-sm text-amber-900">Reopen the form and collect new signatures. Previous versions are retained. Recorded hours and Monthly Log signatures stay unchanged.</p>
+                <p className="mt-1 text-sm text-amber-900">{personalSupportForm ? 'Reopen the form to correct its answers. Previous versions are retained.' : 'Reopen the form and collect new signatures. Previous versions are retained. Recorded hours and Monthly Log signatures stay unchanged.'}</p>
                 <button type="button" disabled={busy} onClick={() => setShowReopenConfirmation(true)}
                   className="mt-3 min-h-11 rounded-lg bg-amber-700 px-4 py-2 font-semibold text-white disabled:opacity-50">Reopen review</button>
               </section>
             )}
             {definition.migratedForm && (
-              <MigratedReviewHistory entries={definition.reopenHistory}
+              <MigratedReviewHistory entries={definition.reopenHistory} signatureFree={personalSupportForm}
                 onDownload={number => downloadMigratedReviewRevision(definition.instance.id, number)} />
             )}
             {initializationFailed && !isViewingAsCoach ? (
@@ -951,14 +970,14 @@ export function ReviewInstanceModal({
                 Retry loading form
               </button>
             ) : null}
-            {definition.migratedForm && definition.booking?.booked ? (
+            {hasImportedBooking && definition.booking?.booked ? (
               <section aria-label="Migrated review meeting" className="rounded-xl border border-primary-200 bg-primary-50 p-4 text-sm">
                 <p className="font-semibold text-primary-900">Meeting booked in LMS</p>
                 <p className="mt-1 text-primary-800">{definition.booking.scheduledDate} at {definition.booking.scheduledTime} · {definition.booking.durationMinutes} minutes</p>
                 {definition.booking.meetingLink ? <a href={definition.booking.meetingLink} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block font-semibold text-primary-700 underline">Join Teams</a> : null}
               </section>
             ) : null}
-            {definition.migratedForm && definition.booking?.eventKey && definition.booking.syncState === 'synced' ? (
+            {definition.migratedForm && !personalSupportForm && definition.booking?.eventKey && definition.booking.syncState === 'synced' ? (
               <MigratedMeetingIntelligence
                 key={`${definition.instance.id}:${migratedIntelligenceRevision}`}
                 instanceId={definition.instance.id}
@@ -977,10 +996,10 @@ export function ReviewInstanceModal({
             {definition.migratedForm && definition.booking?.canAttach && !formReadOnly ? (
               <button type="button" onClick={() => { void bookMigrated(); }} disabled={busy} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">Use existing meeting</button>
             ) : null}
-            {definition.migratedForm && definition.booking?.conflict ? (
+            {hasImportedBooking && definition.booking?.conflict ? (
               <p role="alert" className="text-sm text-red-700">This review has a conflicting calendar association. Ask an administrator to resolve it before booking.</p>
             ) : null}
-            {definition.migratedForm && (definition.booking?.canBook || definition.booking?.canReschedule) && !formReadOnly ? (
+            {hasImportedBooking && (definition.booking?.canBook || definition.booking?.canReschedule) && !bookingReadOnly ? (
               <section aria-label={definition.booking.canReschedule ? 'Reschedule migrated review meeting' : 'Book migrated review meeting'} className="rounded-xl border border-primary-200 bg-white p-4">
                 {!bookingOpen ? <button type="button" onClick={() => { setBookingDate(definition.booking?.scheduledDate || definition.instance.targetDate); setBookingTime(definition.booking?.scheduledTime || '09:00'); setBookingDuration(definition.booking?.durationMinutes || 60); setBookingOpen(true); }} disabled={busy} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{definition.booking.canReschedule ? 'Reschedule' : 'Book Meeting'}</button> : (
                   <div className="flex flex-wrap items-end gap-3">
@@ -993,13 +1012,16 @@ export function ReviewInstanceModal({
                 )}
               </section>
             ) : null}
-            {definition.migratedForm && definition.localStatus === 'scheduled' && definition.booking?.booked && !formReadOnly ? (
+            {definition.migratedForm && !personalSupportForm && definition.localStatus === 'scheduled' && definition.booking?.booked && !formReadOnly ? (
               <button type="button" onClick={() => { void startMigrated(); }} disabled={busy}
                 className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
                 Start migrated review (optional)
               </button>
             ) : null}
-            {definition.migratedForm && definition.localStatus === 'not-scheduled' && !isViewingAsCoach ? (
+            {personalSupportForm && !formReadOnly ? (
+              <p className="text-sm text-primary-800">Save your answers to complete this Personal Support Plan once all required questions are answered.</p>
+            ) : null}
+            {definition.migratedForm && !personalSupportForm && definition.localStatus === 'not-scheduled' && !isViewingAsCoach ? (
               <p className="text-sm text-amber-800">This form can be saved as a draft. Starting the review requires a scheduled state.</p>
             ) : null}
             {definition.migratedForm && definition.fieldWarnings?.length ? (
@@ -1029,8 +1051,8 @@ export function ReviewInstanceModal({
                     <AppIcon className="ri-error-warning-line mt-0.5 text-xl text-amber-600" />
                     <div>
                       <h2 id="reopen-confirmation-title" className="text-base font-bold text-foreground-900">{definition.migratedForm && definition.instance.status !== 'completed' ? 'Reopen this Review for corrections?' : 'Edit this completed Review?'}</h2>
-                      <p className="mt-2 text-sm leading-6 text-foreground-600">Reopening will clear the current signatures after recording an audit snapshot. Everyone must sign this Review again before it can be completed.</p>
-                      {definition.migratedForm && <p className="mt-2 text-sm text-foreground-600">The old signed PDF is retained. Recorded hours and Monthly Log signatures will not change.</p>}
+                      <p className="mt-2 text-sm leading-6 text-foreground-600">{personalSupportForm ? 'The completed version is retained in the review history. Save the corrected answers to complete the Personal Support Plan again.' : 'Reopening will clear the current signatures after recording an audit snapshot. Everyone must sign this Review again before it can be completed.'}</p>
+                      {definition.migratedForm && !personalSupportForm && <p className="mt-2 text-sm text-foreground-600">The old signed PDF is retained. Recorded hours and Monthly Log signatures will not change.</p>}
                     </div>
                   </div>
                   {definition.migratedForm && <div className="mt-4 space-y-3">
@@ -1039,7 +1061,7 @@ export function ReviewInstanceModal({
                         disabled={reopening} className="mt-1 block min-h-11 w-full rounded-lg border border-background-300 bg-white p-2">
                         <option value="correction-required">Correction required</option>
                         <option value="incorrect-answer">Incorrect answer</option>
-                        <option value="signature-error">Signature error</option>
+                        {!personalSupportForm && <option value="signature-error">Signature error</option>}
                         <option value="other">Other</option>
                       </select>
                     </label>
@@ -1067,6 +1089,8 @@ export function ReviewInstanceModal({
                 ? 'You can read this review in admin view-as mode. Changes must be made from the assigned Coach account.'
                 : initializationFailed
                 ? 'The review form could not be opened. Retry to load it. Saved information is unchanged.'
+                : personalSupportForm
+                ? isImportedReadOnly ? 'This completed Personal Support Plan is read-only.' : 'Save your answers. The plan completes when all required questions are answered.'
                 : canInitializeMigrated
                 ? 'An approved form is available to start this review. Its questions can update until you submit it for signatures.'
                 : isSummaryOnly
@@ -1079,9 +1103,9 @@ export function ReviewInstanceModal({
                 : `These answers are saved to this ${definition.template.name} and follow the sections/questions configured in Curriculum.`}</span>
             </div>
 
-            {definition.migratedForm || definition.previewOnly || canInitializeMigrated ? (
+            {hasImportedBooking || definition.previewOnly || canInitializeMigrated ? (
               <div className="flex flex-wrap gap-x-6 gap-y-1 text-[12px] text-foreground-600">
-                <span>Review status: <strong>{definition.localStatus ? definition.localStatus.replaceAll('-', ' ') : 'Not started'}</strong></span>
+                <span>Review status: <strong>{displayedReviewStatus ? displayedReviewStatus.replaceAll('-', ' ') : 'Not started'}</strong></span>
               </div>
             ) : null}
 
@@ -1420,11 +1444,12 @@ export function ReviewInstanceModal({
                 returned. */}
             {(definition.migratedForm && isSignatureStage) || (!definition.migratedForm && (isHistoricalPdfAvailable || (EXPORTABLE_REVIEW_TYPES.includes(definition.template.reviewTypeCode || '') && isSignatureStage))) ? (
               <>
-                {(definition.migratedForm || !isHistoricalPdfAvailable) && <ReviewSignatures signatures={definition.signatures} />}
+                {!personalSupportForm && (definition.migratedForm || !isHistoricalPdfAvailable) && <ReviewSignatures signatures={definition.signatures} />}
                 {definition.migratedForm && definition.localStatus === 'awaiting-signature' && allRequiredSignaturesSaved && !isViewingAsCoach ? (
                   <button type="button" onClick={() => { void finalizeMigrated(); }} disabled={busy} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60">Complete review</button>
                 ) : null}
                 {(definition.source !== 'aptem' || definition.instance.status === 'completed') && <ReviewPdfDownload
+                  label={personalSupportForm ? 'Download PDF' : undefined}
                   availability={definition.migratedForm
                     ? { available: definition.instance.status === 'completed', reason: 'Available after completion.' }
                     : definition.pdf}
@@ -1446,9 +1471,9 @@ export function ReviewInstanceModal({
         <button type="button" onClick={onClose} disabled={busy} className="h-10 rounded-lg px-4 text-xs font-semibold text-foreground-500 transition hover:bg-background-100 disabled:opacity-50">{pageMode ? 'Back' : 'Cancel'}</button>
         {!formReadOnly ? <div className="flex gap-2">
           <button type="button" onClick={saveDraft} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-background-300 bg-white px-5 text-xs font-bold text-foreground-700 shadow-sm transition hover:bg-background-100 disabled:opacity-60">
-            <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-save-line'}></AppIcon>Save draft
+            <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-save-line'}></AppIcon>{personalSupportForm ? missingFieldIds.size ? 'Save draft' : 'Save & complete' : 'Save draft'}
           </button>
-          {(!definition?.migratedForm || definition.localStatus === 'scheduled' || definition.localStatus === 'in-progress') ? <button type="button" onClick={complete} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60">
+          {!personalSupportForm && (!definition?.migratedForm || definition.localStatus === 'scheduled' || definition.localStatus === 'in-progress') ? <button type="button" onClick={complete} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60">
             <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'}></AppIcon>
             {saving ? 'Saving...' : definition?.migratedForm ? 'Submit Review' : requiredSignatures.length ? 'Send for signatures' : 'Complete review'}
           </button> : null}

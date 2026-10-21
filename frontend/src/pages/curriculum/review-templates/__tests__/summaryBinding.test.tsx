@@ -119,7 +119,11 @@ describe('migrated summary field purpose', () => {
     mount(data);
     const dialog = screen.getByRole('dialog', { name: 'Editing Standard Template' });
     expect(within(dialog).getByText(FAMILY_LABELS[family], { exact: true })).toBeVisible();
-    expect(within(dialog).getByText('Changes apply to migrated reviews using this Standard Template while they are still editable. Working reviews synchronise when opened by the coach or checked on save. Reviews awaiting signatures or completed keep their saved version.')).toBeVisible();
+    if (family === 'PSP') {
+      expect(within(dialog).getByText(/Saving all required answers completes the plan without signatures/)).toBeVisible();
+    } else {
+      expect(within(dialog).getByText('Changes apply to migrated reviews using this Standard Template while they are still editable. Working reviews synchronise when opened by the coach or checked on save. Reviews awaiting signatures or completed keep their saved version.')).toBeVisible();
+    }
     expect(within(dialog).queryByText('Programme', { exact: true })).not.toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: 'Use as AI Meeting Summary' })).not.toBeChecked();
   });

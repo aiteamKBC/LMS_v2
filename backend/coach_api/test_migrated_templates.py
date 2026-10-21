@@ -1,17 +1,21 @@
 import copy
 import json
+from io import StringIO
 from inspect import unwrap
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.db import IntegrityError, connection, transaction
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import RequestFactory, TestCase
 from django.test.utils import CaptureQueriesContext
 
 from . import migrated_template_views as api, views
 from .migrated_reviews import review_family
 from .migrated_templates import (
-    resolve_template, snapshot_assignment_valid, snapshot_for, validate_managed_definition,
+    historical_candidate, resolve_template, snapshot_assignment_valid, snapshot_for,
+    template_family, validate_managed_definition,
 )
 from .models import ImportedReviewInstance, MigratedReviewTemplate
 
@@ -179,8 +183,91 @@ class MigratedTemplateManagementTests(TestCase):
                 self.assertEqual(review_family(value), expected)
         self.assertIsNone(review_family("Progress Review Master"))
 
+    def test_psp_library_and_runtime_recognize_the_same_family(self):
+        for source in ("Personal Support Plan", " PERSONAL SUPPORT PLAN "):
+            self.assertEqual(template_family(source), "PSP")
+            self.assertEqual(review_family(source), "PSP")
+        self.assertIsNone(template_family("Personal Support Plan draft"))
+
+    def test_psp_global_can_be_listed_edited_previewed_and_enabled(self):
+        template = self.template(family="PSP", active=False)
+        body = json.loads(self.request(api.collection).content)
+        self.assertIn("PSP", [row["review_family"] for row in body["resolutions"]])
+        preview = self.request(api.preview, data={"template_id": template.pk})
+        self.assertEqual(preview.status_code, 200)
+        self.assertTrue(json.loads(preview.content)["readOnly"])
+        response = self.request(api.detail, "patch", {
+            "name": "Personal Support Plan", "is_active": True,
+            "updated_at": template.updated_at.isoformat(),
+        }, template.pk)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(resolve_template(None, "PSP"), template)
+        self.assertEqual(ImportedReviewInstance.objects.count(), 0)
+        response = self.request(api.collection, "post", {
+            "scope": "PROGRAMME", "programme_key": "id:P1", "review_family": "PSP", "name": "Local PSP",
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(MigratedReviewTemplate.objects.count(), 1)
+
+    def test_psp_import_strips_answers_and_keeps_conditional_metadata(self):
+        from unittest.mock import MagicMock
+        cursor = MagicMock()
+        source = [{"section_name": "Learner information", "source_payload": {"fullName": "Private learner"}},
+                  {"section_name": "Additional Support", "source_payload": {
+                      "needs": True, "details": "Private health answer", "fields": [{
+                          "name": "needs", "title": "Support needed?", "type": 6, "isMandatory": True,
+                          "ifTrue": [{"name": "details", "title": "Details", "type": 13}],
+                      }],
+                  }}]
+        cursor.fetchone.side_effect = [(100, "200", "Personal Support Plan", "Completed", 300, source), ("P1", "Programme")]
+        with patch("coach_api.migrated_templates.connections") as connections:
+            connections["default"].cursor.return_value.__enter__.return_value = cursor
+            definition, metadata = historical_candidate(100, "PSP")
+        self.assertEqual(len(definition["sections"]), 1)
+        field = definition["sections"][0]["fields"][0]
+        self.assertEqual(field["ifTrue"][0]["title"], "Details")
+        self.assertTrue(field["mandatory"])
+        self.assertNotIn("Private", json.dumps((definition, metadata)))
+        self.assertEqual(metadata["sourceReviewId"], 100)
+
+    def test_psp_import_rejects_incomplete_and_wrong_family_sources(self):
+        from unittest.mock import MagicMock
+        for source_type, status in [("Personal Support Plan", "Scheduled"), ("Progress Review", "Completed")]:
+            cursor = MagicMock()
+            cursor.fetchone.return_value = (100, "200", source_type, status, 300, [])
+            with self.subTest(source_type=source_type, status=status), patch("coach_api.migrated_templates.connections") as connections:
+                connections["default"].cursor.return_value.__enter__.return_value = cursor
+                with self.assertRaisesRegex(ValueError, "Completed Aptem"):
+                    historical_candidate(100, "PSP")
+
+    def test_global_import_command_is_dry_run_by_default_and_idempotent_on_create(self):
+        path = "coach_api.management.commands.import_global_migrated_review_template.historical_candidate"
+        options = {"source_review_id": 100, "review_family": "PSP", "name": "Personal Support Plan", "stdout": StringIO()}
+        with patch(path, return_value=(DEFINITION, {"sourceReviewId": 100})):
+            call_command("import_global_migrated_review_template", **options)
+            self.assertFalse(MigratedReviewTemplate.objects.exists())
+            call_command("import_global_migrated_review_template", create=True, **options)
+            template = MigratedReviewTemplate.objects.get()
+            self.assertEqual((template.scope, template.programme_key, template.review_family), ("GLOBAL", "", "PSP"))
+            self.assertFalse(template.is_active)
+            call_command("import_global_migrated_review_template", create=True, **options)
+            self.assertEqual(MigratedReviewTemplate.objects.count(), 1)
+            template.name = "Edited by administrator"
+            template.definition_json = {"sections": [{**DEFINITION["sections"][0], "title": "Edited"}]}
+            template.save()
+            with self.assertRaisesRegex(CommandError, "already exists"):
+                call_command("import_global_migrated_review_template", create=True, **options)
+            template.refresh_from_db()
+            self.assertEqual(template.name, "Edited by administrator")
+
     def test_mcm_template_api_rejects_employer_question_permissions(self):
-        template = self.template(family="MCM")
+        self.check_no_employer_permissions("MCM")
+
+    def test_psp_template_api_rejects_employer_question_permissions(self):
+        self.check_no_employer_permissions("PSP")
+
+    def check_no_employer_permissions(self, family):
+        template = self.template(family=family)
         updated = copy.deepcopy(template.definition_json)
         updated["sections"][0]["fields"][0]["respondentRoles"] = ["employer"]
         response = self.request(api.detail, "patch", {"definition": updated, "updated_at": template.updated_at.isoformat()}, template.pk)

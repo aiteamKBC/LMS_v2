@@ -64,8 +64,10 @@ def reopen_review(request, review_id):
 
 def archived_pdf(overlay, number, *, role=None):
     revision = overlay.archived_revisions.filter(number=number).first()
+    psp_participant = bool(revision and role == "participant"
+        and (revision.snapshot.get("template_snapshot", {}).get("templateSource") or {}).get("family") == "PSP")
     if (not revision or revision.pdf_bytes is None
-            or (role and not revision.snapshot.get("signature_requirements", {}).get(role))):
+            or (role and not psp_participant and not revision.snapshot.get("signature_requirements", {}).get(role))):
         return JsonResponse({"detail": "Archived signed PDF not found for this account."}, status=404)
     response = stored_pdf_response(overlay, revision)
     response["Content-Disposition"] = f'attachment; filename="review-{overlay.pk}-version-{number}.pdf"'

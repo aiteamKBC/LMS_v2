@@ -15,6 +15,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import MonthlyCoachingPage from '../../monthly-coaching/page';
 import ProgressReviewsPage from '../../progress-reviews/page';
+import { CurriculumReviewPage } from '../curriculumReviews';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { ToastProvider } from '@/hooks/useToast';
 import { clearAllCachedResources } from '@/api/cachedRequest';
@@ -238,6 +239,46 @@ const mountProgressReview = (id: string) => render(
 );
 
 describe('Learner Review View opens the generic Curriculum form', () => {
+  it('opens a PSP continuation from Reviews and completes its form without signatures', async () => {
+    const key = 'imported-review:psp-test';
+    events = [event({ id: key, eventKey: key, source: 'progress-review', importedReviewType: 'Personal Support Plan',
+      reviewTypeName: 'Personal Support Plan', migratedForm: true, formEventKey: key,
+      reviewInstanceId: null, reviewTemplateId: null,
+      importedReview: { id: '1', type: 'Personal Support Plan', name: 'Personal Support Plan', sections: [] } as LearnerCalendarEvent['importedReview'] })];
+    reviewDefinition = { ...reviewDefinition, source: 'aptem', migratedForm: true, readOnly: false, answerVersion: 'psp-v1',
+      template: { ...reviewDefinition.template, name: 'Personal Support Plan', reviewTypeCode: 'aptem_psp' },
+      instance: { ...reviewDefinition.instance!, id: key, status: 'not-scheduled' },
+      signatures: { advisor: { required: false, signed: false }, participant: { required: false, signed: false },
+        employer: { required: false, signed: false }, referrer: { required: false, signed: false } },
+      sections: [{ id: 'psp', title: 'Support plan', enabled: true, displayOrder: 0, estimatedMinutes: 0,
+        fields: [{ id: 'goal', title: 'Agreed goal', fieldType: 'text', required: true, displayOrder: 0,
+          configuration: { respondentRoles: ['participant'] }, answer: '' }] }] };
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    const writes: unknown[] = [];
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/party')) return new Response(JSON.stringify(reviewDefinition));
+      if (url.endsWith('/csrf')) return new Response(JSON.stringify({ csrfToken: 'synthetic' }));
+      if (url.endsWith('/party-answers')) {
+        writes.push(JSON.parse(String(init?.body)));
+        return new Response(JSON.stringify({ ...reviewDefinition, readOnly: true, answerVersion: 'psp-v2',
+          instance: { ...reviewDefinition.instance, status: 'completed' } }));
+      }
+      return originalFetch(input, init);
+    });
+    render(<ToastProvider><MemoryRouter initialEntries={[`/learner/reviews/${key}`]}>
+      <Routes><Route path="/learner/reviews/:reviewId" element={<CurriculumReviewPage />} /></Routes>
+    </MemoryRouter></ToastProvider>);
+    expect(await screen.findByText('Agreed goal')).toBeVisible();
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'My agreed goal' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save my answers/ }));
+    expect(await screen.findByText('Personal Support Plan completed')).toBeVisible();
+    expect(writes).toEqual([{ answers: { goal: 'My agreed goal' }, answerVersion: 'psp-v1' }]);
+    expect(screen.queryByLabelText('Signature step')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Save my answers/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download PDF' })).toBeVisible();
+  });
+
   function aptemMcm(sync?: LearnerReviewDefinition['mcmMonthlyLog']) {
     const key = 'imported-review:monthly-log-signature';
     events = [event({ id: key, eventKey: key, migratedForm: true, reviewInstanceId: null, reviewTemplateId: null,

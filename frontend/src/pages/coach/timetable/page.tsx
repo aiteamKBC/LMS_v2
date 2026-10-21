@@ -1,4 +1,5 @@
-import { canRescheduleReconciledReview } from '../shared/resolvedReviewRows';
+import { canRescheduleReconciledReview, isImportedPersonalSupportPlan } from '../shared/resolvedReviewRows';
+import ImportedReviewBookingDialog from '../shared/ImportedReviewBookingDialog';
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import Swal from 'sweetalert2';
@@ -114,6 +115,7 @@ interface TimetableEvent {
   status: 'completed' | 'scheduled' | 'in-progress' | 'awaiting-signature' | 'confirmed' | 'pending' | 'cancelled' | 'not-scheduled';
   source?: 'mcr' | 'progress-review' | string;
   reviewSource?: 'aptem' | 'curriculum' | string;
+  importedReviewType?: string | null;
   calendarEventKey?: string | null;
   reconciledReview?: boolean;
   sourceStatus?: string;
@@ -770,6 +772,7 @@ function isSelectableScheduleEvent(event: TimetableEvent) {
 }
 
 function canEditScheduleEvent(event: TimetableEvent | null | undefined): event is TimetableEvent {
+  if (event && isImportedPersonalSupportPlan(event)) return ['not-scheduled', 'scheduled'].includes(event.status);
   if (event?.reviewSource === 'aptem') return canRescheduleReconciledReview(event);
   if (!event || !isSchedulableSource(event.source)) return false;
   return !['completed', 'confirmed', 'in-progress', 'awaiting-signature'].includes(event.status);
@@ -895,6 +898,7 @@ export default function CoachTimetablePage() {
   const [progressReviewCompletionEvent, setProgressReviewCompletionEvent] = useState<TimetableEvent | null>(null);
   const [reviewFormBusy, setReviewFormBusy] = useState(false);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [supportBookingEvent, setSupportBookingEvent] = useState<TimetableEvent | null>(null);
   const [scheduleModalType, setScheduleModalType] = useState<SchedulableSource>('mcr');
   const [scheduleModalLearnerKey, setScheduleModalLearnerKey] = useState('');
   const [scheduleModalEventKey, setScheduleModalEventKey] = useState('');
@@ -1533,6 +1537,11 @@ export default function CoachTimetablePage() {
   }, [createSessionBusy]);
 
   const openScheduleModal = useCallback((presetEvent?: TimetableEvent | null) => {
+    if (presetEvent && isImportedPersonalSupportPlan(presetEvent)) {
+      setSupportBookingEvent(presetEvent);
+      setSelectedEvent(null);
+      return;
+    }
     setScheduleModalError(null);
     setScheduleModalNotice(null);
 
@@ -2768,7 +2777,7 @@ export default function CoachTimetablePage() {
                       </button>
                     </div>
                   )}
-                  {!isLiveSessionEvent(selectedEvent) && canEditScheduleEvent(selectedEvent) && (
+                  {!isLiveSessionEvent(selectedEvent) && canEditScheduleEvent(selectedEvent) && !isImportedPersonalSupportPlan(selectedEvent) && (
                     <div className="mt-4 rounded-2xl border border-background-200 bg-white p-4 shadow-sm">
                       <div className="mb-3 flex items-center justify-between gap-3">
                         <h4 className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-wide text-foreground-700">
@@ -3645,6 +3654,26 @@ export default function CoachTimetablePage() {
         onSave={handleCalendarColorsSave}
         activeMeetingTypeKeys={activeMeetingTypeKeys}
       />
+      {supportBookingEvent && <ImportedReviewBookingDialog
+        event={supportBookingEvent as CoachCalendarEvent}
+        viewingAsCoach={coach.isViewingAsCoach}
+        onClose={() => setSupportBookingEvent(null)}
+        onSaved={(saved, notice) => {
+          const day = new Date(`${saved.scheduledDate}T00:00:00`);
+          const [hour, minute] = (saved.scheduledTime || '09:00').split(':').map(Number);
+          const startHour = hour + minute / 60;
+          const updated = { ...supportBookingEvent, ...saved, date: saved.scheduledDate || undefined,
+            year: day.getFullYear(), month: day.getMonth(), dayOfMonth: day.getDate(),
+            dayOfWeek: ((day.getDay() + 6) % 7) as TimetableEvent['dayOfWeek'],
+            startHour, endHour: startHour + (saved.durationMinutes || 60) / 60,
+            isTimeEstimated: false,
+          } as TimetableEvent;
+          updateSingleEvent(updated);
+          focusEventOnCalendar(updated);
+          setEventActionNotice(notice);
+          setSupportBookingEvent(null);
+        }}
+      />}
     </WorkspaceShell>
   );
 }
