@@ -22,6 +22,13 @@ from . import feedback, feedback_delivery, hooks, permissions, services, views
 
 @override_settings(LEARNER_FEEDBACK_ENABLED=True, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=True)
 class FeedbackValidationTests(SimpleTestCase):
+    def setUp(self):
+        # These existing transport tests isolate each delivery source. The
+        # module scheduler has its own date/membership regression suite.
+        self.patch_module_sync = mock.patch.object(feedback, 'sync_module_feedback')
+        self.patch_module_sync.start()
+        self.addCleanup(self.patch_module_sync.stop)
+
     def test_review_feedback_sync_uses_publish_time_as_the_no_backfill_boundary(self):
         published_at = datetime(2026, 10, 18, 12, tzinfo=timezone.utc)
         form = feedback.FeedbackForm(id=71, form_type='post_mcm_review', published_at=published_at)
@@ -52,7 +59,7 @@ class FeedbackValidationTests(SimpleTestCase):
         self.assertEqual(created[0].form, form)
         self.assertTrue(bulk_create.call_args.kwargs['ignore_conflicts'])
 
-    def test_production_learner_gets_lecture_only_but_staff_preview_remains_available(self):
+    def test_production_learner_gets_enabled_deliveries_but_staff_preview_remains_available(self):
         with self.settings(DEBUG=False, LEARNER_FEEDBACK_ENABLED=True, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=False):
             recipients = mock.MagicMock()
             recipients.filter.return_value.filter.return_value.order_by.return_value = []
@@ -66,7 +73,8 @@ class FeedbackValidationTests(SimpleTestCase):
                 response = feedback.learner_forms(RequestFactory().get('/'))
             self.assertEqual(response.status_code, 200)
             self.assertEqual(json.loads(response.content), {'forms': []})
-            self.assertEqual(recipients.filter.call_args_list[0].kwargs['delivery__form__form_type'], 'post_lecture')
+            self.assertEqual(set(recipients.filter.call_args_list[0].kwargs['delivery__form__form_type__in']),
+                             {'post_lecture', 'mid_module', 'end_module'})
             self.assertEqual(recipients.filter.call_args_list[0].kwargs['learner_id'], '61')
             review_sync.assert_not_called()
             general_forms.assert_not_called()
@@ -368,7 +376,7 @@ class FeedbackValidationTests(SimpleTestCase):
 
     def test_recipient_rows_show_attendance_learner_lecture_and_response(self):
         form = SimpleNamespace(id=19, form_type='post_lecture', template_key='template-1')
-        delivery_form = SimpleNamespace(version=1)
+        delivery_form = SimpleNamespace(version=1, form_type='post_lecture')
         delivery = SimpleNamespace(
             id=3, occurrence_key='martech-2026-09-24',
             session_title='Martech - Thur - Session 1', module_name='Martech - Thur',
@@ -477,7 +485,7 @@ class FeedbackValidationTests(SimpleTestCase):
         self.assertEqual(summaries[1]['responseCount'], 1)
 
     def test_staff_can_filter_form_recipients_by_lecture(self):
-        form = SimpleNamespace(id=19)
+        form = SimpleNamespace(id=19, form_type='post_lecture')
         rows = [
             {'key': 'delivery-3-1', 'deliveryId': 3, 'occurrenceKey': 'older', 'sessionTitle': 'Session 1', 'moduleName': 'Martech', 'sessionStartsAt': '2026-09-17T09:30:00+00:00', 'learnerName': 'First Learner', 'email': 'first@example.test', 'programme': 'Marketing', 'responseStatus': 'completed'},
             {'key': 'delivery-4-2', 'deliveryId': 4, 'occurrenceKey': 'newer', 'sessionTitle': 'Session 2', 'moduleName': 'Martech', 'sessionStartsAt': '2026-09-24T09:30:00+00:00', 'learnerName': 'Second Learner', 'email': 'second@example.test', 'programme': 'Marketing', 'responseStatus': 'not_started'},
@@ -527,7 +535,7 @@ class FeedbackValidationTests(SimpleTestCase):
 
     def test_staff_view_as_sees_attendance_recipient_delivery(self):
         form = SimpleNamespace(
-            id=19, title='Lecture feedback', description='Tell us about the lecture',
+            id=19, title='Lecture feedback', description='Tell us about the lecture', form_type='post_lecture',
             due_date=None,
         )
         delivery = SimpleNamespace(

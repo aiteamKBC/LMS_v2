@@ -39,6 +39,19 @@ describe('learner feedback automatic save', () => {
     } });
   });
 
+  it.each(['mid_module', 'end_module'] as const)('submits %s using the owned delivery', async formType => {
+    vi.mocked(feedbackApi.myDelivery).mockResolvedValue({ form: { ...form, formType, title: 'Module feedback' } });
+    vi.mocked(feedbackApi.saveDeliveryResponse).mockResolvedValue({ response: {
+      id: 11, status: 'completed', submittedAt: '2026-10-21T10:00:00Z', updatedAt: '2026-10-21T10:00:00Z',
+    } });
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={['/learner/feedback/delivery/21']}><Routes><Route path="/learner/feedback/delivery/:deliveryId" element={<LearnerFeedbackFormPage />} /></Routes></MemoryRouter>);
+    await user.type(await screen.findByRole('textbox', { name: 'Your feedback' }), 'Helpful module');
+    await user.click(screen.getByRole('button', { name: /Submit/ }));
+    await waitFor(() => expect(feedbackApi.saveDeliveryResponse).toHaveBeenCalledWith(21, { '10': 'Helpful module' }, true));
+    expect(await screen.findByText('Thank you for your feedback')).toBeVisible();
+  });
+
   it('opens a completed-review delivery through its dedicated route', async () => {
     render(<MemoryRouter initialEntries={['/learner/feedback/review/71?category=mcm']}><Routes><Route path="/learner/feedback/review/:reviewDeliveryId" element={<LearnerFeedbackFormPage />} /></Routes></MemoryRouter>);
 

@@ -118,8 +118,8 @@ class PostLectureBankTests(SimpleTestCase):
         draw.assert_not_called()
 
     def test_learner_context_initializes_the_bank_before_exposing_the_form(self):
-        form = SimpleNamespace(start_date=None)
-        delivery = SimpleNamespace(form=form)
+        form = SimpleNamespace(start_date=None, form_type='post_lecture')
+        delivery = SimpleNamespace(form=form, available_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
         recipient = SimpleNamespace(delivery=delivery)
         recipient_query = mock.Mock()
         recipient_query.get.return_value = recipient
@@ -237,7 +237,7 @@ class PostLectureBankTests(SimpleTestCase):
 
     @override_settings(LEARNER_FEEDBACK_ENABLED=True)
     def test_learner_detail_shows_only_questions_pinned_to_the_delivery(self):
-        form = SimpleNamespace()
+        form = SimpleNamespace(form_type='post_lecture')
         delivery = SimpleNamespace(
             id=30, occurrence_key='lecture-30', session_title='Lecture 30',
             starts_at=None, ends_at=None, question_set_pinned=True,

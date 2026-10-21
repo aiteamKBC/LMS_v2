@@ -26,7 +26,7 @@ export const learnerNavItems: SidebarNavItem[] = [
 
   // Published forms explicitly assigned to the signed-in learner.
   ...(LEARNER_FEEDBACK_ENABLED || LEARNER_POST_LECTURE_FEEDBACK_ENABLED
-    ? [{ id: 'learner-feedback', label: LEARNER_FEEDBACK_ENABLED ? 'Feedback' : 'Lecture Feedback', icon: 'ri-survey-line', href: LEARNER_FEEDBACK_ENABLED ? '/learner/feedback' : '/learner/feedback?category=lecture' }]
+    ? [{ id: 'learner-feedback', label: 'Feedback', icon: 'ri-survey-line', href: '/learner/feedback' }]
     : []),
 
   // My Progress
