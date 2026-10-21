@@ -25,7 +25,7 @@ SIGN_VIEWS = (
 
 
 def _employer(subject_id=7):
-    return SimpleNamespace(role="employer", subject_id=subject_id)
+    return SimpleNamespace(role="employer", subject_type="employer", subject_id=subject_id, is_active=True)
 
 
 class AccessTests(SimpleTestCase):

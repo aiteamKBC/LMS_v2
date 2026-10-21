@@ -22,6 +22,7 @@ How the authoring tables link together:
 Modules, weeks and components follow the module_catalogue_id / week_id chain.
 """
 import json
+import logging
 
 from django.db import DatabaseError, connections
 from django.http import JsonResponse
@@ -30,6 +31,9 @@ from django.views.decorators.csrf import csrf_exempt
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 from .ksb_sources import PROFILE, STANDARD, parse_source, resolve_source
+
+
+logger = logging.getLogger(__name__)
 
 
 def _conn():
@@ -52,7 +56,8 @@ def _guard(fn):
     try:
         return JsonResponse({"results": fn()})
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
 
 def programmes(request):
@@ -314,7 +319,8 @@ def ksb_profile(request):
     try:
         standard, results = ksb_profile_for_programme(programme)
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     return JsonResponse({"standard": standard, "results": results})
 

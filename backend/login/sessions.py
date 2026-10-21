@@ -467,14 +467,14 @@ def _refresh_staff_role(account):
             account._staff_access_unavailable = True
             return
         account._staff_access = (row.access or '').strip().lower()
-        derived = role_for_staff(row.position, row.access)
+        derived = role_for_staff(row.position, accesses_for_staff(row))
         if derived != account.role:
             account.role = derived
             account.save(update_fields=["role", "updated_at"])
     except DatabaseError:
         account._staff_access_unavailable = True
-    except Exception:  # noqa: BLE001 - never break authentication over this
+    except Exception as exc:  # noqa: BLE001 - never break authentication over this
         account._staff_access_unavailable = True
         import logging
 
-        logging.getLogger("login").exception("Could not refresh staff role")
+        logging.getLogger("login").error("Could not refresh staff role (%s)", type(exc).__name__)

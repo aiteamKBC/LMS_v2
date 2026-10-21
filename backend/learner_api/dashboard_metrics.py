@@ -19,7 +19,7 @@ from .models import TrainingPlanDocument
 from .progress_rules import progress_counts_as_achieved
 from .student_activity_access import student_activity_available
 from .student_activity import _direct_progress_records, _direct_progress_otjh, load_direct_progress_records_bulk
-from .learning_plan import _effective_plan_ids
+from .selectors.assignments import _effective_plan_ids
 from .training_plan_contract import selected_contract
 from .training_plan_dashboard import TRAINING_PLAN_SOURCE_FIELDS, find_contract, number, plan_planned_hours, rows
 from .otjh_totals import completed_otjh, completed_actual_otjh

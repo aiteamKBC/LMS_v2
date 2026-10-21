@@ -43,7 +43,7 @@ class ModuleAssignmentTests(SimpleTestCase):
     def test_clearing_a_plan_does_not_restore_old_csv_or_group_assignments(self):
         source = learner(training_plan=[], learning_plan=[MODULE], modules='Old course')
         self.assertEqual(get_training_plan(source), [])
-        with patch('learner_api.learning_plan._group_module_ids') as preset:
+        with patch('learner_api.selectors.assignments._group_module_ids') as preset:
             self.assertEqual(_effective_plan_ids(source, {}), [])
         preset.assert_not_called()
 
@@ -59,7 +59,7 @@ class ModuleAssignmentTests(SimpleTestCase):
                 patch('learner_api.learning_plan.EnrolmentUser') as model, \
                 patch('learner_api.learning_plan._all_modules', return_value=[MODULE]), \
                 patch('learner_api.learning_plan._programme_modules', return_value=[MODULE]), \
-                patch('learner_api.learning_plan._group_module_ids', return_value=['MOD-NEW']), \
+                patch('learner_api.selectors.assignments._group_module_ids', return_value=['MOD-NEW']), \
                 patch('learner_api.learning_plan.advance_learner'), \
                 patch('learner_api.learning_plan.sync_learning_plan_mirror') as sync_mirror:
             model.all_learners.get.return_value = source
@@ -76,7 +76,7 @@ class ModuleAssignmentTests(SimpleTestCase):
         with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='admin')), \
                 patch('learner_api.learning_plan._all_modules', return_value=[MODULE]), \
                 patch('learner_api.learning_plan._picker_learners', return_value=[source, other]), \
-                patch('learner_api.learning_plan._group_module_ids', return_value=[]), \
+                patch('learner_api.selectors.assignments._group_module_ids', return_value=[]), \
                 patch('learner_api.learning_plan.advance_learner'), \
                 patch('learner_api.learning_plan.sync_learning_plan_mirror') as sync_mirror:
             response = module_learners(request, 'MOD-NEW')

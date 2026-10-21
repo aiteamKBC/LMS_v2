@@ -112,7 +112,7 @@ from learner_api.dashboard_metrics import (read_metrics, load_subject_attempts_b
                                             load_native_components_bulk, load_planned_hours_documents_bulk,
                                             load_contracts_bulk, load_accepted_ksb_rows_bulk)
 from learner_api.dashboard_metrics import load_export_links_bulk
-from learner_api.learning_plan import _effective_plan_ids
+from learner_api.selectors.assignments import _effective_plan_ids
 from learner_api.student_activity import load_direct_progress_records_bulk
 from learner_api.ksb_codes import extract_ksb_codes, normalize_ksb_parent_code
 from learner_api.progress_rules import progress_record_counts_as_achieved

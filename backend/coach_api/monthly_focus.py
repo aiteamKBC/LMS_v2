@@ -59,7 +59,7 @@ def read_month_activities(context, month):
 
 
 def read_month_lectures(context, owner, assigned, month):
-    from learner_api.learning_plan import _effective_plan_ids
+    from learner_api.selectors.assignments import _effective_plan_ids
     ids = list(dict.fromkeys([*_effective_plan_ids(context.source, {}),
                              *canonical_learning.curriculum_module_ids_for(owner)]))
     start, end = month_bounds(month)

@@ -28,7 +28,7 @@ from django.db import DatabaseError, connections, transaction
 
 from learner_api.active_users import hydrate_training_plan
 from learner_api.learning_plan import _programme_modules, sync_learning_plan_mirror
-from learner_api.mappers import _s, stored_training_plan, training_plan_field
+from learner_api.mappers import _s, get_training_plan, stored_training_plan, training_plan_field
 from learner_api.models import EnrolmentUser
 
 
@@ -55,7 +55,8 @@ class Command(BaseCommand):
         planned, already, no_modules = [], [], Counter()
         for source in sources:
             programme = _s(getattr(source, "programme", ""))
-            if stored_training_plan(source):
+            # A deliberate empty selection is saved, not permission to assign everything.
+            if stored_training_plan(source) is not None or get_training_plan(source):
                 already.append(source)
                 continue
             if programme not in catalogue:
@@ -102,10 +103,12 @@ class Command(BaseCommand):
                     field = training_plan_field(source)
                     setattr(source, field, plan)
                     source.save(update_fields=[field])
-                    sync_learning_plan_mirror(source)
+                    sync_learning_plan_mirror(source, strict=True)
                     saved += 1
         except DatabaseError as exc:
-            self.stderr.write(self.style.ERROR(f"Assignment failed and was rolled back: {exc}"))
+            self.stderr.write(self.style.ERROR(
+                f"Assignment failed and was rolled back ({type(exc).__name__})."
+            ))
             return
 
         self.stdout.write(self.style.SUCCESS(f"\nAssigned a plan to {saved} learner(s)."))

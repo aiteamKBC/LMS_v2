@@ -73,12 +73,13 @@ class SyncMirrorTests(SimpleTestCase):
 
     def _sync(self, plan, pk=19):
         source = type("Source", (), {"pk": pk})()
-        with patch("learner_api.mappers.get_training_plan", return_value=plan), \
+        with patch("learner_api.mappers.mirrored_training_plan", return_value=plan), \
                 patch("learner_api.learning_plan.EnrolmentUser") as enrolment, \
+                patch("learner_api.learning_plan.transaction.atomic"), \
                 patch("learner_api.active_users.replace_training_plan") as child_rows, \
                 patch("learner_api.models.LearnerProfile") as profile:
             count = sync_learning_plan_mirror(source)
-        return count, enrolment, profile, child_rows
+        return count, enrolment, type("Profile", (), {"objects": profile.objects.using.return_value}), child_rows
 
     def test_the_mirror_gets_the_structured_plan(self):
         _count, _enrolment, profile, _child = self._sync(PLAN)
@@ -86,12 +87,12 @@ class SyncMirrorTests(SimpleTestCase):
         profile.objects.filter.assert_called_with(enrolment_id=19)
         profile.objects.filter.return_value.update.assert_called_once_with(learning_plan=PLAN)
 
-    def test_a_cleared_plan_nulls_the_mirror(self):
+    def test_a_cleared_plan_stays_explicitly_empty(self):
         # Not skipped: a learner whose plan was removed must not keep a copy of
         # it in the table every coach surface reads.
         _count, _enrolment, profile, _child = self._sync([])
 
-        profile.objects.filter.return_value.update.assert_called_once_with(learning_plan=None)
+        profile.objects.filter.return_value.update.assert_called_once_with(learning_plan=[])
 
     def test_the_mirror_is_matched_on_enrolment_id(self):
         # Never on a LearnerProfile pk: that reference goes stale after
@@ -107,10 +108,11 @@ class SyncMirrorTests(SimpleTestCase):
         # The plan itself is already saved by the time this runs, so a failed
         # mirror must not turn a successful staff edit into an error.
         source = type("Source", (), {"pk": 19})()
-        with patch("learner_api.mappers.get_training_plan", return_value=PLAN), \
+        with patch("learner_api.mappers.mirrored_training_plan", return_value=PLAN), \
                 patch("learner_api.active_users.replace_training_plan"), \
+                patch("learner_api.learning_plan.transaction.atomic"), \
                 patch("learner_api.models.LearnerProfile") as profile:
-            profile.objects.filter.side_effect = DatabaseError("pooler said no")
+            profile.objects.using.return_value.filter.side_effect = DatabaseError("pooler said no")
             self.assertEqual(sync_learning_plan_mirror(source), 0)
 
     def test_the_child_rows_the_learner_page_reads_are_written(self):
@@ -144,21 +146,26 @@ class ChildRowBatchingTests(SimpleTestCase):
                 return list(rows)
             return create
 
-        with patch.object(active_users, 'LearnerTrainingPlanModule') as modules,                 patch.object(active_users, 'LearnerTrainingPlanWeek') as weeks,                 patch.object(active_users, 'LearnerTrainingPlanComponent') as components:
+        with patch.object(active_users, 'LearnerTrainingPlanModule') as modules,                 patch.object(active_users, 'LearnerTrainingPlanWeek') as weeks,                 patch.object(active_users, 'LearnerTrainingPlanComponent') as components, \
+                patch.object(active_users, "LearnerProfile"), \
+                patch.object(active_users.transaction, "atomic"):
+            for model in (modules, weeks, components):
+                model.objects.using.return_value = model.objects
+                model.objects.select_for_update.return_value.filter.return_value.order_by.return_value = []
             modules.side_effect = lambda **kw: type('Row', (), {**kw, 'pk': None})()
             weeks.side_effect = lambda **kw: type('Row', (), {**kw, 'pk': None})()
             components.side_effect = lambda **kw: type('Row', (), {**kw, 'pk': None})()
             modules.objects.bulk_create.side_effect = bulk('modules')
             weeks.objects.bulk_create.side_effect = bulk('weeks')
             components.objects.bulk_create.side_effect = bulk('components')
-            active_users.replace_training_plan(object(), plan)
+            active_users.replace_training_plan(type("Learner", (), {"pk": 19})(), plan)
             return calls, modules, weeks, components
 
-    def test_one_insert_per_level_and_a_single_delete(self):
+    def test_one_insert_per_level_without_wholesale_delete(self):
         calls, modules, weeks, components = self._replace(PLAN)
 
         self.assertEqual(calls, ['modules', 'weeks', 'components'])
-        modules.objects.filter.return_value.delete.assert_called_once_with()
+        modules.objects.filter.return_value.delete.assert_not_called()
         self.assertEqual(len(modules.objects.bulk_create.call_args.args[0]), 1)
         self.assertEqual(len(weeks.objects.bulk_create.call_args.args[0]), 2)
         self.assertEqual(len(components.objects.bulk_create.call_args.args[0]), 2)
@@ -181,4 +188,4 @@ class ChildRowBatchingTests(SimpleTestCase):
         calls, modules, _weeks, _components = self._replace([])
 
         self.assertEqual(calls, [])
-        modules.objects.filter.return_value.delete.assert_called_once_with()
+        modules.objects.filter.return_value.delete.assert_not_called()

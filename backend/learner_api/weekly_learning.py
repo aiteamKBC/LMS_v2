@@ -8,7 +8,7 @@ import re
 
 
 from .identity import learner_profile_for_source
-from .learning_plan import effective_training_plan, request_preset_cache
+from .selectors.assignments import effective_training_plan, request_preset_cache
 from .mappers import _s, flatten_training_plan, get_training_plan
 from .models import _serialise_quiz_ref
 from .retained_quiz_progress import retain_quiz_progress

@@ -21,7 +21,7 @@ def read_native_progress(source, profile):
     # Reuse its authored component and retained-quiz projections directly.
     from .learner_detail import (_resolve_from_master, _append_week_quizzes,
                                  _apply_programme_assignment_template)
-    from .learning_plan import effective_training_plan
+    from .selectors.assignments import effective_training_plan
     from .mappers import flatten_training_plan, get_training_plan
     from .retained_quiz_progress import retain_quiz_progress
     from .student_activity import _effective_current_subjects, _builder_subject_metadata

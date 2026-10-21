@@ -20,7 +20,7 @@ from old_otjh.service import ServiceError
 from . import canonical_learning as canonical
 from .journal_sources import learner_journal_view, enabled as journal_enabled
 from .learner_detail import SOURCE_MODELS
-from .learning_plan import effective_training_plan, request_preset_cache
+from .selectors.assignments import effective_training_plan, request_preset_cache
 from .progress_rules import progress_counts_as_achieved
 from .projection_performance import projection_stage, local_catalogue_trace
 
@@ -192,7 +192,7 @@ def next_title(items, today):
     return next((i['title'] for i in entries if not i['completed']), None)
 
 
-def assemble_cards(native, current, courses, definitions, done, started, hours, metadata, records, modules, credits, *, search=None):
+def assemble_cards(native, current, courses, definitions, done, started, hours, metadata, records, modules, credits, *, search=None, identities_only=False):
     """Programme-wide counts with the same explicit import/replacement identities as My Learning."""
     from .progress_transfer_policy import credited_percent
     from .progress_demo import credit as demo_credit
@@ -272,10 +272,15 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             by_id[f'unlinked:{title}'] = dict(id=f'unlinked:{title}', title=title, source='current', _items=[])
             titles.add(title.strip().casefold())
     module_list = list(modules.values())
-    progress_index = module_record_index(records,module_list) if search is None else None
+    progress_index = module_record_index(records,module_list) if search is None and not identities_only else None
     for ref, transfer in approved.items():
         if ref in by_id:
             by_id.pop(transfer['courseRef'], None)
+    if identities_only:
+        # Keep the existing source reads/validation and replacement annotations.
+        # Upcoming needs only eligible IDs, not display metrics or full cards.
+        return [{'id': subject['id']} for subject in sorted(
+            by_id.values(), key=lambda subject: (subject['title'].casefold(), subject['id']))], {}
     with projection_stage('module_hours'):
         progress = supplement_module_hours(_canonical_module_progress(records,module_list,record_index=progress_index), records, credits) if search is None else {}
     today = datetime.now(UK).date().isoformat()
@@ -446,7 +451,8 @@ def read_catalogue(source, kind, owner, *, upcoming_only=False):
     assigned, ids, records, native, courses, definitions, done, started, hours, metadata, credits = load_context(source, owner)
     modules = metadata['modules']
     with projection_stage('card_aggregation'):
-        cards, summary = assemble_cards(native, metadata['current_subjects'], courses, definitions, done, started, hours, metadata, records, modules, credits)
+        cards, summary = assemble_cards(native, metadata['current_subjects'], courses, definitions, done, started, hours, metadata, records, modules, credits,
+                                       **({'identities_only': True} if upcoming_only else {}))
     if upcoming_only:
         # Reuse native completion before selecting deadlines, just as the
         # initial catalogue does. No cover or programme metric reads on expansion.
@@ -695,7 +701,10 @@ def my_learning(request,kind,pk,subject_id=None,resource=None):
         return JsonResponse({'error':'Learner not found.'},status=404)
     try:
         with projection_stage('source'):
-            source=model.all_learners.only(*SOURCE_FIELDS).get(pk=pk)
+            # Empty search never uses plan/content fields; retain source existence
+            # and the independent canonical owner check before returning its JSON.
+            fields = ('id',) if resource == 'search' and not request.GET.get('q', '').strip() else SOURCE_FIELDS
+            source=model.all_learners.only(*fields).get(pk=pk)
         with projection_stage('owner'):
             owner=canonical.require_profile(pk)
         if resource == 'search':

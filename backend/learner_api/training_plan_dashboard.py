@@ -16,7 +16,8 @@ from old_otjh.coach_booking import booking_url
 from old_otjh.service import ServiceError
 from .learner_detail import SOURCE_MODELS
 from .models import LearnerProfile, StaffUser
-from .learning_plan import _aptem_subject_modules, _effective_plan_ids, request_preset_cache
+from .learning_plan import _aptem_subject_modules
+from .selectors.assignments import _effective_plan_ids, request_preset_cache
 from .coach_assignment import current_coach, source_coach
 from .student_activity import _builder_subject_metadata, builder_subject_links
 from .subject_content import as_list, clean_text, safe_url

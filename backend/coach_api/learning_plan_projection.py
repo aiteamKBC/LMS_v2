@@ -310,7 +310,7 @@ def read_native_facts(context, assigned):
 
 
 def read_journey(context, module_id=None, week_id=None):
-    from learner_api.learning_plan import _effective_plan_ids
+    from learner_api.selectors.assignments import _effective_plan_ids
     from learner_api.builder_activity_dates import read_builder_activity_dates
     if context.source is None:
         raise LookupError('Learner enrolment is unavailable.')
@@ -358,7 +358,7 @@ def canonical_progress_facts(context):
 
 def read_timeline(context):
     from learner_api.module_progress import canonical_module_progress
-    from learner_api.learning_plan import _effective_plan_ids
+    from learner_api.selectors.assignments import _effective_plan_ids
     from learner_api.training_plan_dashboard import attach_curriculum_slots
     from learner_api.calendar import coaching_events_for_learner
     from .selectors.otjh import learner_programme_window

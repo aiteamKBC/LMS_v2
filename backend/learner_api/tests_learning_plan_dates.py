@@ -74,7 +74,7 @@ class ModuleWindowTests(SimpleTestCase):
                 patch("learner_api.learning_plan.EnrolmentUser") as model, \
                 patch("learner_api.learning_plan._programme_modules", return_value=catalogue), \
                 patch("learner_api.learning_plan._all_modules", return_value=catalogue), \
-                patch("learner_api.learning_plan._group_module_ids", return_value=["MOD-1", "MOD-2"]),                 patch("learner_api.learning_plan._modules_by_id", return_value=off_programme or {}):
+                patch("learner_api.selectors.assignments._group_module_ids", return_value=["MOD-1", "MOD-2"]),                 patch("learner_api.learning_plan._modules_by_id", return_value=off_programme or {}):
             model.all_learners.get.return_value = learner
             response = learning_plan(request, 19)
         return response, json.loads(response.content)

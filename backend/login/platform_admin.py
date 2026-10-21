@@ -43,6 +43,7 @@ removes two Neon round trips per dashboard section.
 from __future__ import annotations
 
 import json
+import logging
 
 from django.db import DatabaseError, IntegrityError, connections, transaction
 from django.http import JsonResponse
@@ -71,6 +72,9 @@ from .services import sync_account
 #: anything past this is an export job, not a page view.
 MAX_PAGE_SIZE = 200
 DEFAULT_PAGE_SIZE = 50
+
+
+logger = logging.getLogger(__name__)
 
 
 def _sanitized_layout_config(value):
@@ -295,7 +299,8 @@ def _optional_rows(sql, params=None):
     try:
         return None, _isolated_database_call(lambda: _rows(sql, params))
     except DatabaseError as exc:
-        return str(exc), []
+        logger.error("Optional admin read failed (%s)", type(exc).__name__)
+        return "The database service is temporarily unavailable.", []
 
 
 # ---------------------------------------------------------------------------
@@ -350,7 +355,8 @@ def overview(request):
         login_ok = True
         login_error = None
     except DatabaseError as exc:
-        accounts, login_ok, login_error = {}, False, str(exc)
+        logger.error("Admin account overview failed (%s)", type(exc).__name__)
+        accounts, login_ok, login_error = {}, False, "The database service is temporarily unavailable."
 
     # --- login audit: 24h authentication activity ------------------------
     audit = _optional_scalars(
@@ -651,7 +657,8 @@ def accounts(request):
             total = qs.count()
             rows = list(qs.order_by("-id")[(page - 1) * size: page * size])
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     extras = _row_extras(rows)
     return JsonResponse({
@@ -703,7 +710,8 @@ def account_action(request, pk):
     try:
         account = LoginAccount.objects.filter(pk=pk).first()
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
     if account is None:
         return _error("Account not found.", 404)
 
@@ -742,7 +750,8 @@ def account_action(request, pk):
                 user_agent=user_agent(request),
             )
         except DatabaseError as exc:
-            return _error(f"Database error: {exc}", 502)
+            logger.error("Database operation failed (%s)", type(exc).__name__)
+            return _error("The database service is temporarily unavailable.", 502)
 
         if not sent:
             # Reported as a failure so the console can say so plainly; the
@@ -779,7 +788,8 @@ def account_action(request, pk):
         except EnrolmentError as exc:
             return _error(str(exc), 400, code="cannot_add_learner")
         except DatabaseError as exc:
-            return _error(f"Database error: {exc}", 502)
+            logger.error("Database operation failed (%s)", type(exc).__name__)
+            return _error("The database service is temporarily unavailable.", 502)
 
         # The same trail the other administrative actions leave: this one
         # creates a person's enrolment record, so who did it is worth keeping.
@@ -831,7 +841,8 @@ def account_action(request, pk):
                 user_agent=user_agent(request),
             )
         except DatabaseError as exc:
-            return _error(f"Database error: {exc}", 502)
+            logger.error("Database operation failed (%s)", type(exc).__name__)
+            return _error("The database service is temporarily unavailable.", 502)
 
         if not sent:
             return _error(
@@ -875,7 +886,8 @@ def account_action(request, pk):
     try:
         account.save(update_fields=fields)
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     # Recorded in the same trail as sign-ins, so an admin action and its effect
     # sit next to each other when somebody asks why an account stopped working.
@@ -930,7 +942,8 @@ def _delete_staff_account(request, account, actor):
             code="has_linked_records",
         )
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     # The row the audit entry describes is gone, so the entry carries the email
     # and the staff id — enough to say who was removed and by whom.
@@ -1002,7 +1015,8 @@ def audit(request):
             # a new event name never needs a matching change in the SPA.
             events = sorted(LoginAudit.objects.values_list("event", flat=True).distinct())
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     return JsonResponse({
         "count": total,
@@ -1075,7 +1089,8 @@ def roles(request):
                     "suspended": base.filter(is_active=False).count(),
                 }
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     # Every permission any role holds — the columns of the console's matrix.
     all_permissions = sorted({p for role in _ROLE_ORDER for p in permissions_for(role)})
@@ -1156,7 +1171,8 @@ def email_log(request):
         with transaction.atomic(using="enrolment"):
             merged = collect(Invitation, "invitation") + collect(PasswordReset, "reset")
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     stats = _optional_scalars(
         """
@@ -1276,7 +1292,8 @@ def email_acknowledge(request, kind, pk):
                 user_agent=user_agent(request),
             )
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     return JsonResponse({
         "id": f"{kind}-{pk}",
@@ -1475,7 +1492,8 @@ def system(request):
                         cur.fetchone()
                 configured, detail = True, "Connected"
             except DatabaseError as exc:
-                configured, detail = False, str(exc)[:200]
+                logger.error("Admin readiness check failed (%s)", type(exc).__name__)
+                configured, detail = False, "The database service is temporarily unavailable."
         elif key == "email":
             configured = email_azure.is_configured()
             detail = "Configured" if configured else f"Missing: {', '.join(email_azure.missing_settings())}"
@@ -1862,17 +1880,18 @@ def report_drill(request):
                 total = int(row[0]) if row and row[0] is not None else 0
             rows = _rows(rows_sql)
     except DatabaseError as exc:
+        logger.error("Admin report read failed (%s)", type(exc).__name__)
         # The source table is absent on this database -- the same state the
         # report itself reports by dropping a section, so it is said plainly
         # rather than shown as an empty result.
         return JsonResponse({
             "metric": key,
             "label": spec["label"],
-            "table": spec["table"],
+            "table": "",
             "available": False,
-            "error": str(exc),
-            "countSql": count_sql,
-            "rowsSql": rows_sql,
+            "error": "The database service is temporarily unavailable.",
+            "countSql": "",
+            "rowsSql": "",
         })
 
     return JsonResponse({

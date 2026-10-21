@@ -27,20 +27,38 @@ BACKEND = Path(__file__).resolve().parent.parent
 # the number of week queries it runs through the shared rule.
 READER_PATHS = {
     'learner_api/training_plan_dashboard.py': 1,
-    'learner_api/overview_week.py': 3,
+    'learner_api/overview_week.py': 4,
     'learner_api/mobile.py': 2,
-    'learner_api/learner_detail.py': 4,
+    'learner_api/learner_detail.py': 5,
     'learner_api/builder_activity_dates.py': 1,
     'learner_api/personal_learning_reads.py': 1,
     'learner_api/training_plan_targets.py': 1,
     'learner_api/curriculum.py': 1,
     'learner_api/module_shift.py': 1,
-    'learner_api/training_plan_document.py': 1,
+    'learner_api/selectors/training_plan_documents.py': 1,
     'learner_api/active_users.py': 1,
     'coach_api/overview_modules.py': 1,
     'coach_api/otjh_ksb.py': 1,
     'coach_api/learning_plan_projection.py': 2,
     'coach_api/weekly_learning.py': 1,
+}
+
+# The companion census covers the component/mapping filters in these same
+# F01/F02 readers. Keep explicit expected counts so new SQL sites require review.
+CHILD_READER_PATHS = {
+    'learner_api/training_plan_dashboard.py': 2,
+    'learner_api/overview_week.py': 5,
+    'learner_api/mobile.py': 2,
+    'learner_api/learner_detail.py': 7,
+    'learner_api/builder_activity_dates.py': 1,
+    'learner_api/curriculum.py': 1,
+    'learner_api/module_shift.py': 2,
+    'learner_api/selectors/training_plan_documents.py': 1,
+    'learner_api/active_users.py': 1,
+    'coach_api/overview_modules.py': 1,
+    'coach_api/otjh_ksb.py': 1,
+    'coach_api/learning_plan_projection.py': 1,
+    'coach_api/weekly_learning.py': 2,
 }
 
 # The old rule: any parent stamp kept a deleted week visible.

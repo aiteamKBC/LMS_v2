@@ -99,7 +99,8 @@ class OverviewProjectionTests(SimpleTestCase):
         self.assertEqual(overview.reviews_to_date(reviews, '2026-10-15'), {'completed': 1, 'total': 2, 'percent': 50})
 
     def test_compact_read_reuses_learning_progress_and_preserves_authoritative_totals(self):
-        from . import dashboard_tabs, overview_week, learning_plan, attendance_lectures, attendance, dashboard_metrics
+        from . import dashboard_tabs, overview_week, attendance_lectures, attendance, dashboard_metrics
+        from .selectors import assignments as assignment_reads
         source = SimpleNamespace(id=265, pk=265, email='synthetic@example.test')
         owner = {'id': 17, 'start_date': date(2026, 9, 1), 'end_date': date(2026, 11, 30)}
         module = {'id': 'M1', 'title': 'Module', 'start_date': '2026-09-01', 'end_date': '2026-11-30',
@@ -123,7 +124,7 @@ class OverviewProjectionTests(SimpleTestCase):
              patch.object(overview.schedule, 'plan_reviews', return_value=[]), \
              patch.object(overview.schedule, 'read_dashboard') as legacy, \
              patch.object(dashboard_tabs, 'learning_projection', return_value=learning) as facts, \
-             patch.object(learning_plan, '_effective_plan_ids', return_value=['M1']), \
+             patch.object(assignment_reads, '_effective_plan_ids', return_value=['M1']), \
              patch.object(overview_week, 'read_week', return_value={}) as weekly, \
              patch.object(attendance_lectures, 'lecture_register', return_value=[]), \
              patch.object(attendance, '_summarize_attendance', return_value=None), \

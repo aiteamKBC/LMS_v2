@@ -52,7 +52,7 @@ class Profile:
     objects = Mock()
 fixture_module("learner_api.models", EnrolmentUser=Source, LearnerProfile=Profile)
 fixture_module("learner_api.learner_detail", build_learner_detail=Mock())
-fixture_module("learner_api.learning_plan", effective_training_plan=Mock())
+fixture_module("learner_api.selectors.assignments", effective_training_plan=Mock())
 rules_path = ROOT.parent / "learner_api" / "progress_rules.py"
 rules_spec = importlib.util.spec_from_file_location("learner_api.progress_rules", rules_path)
 rules = importlib.util.module_from_spec(rules_spec)

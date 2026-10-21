@@ -27,6 +27,8 @@ Creates the enrolment record, and nothing further. It does **not** create the
 happens only once a plan has been assigned. An in-progress enrolment must not
 appear as a live learner, which is the same rule every other learner follows.
 """
+import logging
+
 from django.db import DatabaseError, transaction
 
 from learner_api.constants import DEFAULT_PROGRAMME_STATUS
@@ -49,6 +51,9 @@ ENROLMENT_DEFAULTS = {
     # than "a new person".
     "invite_to_platform": True,
 }
+
+
+logger = logging.getLogger(__name__)
 
 
 class EnrolmentError(ValueError):
@@ -123,4 +128,5 @@ def add_learner_record(account, *, programme="", cohort="", group="", learner_ty
                **({"learner_type": learner_type.strip()} if (learner_type or "").strip() else {})},
         )
     except DatabaseError as exc:
-        raise EnrolmentError(f"Database error: {exc}") from exc
+        logger.error("Could not create learner enrolment (%s)", type(exc).__name__)
+        raise EnrolmentError("The database service is temporarily unavailable.") from None

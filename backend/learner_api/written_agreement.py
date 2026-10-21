@@ -265,8 +265,8 @@ def written_agreement(request, pk):
         derived = derive_content(learner)
         document = _active_document(_learner_kind(learner), learner.pk)
     except DatabaseError as exc:
-        logger.exception("written_agreement: build failed")
-        return _error(f"Database error: {exc}", 502)
+        logger.error('written_agreement: build failed (%s)', type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     return JsonResponse({
         "learner": {
@@ -321,8 +321,8 @@ def issue_written_agreement(request, pk):
                 contacts=derived["contacts"],
             )
     except DatabaseError as exc:
-        logger.exception("issue_written_agreement: failed")
-        return _error(f"Database error: {exc}", 502)
+        logger.error('issue_written_agreement: failed (%s)', type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     return JsonResponse({"document": _document_json(document)}, status=201)
 
@@ -382,8 +382,8 @@ def sign_written_agreement(request, pk):
             document.save()
         promoted = advance_learner(learner)
     except DatabaseError as exc:
-        logger.exception("sign_written_agreement: failed")
-        return _error(f"Database error: {exc}", 502)
+        logger.error('sign_written_agreement: failed (%s)', type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     return JsonResponse({
         "document": _document_json(document),

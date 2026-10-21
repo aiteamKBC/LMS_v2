@@ -12,7 +12,8 @@ from unittest.mock import Mock, patch
 
 from django.test import RequestFactory, SimpleTestCase
 
-from . import learning_plan, module_shift
+from . import module_shift
+from .selectors import assignments as assignment_reads
 
 # Two modules built from the same shape: three components in week 1, one of
 # which differs in type, plus a second week with none. Enough to exercise
@@ -308,7 +309,7 @@ class ShiftedPlanTests(SimpleTestCase):
         self.assertEqual([entry["moduleId"] for entry in shifted], ["MOD-B"])
         self.assertEqual(shifted[0]["assignmentMode"], "explicit")
         self.learner.learning_plan = shifted
-        self.assertEqual(learning_plan._effective_plan_ids(self.learner, {}), ["MOD-B"])
+        self.assertEqual(assignment_reads._effective_plan_ids(self.learner, {}), ["MOD-B"])
 
     def test_a_non_group_module_does_not_freeze_the_rest_of_the_plan(self):
         with patch("learner_api.module_shift._group_module_ids", return_value=["MOD-X"]):

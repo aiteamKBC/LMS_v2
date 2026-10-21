@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from django.test import SimpleTestCase
 from . import projection_performance as perf, attendance, learning_plan, mappers
+from .selectors import assignments as assignment_reads
 from .live_session_progress import project_live_credits
 from .tests_live_session_progress import component, lecture, NOW
 
@@ -127,7 +128,7 @@ class DuplicatedWorkTests(SimpleTestCase):
             source = SimpleNamespace(training_plan=json.dumps(saved) if kind=='commercial' else None,
                 learning_plan=json.dumps(saved) if kind=='apprenticeship' else None,learner_type=kind)
             original = mappers.stored_training_plan
-            with patch.object(learning_plan,'stored_training_plan',wraps=original) as direct, \
+            with patch.object(assignment_reads,'stored_training_plan',wraps=original) as direct, \
                  patch.object(mappers,'stored_training_plan',wraps=original) as nested:
                 result = learning_plan.effective_training_plan(source)
             self.assertEqual(result,saved)
@@ -137,7 +138,7 @@ class DuplicatedWorkTests(SimpleTestCase):
         for saved, expected in ((None,['M2']),([],[]),([{'moduleId':'M1'}],['M1','M2']),
                                 ([{'moduleId':'M1','assignmentMode':'explicit'}],['M1'])):
             source = SimpleNamespace(training_plan=deepcopy(saved),learning_plan=None,modules='',weeks='',components='')
-            with patch.object(learning_plan,'_preset_ids_for',return_value=['M2']):
+            with patch.object(assignment_reads,'_preset_ids_for',return_value=['M2']):
                 self.assertEqual([row['moduleId'] for row in learning_plan.effective_training_plan(source)],expected)
         source.training_plan = [{'moduleId':'M9','assignmentMode':'explicit'}]
         self.assertEqual(learning_plan.effective_training_plan(source),source.training_plan)

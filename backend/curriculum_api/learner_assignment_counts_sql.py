@@ -53,6 +53,7 @@ import time
 from django.db import connections
 
 from learner_api import learning_plan as plans
+from learner_api.selectors import assignments as assignment_reads
 from learner_api.models import EnrolmentUser
 
 logger = logging.getLogger(__name__)
@@ -153,7 +154,7 @@ def _preset_ids(programme, group, cache):
     """`learning_plan._preset_ids_for`, keyed off plain values not a learner."""
     key = (plans._s(programme), plans._s(group))
     if key not in cache:
-        cache[key] = plans._group_module_ids(*key)
+        cache[key] = assignment_reads._group_module_ids(*key)
     return cache[key]
 
 
@@ -232,7 +233,7 @@ def assignment_directory_facts(target_module_ids):
     # One round trip for every distinct (programme, group) pair in the result,
     # same as bulk_assigned_learner_counts_sql -- see its own comment for why
     # that matters on a slow link.
-    cache = dict(plans.group_module_ids_bulk(
+    cache = dict(assignment_reads.group_module_ids_bulk(
         {(fact['programme'], fact['grp']) for fact in facts}
     ))
     rows = {}
@@ -261,7 +262,7 @@ def bulk_assigned_learner_counts_sql(module_ids):
     # sequential lookups of a 155-row table -- more latency than the learner read
     # this module exists to remove. The keys are exactly what `_preset_ids`
     # builds, so anything the bulk read misses still falls through to it.
-    cache = dict(plans.group_module_ids_bulk(
+    cache = dict(assignment_reads.group_module_ids_bulk(
         {(fact['programme'], fact['grp']) for fact in facts}
     ))
     counts, ambiguous = counts_from_plan_facts(facts, wanted, cache)
@@ -273,7 +274,7 @@ def bulk_assigned_learner_counts_sql(module_ids):
             'id', 'programme', 'group', 'learning_plan', 'training_plan',
         ).filter(pk__in=ambiguous)
         for learner in learners:
-            for module_id in set(plans._effective_plan_ids(learner, cache)):
+            for module_id in set(assignment_reads._effective_plan_ids(learner, cache)):
                 if module_id in wanted:
                     counts[module_id] += 1
     return counts

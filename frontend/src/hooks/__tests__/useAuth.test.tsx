@@ -172,6 +172,21 @@ describe('hydration from the session cookie', () => {
     expect(result.current.initializationError).toBeNull();
     expect(apiLogin).not.toHaveBeenCalled();
   });
+
+  it('allows retry after a 503 without logging out or discarding stored identity', async () => {
+    localStorage.setItem('kbc_auth_email', ADMIN.email);
+    apiMe.mockRejectedValueOnce(Object.assign(new Error('Temporarily unavailable'), {
+      status: 503, code: 'session_unavailable',
+    }));
+    const { result } = await renderAuth();
+    expect(result.current.initializationError).toBeTruthy();
+    expect(localStorage.getItem('kbc_auth_email')).toBe(ADMIN.email);
+    apiMe.mockResolvedValueOnce(ADMIN);
+    act(() => result.current.retryInitialization());
+    await waitFor(() => expect(result.current.auth.account).toEqual(ADMIN));
+    expect(apiLogout).not.toHaveBeenCalled();
+    expect(apiLogin).not.toHaveBeenCalled();
+  });
 });
 
 describe('login', () => {

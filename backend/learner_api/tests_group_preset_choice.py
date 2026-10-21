@@ -20,7 +20,7 @@ import unittest
 
 from django.test import SimpleTestCase
 
-from learner_api import learning_plan as plans
+from learner_api.selectors import assignments as plans
 
 LIVE = os.environ.get('LEARNER_GROUP_PRESET_LIVE_CHECK', '').strip().lower() in {'1', 'true', 'yes', 'on'}
 
