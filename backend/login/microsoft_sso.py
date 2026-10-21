@@ -307,6 +307,12 @@ def _graph_email(access_token):
 @require_GET
 def callback(request):
     """Complete the flow: verify state, resolve the address, issue a session."""
+    # Calendar consent reuses this registered redirect URI, with its own salt,
+    # nonce, active staff-session check and expiry. It never issues an LMS login.
+    # Ordinary SSO states continue through the unchanged sign-in path below.
+    if str(request.GET.get("state", "")).startswith("teams-calendar:"):
+        from curriculum_api.teams_imported_calendar_auth import imported_calendar_callback
+        return imported_calendar_callback(request)
     ip = client_ip(request)
     ua = user_agent(request)
     settings = config()

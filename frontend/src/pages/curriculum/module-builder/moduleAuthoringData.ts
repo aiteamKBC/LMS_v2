@@ -1032,6 +1032,10 @@ export function applyModuleWeekSessionPlan(
         const planned = plannedByComponentId.get(component.id);
         if (!planned?.date) return component;
         const settings = component.settings || {};
+        // An additional meeting owns its confirmed schedule independently of
+        // this week's main delivery slot, including after a week is inserted.
+        if (trimmed(settings.extraTeamsMeetingUrl)) return component;
+        const calendarConfirmationPending = ['missing', 'ambiguous'].includes(trimmed(settings.teamsCalendarBinding));
         // A live session runs on the day its week runs on. The date stored on
         // the component is a copy of the plan's, not a second opinion, so it
         // follows the plan whenever the plan moves -- which is what a changed
@@ -1066,6 +1070,7 @@ export function applyModuleWeekSessionPlan(
           && Number(settings.durationMinutes || 0) === durationMinutes
           && Number(settings.teamsDurationMinutes || durationMinutes) === durationMinutes
           && sameInstant
+          && (!calendarConfirmationPending || !trimmed(settings.teamsStartDateTimeUtc))
         ) return component;
         componentsMoved = true;
         weeksMoved = true;
@@ -1081,7 +1086,12 @@ export function applyModuleWeekSessionPlan(
             // Re-derived, never left behind: the learner timeline and the
             // programme calendar read this instant, so a stale one would keep
             // pointing at the old day after the date above had moved.
-            ...(instant ? { sessionDateTimeUtc: instant, teamsStartDateTimeUtc: instant } : {}),
+            ...(instant ? { sessionDateTimeUtc: instant } : {}),
+            // An imported date without an occurrence is a plan, not a Teams
+            // confirmation. Keep that distinction when the week is moved.
+            ...(calendarConfirmationPending
+              ? { teamsStartDateTimeUtc: '' }
+              : instant ? { teamsStartDateTimeUtc: instant } : {}),
           },
         };
       });
@@ -1829,6 +1839,8 @@ export const TEAMS_MEETING_SETTING_KEYS = [
   // an independent copy keeps its join URL only through the explicit copy
   // path below and must not inherit the override marker.
   'liveSessionLinkOverride',
+  'teamsCalendarBinding',
+  'teamsMainLinkInherited',
   // The one-off week meeting is the original's too: its organiser invited its
   // own guests to one date, and a copy placed in another week must arrive with
   // no link at all rather than pointing people at somebody else's meeting.
@@ -3462,13 +3474,14 @@ export async function cancelWeekTeamsMeeting(moduleCatalogueId: string, liveSess
 
 /**
  * Choose which calendar delivers one live session: the module's own series or an
- * additional meeting. Records the choice only -- nothing is sent to Microsoft.
+ * additional meeting. Inherits the main link and matches imported occurrences;
+ * nothing is sent to Microsoft.
  * The server refuses a live session either calendar has already booked.
  */
 export async function setLiveSessionMeetingScope(
   moduleCatalogueId: string, componentId: string, scope: 'main' | 'additional',
 ) {
-  return apiJson<{ componentId: string; scope: 'main' | 'additional' }>(
+  return apiJson<{ componentId: string; scope: 'main' | 'additional'; calendarStatus?: string; message?: string }>(
     `/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/live-session-meeting-scope/`,
     { method: 'POST', body: JSON.stringify({ componentId, scope }) },
   ).then(result => {
@@ -3667,6 +3680,7 @@ export interface TeamsMeetingOccurrence {
 
 export interface TeamsMeetingArtifactsResult {
   series: {
+    meeting_type?: string;
     timezone?: string;
     timeZoneIana?: string;
     id: string;
