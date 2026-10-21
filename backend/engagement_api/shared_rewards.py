@@ -102,9 +102,15 @@ def record_observations(*, learner_id, profile_id, component, tracking, token,
     if timezone.is_naive(started):
         raise RewardError("invalid_signed_start")
     now = timezone.now()
-    if now < started or now >= started+timedelta(hours=24):
+    expires = tracking.get('trackingExpiresAt', started+timedelta(hours=24))
+    if now < started or now >= expires:
         raise RewardError("tracking_session_expired")
-    checked = intervals(observed_intervals, max(0, _ms(now)-_ms(started)))
+    checked = intervals(observed_intervals, max(0, _ms(now)-_ms(started)),
+                        max_offset_ms=max(86400000, _ms(expires)-_ms(started)))
+    windows = tracking.get('trackingWindows')
+    if windows and any(not any(left <= start and end <= right for left, right in windows)
+                       for start, end in checked):
+        raise RewardError('observation_outside_timing_lease')
     session_id = identifier(tracking["sessionId"])
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     fingerprint = digest([session_id, sequence, checked])
@@ -122,7 +128,7 @@ def record_observations(*, learner_id, profile_id, component, tracking, token,
              VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING''',
              [session_id, learner_id, tracking["learnerKind"], profile_id, component["componentId"], module_id, component["weekId"],
               tracking["activityKind"], str(tracking["activityId"]), tracking["countingMode"],
-              started, started+timedelta(hours=24), token_hash, bool(component.get("tutorValidationRequired")),
+              started, expires, token_hash, bool(component.get("tutorValidationRequired")),
               component.get("type") or tracking["activityKind"],component.get("component") or component["componentId"],
               component.get("module") or "",component.get("week") or ""])
         cursor.execute('SELECT * FROM "Engagement".shared_reward_sessions WHERE session_id=%s FOR UPDATE', [session_id])
@@ -133,6 +139,9 @@ def record_observations(*, learner_id, profile_id, component, tracking, token,
              learner_id, profile_id, component["componentId"], module_id, tracking["activityKind"],
              str(tracking["activityId"]), tracking["countingMode"], started, token_hash):
             raise RewardError("session_identity_conflict")
+        if windows and expires > session['expires_at']:
+            cursor.execute('UPDATE "Engagement".shared_reward_sessions SET expires_at=%s WHERE session_id=%s',
+                           [expires, session_id])
         cursor.execute('''SELECT * FROM "Engagement".shared_reward_observations
              WHERE event_id=%s OR (session_id=%s AND sequence=%s) ORDER BY event_id''', [event_id, session_id, sequence])
         previous = _all(cursor)

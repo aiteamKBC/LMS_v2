@@ -2,9 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as SelectPrimitive from '@radix-ui/react-select';
 import { useNavigate, useParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
+import { QRCodeSVG } from 'qrcode.react';
 import { feedbackApi, type FeedbackCurriculumOptions, type FeedbackFormInput, type FeedbackQuestion, type FeedbackQuestionType, type FeedbackSection } from '@/api/feedback';
 import { FeedbackFormHeader, FeedbackStepProgress, FormRenderer } from './FormRenderer';
 import { FEEDBACK_SECTION_ICONS } from './formPresentation';
+import { lecturePresentationSections } from './lecturePresentation';
+import { parsePostLectureQuestionBank, POST_LECTURE_BANK_TEMPLATE, type ParsedPostLectureBank } from './postLectureQuestionBank';
 
 type BuilderSelectOption = { value: string; label: string; description: string; icon: string };
 
@@ -49,6 +52,15 @@ export function FormBuilder() {
   const [selectedQuestionIndex, setSelectedQuestionIndex] = useState(0);
   const [previewViewport, setPreviewViewport] = useState<'desktop' | 'mobile'>('desktop');
   const [saving, setSaving] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [bankPreview, setBankPreview] = useState<ParsedPostLectureBank | null>(null);
+  const [bankError, setBankError] = useState('');
+  const [bankFileName, setBankFileName] = useState('');
+  const [bankBusy, setBankBusy] = useState(false);
+  const [bankNotice, setBankNotice] = useState('');
+  const lectureFeedbackUrl = `${window.location.origin}/login?lectureFeedback=1`;
+  const presentationSections = useMemo(() => lecturePresentationSections(model.formType, model.sections), [model.formType, model.sections]);
+  const presentationStep = Math.min(previewStep, Math.max(presentationSections.length - 1, 0));
 
   useEffect(() => {
     if (!formId) return;
@@ -112,8 +124,13 @@ export function FormBuilder() {
   };
 
   const removeQuestion = (sectionIndex: number, questionIndex: number) => {
-    const questions = model.sections[sectionIndex].questions.filter((_, index) => index !== questionIndex);
-    updateSection(sectionIndex, { questions });
+    const section = model.sections[sectionIndex];
+    const questions = section.questions.filter((_, index) => index !== questionIndex);
+    updateSection(sectionIndex, {
+      questions,
+      questionsPerDelivery: section.questionsPerDelivery == null
+        ? null : Math.min(section.questionsPerDelivery, questions.length) || null,
+    });
     setSelectedSectionIndex(sectionIndex);
     setSelectedQuestionIndex(Math.max(0, Math.min(questionIndex, questions.length - 1)));
   };
@@ -151,6 +168,41 @@ export function FormBuilder() {
     } finally { setSaving(false); }
   }
 
+  function downloadBankTemplate() {
+    const url = URL.createObjectURL(new Blob(['\uFEFF', POST_LECTURE_BANK_TEMPLATE], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'post-lecture-question-bank-template.csv';
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  async function previewBankFile(file: File | undefined) {
+    setBankPreview(null);
+    setBankError('');
+    setBankNotice('');
+    setBankFileName(file?.name || '');
+    if (!file) return;
+    setBankBusy(true);
+    try {
+      setBankPreview(await parsePostLectureQuestionBank(file));
+    } catch (error) {
+      setBankError(error instanceof Error ? error.message : 'Could not read question bank.');
+    } finally {
+      setBankBusy(false);
+    }
+  }
+
+  function applyBankPreview() {
+    if (!bankPreview || locked) return;
+    setSections(bankPreview.sections);
+    setSelectedSectionIndex(0);
+    setSelectedQuestionIndex(0);
+    setPreviewStep(0);
+    setBankPreview(null);
+    setBankNotice('Question bank added to this draft. Save the form to keep it.');
+  }
+
   return <div className="mx-auto max-w-[1480px] space-y-6 p-4 sm:p-6">
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div>
@@ -167,7 +219,7 @@ export function FormBuilder() {
     </div>
     {locked && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">Questions and sections are locked because a learner has started this form. Form details and dates can still be updated.</div>}
     {versionInfo?.willCreateVersion && <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">You are editing version {versionInfo.version}. Saving creates a new version for future deliveries; previous responses stay unchanged.</div>}
-    {preview ? <div className="mx-auto max-w-4xl rounded-2xl border border-foreground-200/70 bg-white p-6 shadow-xl sm:p-8"><FeedbackFormHeader title={model.title || 'Untitled feedback form'} description={model.description} instructions={model.instructions} /><FeedbackStepProgress sections={model.sections} activeSection={previewStep} onStepChange={setPreviewStep} /><FormRenderer sections={model.sections} activeSection={previewStep} answers={{}} readOnly /><div className="mt-7 grid grid-cols-3 items-center border-t border-foreground-100 pt-5"><div>{previewStep > 0 && <button type="button" onClick={() => setPreviewStep(value => value - 1)} className="rounded-md bg-[#34405f] px-6 py-2.5 text-xs font-semibold text-white">Back</button>}</div><div className="flex justify-center">{previewStep < model.sections.length - 1 && <button type="button" onClick={() => setPreviewStep(value => value + 1)} className="rounded-md bg-[#34405f] px-6 py-2.5 text-xs font-semibold text-white">Next</button>}</div><p className="text-right text-xs text-foreground-500">{previewStep + 1}/{model.sections.length}</p></div></div> : <>
+    {preview ? <div className="mx-auto max-w-4xl rounded-2xl border border-foreground-200/70 bg-white p-6 shadow-xl sm:p-8">{model.formType === 'post_lecture' && <p className="mb-4 text-xs text-primary-700">Bank preview shows all questions. Each lecture will show only its saved random selection.</p>}<FeedbackFormHeader title={model.title || 'Untitled feedback form'} description={model.description} instructions={model.instructions} /><FeedbackStepProgress sections={presentationSections} activeSection={presentationStep} onStepChange={setPreviewStep} /><FormRenderer sections={presentationSections} activeSection={presentationStep} answers={{}} readOnly /><div className="mt-7 grid grid-cols-3 items-center border-t border-foreground-100 pt-5"><div>{presentationStep > 0 && <button type="button" onClick={() => setPreviewStep(value => value - 1)} className="rounded-md bg-[#34405f] px-6 py-2.5 text-xs font-semibold text-white">Back</button>}</div><div className="flex justify-center">{presentationStep < presentationSections.length - 1 && <button type="button" onClick={() => setPreviewStep(value => value + 1)} className="rounded-md bg-[#34405f] px-6 py-2.5 text-xs font-semibold text-white">Next</button>}</div><p className="text-right text-xs text-foreground-500">{presentationStep + 1}/{presentationSections.length}</p></div></div> : <>
       <div className="space-y-6">
       <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-white shadow-sm">
         <div className="flex items-start gap-3 border-b border-foreground-100 bg-background-50/70 px-5 py-4">
@@ -175,11 +227,12 @@ export function FormBuilder() {
           <div><h2 className="text-sm font-bold text-foreground-900">Form setup</h2><p className="mt-0.5 text-xs text-foreground-500">Choose when this form is used and who should receive it.</p></div>
         </div>
         <div className="grid gap-5 p-5 md:grid-cols-2">
-        <div className="max-w-2xl"><BuilderSelect label="Form Type" value={model.formType} options={FORM_TYPE_OPTIONS} disabled={locked} onValueChange={value => { const formType = value as FeedbackFormInput['formType']; setModel(current => ({ ...current, formType, deliveryScope: formType === 'post_lecture' ? 'all_modules' : 'manual', programmeId: '', cohortId: '', groupId: '', moduleCatalogueId: '' })); }} /></div>
+        <div className="max-w-2xl"><BuilderSelect label="Form Type" value={model.formType} options={FORM_TYPE_OPTIONS} disabled={locked} onValueChange={value => { const formType = value as FeedbackFormInput['formType']; setModel(current => ({ ...current, formType, deliveryScope: formType === 'post_lecture' ? 'all_modules' : 'manual', programmeId: '', cohortId: '', groupId: '', moduleCatalogueId: '', sections: formType === 'post_lecture' ? current.sections : current.sections.map(section => ({ ...section, questionsPerDelivery: null })) })); }} /></div>
         {(model.formType === 'post_mcm_review' || model.formType === 'post_progress_review') && <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-4 text-xs text-violet-800 md:col-span-2">Learners receive this form automatically only for matching reviews completed after this template is first published. Historical completed reviews are not backfilled.</div>}
         {model.formType === 'event_rsvp' && <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 text-xs text-emerald-800 md:col-span-2">This form is attached to an event invitation. Yes / No / Maybe is collected by the RSVP page; add any extra questions attendees should answer.</div>}
         {model.formType === 'post_lecture' && <div className="rounded-xl border border-primary-100 bg-primary-50/40 p-4 md:col-span-2">
           <div className="mb-4 flex items-start gap-3"><span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-primary-600 shadow-sm"><i className="ri-graduation-cap-line" aria-hidden="true" /></span><div><div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-semibold text-foreground-900">Lecture delivery</h3><span className="rounded-full bg-primary-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-primary-700">Automatic</span></div><p className="mt-1 text-xs leading-5 text-foreground-500">Present learners receive this form automatically after finalized attendance. A module-specific form overrides the all-modules form.</p></div></div>
+          <p className="mb-4 text-xs leading-5 text-foreground-600">Use each section as a question bank category. Set how many questions to draw below; a new mix is chosen automatically for each finalized lecture and stays fixed for that lecture.</p>
           <fieldset className="mb-3 max-w-2xl"><legend className="mb-1.5 text-xs font-semibold text-foreground-700">Delivery scope</legend><div className="grid gap-2 sm:grid-cols-2">{[
             { value: 'all_modules', label: 'All modules', description: 'Use this form by default for every module.', icon: 'ri-stack-line' },
             { value: 'module', label: 'One module only', description: 'Override the default for a specific module.', icon: 'ri-book-open-line' },
@@ -193,6 +246,21 @@ export function FormBuilder() {
             <ScopeSelect label="Module" value={model.moduleCatalogueId} disabled={locked || !model.groupId} options={modules} placeholder="Choose module" onChange={moduleCatalogueId => setModel(current => ({ ...current, moduleCatalogueId }))} />
             </div>
           </>}
+        </div>}
+        {model.formType === 'post_lecture' && <div className="rounded-xl border border-primary-100 bg-white p-4 md:col-span-2">
+          <h3 className="text-sm font-semibold text-foreground-900">Reusable lecture feedback QR</h3>
+          <p className="mt-1 text-xs text-foreground-500">Share this same QR every week. After sign-in, each learner sees only lecture feedback unlocked by their finalized attendance.</p>
+          <div className="mt-3 flex flex-wrap items-center gap-4"><div className="rounded-lg border border-foreground-200 bg-white p-2"><QRCodeSVG value={lectureFeedbackUrl} size={150} level="M" marginSize={1} title="Lecture feedback QR" /></div><div className="min-w-0 flex-1"><p className="break-all text-xs text-foreground-600">{lectureFeedbackUrl}</p><button type="button" className="mt-3 rounded-lg border border-primary-200 px-3 py-2 text-xs font-semibold text-primary-700" onClick={() => void navigator.clipboard.writeText(lectureFeedbackUrl).then(() => { setLinkCopied(true); window.setTimeout(() => setLinkCopied(false), 1600); }).catch(() => void Swal.fire({ icon: 'error', title: 'Could not copy link' }))}>{linkCopied ? 'Copied' : 'Copy link'}</button></div></div>
+        </div>}
+        {model.formType === 'post_lecture' && <div className="rounded-xl border border-primary-100 bg-white p-4 md:col-span-2">
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-sm font-semibold text-foreground-900">Import 5-star question bank</h3><p className="mt-1 text-xs text-foreground-500">Upload one .xlsx or .csv sheet. Categories control the automatic random draw, but learners see one form: stars first, then the closing text question.</p></div><button type="button" onClick={downloadBankTemplate} className="rounded-lg border border-primary-200 px-3 py-2 text-xs font-semibold text-primary-700">Download CSV template</button></div>
+          <p className="mt-3 text-xs text-foreground-600">Columns: Category, Question, Questions per lecture, Type. Use <code>stars</code> for each 5-star question; repeat the category and draw count (1 or 2) on every row. Add one final <code>text</code> row with blank category and draw count. Include at least two categories and more questions in each than its draw count.</p>
+          <label className="mt-4 block text-xs font-semibold text-foreground-700">Question bank file<input type="file" accept=".xlsx,.csv" disabled={locked || bankBusy} className={`${field} mt-1.5`} onChange={event => { void previewBankFile(event.target.files?.[0]); event.target.value = ''; }} /></label>
+          {locked && <p className="mt-2 text-xs text-amber-700">This form structure is locked because responses have started. Import into a new editable template instead.</p>}
+          {bankBusy && <p role="status" className="mt-3 text-xs text-foreground-500">Reading question bank...</p>}
+          {bankError && <p role="alert" className="mt-3 text-xs text-red-700">{bankError}</p>}
+          {bankNotice && <p role="status" className="mt-3 text-xs text-emerald-700">{bankNotice}</p>}
+          {bankPreview && <div className="mt-4 rounded-lg border border-primary-200 bg-primary-50/40 p-3 text-xs text-foreground-700"><p className="font-semibold">Preview: {bankFileName} — {bankPreview.ratingCount} star questions across {bankPreview.sections.length - 1} categories</p><ul className="mt-2 list-inside list-disc space-y-1">{bankPreview.sections.slice(0, -1).map(section => <li key={section.title}>{section.title}: draw {section.questionsPerDelivery} of {section.questions.length} each lecture</li>)}</ul><p className="mt-2">Closing question: {bankPreview.closingQuestion}</p><button type="button" disabled={locked} onClick={applyBankPreview} className="mt-3 rounded-lg bg-primary-600 px-3 py-2 font-semibold text-white disabled:opacity-50">Replace draft questions with this bank</button><p className="mt-2 text-foreground-500">Your current draft questions are replaced only after you click this button. Save the form separately.</p></div>}
         </div>}
         </div>
       </section>
@@ -227,6 +295,12 @@ export function FormBuilder() {
             {model.sections.map((section, sectionIndex) => <div key={sectionIndex} className={`rounded-xl border p-3 transition-colors ${sectionIndex === activeSectionIndex ? 'border-primary-200 bg-primary-50/40' : 'border-foreground-200/70 bg-background-50/40'}`}>
               <div className="mb-2 flex items-center justify-between gap-2"><button type="button" onClick={() => { setSelectedSectionIndex(sectionIndex); setSelectedQuestionIndex(0); setPreviewStep(sectionIndex); }} className="flex min-w-0 items-center gap-2 text-left"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white text-[10px] font-bold text-primary-700 shadow-sm">{sectionIndex + 1}</span><span className="truncate text-xs font-bold text-foreground-800">{section.title || `Section ${sectionIndex + 1}`}</span></button><div className="flex items-center gap-1"><MoveButtons index={sectionIndex} length={model.sections.length} onMove={direction => moveSectionAndSelection(sectionIndex, direction)} disabled={locked} /><button type="button" aria-label={`Delete section ${sectionIndex + 1}`} disabled={locked || model.sections.length === 1} onClick={() => { const sections = model.sections.filter((_, index) => index !== sectionIndex); setSections(sections); setSelectedSectionIndex(Math.max(0, Math.min(sectionIndex, sections.length - 1))); setSelectedQuestionIndex(0); setPreviewStep(Math.max(0, Math.min(sectionIndex, sections.length - 1))); }} className="flex h-7 w-7 items-center justify-center rounded-md text-foreground-400 transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-25"><i className="ri-delete-bin-line" aria-hidden="true" /></button></div></div>
               <div className="grid gap-2"><label className="relative"><span className="sr-only">Section {sectionIndex + 1} icon</span><i className={`${section.icon || 'ri-file-list-3-line'} pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-primary-600`} /><select disabled={locked} aria-label={`Section ${sectionIndex + 1} icon`} className={`${field} pl-9 text-xs`} value={section.icon || 'ri-file-list-3-line'} onChange={e => updateSection(sectionIndex, { icon: e.target.value })}>{FEEDBACK_SECTION_ICONS.map(icon => <option key={icon.value} value={icon.value}>{icon.label}</option>)}</select></label><input disabled={locked} aria-label={`Section ${sectionIndex + 1} title`} className={`${field} text-xs font-semibold`} value={section.title} onChange={e => updateSection(sectionIndex, { title: e.target.value })} /><input disabled={locked} className={`${field} text-xs`} placeholder="Section description (optional)" value={section.description} onChange={e => updateSection(sectionIndex, { description: e.target.value })} /></div>
+              {model.formType === 'post_lecture' && <label className="mt-3 block text-[11px] font-semibold text-foreground-700">Questions drawn per lecture
+                <select disabled={locked || section.questions.length === 0} aria-label={`Section ${sectionIndex + 1} questions per lecture`} className={`${field} mt-1 text-xs`} value={section.questionsPerDelivery ?? ''} onChange={e => updateSection(sectionIndex, { questionsPerDelivery: e.target.value ? Number(e.target.value) : null })}>
+                  <option value="">All questions (fixed)</option>
+                  {Array.from({ length: section.questions.length }, (_, index) => index + 1).map(count => <option key={count} value={count}>{count} random {count === 1 ? 'question' : 'questions'}</option>)}
+                </select>
+              </label>}
               <div className="mt-3 space-y-1.5">{section.questions.map((question, questionIndex) => <div key={questionIndex} className="flex items-center gap-1"><button type="button" onClick={() => selectQuestion(sectionIndex, questionIndex)} className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors ${sectionIndex === activeSectionIndex && questionIndex === activeQuestionIndex ? 'border-primary-300 bg-white shadow-sm' : 'border-transparent hover:border-foreground-200 hover:bg-white'}`}><span className="text-[10px] font-bold text-foreground-400">{questionIndex + 1}</span><i className={`${question.type === 'rating' ? 'ri-star-line' : question.type === 'long_text' ? 'ri-message-3-line' : 'ri-question-line'} shrink-0 text-primary-600`} aria-hidden="true" /><span className="min-w-0"><span className="block truncate text-[11px] font-semibold text-foreground-800">{question.text || `Question ${questionIndex + 1}`}</span><span className="block text-[10px] text-foreground-400">{QUESTION_TYPES.find(type => type.value === question.type)?.label}</span></span></button><MoveButtons index={questionIndex} length={section.questions.length} onMove={direction => moveQuestionAndSelection(sectionIndex, questionIndex, direction)} disabled={locked} /></div>)}</div>
               <button type="button" aria-label={`+ Add Question to section ${sectionIndex + 1}`} disabled={locked} onClick={() => addQuestion(sectionIndex)} className="mt-3 inline-flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-primary-300 bg-white px-3 py-2 text-[11px] font-semibold text-primary-700 transition-colors hover:bg-primary-50 disabled:opacity-30"><i className="ri-add-line" aria-hidden="true" />Add question</button>
             </div>)}
@@ -235,8 +309,8 @@ export function FormBuilder() {
         </aside>
 
         <main className="min-w-0 overflow-hidden rounded-2xl border border-foreground-200/70 bg-white shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-foreground-100 bg-background-50/70 px-4 py-3"><div><h2 className="flex items-center gap-2 text-sm font-bold text-foreground-900"><i className="ri-macbook-line text-primary-600" aria-hidden="true" />Form preview</h2><p className="mt-0.5 text-[11px] text-foreground-500">This is how learners will see the form.</p></div><div className="flex rounded-lg border border-primary-200 bg-white p-1"><button type="button" onClick={() => setPreviewViewport('desktop')} className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[11px] font-semibold ${previewViewport === 'desktop' ? 'bg-primary-600 text-white' : 'text-foreground-500'}`}><i className="ri-computer-line" aria-hidden="true" />Desktop</button><button type="button" onClick={() => setPreviewViewport('mobile')} className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[11px] font-semibold ${previewViewport === 'mobile' ? 'bg-primary-600 text-white' : 'text-foreground-500'}`}><i className="ri-smartphone-line" aria-hidden="true" />Mobile</button></div></div>
-          <div className="bg-[#f6f4fb] p-4 sm:p-6"><div className={`mx-auto rounded-2xl border border-foreground-200/70 bg-white p-5 shadow-sm transition-[max-width] sm:p-6 ${previewViewport === 'mobile' ? 'max-w-[390px]' : 'max-w-4xl'}`}><FeedbackFormHeader title={model.title || 'Untitled feedback form'} description={model.description} instructions={model.instructions} /><FeedbackStepProgress sections={model.sections} activeSection={previewStep} onStepChange={step => { setPreviewStep(step); setSelectedSectionIndex(step); setSelectedQuestionIndex(0); }} /><FormRenderer sections={model.sections} activeSection={previewStep} answers={{}} readOnly /><div className="mt-6 grid grid-cols-3 items-center border-t border-foreground-100 pt-4"><div>{previewStep > 0 && <button type="button" onClick={() => { const step = previewStep - 1; setPreviewStep(step); setSelectedSectionIndex(step); setSelectedQuestionIndex(0); }} className="rounded-md bg-[#34405f] px-4 py-2 text-xs font-semibold text-white">Back</button>}</div><div className="flex justify-center">{previewStep < model.sections.length - 1 && <button type="button" onClick={() => { const step = previewStep + 1; setPreviewStep(step); setSelectedSectionIndex(step); setSelectedQuestionIndex(0); }} className="rounded-md bg-[#34405f] px-4 py-2 text-xs font-semibold text-white">Next</button>}</div><p className="text-right text-xs text-foreground-500">{previewStep + 1}/{model.sections.length}</p></div></div></div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-foreground-100 bg-background-50/70 px-4 py-3"><div><h2 className="flex items-center gap-2 text-sm font-bold text-foreground-900"><i className="ri-macbook-line text-primary-600" aria-hidden="true" />Form preview</h2><p className="mt-0.5 text-[11px] text-foreground-500">{model.formType === 'post_lecture' ? 'Bank preview: learners see only the questions selected for their lecture.' : 'This is how learners will see the form.'}</p></div><div className="flex rounded-lg border border-primary-200 bg-white p-1"><button type="button" onClick={() => setPreviewViewport('desktop')} className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[11px] font-semibold ${previewViewport === 'desktop' ? 'bg-primary-600 text-white' : 'text-foreground-500'}`}><i className="ri-computer-line" aria-hidden="true" />Desktop</button><button type="button" onClick={() => setPreviewViewport('mobile')} className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[11px] font-semibold ${previewViewport === 'mobile' ? 'bg-primary-600 text-white' : 'text-foreground-500'}`}><i className="ri-smartphone-line" aria-hidden="true" />Mobile</button></div></div>
+          <div className="bg-[#f6f4fb] p-4 sm:p-6"><div className={`mx-auto rounded-2xl border border-foreground-200/70 bg-white p-5 shadow-sm transition-[max-width] sm:p-6 ${previewViewport === 'mobile' ? 'max-w-[390px]' : 'max-w-4xl'}`}><FeedbackFormHeader title={model.title || 'Untitled feedback form'} description={model.description} instructions={model.instructions} /><FeedbackStepProgress sections={presentationSections} activeSection={presentationStep} onStepChange={step => { setPreviewStep(step); setSelectedSectionIndex(step); setSelectedQuestionIndex(0); }} /><FormRenderer sections={presentationSections} activeSection={presentationStep} answers={{}} readOnly /><div className="mt-6 grid grid-cols-3 items-center border-t border-foreground-100 pt-4"><div>{presentationStep > 0 && <button type="button" onClick={() => { const step = presentationStep - 1; setPreviewStep(step); setSelectedSectionIndex(step); setSelectedQuestionIndex(0); }} className="rounded-md bg-[#34405f] px-4 py-2 text-xs font-semibold text-white">Back</button>}</div><div className="flex justify-center">{presentationStep < presentationSections.length - 1 && <button type="button" onClick={() => { const step = presentationStep + 1; setPreviewStep(step); setSelectedSectionIndex(step); setSelectedQuestionIndex(0); }} className="rounded-md bg-[#34405f] px-4 py-2 text-xs font-semibold text-white">Next</button>}</div><p className="text-right text-xs text-foreground-500">{presentationStep + 1}/{presentationSections.length}</p></div></div></div>
         </main>
 
         <aside className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-white shadow-sm xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto">

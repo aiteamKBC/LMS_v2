@@ -28,4 +28,22 @@ describe('absence report submission', () => {
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ id: 7, reference: 'AR-0007' }), { status: 200 }));
     await expect(submitAbsenceReport('apprenticeship', '12', new FormData())).resolves.toMatchObject({ id: 7 });
   });
+
+  it('includes the support reference when the report cannot be saved', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({
+      error: 'The absence report could not be saved. Please retry.',
+      code: 'absence_report_save_failed',
+      reference: 'ABS-PLAN-23514-ABCDEF123456',
+    }), { status: 502 }));
+    await expect(submitAbsenceReport('apprenticeship', '12', new FormData())).rejects.toThrow(
+      'The absence report could not be saved. Please retry. Support reference: ABS-PLAN-23514-ABCDEF123456',
+    );
+  });
+
+  it.each([{}, 'private arbitrary diagnostic text'])('does not display an unexpected reference value', async reference => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({
+      error: 'Save failed.', reference,
+    }), { status: 502 }));
+    await expect(submitAbsenceReport('apprenticeship', '12', new FormData())).rejects.toThrow(/^Save failed\.$/);
+  });
 });

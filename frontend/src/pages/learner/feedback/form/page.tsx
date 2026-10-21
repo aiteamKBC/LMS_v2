@@ -5,6 +5,7 @@ import { feedbackApi, type FeedbackAnswerValue, type FeedbackForm } from '@/api/
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { FeedbackFormExperience } from '@/features/feedback/FormRenderer';
 import { missingRequiredQuestionIds } from '@/features/feedback/formPresentation';
+import { lecturePresentationSections } from '@/features/feedback/lecturePresentation';
 import { useAuth } from '@/hooks/useAuth';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { roleNavMap } from '@/mocks/navigation';
@@ -57,7 +58,7 @@ export default function LearnerFeedbackFormPage() {
     if (autoSaveTimer.current !== null) window.clearTimeout(autoSaveTimer.current);
   }, []);
 
-  const sections = useMemo(() => form?.sections || [], [form]);
+  const sections = useMemo(() => form ? lecturePresentationSections(form.formType, form.sections || []) : [], [form]);
   function nextStep() {
     const missing = missingRequiredQuestionIds(sections[step], answers);
     setInvalidQuestionIds(missing);

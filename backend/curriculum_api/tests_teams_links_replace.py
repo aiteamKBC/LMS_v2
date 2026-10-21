@@ -80,6 +80,40 @@ class TeamsLinksReplaceTests(CurriculumPersistenceHarness):
         first_live = next(c for c in saved['weekStructure'][0]['components'] if c['type'] == 'live-session')
         self.assertEqual(first_live['settings']['liveSessionUrl'], NEW_LINK)
 
+    def test_pasting_a_tracked_meeting_into_a_new_live_session_links_its_saved_results(self):
+        """Evidence remains on its original series but is visible in this module."""
+        source_id = self.make_source_module()
+        views.ensure_live_session_tracking_tables()
+        views.authoring_upsert(views.LIVE_SESSIONS_TABLE, ['id'], {
+            'id': 'SOURCE-SERIES',
+            'module_catalogue_id': source_id,
+            'module_title': 'Meeting owner',
+            'organizer_email': 'tutor@example.invalid',
+            'join_url': SOURCE_LINK,
+            'status': 'active',
+        })
+        # A new card has no old URL to replace; it must still be selectable.
+        first = self.component_row(self.live_ids[0])
+        settings = self.settings_of(self.live_ids[0])
+        views.update_authoring_rows(views.AUTHORING_COMPONENTS_TABLE, 'id = %s', [first['id']], {
+            'settings_json': json.dumps({key: value for key, value in settings.items()
+                                         if key not in {'liveSessionUrl', 'teamsMeetingUrl'}}),
+            'live_sessions_link': '',
+        })
+
+        response = self.post_json(self.url, {'weekIds': [self.weeks[0]['id']], 'link': SOURCE_LINK})
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['updatedComponentIds'], [self.live_ids[0]])
+        self.assertEqual(response.json()['recordingsSourceModuleId'], source_id)
+        target = views.authoring_module_exists(self.module_id)
+        self.assertEqual(target['teams_shared_source_module_id'], source_id)
+        # The new module is an alias, not a second owner of the Teams series.
+        self.assertEqual(
+            views.authoring_fetch_all(views.LIVE_SESSIONS_TABLE, 'module_catalogue_id = %s', [self.module_id]),
+            [],
+        )
+
     def test_a_stale_revision_still_saves_but_is_reported(self):
         response = self.post_json(self.url, {'weekIds': [self.weeks[0]['id']], 'link': NEW_LINK, 'expectedRevision': 'stale'})
 
