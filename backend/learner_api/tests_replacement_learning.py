@@ -7,6 +7,27 @@ from .replacement_learning import annotate_replacement_learning, project_approve
 
 
 class ReplacementLearningReadTests(SimpleTestCase):
+    def test_approval_for_one_learner_never_completes_the_same_component_for_another(self):
+        component = {'componentId': 'C1', 'moduleId': 'M1', 'type': 'reading'}
+        match = {'courseRef': 'legacy:50', 'activityId': 'catalogue:50:material:7',
+                 'sourceActivityId': 7, 'catalogueKind': 'material', 'completed': True}
+        transfer = {'status': 'approved', 'moduleId': 'M1', 'courseRef': 'legacy:50',
+                    'matchedComponents': {'C1': match}}
+        states = {12: {'items': [transfer]}, 13: {'items': [{**transfer, 'status': 'pending'}]}}
+        with patch('learner_api.progress_transfer_store.read_state', side_effect=lambda pk: states[pk]) as state, \
+             patch('django.db.connections') as connections:
+            cursor = connections.__getitem__.return_value.cursor.return_value.__enter__.return_value
+            cursor.fetchall.return_value = [('C1', {'legacySettings': {'sourceLessonId': 7}})]
+            for pk in (12, 13, 12):
+                result = annotate_replacement_learning([component], pk)
+                if pk == 12:
+                    self.assertEqual(result[0]['previousLearning'], match)
+                else:
+                    self.assertEqual(result, [component])
+            self.assertEqual([call.args[0] for call in state.call_args_list], [12, 13, 12])
+            self.assertEqual(cursor.execute.call_count, 2)
+            self.assertNotIn('previousLearning', component)
+
     def test_unassigned_and_unowned_courses_do_not_load_source_records(self):
         component = {'componentId': 'C1', 'moduleId': 'M1'}
         with patch('learner_api.progress_transfer_store.read_state', return_value={'items': []}) as state, \

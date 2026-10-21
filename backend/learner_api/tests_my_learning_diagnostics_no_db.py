@@ -140,7 +140,7 @@ class LocalProjectionDiagnosticsTests(SimpleTestCase):
 
 
 class SafeCatalogueReductionTests(SimpleTestCase):
-    def test_cached_imports_and_scoped_replacement_settings_avoid_repeated_metadata_reads(self):
+    def load_replacement_context(self, transfers=None, components=None):
         from . import models,weekly_learning,subject_origins,previous_learning_groups,builder_activity_dates,teams_attendance
         from .tests_my_learning_no_db import native,component
         source=SimpleNamespace(pk=7,id=7,aptem_id=7,programme='Programme',cohort='',group='')
@@ -158,15 +158,21 @@ class SafeCatalogueReductionTests(SimpleTestCase):
             stack.enter_context(patch.object(learning,'catalogue_module_rows',side_effect=module_rows))
             stack.enter_context(patch.object(learning.canonical,'entries_for',return_value=[]))
             stack.enter_context(patch.object(learning.canonical,'owned_source_courses',return_value=[]))
-            stack.enter_context(patch.object(weekly_learning,'build_learning_content_summary',return_value=native([component()])))
+            stack.enter_context(patch.object(weekly_learning,'build_learning_content_summary',return_value=native(components or [component()])))
             imports=stack.enter_context(patch.object(subject_origins,'read_imported_courses',side_effect=AssertionError('Repeated import query')))
             stack.enter_context(patch.object(subject_origins,'read_replacement_courses',return_value={'current:M1':'legacy:50'}))
             stack.enter_context(patch.object(previous_learning_groups,'read_previous_learning_groups',return_value={}))
             stack.enter_context(patch.object(builder_activity_dates,'read_builder_activity_dates',return_value={}))
             stack.enter_context(patch.object(teams_attendance,'annotate_attendance_completion',side_effect=lambda rows,*args:rows))
             stack.enter_context(patch.object(live,'read_live_credits',return_value=[]))
-            context=learning.load_context(source,{'id':9})
+            state=stack.enter_context(patch('learner_api.progress_transfer_store.read_state',return_value={'items':transfers or []}))
+            context=learning.load_context(source,{'id':9,'progress_transfer_active':transfers is not None})
+        self.assertEqual(state.call_count, int(transfers is not None))
         imports.assert_not_called()
+        return context,cur
+
+    def test_cached_imports_and_scoped_replacement_settings_avoid_repeated_metadata_reads(self):
+        context,cur=self.load_replacement_context()
         self.assertEqual(cur.execute.call_count,1)
         sql,params=cur.execute.call_args.args
         self.assertIn('AND id=ANY(%s)',sql)
@@ -174,6 +180,24 @@ class SafeCatalogueReductionTests(SimpleTestCase):
         self.assertIn("ELSE settings_json->'legacySettings' END",sql)
         self.assertEqual(params,[['M1'],['C1']])
         self.assertEqual(context[9]['imported_courses'],{'current:M1':'legacy:50'})
+
+    def test_percentage_only_approval_skips_lineage_without_losing_transfer_credit(self):
+        transfer={'moduleId':'M1','status':'approved','matchedComponents':{},'percent':40}
+        context,cur=self.load_replacement_context([transfer])
+        cur.execute.assert_not_called()
+        self.assertEqual(context[9]['progress_transfers'],[transfer])
+        self.assertEqual(context[9]['replacement_settings'],{})
+
+    def test_pending_transfer_keeps_lineage_reads_for_later_approval(self):
+        _,cur=self.load_replacement_context([{'moduleId':'M1','status':'pending','matchedComponents':{}}])
+        self.assertEqual(cur.execute.call_args.args[1],[['M1'],['C1']])
+
+    def test_approved_matches_keep_unmatched_identities_for_duplicate_detection(self):
+        from .tests_my_learning_no_db import component
+        transfer={'moduleId':'M1','status':'approved','matchedComponents':{'C1':{'completed':True}}}
+        _,cur=self.load_replacement_context([transfer],
+            [component('C1'),component('C2'),component('OTHER','M2')])
+        self.assertEqual(cur.execute.call_args.args[1],[['M1'],['C1','C2']])
 
     def test_live_credit_supplement_visits_records_once_and_preserves_corrections_and_duplicates(self):
         class CountedList(list):

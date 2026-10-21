@@ -26,6 +26,17 @@ def saved(status='pending', modules=None):
 
 
 class TransferPolicyTests(SimpleTestCase):
+    def test_same_component_completed_in_both_systems_is_never_credited_twice(self):
+        for course, module in [('50', 'M1'), ('91', 'OTHER-MODULE')]:
+            for baseline, start in [(10, 40), (60, 60)]:
+                with self.subTest(course=course, module=module, baseline=baseline):
+                    transfer = item(course, module, baselineCompletedIds=['shared'],
+                        baselinePercent=baseline, matchedComponents={'shared': {'completed': True}})
+                    original = deepcopy(transfer)
+                    self.assertEqual(credited_percent(transfer, ['shared', 'shared'], 10), start)
+                    self.assertEqual(credited_percent(transfer, ['shared', 'new', 'new'], 10), start + 10)
+                    self.assertEqual(transfer, original)
+
     def test_matched_completion_is_included_in_transferred_percent_not_added_again(self):
         transfer = item(baselineCompletedIds=['before'], baselinePercent=10, matchedComponents={'matched': {'completed': True}})
         self.assertEqual(credited_percent(transfer, ['before', 'matched'], 10), 40)

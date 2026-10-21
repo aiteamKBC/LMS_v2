@@ -412,7 +412,19 @@ def learner_request(request, account, identity):
             else:
                 component_for(detail, payload.get('activityId'), payload.get('activityKind'))
             return JsonResponse(issue_tracking_session(activity_kind=payload.get('activityKind'), activity_id=payload.get('activityId'),
-                learner_kind='personal', learner_id=identity, counting_mode=payload.get('countingMode')))
+                learner_kind='personal', learner_id=identity, counting_mode=payload.get('countingMode'),
+                persistent=payload.get('persistent') is True))
+        if path == '/learner_api/time-tracking/checkpoint/':
+            from .timing_drafts import checkpoint
+            ensure_open(detail, context)
+            if str(payload.get('activityId') or '').startswith('quiz-reading:') and payload.get('activityKind') == 'component':
+                from .personal_learning_quiz_reading import reading_record
+                reading_record(context, payload['activityId'])
+            else:
+                component_for(detail, payload.get('activityId'), payload.get('activityKind'))
+            return JsonResponse(checkpoint(payload.get('trackingToken'), activity_kind=payload.get('activityKind'),
+                activity_id=payload.get('activityId'), learner_kind='personal', learner_id=identity,
+                seconds=payload.get('elapsedSeconds', 0)))
         match = re.fullmatch(r'/learner_api/(components|videos)/([^/]+)/complete/', path)
         if match:
             return JsonResponse(complete_activity(context, account, detail, match[2], 'video' if match[1] == 'videos' else 'component', payload))
