@@ -131,7 +131,7 @@ export default function LearnerFeedbackFormPage() {
     if (learnerKind) previewParams.set('kind', learnerKind);
   }
   if (eventRecipientId) previewParams.set('eventRecipientId', String(eventRecipientId));
-  if (requestedCategory && ['lecture', 'mcm', 'progress-review', 'event', 'general'].includes(requestedCategory)) previewParams.set('category', requestedCategory);
+  if (requestedCategory && ['lecture', 'mid-module', 'end-module', 'mcm', 'progress-review', 'event', 'general'].includes(requestedCategory)) previewParams.set('category', requestedCategory);
   const previewQuery = previewParams.toString() ? `?${previewParams}` : '';
   return <WorkspaceShell role="learner" roleLabel={nav.label} navItems={nav.items} workspaceLabel={nav.workspaceLabel} pageTitle={form?.title || 'Feedback'} pageSubtitle="Complete your assigned feedback form" userName={auth.account?.displayName || 'Learner'} userRole="Learner">
     <div className="p-6">

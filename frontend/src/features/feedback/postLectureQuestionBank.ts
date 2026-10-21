@@ -1,40 +1,103 @@
 import * as XLSX from 'xlsx';
-import type { FeedbackQuestion, FeedbackSection } from '@/api/feedback';
+import type { FeedbackQuestion, FeedbackQuestionType, FeedbackSection } from '@/api/feedback';
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_ROWS = 1000;
-const HEADERS = ['Category', 'Question', 'Questions per lecture', 'Type'] as const;
+const REQUIRED_HEADERS = ['Category', 'Question', 'Type'] as const;
+const OPTIONAL_HEADERS = ['Options', 'Required', 'Help text', 'Questions per lecture', 'Scale max', 'Scale display', 'Scale labels', 'Min label', 'Max label'] as const;
+const CHOICE_TYPES = new Set<FeedbackQuestionType>(['single_choice', 'multiple_choice', 'dropdown', 'likert']);
+export const QUESTION_BANK_TYPES: readonly FeedbackQuestionType[] = [
+  'short_text', 'long_text', 'yes_no', 'single_choice', 'multiple_choice',
+  'dropdown', 'rating', 'likert', 'number', 'date', 'name', 'email', 'photo_upload',
+];
+export const QUESTION_BANK_ANSWER_TYPES = [
+  { value: 'stars', label: '5 Stars' }, { value: 'long_text', label: 'Written answer' },
+  { value: 'short_text', label: 'Short answer' }, { value: 'yes_no', label: 'Yes / No' },
+  { value: 'single_choice', label: 'Choose one' }, { value: 'multiple_choice', label: 'Choose several' },
+  { value: 'dropdown', label: 'Dropdown list' }, { value: 'rating', label: 'Number rating' },
+  { value: 'likert', label: 'Agreement scale' }, { value: 'number', label: 'Number' },
+  { value: 'date', label: 'Date' }, { value: 'name', label: 'Full name' },
+  { value: 'email', label: 'Email address' }, { value: 'photo_upload', label: 'Photo upload' },
+] as const;
 
-export const POST_LECTURE_BANK_TEMPLATE = [
-  HEADERS.join(','),
-  'Teaching,How clear was the tutor\'s explanation?,1,stars',
-  'Teaching,How useful were the examples?,1,stars',
-  'Teaching,How well was the session paced?,1,stars',
-  'Learning resources,How useful were the materials?,2,stars',
-  'Learning resources,How easy was it to follow the activities?,2,stars',
-  'Learning resources,How helpful were the practice tasks?,2,stars',
-  ',What did you find most useful and what could we improve?,,text',
-].join('\r\n');
+export function questionBankAnswerLabel(question: FeedbackQuestion) {
+  const value = question.type === 'rating' && question.config.display === 'stars' ? 'stars' : question.type;
+  return QUESTION_BANK_ANSWER_TYPES.find(type => type.value === value)?.label || question.type;
+}
+
+function typeCode(value: string) {
+  const normalized = value.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const friendly = QUESTION_BANK_ANSWER_TYPES.find(type => type.label.toLowerCase().replace(/[^a-z0-9]/g, '') === normalized);
+  const aliases: Record<string, string> = { longanswer: 'long_text', chooseoneanswer: 'single_choice', chooseseveralanswers: 'multiple_choice' };
+  return friendly?.value || aliases[normalized] || value.toLowerCase().replace(/[ -]+/g, '_');
+}
+
+const templateRows = [
+  ['Category', 'Question', 'Answer type', 'Option 1', 'Option 2', 'Option 3', 'Option 4', 'Option 5', 'Option 6'],
+  ['Teaching', 'How clear was the tutor\'s explanation?', '5 Stars'],
+  ['Teaching', 'Were the learning objectives clear?', 'Yes / No'],
+  ['Experience', 'How would you rate the session overall?', 'Number rating'],
+  ['Experience', 'Which topic helped you most?', 'Short answer'],
+  ['Experience', 'How will you apply this learning?', 'Written answer'],
+  ['Activities', 'Which activity helped most?', 'Choose one', 'Discussion', 'Practice', 'Demonstration'],
+  ['Activities', 'Which resources did you use?', 'Choose several', 'Slides', 'Workbook', 'Recording'],
+  ['Activities', 'Which activity would you like next?', 'Dropdown list', 'Case study', 'Group work', 'Quiz'],
+  ['Activities', 'I feel ready to apply this learning.', 'Agreement scale', 'Strongly disagree', 'Disagree', 'Neutral', 'Agree', 'Strongly agree'],
+  ['Details', 'How many practice tasks did you complete?', 'Number'],
+  ['Details', 'When do you plan to use this learning?', 'Date'],
+  ['Details', 'Your name', 'Full name'],
+  ['Details', 'Contact email', 'Email address'],
+  ['Evidence', 'Add a photo of your practice work.', 'Photo upload'],
+  ['General', 'What did you find most useful and what could we improve?', 'Written answer'],
+];
+
+export const POST_LECTURE_BANK_TEMPLATE = templateRows.map(row => row.map(value =>
+  /[",\r\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value,
+).join(',')).join('\r\n');
 
 export interface ParsedPostLectureBank {
   sections: FeedbackSection[];
-  ratingCount: number;
-  closingQuestion: string;
+  categoryCount: number;
+  questionCount: number;
+  closingQuestion: string | null;
 }
 
 function headerName(value: unknown) {
   return String(value ?? '').replace(/^\uFEFF/, '').trim().toLowerCase().replaceAll('_', ' ').replace(/\s+/g, ' ');
 }
 
-function cell(row: unknown[], index: number) {
-  return String(row[index] ?? '').trim();
+function requiredValue(value: string, defaultValue: boolean, rowNumber: number) {
+  if (!value) return defaultValue;
+  if (['yes', 'true', '1'].includes(value.toLowerCase())) return true;
+  if (['no', 'false', '0'].includes(value.toLowerCase())) return false;
+  throw new Error(`Row ${rowNumber}: Required must be yes or no.`);
 }
 
-function starQuestion(text: string): FeedbackQuestion {
-  return {
-    type: 'rating', text, required: true, helpText: '',
-    config: { min: 1, max: 5, display: 'stars', labels: ['', '', '', '', ''] },
-  };
+function questionConfig(type: FeedbackQuestionType, originalType: string, read: (header: string) => string, rowNumber: number, optionHeaders: string[]): FeedbackQuestion['config'] {
+  if (CHOICE_TYPES.has(type)) {
+    const separateOptions = optionHeaders.map(read).filter(Boolean);
+    const packedOptions = read('Options');
+    if (separateOptions.length && packedOptions) throw new Error(`Row ${rowNumber}: use separate Option columns or the old Options column, not both.`);
+    const options = separateOptions.length ? separateOptions : packedOptions.split('|').map(option => option.trim()).filter(Boolean);
+    if (options.length < 2) throw new Error(`Row ${rowNumber}: add at least two choices in Option 1 and Option 2.`);
+    if (new Set(options.map(option => option.toLowerCase())).size !== options.length) {
+      throw new Error(`Row ${rowNumber}: Options must not contain duplicates.`);
+    }
+    return { options };
+  }
+  if (type !== 'rating') return {};
+  const display = read('Scale display').toLowerCase() || (originalType === 'stars' ? 'stars' : 'numbers');
+  const maximum = read('Scale max') || '5';
+  if (display !== 'stars' && display !== 'numbers') throw new Error(`Row ${rowNumber}: Scale display must be stars or numbers.`);
+  if (maximum !== '5' && maximum !== '10') throw new Error(`Row ${rowNumber}: Scale max must be 5 or 10.`);
+  if (display === 'stars' && maximum !== '5') throw new Error(`Row ${rowNumber}: star ratings use a 1–5 scale.`);
+  const labels = read('Scale labels');
+  if (labels && display !== 'stars') throw new Error(`Row ${rowNumber}: Scale labels apply only to stars; use Min label and Max label for numbers.`);
+  const starLabels = labels ? labels.split('|').map(label => label.trim()) : ['', '', '', '', ''];
+  if (display === 'stars' && starLabels.length !== 5) throw new Error(`Row ${rowNumber}: provide five Scale labels separated by |.`);
+  return display === 'stars'
+    ? { min: 1, max: 5, display, labels: starLabels }
+    : { min: 1, max: Number(maximum), display, minLabel: read('Min label'), maxLabel: read('Max label') };
 }
 
 export async function parsePostLectureQuestionBank(file: Pick<File, 'name' | 'size' | 'arrayBuffer'>): Promise<ParsedPostLectureBank> {
@@ -57,69 +120,85 @@ export async function parsePostLectureQuestionBank(file: Pick<File, 'name' | 'si
   if (!rows.length) throw new Error('The spreadsheet is empty.');
   if (rows.length - 1 > MAX_ROWS) throw new Error(`The spreadsheet can contain at most ${MAX_ROWS} question rows.`);
   const headers = rows[0].map(headerName);
-  const columns = HEADERS.map(header => {
-    const matches = headers.flatMap((value, index) => value === headerName(header) ? [index] : []);
-    if (matches.length !== 1) throw new Error(`The spreadsheet needs exactly one "${header}" column.`);
-    return matches[0];
-  });
-  const [categoryColumn, questionColumn, countColumn, typeColumn] = columns;
+  const columns = new Map<string, number>();
+  for (const header of [...REQUIRED_HEADERS, ...OPTIONAL_HEADERS]) {
+    const matches = headers.flatMap((value, index) => value === headerName(header) || (header === 'Type' && value === 'answer type') ? [index] : []);
+    if (matches.length > 1 || (!matches.length && (REQUIRED_HEADERS as readonly string[]).includes(header))) {
+      throw new Error(`The spreadsheet needs exactly one "${header === 'Type' ? 'Answer type (or Type)' : header}" column.`);
+    }
+    if (matches.length) columns.set(header, matches[0]);
+  }
+  const optionHeaders: string[] = [];
+  for (const [index, header] of headers.entries()) {
+    const match = /^option\s*([1-9]\d*)$/.exec(header);
+    if (!match) continue;
+    const key = `Option ${Number(match[1])}`;
+    if (columns.has(key)) throw new Error(`The spreadsheet needs exactly one "${key}" column.`);
+    columns.set(key, index);
+    optionHeaders.push(key);
+  }
+  optionHeaders.sort((left, right) => Number(left.slice(7)) - Number(right.slice(7)));
   const categories = new Map<string, FeedbackSection>();
+  const legacyDrawCounts = new Map<string, number>();
   const seenQuestions = new Set<string>();
-  let closingQuestion = '';
-  let ratingCount = 0;
+  let closing: FeedbackQuestion | null = null;
 
-  rows.slice(1).forEach((row, index) => {
-    const category = cell(row, categoryColumn);
-    const text = cell(row, questionColumn);
-    const countValue = cell(row, countColumn);
-    const type = cell(row, typeColumn).toLowerCase();
-    if (!category && !text && !countValue && !type) return;
+  for (const [index, row] of rows.slice(1).entries()) {
+    const read = (header: string) => String(row[columns.get(header) ?? -1] ?? '').trim();
+    const category = read('Category');
+    const text = read('Question');
+    const countValue = read('Questions per lecture');
+    const originalType = typeCode(read('Type'));
+    if (!row.some(value => String(value ?? '').trim())) continue;
     const rowNumber = index + 2;
     if (!text || text.length > 2000) throw new Error(`Row ${rowNumber}: question must contain 1–2000 characters.`);
+    const type = originalType === 'stars' ? 'rating' : originalType === 'text' ? 'long_text' : originalType;
+    if (!QUESTION_BANK_TYPES.includes(type as FeedbackQuestionType)) throw new Error(`Row ${rowNumber}: unsupported Type "${read('Type')}". Use a type from the template.`);
     const questionKey = text.toLowerCase();
     if (seenQuestions.has(questionKey)) throw new Error(`Row ${rowNumber}: duplicate question.`);
     seenQuestions.add(questionKey);
-    if (type === 'text') {
-      if (category || countValue) throw new Error(`Row ${rowNumber}: the closing text question must have an empty category and draw count.`);
-      if (closingQuestion) throw new Error(`Row ${rowNumber}: include only one closing text question.`);
-      closingQuestion = text;
-      return;
-    }
-    if (type !== 'stars') throw new Error(`Row ${rowNumber}: type must be "stars" or "text".`);
-    if (!category || category.length > 255) throw new Error(`Row ${rowNumber}: category must contain 1–255 characters.`);
-    if (countValue !== '1' && countValue !== '2') throw new Error(`Row ${rowNumber}: questions per lecture must be 1 or 2.`);
-    const key = category.toLowerCase();
-    const existing = categories.get(key);
-    if (existing && existing.questionsPerDelivery !== Number(countValue)) {
-      throw new Error(`Row ${rowNumber}: every question in "${existing.title}" must have the same draw count.`);
-    }
-    const section: FeedbackSection = existing || {
-      title: category, icon: 'ri-star-line', description: '',
-      questionsPerDelivery: Number(countValue), questions: [],
+    const question: FeedbackQuestion = {
+      type: type as FeedbackQuestionType, text,
+      required: requiredValue(read('Required'), Boolean(category) && type !== 'long_text', rowNumber),
+      helpText: read('Help text'),
+      config: questionConfig(type as FeedbackQuestionType, originalType, read, rowNumber, optionHeaders),
     };
-    section.questions.push(starQuestion(text));
-    categories.set(key, section);
-    ratingCount += 1;
-  });
-
-  if (categories.size < 2) throw new Error('Include at least two star-question categories.');
-  for (const section of categories.values()) {
-    if (section.questions.length <= (section.questionsPerDelivery || 0)) {
-      throw new Error(`"${section.title}" needs more questions than its draw count so the weekly selection can vary.`);
+    if (!category) {
+      if (type !== 'long_text' || countValue) throw new Error(`Row ${rowNumber}: only a closing text question may have an empty category; leave its draw count empty.`);
+      if (closing) throw new Error(`Row ${rowNumber}: include only one closing text question.`);
+      closing = question;
+      continue;
     }
+    if (category.length > 255) throw new Error(`Row ${rowNumber}: category must contain 1–255 characters.`);
+    const key = category.toLowerCase();
+    if (countValue) {
+      if (!/^[1-9]\d*$/.test(countValue)) throw new Error(`Row ${rowNumber}: questions per lecture must be a positive whole number.`);
+      const count = Number(countValue);
+      if (legacyDrawCounts.has(key) && legacyDrawCounts.get(key) !== count) {
+        throw new Error(`Row ${rowNumber}: every question in "${category}" must have the same draw count, or remove the draw-count column and set it in the preview.`);
+      }
+      legacyDrawCounts.set(key, count);
+    }
+    const section: FeedbackSection = categories.get(key) || {
+      title: category, icon: 'ri-file-list-3-line', description: '', questionsPerDelivery: 1, questions: [],
+    };
+    section.questions.push(question);
+    categories.set(key, section);
   }
-  if (!closingQuestion) throw new Error('Include one closing text question with an empty category and draw count.');
 
+  if (!categories.size) throw new Error('Include at least one question category.');
+  for (const [key, section] of categories) {
+    section.questionsPerDelivery = legacyDrawCounts.get(key) ?? 1;
+    if (section.questionsPerDelivery > section.questions.length) throw new Error(`"${section.title}" cannot draw more questions than its bank contains.`);
+  }
+  const sections = [...categories.values()];
+  if (closing) sections.push({
+    title: 'General comments', icon: 'ri-chat-3-line', description: '', questionsPerDelivery: null,
+    questions: [closing],
+  });
   return {
-    sections: [
-      ...categories.values(),
-      {
-        title: 'General comments', icon: 'ri-chat-3-line', description: '',
-        questionsPerDelivery: null,
-        questions: [{ type: 'long_text', text: closingQuestion, required: false, helpText: '', config: {} }],
-      },
-    ],
-    ratingCount,
-    closingQuestion,
+    sections, categoryCount: categories.size,
+    questionCount: sections.reduce((count, section) => count + section.questions.length, 0),
+    closingQuestion: closing?.text ?? null,
   };
 }
