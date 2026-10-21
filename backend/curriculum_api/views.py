@@ -5201,8 +5201,10 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                     if (artifact_type == 'recording' and occurrence and not stored
                             and not recording_matches_occurrence(artifact, occurrence, linked_by_launch=bool(launch))):
                         continue
+                    # Recordings are matched by their start; judge delivery by their actual end.
                     if occurrence and not stored and launch is None and run_not_delivery(
-                            occurrence, parse_graph_datetime(artifact.get('createdDateTime')) or timestamp, timestamp):
+                            occurrence, parse_graph_datetime(artifact.get('createdDateTime')) or timestamp,
+                            parse_graph_datetime(artifact.get('endDateTime')) or timestamp):
                         # Matched only as the nearest scheduled session, yet recorded
                         # outside it -- another day's use of the link (a week with no
                         # session, a session booked on its own meeting). Filing it

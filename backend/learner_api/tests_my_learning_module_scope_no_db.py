@@ -1,10 +1,12 @@
 """Module-open regressions; all persistence and external services are mocked."""
 from contextlib import ExitStack
 from copy import deepcopy
+import inspect
+import json
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, RequestFactory
 
 from . import my_learning as learning
 from . import canonical_learning as canonical
@@ -94,7 +96,7 @@ class ModuleContextScopeTests(SimpleTestCase):
 
 
 class TransferredModuleOpenTests(SimpleTestCase):
-    def open_module(self, kind, status, *, new_completion=False):
+    def open_module(self, kind, status, *, new_completion=False, http=False):
         from . import (weekly_learning, dashboard_training, training_plan_dashboard, live_session_progress,
                        teams_attendance, builder_activity_dates, subject_store)
         source = SimpleNamespace(pk=7, id=7, email='learner@example.test', programme='Programme',
@@ -125,8 +127,40 @@ class TransferredModuleOpenTests(SimpleTestCase):
             stack.enter_context(patch.object(teams_attendance, 'annotate_attendance_completion', side_effect=lambda rows, *a: rows))
             stack.enter_context(patch.object(builder_activity_dates, 'read_builder_activity_dates', return_value={}))
             stack.enter_context(patch.object(subject_store, 'covers_for', return_value={}))
-            result = learning.read_module(source, kind, {'id': 9, 'name': 'Synthetic'}, 'current:M1')
+            owner = {'id': 9, 'name': 'Synthetic'}
+            if http:
+                model = Mock()
+                model.DoesNotExist = type('MissingLearner', (Exception,), {})
+                model.all_learners.only.return_value.get.return_value = source
+                stack.enter_context(patch.dict(learning.SOURCE_MODELS, {kind: model}))
+                stack.enter_context(patch.object(canonical, 'require_profile', return_value=owner))
+                # Exercise the real endpoint and Django JSON encoder. Only the
+                # authentication wrapper is outside this isolated read fixture.
+                response = inspect.unwrap(learning.my_learning)(RequestFactory().get('/'),
+                    kind=kind, pk=7, subject_id='current:M1')
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response['Cache-Control'], 'private, no-store')
+                result = json.loads(response.content)
+            else:
+                result = learning.read_module(source, kind, owner, 'current:M1')
         return result, historical
+
+    def test_transferred_module_http_response_is_serializable_with_completion_credit(self):
+        for kind in ('commercial', 'apprenticeship'):
+            for completed, expected in ((False, 40), (True, 50)):
+                with self.subTest(kind=kind, new_completion=completed):
+                    result, _ = self.open_module(kind, 'approved', new_completion=completed, http=True)
+                    self.assertNotIn('_completion', result['detail'])
+                    self.assertEqual(result['metadata']['module_credits']['current:M1']['progress'], expected)
+                    self.assertEqual(len(result['detail']['components']), 10)
+                    self.assertTrue(result['detail']['components'][0]['previousLearning']['completed'])
+
+    def test_pending_module_http_response_keeps_historical_content(self):
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind):
+                result, _ = self.open_module(kind, 'pending', http=True)
+                self.assertEqual(result['subjectId'], 'legacy:50')
+                self.assertTrue(result['metadata']['module_credits']['legacy:50']['transferPending'])
 
     def test_pending_transfer_still_opens_owned_old_course_for_both_kinds(self):
         for kind in ('commercial', 'apprenticeship'):

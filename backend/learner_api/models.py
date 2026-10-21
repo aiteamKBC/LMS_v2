@@ -2049,3 +2049,7 @@ class WrittenAgreement(models.Model):
 
     def __str__(self):
         return f"Written Agreement for {self.learner_kind}:{self.learner_id}"
+
+
+# Kept in its own module so checkpoint storage has no progress-table side effects.
+from .timing_drafts import ActivityTimingDraft  # noqa: E402,F401
