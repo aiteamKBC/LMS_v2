@@ -9,17 +9,18 @@ from django.test import RequestFactory, SimpleTestCase, override_settings
 from . import feedback, feedback_delivery
 
 
+@override_settings(DEBUG=True)
 class PostLectureBankTests(SimpleTestCase):
     @override_settings(DEBUG=False, LEARNER_FEEDBACK_ENABLED=True, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=False)
-    def test_production_learner_gate_only_accepts_a_lecture_delivery(self):
+    def test_production_learner_gate_blocks_lecture_deliveries_too(self):
         request = RequestFactory().get('/')
         with mock.patch.object(feedback, 'learner_identity', return_value='7'):
             lecture = SimpleNamespace(form_type='post_lecture')
             general = SimpleNamespace(form_type='general')
             event = SimpleNamespace(form_type='post_event')
-            self.assertIsNone(feedback._learner_feedback_disabled_response(
+            self.assertEqual(feedback._learner_feedback_disabled_response(
                 request, form=lecture, delivery=SimpleNamespace(id=30),
-            ))
+            ).status_code, 404)
             for form, delivery in ((lecture, None), (general, None), (event, None), (event, SimpleNamespace(id=31))):
                 self.assertEqual(feedback._learner_feedback_disabled_response(
                     request, form=form, delivery=delivery,

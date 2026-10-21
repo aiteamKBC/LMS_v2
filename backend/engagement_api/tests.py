@@ -20,7 +20,7 @@ from django.test import RequestFactory, SimpleTestCase, override_settings
 from . import feedback, feedback_delivery, hooks, permissions, services, views
 
 
-@override_settings(LEARNER_FEEDBACK_ENABLED=True, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=True)
+@override_settings(DEBUG=True, LEARNER_FEEDBACK_ENABLED=True, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=True)
 class FeedbackValidationTests(SimpleTestCase):
     def setUp(self):
         # These existing transport tests isolate each delivery source. The
@@ -59,7 +59,7 @@ class FeedbackValidationTests(SimpleTestCase):
         self.assertEqual(created[0].form, form)
         self.assertTrue(bulk_create.call_args.kwargs['ignore_conflicts'])
 
-    def test_production_learner_gets_enabled_deliveries_but_staff_preview_remains_available(self):
+    def test_production_learner_has_no_feedback_but_staff_preview_remains_available(self):
         with self.settings(DEBUG=False, LEARNER_FEEDBACK_ENABLED=True, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=False):
             recipients = mock.MagicMock()
             recipients.filter.return_value.filter.return_value.order_by.return_value = []
@@ -73,11 +73,10 @@ class FeedbackValidationTests(SimpleTestCase):
                 response = feedback.learner_forms(RequestFactory().get('/'))
             self.assertEqual(response.status_code, 200)
             self.assertEqual(json.loads(response.content), {'forms': []})
-            self.assertEqual(set(recipients.filter.call_args_list[0].kwargs['delivery__form__form_type__in']),
-                             {'post_lecture', 'mid_module', 'end_module'})
-            self.assertEqual(recipients.filter.call_args_list[0].kwargs['learner_id'], '61')
+            recipients.filter.assert_not_called()
             review_sync.assert_not_called()
             general_forms.assert_not_called()
+            feedback.sync_module_feedback.assert_not_called()
 
             with _patched(_account(role='staff', subject_type='staff')):
                 self.assertFalse(feedback._learner_feedback_disabled(RequestFactory().get('/')))

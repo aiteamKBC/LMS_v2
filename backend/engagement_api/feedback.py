@@ -94,22 +94,16 @@ def _iso(value):
 
 
 def _learner_feedback_disabled(request):
-    """Hide learner-owned feedback while preserving staff preview/reporting."""
-    all_types_enabled = getattr(settings, 'LEARNER_FEEDBACK_ENABLED', False) and (
-        settings.DEBUG or getattr(settings, 'LEARNER_NON_LECTURE_FEEDBACK_ENABLED', False)
-    )
-    return (
-        not all_types_enabled
-        and learner_identity(request) is not None
-    )
+    """Local development only for learners; staff preview/reporting stays open.
+
+    Production has no lecture/module exception, even if a deployment still
+    carries the old learner-feedback environment switches.
+    """
+    return not settings.DEBUG and learner_identity(request) is not None
 
 
 def _learner_feedback_disabled_response(request, *, form=None, delivery=None):
-    # Only lecture and module-checkpoint deliveries are enabled in production;
-    # the wider learner workspace retains its existing gate.
-    if _learner_feedback_disabled(request) and not (
-        form is not None and form.form_type in {'post_lecture', *MODULE_FORM_TYPES} and delivery is not None
-    ):
+    if _learner_feedback_disabled(request):
         return json_error('Feedback is not available.', status=404)
     return None
 
@@ -928,6 +922,8 @@ def learner_forms(request):
         return json_error('Method not allowed.', status=405)
     if not learner_id:
         return json_error('Choose a learner to preview feedback.', status=400)
+    if lecture_only:
+        return JsonResponse({'forms': []})
     learner_id = str(learner_id)
     now = timezone.now()
     items = []
@@ -1408,6 +1404,9 @@ def learner_form_detail(request, pk=None, delivery_id=None, event_recipient_id=N
         return error
     if request.method != 'GET':
         return json_error('Method not allowed.', status=405)
+    disabled = _learner_feedback_disabled_response(request)
+    if disabled:
+        return disabled
     if not learner_id:
         return json_error('Choose a learner to preview feedback.', status=400)
     learner_id = str(learner_id)
@@ -1512,6 +1511,9 @@ def learner_response_save(request, pk=None, delivery_id=None, event_recipient_id
         return error
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
+    disabled = _learner_feedback_disabled_response(request)
+    if disabled:
+        return disabled
     form, delivery, recipient = _learner_feedback_context(
         learner_id, form_id=pk, delivery_id=delivery_id, event_recipient_id=event_recipient_id,
         review_delivery_id=review_delivery_id,
@@ -1604,6 +1606,9 @@ def learner_photo_upload(request, pk=None, question_id=None, delivery_id=None, r
         return error
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
+    disabled = _learner_feedback_disabled_response(request)
+    if disabled:
+        return disabled
     form, delivery, recipient = _learner_feedback_context(
         learner_id, form_id=pk, delivery_id=delivery_id,
         review_delivery_id=review_delivery_id,
@@ -1697,6 +1702,9 @@ def feedback_upload_content(request, upload_id):
     """Serve a private upload only to its owner or an authorised staff user."""
     if request.method != 'GET':
         return json_error('Method not allowed.', status=405)
+    disabled = _learner_feedback_disabled_response(request)
+    if disabled:
+        return disabled
     try:
         upload = FeedbackUpload.objects.select_related('response__form', 'response__delivery').get(pk=upload_id)
     except FeedbackUpload.DoesNotExist:
