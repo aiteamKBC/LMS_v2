@@ -556,6 +556,7 @@ class FeedbackSection(models.Model):
     title = models.CharField(max_length=255)
     icon = models.CharField(max_length=80, blank=True, default='ri-file-list-3-line')
     description = models.TextField(blank=True, default='')
+    questions_per_delivery = models.PositiveIntegerField(null=True, blank=True)
     sort_order = models.IntegerField(default=0)
 
     class Meta:
@@ -615,6 +616,7 @@ class FeedbackDelivery(models.Model):
     starts_at = models.DateTimeField(null=True, blank=True)
     ends_at = models.DateTimeField(null=True, blank=True)
     available_at = models.DateTimeField()
+    question_set_pinned = models.BooleanField(default=False)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='open')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -622,6 +624,20 @@ class FeedbackDelivery(models.Model):
     class Meta:
         managed = False
         db_table = 'Feedback"."feedback_deliveries'
+
+
+class FeedbackDeliveryQuestion(models.Model):
+    """The question set drawn once for a lecture, shared by its recipients."""
+
+    delivery = models.ForeignKey(
+        FeedbackDelivery, on_delete=models.CASCADE, related_name='selected_questions', db_column='delivery_id',
+    )
+    question = models.ForeignKey(FeedbackQuestion, on_delete=models.PROTECT, db_column='question_id')
+    sort_order = models.IntegerField(default=0)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_delivery_questions'
 
 
 class FeedbackDeliveryRecipient(models.Model):

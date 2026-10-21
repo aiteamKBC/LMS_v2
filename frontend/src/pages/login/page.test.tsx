@@ -5,7 +5,8 @@ import LoginPage from './page';
 import { AuthError, PasswordSetupRequired, apiAuthHealth, apiMicrosoftStart, type AuthUser } from '@/api/auth';
 
 const { login, authState } = vi.hoisted(() => ({ login: vi.fn(), authState: {
-  account: null as Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord'> | null,
+  account: null as (Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord'>
+    & Partial<Pick<AuthUser, 'subjectType'>>) | null,
 } }));
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({ login, auth: authState, isInitialized: true }),
@@ -63,6 +64,36 @@ it('submits the visible autofilled values instead of stale React state', async (
   autofill(password, 'Visible value @ 9');
   fireEvent.click(submit);
   await waitFor(() => expect(login).toHaveBeenCalledWith('current@example.test', 'Visible value @ 9', false));
+});
+
+it('opens the fixed lecture feedback page after learner sign-in from its QR', async () => {
+  login.mockResolvedValue({ id: 61, role: 'learner', subjectType: 'learner', subjectId: 61, accessHome: '/learner/home' });
+  render(<MemoryRouter initialEntries={['/login?lectureFeedback=1']}><Routes>
+    <Route path="/login" element={<LoginPage />} />
+    <Route path="/learner/feedback" element={<h1>Lecture feedback destination</h1>} />
+  </Routes></MemoryRouter>);
+  autofill(screen.getByLabelText('Email address', { exact: true }) as HTMLInputElement, 'learner@example.test');
+  autofill(screen.getByLabelText('Password', { exact: true }) as HTMLInputElement, 'Example password 7!');
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in to Workspace' }));
+  expect(await screen.findByRole('heading', { name: 'Lecture feedback destination' })).toBeInTheDocument();
+});
+
+it('uses the same fixed destination when an already signed-in learner scans the QR', async () => {
+  authState.account = { role: 'learner', subjectType: 'learner', subjectId: 61, accessHome: '/learner/home' };
+  render(<MemoryRouter initialEntries={['/login?lectureFeedback=1']}><Routes>
+    <Route path="/login" element={<LoginPage />} />
+    <Route path="/learner/feedback" element={<h1>Lecture feedback destination</h1>} />
+  </Routes></MemoryRouter>);
+  expect(await screen.findByRole('heading', { name: 'Lecture feedback destination' })).toBeInTheDocument();
+});
+
+it('forwards only the fixed lecture feedback intent to Microsoft sign-in', async () => {
+  vi.mocked(apiAuthHealth).mockResolvedValue({ microsoftSso: { configured: true } } as Awaited<ReturnType<typeof apiAuthHealth>>);
+  vi.mocked(apiMicrosoftStart).mockRejectedValue(new AuthError('Provider unavailable.', 503));
+  render(<MemoryRouter initialEntries={['/login?lectureFeedback=1']}><LoginPage /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: /Microsoft/i }));
+  await screen.findByText('Provider unavailable.');
+  expect(apiMicrosoftStart).toHaveBeenCalledExactlyOnceWith(undefined, 'lecture-feedback');
 });
 
 it('allows a first visit filled entirely by the password manager', async () => {

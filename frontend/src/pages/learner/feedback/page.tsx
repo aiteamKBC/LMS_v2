@@ -5,6 +5,7 @@ import { feedbackApi, type FeedbackFormType, type LearnerFeedbackListItem } from
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useAuth } from '@/hooks/useAuth';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
+import { LEARNER_FEEDBACK_ENABLED } from '@/lib/featureFlags';
 import { roleNavMap } from '@/mocks/navigation';
 
 type FeedbackCategory = 'lecture' | 'mcm' | 'progress-review' | 'event' | 'general';
@@ -32,10 +33,12 @@ export default function LearnerFeedbackPage() {
   const requestedKind = params.get('kind') || undefined;
   const requestedLearnerId = params.get('learnerId') || undefined;
   const requestedCategory = params.get('category');
-  const activeCategory = CATEGORIES.find(category => category.id === requestedCategory) || null;
   const resolved = useResolvedLearner(requestedKind, requestedLearnerId);
   const account = auth.account;
   const isLearner = account?.role === 'learner' && account.subjectType === 'learner';
+  const lectureOnly = !LEARNER_FEEDBACK_ENABLED && isLearner;
+  const availableCategories = lectureOnly ? CATEGORIES.filter(category => category.id === 'lecture') : CATEGORIES;
+  const activeCategory = availableCategories.find(category => category.id === requestedCategory) || (lectureOnly ? availableCategories[0] : null);
   const learnerId = isLearner ? String(account.subjectId) : resolved.id;
   const learnerKind = isLearner ? account.learnerType || 'apprenticeship' : resolved.kind;
   const preview = Boolean(account && !isLearner);
@@ -74,10 +77,10 @@ export default function LearnerFeedbackPage() {
     : '';
   const navItems = useMemo(() => (nav.items || []).map(item => {
     if (!preview || !learnerId) return item;
-    if (item.id === 'learner-feedback') return { ...item, href: `/learner/feedback${previewQuery}` };
+    if (item.id === 'learner-feedback') return { ...item, href: `/learner/feedback${previewQuery}${lectureOnly ? `${previewQuery ? '&' : '?'}category=lecture` : ''}` };
     if (item.id === 'learner-my-learning' && learnerKind) return { ...item, href: `/learner/my-learning/${encodeURIComponent(learnerKind)}/${encodeURIComponent(learnerId)}` };
     return item;
-  }), [learnerId, learnerKind, nav.items, preview, previewQuery]);
+  }), [learnerId, learnerKind, lectureOnly, nav.items, preview, previewQuery]);
 
   const formsByCategory = useMemo(() => ({
     lecture: forms.filter(form => categoryFor(form) === 'lecture'),
@@ -109,8 +112,8 @@ export default function LearnerFeedbackPage() {
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#4B197D] via-[#6024A8] to-[#7C3AED] px-6 py-7 text-white shadow-sm"><span aria-hidden="true" className="absolute -right-8 -top-16 h-44 w-44 rounded-full border border-white/15" /><span aria-hidden="true" className="absolute right-16 top-7 h-24 w-24 rounded-full bg-white/5" /><div className="relative flex items-center gap-4"><span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-white/20 bg-white/10 text-2xl"><i className={activeCategory?.icon || 'ri-chat-smile-2-line'} /></span><div><h1 className="font-heading text-2xl font-bold !text-white">{activeCategory?.title || 'Feedback'}</h1><p className="mt-1 text-sm text-purple-100">{activeCategory?.description || 'Choose a feedback type to view the forms assigned to you.'}</p></div></div></div>
       {preview && learnerId && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-800">Viewing this learner’s feedback assignments. Preview is read-only; only the learner can submit a response.</div>}
       {activeCategory
-        ? <CategoryView category={activeCategory} forms={selectedForms} lectureGroups={lectureGroups} loading={loading} onBack={() => navigate(`/learner/feedback${previewQuery}`)} onRefresh={loadForms} onOpen={openForm} />
-        : <CategoryCards formsByCategory={formsByCategory} loading={loading} onOpen={category => {
+        ? <CategoryView category={activeCategory} forms={selectedForms} lectureGroups={lectureGroups} loading={loading} onBack={lectureOnly ? undefined : () => navigate(`/learner/feedback${previewQuery}`)} onRefresh={loadForms} onOpen={openForm} />
+        : <CategoryCards categories={availableCategories} formsByCategory={formsByCategory} loading={loading} onOpen={category => {
           const search = contextSearch(category);
           navigate(`/learner/feedback${search ? `?${search}` : ''}`);
         }} />}
@@ -118,13 +121,14 @@ export default function LearnerFeedbackPage() {
   </WorkspaceShell>;
 }
 
-function CategoryCards({ formsByCategory, loading, onOpen }: {
+function CategoryCards({ categories, formsByCategory, loading, onOpen }: {
+  categories: typeof CATEGORIES;
   formsByCategory: Record<FeedbackCategory, LearnerFeedbackListItem[]>;
   loading: boolean;
   onOpen: (category: FeedbackCategory) => void;
 }) {
   return <section aria-label="Feedback types" className="grid gap-4 md:grid-cols-3">
-    {CATEGORIES.map(category => {
+    {categories.map(category => {
       const forms = formsByCategory[category.id];
       const outstanding = forms.filter(form => form.status !== 'completed').length;
       const completed = forms.length - outstanding;
@@ -145,12 +149,12 @@ function CategoryView({ category, forms, lectureGroups, loading, onBack, onRefre
   forms: LearnerFeedbackListItem[];
   lectureGroups: Array<{ moduleName: string; forms: LearnerFeedbackListItem[] }>;
   loading: boolean;
-  onBack: () => void;
+  onBack?: () => void;
   onRefresh: () => Promise<void>;
   onOpen: (form: LearnerFeedbackListItem) => void;
 }) {
   return <div className="space-y-4">
-    <div className="flex items-center justify-between gap-3"><button type="button" onClick={onBack} className="rounded-lg border border-foreground-200 bg-white px-3 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-50"><i className="ri-arrow-left-line mr-1" />All feedback types</button><button type="button" disabled={loading} onClick={() => void onRefresh()} className="rounded-lg border border-foreground-200 bg-white px-3 py-2 text-xs font-semibold text-primary-700 disabled:opacity-50"><i className="ri-refresh-line mr-1" />Refresh</button></div>
+    <div className="flex items-center justify-between gap-3">{onBack && <button type="button" onClick={onBack} className="rounded-lg border border-foreground-200 bg-white px-3 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-50"><i className="ri-arrow-left-line mr-1" />All feedback types</button>}<button type="button" disabled={loading} onClick={() => void onRefresh()} className="rounded-lg border border-foreground-200 bg-white px-3 py-2 text-xs font-semibold text-primary-700 disabled:opacity-50"><i className="ri-refresh-line mr-1" />Refresh</button></div>
     {loading ? <div className="rounded-xl border border-foreground-200/60 bg-white p-10 text-center text-sm text-foreground-400">Loading…</div>
       : category.id === 'lecture' && lectureGroups.length
         ? <div className="space-y-5">{lectureGroups.map(group => {

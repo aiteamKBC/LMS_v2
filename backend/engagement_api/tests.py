@@ -20,7 +20,7 @@ from django.test import RequestFactory, SimpleTestCase, override_settings
 from . import feedback, feedback_delivery, hooks, permissions, services, views
 
 
-@override_settings(LEARNER_FEEDBACK_ENABLED=True)
+@override_settings(LEARNER_FEEDBACK_ENABLED=True, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=True)
 class FeedbackValidationTests(SimpleTestCase):
     def test_review_feedback_sync_uses_publish_time_as_the_no_backfill_boundary(self):
         published_at = datetime(2026, 10, 18, 12, tzinfo=timezone.utc)
@@ -52,11 +52,24 @@ class FeedbackValidationTests(SimpleTestCase):
         self.assertEqual(created[0].form, form)
         self.assertTrue(bulk_create.call_args.kwargs['ignore_conflicts'])
 
-    def test_disabled_feedback_is_hidden_from_learner_but_not_staff_preview(self):
-        with self.settings(LEARNER_FEEDBACK_ENABLED=False):
-            with _patched(_account(role='learner', subject_type='learner')):
+    def test_production_learner_gets_lecture_only_but_staff_preview_remains_available(self):
+        with self.settings(DEBUG=False, LEARNER_FEEDBACK_ENABLED=True, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=False):
+            recipients = mock.MagicMock()
+            recipients.filter.return_value.filter.return_value.order_by.return_value = []
+            with (
+                _patched(_account(role='learner', subject_type='learner')),
+                mock.patch.object(feedback.FeedbackDeliveryRecipient.objects, 'select_related', return_value=recipients),
+                mock.patch.object(feedback.FeedbackResponse.objects, 'filter', return_value=[]),
+                mock.patch.object(feedback, '_sync_review_feedback_deliveries') as review_sync,
+                mock.patch.object(feedback, '_forms_queryset') as general_forms,
+            ):
                 response = feedback.learner_forms(RequestFactory().get('/'))
-            self.assertEqual(response.status_code, 404)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(json.loads(response.content), {'forms': []})
+            self.assertEqual(recipients.filter.call_args_list[0].kwargs['delivery__form__form_type'], 'post_lecture')
+            self.assertEqual(recipients.filter.call_args_list[0].kwargs['learner_id'], '61')
+            review_sync.assert_not_called()
+            general_forms.assert_not_called()
 
             with _patched(_account(role='staff', subject_type='staff')):
                 self.assertFalse(feedback._learner_feedback_disabled(RequestFactory().get('/')))
@@ -92,6 +105,7 @@ class FeedbackValidationTests(SimpleTestCase):
             mock.patch.object(feedback_delivery.EnrolmentUser.all_learners, 'filter', return_value=[learner]),
             mock.patch.object(feedback_delivery, '_form_for_occurrence', return_value=form),
             mock.patch.object(feedback_delivery.FeedbackDelivery.objects, 'update_or_create', return_value=(delivery, True)) as delivery_upsert,
+            mock.patch.object(feedback_delivery, '_pin_delivery_questions') as pin_questions,
             mock.patch.object(feedback_delivery.FeedbackDeliveryRecipient.objects, 'update_or_create', return_value=(mock.Mock(), True)) as recipient_upsert,
             mock.patch.object(feedback_delivery.FeedbackDeliveryRecipient.objects, 'filter', return_value=stale_recipients),
             mock.patch.object(feedback_delivery.transaction, 'atomic', return_value=atomic),
@@ -102,6 +116,7 @@ class FeedbackValidationTests(SimpleTestCase):
 
         delivery_upsert.assert_called_once_with(occurrence_key='OCC-1', defaults=mock.ANY)
         self.assertIs(delivery_upsert.call_args.kwargs['defaults']['form'], form)
+        pin_questions.assert_called_once_with(delivery, form)
         recipient_upsert.assert_called_once_with(delivery=delivery, learner_id='7', defaults=mock.ANY)
         self.assertEqual(result['deliveryIds'], [11])
         self.assertEqual(result['recipientsMatched'], 1)
