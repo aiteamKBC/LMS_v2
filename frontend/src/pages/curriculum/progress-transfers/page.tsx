@@ -2,17 +2,17 @@ import { useEffect, useState } from 'react';
 import { ArrowRight, ArrowRightLeft, CheckCircle2, Clock3, Eye, Info, Layers, RefreshCw } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { PageContainer } from '@/components/ui/PageContainer';
-import { curriculumNavItems } from '@/mocks/navigation';
+import { roleNavMap } from '@/mocks/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { Modal } from '@/pages/users/components/Modal';
-import { getTransferRequests, approveTransferRequest, type AdminTransfer, type AdminTransfers } from '@/api/progressTransfer';
+import { getTransferRequests, getTransferReview, approveTransferRequest, type AdminTransfer, type AdminTransfers, type TransferReview, type TransferMapping } from '@/api/progressTransfer';
 import { formatSystemTimestamp } from '@/lib/format';
 import { formatHoursMinutes } from '@/utils/learnerJourney';
 import styles from './progressTransfers.module.css';
 
 export default function ProgressTransfersPage() {
   const { auth } = useAuth();
-  return <WorkspaceShell role="curriculum" roleLabel="Curriculum" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Transfer Progress" pageSubtitle="Review learner requests to move progress to the new LMS.">
+  return <WorkspaceShell role="compliance" roleLabel={roleNavMap.apprentice.label} navItems={roleNavMap.apprentice.items} workspaceLabel={roleNavMap.apprentice.workspaceLabel} pageTitle="Transfer Progress" pageSubtitle="Review learner requests to move progress to the new LMS.">
     <PageContainer>{auth.account?.role === 'admin' ? <TransferRequests /> : <p role="alert">Only administrators can review and approve progress transfers.</p>}</PageContainer>
   </WorkspaceShell>;
 }
@@ -26,6 +26,23 @@ export function TransferRequests() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [notice, setNotice] = useState('');
+  const [review, setReview] = useState<TransferReview | null>(null);
+  const [reviewError, setReviewError] = useState('');
+  const [reviewRefresh, setReviewRefresh] = useState(0);
+  const [mappings, setMappings] = useState<TransferMapping[]>([]);
+  const requestId = selected?.requestId;
+  const requestStatus = selected?.status;
+  useEffect(() => {
+    setReview(null); setReviewError(''); setMappings([]);
+    if (!requestId || requestStatus !== 'pending') return;
+    const controller = new AbortController();
+    void getTransferReview(requestId, controller.signal)
+      .then(value => { if (!controller.signal.aborted) setReview(value); })
+      .catch(reason => { if (!controller.signal.aborted) setReviewError(reason instanceof Error ? reason.message : 'Could not load component matches.'); });
+    return () => controller.abort();
+  }, [requestId, requestStatus, reviewRefresh]);
+  const unresolved = review?.modules.reduce((count, module) => count + module.sources.filter(source =>
+    !source.automaticTargetId && !mappings.some(mapping => mapping.moduleId === module.moduleId && mapping.sourceActivityRef === source.sourceActivityRef)).length, 0) ?? 0;
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true); setError('');
@@ -44,10 +61,10 @@ export function TransferRequests() {
     finally { setLoading(false); }
   }
   async function confirm() {
-    if (!selected || selected.status !== 'pending' || !data || saving) return;
+    if (!selected || selected.status !== 'pending' || !data || saving || !review || unresolved) return;
     setSaving(true); setSaveError('');
     try {
-      await approveTransferRequest(selected.requestId, data.csrfToken);
+      await approveTransferRequest(selected.requestId, review.csrfToken, { reviewToken: review.reviewToken, mappings });
       setSelected(null); setNotice('Transfer approved. The learner can now open the new modules.'); setRefresh(value => value+1);
     } catch (reason) { setSaveError(reason instanceof Error ? reason.message : 'Could not approve this request. Please try again.'); }
     finally { setSaving(false); }
@@ -78,7 +95,7 @@ export function TransferRequests() {
     {hasMore && <div className={styles.pagination}><p>Showing {data?.requests.length} loaded requests. Load more to see additional pending and approved requests.</p><button type="button" disabled={loading || saving} onClick={() => void more()} className={styles.secondaryButton}>Load more</button></div>}
     {selected && <Modal title={`${selected.status === 'pending' ? 'Confirm transfer' : 'Transfer details'} for ${selected.learnerName}`} onClose={() => setSelected(null)} dismissible={!saving} size="max-w-5xl" footer={<>
       <button type="button" onClick={() => setSelected(null)} disabled={saving} className={styles.secondaryButton}>{selected.status === 'pending' ? 'Cancel' : 'Close'}</button>
-      {selected.status === 'pending' && <button type="button" onClick={() => void confirm()} disabled={saving} className={styles.primaryButton}>{saving ? 'Transferring…' : 'Confirm'}</button>}
+      {selected.status === 'pending' && <button type="button" onClick={() => void confirm()} disabled={saving || !review || unresolved > 0} className={styles.primaryButton}>{saving ? 'Transferring…' : 'Confirm'}</button>}
     </>}>
       <div className={styles.dialogBody}>
         <div className={styles.dialogSummary}><div><strong>{selected.programme || 'Programme not specified'}</strong><span>Requested {requestDate(selected.requestedAt)}</span></div><span className={selected.status === 'pending' ? styles.pendingBadge : styles.approvedBadge}>{selected.status === 'pending' ? 'Pending approval' : 'Approved'}</span></div>
@@ -86,9 +103,63 @@ export function TransferRequests() {
           ? <p>This transfers the saved percentage and hours for every module below. Old LMS progress has been frozen since the learner submitted the request. Verified matching activities stay complete within the transferred percentage, without counting twice.</p>
           : <p>Approved {requestDate(selected.approvedAt)}. These are the progress percentages and hours saved at the time of transfer.</p>}
         <ModuleTable request={selected} />
+        {selected.status === 'approved' && selected.modules.some(module => module.componentMatches?.length) && <section className={styles.matching} aria-label="Approved component matches">
+          <h2>Approved component matches</h2>
+          {selected.modules.filter(module => module.componentMatches?.length).map(module => <div key={module.moduleId} className={styles.matchModule}>
+            <h3>{module.newTitle}</h3>{module.componentMatches?.map(match => <div key={match.sourceActivityRef} className={styles.matchRow}>
+              <div><strong>{match.sourceTitle}</strong><small>{match.sourceActivityRef}</small></div>
+              <div><strong>{match.targetTitle}</strong><small>{match.manual ? 'Manual match' : 'Automatic match'}</small>
+                {match.manual && <small>New component planned hours: {match.plannedHours == null ? 'Not specified' : formatHoursMinutes(match.plannedHours)}. Actual transferred hours are unchanged.</small>}</div>
+            </div>)}
+          </div>)}
+        </section>}
+        {selected.status === 'pending' && <>
+          {reviewError ? <div role="alert" className={styles.error}>{reviewError} <button type="button" className={styles.secondaryButton} onClick={() => setReviewRefresh(value => value + 1)}>Retry matching</button></div>
+            : !review ? <p role="status">Checking component matches…</p>
+              : <ComponentMatching review={review} mappings={mappings} disabled={saving} onChange={setMappings} />}
+          {(review || saveError) && <button type="button" disabled={saving} className={styles.secondaryButton} onClick={() => { setReviewRefresh(value => value + 1); setSaveError(''); }}>Reload component matches</button>}
+        </>}
         {saveError && <p role="alert" className={styles.error}>{saveError}</p>}
       </div>
     </Modal>}
+  </section>;
+}
+
+function ComponentMatching({ review, mappings, disabled, onChange }: {
+  review: TransferReview; mappings: TransferMapping[]; disabled: boolean; onChange: (value: TransferMapping[]) => void;
+}) {
+  const unmatched = review.modules.reduce((count, module) => count + module.sources.filter(source => !source.automaticTargetId).length, 0);
+  return <section className={styles.matching} aria-label="Component matching">
+    <h2>Component matching</h2>
+    <p role="status" className={unmatched ? styles.matchWarning : styles.guidance}>{unmatched
+      ? `${unmatched} completed old ${unmatched === 1 ? 'component has' : 'components have'} no automatic match. Review each item below before confirming.`
+      : 'All completed source components with recorded activity progress have been matched.'}</p>
+    <p>Every completed old component needs a match before approval. Choose the equivalent component in the new module. Matched completions are included in the transferred percentage; actual transferred hours stay unchanged.</p>
+    {review.modules.map(module => <div key={module.moduleId} className={styles.matchModule}>
+      <h3>{module.title}</h3>
+      {!module.sources.length && <p>No individual completed activities were recorded for this module. Its saved percentage and hours will still transfer.</p>}
+      {module.sources.map(source => {
+        const value = mappings.find(mapping => mapping.moduleId === module.moduleId && mapping.sourceActivityRef === source.sourceActivityRef);
+        const used = new Set([...module.sources.flatMap(row => row.automaticTargetId ? [row.automaticTargetId] : []),
+          ...mappings.filter(mapping => mapping.moduleId === module.moduleId && mapping.sourceActivityRef !== source.sourceActivityRef).map(mapping => mapping.targetComponentId)]);
+        const automatic = module.targets.find(target => target.componentId === source.automaticTargetId);
+        const manualTarget = module.targets.find(target => target.componentId === value?.targetComponentId);
+        const candidates = module.targets.filter(target => target.type === source.type && source.type !== 'unknown');
+        return <div className={styles.matchRow} key={source.sourceActivityRef}>
+          <div><strong>{source.title}</strong><small>{source.week || 'No week specified'} · {source.type} · {source.sourceActivityRef}</small></div>
+          {source.automaticTargetId ? <div><span className={styles.approvedBadge}>Automatically matched</span><strong>{automatic?.title || source.automaticTargetId}</strong><small>{automatic?.week}</small></div>
+            : <label><span>Match in new module</span><select aria-label={`Match ${source.title} (${source.sourceActivityRef}) in ${module.title}`} disabled={disabled} value={value?.targetComponentId ?? ''}
+              onChange={event => onChange([...mappings.filter(mapping => mapping.moduleId !== module.moduleId || mapping.sourceActivityRef !== source.sourceActivityRef),
+                ...(event.target.value ? [{ moduleId: module.moduleId, sourceActivityRef: source.sourceActivityRef, targetComponentId: event.target.value }] : [])])}>
+              <option value="">Choose a matching component</option>
+              {candidates.map(target => <option key={target.componentId} value={target.componentId} disabled={used.has(target.componentId)}>{target.week ? `${target.week} · ` : ''}{target.title} ({target.type} · {target.componentId})</option>)}
+            </select><small>Choose only an equivalent activity. Each destination can be used once.</small>
+              {!candidates.length && <small className={styles.error}>No compatible component is available. Check the source type or add the equivalent component to the new module, then reload matches.</small>}
+              {manualTarget && <small>New component planned hours: {manualTarget.plannedHours == null ? 'Not specified' : formatHoursMinutes(manualTarget.plannedHours)}. Actual transferred hours are unchanged.</small>}
+            </label>}
+        </div>;
+      })}
+    </div>)}
   </section>;
 }
 

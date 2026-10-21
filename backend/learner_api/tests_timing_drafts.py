@@ -15,6 +15,39 @@ from engagement_api import shared_rewards
 from engagement_api.segment_rules import RewardError
 
 
+class TimingMigrationTargetTests(unittest.TestCase):
+    def setUp(self):
+        self.migration = importlib.import_module('learner_api.migrations.0024_activity_timing_drafts')
+        self.config = {'ENGINE': 'django.db.backends.postgresql', 'NAME': 'synthetic_timing',
+                       'HOST': 'localhost', 'USER': 'synthetic_owner', 'PORT': ''}
+
+    def install(self, primary_config, learner_config):
+        primary = SimpleNamespace(alias='default', vendor='postgresql', settings_dict=primary_config)
+        learner = SimpleNamespace(vendor='postgresql', settings_dict=learner_config)
+        editor = SimpleNamespace(connection=primary, create_model=MagicMock())
+        apps = MagicMock()
+        with patch.object(self.migration, 'connections', {'enrolment': learner}):
+            self.migration.install(apps, editor)
+        editor.create_model.assert_called_once_with(apps.get_model.return_value)
+
+    def test_migration_accepts_omitted_and_explicit_default_postgres_port(self):
+        for primary_port, learner_port in (('5432', ''), ('', '5432'), (5432, None)):
+            with self.subTest(primary_port=primary_port, learner_port=learner_port):
+                self.install({**self.config, 'PORT': primary_port}, {**self.config, 'PORT': learner_port})
+
+    def test_migration_rejects_a_different_database_host_user_engine_or_port(self):
+        for change in ({'PORT': '5433'}, {'NAME': 'other_database'}, {'HOST': 'other-host'},
+                       {'USER': 'other_owner'}, {'ENGINE': 'django.db.backends.mysql'}):
+            with self.subTest(change=change):
+                primary = SimpleNamespace(alias='default', vendor='postgresql', settings_dict=self.config)
+                learner = SimpleNamespace(vendor='postgresql', settings_dict={**self.config, **change})
+                editor = SimpleNamespace(connection=primary, create_model=MagicMock())
+                with patch.object(self.migration, 'connections', {'enrolment': learner}):
+                    with self.assertRaisesRegex(RuntimeError, 'same database'):
+                        self.migration.install(MagicMock(), editor)
+                editor.create_model.assert_not_called()
+
+
 class TimingDraftTests(unittest.TestCase):
     def setUp(self):
         ActivityTimingDraft.objects.using('enrolment').all().delete()

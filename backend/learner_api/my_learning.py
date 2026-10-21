@@ -102,7 +102,7 @@ def course_facts(owner, records, courses):
     membership exclusions. One canonical row contributes hours once per course.
     """
     from .course_catalogue_display import retain_learner_schedule
-    definitions = canonical.query('''SELECT a.source_activity_id,a.source_activity_title,
+    definitions = canonical.query('''SELECT a.source_activity_id,a.source_activity_title,a.source_activity_type,
         a.source_section_ref,a.source_section_title,a.source_position AS position,
         c.source_course_ref,
         jsonb_build_object('quiz_id',a.source_payload->'quiz_id','activity_id',a.source_payload->'activity_id',
@@ -439,8 +439,14 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
             replacements = read_replacement_courses(cur, current, source.pk)
             groups = read_previous_learning_groups(cur, source.pk, current) if purpose != 'search' else {}
         settings = {}
-        settings_modules = [key[8:] for key in replacements
-            if key[8:] not in approved_modules or key[8:] in matched_modules]
+        # Both imported modules and verified successors can receive a transfer.
+        # Approved lineage belongs to its saved destination even if the current
+        # source-course mapping is later removed; keep checking that component's
+        # identity against the same settings used by the activity reader.
+        settings_modules = sorted((
+            {key[8:] for key in {**imports, **replacements} if key[8:] not in approved_modules}
+            | matched_modules
+        ) & set(ids))
         settings_ids = list(dict.fromkeys(c['componentId']
             for c in [*native['components'], *native.get('retiredQuizComponents', [])]
             if c.get('componentId') and c.get('moduleId') in settings_modules))
