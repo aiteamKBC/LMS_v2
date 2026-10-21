@@ -123,11 +123,48 @@ class EmployerPortalOverviewTests(SimpleTestCase):
         self.assertEqual(self.get("week", learner_id=999).status_code, 404)
         self.assertEqual(self.get("week", method="post").status_code, 405)
 
-    def progress_reviews(self, method="get", employer_id=9, learner_id=101, **parts):
+    def progress_reviews(self, method="get", employer_id=9, learner_id=101, kind="commercial", **parts):
         request = getattr(self.factory, method)("/progress-reviews/")
         return employer_portal.employer_portal_progress_reviews(
-            request, employer_id=employer_id, kind="commercial", learner_id=learner_id, **parts,
+            request, employer_id=employer_id, kind=kind, learner_id=learner_id, **parts,
         )
+
+    def test_progress_reviews_filter_imported_types_for_both_learner_kinds(self):
+        types = ["Progress Review", "Progress Review (+ Skills Radar)", " progress REVIEW ",
+                 "Gateway Review", "Personal Support Plan", "Monthly Coaching Meeting", "Other Review"]
+        events = [{"id": f"imported-review:{index}", "eventKey": f"imported-review:{index}",
+                   "source": "progress-review", "importedReviewType": review_type,
+                   "title": "Progress Review", "sequence": index}
+                  for index, review_type in enumerate(types)]
+        original = json.loads(json.dumps(events))
+        for kind in ("commercial", "apprenticeship"):
+            with self.subTest(kind=kind), \
+                    mock.patch.object(employer_portal, "SOURCE_MODELS", {kind: _model(self.learner)}), \
+                    mock.patch("learner_api.calendar._calendar_profile", return_value=SimpleNamespace(pk=55)), \
+                    mock.patch("learner_api.calendar.coaching_events_for_learner", return_value=events):
+                response = self.progress_reviews(kind=kind)
+            self.assertEqual(response.status_code, 200)
+            payload = json.loads(response.content)
+            self.assertEqual([row["eventKey"] for row in payload["events"]],
+                             ["imported-review:0", "imported-review:1", "imported-review:2"])
+            self.assertEqual(payload["definitions"], {})
+        self.assertEqual(events, original)
+
+    def test_other_imported_reviews_are_unavailable_in_progress_review_details_and_pdfs(self):
+        for review_type in ("Gateway Review", "Personal Support Plan"):
+            for code in (None, "progress_review"):
+                event = {"id": "imported-review:88", "eventKey": "imported-review:88",
+                         "source": "progress-review", "importedReviewType": review_type,
+                         "reviewTypeCode": code}
+                with self.subTest(review_type=review_type, code=code), \
+                        mock.patch("learner_api.calendar._calendar_profile", return_value=SimpleNamespace(pk=55)), \
+                        mock.patch("learner_api.calendar.coaching_events_for_learner", return_value=[event]):
+                    for parts in ({}, {"event_key": event["eventKey"]}, {"event_key": event["id"], "as_pdf": True}):
+                        response = self.progress_reviews(**parts)
+                        if parts:
+                            self.assertEqual(response.status_code, 404)
+                        else:
+                            self.assertEqual(json.loads(response.content), {"events": [], "definitions": {}})
 
     def test_progress_reviews_use_the_learner_source_and_employer_template_visibility(self):
         events = [
@@ -135,6 +172,9 @@ class EmployerPortalOverviewTests(SimpleTestCase):
             {"id": "hidden", "eventKey": "hidden", "source": "progress-review", "reviewTypeCode": "progress_review", "reviewTemplateId": "hidden-template"},
             {"id": "future", "eventKey": "future", "source": "progress-review", "reviewTypeCode": "progress_review", "reviewTemplateId": "visible-template", "sequence": 2},
             {"id": "mcm", "eventKey": "mcm", "source": "mcr", "reviewTypeCode": "mcm"},
+            {"id": "gateway", "eventKey": "gateway", "source": "progress-review", "reviewTypeCode": "gateway", "reviewTemplateId": "gateway-template"},
+            {"id": "support", "eventKey": "support", "source": "progress-review", "reviewTypeCode": "personal_support_plan", "reviewTemplateId": "support-template"},
+            {"id": "untyped", "eventKey": "untyped", "source": "progress-review", "reviewTemplateId": "untyped-template"},
             {"id": "archived", "eventKey": "archived", "source": "progress-review", "importedReview": {"id": "88", "sections": []}},
         ]
         profile = SimpleNamespace(pk=55)

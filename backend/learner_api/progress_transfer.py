@@ -15,6 +15,7 @@ from . import canonical_learning as canonical
 from . import progress_transfer_store as store
 from .journal_sources import learner_journal_reads
 from .progress_transfer_policy import eligible_pairs, public_item, record_courses, is_old_record
+from .progress_transfer_matching import build_review, module_review, validate_decisions, manual_completion
 
 
 def endpoint(role):
@@ -33,7 +34,8 @@ def endpoint(role):
                     return JsonResponse({'error': 'Learner not found.'}, status=404)
                 if request.method == 'POST':
                     payload = json.loads(request.body or b'{}')
-                    if not isinstance(payload, dict) or payload.get('confirm') is not True or set(payload) != {'confirm'}:
+                    allowed = {'confirm', 'reviewToken', 'mappings'} if role == 'admin' and kwargs.get('request_id') else {'confirm'}
+                    if not isinstance(payload, dict) or payload.get('confirm') is not True or set(payload) - allowed:
                         return JsonResponse({'error': 'Confirm this action to continue.'}, status=400)
                 response = view(request, account, *args, **kwargs)
             except ServiceError as exc:
@@ -140,7 +142,41 @@ def create_request(source, kind, owner, account):
 
 
 @learner_journal_reads()
-def approve_request(request_id, account):
+def review_request(request_id):
+    from .my_learning import load_context
+    with connections['enrolment'].cursor() as cursor:
+        cursor.execute(f'SELECT enrolment_id,learner_kind FROM {store.REQUESTS} WHERE id=%s', [request_id])
+        row = cursor.fetchone()
+    if not row:
+        raise ServiceError('Transfer request not found.', 'not_found', 404)
+    pk, kind = row
+    source, owner = source_owner(kind, pk)
+    items = [item for item in store.read_state(pk)['items'] if item['requestId'] == str(request_id)]
+    if not items or any(item['status'] != 'pending' for item in items):
+        raise ServiceError('This request is no longer pending. Refresh the requests.', 'transfer_not_pending', 409)
+    return build_review(request_id, items, with_planned_hours(load_context(source, owner), items))
+
+
+def with_planned_hours(context, items):
+    """Fetch authored hours only for request targets; catalogue identities omit them."""
+    module_ids = {item['moduleId'] for item in items}
+    ids = sorted({c['componentId'] for c in context[3]['components']
+                  if c.get('componentId') and c.get('moduleId') in module_ids and 'expectedOtjh' not in c})
+    if not ids:
+        return context
+    with connections['enrolment'].cursor() as cursor:
+        cursor.execute('''SELECT id,module_catalogue_id,expected_otjh FROM curriculum.components
+            WHERE id=ANY(%s) AND module_catalogue_id=ANY(%s)''', [ids, sorted(module_ids)])
+        hours = {(mid, ident): float(value) if value is not None else None for ident, mid, value in cursor.fetchall()}
+    result = list(context)
+    result[3] = {**context[3], 'components': [
+        {**c, 'expectedOtjh': hours.get((c.get('moduleId'), c.get('componentId')))} if c.get('componentId') in ids else c
+        for c in context[3]['components']]}
+    return tuple(result)
+
+
+@learner_journal_reads()
+def approve_request(request_id, account, decisions=None):
     from .my_learning import load_context, native_done
     with connections['enrolment'].cursor() as cursor:
         cursor.execute(f'SELECT enrolment_id,learner_kind FROM {store.REQUESTS} WHERE id=%s', [request_id])
@@ -164,21 +200,27 @@ def approve_request(request_id, account):
         if any(pairs.get('current:' + item['moduleId']) != item['courseRef'] for item in items):
             raise ServiceError('A module assignment or course mapping changed. Review it before approving this request.',
                                'transfer_mapping_changed', 409)
+        context = with_planned_hours(context, items)
+        review = build_review(request_id, items, context)
+        manual = validate_decisions(review, decisions)
         for item in items:
-            components = [{key: value for key, value in c.items() if key != 'previousLearning'}
-                          for c in [*native['components'], *native.get('retiredQuizComponents', [])] if c.get('moduleId') == item['moduleId']]
+            module, matches, components = module_review(item, context)
+            item['completedSourceActivities'] = [source['sourceActivityRef'] for source in module['sources']]
             item['baselineCompletedIds'] = [c['componentId'] for c in components if c.get('componentId') and native_done(c, native)]
             item['baselinePercent'] = 100 * len(set(item['baselineCompletedIds'])) / len(components) if components else 0
-            from .replacement_learning import project_replacement_learning
-            # Older pending requests still use their frozen ledger projection.
-            source_refs = item.get('completedSourceActivities', sorted(ref for course, ref in done if str(course) == item['courseRef'][7:]))
-            activities = [{'group_id': int(item['courseRef'][7:]), 'catalogue_kind': ref.split(':')[0],
-                'source_activity_id': int(ref.split(':')[1]), 'activity_id': f"catalogue:{item['courseRef'][7:]}:{ref}",
-                'completed': True} for ref in source_refs]
-            matched = project_replacement_learning(components, metadata['replacement_settings'],
-                {'current:' + item['moduleId']: item['courseRef']}, activities)
-            item['matchedComponents'] = {c['componentId']: c['previousLearning'] for c in matched
-                                         if c.get('previousLearning', {}).get('completed') is True}
+            item['componentMatches'] = []
+            for source_component in module['sources']:
+                ref = source_component['sourceActivityRef']
+                target = manual.get((item['moduleId'], ref))
+                if target:
+                    matches[target['componentId']] = manual_completion(item, ref, target)
+                else:
+                    target = next(t for t in module['targets'] if t['componentId'] == source_component['automaticTargetId'])
+                item['componentMatches'].append({'sourceActivityRef': ref, 'sourceTitle': source_component['title'],
+                    'targetComponentId': target['componentId'], 'targetTitle': target['title'],
+                    'manual': not bool(source_component['automaticTargetId']),
+                    **({'plannedHours': target['plannedHours']} if not source_component['automaticTargetId'] else {})})
+            item['matchedComponents'] = matches
             cursor.execute(f'UPDATE {store.ITEMS} SET snapshot=%s::jsonb WHERE request_id=%s AND enrolment_id=%s AND module_id=%s',
                 [store.dumps({key: value for key, value in item.items() if key not in ('requestId','status','requestedAt','approvedAt')}), request_id, pk, item['moduleId']])
         cursor.execute(f"UPDATE {store.REQUESTS} SET status='approved',approved_by=%s,approved_at=now() WHERE id=%s AND status='pending'",
@@ -218,9 +260,11 @@ def learner_request(request, account, kind, pk):
 @endpoint('admin')
 def admin_requests(request, account, request_id=None):
     if request_id is not None:
-        if request.method != 'POST':
-            return JsonResponse({'error': 'Use Confirm to approve this request.'}, status=405)
-        return JsonResponse({'request': approve_request(request_id, account)})
+        if request.method == 'GET':
+            return JsonResponse({**review_request(request_id), 'csrfToken': get_token(request)})
+        payload = json.loads(request.body or b'{}')
+        decisions = {key: payload[key] for key in ('reviewToken', 'mappings') if key in payload} or None
+        return JsonResponse({'request': approve_request(request_id, account, decisions)})
     if request.method != 'GET':
         return JsonResponse({'error': 'Method not allowed.'}, status=405)
     offset = int(request.GET.get('offset', 0))

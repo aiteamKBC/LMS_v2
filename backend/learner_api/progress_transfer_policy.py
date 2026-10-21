@@ -72,6 +72,8 @@ def public_item(item):
     result = {key: item[key] for key in ('courseRef', 'moduleId', 'oldTitle', 'newTitle', 'percent', 'hours')}
     if item.get('demoProgress'):
         result['demoProgress'] = True
+    if 'componentMatches' in item:
+        result['componentMatches'] = item['componentMatches']
     return result
 
 

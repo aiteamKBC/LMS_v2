@@ -122,7 +122,7 @@ def source_reference(record):
 
 
 def merge_attempts(records, attempts):
-    """Use saved course attempts for completion, never manufacture their hours."""
+    """Project completion and independently verified local time beside history."""
     result = [dict(p) for p in records]
     # One record can be reached through several lineage links. Index positions,
     # preserving original row order and merging each matching row only once.
@@ -156,6 +156,7 @@ def merge_attempts(records, attempts):
         route = {'source_system': 'old_lms', 'source_course_ref': str(attempt['group_id']),
                  'source_activity_id': f"{catalogue_kind}:{attempt['activity_id']}"}
         matches = [result[index] for index in by_route.get(ref, ())]
+        has_progress_record = bool(matches)
         if not matches:
             at = instant(attempt['submitted_at'])
             record_id = (f"subject:{attempt['group_id']}:{attempt['activity_id']}" if catalogue_kind == 'material'
@@ -174,7 +175,45 @@ def merge_attempts(records, attempts):
                 old = float(p['achieved_score']) / float(maximum) * 100 if maximum and p.get('achieved_score') is not None else None
                 p['achieved_score'] = max(float(attempt['best_percent']), old) if old is not None else float(attempt['best_percent'])
                 p['total_score'] = 100
+        measured = measured_attempt_record(attempt, route)
+        if measured and not any(str(p['id']) == measured['id'] for p in result):
+            # Additional time for an existing activity is evidence, not another
+            # activity in programme/recorded-course completion denominators.
+            measured['hours_only'] = has_progress_record
+            result.append(measured)
     return result
+
+
+def measured_attempt_record(attempt, route):
+    """One best completed local duration per placement, as for native saves.
+
+    Untimed historical attempts contribute no hours. Keep this row separate
+    from audited source time, and give retries/re-reads a stable identity.
+    """
+    candidates = []
+    saved_attempts = attempt.get('timed_attempts') or []
+    if isinstance(saved_attempts, str):
+        saved_attempts = json.loads(saved_attempts)
+    for saved in saved_attempts:
+        timing = saved.get('timing') or {}
+        seconds = timing.get('verifiedSeconds')
+        if (saved.get('completed') is True and timing.get('version') == 1
+                and isinstance(seconds, int) and not isinstance(seconds, bool) and seconds >= 0):
+            candidates.append(saved)
+    if not candidates:
+        return None
+    saved = max(candidates, key=lambda row: (row['timing']['verifiedSeconds'], str(row.get('id'))))
+    timing = saved['timing']
+    at = instant(timing.get('declaredCompletedAt') or timing.get('submittedAt'))
+    if at is None:
+        return None
+    ident = f"subject:timing:{attempt['group_id']}:{attempt.get('catalogue_kind', 'material')}:{attempt['activity_id']}"
+    return {'id': ident, 'component_title': attempt.get('title'),
+        'kind': 'quiz' if attempt.get('catalogue_kind') == 'quiz' else 'component',
+        'accepted': True, 'completed': True, 'actual_seconds': timing['verifiedSeconds'],
+        'actual_basis': 'legacy_activity_verified_timer', 'ksbs': [], 'sources': [route], 'segments': [],
+        'reporting_month': at.strftime('%Y-%m'), 'reporting_started_at': at, 'reporting_ended_at': at,
+        'source_payload': {'original_source_ref': ident, 'subject_attempt_id': str(saved['id']), 'studyTime': timing}}
 
 
 def merge_submissions(records, submissions):
@@ -228,16 +267,23 @@ def current_records(owner, records):
         ORDER BY submitted_at NULLS FIRST,id''', [str(owner['enrolment_id']), owner.get('learner_type')])
     markings = {str(s['component_ref']): s for s in submissions if s.get('component_ref')}
     projected = merge_submissions(project_current(records, markings), submissions)
+    return merge_attempts(projected, subject_attempt_rows(owner))
+
+
+def subject_attempt_rows(owner, *, timed_only=False):
+    """Owned persisted attempts, shared by full and hours-only projections."""
     if not owner.get('aptem_id') or not attempts_relation_exists():
-        return projected
-    attempts = query('''SELECT group_id,activity_id,
+        return []
+    return query('''SELECT group_id,activity_id,
         coalesce(definition->>'catalogue_kind','material') AS catalogue_kind,bool_or(completed) AS completed,
         max(score_percent) AS best_percent,max(submitted_at) AS submitted_at,
-        max(definition->>'title') AS title
+        max(definition->>'title') AS title,
+        jsonb_agg(jsonb_build_object('id',id,'completed',completed,'timing',definition->'studyTime'))
+            FILTER (WHERE definition ? 'studyTime') AS timed_attempts
         FROM "Learner".subject_activity_attempts
-        WHERE enrolment_id=%s AND aptem_id=%s AND submitted_at IS NOT NULL
+        WHERE enrolment_id=%s AND aptem_id=%s AND submitted_at IS NOT NULL'''
+        + (" AND definition ? 'studyTime'" if timed_only else '') + '''
         GROUP BY group_id,activity_id,coalesce(definition->>'catalogue_kind','material')''', [owner['enrolment_id'], owner['aptem_id']])
-    return merge_attempts(projected, attempts)
 
 
 def current_records_bulk(owners, records_by_learner_id):
@@ -308,7 +354,9 @@ def current_records_bulk(owners, records_by_learner_id):
     attempts = query(f'''SELECT enrolment_id,aptem_id,group_id,activity_id,
         coalesce(definition->>'catalogue_kind','material') AS catalogue_kind,
         bool_or(completed) AS completed,max(score_percent) AS best_percent,
-        max(submitted_at) AS submitted_at,max(definition->>'title') AS title
+        max(submitted_at) AS submitted_at,max(definition->>'title') AS title,
+        jsonb_agg(jsonb_build_object('id',id,'completed',completed,'timing',definition->'studyTime'))
+            FILTER (WHERE definition ? 'studyTime') AS timed_attempts
         FROM "Learner".subject_activity_attempts
         WHERE (enrolment_id,aptem_id) IN ({placeholders}) AND submitted_at IS NOT NULL
         GROUP BY enrolment_id,aptem_id,group_id,activity_id,coalesce(definition->>'catalogue_kind','material')''', params)

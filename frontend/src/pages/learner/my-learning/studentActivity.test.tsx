@@ -1,7 +1,7 @@
 import { act, fireEvent, render as renderReact, renderHook, screen, waitFor, within } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StudentActivityResponse, SubjectMaterial, SubjectAttemptResult } from '@/api/studentActivity';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import type { LearningSchedule } from '@/api/learnerOverview';
@@ -15,6 +15,7 @@ import { CompactModules } from './CompactModules';
 
 // AppIcon is normally supplied by the app build's auto-import plugin.
 vi.stubGlobal('AppIcon', () => <span />);
+beforeEach(() => localStorage.clear());
 const render = (element: ReactElement) => renderReact(element, { wrapper: MemoryRouter });
 
 const data: StudentActivityResponse = {
@@ -608,7 +609,7 @@ function mockMaterialRequests(material = activityMaterial, save: () => Promise<S
   return vi.spyOn(api, 'subjectRequest').mockImplementation(async <T,>(url: string, options?: Parameters<typeof fetch>[1]): Promise<T> => {
     if (url.includes('/subject-covers/')) return { covers: {} } as T;
     if (options?.method !== 'POST') return material as T;
-    if (url.endsWith('/attempts/')) return { attempt_id: 'attempt-1', definition: { quiz: material.quiz } } as T;
+    if (url.endsWith('/attempts/')) return { attempt_id: 'attempt-1', definition: { quiz: material.quiz }, timing: { trackingToken: 'synthetic-token', startedAt: new Date().toISOString(), countingMode: material.quiz ? 'active_quiz' : 'visible_page' } } as T;
     return await save() as T;
   });
 }
@@ -687,6 +688,7 @@ describe('subject months, weeks and completion', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Course A/ }));
     selectMonthWeek('Undated activities');
     expect(await screen.findByRole('region', { name: 'Reflection content' })).toBeVisible();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start activity' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Submit & complete' }));
     await screen.findByText('Activity completed.');
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '100');
@@ -784,6 +786,10 @@ describe('subject months, weeks and completion', () => {
     expect(weekProgress()).toHaveAttribute('aria-valuenow', '0');
     expect(screen.getByRole('region', { name: 'Extra reading content' })).toBeVisible();
     expect(await within(screen.getByRole('region', { name: 'Extra reading content' })).findByTitle('Reflection frame')).toBeVisible();
+    if (screen.queryByRole('button', { name: 'Start activity' })) {
+      fireEvent.click(screen.getByRole('button', { name: 'Start activity' }));
+      await screen.findByRole('button', { name: 'Submit & complete' });
+    }
     fireEvent.click(screen.getByRole('button', { name: 'Submit & complete' }));
     await screen.findByText('Activity completed.');
     expect(weekProgress()).toHaveAttribute('aria-valuenow', '10');
@@ -824,6 +830,10 @@ describe('subject months, weeks and completion', () => {
     expect(screen.queryByRole('button', { name: 'October lecture' })).not.toBeInTheDocument();
     fireEvent.click(within(screen.getByRole('complementary', { name: 'Module activities' })).getByRole('button', { name: /Reflection/ }));
     await within(screen.getByRole('region', { name: 'Reflection content' })).findByTitle('Reflection frame');
+    if (screen.queryByRole('button', { name: 'Start activity' })) {
+      fireEvent.click(screen.getByRole('button', { name: 'Start activity' }));
+      await screen.findByRole('button', { name: 'Submit & complete' });
+    }
     fireEvent.click(screen.getByRole('button', { name: 'Submit & complete' }));
     await screen.findByText('Activity completed.');
     expect(weekProgress()).toHaveAttribute('aria-valuenow', '100');
@@ -865,6 +875,7 @@ describe('subject months, weeks and completion', () => {
     await screen.findByRole('button', { name: 'All subjects' });
     selectMonthWeek();
     expect(screen.getByRole('region', { name: 'Reflection content' })).toBeVisible();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start activity' }));
     const submit = await screen.findByRole('button', { name: 'Submit & complete' });
     const frame = screen.getByTitle('Reflection frame');
     expect(submit.compareDocumentPosition(frame) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -881,7 +892,7 @@ describe('subject months, weeks and completion', () => {
     expect(weekProgress()).toHaveAttribute('aria-valuenow', '100');
     expect(screen.getByRole('complementary', { name: 'Module activities' })).toHaveTextContent(/2 components\s*\u00b7\s*2 done/);
     const submitted = requests.mock.calls.find(([url]) => url.endsWith('/attempt-1/'))![1]!;
-    expect(JSON.parse(submitted.body as string)).toEqual({ answers: {}, reading_confirmed: true });
+    expect(JSON.parse(submitted.body as string)).toEqual({ answers: {}, reading_confirmed: true, trackingToken: 'synthetic-token', timeTakenSeconds: expect.any(Number) });
     expect(submitted.headers).toMatchObject({ 'X-CSRFToken': 'csrf-value' });
     selectMonthWeek('March 2026');
     selectMonthWeek();
@@ -901,9 +912,14 @@ describe('subject months, weeks and completion', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
     selectMonthWeek();
     expect(screen.getByRole('region', { name: 'Reflection content' })).toBeVisible();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start activity' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Submit & complete' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not save');
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '33.33');
+    if (screen.queryByRole('button', { name: 'Start activity' })) {
+      fireEvent.click(screen.getByRole('button', { name: 'Start activity' }));
+      await screen.findByRole('button', { name: 'Submit & complete' });
+    }
     fireEvent.click(screen.getByRole('button', { name: 'Submit & complete' }));
     await screen.findByText('Activity completed.');
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '66.67');
@@ -914,7 +930,7 @@ describe('subject months, weeks and completion', () => {
     const requests = mockMaterialRequests({ ...activityMaterial, can_attempt: false });
     const { unmount } = render(<StudentMaterial kind="commercial" learnerId="132" groupId={1} activityId={11} />);
     await screen.findByTitle('Reflection frame');
-    const submit = screen.getByRole('button', { name: 'Submit & complete' });
+    const submit = screen.getByRole('button', { name: 'Start activity' });
     expect(submit).toBeDisabled();
     expect(screen.queryByText(/Viewing read-only|Only the learner can submit/)).not.toBeInTheDocument();
     expect(submit).not.toHaveAttribute('aria-describedby');
@@ -931,7 +947,7 @@ describe('subject months, weeks and completion', () => {
   it('keeps the completion button visible with a reason when saving is unavailable', async () => {
     const requests = mockMaterialRequests({ ...activityMaterial, persistence_ready: false, can_attempt: false });
     render(<StudentMaterial kind="commercial" learnerId="132" groupId={1} activityId={11} />);
-    const submit = await screen.findByRole('button', { name: 'Submit & complete' });
+    const submit = await screen.findByRole('button', { name: 'Start activity' });
     expect(submit).toBeDisabled();
     expect(submit).toHaveAccessibleDescription(/Saving progress is temporarily unavailable/);
     expect(screen.queryByText(/Viewing read-only/)).not.toBeInTheDocument();
@@ -968,7 +984,7 @@ describe('subject months, weeks and completion', () => {
     expect(within(screen.getByRole('region', { name: 'Activity completion' })).getByText('Complete')).toBeVisible();
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '66.67');
     const submitted = requests.mock.calls.find(([url]) => url.endsWith('/attempt-1/'))![1]!;
-    expect(JSON.parse(submitted.body as string)).toEqual({ answers: { '1': ['a'] }, reading_confirmed: true });
+    expect(JSON.parse(submitted.body as string)).toEqual({ answers: { '1': ['a'] }, reading_confirmed: true, trackingToken: 'synthetic-token', timeTakenSeconds: expect.any(Number) });
   });
 
   it('does not increase completion when a quiz attempt fails', async () => {

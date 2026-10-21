@@ -323,7 +323,9 @@ export default function CoachMeetingDetail() {
       setImportedReview(updated);
       setEvent(current => (current ? {
         ...current,
-        status: (updated.localStatus || updated.instance.status) as CoachCalendarEvent['status'],
+        status: (updated.booking?.status || updated.localStatus || updated.instance.status) as CoachCalendarEvent['status'],
+        calendarEventKey: updated.booking?.eventKey ?? current.calendarEventKey,
+        syncState: updated.booking?.syncState as CoachCalendarEvent['syncState'],
         scheduledDate: updated.booking?.scheduledDate ?? current.scheduledDate,
         scheduledTime: updated.booking?.scheduledTime ?? current.scheduledTime,
         durationMinutes: updated.booking?.durationMinutes ?? current.durationMinutes,

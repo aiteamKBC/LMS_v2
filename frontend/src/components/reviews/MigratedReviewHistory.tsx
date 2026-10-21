@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import type { ReviewInstanceFormDefinition } from '@/api/reviewInstances';
 
-export function MigratedReviewHistory({ entries, onDownload }: {
+export function MigratedReviewHistory({ entries, onDownload, signatureFree = false }: {
   entries: ReviewInstanceFormDefinition['reopenHistory'];
   onDownload: (number: number) => Promise<void>;
+  signatureFree?: boolean;
 }) {
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState('');
@@ -25,7 +26,7 @@ export function MigratedReviewHistory({ entries, onDownload }: {
   return (
     <details className="rounded-xl border border-background-200 bg-white p-4">
       <summary className="cursor-pointer font-semibold text-foreground-900">Previous review versions ({entries.length})</summary>
-      <p className="mt-2 text-sm text-foreground-600">These versions retain the answers and signatures recorded before each correction.</p>
+      <p className="mt-2 text-sm text-foreground-600">{signatureFree ? 'These versions retain the answers recorded before each correction.' : 'These versions retain the answers and signatures recorded before each correction.'}</p>
       <ul className="mt-3 divide-y divide-background-200">
         {entries.map(entry => (
           <li key={entry.number} className="flex flex-wrap items-start justify-between gap-3 py-3 text-sm">
@@ -42,7 +43,7 @@ export function MigratedReviewHistory({ entries, onDownload }: {
                 className="min-h-11 rounded-lg border border-primary-200 px-3 py-2 font-semibold text-primary-700 disabled:opacity-50">
                 {busy === entry.number ? 'Downloading…' : `Download version ${entry.number} PDF`}
               </button>
-            ) : <span className="text-foreground-500">Not completed; no signed PDF</span>}
+            ) : <span className="text-foreground-500">{signatureFree ? 'Not completed; no PDF' : 'Not completed; no signed PDF'}</span>}
           </li>
         ))}
       </ul>

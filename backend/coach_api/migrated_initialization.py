@@ -19,13 +19,20 @@ def initialize_imported_review(owner_email, definition):
         if template is None:
             raise ValueError("No approved migrated template is assigned.")
         validate_definition(template.definition_json)
+        answers = {}
+        status = initial_local_status(definition.get("sourceStatus"))
+        if family == "PSP":
+            from .personal_support_form import initial_answers
+            answers = initial_answers(source_id, definition["instance"]["learnerId"], template.definition_json)
+            if str(definition.get("sourceStatus", "")).casefold().replace(" ", "-") == "in-progress":
+                status = "in-progress"
         overlay, created = ImportedReviewInstance.objects.get_or_create(
             owner_email=owner_email, event_key=definition["instance"]["id"],
             defaults={
                 "learner_id": definition["instance"]["learnerId"], "source_review_id": source_id,
                 "migrated_template": template, "template_snapshot": snapshot_for(template),
-                "signature_requirements": requirements_for_family(family), "answers": {},
-                "status": initial_local_status(definition.get("sourceStatus")),
+                "signature_requirements": requirements_for_family(family), "answers": answers,
+                "status": status,
             },
         )
         if (overlay.learner_id != definition["instance"]["learnerId"]
