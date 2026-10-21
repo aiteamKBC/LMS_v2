@@ -396,7 +396,8 @@ class RegisterTests(unittest.TestCase):
         def __init__(self, **kwargs): pass
         def __or__(self, other): return self
 
-    def roster(self, records, *, assigned=True, invited=True, launched=False, complete=True, stored_attendees=None, recovery_guest=False):
+    def roster(self, records, *, assigned=True, invited=True, launched=False, complete=True, stored_attendees=None, recovery_guest=False,
+               display_name='Example Learner'):
         learner = types.SimpleNamespace(id=13, enrolment_id=7, full_name='Example Learner', email='a@example.invalid', coach_name='Coach')
         session = types.SimpleNamespace(id='S', module_catalogue_id='M', module_title='Module', attendees=['a@example.invalid'] if invited else [])
         if stored_attendees is not None:
@@ -433,7 +434,7 @@ class RegisterTests(unittest.TestCase):
              'LiveSessionOccurrence': types.SimpleNamespace(objects=self.Query(occurrences)),
              'LiveSessionAttendanceAlias': types.SimpleNamespace(objects=self.Query([])),
              'LiveSessionAttendance': types.SimpleNamespace(objects=self.Query([types.SimpleNamespace(id=f'ROW-{i}', occurrence_id='O1', graph_record_id=str(i),
-                display_name='Example Learner', email=email, role='attendee', raw_data={}, intervals=intervals, total_attendance_seconds=0) for i, (email, intervals) in enumerate(records)])),
+                display_name=display_name, email=email, role='attendee', raw_data={}, intervals=intervals, total_attendance_seconds=0) for i, (email, intervals) in enumerate(records)])),
             'ModuleAuthoringModule': types.SimpleNamespace(objects=self.Query([types.SimpleNamespace(module_catalogue_id='M', group_id='G', group_name='Group')]))}
         functions(ROOT.parent / 'learner_api/teams_attendance.py', {'_email', '_canonical_attendance_email', '_assigned_learner_emails_by_module',
             '_module_expected_emails', '_unique_exact_name_email', '_local_datetime', '_graph_datetime', '_attendance_interval_bounds',
@@ -478,6 +479,14 @@ class RegisterTests(unittest.TestCase):
         rows = self.roster([('', [visit('00:00', '03:01')])])
         self.assertEqual([row['occurrence_id'] for row in rows], ['O1', 'O2'])
         self.assertEqual([row['attendance_status'] for row in rows], ['present', 'absent'])
+
+    def test_short_name_matches_in_reporting_without_changing_another_occurrence(self):
+        for name in ['Example (Unverified)', 'Learner', 'Example L', 'Examlpe Learner']:
+            with self.subTest(name=name):
+                rows = self.roster([('', [visit('00:00', '03:01')])], display_name=name)
+                self.assertEqual([row['occurrence_id'] for row in rows], ['O1', 'O2'])
+                self.assertEqual([row['attendance_status'] for row in rows], ['present', 'absent'])
+                self.assertEqual([row['attended_seconds'] for row in rows], [181, 0])
 
 
 class SharedSessionRosterQueryTests(unittest.TestCase):
@@ -570,6 +579,7 @@ class EndpointTests(unittest.TestCase):
         self.ns['launch_expectations'] = lambda *args: (defaultdict(set), defaultdict(set))
         self.ns['start_requested_sync'] = Mock(return_value=True)
         self.ns['add_sync_progress'] = Mock()
+        self.ns['linked_session_items'] = Mock(return_value={})
         callbacks = []
 
         @contextmanager
@@ -1120,6 +1130,24 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(response['jobs'], [])
         self.assertEqual(self.ns['read'].call_args.args[1], [['S']])
         self.cursor.execute.assert_not_called()
+
+    def test_module_index_names_each_session_by_its_linked_item(self):
+        self.ns['read'].side_effect = [[{'id': 'S', 'module_title': 'Example'}],
+            [{'id': 'O1', 'seriesId': 'S', 'sessionNumber': 1, 'startsAt': None, 'endsAt': None, 'syncedAt': None, 'reportReady': True, 'fileCount': 2},
+             {'id': 'O2', 'seriesId': 'S', 'sessionNumber': 2, 'startsAt': None, 'endsAt': None, 'syncedAt': None, 'reportReady': False, 'fileCount': 0}], []]
+        self.ns['linked_session_items'].return_value = {('S', 1): {'title': 'Week 01 | Join the LIVE session', 'week': None}}
+        response = self.ns['module_results'](self.req(), module_id='M')
+        sessions = response['series'][0]['sessions']
+        self.assertEqual([item['itemTitle'] for item in sessions], ['Week 01 | Join the LIVE session', None])
+        self.ns['linked_session_items'].assert_called_once_with(['S'])
+        # A failed name lookup never hides the sessions.
+        self.ns['read'].side_effect = [[{'id': 'S', 'module_title': 'Example'}],
+            [{'id': 'O1', 'seriesId': 'S', 'sessionNumber': 1, 'startsAt': None, 'endsAt': None, 'syncedAt': None, 'reportReady': True, 'fileCount': 2}], []]
+        self.ns['linked_session_items'].side_effect = self.ns['DatabaseError']('names unavailable')
+        self.ns['log'] = Mock()
+        response = self.ns['module_results'](self.req(), module_id='M')
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response['series'][0]['sessions'][0]['itemTitle'])
 
     def test_module_index_does_not_hide_other_database_failures(self):
         self.ns['read'].side_effect = [[{'id': 'S', 'module_title': 'Example'}], [], self.ns['DatabaseError']('Read failed')]
@@ -1710,6 +1738,17 @@ class ArchiveWorkerTests(unittest.TestCase):
         self.assertIn('HTTP 403', errors[0])
         self.assertNotIn('synthetic private response', errors[0])
         self.storage.upload_blob.assert_not_called()
+
+    def test_missing_recording_is_stored_as_a_not_found_diagnostic(self):
+        from curriculum_api.session_sync_issues import parse_sync_error
+        errors, _ = self.archive(exists=False, http_status=404)
+
+        self.assertEqual(self.http.stream.call_count, 1)
+        self.assertIn('during downloading (HTTPStatusError, HTTP 404)', errors[0])
+        self.assertNotIn('synthetic private response', errors[0])
+        self.assertEqual(self.ns['save_archive'].call_args.kwargs['state'], 'failed')
+        issue = parse_sync_error(errors[0])
+        self.assertEqual((issue['category'], issue['fileType'], issue['httpStatus']), ('not_found', 'recording', 404))
 
     def test_reports_actual_download_bytes_then_upload_phase_without_invented_total(self):
         errors, _ = self.archive(exists=False)

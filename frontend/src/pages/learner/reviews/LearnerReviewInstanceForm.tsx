@@ -12,7 +12,10 @@ import {
 import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 import { ReviewProgressPanel } from '@/components/reviews/ReviewProgressPanel';
-import { fetchLearnerEventReviewInstance, fetchMigratedReviewForParty, type LearnerReviewDefinition } from '@/api/learnerCalendar';
+import { fetchLearnerEventReviewInstance, fetchMigratedReviewForParty, type LearnerReviewDefinition, type MonthlyLogSignatureSync } from '@/api/learnerCalendar';
+import { MonthlyLogSignatureStatus } from './MonthlyLogSignatureStatus';
+import { MigratedReviewHistory } from '@/components/reviews/MigratedReviewHistory';
+import { downloadMigratedRevisionForParty } from '@/api/learnerCalendar';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { flattenReviewFields } from '@/api/reviewInstances';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
@@ -124,8 +127,8 @@ function seedAnswersFromDefinition(definition: LearnerReviewDefinition): Record<
 }
 
 export function LearnerReviewInstanceForm({
-  definition, onSign, onDownload, signatoryName = 'Learner',
-  viewerRole = 'participant', onSaveAnswers, mcmMonthlyLog,
+  definition: incomingDefinition, onSign, onDownload, signatoryName = 'Learner',
+  viewerRole = 'participant', onSaveAnswers, mcmMonthlyLog, monthlyLogSync, onRetryMonthlyLogSignature,
 }: {
   definition: LearnerReviewDefinition;
   onSign?: (signature: string, options?: { applyMonthlyLogSignature?: boolean }) => Promise<void>;
@@ -140,7 +143,13 @@ export function LearnerReviewInstanceForm({
   onSaveAnswers?: (answers: Record<string, unknown>, answerVersion?: string) => Promise<LearnerReviewDefinition>;
   /** The target-month log is reviewed inside the MCM signing modal, never inline. */
   mcmMonthlyLog?: { id: string; month: string; contractKind: LearnerKind };
+  monthlyLogSync?: MonthlyLogSignatureSync;
+  onRetryMonthlyLogSignature?: () => Promise<void>;
 }) {
+  const [savedPersonalSupport, setSavedPersonalSupport] = useState<LearnerReviewDefinition | null>(null);
+  useEffect(() => setSavedPersonalSupport(null), [incomingDefinition]);
+  const definition = savedPersonalSupport || incomingDefinition;
+  const personalSupportForm = Boolean(definition.migratedForm && definition.template.reviewTypeCode === 'aptem_psp');
   const [openSectionId, setOpenSectionId] = useState('');
   const [signing, setSigning] = useState(false);
   const [signatureError, setSignatureError] = useState('');
@@ -195,7 +204,8 @@ export function LearnerReviewInstanceForm({
   useEffect(() => {
     setSavedSignature(definition.savedSignature || readSavedLearnerSignature(signatoryName));
     setDrawingSignature(false);
-  }, [definition.savedSignature, signatoryName]);
+    setSignatureError('');
+  }, [definition.savedSignature, definition.reviewRevision, signatoryName]);
 
   useEffect(() => {
     setApplyMonthlyLogSignature(true);
@@ -273,6 +283,7 @@ export function LearnerReviewInstanceForm({
         : await onSaveAnswers(payload);
       answerVersion.current = updated.answerVersion;
       setAnswers(seedAnswersFromDefinition(updated));
+      if (personalSupportForm) setSavedPersonalSupport(updated);
     } catch (reason) {
       setSaveAnswersError(reason instanceof Error ? reason.message : 'Could not save your answers. Please try again.');
     } finally {
@@ -298,13 +309,15 @@ export function LearnerReviewInstanceForm({
         {/* The Review Template's own name is the title. The Review Type only
             classifies/routes the occurrence and is never displayed here. */}
         <h2 className="mt-0.5 text-sm font-bold text-foreground-900" data-testid="learner-review-instance-title">
-          {definition.template.name} #{definition.instance?.occurrenceNumber || definition.occurrenceNumber}
+          {definition.template.name}{!personalSupportForm && <> #{definition.instance?.occurrenceNumber || definition.occurrenceNumber}</>}
         </h2>
         <p className="mt-1 text-xs text-primary-800">
           <AppIcon className="ri-information-line mr-1.5" />
-          Review your coach's notes and the agreed next steps.
+          {personalSupportForm ? 'Save your answers to complete the plan once all required questions are answered.' : "Review your coach's notes and the agreed next steps."}
         </p>
       </div>
+
+      {personalSupportForm && definition.instance?.status === 'completed' && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 font-semibold text-emerald-800">Personal Support Plan completed</p>}
 
       {requiredSignatures.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-4">
         <div className="min-w-0 flex-1 basis-64">
@@ -404,9 +417,14 @@ export function LearnerReviewInstanceForm({
         onOpenSectionChange={setOpenSectionId}
       />
 
-      <div ref={signatureSection} tabIndex={-1} aria-label="Signature step" className="scroll-mt-6 space-y-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">
-        <ReviewSignatures signatures={definition.signatures} />
+      <div ref={signatureSection} tabIndex={-1} aria-label={personalSupportForm ? 'Review documents' : 'Signature step'} className="scroll-mt-6 space-y-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">
+        {definition.migratedForm && definition.instance && <MigratedReviewHistory entries={definition.reopenHistory} signatureFree={personalSupportForm}
+          onDownload={number => downloadMigratedRevisionForParty(definition.instance!.id, number)} />}
+        {!personalSupportForm && <ReviewSignatures signatures={definition.signatures} />}
+        {viewerRole === 'participant' && monthlyLogSync && <MonthlyLogSignatureStatus sync={monthlyLogSync} onRetry={onRetryMonthlyLogSignature}
+          previousReviewVersion={Boolean(definition.reviewRevision && !definition.signatures.participant?.signed)} />}
         {(definition.source !== 'aptem' || definition.instance?.status === 'completed') && <ReviewPdfDownload
+          label={personalSupportForm ? 'Download PDF' : undefined}
           availability={definition.migratedForm
             ? { available: definition.instance?.status === 'completed', reason: 'Available after completion.' }
             : definition.pdf}

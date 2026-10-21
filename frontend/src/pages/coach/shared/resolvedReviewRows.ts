@@ -18,6 +18,13 @@ export interface ReviewActionMatrix {
   join: boolean;
 }
 
+export function isImportedPersonalSupportPlan(event: {
+  reviewSource?: string | null; aptemReviewId?: string | null; importedReviewType?: string | null;
+}) {
+  return Boolean((event.reviewSource === 'aptem' || event.aptemReviewId)
+    && event.importedReviewType?.trim().toLowerCase() === 'personal support plan');
+}
+
 export function canRescheduleReconciledReview(event: Pick<CoachCalendarEvent, 'reviewSource' | 'reconciledReview' | 'calendarEventKey' | 'status'> | null | undefined) {
   return Boolean(event?.reviewSource === 'aptem' && event.reconciledReview && event.calendarEventKey && event.status === 'scheduled');
 }
@@ -56,7 +63,7 @@ export function reviewActionMatrix(event: CoachCalendarEvent): ReviewActionMatri
     (event.reviewSource === 'aptem' || event.aptemReviewId) && status !== 'completed',
   );
   const imported = Boolean(event.reviewSource === 'aptem' || event.aptemReviewId);
-  const importedSchedulable = imported && ['progress-review', 'mcr'].includes(reviewCategory(event))
+  const importedSchedulable = imported && (['progress-review', 'mcr'].includes(reviewCategory(event)) || isImportedPersonalSupportPlan(event))
     && (status === 'not-scheduled' || status === 'scheduled');
   return {
     // Aptem source dates alone do not identify a local booking to reschedule.

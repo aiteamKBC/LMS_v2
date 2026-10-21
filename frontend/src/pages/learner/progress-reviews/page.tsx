@@ -376,7 +376,9 @@ export default function ProgressReviewsPage() {
   const saveSignature = async (signature: string) => {
     if (!selected || !canProgress) return;
     if (migratedEvent) {
-      await signMigratedReviewAsParty(selected.formEventKey || selected.eventKey || selected.id, signature);
+      await signMigratedReviewAsParty(selected.formEventKey || selected.eventKey || selected.id, signature, {
+        reviewRevision: reviewInstance.definition?.reviewRevision,
+      });
       reviewInstance.refresh();
       return;
     }

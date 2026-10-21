@@ -6,7 +6,8 @@ import { roleNavMap } from '@/mocks/navigation';
 import { downloadLearnerMcmPdf, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers, signLearnerProgressReview, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
-import { useReviewSessions } from './useReviewSessions';
+import { isMigratedContinuationEvent, useReviewSessions } from './useReviewSessions';
+import { downloadMigratedReviewForParty, saveMigratedReviewPartyAnswers } from '@/api/learnerCalendar';
 import { useMeetingAttendance } from './useMeetingAttendance';
 import { useMeetingBooking } from './useMeetingBooking';
 import type { MeetingAttendance } from '@/api/meetingAttendance';
@@ -93,8 +94,9 @@ export function CurriculumReviewPage() {
   const { canProgress } = useLearnerWorkspaceAccess(myLearner.id);
   const [actionError, setActionError] = useState('');
   const selected = useMemo(() => sessions.find(review => review.id === reviewId || review.eventKey === reviewId) || null, [reviewId, sessions]);
-  const eventKey = selected?.eventKey || '';
-  const instance = useLearnerReviewInstance(myLearner.kind, myLearner.id, selected?.reviewTemplateId || selected?.reviewInstanceId ? eventKey : '');
+  const migratedEvent = isMigratedContinuationEvent(selected);
+  const eventKey = selected?.formEventKey || selected?.eventKey || '';
+  const instance = useLearnerReviewInstance(myLearner.kind, myLearner.id, selected?.reviewTemplateId || selected?.reviewInstanceId || migratedEvent ? eventKey : '');
   const error = loadError || actionError;
 
   useEffect(() => {
@@ -126,14 +128,14 @@ export function CurriculumReviewPage() {
           {selected.meetingLink && <a className="mt-4 inline-flex items-center gap-2 rounded-lg bg-primary-700 px-4 py-2 text-xs font-bold text-white" href={selected.meetingLink} target="_blank" rel="noopener noreferrer"><AppIcon className="ri-video-chat-line" />Join meeting</a>}
         </section>
         {selected.meetingLink && <CoachMeetingArtifactsPanel event={{ ...selected, eventKey }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />}
-        {selected.importedReview ? <section className="rounded-xl border border-background-200 bg-white p-5 space-y-4">
+        {selected.importedReview && !migratedEvent ? <section className="rounded-xl border border-background-200 bg-white p-5 space-y-4">
           <ReviewPdfDownload availability={{ available: true, reason: '' }} label="Download PDF" onDownload={() => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, eventKey)} />
           {selected.importedReview.sections.map(section => <section key={section.id}>
             <h2 className="mb-3 text-sm font-bold text-foreground-900">{section.name.replace(/\s+(completed|incomplete)$/i, '').trim()}</h2>
             <ImportedReviewSections review={{ ...selected.importedReview!, sections: [section] }} />
           </section>)}
           {!selected.importedReview.sections.length && <p className="text-sm text-foreground-500">Detailed questions and answers have not been imported for this review yet.</p>}
-        </section> : instance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={5} /></div> : instance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{instance.error}<button type="button" onClick={instance.refresh} className="ml-2 underline">Retry review</button></p> : instance.definition ? <LearnerReviewInstanceForm definition={instance.definition} onSign={canProgress ? saveSignature : undefined} signatoryName={learner?.name || 'Learner'} onSaveAnswers={answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, eventKey, answers)} /> : <section className="rounded-xl border border-background-200 bg-white p-5 text-sm text-foreground-500">This review form is not available yet.</section>}
+        </section> : instance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={5} /></div> : instance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{instance.error}<button type="button" onClick={instance.refresh} className="ml-2 underline">Retry review</button></p> : instance.definition ? <LearnerReviewInstanceForm definition={instance.definition} onSign={canProgress && !migratedEvent ? saveSignature : undefined} onDownload={migratedEvent ? () => downloadMigratedReviewForParty(eventKey) : undefined} signatoryName={learner?.name || 'Learner'} onSaveAnswers={migratedEvent ? (canProgress ? async (answers, version) => { const updated = await saveMigratedReviewPartyAnswers(eventKey, answers, version); setEvents(current => current.map(event => event.id === selected.id ? { ...event, status: updated.instance?.status || event.status } : event)); return updated; } : undefined) : answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, eventKey, answers)} /> : <section className="rounded-xl border border-background-200 bg-white p-5 text-sm text-foreground-500">This review form is not available yet.</section>}
       </>}
     </div>
   </WorkspaceShell>;

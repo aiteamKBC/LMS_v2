@@ -1,6 +1,5 @@
 """Coach-authorized transcript upload, independent of Teams booking."""
 from copy import deepcopy
-import logging
 
 from django.db import transaction
 from django.http import JsonResponse
@@ -12,9 +11,9 @@ from .migrated_completion_views import _coach_review
 from .migrated_reviews import meeting_summary_field
 from .migrated_summary_binding import answer_version
 from .migrated_summary_generation import apply_suggestion, parse_upload, summary_binding_response
+from .migrated_summary_errors import summary_generation_error
 from .migrated_template_sync import active_answers, snapshot_fingerprint
 
-logger = logging.getLogger(__name__)
 EDITABLE = {"scheduled", "in-progress"}
 
 
@@ -56,10 +55,11 @@ def migrated_review_summary_upload(request, review_id):
                                     learner_name=definition.get("learnerName", ""),
                                     owner_name=getattr(getattr(request, "login_account", None), "display_name", ""))
     summary, model = None, None
+    generation_error = None
     try:
         summary, model = openai_meeting_summary(context, transcript)
     except Exception as exc:
-        logger.warning("Migrated upload summary failed overlay_id=%s error_type=%s", overlay.pk, type(exc).__name__)
+        generation_error = summary_generation_error(request, exc)
     # No upload body is stored, and generation holds no database lock.
     with transaction.atomic():
         locked = _owned_migrated_overlay(owner, definition, lock=True)
@@ -77,7 +77,8 @@ def migrated_review_summary_upload(request, review_id):
             result = apply_suggestion(locked, state, summary, provenance)
         else:
             state["summaryGeneration"] = {**provenance, "status": "failed", "attemptedBy": owner,
-                                          "attemptedAt": timezone.now().isoformat(), "bindingResult": "answer-preserved"}
+                                          "attemptedAt": timezone.now().isoformat(), "bindingResult": "answer-preserved",
+                                          "error": generation_error}
         locked.meeting_intelligence = state
         locked.save(update_fields=["meeting_intelligence", "updated_at"] + (["answers"] if result.get("status") == "populated" else []))
         return JsonResponse({"artifacts": [], "summaryBinding": summary_binding_response(locked),

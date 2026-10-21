@@ -45,8 +45,12 @@ describe('review presentation preserves review and booking rules', () => {
     const result = reviewOverview(sessions, [], today, { sign: definition() });
     expect(result.current?.session).toBe(next);
     expect(result.attention.find(item => item.session.id === 'sign')).toMatchObject({ action: 'sign', past: true });
-    expect(result.all.map(item => item.session)).toEqual(original);
-    result.all.forEach((item, index) => expect(item.session).toBe(sessions[index]));
+    // Identity, not position: the list is ordered by planned date, so each input
+    // event is located by id and must still be the very same object, never a copy.
+    expect(result.all).toHaveLength(sessions.length);
+    sessions.forEach(input => expect(result.all.find(item => item.session.id === input.id)?.session).toBe(input));
+    expect([...result.all].sort((a, b) => a.session.id.localeCompare(b.session.id)).map(item => item.session))
+      .toEqual([...original].sort((a, b) => a.id.localeCompare(b.id)));
     expect([...result.upcoming, ...result.past]).toHaveLength(sessions.length);
     expect(new Set([...result.upcoming, ...result.past].map(item => item.session.id)).size).toBe(sessions.length);
     expect(sessions).toEqual(original);
@@ -61,7 +65,7 @@ describe('review presentation preserves review and booking rules', () => {
     Object.freeze(confirmed);
     const result = reviewOverview([moved, next], [confirmed], today);
     expect(result.current?.session).toBe(next);
-    expect(result.all[0]).toMatchObject({ date: '2026-10-01', attendance: confirmed });
+    expect(result.all.find(item => item.session.id === 'moved')).toMatchObject({ date: '2026-10-01', attendance: confirmed });
     expect({ moved, confirmed }).toEqual(before);
   });
 
@@ -203,5 +207,51 @@ describe('review presentation preserves review and booking rules', () => {
     expect(reviewsListHref(learner, new URLSearchParams('view=all&filter=unknown&page=-1'))).toBe('/learner/progress-reviews?kind=apprenticeship&learner=12&view=all');
     expect(reviewsListHref(learner, new URLSearchParams('filter=past&page=2'))).toBe('/learner/progress-reviews?kind=apprenticeship&learner=12');
     expect(reviewsListHref(learner, new URLSearchParams('view=all&filter=upcoming'), '/learner/reviews')).toBe('/learner/reviews?kind=apprenticeship&learner=12&view=all&filter=upcoming');
+  });
+});
+
+describe('programme order follows the planned date, not the date a review was completed', () => {
+  // An imported review carries its planned date in targetDate/scheduledDate and,
+  // once completed, its completed date in `date`. The reader upstream orders by
+  // `date`, so these arrive in completed order while every row displays planned
+  // dates. Each case receives them in that upstream order.
+  const imported = (id: string, planned: string, completed: string, sequence: number) =>
+    session(id, { date: completed, targetDate: planned, scheduledDate: planned, status: 'completed', sequence });
+
+  it('reorders a review completed away from its plan, and shows dates that agree with the order', () => {
+    const sessions = [imported('second', '2026-12-17', '2026-05-04', 2), imported('first', '2026-10-20', '2026-10-20', 1)];
+    sessions.forEach(Object.freeze);
+    const result = reviewOverview(Object.freeze(sessions), [], today);
+
+    expect(result.all.map(item => item.session.id)).toEqual(['first', 'second']);
+    expect(result.all.map(item => item.date)).toEqual(['2026-10-20', '2026-12-17']);
+  });
+
+  it('falls back to the occurrence, then to the order the reader gave, on a shared planned date', () => {
+    const sessions = [imported('later', '2027-06-02', '2027-06-02', 4), imported('earlier', '2027-06-02', '2027-06-02', 3)];
+    expect(reviewOverview(sessions, [], today).all.map(item => item.session.id)).toEqual(['earlier', 'later']);
+
+    const tied = [imported('b', '2027-06-02', '2027-06-02', 3), imported('a', '2027-06-02', '2027-06-02', 3)];
+    expect(reviewOverview(tied, [], today).all.map(item => item.session.id)).toEqual(['b', 'a']);
+  });
+
+  it('carries the same order into the upcoming and past filters', () => {
+    const sessions = [
+      imported('past-two', '2026-08-11', '2026-02-02', 2),
+      imported('past-one', '2026-06-09', '2026-07-07', 1),
+      session('ahead-two', { date: '2027-01-05', targetDate: '2027-01-05', scheduledDate: '2027-01-05', sequence: 4 }),
+      session('ahead-one', { date: '2026-11-03', targetDate: '2026-11-03', scheduledDate: '2026-11-03', sequence: 3 }),
+    ];
+    const result = reviewOverview(sessions, [], today);
+
+    expect(result.upcoming.map(item => item.session.id)).toEqual(['ahead-one', 'ahead-two']);
+    // Past stays most-recent-first, now measured by planned date.
+    expect(result.past.map(item => item.session.id)).toEqual(['past-two', 'past-one']);
+  });
+
+  it('leaves a review without a planned date at the end instead of dropping it', () => {
+    const undated = session('undated', { date: null, targetDate: null, scheduledDate: null, status: 'not-scheduled', sequence: 9 });
+    const planned = imported('planned', '2027-08-25', '2027-08-25', 5);
+    expect(reviewOverview([undated, planned], [], today).all.map(item => item.session.id)).toEqual(['planned', 'undated']);
   });
 });

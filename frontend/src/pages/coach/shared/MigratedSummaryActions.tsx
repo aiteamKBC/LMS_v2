@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { fetchMigratedReviewIntelligence, uploadMigratedSummaryTranscript } from '@/api/reviewInstances';
 import type { CoachMeetingArtifactsResponse, MigratedSummaryBinding } from './calendarEvents';
 
@@ -19,6 +19,15 @@ export function MigratedSummaryActions({ instanceId, binding, editable, showActi
   const running = useRef(false);
   const [action, setAction] = useState<'teams' | 'upload' | null>(null);
   const [error, setError] = useState('');
+  // A successful Check Session can update this field from another control.
+  // Keep transport/validation errors local to their attempt, not to the mounted form.
+  useEffect(() => { setError(''); }, [
+    instanceId, binding.fieldKey, binding.generationStatus, binding.generationAttemptedAt,
+    binding.generatedAt, binding.generationError?.requestId,
+  ]);
+  const failureMessage = (value?: MigratedSummaryBinding['generationError']) => value
+    ? `${value.message} Your saved answer is unchanged. Reference: ${value.requestId}`
+    : 'The transcript was processed, but the AI summary could not be generated. You can enter the answer manually.';
   const disabled = !editable || busy || unsaved || !!action;
   const generate = async (file?: File) => {
     if (!editable || disabled || running.current || (!file && !teamsAvailable)) return;
@@ -35,8 +44,8 @@ export function MigratedSummaryActions({ instanceId, binding, editable, showActi
       const result = file ? await uploadMigratedSummaryTranscript(instanceId, file)
         : await fetchMigratedReviewIntelligence(instanceId, undefined, { refresh: true });
       onResult(result);
-      if (result.summaryBinding?.generationStatus === 'failed' || result.intelligence?.summaryStatus === 'failed') {
-        setError('The transcript was processed, but the AI summary could not be generated. You can enter the answer manually.');
+      if ((result.summaryBinding?.generationStatus ?? result.intelligence?.summaryStatus) === 'failed') {
+        setError(failureMessage(result.summaryBinding?.generationError ?? result.intelligence?.generationError ?? undefined));
       } else if (result.summaryBinding?.generationStatus === 'unavailable' || result.summaryBinding?.status === 'summary-unavailable') {
         setError('No transcript was found for this meeting. Upload a transcript or enter the answer manually.');
       }
@@ -49,7 +58,7 @@ export function MigratedSummaryActions({ instanceId, binding, editable, showActi
     }
   };
   const message = binding.generationStatus === 'failed'
-    ? 'The transcript was processed, but the AI summary could not be generated. You can enter the answer manually.'
+    ? failureMessage(binding.generationError)
     : binding.generationStatus === 'unavailable'
       ? 'No transcript was found for this meeting. Upload a transcript or enter the answer manually.'
       : binding.status === 'summary-too-long'
@@ -90,7 +99,9 @@ export function MigratedSummaryActions({ instanceId, binding, editable, showActi
     </>}
     {binding.suggestionSource && <p className="text-xs text-primary-800">Latest AI summary generated from {binding.suggestionSource === 'teams' ? 'Teams transcript' : 'uploaded transcript'}.</p>}
     {binding.transcriptTruncated && <p role="status" className="text-xs text-amber-800">The transcript exceeded the AI input limit. The summary covers only its initial portion; review it against the full transcript.</p>}
-    {error ? <p role="alert" className="text-xs text-red-700">{error}</p> : message && <p role="status" className="text-xs text-primary-800">{message}</p>}
+    {error ? <p role="alert" className="text-xs text-red-700">{error}</p> : message && <p
+      role={binding.generationStatus === 'failed' || binding.generationStatus === 'unavailable' ? 'alert' : 'status'}
+      className={binding.generationStatus === 'failed' ? 'text-xs text-red-700' : 'text-xs text-primary-800'}>{message}</p>}
     {binding.summaryTooLong && binding.status !== 'summary-too-long' && <p role="status" className="text-xs text-amber-800">AI summary is longer than this field allows. Review and shorten it before saving.</p>}
     {editable && binding.suggestionText && (binding.replacementAvailable || binding.status === 'summary-too-long') && <details className="text-xs">
       <summary className="cursor-pointer font-semibold">View latest AI suggestion</summary>

@@ -601,15 +601,28 @@ def start_subject_attempt(request, kind, pk, group_id, activity_id):
             return _error(definition['quiz']['message'], 409)
         if not definition['available']:
             return _error('No activity content is available yet.', 409)
-        attempt_id = subject_store.start(pk, aptem_id, group_id, activity_id, definition)
+        payload = json.loads(request.body) if request.body else {}
+        if not isinstance(payload, dict):
+            return _error('Invalid attempt request.', 400)
+        timing = None
+        if payload.get('track_time') is True:
+            from .subject_timing import create_session
+            attempt_id, timing = create_session(kind, pk, group_id, activity_id, definition)
+            subject_store.start(pk, aptem_id, group_id, activity_id, definition,
+                                attempt_id=attempt_id, timing_session=timing)
+        else:
+            attempt_id = subject_store.start(pk, aptem_id, group_id, activity_id, definition)
         public = _local_pdf_urls(definition, kind, pk, group_id, activity_id)
-        return _private({'attempt_id': attempt_id, 'definition': {**public, 'quiz': public_quiz(definition['quiz'])}}, 201)
+        return _private({'attempt_id': attempt_id, 'definition': {**public, 'quiz': public_quiz(definition['quiz'])},
+                         **({'timing': timing} if timing else {})}, 201)
     except canonical_learning.ServiceError as error:
         return _error(str(error), error.status)
     except LookupError as error:
         return _error(str(error), 404)
     except (ContentUnavailable, subject_store.StoreUnavailable) as error:
         return _error(str(error), 503)
+    except (ValueError, TypeError):
+        return _error('Invalid attempt request.', 400)
     except DatabaseError:
         return _error('Could not start this attempt. Please try again.', 503)
 
@@ -618,6 +631,7 @@ def start_subject_attempt(request, kind, pk, group_id, activity_id):
 @learner_self_or_admin(kwarg='pk')
 def submit_subject_attempt(request, kind, pk, group_id, activity_id, attempt_id):
     from . import canonical_learning
+    from .working_rules import DeclaredCompletionError, validation_response_payload
     try:
         if len(request.body) > 256 * 1024:
             return _error('The submitted answers are too large.', 413)
@@ -632,7 +646,7 @@ def submit_subject_attempt(request, kind, pk, group_id, activity_id, attempt_id)
         aptem_id, _stored = reader(kind, pk, group_id, activity_id)
         result = subject_store.finish(pk, aptem_id, group_id, activity_id, str(attempt_id),
                                       payload.get('answers', {}), payload.get('reading_confirmed') is True,
-                                      catalogue_kind=catalogue_kind)
+                                      catalogue_kind=catalogue_kind, learner_kind=kind, timing_payload=payload)
         return _private(result)
     except canonical_learning.ServiceError as error:
         return _error(str(error), error.status)
@@ -640,6 +654,8 @@ def submit_subject_attempt(request, kind, pk, group_id, activity_id, attempt_id)
         return _error(str(error), 404)
     except subject_store.StoreUnavailable as error:
         return _error(str(error), 503)
+    except DeclaredCompletionError as error:
+        return _private(validation_response_payload(error), 422)
     except (ValueError, TypeError) as error:
         return _error(str(error) if not isinstance(error, json.JSONDecodeError) else 'Invalid submission.', 400)
     except DatabaseError:

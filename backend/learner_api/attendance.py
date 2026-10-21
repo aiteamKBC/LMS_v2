@@ -448,7 +448,7 @@ def combined_attendance_rows(source, *, credit_projection=False, register_schedu
     return list(unique.values())
 
 
-def _live_register_rows(source):
+def _live_register_rows(source, *, occurrence_ids=None):
     """Return editable live-register outcomes in learner-register shape.
 
     The live register is keyed by ``LearnerProfile`` while learner pages use
@@ -482,10 +482,13 @@ def _live_register_rows(source):
             return []
         profile_id = profiles[0].id
         register_database = router.db_for_read(LiveSessionLearnerAttendance) or 'default'
+        register_query = LiveSessionLearnerAttendance.objects.using(register_database).filter(
+            learner_profile_id=profile_id,
+        )
+        if occurrence_ids is not None:
+            register_query = register_query.filter(occurrence_id__in=list(occurrence_ids))
         register_rows = list(
-            LiveSessionLearnerAttendance.objects.using(register_database)
-            .filter(learner_profile_id=profile_id)
-            .values(
+            register_query.values(
                 'occurrence_id', 'live_session_id', 'module_catalogue_id',
                 'attendance_status', 'attended_seconds', 'attendance_report_id',
                 'updated_at',

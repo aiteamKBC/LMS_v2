@@ -18,8 +18,21 @@ import type { MonthlyLogHours, LogSummary, LogDetail } from '@/features/monthly-
 import type { ActivityContent } from '@/features/old-otjh/api';
 import type { ReviewFormResponse } from '@/api/reviewForm';
 import type { LearnerCalendarEvent, LearnerReviewDefinition } from '@/api/learnerCalendar';
+import type { ProgressMetric } from '@/api/learnerMetrics';
 
 const BASE = '/learner_api/employer-portal';
+
+export type EmployerDashboardMetrics = {
+  asOf: string;
+  learners: Record<string, {
+    programme: Pick<ProgressMetric, 'completed' | 'total' | 'percent' | 'status'> | null;
+    risk: 'on-track' | 'need-attention' | 'at-risk' | 'unavailable';
+  }>;
+};
+
+export function fetchEmployerDashboardMetrics(employerId: string, signal?: AbortSignal) {
+  return request<EmployerDashboardMetrics>(`${BASE}/${employerId}/dashboard-metrics/`, { signal });
+}
 
 export type EmployerProgressReviews = {
   events: LearnerCalendarEvent[];

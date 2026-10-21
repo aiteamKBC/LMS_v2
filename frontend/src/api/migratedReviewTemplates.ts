@@ -1,9 +1,9 @@
 import type { ReviewSectionDefinition } from './reviewInstances';
 import { CurriculumApiError, fetchCurriculumJson } from '@/lib/curriculumApi';
 
-export const MIGRATED_FAMILIES = ['MCM', 'PR', 'PR_SKILLS_RADAR'] as const;
+export const MIGRATED_FAMILIES = ['MCM', 'PR', 'PR_SKILLS_RADAR', 'PSP'] as const;
 export type MigratedFamily = typeof MIGRATED_FAMILIES[number];
-export const FAMILY_LABELS: Record<MigratedFamily, string> = { MCM: 'MCM', PR: 'PR', PR_SKILLS_RADAR: 'PR + Skills Radar' };
+export const FAMILY_LABELS: Record<MigratedFamily, string> = { MCM: 'MCM', PR: 'PR', PR_SKILLS_RADAR: 'PR + Skills Radar', PSP: 'PSP' };
 export interface MigratedField {
   key: string; name?: string; title: string; aptemType: number; order: number;
   mandatory?: boolean; description?: string; options?: string[];
@@ -32,6 +32,15 @@ export interface TemplateLibrary {
 }
 export interface TemplatePreview { sections: ReviewSectionDefinition[]; readOnly: boolean }
 
+export class TemplateAnswerConflictError extends Error {
+  fields: string[];
+  constructor(message: string, fields: string[]) {
+    super(message);
+    this.name = 'TemplateAnswerConflictError';
+    this.fields = fields;
+  }
+}
+
 const root = '/curriculum/migrated-review-templates/';
 let csrfToken = '';
 
@@ -49,7 +58,11 @@ async function request<T>(path = '', method = 'GET', payload?: unknown, signal?:
     return data;
   } catch (error) {
     if (!(error instanceof CurriculumApiError)) throw error;
-    const data = error.data as { detail?: string } | undefined;
+    const data = error.data as { detail?: string; code?: string; fields?: string[] } | undefined;
+    if (error.status === 409 && data?.code === 'template_answer_conflict') {
+      throw new TemplateAnswerConflictError(data.detail || 'This change conflicts with saved review answers.',
+        Array.isArray(data.fields) ? data.fields.filter(field => typeof field === 'string') : []);
+    }
     throw new Error(error.status === 403
       ? 'Curriculum or administrator access is required to manage migrated templates.'
       : data?.detail || `Unable to load migrated templates (${error.status}).`);

@@ -61,7 +61,7 @@ export function EmployerProgressReviewsTab({ employerId, kind, learnerId, employ
   };
   const sign = async (signature: string) => {
     if (!review || !definition) throw new Error('This review is not ready for signing.');
-    if (review.migratedForm) await signMigratedReviewAsParty(review.eventKey, signature);
+    if (review.migratedForm) await signMigratedReviewAsParty(review.eventKey, signature, { reviewRevision: definition.reviewRevision });
     else if (definition.instance) await signReviewAsEmployer(employerId, kind, learnerId, definition.instance.id, { name: employerName, signature });
     else throw new Error('The coach must prepare this review before you can sign.');
     await refresh();

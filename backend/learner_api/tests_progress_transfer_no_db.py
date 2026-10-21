@@ -26,6 +26,17 @@ def saved(status='pending', modules=None):
 
 
 class TransferPolicyTests(SimpleTestCase):
+    def test_same_component_completed_in_both_systems_is_never_credited_twice(self):
+        for course, module in [('50', 'M1'), ('91', 'OTHER-MODULE')]:
+            for baseline, start in [(10, 40), (60, 60)]:
+                with self.subTest(course=course, module=module, baseline=baseline):
+                    transfer = item(course, module, baselineCompletedIds=['shared'],
+                        baselinePercent=baseline, matchedComponents={'shared': {'completed': True}})
+                    original = deepcopy(transfer)
+                    self.assertEqual(credited_percent(transfer, ['shared', 'shared'], 10), start)
+                    self.assertEqual(credited_percent(transfer, ['shared', 'new', 'new'], 10), start + 10)
+                    self.assertEqual(transfer, original)
+
     def test_matched_completion_is_included_in_transferred_percent_not_added_again(self):
         transfer = item(baselineCompletedIds=['before'], baselinePercent=10, matchedComponents={'matched': {'completed': True}})
         self.assertEqual(credited_percent(transfer, ['before', 'matched'], 10), 40)
@@ -142,6 +153,24 @@ class TransferEndpointTests(SimpleTestCase):
             self.assertEqual(response.status_code,503)
             self.assertNotIn('private connection',response.content.decode())
 
+    def test_component_review_is_admin_only_and_learner_cannot_supply_mappings(self):
+        for role in ('learner', 'staff', 'employer'):
+            with patch.object(api, 'authenticate_request', return_value=SimpleNamespace(role=role)), \
+                    patch.object(api, 'review_request') as review:
+                self.assertEqual(api.admin_requests(self.request(), request_id='R1').status_code, 403)
+                review.assert_not_called()
+        with patch.object(api, 'authenticate_request', return_value=SimpleNamespace(role='admin')), \
+                patch.object(api, 'review_request', return_value={'reviewToken': 'token', 'modules': []}) as review:
+            response = api.admin_requests(self.request(), request_id='R1')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response['Cache-Control'], 'private, no-store')
+            self.assertEqual(json.loads(response.content)['reviewToken'], 'token')
+            review.assert_called_once_with('R1')
+        with patch.object(api, 'authenticate_request', return_value=SimpleNamespace(role='learner', subject_id=7)), \
+                patch.object(api, 'create_request') as create:
+            self.assertEqual(api.learner_request(self.request('post', {'confirm': True, 'mappings': []}), kind='commercial', pk=7).status_code, 400)
+            create.assert_not_called()
+
 
 class TransferWorkflowTests(SimpleTestCase):
     def setUp(self):
@@ -157,7 +186,7 @@ class TransferWorkflowTests(SimpleTestCase):
                     record_ids={('50','material:1'):{'1'},('51','material:2'):{'2'}},modules={})
         records = [{'id':1,'source_system':'old_lms','actual_seconds':3600},
                    {'id':2,'source_system':'old_lms','actual_seconds':7200}]
-        context = ([],['M1','M2'],records,native(),[],[],set(),set(),{},meta,[])
+        context = ([],['M1','M2'],records,native(),[],[],{('50','material:1'),('99','material:8')},set(),{},meta,[])
         cards = [{'id':f'legacy:{course}','title':'Old module','progress':40,'actualHours':hours,'activityCount':10,'completedActivityCount':4}
                  for course,hours in [('50',1),('51',2)]]
         with patch.object(store,'lock_learner',return_value=nullcontext(cursor)), \
@@ -171,6 +200,8 @@ class TransferWorkflowTests(SimpleTestCase):
             self.assertEqual(cursor.execute.call_count,3)
             payload = json.loads(cursor.execute.call_args_list[0].args[1][-1])
             self.assertEqual(payload,records)
+            snapshots = [json.loads(call.args[1][-1]) for call in cursor.execute.call_args_list[1:]]
+            self.assertEqual([snapshot['completedSourceActivities'] for snapshot in snapshots], [['material:1'], []])
             self.assertEqual(api.create_request(self.source,'commercial',self.owner,self.account),result)
             self.assertEqual(cursor.execute.call_count,3)
             entries.assert_called_once_with(self.owner)
@@ -211,6 +242,30 @@ class TransferWorkflowTests(SimpleTestCase):
         self.assertEqual(cursor.execute.call_args.args[1],[7,'legacy:50'])
         cursor.fetchone.return_value=None
         store.assert_legacy_writable(cursor,8,50)
+
+    def test_approval_matches_only_completions_frozen_at_request_not_later_source_results(self):
+        cursor = MagicMock(); cursor.fetchone.return_value = (7, 'commercial')
+        connection = MagicMock(); connection.cursor.return_value.__enter__.return_value = cursor
+        meta = metadata(); meta['replacement_courses'] = {'current:M1': 'legacy:50'}
+        meta['replacement_settings'] = {key: {'legacySettings': {'sourceLessonId': ident}}
+                                        for key, ident in [('FROZEN', 7), ('LATER', 8)]}
+        context = ([], ['M1'], [], native([component('FROZEN'), component('LATER')]),
+                   [{'source_course_ref': '50'}], [], {('50', 'material:8')}, set(), {}, meta, [])
+        for refs, expected in [(['material:7'], ['FROZEN']), ([], [])]:
+            with self.subTest(refs=refs):
+                pending = saved(modules=[item(completedSourceActivities=refs)])
+                cursor.reset_mock()
+                with patch.object(api, 'connections', {'enrolment': connection}), \
+                     patch.object(store, 'lock_learner', return_value=nullcontext(cursor)), \
+                     patch.object(store, 'read_state', side_effect=[pending, saved('approved')]), \
+                     patch.object(api, 'source_owner', return_value=(self.source, self.owner)), \
+                     patch('learner_api.my_learning.load_context', return_value=context):
+                    api.approve_request(pending['items'][0]['requestId'], self.account)
+                update = next(call for call in cursor.execute.call_args_list if 'SET snapshot=' in call.args[0])
+                snapshot = json.loads(update.args[1][0])
+                self.assertEqual(sorted(snapshot['matchedComponents']), expected)
+                self.assertEqual((snapshot['percent'], snapshot['hours']), (40, 2))
+                self.assertTrue(all('INSERT' not in call.args[0] for call in cursor.execute.call_args_list))
 
     def test_confirmation_snapshots_the_same_journal_rules_as_the_learner_screen(self):
         from .journal_sources import enabled

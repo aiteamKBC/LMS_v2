@@ -37,6 +37,7 @@ class CancelledReviewTests(SimpleTestCase):
             migrated_template_id=3, migrated_template=SimpleNamespace(review_family="PR"),
             event_key="imported-review:C5-TEST-PR", template_snapshot={"name": "Test PR", "sections": [{}]},
             status="awaiting-signature", learner_id=670,
+            source_review_id=407,
         )
         # Fetched in the same batch, but another learner's: not listed for 670.
         other_learners = SimpleNamespace(**{**vars(overlay), "learner_id": 671, "event_key": "imported-review:OTHER"})
@@ -48,6 +49,7 @@ class CancelledReviewTests(SimpleTestCase):
                 patch.object(employer_portal, "SOURCE_MODELS", {}), \
                 patch.object(employer_portal.review_instances, "list_review_instances_for_learners", return_value={}), \
                 patch.object(employer_portal.ImportedReviewInstance.objects, "select_related") as migrated, \
+                patch.object(employer_portal, "imported_document_dates", return_value={(670, 407): "2026-10-21"}), \
                 patch.object(employer_portal, "signature_states", return_value=states):
             migrated.return_value.prefetch_related.return_value.filter.return_value = [overlay, other_learners]
             rows = employer_portal._review_signing_rows("apprenticeship", 670)
@@ -56,3 +58,4 @@ class CancelledReviewTests(SimpleTestCase):
         self.assertEqual(rows[0]["eventKey"], overlay.event_key)
         self.assertTrue(rows[0]["signable"])
         self.assertFalse(rows[0]["signed"])
+        self.assertEqual(rows[0]["scheduledDate"], "2026-10-21")

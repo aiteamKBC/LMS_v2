@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -237,7 +237,10 @@ describe('Module Builder live sync', { timeout: 25000 }, () => {
 
     await saveArrivesFromElsewhere('Week one, renamed by Sara', 'rev-2');
 
-    expect(await screen.findByRole('button', { name: 'Load their version' })).toBeInTheDocument();
+    // Both changed the same field: the reader is asked, nothing is decided.
+    const panel = await screen.findByTestId('module-builder-conflicts');
+    expect(within(panel).getByRole('button', { name: 'Keep mine' })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'Use theirs' })).toBeInTheDocument();
     // The edit is untouched, and nothing was written on the reader's behalf.
     expect(title).toHaveValue('My unsaved week');
     expect(saveModuleStructure).not.toHaveBeenCalled();
@@ -283,7 +286,11 @@ describe('Module Builder live sync', { timeout: 25000 }, () => {
     await userEvent.type(title, 'My unsaved week');
 
     await saveArrivesFromElsewhere('Week one, renamed by Sara', 'rev-2', [{ id: 'WEEK-2', title: 'A week Sara added' }]);
-    expect(await screen.findByRole('button', { name: 'Load their version' })).toBeInTheDocument();
+    // Their added week merged in silently; the title they both changed is a
+    // question, and the reader answers it before anything is saved.
+    const panel = await screen.findByTestId('module-builder-conflicts');
+    await userEvent.click(within(panel).getByRole('button', { name: 'Keep mine' }));
+    expect(screen.queryByTestId('module-builder-conflicts')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByTestId('module-builder-save'));
 
@@ -296,17 +303,34 @@ describe('Module Builder live sync', { timeout: 25000 }, () => {
     expect(sent.weekStructure.map(week => week.title)).toContain('A week Sara added');
   });
 
-  it('names the field both editors changed and keeps this one', async () => {
+  it('names the field both editors changed and lets the reader take theirs', async () => {
     const title = await openWorkspace();
     await userEvent.clear(title);
     await userEvent.type(title, 'My unsaved week');
 
     await saveArrivesFromElsewhere('Week one, renamed by Sara', 'rev-2');
 
-    const notice = await screen.findByTestId('module-builder-remote-update');
-    expect(notice).toHaveTextContent(/both changed the title/i);
-    expect(notice).toHaveTextContent(/Yours is kept/i);
+    const panel = await screen.findByTestId('module-builder-conflicts');
+    expect(panel).toHaveTextContent(/both changed the title/i);
+    expect(panel).toHaveTextContent(/Week one, renamed by Sara/);
+    // Until they choose, their own version is the one on screen.
     expect(title).toHaveValue('My unsaved week');
+    await userEvent.click(within(panel).getByRole('button', { name: 'Use theirs' }));
+    await waitFor(() => expect(title).toHaveValue('Week one, renamed by Sara'));
+    expect(screen.queryByTestId('module-builder-conflicts')).not.toBeInTheDocument();
+  });
+
+  it('does not save over the other editor while a choice is open', async () => {
+    const title = await openWorkspace();
+    await userEvent.clear(title);
+    await userEvent.type(title, 'My unsaved week');
+    await saveArrivesFromElsewhere('Week one, renamed by Sara', 'rev-2');
+    await screen.findByTestId('module-builder-conflicts');
+
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+
+    expect(await screen.findAllByText(/Choose which version to keep/i)).not.toHaveLength(0);
+    expect(saveModuleStructure).not.toHaveBeenCalled();
   });
 
   it('merges and re-sends a save the server refused, instead of stopping at a red banner', async () => {
@@ -458,16 +482,17 @@ describe('Module Builder live sync', { timeout: 25000 }, () => {
     // reader's alone}: that made the next save legal at the endpoint and let it
     // replace whatever the drawer had just written, silently. What makes the
     // drawer's revision safe to take now is that the drawer's content comes
-    // with it -- the reader's week title is kept over it, and said out loud,
-    // because they changed the same field.
+    // with it -- and the week title both of them changed is put to the reader
+    // as a choice before anything is saved.
     const title = await openWorkspace();
     await userEvent.clear(title);
     await userEvent.type(title, 'My unsaved week');
 
     await drawerSaves('Week one, as the drawer stored it', 'rev-2');
 
-    expect(await screen.findByRole('button', { name: 'Load their version' })).toBeInTheDocument();
+    const panel = await screen.findByTestId('module-builder-conflicts');
     expect(title).toHaveValue('My unsaved week');
+    await userEvent.click(within(panel).getByRole('button', { name: 'Keep mine' }));
 
     await userEvent.click(screen.getByTestId('module-builder-save'));
 

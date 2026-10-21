@@ -28,6 +28,12 @@ import { ModuleFormDrawer } from '../moduleForm';
  * tutor double-booking. A module with no group yet must not.
  */
 
+// Out of the concurrency path, which drawerRecordConcurrency covers: the server
+// reports no version for these records, so their saves go unguarded.
+vi.mock('../recordSnapshot', () => ({
+  fetchCurriculumRecordSnapshot: vi.fn(async () => ({ revision: '', record: null })),
+}));
+
 vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
   showCurriculumAlert: vi.fn(async () => undefined),
   showCurriculumConfirm: vi.fn(async () => undefined),

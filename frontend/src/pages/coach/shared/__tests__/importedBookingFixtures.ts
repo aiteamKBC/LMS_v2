@@ -33,6 +33,15 @@ export function scheduledImportedBooking(overrides: Partial<ReviewInstanceFormDe
   });
 }
 
+export function personalSupportBooking(scheduled = false): ReviewInstanceFormDefinition {
+  const base = scheduled ? scheduledImportedBooking() : importedBookingDefinition();
+  return { ...base, migratedForm: false, formAvailable: false, summaryOnly: true, readOnly: true,
+    canInitialize: false, localStatus: null, template: { ...base.template, name: 'Personal Support Plan' },
+    booking: { ...base.booking!, formRequired: false, status: scheduled ? 'scheduled' : 'not-scheduled',
+      eventKey: scheduled ? base.instance.id : null },
+  };
+}
+
 // JSDOM does not implement the native dialog's top-layer methods.
 export function installDialogTestSupport() {
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
