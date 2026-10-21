@@ -13,7 +13,7 @@ from PIL import Image as PillowImage, UnidentifiedImageError
 from django.db import transaction
 from django.utils import timezone
 
-from .migrated_reviews import SCHEDULED_WORK_STATUSES, validate_answers
+from .migrated_reviews import EDITABLE_STATUSES, SCHEDULED_WORK_STATUSES, _visible_fields, validate_answers
 from .migrated_template_sync import active_answers, preserve_inactive_answers
 from .models import ImportedReviewInstance, MigratedReviewDocument, MigratedReviewSignature
 
@@ -23,6 +23,7 @@ ROLES = ("advisor", "participant", "employer", "referrer")
 FAMILY_REQUIRED_ROLES = {"MCM": ("advisor", "participant"), "PR": ("advisor", "participant", "employer")}
 # This family previously used PR rules; separating template selection preserves them.
 FAMILY_REQUIRED_ROLES["PR_SKILLS_RADAR"] = FAMILY_REQUIRED_ROLES["PR"]
+FAMILY_REQUIRED_ROLES["PSP"] = ()
 IMAGE_PATTERN = re.compile(r"^data:image/(?:png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$", re.I)
 
 
@@ -33,10 +34,40 @@ def requirements_for_family(family):
 
 
 def required_roles(overlay):
+    if is_personal_support_form(overlay):
+        return ()
     rules = overlay.signature_requirements or {}
     if not rules:
         rules = requirements_for_family(overlay.migrated_template.review_family)
     return tuple(role for role in ROLES if rules.get(role) is True)
+
+
+def is_personal_support_form(overlay):
+    family = (overlay.template_snapshot.get("templateSource") or {}).get("family")
+    return (family or getattr(getattr(overlay, "migrated_template", None), "review_family", None)) == "PSP"
+
+
+def complete_personal_support_if_ready(overlay):
+    """Called only after an authorized, version-checked save under row locks.
+
+    Partial drafts remain editable. Completion never needs a booking, signature,
+    Graph call or hours allocation, and never rewrites the imported source.
+    """
+    if not is_personal_support_form(overlay) or overlay.status not in EDITABLE_STATUSES:
+        return False
+    answers = active_answers(overlay.template_snapshot, overlay.answers)
+    validate_answers(overlay.template_snapshot, answers)
+    if any(field.get("mandatory") and field.get("aptemType") != 11
+           and (answers.get(field["key"]) is None or not str(answers.get(field["key"], "")).strip())
+           for field in _visible_fields(overlay.template_snapshot, answers)):
+        return False
+    overlay.signature_requirements = requirements_for_family("PSP")
+    overlay.status = ImportedReviewInstance.STATUS_COMPLETED
+    overlay.completed_at = timezone.now()
+    overlay.save(update_fields=["signature_requirements", "status", "completed_at", "updated_at"])
+    from .migrated_completion_views import _mirror_status
+    _mirror_status(overlay)
+    return True
 
 
 def signature_states(overlay):
@@ -53,6 +84,17 @@ def signature_states(overlay):
 
 
 def submit(overlay, answers):
+    if is_personal_support_form(overlay):
+        if overlay.status not in EDITABLE_STATUSES:
+            raise ValueError("This Personal Support Plan is read-only.")
+        validate_answers(overlay.template_snapshot, answers, completing=True)
+        overlay.answers = preserve_inactive_answers(overlay.template_snapshot, overlay.answers or {}, answers)
+        # Keep the compatibility submit endpoint signature-free as well.
+        with transaction.atomic():
+            if not complete_personal_support_if_ready(overlay):
+                raise ValueError("Required review fields are unanswered.")
+            overlay.save(update_fields=["answers", "updated_at"])
+        return
     if overlay.status not in SCHEDULED_WORK_STATUSES:
         raise ValueError("Only a scheduled or in-progress migrated review can be submitted.")
     validate_answers(overlay.template_snapshot, answers, completing=True)

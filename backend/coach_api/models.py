@@ -151,8 +151,10 @@ class MigratedReviewTemplate(models.Model):
     FAMILY_MCM = "MCM"
     FAMILY_PR = "PR"
     FAMILY_PR_SKILLS_RADAR = "PR_SKILLS_RADAR"
+    FAMILY_PSP = "PSP"
     FAMILY_CHOICES = [(FAMILY_MCM, "Monthly Coaching Meeting"), (FAMILY_PR, "Progress Review"),
-                      (FAMILY_PR_SKILLS_RADAR, "Progress Review + Skills Radar")]
+                      (FAMILY_PR_SKILLS_RADAR, "Progress Review + Skills Radar"),
+                      (FAMILY_PSP, "Personal Support Plan")]
     SCOPE_GLOBAL = "GLOBAL"
     SCOPE_PROGRAMME = "PROGRAMME"
 
@@ -179,7 +181,7 @@ class MigratedReviewTemplate(models.Model):
                 name="coach_migrated_global_active",
             ),
             models.CheckConstraint(
-                condition=models.Q(review_family__in=["MCM", "PR", "PR_SKILLS_RADAR"]),
+                condition=models.Q(review_family__in=["MCM", "PR", "PR_SKILLS_RADAR", "PSP"]),
                 name="coach_migrated_template_family_valid",
             ),
             models.CheckConstraint(

@@ -9,12 +9,19 @@ from .migrated_reviews import FIELD_TYPES, candidate_definition, meeting_summary
 from .models import MigratedReviewTemplate
 
 
-FAMILIES = ("MCM", "PR", "PR_SKILLS_RADAR")
+FAMILIES = ("MCM", "PR", "PR_SKILLS_RADAR", "PSP")
+
+
+def template_family(source_type):
+    """Use the same explicit source family for library and continuation forms."""
+    return review_family(source_type)
 
 
 def validate_slot(scope, family, key):
     if family not in FAMILIES:
-        raise ValueError("Choose MCM, PR or PR_SKILLS_RADAR.")
+        raise ValueError("Choose MCM, PR, PR_SKILLS_RADAR or PSP.")
+    if family == "PSP" and scope != "GLOBAL":
+        raise ValueError("Personal Support Plan templates are managed globally.")
     if scope == "GLOBAL":
         if key:
             raise ValueError("A Global template cannot have a programme key.")
@@ -69,7 +76,7 @@ def validate_managed_definition(definition, *, family=None):
             raise ValueError("Respondent roles must be unique Learner or Employer roles.")
         if kind == 11 and roles:
             raise ValueError("Headings cannot have respondent roles.")
-        if family == "MCM" and "employer" in roles:
+        if family in ("MCM", "PSP") and "employer" in roles:
             raise ValueError("Employer answers are supported for Progress Reviews only.")
         ordered(field)
         if type(field.get("mandatory", False)) is not bool:
@@ -170,11 +177,11 @@ def historical_candidate(source_id, family):
         cursor.execute('''SELECT id, aptem_review_id, review_type, status, learner_id,
                           review_data->'sections' FROM "Learner".reviews WHERE id = %s''', [source_id])
         row = cursor.fetchone()
-        if row is None or row[3] != "Completed" or review_family(row[2]) != family:
+        if row is None or row[3] != "Completed" or template_family(row[2]) != family:
             raise ValueError("Select a Completed Aptem source review in this family using its internal review ID.")
         sections = json.loads(row[5]) if isinstance(row[5], str) else row[5]
         definition = candidate_definition({"sections": sections})
-        validate_managed_definition(definition)
+        validate_managed_definition(definition, family=family)
         cursor.execute('SELECT programme_id, programme FROM "Learner".learners WHERE id = %s', [row[4]])
         programme = cursor.fetchone()
     return definition, {

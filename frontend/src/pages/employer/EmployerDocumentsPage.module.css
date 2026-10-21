@@ -408,6 +408,11 @@
 }
 
 .documentName {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
   overflow: hidden;
   color: #291541;
   font-size: 0.81rem;
@@ -416,6 +421,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.documentName:hover { color: #7141bb; text-decoration: underline; }
+.documentName:focus-visible { outline: 2px solid #7141bb; outline-offset: 3px; }
+.documentActions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 
 .documentMeta {
   display: flex;

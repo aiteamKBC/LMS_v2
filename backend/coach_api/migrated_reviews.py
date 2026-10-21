@@ -10,6 +10,7 @@ FAMILY_BY_SOURCE_TYPE = {
     "mcm": "MCM",
     "progress review": "PR",
     "progress review (+ skills radar)": "PR_SKILLS_RADAR",
+    "personal support plan": "PSP",
 }
 INITIAL_STATUSES = {"not-scheduled", "scheduled"}
 EDITABLE_STATUSES = {"not-scheduled", "scheduled", "in-progress"}
@@ -58,6 +59,7 @@ def review_family(source_type):
 
 def booking_event_type(family):
     """Keep template families distinct while sharing existing calendar types."""
+    # PSP retains its separate coach-only booking policy.
     return {"MCM": "mcr", "PR": "progress-review", "PR_SKILLS_RADAR": "progress-review"}.get(family)
 
 

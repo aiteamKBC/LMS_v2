@@ -249,7 +249,9 @@ export function TemplateEditor({ template, programmeName, onClose, onSaved }: { 
       <p className="text-sm text-foreground-500">{FAMILY_LABELS[template.review_family]}</p>
     </div>
     <div className="mb-5 rounded-xl border border-sky-100 bg-sky-50 p-3 text-sm leading-6 text-sky-900">
-      {template.scope === 'GLOBAL'
+      {template.review_family === 'PSP'
+        ? 'Manage the global Personal Support Plan questions here. Learner information, Functional Skills and Reviews Schedule belong to each learner and are not shared template answers. Saving all required answers completes the plan without signatures. Learner answer permissions are configured per question.'
+        : template.scope === 'GLOBAL'
         ? 'Changes apply to migrated reviews using this Standard Template while they are still editable. Working reviews synchronise when opened by the coach or checked on save. Reviews awaiting signatures or completed keep their saved version.'
         : 'This programme-specific copy can be edited independently. Working reviews synchronise when opened by the coach or checked on save. Reviews awaiting signatures or completed keep their saved version.'}
     </div>
@@ -290,7 +292,7 @@ export function TemplateEditor({ template, programmeName, onClose, onSaved }: { 
         <div id={anchorId(`fields:${section.key}`)} className="p-3 sm:p-5">
           {problemFor(`fields:${section.key}`) && <p className="mb-3 text-[11px] font-semibold text-red-600">{problemFor(`fields:${section.key}`)}</p>}
           <Fields fields={section.fields} onChange={fields => updateSections(sections.map((s, i) => i === index ? { ...s, fields } : s))}
-          numberPrefix={`${index + 1}.`} addLabel={`Add question to section ${index + 1}`} summaryMapped={sections.some(s => hasSummary(s.fields))} allowEmployer={template.review_family !== 'MCM'} problemFor={problemFor} /></div>
+          numberPrefix={`${index + 1}.`} addLabel={`Add question to section ${index + 1}`} summaryMapped={sections.some(s => hasSummary(s.fields))} allowEmployer={template.review_family === 'PR' || template.review_family === 'PR_SKILLS_RADAR'} problemFor={problemFor} /></div>
       </section>;
       })}
       <div id={anchorId('sections')}>
