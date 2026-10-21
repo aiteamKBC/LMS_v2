@@ -36,6 +36,11 @@ export interface BulkAttendanceHistoryResult {
   warnings: string[];
 }
 
+export interface BulkAttendanceHistoryReadOptions {
+  /** Read only the LMS live-session register, excluding legacy KBC rows. */
+  source?: 'live' | 'all';
+}
+
 function warningsFrom(payload: { warnings?: unknown }): string[] {
   return Array.isArray(payload.warnings)
     ? payload.warnings.filter((warning): warning is string => typeof warning === 'string')
@@ -160,9 +165,26 @@ export async function fetchBulkAttendanceLiveDayRecords(
   );
 }
 
-/** Each learner's last four marked lectures (KBC + live register), oldest first, keyed by KBC id. */
-export async function fetchBulkAttendanceKbcRecent(signal?: AbortSignal): Promise<BulkAttendanceRecentResult> {
-  const response = await coachFetch('/curriculum_api/curriculum/bulk-attendance/kbc-recent/', { signal });
+/** Learners with any saved KBC or live attendance on this exact calendar day. */
+export async function fetchBulkAttendanceDayLearners(date: string, signal?: AbortSignal): Promise<string[]> {
+  const query = new URLSearchParams({ date });
+  const response = await coachFetch(`/curriculum_api/curriculum/bulk-attendance/day-learners/?${query}`, { signal });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || 'Unable to load attendance for this date.');
+  if (payload.date !== date || !Array.isArray(payload.learnerIds)
+    || !payload.learnerIds.every((id: unknown) => typeof id === 'string')) {
+    throw new Error('Attendance for this date returned an invalid response.');
+  }
+  return payload.learnerIds;
+}
+
+/** Each learner's last four saved attendance lectures, oldest first, keyed by KBC id. */
+export async function fetchBulkAttendanceKbcRecent(
+  signal?: AbortSignal,
+  options: BulkAttendanceHistoryReadOptions = { source: 'live' },
+): Promise<BulkAttendanceRecentResult> {
+  const query = options.source ? `?source=${encodeURIComponent(options.source)}` : '';
+  const response = await coachFetch(`/curriculum_api/curriculum/bulk-attendance/kbc-recent/${query}`, { signal });
   const payload = await response.json();
   if (!response.ok) {
     throw new Error(payload.error || 'Unable to load recent KBC attendance.');
@@ -176,9 +198,11 @@ export async function fetchBulkAttendanceKbcRecent(signal?: AbortSignal): Promis
 export async function fetchBulkAttendanceKbcHistory(
   learnerId: string,
   signal?: AbortSignal,
+  options: BulkAttendanceHistoryReadOptions = { source: 'live' },
 ): Promise<BulkAttendanceHistoryResult> {
   if (!learnerId) return { records: [], warnings: [] };
   const query = new URLSearchParams({ learner_id: learnerId });
+  if (options.source) query.set('source', options.source);
   const response = await coachFetch(`/curriculum_api/curriculum/bulk-attendance/kbc-history/?${query}`, { signal });
   const payload = await response.json();
   if (!response.ok) {

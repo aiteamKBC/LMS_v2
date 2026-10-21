@@ -19,6 +19,7 @@ from .bulk_attendance_learners import bulk_attendance_learners
 from .bulk_attendance_kbc_history import (
     bulk_attendance_kbc_history,
     bulk_attendance_kbc_recent,
+    bulk_attendance_day_learners,
     bulk_attendance_save_attendance,
 )
 from .bulk_attendance_live_day import bulk_attendance_live_day
@@ -39,6 +40,7 @@ urlpatterns = [
     path('curriculum/bulk-attendance/learners/', bulk_attendance_learners, name='curriculum-bulk-attendance-learners'),
     path('curriculum/bulk-attendance/kbc-history/', bulk_attendance_kbc_history, name='curriculum-bulk-attendance-kbc-history'),
     path('curriculum/bulk-attendance/kbc-recent/', bulk_attendance_kbc_recent, name='curriculum-bulk-attendance-kbc-recent'),
+    path('curriculum/bulk-attendance/day-learners/', bulk_attendance_day_learners, name='curriculum-bulk-attendance-day-learners'),
     path('curriculum/bulk-attendance/attendance/', bulk_attendance_save_attendance, name='curriculum-bulk-attendance-save-attendance'),
     path('curriculum/bulk-attendance/live-day/', bulk_attendance_live_day, name='curriculum-bulk-attendance-live-day'),
     path('curriculum/bulk-attendance/live-day-records/', bulk_attendance_live_day_records, name='curriculum-bulk-attendance-live-day-records'),

@@ -3739,7 +3739,7 @@ export function liveSessionArtifactPreviewUrl(liveSessionId: string, artifactId:
 
 export function fetchCurriculumSessions(
   signal?: AbortSignal,
-  options: { skipCache?: boolean; revalidate?: boolean; moduleCatalogueId?: string } = {},
+  options: { skipCache?: boolean; revalidate?: boolean; moduleCatalogueId?: string; visibility?: 'operational' | 'all' } = {},
 ): Promise<CurriculumSession[]> {
   // Sessions live in the 45s "dynamic" cache tier, so a caller that has just
   // scheduled a module (or opens straight after) can otherwise read a stale
@@ -3751,7 +3751,10 @@ export function fetchCurriculumSessions(
   // `moduleCatalogueId` asks for that one module's sessions, which the server
   // derives fresh from its own rows every time. Without it, current dates for
   // one module meant skipCache forcing a rebuild of every session there is.
-  const query = options.moduleCatalogueId ? `?module_catalogue_id=${encodeURIComponent(options.moduleCatalogueId)}` : '';
+  const queryParams = new URLSearchParams();
+  if (options.moduleCatalogueId) queryParams.set('module_catalogue_id', options.moduleCatalogueId);
+  if (options.visibility === 'all') queryParams.set('visibility', 'all');
+  const query = queryParams.toString() ? `?${queryParams.toString()}` : '';
   return fetchCollection<CurriculumSession>(`/curriculum/sessions/${query}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate });
 }
 
@@ -3779,12 +3782,16 @@ export function fetchEnglandHolidays(signal?: AbortSignal, options: { skipCache?
 // `fetchCurriculumModules` applies. Nothing that reads this endpoint renders
 // those titles; the module workspace derives its own from the authored week
 // structure. A caller that needs them must take the full response.
-export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact?: boolean; skipCache?: boolean; revalidate?: boolean; timeoutMs?: number } = {}): Promise<CurriculumOverview> {
+export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact?: boolean; skipCache?: boolean; revalidate?: boolean; timeoutMs?: number; visibility?: 'operational' | 'all' } = {}): Promise<CurriculumOverview> {
   // Capped so a slow backend fails into its own error+Retry banner instead of
   // hanging on the browser's multi-minute default. 90s, not 30s: a forced rebuild
   // is ~13s on its own, and behind the browser's six-per-host queue on a busy
   // page it was being cut off at 30s before the server had answered.
-  return fetchJson<CurriculumOverview>(`/curriculum/overview/${options.compact ? '?compact=true' : ''}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 90000 });
+  const query = new URLSearchParams();
+  if (options.compact) query.set('compact', 'true');
+  if (options.visibility === 'all') query.set('visibility', 'all');
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumOverview>(`/curriculum/overview/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 90000 });
 }
 
 // `omitComponents` leaves `flat.components` out of the response, for a caller
