@@ -5,6 +5,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ComponentEditor } from './page';
 
+// The video's content editor is not under test here (as in quizPicker.test).
+vi.mock('../module-builder/RichTextEditor', () => ({ RichTextDraft: () => <div>Content editor</div> }));
+
 describe('week component assigned groups', () => {
   it('keeps groups hidden until programme and cohort are selected, then filters by group', async () => {
     const user = userEvent.setup();

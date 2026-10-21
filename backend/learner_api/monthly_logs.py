@@ -517,12 +517,13 @@ def mirror_mcm_learner_signature(learner, month, signature, name):
                   AND review_confirmed IS TRUE LIMIT 1''', [owner['id'], month])
             if existing:
                 return {'status': 'already-synced', 'month': month}
-            old_repo.query('''INSERT INTO "Learner".learner_monthly_signatures
+            inserted = old_repo.query('''INSERT INTO "Learner".learner_monthly_signatures
                 (learner_id,report_month,signer_role,signer_name,review_confirmed,
                  signature_url,signature_data,capture_method,signed_at,snapshot_digest,
                  source_system,source_ref,source_learner_id,programme_key)
                 VALUES (%s,%s,'learner',%s,true,%s,%s,'mcm',now(),%s,'lms',%s,%s,%s)
-                ON CONFLICT (source_learner_id,programme_key,report_month,signer_role) DO NOTHING''',
+                ON CONFLICT (source_learner_id,programme_key,report_month,signer_role) DO NOTHING
+                RETURNING id''',
                 [owner['id'], month, signed_name, signature, capture, snapshot_digest, source_ref,
                  source_learner_id, programme_key])
         else:
@@ -533,12 +534,17 @@ def mirror_mcm_learner_signature(learner, month, signature, name):
                 [learner_key, month, VERSION])
             if existing:
                 return {'status': 'already-synced', 'month': month}
-            old_repo.query(f'''INSERT INTO {old_repo.SIGNOFFS}
+            inserted = old_repo.query(f'''INSERT INTO {old_repo.SIGNOFFS}
                 (learner_id,programme_key,report_month,signer_role,signer_name,
                  review_confirmed,signature_data,signed_at,snapshot_hash,audit_version)
                 VALUES (%s,%s,%s,'learner',%s,true,%s,now(),%s,%s)
-                ON CONFLICT (learner_id,programme_key,report_month,signer_role) DO NOTHING''',
+                ON CONFLICT (learner_id,programme_key,report_month,signer_role) DO NOTHING
+                RETURNING id''',
                 [learner_key, source_ref, month, signed_name, capture, snapshot_digest, VERSION])
+        if not inserted:
+            # An unconfirmed imported row can occupy the unique key. DO NOTHING
+            # preserves that record, but it is not a successful learner sign-off.
+            raise old.ServiceError('The Monthly Log signature was not saved. Please try again from Monthly Logs.')
 
     return {'status': 'synced', 'month': month, 'snapshot_digest': snapshot_digest}
 

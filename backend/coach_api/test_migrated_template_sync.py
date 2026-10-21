@@ -183,6 +183,11 @@ class WorkingSnapshotTests(TestCase):
             meeting_intelligence={"aiSummaryOriginal": {"overview": "Original"}, "summaryStatus": "edited", "transcriptArtifactId": "synthetic"})
         self.definition = {"migratedForm": True, "readOnly": False, "localStatus": "in-progress", "migratedProgrammeKey": "id:synthetic",
             "instance": {"id": self.overlay.event_key, "learnerId": 42}, "historicalReview": {"id": "7001", "type": SOURCE_TYPES["MCM"]}}
+        # A working booked review has a calendar row. Keep lifecycle tests on their
+        # synthetic booking instead of falling through to enrolment-source lookup.
+        self.meeting = CoachCalendarEvent.objects.create(event_key=self.overlay.event_key, owner_email=OWNER, learner_id=42,
+            event_type="mcr", target_date=date(2026, 10, 4), scheduled_date=date(2026, 10, 4), scheduled_time=time(10),
+            graph_event_id="synthetic-event", meeting_link="https://example.invalid/meeting", sync_state="synced", status="scheduled")
 
     def edit(self, definition=None):
         self.template.definition_json = definition or form(field("note", title="Updated label"), field("new"))
@@ -261,9 +266,7 @@ class WorkingSnapshotTests(TestCase):
     def test_start_revalidates_working_definition_without_changing_the_meeting(self):
         self.overlay.status = "scheduled"
         self.overlay.save()
-        meeting = CoachCalendarEvent.objects.create(event_key=self.overlay.event_key, owner_email=OWNER, learner_id=42,
-            event_type="mcr", target_date=date(2026, 10, 4), scheduled_date=date(2026, 10, 4), scheduled_time=time(10),
-            graph_event_id="synthetic-event", meeting_link="https://example.invalid/meeting", sync_state="synced", status="scheduled")
+        meeting = self.meeting
         self.edit()
         request = self.factory.post("/", data=json.dumps({"status": "in-progress"}), content_type="application/json")
         request.coach_email = OWNER

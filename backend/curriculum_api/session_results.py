@@ -20,6 +20,7 @@ from .session_results_policy import attendance_display_name, attendance_name_key
 from .session_media_policy import hidden_artifact_ids, recording_transcript_links, transcript_timing_ready, artifact_metadata
 from .session_sync_runtime import start_requested_sync
 from .session_transfer_progress import summarize_transfers
+from .session_sync_issues import sync_issues
 
 log = logging.getLogger(__name__)
 
@@ -702,7 +703,8 @@ def link_attendance_alias(request, series_id, session_number):
 def add_sync_progress(jobs):
     if not jobs:
         return
-    rows = read('''SELECT o.live_session_id,o.session_number,a.artifact_type,r.status,
+    rows = read('''SELECT o.live_session_id,o.session_number,a.id,a.artifact_type,r.status,
+        r.last_error,r.updated_at,
         CASE WHEN a.metadata::jsonb->'lmsArchiveProgress'->>'leaseId'=j.lease_id
             THEN (a.metadata::jsonb->'lmsArchiveProgress')-'leaseId' ELSE NULL END AS transfer
         FROM curriculum.live_session_artifacts a
@@ -712,9 +714,73 @@ def add_sync_progress(jobs):
         WHERE o.live_session_id=ANY(%s) AND a.artifact_type IN ('recording','transcript')''',
         [[job['live_session_id'] for job in jobs]])
     for job in jobs:
-        job['progress'] = summarize_transfers([row for row in rows if row['live_session_id'] == job['live_session_id']])
+        own = [row for row in rows if row['live_session_id'] == job['live_session_id']]
+        job['progress'] = summarize_transfers(own)
         if job['state'] not in {'running', 'failed'}:
             job['progress']['transfer'] = None
+        # Staff-only: plain categories for what still needs attention. last_error
+        # is kept unchanged for older callers.
+        job['issues'] = sync_issues(
+            {**job, 'finished_at': instant(job.get('finished_at'))},
+            [{**row, 'updated_at': instant(row.get('updated_at'))} for row in own])
+    add_issue_weeks(jobs)
+
+
+def linked_session_items(series_ids):
+    """The live-session item each Teams session is linked to, by (series, session number).
+
+    A session is named only from the Course structure item that links its
+    occurrence (or its series and session number). The title is given only
+    when the linked items agree on one; the week only when they sit in one
+    week. Nothing is guessed from dates.
+    """
+    if not series_ids:
+        return {}
+    rows = read('''SELECT DISTINCT o.live_session_id,o.session_number,c.id AS component_id,c.title,
+            w.id AS week_id,w.week_number,w.title AS week_title
+        FROM curriculum.live_session_occurrences o
+        JOIN curriculum.live_sessions s ON s.id=o.live_session_id
+        JOIN curriculum.components c ON c.module_catalogue_id=s.module_catalogue_id
+          AND lower(replace(coalesce(c.type,''),'-','_'))='live_session'
+          AND c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted,false)
+          AND coalesce(c.library_state,'')<>'library'
+          AND (c.settings_json->>'teamsOccurrenceId'=o.id::text
+               OR (c.settings_json->>'teamsLiveSessionId'=o.live_session_id::text
+                   AND c.settings_json->>'teamsSessionNumber'=o.session_number::text))
+        JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
+          AND w.deleted_at IS NULL AND NOT coalesce(w.is_programme_deleted,false)
+          AND coalesce(w.library_state,'')<>'library'
+        WHERE o.live_session_id=ANY(%s)''', [sorted(set(series_ids))])
+    titles, weeks = defaultdict(set), defaultdict(dict)
+    for row in rows:
+        key = (row['live_session_id'], row['session_number'])
+        titles[key].add(str(row.get('title') or '').strip())
+        weeks[key][row['week_id']] = {'number': row['week_number'], 'title': row['week_title'] or ''}
+    items = {}
+    for key in set(titles) | set(weeks):
+        named = titles[key] - {''}
+        items[key] = {'title': next(iter(named)) if len(titles[key]) == 1 and named else None,
+                      'week': next(iter(weeks[key].values())) if len(weeks[key]) == 1 else None}
+    return items
+
+
+def add_issue_weeks(jobs):
+    """Name the linked item and course week of each session with an outstanding issue."""
+    wanted = {job['live_session_id'] for job in jobs
+              for issue in job.get('issues') or [] if issue.get('sessionNumber') is not None}
+    if not wanted:
+        return
+    try:
+        items = linked_session_items(wanted)
+    except DatabaseError:
+        # The names are a convenience; the issue itself must still be shown.
+        log.warning('Could not read the linked items for sync issues.', exc_info=True)
+        return
+    for job in jobs:
+        for issue in job.get('issues') or []:
+            found = items.get((job['live_session_id'], issue.get('sessionNumber'))) or {}
+            issue['week'] = found.get('week')
+            issue['sessionTitle'] = found.get('title')
 
 
 @require_GET
@@ -739,6 +805,14 @@ def module_results(request, module_id):
             item['title'] = next((row.get('module_title') or '' for row in series if row['id'] == item['seriesId']), '')
             for key in ('startsAt', 'endsAt', 'syncedAt'):
                 item[key] = instant(item[key])
+        try:
+            items = linked_session_items(ids)
+        except DatabaseError:
+            log.warning('Could not read the linked items for module sessions.', exc_info=True)
+            items = {}
+        for item in occurrences:
+            # The Course structure item's own name; the list falls back to "Session N".
+            item['itemTitle'] = (items.get((item['seriesId'], item['sessionNumber'])) or {}).get('title')
         results = [{'id': row['id'], 'title': row['module_title'],
                     'sessions': [item for item in occurrences if item['seriesId'] == row['id']]} for row in series]
         payload = {'series': results, 'jobs': [], 'presenceThresholdSeconds': 180, 'syncAvailable': True}

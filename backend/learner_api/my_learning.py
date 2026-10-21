@@ -382,8 +382,22 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
         resolved.setdefault('module_titles', {})
         resolved.setdefault('weeks', [])
         resolved.setdefault('covers', {})
+    content_source, content_plan = source, assigned
+    if subject_id is not None and not subject_id.startswith('activity:'):
+        # A module link already identifies the content scope. Keep the full
+        # assignment/mapping lists below for ownership and ambiguous successor
+        # checks, but do not rebuild every other course just to open this one.
+        # Activity-only links still need global identities to resolve their owner.
+        selected_id = subject_id[8:] if subject_id.startswith('current:') else subject_id
+        content_plan = [entry for entry in assigned if
+            str(entry.get('moduleId') or '') == selected_id
+            or (subject_id.startswith('unlinked:') and not entry.get('moduleId')
+                and entry.get('moduleTitle') == subject_id[9:])]
+        content_source = copy(source)
+        content_source.training_plan = content_plan
+        content_source.learning_plan = content_plan
     with projection_stage('native_learning'):
-        native = build_learning_content_summary(source, source.pk, learning_summary=True, assigned_modules=assigned,
+        native = build_learning_content_summary(content_source, source.pk, learning_summary=True, assigned_modules=content_plan,
             identities_only=True, preserve_legacy=True, strict=True, resolved_metadata=resolved)
     if subject_id is None and purpose == 'catalogue':
         with projection_stage('attendance_completion'):

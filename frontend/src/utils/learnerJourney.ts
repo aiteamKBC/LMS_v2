@@ -22,6 +22,8 @@ export interface JourneyComponent {
   videoUrl?: string | null;
   audioUrl?: string | null;
   contentHtml?: string | null;
+  /** A video's authored lesson content (HTML or plain text), shown under the player. */
+  lessonContentHtml?: string | null;
   hasReadingContent?: boolean;
   fileName?: string | null;
   /** Ordered attachments; entry 0 is `resourceUrl`. */
@@ -691,7 +693,7 @@ export function buildLearnerJourney(real: LearnerJourneySource | null): JourneyM
             monthlyAssignment: c.monthlyAssignment,
             videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
             audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName, files: c.files,
-            hasReadingContent: c.hasReadingContent,
+            hasReadingContent: c.hasReadingContent, lessonContentHtml: c.lessonContentHtml,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt,
             attendanceCompleted: c.attendanceCompleted, attendanceCompletedAt: c.attendanceCompletedAt,
             previousLearning: c.previousLearning,

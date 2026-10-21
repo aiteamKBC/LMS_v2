@@ -31,6 +31,7 @@ export function useAttendanceDetail(learnerId: string, enabled: boolean, scope: 
           programme: details.learner.programme || '--',
           cohort: details.learner.cohort || '--',
           group: details.learner.group || '--',
+          attendanceMode: details.attendanceMode,
           attendance: summary?.attendanceRate ?? null,
           sessions: summary?.sessions || 0,
           present: summary?.present || 0,
@@ -59,5 +60,6 @@ export function useAttendanceDetail(learnerId: string, enabled: boolean, scope: 
     setRevision(value => value + 1);
   }, [key, setPage]);
   return { learner, recorded: payload?.records || [], coach: payload?.coach, tutor: payload?.tutor,
+    awaitingRecording: payload?.awaitingRecording ?? 0,
     pagination: payload?.pagination, page, setPage, loading, error, reload, key, scope };
 }

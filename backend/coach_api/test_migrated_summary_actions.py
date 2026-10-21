@@ -196,9 +196,86 @@ class MigratedSummaryActionTests(TestCase):
         data = json.loads(response.content)
         self.assertTrue(data['partial'])
         self.assertEqual(data['summaryBinding']['generationStatus'], 'failed')
+        self.assertEqual(data['summaryBinding']['generationError']['code'], 'AI_SUMMARY_FAILED')
+        self.assertTrue(data['summaryBinding']['generationError']['requestId'])
         self.assertEqual(self.overlay.answers['recap'], 'Manual saved answer')
         self.assertNotIn('private provider exception', response.content.decode())
         self.assertEqual(self.save({'recap': 'Still editable'}).status_code, 200)
+
+    def test_successful_upload_has_consistent_status_without_overwriting_teams_provenance(self):
+        self.overlay.meeting_intelligence = {
+            'summaryStatus': 'edited', 'summary': {'overview': 'Earlier coach wording'},
+        }
+        self.overlay.save()
+        self.upload()
+        data = json.loads(intelligence._response(self.overlay, self.calendar, self.snapshot).content)
+        self.assertEqual(data['summaryBinding']['generationStatus'], 'ready')
+        self.assertEqual(data['intelligence']['summaryStatus'], 'ready')
+        self.assertFalse(data['partial'])
+        self.assertEqual(data['meetingSummary']['summary']['overview'], 'Earlier coach wording')
+        self.assertEqual(data['meetingSummary']['status'], 'edited')
+
+    def test_upload_success_supersedes_failure_diagnostics_and_preserves_saved_answer(self):
+        self.save({'recap': 'Keep coach wording'})
+        self.check(ai_error=RuntimeError('private provider exception'))
+        self.assertTrue(self.overlay.meeting_intelligence['summaryGeneration']['error'])
+        self.upload()
+        data = json.loads(intelligence._response(self.overlay, self.calendar, self.snapshot).content)
+        self.assertEqual(data['intelligence']['summaryStatus'], 'ready')
+        self.assertNotIn('AI_SUMMARY_FAILED', data['intelligence']['errorCodes'])
+        self.assertIsNone(data['intelligence']['generationError'])
+        self.assertNotIn('generationError', data['summaryBinding'])
+        self.assertFalse(data['partial'])
+        self.assertEqual(self.overlay.answers['recap'], 'Keep coach wording')
+
+    def test_new_check_without_transcript_does_not_repeat_old_generation_failure(self):
+        self.check(ai_error=RuntimeError('private provider exception'))
+        failed = json.loads(intelligence._response(self.overlay, self.calendar, self.snapshot).content)
+        self.assertTrue(failed['partial'])
+        self.assertEqual(failed['intelligence']['generationError']['code'], 'AI_SUMMARY_FAILED')
+        response, ai = self.check(transcript=None)
+        ai.assert_not_called()
+        data = json.loads(response.content)
+        self.assertEqual(data['summaryBinding']['generationStatus'], 'unavailable')
+        self.assertEqual(data['intelligence']['summaryStatus'], 'unavailable')
+        self.assertNotIn('AI_SUMMARY_FAILED', data['intelligence']['errorCodes'])
+        self.assertNotIn('generationError', data['summaryBinding'])
+
+    def test_older_uploaded_suggestion_is_presented_as_ready_without_a_data_rewrite(self):
+        self.upload()
+        state = deepcopy(self.overlay.meeting_intelligence)
+        state.pop('summaryGeneration')
+        self.overlay.meeting_intelligence = state
+        data = json.loads(intelligence._response(self.overlay, self.calendar, self.snapshot).content)
+        self.assertEqual(data['intelligence']['summaryStatus'], 'ready')
+        self.assertEqual(data['summaryBinding']['generationStatus'], 'ready')
+        self.assertEqual(self.overlay.meeting_intelligence, state)
+
+    def test_unbound_legacy_summary_retry_clears_failure_and_preserves_manual_edit_status(self):
+        self.overlay.template_snapshot['sections'][0]['fields'][0].pop('semanticKey')
+        self.overlay.save()
+        self.check(ai_error=RuntimeError('private provider exception'))
+        response, ai = self.check()
+        ai.assert_called_once()
+        data = json.loads(response.content)
+        self.assertEqual(data['intelligence']['summaryStatus'], 'ready')
+        self.assertNotIn('AI_SUMMARY_FAILED', data['intelligence']['errorCodes'])
+        self.assertIsNone(data['intelligence']['generationError'])
+        self.assertNotIn('recap', self.overlay.answers)
+        self.overlay.meeting_intelligence['summaryStatus'] = 'edited'
+        data = json.loads(intelligence._response(self.overlay, self.calendar, self.snapshot).content)
+        self.assertEqual(data['intelligence']['summaryStatus'], 'edited')
+
+    def test_unbound_legacy_check_without_transcript_clears_previous_failure(self):
+        self.overlay.template_snapshot['sections'][0]['fields'][0].pop('semanticKey')
+        self.overlay.save()
+        self.check(ai_error=RuntimeError('private provider exception'))
+        response, ai = self.check(transcript=None)
+        ai.assert_not_called()
+        data = json.loads(response.content)
+        self.assertEqual(data['intelligence']['summaryStatus'], 'unavailable')
+        self.assertNotIn('AI_SUMMARY_FAILED', data['intelligence']['errorCodes'])
+        self.assertIsNone(data['intelligence']['generationError'])
 
     def test_oversized_summary_keeps_full_original_and_does_not_write_answer(self):
         response, _ = self.upload(summary='X' * 4001)
