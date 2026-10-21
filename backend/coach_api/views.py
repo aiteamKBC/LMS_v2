@@ -10477,6 +10477,13 @@ def lock_learner_calendar(learner_id: int) -> None:
     )
 
 
+def ensure_coach_booking_available(owner_email, scheduled_date, scheduled_time, duration_minutes, *, exclude_record_id=None):
+    from .booking_availability import lock_coach_calendar, ensure_coach_calendar_available
+    lock_coach_calendar(owner_email)
+    ensure_coach_calendar_available(owner_email, scheduled_date, scheduled_time, duration_minutes,
+                                    exclude_record_id=exclude_record_id)
+
+
 def find_learner_calendar_conflict(
     *,
     learner_id: int,
@@ -10733,6 +10740,7 @@ def reserve_coach_calendar_booking(
                 scheduled_time=scheduled_time,
                 duration_minutes=duration_minutes,
             )
+            ensure_coach_booking_available(owner_email, scheduled_date, scheduled_time, duration_minutes)
 
             current_max = (
                 CoachCalendarEvent.objects.filter(
@@ -10922,6 +10930,8 @@ def persist_calendar_sync_reservation(
                 duration_minutes=candidate.duration_minutes,
                 exclude_record_id=candidate.pk,
             )
+            ensure_coach_booking_available(candidate.owner_email, candidate.scheduled_date, candidate.scheduled_time,
+                                           candidate.duration_minutes, exclude_record_id=candidate.pk)
         for field in mutable_fields:
             if record.review_instance_id and field in {"review_template_id", "occurrence_number"}:
                 continue
@@ -15162,7 +15172,10 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     if migrated_form:
         try:
             from coach_api.migrated_template_sync import active_answers
-            adapted_sections, field_warnings = render_migrated_sections(snapshot, active_answers(snapshot, saved_answers))
+            adapted_sections, field_warnings = render_migrated_sections(
+                snapshot, active_answers(snapshot, saved_answers),
+                answer_audit=(getattr(saved_instance, "meeting_intelligence", None) or {}).get("answerEdits", {}),
+            )
         except ValueError:
             return None
     elif is_template_preview:
@@ -15275,6 +15288,9 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         from coach_api.migrated_template_sync import snapshot_state
         definition["templateSync"] = snapshot_state(saved_instance)
         definition["answerVersion"] = answer_version(saved_instance)
+        from .migrated_reopening import revision_number, history as migrated_revision_history
+        definition["reviewRevision"] = revision_number(saved_instance)
+        definition["reopenHistory"] = migrated_revision_history(saved_instance)
         pdf_ready = saved_instance.status == ImportedReviewInstance.STATUS_COMPLETED
         definition["pdf"] = {
             "available": pdf_ready,
@@ -15511,6 +15527,7 @@ def coach_review_instance_book(request, instance_id):
             else:
                 if england_non_delivery_reason(scheduled_date):
                     return coach_error(request, code="BOOKING_CONFLICT", message=england_non_delivery_reason(scheduled_date), status=409)
+                ensure_coach_booking_available(owner_email, scheduled_date, scheduled_time, duration_minutes)
                 ensure_learner_calendar_available(
                     learner_id=learner_id, learner_email=clean_text(base_event.get("email")),
                     scheduled_date=scheduled_date, scheduled_time=scheduled_time,
@@ -15736,6 +15753,10 @@ def coach_review_instance_previous(request, instance_id):
     """
     if request.method != "GET":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
+
+    if instance_id.startswith("imported-review:"):
+        from .migrated_previous import previous_review
+        return previous_review(authenticated_coach_email(request), instance_id)
 
     instance_row, error = _authorized_review_instance(request, instance_id)
     if error:

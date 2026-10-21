@@ -13,7 +13,8 @@ from old_otjh.service import ServiceError
 
 from . import canonical_learning as canonical
 from . import progress_transfer_store as store
-from .progress_transfer_policy import eligible_pairs, public_item
+from .journal_sources import learner_journal_reads
+from .progress_transfer_policy import eligible_pairs, public_item, record_courses, is_old_record
 
 
 def endpoint(role):
@@ -53,15 +54,19 @@ def source_owner(kind, pk):
     source = model.all_learners.only(*SOURCE_FIELDS).filter(pk=pk).first() if model else None
     if source is None:
         raise ServiceError('Learner not found.', 'not_found', 404)
+    source_kind = 'commercial' if source.learner_type == 'commercial' else 'apprenticeship'
+    if kind != source_kind:
+        raise ServiceError('Learner not found.', 'not_found', 404)
     return source, canonical.require_profile(pk)
 
 
-def available(source, owner, state):
+def available(source, owner, state, *, records=None):
     from .my_learning import load_context
-    context = load_context(source, owner)
+    context = load_context(source, owner, **({'records_override': records} if records is not None else {}))
     _, assigned_ids, _, _, courses, _, _, _, _, metadata, _ = context
     pairs = eligible_pairs(metadata['imported_courses'], metadata['replacement_courses'],
-        {f"legacy:{int(course['source_course_ref'])}" for course in courses}, set(assigned_ids), state['items'])
+        {f"legacy:{int(course['source_course_ref'])}" for course in courses},
+        {item['id'] for item in metadata['current_subjects']} & set(assigned_ids), state['items'])
     return context, pairs
 
 
@@ -73,16 +78,20 @@ def request_summary(items):
     return list(grouped.values())
 
 
+@learner_journal_reads()
 def transfer_preview(source, owner):
     state = store.read_state(source.pk)
     context, pairs = available(source, owner, state)
     courses, metadata = context[4], context[9]
     titles = {f"legacy:{int(course['source_course_ref'])}": course['source_course_title'] for course in courses}
     current = {f"current:{item['id']}": item['title'] for item in metadata['current_subjects']}
-    return {'eligible': [{'courseRef': old, 'moduleId': ref[8:], 'oldTitle': titles[old], 'newTitle': current[ref]}
+    demos = {f"legacy:{course['source_course_ref']}" for course in courses if course.get('demo_progress')}
+    return {'eligible': [{'courseRef': old, 'moduleId': ref[8:], 'oldTitle': titles[old], 'newTitle': current[ref],
+                         **({'demoProgress': True} if old in demos else {})}
                          for ref, old in pairs.items()], 'requests': request_summary(state['items'])}
 
 
+@learner_journal_reads()
 def create_request(source, kind, owner, account):
     from .my_learning import assemble_cards
     with store.lock_learner(source.pk) as cursor:
@@ -90,7 +99,10 @@ def create_request(source, kind, owner, account):
         pending = [item for item in state['items'] if item['status'] == 'pending']
         if pending:
             return request_summary(pending)[0]
-        context, pairs = available(source, owner, state)
+        # One immutable read supplies both the numeric preview and the saved
+        # ledger facts, even if an external import arrives during this request.
+        snapshot_records = canonical.entries_for(owner)
+        context, pairs = available(source, owner, state, records=snapshot_records)
         if not pairs:
             raise ServiceError('No old modules are currently eligible for transfer.', 'no_eligible_modules', 409)
         _, _, records, native, courses, definitions, done, started, hours, metadata, credits = context
@@ -109,10 +121,15 @@ def create_request(source, kind, owner, account):
                 percent=card['progress'], hours=card['actualHours'] or 0,
                 activityCount=card['activityCount'], completedActivityCount=card['completedActivityCount'],
                 recordIds=sorted(ids)))
+            if card.get('demoProgress'):
+                items[-1]['demoProgress'] = True
+            # Aggregate demo credit never invents completed source activities.
+            items[-1]['completedSourceActivities'] = sorted(ref for course, ref in done if str(course) == old[7:])
         # Load complete records once, retaining evidence and reporting history.
         # Snapshot only historical rows; native activity saves remain independent.
-        snapshots = [record for record in canonical.entries_for(owner) if str(record['id']) in frozen_ids
-                     and record.get('source_system') == 'old_lms']
+        frozen_courses = {old[7:] for old in pairs.values()}
+        snapshots = [record for record in snapshot_records if is_old_record(record)
+                     and (str(record['id']) in frozen_ids or record_courses(record) & frozen_courses)]
         cursor.execute(f'''INSERT INTO {store.REQUESTS}
             (id,enrolment_id,learner_id,learner_kind,requested_by,records) VALUES (%s,%s,%s,%s,%s,%s::jsonb)''',
             [request_id, source.pk, owner['id'], kind, account.id, store.dumps(snapshots)])
@@ -122,6 +139,7 @@ def create_request(source, kind, owner, account):
         return next(row for row in request_summary(store.read_state(source.pk)['items']) if row['requestId'] == request_id)
 
 
+@learner_journal_reads()
 def approve_request(request_id, account):
     from .my_learning import load_context, native_done
     with connections['enrolment'].cursor() as cursor:
@@ -139,21 +157,54 @@ def approve_request(request_id, account):
             return request_summary(items)[0]
         source, owner = source_owner(kind, pk)
         context = load_context(source, owner)
-        _, assigned, _, native, courses, _, _, _, _, metadata, _ = context
+        _, assigned, _, native, courses, _, done, _, _, metadata, _ = context
         pairs = eligible_pairs(metadata['imported_courses'], metadata['replacement_courses'],
-            {f"legacy:{int(course['source_course_ref'])}" for course in courses}, set(assigned))
+            {f"legacy:{int(course['source_course_ref'])}" for course in courses},
+            {row['id'] for row in metadata['current_subjects']} & set(assigned))
         if any(pairs.get('current:' + item['moduleId']) != item['courseRef'] for item in items):
             raise ServiceError('A module assignment or course mapping changed. Review it before approving this request.',
                                'transfer_mapping_changed', 409)
         for item in items:
-            components = [c for c in native['components'] if c.get('moduleId') == item['moduleId']]
+            components = [{key: value for key, value in c.items() if key != 'previousLearning'}
+                          for c in [*native['components'], *native.get('retiredQuizComponents', [])] if c.get('moduleId') == item['moduleId']]
             item['baselineCompletedIds'] = [c['componentId'] for c in components if c.get('componentId') and native_done(c, native)]
             item['baselinePercent'] = 100 * len(set(item['baselineCompletedIds'])) / len(components) if components else 0
+            from .replacement_learning import project_replacement_learning
+            # Older pending requests still use their frozen ledger projection.
+            source_refs = item.get('completedSourceActivities', sorted(ref for course, ref in done if str(course) == item['courseRef'][7:]))
+            activities = [{'group_id': int(item['courseRef'][7:]), 'catalogue_kind': ref.split(':')[0],
+                'source_activity_id': int(ref.split(':')[1]), 'activity_id': f"catalogue:{item['courseRef'][7:]}:{ref}",
+                'completed': True} for ref in source_refs]
+            matched = project_replacement_learning(components, metadata['replacement_settings'],
+                {'current:' + item['moduleId']: item['courseRef']}, activities)
+            item['matchedComponents'] = {c['componentId']: c['previousLearning'] for c in matched
+                                         if c.get('previousLearning', {}).get('completed') is True}
             cursor.execute(f'UPDATE {store.ITEMS} SET snapshot=%s::jsonb WHERE request_id=%s AND enrolment_id=%s AND module_id=%s',
                 [store.dumps({key: value for key, value in item.items() if key not in ('requestId','status','requestedAt','approvedAt')}), request_id, pk, item['moduleId']])
         cursor.execute(f"UPDATE {store.REQUESTS} SET status='approved',approved_by=%s,approved_at=now() WHERE id=%s AND status='pending'",
                        [account.id, request_id])
         return next(row for row in request_summary(store.read_state(pk)['items']) if row['requestId'] == str(request_id))
+
+
+@learner_journal_reads()
+def cover_transfer_metadata(pk):
+    """Keep existing subject-panel consumers consistent with My Learning cards."""
+    state = store.read_state(pk)
+    if not state['items']:
+        return {}
+    from .my_learning import load_context, assemble_cards
+    kind = 'commercial' if canonical.require_profile(pk)['learner_type'] == 'commercial' else 'apprenticeship'
+    source, owner = source_owner(kind, pk)
+    context = load_context(source, owner)
+    _, _, records, native, courses, definitions, done, started, hours, metadata, credits = context
+    cards, _ = assemble_cards(native, metadata['current_subjects'], courses, definitions, done, started,
+        hours, metadata, records, metadata['modules'], credits)
+    return {
+        'approved_transfers': {f"current:{item['moduleId']}": item['courseRef'] for item in state['items'] if item['status'] == 'approved'},
+        'module_credits': {card['id']: {'progress': card['progress'], 'actualHours': card['actualHours'],
+            **{key:card[key] for key in ('transferredProgress','transferPending','demoProgress') if key in card}}
+            for card in cards if 'transferredProgress' in card or card.get('transferPending')},
+    }
 
 
 @endpoint('learner')

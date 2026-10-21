@@ -25,6 +25,7 @@ class CoachDetailProjectionTests(SimpleTestCase):
             session_date=date(2026, 8, 1) + timedelta(days=i),
             attendance_status='present' if i % 4 else 'absent') for i in range(43)]
         self.schedule = []
+        self.saved = []
         self.manuals = []
         self.reports = []
         self.adjustments = []
@@ -36,6 +37,7 @@ class CoachDetailProjectionTests(SimpleTestCase):
             ('coach_api.attendance_detail.timezone.now', {'return_value': NOW}),
             ('coach_api.attendance_detail.historical_schedule', {'side_effect': lambda *_: deepcopy(self.schedule)}),
             ('coach_api.attendance_detail.historical_evidence', {'side_effect': lambda *_: deepcopy(self.rows)}),
+            ('coach_api.attendance_detail.saved_attendance_rows', {'side_effect': lambda *_, **__: deepcopy(self.saved)}),
             ('coach_api.attendance_detail.kbc_attendance_rows', {'side_effect': lambda *_: deepcopy(self.rows)}),
             ('learner_api.attendance_lectures.combined_attendance_rows', {'side_effect': lambda *_: deepcopy(self.rows)}),
             ('learner_api.attendance_confirmation.read_confirmations', {'side_effect': lambda *_: self.confirmations}),
@@ -78,7 +80,7 @@ class CoachDetailProjectionTests(SimpleTestCase):
         actual = self.read()
         self.assertEqual(actual['summary'], {key: expected['summary'][key]
             for key in ('present', 'absent', 'sessions', 'attendanceRate')})
-        self.assertEqual(set(actual), {'summary', 'records', 'pagination'})
+        self.assertEqual(set(actual), {'summary', 'records', 'pagination', 'attendanceMode', 'awaitingRecording'})
         self.assertEqual(len(actual['records']), 20)
         for row in actual['records']:
             self.assertEqual(set(row), {'id', 'date', 'module', 'title', 'status', 'absenceReport'})
@@ -94,6 +96,19 @@ class CoachDetailProjectionTests(SimpleTestCase):
         self.assertEqual(len(set(identities)), 43)
         self.assertEqual(self.read(page=4)['records'], [])
         self.assertEqual(len(self.read(pageSize=7)['records']), 7)
+
+    def test_saved_delivery_mode_is_returned_even_without_attendance_history(self):
+        self.rows = []
+        for kind in ('commercial', 'apprenticeship'):
+            self.source.learner_type = kind
+            for mode in ('live', 'lazy'):
+                with self.subTest(kind=kind, mode=mode), patch(
+                    'learner_api.recorded_attendance.saved_delivery_mode', return_value=mode
+                ) as saved_mode:
+                    actual = self.read()
+                    self.assertEqual(actual['attendanceMode'], mode)
+                    saved_mode.assert_called_once_with(self.source.id)
+                    self.assertEqual(actual['records'], [])
 
     def test_invalid_pagination_is_rejected_before_any_loading(self):
         for params in ({'page': 0}, {'page': 'bad'}, {'pageSize': 0}, {'pageSize': 101}):
@@ -117,6 +132,100 @@ class CoachDetailProjectionTests(SimpleTestCase):
         actual = self.read()
         self.assertEqual([row['id'] for row in actual['records']], ['coach-manual:9', 'kbc-attendance:legacy:key'])
         self.assertEqual(actual['summary']['sessions'], 2)
+
+    def test_view_includes_saved_absences_without_a_raw_teams_report_and_matches_bulk_totals(self):
+        self.rows = []
+        self.saved = [register_row(source='microsoft-teams', session_id=f'saved-{index}', learner_id=901,
+            module_catalogue_id='module', session_date=date(2026, 9, 10 + index),
+            attendance_status=status, attendance_report_id='',
+            scheduled_start=NOW-timedelta(days=28-index, hours=2), scheduled_end=NOW-timedelta(days=28-index))
+            for index, status in enumerate(('absent', 'absent', 'present'))]
+        # The old path sees only a verified present result; the other two
+        # persisted outcomes must still appear and contribute to the denominator.
+        self.schedule = [{**row, 'attendance_status': 'pending'} for row in self.saved]
+        self.rows = [{**self.saved[-1], 'attendance_status': 'present'}]
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind):
+                self.source.learner_type = kind
+                actual = self.read()
+                self.assertEqual(actual['summary'], {'present': 1, 'absent': 2, 'sessions': 3, 'attendanceRate': 33})
+                self.assertEqual(len(actual['records']), 3)
+                self.assertEqual({row['id']: row['status'] for row in actual['records']}, {
+                    'microsoft-teams:saved-0': 'absent', 'microsoft-teams:saved-1': 'absent', 'microsoft-teams:saved-2': 'present'})
+        detail.saved_attendance_rows.assert_called_with(self.source, learner_profile_id=42, apply_adjustments=False)
+
+    def test_saved_history_outside_current_plan_is_retained_and_future_results_are_not_counted(self):
+        self.rows = []
+        self.saved = [register_row(source='microsoft-teams', session_id='previous-plan', learner_id=901,
+            module_catalogue_id='previous-module', session_date=date(2026, 9, 10), attendance_status='absent',
+            scheduled_start=NOW-timedelta(days=28, hours=2), scheduled_end=NOW-timedelta(days=28)),
+            register_row(source='microsoft-teams', session_id='future-saved', learner_id=901,
+            module_catalogue_id='module', session_date=date(2026, 10, 9), attendance_status='present',
+            scheduled_start=NOW+timedelta(days=1), scheduled_end=NOW+timedelta(days=1, hours=1))]
+        actual = self.read()
+        self.assertEqual(actual['summary'], {'present': 0, 'absent': 1, 'sessions': 1, 'attendanceRate': 0})
+        self.assertEqual([row['id'] for row in actual['records']], ['microsoft-teams:previous-plan'])
+
+    def test_saved_absence_wins_over_raw_present_evidence_and_manual_corrections_still_apply(self):
+        self.saved = [register_row(source='microsoft-teams', session_id='saved', learner_id=901,
+            module_catalogue_id='module', session_date=date(2026, 9, 10), attendance_status='absent',
+            scheduled_start=NOW-timedelta(days=28, hours=2), scheduled_end=NOW-timedelta(days=28))]
+        self.rows = [{**self.saved[0], 'attendance_status': 'present'}]
+        self.assertEqual(self.read()['records'][0]['status'], 'absent')
+        self.adjustments = [SimpleNamespace(source='microsoft-teams', source_id='saved', is_deleted=False,
+            session_date=None, module_name='', session_title='', status='present', updated_at=NOW)]
+        self.assertEqual(self.read()['records'][0]['status'], 'present')
+        self.adjustments[0].is_deleted = True
+        self.assertEqual(self.read()['records'], [])
+
+    def test_view_counts_awaiting_recordings_as_absent_without_changing_shared_learner_totals(self):
+        self.rows = []
+        self.saved = [register_row(source='microsoft-teams', session_id=f'recorded-{index}', learner_id=901,
+            module_catalogue_id='module', session_date=date(2026, 9, 10 + index), attendance_status=status,
+            scheduled_start=NOW-timedelta(days=28-index, hours=2), scheduled_end=NOW-timedelta(days=28-index))
+            for index, status in enumerate(('absent', 'absent', 'present'))]
+        with patch('learner_api.recorded_attendance.saved_delivery_mode', return_value='lazy'), \
+             patch('curriculum_api.recording_views.fully_watched_occurrences', return_value=set()) as watched:
+            first, second = self.read(pageSize=2), self.read(pageSize=2, page=2)
+            self.assertEqual(first['summary'], {'present': 1, 'absent': 2, 'sessions': 3, 'attendanceRate': 33})
+            self.assertEqual(first['attendanceMode'], 'lazy')
+            self.assertEqual(first['awaitingRecording'], 2)
+            self.assertEqual(second['awaitingRecording'], 2)
+            self.assertEqual(first['pagination'], {'page': 1, 'pageSize': 2, 'total': 3, 'hasMore': True})
+            self.assertEqual(second['pagination']['total'], 3)
+            self.assertFalse(second['pagination']['hasMore'])
+            statuses = {row['id']: row['status'] for row in first['records'] + second['records']}
+            self.assertEqual(statuses, {'microsoft-teams:recorded-0': 'awaiting_recording',
+                'microsoft-teams:recorded-1': 'awaiting_recording', 'microsoft-teams:recorded-2': 'present'})
+            # Only View/PDF uses this denominator; shared learner totals retain
+            # the agreed existing exclusion until the recording is completed.
+            from learner_api.attendance import _summarize_attendance
+            from learner_api.recorded_attendance import apply_recorded_attendance
+            shared_rows = apply_recorded_attendance(deepcopy(self.saved), self.source, now=NOW)
+            shared_summary = _summarize_attendance(shared_rows, now=NOW)
+            self.assertEqual((shared_summary['sessions'], shared_summary['attendanceRate']), (1, 100))
+            # Completing one recording changes its outcome, never persisted
+            # absence evidence or the View/PDF history denominator.
+            watched.return_value = {'recorded-0'}
+            completed = self.read()
+            self.assertEqual(completed['summary'], {'present': 2, 'absent': 1, 'sessions': 3, 'attendanceRate': 67})
+            self.assertEqual(completed['awaitingRecording'], 1)
+            self.assertEqual(completed['pagination']['total'], 3)
+            self.assertEqual([row['status'] for row in completed['records']].count('awaiting_recording'), 1)
+            self.assertEqual([row['attendance_status'] for row in self.saved], ['absent', 'absent', 'present'])
+
+    def test_only_awaiting_recordings_counts_absence_and_excludes_invalid_future_and_active_sessions(self):
+        self.rows = [register_row(session_id='waiting', attendance_status='awaiting_recording'),
+                     register_row(session_id='invalid', attendance_status='awaiting_recording', occurrence_status='cancelled'),
+                     register_row(session_id='future', attendance_status='awaiting_recording', session_date=date(2026, 10, 9)),
+                     register_row(session_id='active', attendance_status='awaiting_recording',
+                                  scheduled_start=NOW-timedelta(minutes=5), scheduled_end=NOW+timedelta(minutes=5)),
+                     register_row(session_id='unmarked', attendance_status='unmarked')]
+        actual = self.read()
+        self.assertEqual(actual['summary'], {'present': 0, 'absent': 1, 'sessions': 1, 'attendanceRate': 0})
+        self.assertEqual(actual['awaitingRecording'], 1)
+        self.assertEqual(actual['pagination']['total'], 1)
+        self.assertEqual([row['id'] for row in actual['records']], ['kbc-attendance:waiting'])
 
     def test_reports_are_scoped_to_selected_page_and_keep_latest_report(self):
         row = self.rows[-1]
@@ -215,6 +324,22 @@ class CoachDetailProjectionTests(SimpleTestCase):
 
 
 class HistoricalScheduleQueryTests(SimpleTestCase):
+    def setUp(self):
+        assignment = patch.object(canonical, 'effective_assigned_module_ids', return_value=['module'])
+        self.assigned_modules = assignment.start()
+        self.addCleanup(assignment.stop)
+
+    def test_module_lookup_binds_effective_assignments_instead_of_the_learner_id(self):
+        source = SimpleNamespace(id=901, email='synthetic@example.test')
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = []
+        self.assigned_modules.return_value = ['module-one', 'module-two']
+        with patch.object(detail, 'connections', {'enrolment': connection}):
+            self.assertEqual(detail.historical_schedule(source, NOW), [])
+        self.assigned_modules.assert_called_once_with(source)
+        cursor.execute.assert_called_once_with(canonical.ATTENDANCE_SUBJECTS_SQL, [['module-one', 'module-two']])
+
     def test_future_mirror_query_reads_only_identity_metadata_on_legacy_dates(self):
         source = SimpleNamespace(id=901, email='synthetic@example.test')
         connection = MagicMock()

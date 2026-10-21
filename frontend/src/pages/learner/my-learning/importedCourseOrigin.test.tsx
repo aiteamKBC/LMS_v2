@@ -123,19 +123,18 @@ describe('original imported course identity', () => {
     expect(screen.queryByRole('button', { name: /New LMS.*Open subject/ })).not.toBeInTheDocument();
   });
 
-  it('uses one current catalogue and retains the original record for a verified replacement', () => {
+  it('keeps old components and hours until approval for a verified replacement', () => {
     const linked = { ...metadata, imported_courses: {}, replacement_courses: { 'current:IMPORTED': 'legacy:50' } };
     const current = { ...real, componentProgress: [{ componentId: 'COPY-1', kind: 'component' }] } as LearnerDetail;
     const before = JSON.stringify({ history, current });
     const summary = buildUnifiedLearningSummary(history, current, linked);
     expect(summary.subjectCount).toBe(2);
     expect(summary.subjects).toHaveLength(2);
-    expect(summary.subjects.find(subject => subject.id === 'current:IMPORTED')).toMatchObject({ replacementCourseRef: 'legacy:50' });
-    expect(summary.subjects.find(subject => subject.id === 'current:IMPORTED')?.activities.filter(item => item.completed)).toHaveLength(1);
-    expect(summary.previousLearning).toMatchObject({ activityCount: 0, completedActivityCount: 0 });
-    expect(summary.subjects.find(subject => subject.id === 'current:IMPORTED')?.archivedActivities?.map(item => item.legacy)).toEqual(history.activities);
-    expect(resolveLearningSubject(summary.subjects, 'current:IMPORTED', linked)?.id).toBe('current:IMPORTED');
-    expect(resolveLearningSubject(summary.subjects, 'legacy:50', linked)?.id).toBe('current:IMPORTED');
+    expect(summary.subjects.find(subject => subject.id === 'current:IMPORTED')).toBeUndefined();
+    expect(summary.previousLearning).toMatchObject({ activityCount: 4, completedActivityCount: 4 });
+    expect(summary.subjects.find(subject => subject.id === 'legacy:50')?.activities.map(item => item.legacy)).toEqual(history.activities);
+    expect(resolveLearningSubject(summary.subjects, 'current:IMPORTED', linked)?.id).toBe('legacy:50');
+    expect(resolveLearningSubject(summary.subjects, 'legacy:50', linked)?.id).toBe('legacy:50');
     expect(JSON.stringify({ history, current })).toBe(before);
   });
 
@@ -164,7 +163,7 @@ describe('original imported course identity', () => {
     expect(request.mock.calls.every(([, options]) => options?.method !== 'POST')).toBe(true);
   });
 
-  it.each(['commercial', 'apprenticeship'])('shows one updated card with an accessible historical record for %s', async kind => {
+  it.each(['commercial', 'apprenticeship'])('shows only old components before approval for %s', async kind => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({
       ...metadata, imported_courses: {}, replacement_courses: { 'current:IMPORTED': 'legacy:50' },
     });
@@ -172,8 +171,8 @@ describe('original imported course identity', () => {
     render(<MemoryRouter><StudentActivityPanel data={history} real={current} kind={kind} learnerId="12"
       loading={false} error={null} onRetry={vi.fn()} /></MemoryRouter>);
     const oldCard = within(await screen.findByRole('button', { name: /Old LMS.*Open subject/ }));
-    expect(oldCard.getByText('1 of 2 completed')).toBeVisible();
-    expect(oldCard.queryByText('Completed 4h')).not.toBeInTheDocument();
+    expect(oldCard.getByText('4 of 4 completed')).toBeVisible();
+    expect(oldCard.getByText('Completed 4h')).toBeVisible();
     expect(screen.getAllByRole('button', { name: /Open subject/ })).toHaveLength(2);
     expect(screen.queryByText('Updated learning plan')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: 'New LMS' }));
@@ -184,11 +183,23 @@ describe('original imported course identity', () => {
     expect(screen.queryByRole('button', { name: 'Open updated plan' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Old LMS.*Open subject/ }));
     const sidebar = within(screen.getByRole('complementary', { name: 'Module activities' }));
-    expect(sidebar.getByRole('button', { name: /^Reading\s*Imported copy 1$/ })).toBeVisible();
-    expect(sidebar.getByRole('button', { name: /^Reading\s*Imported copy 2$/ })).toBeVisible();
-    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '50');
-    expect(screen.getByRole('group', { name: 'Imported copy 2 activity' })).toHaveTextContent('Not complete');
-    fireEvent.click(screen.getByText('Previous learning record'));
+    expect(sidebar.getByRole('button', { name: /^Reading\s*Original lesson 1$/ })).toBeVisible();
+    expect(screen.queryByText('Imported copy 1')).not.toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '100');
+    fireEvent.click(sidebar.getByRole('button', { name: /Original lesson 4/ }));
     expect(screen.getByRole('group', { name: 'Original lesson 4 activity' })).toHaveTextContent('Complete');
+  });
+
+  it('shows approved module credit without marking new components complete', () => {
+    const approved: CoverMetadata = { ...metadata, approved_transfers: { 'current:IMPORTED': 'legacy:50' },
+      module_credits: { 'current:IMPORTED': { progress: 40, transferredProgress: 40, actualHours: 4 } } };
+    const summary = buildUnifiedLearningSummary(history, real, approved);
+    expect(summary.subjects.map(subject => subject.id)).toEqual(['current:IMPORTED', 'current:NEW']);
+    const subject = summary.subjects[0];
+    expect(subject).toMatchObject({ source: 'current', aggregateProgress: 40, acceptedHours: 4, transferredProgress: 40 });
+    expect(subject.importedCourseRef).toBeUndefined();
+    expect(subject.activities.every(activity => !activity.completed)).toBe(true);
+    expect(subject.activities.map(activity => activity.title)).toEqual(['Imported copy 1', 'Imported copy 2']);
+    expect(resolveLearningSubject(summary.subjects, 'legacy:50', approved)?.id).toBe('current:IMPORTED');
   });
 });

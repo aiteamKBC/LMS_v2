@@ -130,7 +130,7 @@ def caseload_learners(owner_email: str) -> list[LearnerProfile]:
     rows = (
         LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
         .filter(coach_email_key=_normalize_email(owner_email))
-        .only("id", "full_name", "email", "programme", "cohort", "group_name", "programme_status")
+        .only("id", "enrolment_id", "full_name", "email", "programme", "cohort", "group_name", "programme_status")
         .order_by("full_name", "id")
     )
     return [

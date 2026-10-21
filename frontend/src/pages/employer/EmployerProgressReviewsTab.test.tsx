@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppIcon } from '@/components/feature/AppIcon';
 import type { LearnerCalendarEvent, LearnerReviewDefinition } from '@/api/learnerCalendar';
 import { fetchEmployerProgressReview, fetchEmployerProgressReviews, saveEmployerReviewAnswers, signReviewAsEmployer } from '@/api/employerPortal';
-import { fetchMigratedReviewForParty, signMigratedReviewAsParty } from '@/api/learnerCalendar';
+import { fetchMigratedReviewForParty, signMigratedReviewAsParty, saveMigratedReviewPartyAnswers } from '@/api/learnerCalendar';
 import { EmployerProgressReviewsTab } from './EmployerProgressReviewsTab';
 
 vi.mock('@/api/employerPortal', async importOriginal => ({
@@ -15,7 +15,7 @@ vi.mock('@/api/employerPortal', async importOriginal => ({
 }));
 vi.mock('@/api/learnerCalendar', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/learnerCalendar')>(),
-  fetchMigratedReviewForParty: vi.fn(), signMigratedReviewAsParty: vi.fn(),
+  fetchMigratedReviewForParty: vi.fn(), signMigratedReviewAsParty: vi.fn(), saveMigratedReviewPartyAnswers: vi.fn(),
 }));
 vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({
   SignaturePad: ({ onCommit }: { onCommit: (signature: string) => void }) => <button type="button" onClick={() => onCommit('data:image/png;base64,SIG')}>Confirm employer signature</button>,
@@ -53,6 +53,22 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('employer progress reviews', () => {
+  it('saves an Aptem employer answer through the party endpoint and refreshes its version', async () => {
+    event = { ...event, migratedForm: true, eventKey: 'imported-review:88', id: 'imported-review:88', status: 'scheduled' };
+    definition = { ...definition, migratedForm: true, readOnly: false, answerVersion: 'v1', instance: { ...definition.instance!, status: 'scheduled' },
+      sections: [{ id: 'discussion', title: 'Discussion', enabled: true, displayOrder: 0, estimatedMinutes: 0, fields: [
+        { id: 'employer', title: 'Employer feedback', fieldType: 'text', required: false, displayOrder: 0, configuration: { respondentRoles: ['employer'] } },
+      ] }] };
+    vi.mocked(fetchMigratedReviewForParty).mockResolvedValue(definition);
+    vi.mocked(saveMigratedReviewPartyAnswers).mockResolvedValue({ ...definition, answerVersion: 'v2' });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'View review' }));
+    fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Employer draft' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save my answers' }));
+    await waitFor(() => expect(saveMigratedReviewPartyAnswers).toHaveBeenCalledWith('imported-review:88', { employer: 'Employer draft' }, 'v1'));
+    expect(saveEmployerReviewAnswers).not.toHaveBeenCalled();
+  });
+
   it('uses the learner timeline and archive with employer signature status and no learner actions', async () => {
     mount();
     expect(await screen.findByText('Your signature is needed')).toBeVisible();
@@ -107,13 +123,13 @@ describe('employer progress reviews', () => {
   it('uses the existing employer party flow for migrated reviews', async () => {
     event = { ...event, migratedForm: true, eventKey: 'imported-review:88', id: 'imported-review:88', reviewInstanceId: null, reviewTemplateId: null,
       employerSigned: false, employerSignatureRequired: true };
-    definition = { ...definition, migratedForm: true, source: 'aptem' };
+    definition = { ...definition, migratedForm: true, source: 'aptem', reviewRevision: 2 };
     vi.mocked(fetchMigratedReviewForParty).mockResolvedValue(definition);
     vi.mocked(signMigratedReviewAsParty).mockResolvedValue({ signed: true, role: 'employer' });
     mount();
     fireEvent.click(await screen.findByRole('button', { name: 'Read & sign' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Confirm employer signature' }));
-    await waitFor(() => expect(signMigratedReviewAsParty).toHaveBeenCalledWith('imported-review:88', 'data:image/png;base64,SIG'));
+    await waitFor(() => expect(signMigratedReviewAsParty).toHaveBeenCalledWith('imported-review:88', 'data:image/png;base64,SIG', { reviewRevision: 2 }));
     expect(signReviewAsEmployer).not.toHaveBeenCalled();
   });
 

@@ -6,7 +6,7 @@
  * implementations of "which Review Type is this" would drift apart the first
  * time either was tuned, and the same Review Type would end up a different
  * colour or a different bucket on the two calendars. This module only adds the
- * learner's own non-review chips around it.
+ * learner's own non-review chips and adapts Aptem's imported type names.
  *
  * See the shared helper for why filtering never reads `event.source`, a
  * template name, or a hard-coded type code.
@@ -20,6 +20,7 @@ import {
   reviewTypeDot,
   UNCLASSIFIED_REVIEW_LABEL,
   type ReviewFilterKey,
+  type ReviewTypeClassifiedEvent,
 } from '@/lib/reviewTypeFilters';
 
 export { REVIEW_FILTER_PREFIX } from '@/lib/reviewTypeFilters';
@@ -54,14 +55,28 @@ export const LEARNER_NON_REVIEW_SOURCE_META: Record<
   busy: { label: 'Busy Time', short: 'Busy', dot: 'bg-slate-500' },
 };
 
+/** Aptem supplies a review type name rather than a Curriculum type ID. Give
+ *  that type a filter-only identity; never change the stored event, booking
+ *  source or form IDs. Native types continue to use their authoritative ID. */
+function reviewClassification(event: CalendarEvent): ReviewTypeClassifiedEvent {
+  const importedType = event.importedReview?.type.trim();
+  if (event.reviewTypeId || !importedType) return event;
+  return {
+    ...event,
+    reviewTypeId: `aptem-type:${encodeURIComponent(importedType)}`,
+    reviewTypeName: importedType,
+  };
+}
+
 /** Label/colour for whichever bucket an event falls in -- the fixed record for
  *  a non-review source, the Review Type's own name and colour for a review.
  *  Used by the cards and side panels, which show an event's source. */
 export function learnerSourceMeta(event: CalendarEvent): { label: string; short: string; dot: string } {
   const key = learnerEventSource(event);
   if (!isReviewFilterKey(key)) return LEARNER_NON_REVIEW_SOURCE_META[key];
-  const label = event.reviewTypeName || UNCLASSIFIED_REVIEW_LABEL;
-  return { label, short: label, dot: reviewTypeDot(event.reviewTypeId || label) };
+  const classification = reviewClassification(event);
+  const label = classification.reviewTypeName || UNCLASSIFIED_REVIEW_LABEL;
+  return { label, short: label, dot: reviewTypeDot(classification.reviewTypeId || label) };
 }
 
 /** Which filter bucket one event belongs to. */
@@ -69,7 +84,8 @@ export function learnerEventSource(event: CalendarEvent): LearnerSourceFilter {
   if (event.type === 'Busy') return 'busy';
   if (event.club === 'Personal' || event.type === 'Personal') return 'personal';
   if (event.source === 'live-session') return 'live-session';
-  if (isReviewEvent(event)) return reviewFilterKey(event.reviewTypeId);
+  const classification = reviewClassification(event);
+  if (isReviewEvent(classification)) return reviewFilterKey(classification.reviewTypeId);
   if (event.source === 'catch-up') return 'catch-up';
   if (event.source === 'student-support') return 'student-support';
   if (event.source === 'other') return 'other';
@@ -79,7 +95,7 @@ export function learnerEventSource(event: CalendarEvent): LearnerSourceFilter {
 /** The review buckets present in a set of events, in the shared deterministic
  *  order (system types first, then custom, alphabetical within each). */
 export function reviewTypeBuckets(events: CalendarEvent[]): SourceFilterOption[] {
-  return sharedReviewTypeBuckets(events).map((bucket) => ({
+  return sharedReviewTypeBuckets(events.map(reviewClassification)).map((bucket) => ({
     key: bucket.key,
     label: bucket.label,
     longLabel: bucket.label,

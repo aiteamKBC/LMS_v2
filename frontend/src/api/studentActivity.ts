@@ -9,6 +9,8 @@ export interface StudentActivityItem {
   can_open_material?: boolean;
   /** Exact owned parent material for an imported companion quiz. */
   source_material_activity_id?: string;
+  /** Original course section. Upload dates must not split or merge its contents. */
+  source_section?: { id: string; title: string; order: number | null; component_order: number | null };
   /** Canonical evidence links retained when several results share a component. */
   record_ids?: string[];
   group_id: number;

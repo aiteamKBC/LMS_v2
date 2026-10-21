@@ -73,6 +73,9 @@ import { CoverImageControl, EntityDrawer } from '../shared/entities/ui';
 import { mergeModuleStructures } from '../shared/entities/mergeModuleStructure';
 import { ComponentLibraryModal } from './ComponentLibraryModal';
 import { PlaceWeekDrawer } from './PlaceWeekDrawer';
+import { ModuleConflictPanel } from './ModuleConflictPanel';
+import { applyTheirs, conflictsFromCollisions, conflictsFromServer, mergeConflictLists, type ModuleConflict } from './moduleConflicts';
+import { announceModuleWrite, useModuleLiveSync } from './useModuleLiveSync';
 import {
   calculateQualityChecklist,
   componentTypeGroups,
@@ -127,7 +130,10 @@ import {
   recalculateModule,
   restoreModuleTeamsMeeting,
   ModuleStructureConflictError,
+  loadModuleStructureChanges,
   saveModuleStructure,
+  serverCopyOf,
+  type ServerStructureCopy,
   uploadComponentResource,
   utcIsoToCalendarParts,
   weekExpectedOtjhTotal,
@@ -303,7 +309,21 @@ const MODULE_CONFLICT_BUSY_NOTICE = 'This module is being saved by someone else 
  * reader read it twice to check it was the same thing. The banner's job here is
  * the button beside it, so it says only what that button is for.
  */
-const MODULE_CONFLICT_BUSY_BANNER = 'Your changes are all still here and were not saved. Load their version to start again from it.';
+// Somebody else changed the same thing this author did. Saving waits for the
+// author to choose, in the panel above the workspace.
+const MODULE_CONFLICT_CHOICE_NOTICE = 'Someone else changed some of the same things you did. Choose which version to keep in the box above the weeks, then save. Nothing of yours has been lost.';
+
+/** Every week and component id in a module, for telling what a save deleted. */
+function moduleItemIds(module: ModuleCatalogueItem): Set<string> {
+  const ids = new Set<string>();
+  module.weekStructure.forEach(week => {
+    ids.add(week.id);
+    week.components.forEach(component => ids.add(component.id));
+  });
+  return ids;
+}
+
+const MODULE_CONFLICT_BUSY_BANNER ='Your changes are all still here and were not saved. Load their version to start again from it.';
 
 const ALLOW_MULTIPLE_EXPANDED_WEEKS = false;
 
@@ -762,6 +782,17 @@ export default function ModuleBuilder() {
    */
   const [remoteUpdate, setRemoteUpdate] = useState<{ revision: string; notices: string[]; adopted: number } | null>(null);
   /**
+   * Things this author and someone else both changed, waiting for the author
+   * to choose. Nothing is saved over the other editor while any is open: the
+   * ref is what the save path reads, the state is what the panel shows.
+   */
+  const [moduleConflicts, setModuleConflictsState] = useState<ModuleConflict[]>([]);
+  const moduleConflictsRef = useRef<ModuleConflict[]>([]);
+  const setModuleConflicts = useCallback((next: ModuleConflict[]) => {
+    moduleConflictsRef.current = next;
+    setModuleConflictsState(next);
+  }, []);
+  /**
    * When the live sync last asked the server for this module's structure.
    *
    * Every curriculum write in the estate reaches this tab as "something
@@ -774,7 +805,9 @@ export default function ModuleBuilder() {
   /** The trailing half of that floor: a tick waiting for the cooldown to pass. */
   const liveSyncPendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Read through a ref so the trailing tick runs today's callback, not the one that scheduled it. */
-  const liveSyncRef = useRef<() => void | Promise<void>>(() => undefined);
+  const liveSyncRef = useRef<(trigger?: 'return' | 'live') => void | Promise<void>>(() => undefined);
+  // A live read that arrived while a save was in flight, run once it settles.
+  const liveSyncAfterSaveRef = useRef<'return' | 'live' | ''>('');
   /** The live merge, reachable from the save path that is declared above it. */
   const mergeStoredRef = useRef<(structureId: string) => Promise<boolean>>(async () => false);
   /**
@@ -825,6 +858,21 @@ export default function ModuleBuilder() {
    * than allowed to replace their weeks and components with its own.
    */
   const serverRevisionRef = useRef('');
+  /**
+   * The server's own copy of the module at `serverRevisionRef`, item by item
+   * with the fingerprint it gave each one (moduleAuthoringData.serverCopyOf).
+   * Sent with a save so the server can merge it with anyone else's save item
+   * by item, and used by live sync to read only what changed.
+   */
+  const serverCopyRef = useRef<ServerStructureCopy | null>(null);
+  /**
+   * Week and component ids this workspace deleted in its own saves. Bringing
+   * one of those back (undo) is this author's own decision; any other deleted
+   * id a save names is refused by the server rather than silently restored.
+   */
+  const ownDeletedIdsRef = useRef<Set<string>>(new Set());
+  /** Ids someone else deleted that the author chose to keep ("Keep mine"). */
+  const explicitRestoreIdsRef = useRef<Set<string>>(new Set());
   /**
    * Whether the workspace may save without being asked.
    *
@@ -1591,6 +1639,12 @@ export default function ModuleBuilder() {
       // the structure that was just read, so a save based on this copy is
       // accepted only while the module is still that copy.
       serverRevisionRef.current = next.structureRevision || '';
+      // The server's own copy of that version. A Teams restore above moves the
+      // revision past it, and a save then simply leaves it out.
+      serverCopyRef.current = serverCopyOf(remote);
+      ownDeletedIdsRef.current = new Set();
+      explicitRestoreIdsRef.current = new Set();
+      setModuleConflicts([]);
       // This read IS the latest version, so any notice about one left over from
       // the module before this has nothing left to announce. The live-sync
       // cooldown is deliberately NOT armed here: the first write this workspace
@@ -1648,7 +1702,7 @@ export default function ModuleBuilder() {
       setOpeningModule(null);
       setOpeningModuleComplete(false);
     }
-  }, [finishLoadingProgress, resolveModuleScopeLock, setSearchParams]);
+  }, [finishLoadingProgress, resolveModuleScopeLock, setModuleConflicts, setSearchParams]);
 
   /**
    * What happens once the Add module form has written the module.
@@ -1940,12 +1994,12 @@ export default function ModuleBuilder() {
     void showCurriculumAlert(result.updated
       ? {
         title: `${result.updated} Teams link${result.updated === 1 ? '' : 's'} replaced`,
-        text: `Saved across ${weekCount} week${weekCount === 1 ? '' : 's'}. The live sessions in those weeks now use the new link. The Teams meetings and their invitations were not changed.`,
+        text: `Saved across ${weekCount} week${weekCount === 1 ? '' : 's'}. The live sessions in those weeks now use the new link.${result.recordingsSourceModuleId ? ' Existing recordings and attendance for this Teams meeting are now available in this module.' : ''} The Teams meetings and their invitations were not changed.`,
         icon: 'success',
       }
       : {
         title: 'No links were replaced',
-        text: 'None of the selected weeks has a saved live session with a link to replace. Save the module first if you have just added one.',
+        text: 'None of the selected weeks has a live-session component that can use this link. Save the module first if you have just added one.',
         icon: 'info',
       });
   }, [workingModuleProgrammeArchived]);
@@ -2135,10 +2189,20 @@ export default function ModuleBuilder() {
     // on after the `finally` has released the in-flight guard, because the
     // retry is a second save and the overlap guard would otherwise refuse it.
     let retryAfterMerge = '';
+    // What the server said both editors changed, kept for after the merge: the
+    // browser's own merge normally finds the same things, and when it cannot
+    // (a row deleted that this copy never knew of) these are what is asked.
+    let serverConflicts: ModuleConflict[] = [];
     // The backend refuses this with a 400 anyway; saying so here keeps the
     // reader's unsaved work in the workspace instead of round-tripping it.
     if (workingModuleProgrammeArchived) {
       setActionMessage(ARCHIVED_PROGRAMME_BUILDER_NOTICE);
+      return null;
+    }
+    // Someone else changed what this author changed, and they have not chosen
+    // yet. Sending now would decide it for them.
+    if (moduleConflictsRef.current.length) {
+      setActionMessage(MODULE_CONFLICT_CHOICE_NOTICE);
       return null;
     }
     // The ref rather than the state: identical on an ordinary save, and the
@@ -2208,11 +2272,24 @@ export default function ModuleBuilder() {
         expectedRevision: serverRevisionRef.current,
         source,
         base,
+        // Lets the server merge this save with one that landed first, item by
+        // item, instead of refusing it outright.
+        serverCopy: serverCopyRef.current,
+        restoreIds: [...new Set([...ownDeletedIdsRef.current, ...explicitRestoreIdsRef.current])],
       });
       if (saveRequestRef.current !== requestId) return null;
       // The write landed, so this is the version the next save is measured
       // against, whether or not its result is adopted below.
       serverRevisionRef.current = saved.structureRevision || '';
+      serverCopyRef.current = serverCopyOf(saved);
+      if (base) {
+        // Deleted here by this author: an undo may bring them back.
+        const sent = moduleItemIds(moduleToSave);
+        moduleItemIds(base).forEach(id => { if (!sent.has(id)) ownDeletedIdsRef.current.add(id); });
+      }
+      explicitRestoreIdsRef.current = new Set();
+      // Other tabs of this browser hear it at once rather than on their next poll.
+      announceModuleWrite(moduleToSave.catalogueId);
       setWorkingModule(current => {
         if (!current || current.catalogueId !== moduleToSave.catalogueId) return current;
         // The server normalises what it stores -- session counts, dates, the
@@ -2244,6 +2321,7 @@ export default function ModuleBuilder() {
       // authored exactly where they are -- `savedModuleSnapshotRef` is left
       // alone too, so the workspace still knows it has unsaved work.
       if (err instanceof ModuleStructureConflictError) {
+        serverConflicts = err.conflicts.length ? conflictsFromServer(moduleToSave, err.conflicts) : [];
         // Somebody else's write got there first. Re-sending this payload as it
         // stands would replace every week and component with the pre-edit ones,
         // so it is not re-sent: the stored version is merged into the workspace
@@ -2289,6 +2367,11 @@ export default function ModuleBuilder() {
         setSaving(false);
         setSaveStartedAt(null);
         setSavingSnapshot('');
+        // A colleague's save heard while this one was in the air. A retry below
+        // reads the stored module anyway; otherwise it is read now.
+        const pendingLive = liveSyncAfterSaveRef.current;
+        liveSyncAfterSaveRef.current = '';
+        if (pendingLive && !retryAfterMerge) setTimeout(() => { void liveSyncRef.current(pendingLive); }, 0);
       }
     }
     // Only reachable from the conflict branch above: every other path has
@@ -2297,6 +2380,17 @@ export default function ModuleBuilder() {
     // save, which is what makes the second attempt a legal one.
     if (retryAfterMerge) {
       const merged = await mergeStoredRef.current(retryAfterMerge).catch(() => false);
+      if (!moduleConflictsRef.current.length && serverConflicts.length) {
+        setModuleConflicts(serverConflicts);
+      }
+      if (moduleConflictsRef.current.length) {
+        // A real disagreement: the merge has put their side next to this
+        // author's, and nothing goes until the author chooses.
+        autoSaveArmedRef.current = false;
+        setSaveFailure({ kind: 'conflict', message: MODULE_CONFLICT_CHOICE_NOTICE });
+        setActionMessage(MODULE_CONFLICT_CHOICE_NOTICE);
+        return null;
+      }
       if (merged) return persistRef.current(source, rebasesLeft - 1);
       // The stored version could not be read, so the refusal stands and the
       // reader is told, exactly as it was before there was a merge to try.
@@ -2305,7 +2399,7 @@ export default function ModuleBuilder() {
       setActionMessage(MODULE_CONFLICT_UNREADABLE_NOTICE);
     }
     return null;
-  }, [curriculumProgrammes, ksbSets, reload, standards, workingModule, workingModuleProgrammeArchived, workingModuleScopeLock]);
+  }, [curriculumProgrammes, ksbSets, reload, setModuleConflicts, standards, workingModule, workingModuleProgrammeArchived, workingModuleScopeLock]);
   /**
    * `persistWorkingModule` and the live merge, readable from inside each other.
    *
@@ -2631,6 +2725,11 @@ export default function ModuleBuilder() {
     // Carrying a revision or an armed auto-save into the next one would have it
     // write the module just closed, or refuse a module it has never read.
     serverRevisionRef.current = '';
+    serverCopyRef.current = null;
+    ownDeletedIdsRef.current = new Set();
+    explicitRestoreIdsRef.current = new Set();
+    liveSyncAfterSaveRef.current = '';
+    setModuleConflicts([]);
     autoSaveArmedRef.current = false;
     autoSaveAttemptRef.current = '';
     // Announced about the module being left. Carrying it into the next one
@@ -2649,7 +2748,7 @@ export default function ModuleBuilder() {
     setActionMessage(null);
     // Browser Forward must reload the module from the restored address.
     deepLinkedModuleRef.current = '';
-  }, []);
+  }, [setModuleConflicts]);
 
   const closeWorkingModule = () => {
     clearWorkingModule();
@@ -2712,6 +2811,34 @@ export default function ModuleBuilder() {
   }, [workingModule]);
 
   /**
+   * The module as it is stored now.
+   *
+   * Through the changes feed when this workspace holds the server's copy of
+   * the module: the server sends only the weeks and components whose
+   * fingerprints differ, and the rest is rebuilt from the copy -- the same
+   * module a full read returns, in kilobytes. A whole read otherwise, or if
+   * the feed cannot answer. `unchanged` (only with `allowUnchanged`) means the
+   * stored version is the one already held, and nothing was sent at all.
+   */
+  const readStoredModule = useCallback(async (
+    structureId: string,
+    options: { allowUnchanged?: boolean } = {},
+  ): Promise<{ unchanged: true } | { unchanged: false; module: ModuleCatalogueItem | null }> => {
+    const copy = serverCopyRef.current;
+    const current = workingModuleRef.current;
+    if (copy && current && moduleStructureIdentifier(current) === structureId) {
+      try {
+        const changes = await loadModuleStructureChanges(structureId, copy, { allowUnchanged: options.allowUnchanged === true });
+        if (changes && changes.unchanged === false) return { unchanged: false, module: changes.module };
+        if (changes) return { unchanged: true };
+      } catch {
+        // Read whole below: the feed is a shortcut, never the only way.
+      }
+    }
+    return { unchanged: false, module: await loadModuleStructure(structureId, { skipCache: true }) };
+  }, []);
+
+  /**
    * Replace what this workspace holds with the module as it is stored now.
    *
    * The whole structure, not a merge: the weeks and components are the ones the
@@ -2723,11 +2850,11 @@ export default function ModuleBuilder() {
    * showing a confirmation keeps it open and says so instead of reporting a
    * version it never loaded.
    */
-  const adoptStoredModule = useCallback(async () => {
+  const adoptStoredModule = useCallback(async (options: { skipIfUnchanged?: boolean } = {}): Promise<boolean> => {
     const current = workingModule;
-    if (!current) return;
+    if (!current) return false;
     const structureId = moduleStructureIdentifier(current);
-    if (!structureId) return;
+    if (!structureId) return false;
     // The read can overlap an import or another authoring edit. Capture the
     // exact copy we started reading; installing the response unconditionally
     // would put the workspace back onto the older server copy and make a just-
@@ -2738,20 +2865,24 @@ export default function ModuleBuilder() {
     liveSyncSequenceRef.current = sequence;
     // Fresh for the same reason opening a module is: this copy is the one the
     // next save writes back in full, and a cached answer would put pre-write
-    // weeks into a workspace that then stores them.
-    const remote = await loadModuleStructure(structureId, { skipCache: true });
+    // weeks into a workspace that then stores them. Read through the changes
+    // feed when this workspace holds the server's copy, so only what changed
+    // travels.
+    const read = await readStoredModule(structureId, { allowUnchanged: Boolean(options.skipIfUnchanged) });
     // Overtaken while this was in the air. Installing it now would put the
     // workspace back onto a version that has already been superseded, and onto
     // the revision that goes with it -- so the newer read stands and this one
     // is dropped. Not an error: the workspace is up to date, by another route.
-    if (liveSyncSequenceRef.current !== sequence) return;
+    if (liveSyncSequenceRef.current !== sequence) return false;
+    if (read.unchanged !== false) return false;
+    const remote = read.module;
     if (!remote) throw new Error('The saved version of this module could not be read.');
     const latest = workingModuleRef.current;
     if (
       !latest
       || latest.catalogueId !== current.catalogueId
       || moduleSnapshot(latest) !== snapshotAtRead
-    ) return;
+    ) return false;
     const stored = recalculateModule(getDefaultStructure({
       ...current,
       ...remote,
@@ -2762,6 +2893,7 @@ export default function ModuleBuilder() {
     } as ModuleBuilderListItem));
     savedModuleSnapshotRef.current = moduleSnapshot(stored);
     serverRevisionRef.current = stored.structureRevision || remote.structureRevision || '';
+    serverCopyRef.current = serverCopyOf(remote);
     // The stored structure has been read back, which is the one condition that
     // makes saving unprompted safe -- the same condition openModule arms on.
     // It is also how a workspace that was disarmed by a conflict is allowed to
@@ -2770,10 +2902,13 @@ export default function ModuleBuilder() {
     setWorkingModule(latest => (latest && latest.catalogueId === current.catalogueId ? stored : latest));
     if (selection) applySelectionSafely(selection, stored);
     setRemoteUpdate(null);
+    // Taking the stored module whole answers every open question with theirs.
+    setModuleConflicts([]);
     // Nothing of the reader's is waiting any more, so a refusal from before
     // this read is answered rather than left sitting on screen.
     setSaveFailure(null);
-  }, [applySelectionSafely, selection, workingModule]);
+    return true;
+  }, [applySelectionSafely, readStoredModule, selection, setModuleConflicts, workingModule]);
 
   /**
    * Fold the stored module into the one the reader is editing.
@@ -2799,7 +2934,8 @@ export default function ModuleBuilder() {
     liveSyncReadAtRef.current = Date.now();
     const sequence = liveSyncSequenceRef.current + 1;
     liveSyncSequenceRef.current = sequence;
-    const remote = await loadModuleStructure(structureId, { skipCache: true }).catch(() => null);
+    const read = await readStoredModule(structureId, { allowUnchanged: true }).catch(() => null);
+    const remote = read && read.unchanged === false ? read.module : null;
     // A later read has already answered while this one was in the air, so this
     // reply describes a version of the module that has since been superseded.
     // Reported as a success rather than a failure: the workspace HAS been
@@ -2825,16 +2961,23 @@ export default function ModuleBuilder() {
     const base = savedModuleSnapshotRef.current
       ? JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem
       : null;
-    const { module: merged, notices, adopted } = mergeModuleStructures(base, current, stored);
+    const { module: merged, adopted, collisions } = mergeModuleStructures(base, current, stored);
     // What the server holds is the stored copy, so that is what "saved" means
     // from here: the difference between it and the merged copy is exactly the
     // reader's outstanding work, which is what keeps the footer honest.
     savedModuleSnapshotRef.current = moduleSnapshot(stored);
     serverRevisionRef.current = revision;
+    serverCopyRef.current = serverCopyOf(remote);
+    // A field both of them changed keeps this reader's value on screen, but is
+    // now a question rather than a decision: saving waits until they answer it.
+    const conflicts = collisions.length
+      ? mergeConflictLists(moduleConflictsRef.current, conflictsFromCollisions(merged, collisions))
+      : moduleConflictsRef.current;
+    if (collisions.length) setModuleConflicts(conflicts);
     // The stored structure has been read back, which is the condition that
     // makes saving unprompted safe again -- including for a workspace a
-    // conflict had disarmed.
-    autoSaveArmedRef.current = true;
+    // conflict had disarmed -- unless there is a choice still to make.
+    autoSaveArmedRef.current = !conflicts.length;
     // Ahead of the render, because a save refused for a conflict merges and
     // then re-sends immediately: the retry has to carry the merged module, and
     // the state it would otherwise read is still a render away.
@@ -2844,11 +2987,45 @@ export default function ModuleBuilder() {
     // A refusal from before this read has been answered by it: the payload that
     // was turned down has since been merged with what turned it down.
     setSaveFailure(null);
-    if (!adopted && !notices.length) return true;
-    setRemoteUpdate({ revision, notices, adopted });
+    // The disagreements have their own panel; this line only says that their
+    // other changes arrived.
+    if (adopted) setRemoteUpdate({ revision, notices: [], adopted });
     return true;
-  }, [applySelectionSafely, selection]);
+  }, [applySelectionSafely, readStoredModule, selection, setModuleConflicts]);
   mergeStoredRef.current = mergeStoredIntoWorkspace;
+
+  /**
+   * The author answered one of the questions the conflict panel asks. When the
+   * last is answered, saving resumes: what goes now is a decision, not a guess.
+   */
+  const settleConflict = useCallback((conflict: ModuleConflict) => {
+    const remaining = moduleConflictsRef.current.filter(item => item.key !== conflict.key);
+    setModuleConflicts(remaining);
+    if (!remaining.length) {
+      autoSaveArmedRef.current = true;
+      autoSaveAttemptRef.current = '';
+      setSaveFailure(null);
+      setActionMessage(null);
+    }
+  }, [setModuleConflicts]);
+
+  /** "Keep mine": the author's version stays. A deleted item they kept is restored on save. */
+  const keepMineInConflict = useCallback((conflict: ModuleConflict) => {
+    if (conflict.kind === 'remote-deleted' && conflict.itemId) explicitRestoreIdsRef.current.add(conflict.itemId);
+    settleConflict(conflict);
+  }, [settleConflict]);
+
+  /** "Use theirs": the other editor's version goes into the workspace; nothing else moves. */
+  const takeTheirsInConflict = useCallback((conflict: ModuleConflict) => {
+    const current = workingModuleRef.current;
+    if (current) {
+      const next = applyTheirs(current, conflict);
+      workingModuleRef.current = next;
+      setWorkingModule(latest => (latest && latest.catalogueId === current.catalogueId ? next : latest));
+      if (selection) applySelectionSafely(selection, next);
+    }
+    settleConflict(conflict);
+  }, [applySelectionSafely, selection, settleConflict]);
 
   /**
    * The placement drawer PATCHes the name, dates, tutor and group straight to
@@ -2891,7 +3068,7 @@ export default function ModuleBuilder() {
    * is what lets two people build one module at the same time without either
    * of them losing work or being told to reload.
    */
-  const liveSyncWorkingModule = useCallback(async () => {
+  const liveSyncWorkingModule = useCallback(async (trigger: 'return' | 'live' = 'return') => {
     const current = workingModule;
     // Nothing open: the catalogue behind this is the live surface.
     if (!current) {
@@ -2901,8 +3078,13 @@ export default function ModuleBuilder() {
     const structureId = moduleStructureIdentifier(current);
     if (!structureId) return;
     // A save in flight is already deciding what this module is. Reading now
-    // would race its reply, and whichever landed second would win.
-    if (savingRef.current) return;
+    // would race its reply, and whichever landed second would win -- so the
+    // read waits for the save and runs as soon as it settles, rather than
+    // being dropped with a colleague's write in it.
+    if (savingRef.current) {
+      liveSyncAfterSaveRef.current = trigger;
+      return;
+    }
     const sinceLastRead = Date.now() - liveSyncReadAtRef.current;
     if (sinceLastRead < LIVE_SYNC_MIN_INTERVAL_MS) {
       // Held back, not dropped. A colleague's only save of the hour landing a
@@ -2911,21 +3093,24 @@ export default function ModuleBuilder() {
       if (!liveSyncPendingRef.current) {
         liveSyncPendingRef.current = setTimeout(() => {
           liveSyncPendingRef.current = null;
-          void liveSyncRef.current();
+          void liveSyncRef.current(trigger);
         }, LIVE_SYNC_MIN_INTERVAL_MS - sinceLastRead);
       }
       return;
     }
     const dirty = Boolean(savedModuleSnapshotRef.current && moduleSnapshot(current) !== savedModuleSnapshotRef.current);
+    // A live poll that finds the module as it already is (this tab's own save,
+    // or a write elsewhere in its group) changes nothing and reloads nothing.
+    // Coming back to the tab still refreshes the catalogue, as it always did.
     if (!dirty) {
       // A failed read leaves the workspace exactly as it was. The next write in
       // the estate, or the reader coming back to the tab, asks again.
-      await adoptStoredModule().catch(() => undefined);
-      reload({ silent: true });
+      const changed = await adoptStoredModule({ skipIfUnchanged: trigger === 'live' }).catch(() => false);
+      if (changed || trigger === 'return') reload({ silent: true });
       return;
     }
-    await mergeStoredIntoWorkspace(structureId);
-    reload({ silent: true });
+    const merged = await mergeStoredIntoWorkspace(structureId).catch(() => false);
+    if (merged || trigger === 'return') reload({ silent: true });
   }, [adoptStoredModule, mergeStoredIntoWorkspace, reload, workingModule]);
 
   liveSyncRef.current = liveSyncWorkingModule;
@@ -2937,6 +3122,16 @@ export default function ModuleBuilder() {
   // back to it. Held off while a module is still opening, because the copy it
   // is about to install is the fresh one anyway.
   useLiveRefresh(liveSyncWorkingModule, { enabled: !openingModule });
+  // Somebody else saving this module, heard within a couple of seconds. Off
+  // unless the server has live sync switched on (CURRICULUM_LIVE_SYNC); the
+  // hook then asks once and stops. Reads only what changed, merges it in, and
+  // leaves the reader's unsaved work, selection, dialogs and scroll alone.
+  useModuleLiveSync({
+    moduleId: workingModule ? moduleStructureIdentifier(workingModule) : '',
+    groupId: workingModule?.groupId || '',
+    enabled: Boolean(workingModule) && !openingModule,
+    onChange: () => { void liveSyncRef.current('live'); },
+  });
 
   const loadRemoteModuleVersion = useCallback(async () => {
     await showCurriculumConfirm({
@@ -3276,6 +3471,15 @@ export default function ModuleBuilder() {
               </span>
             </div>
           )}
+
+          {/* What this author and someone else both changed, each with its two
+              choices. Above the weeks rather than over them, so nothing the
+              reader is looking at or typing into moves. */}
+          <ModuleConflictPanel
+            conflicts={moduleConflicts}
+            onKeepMine={keepMineInConflict}
+            onUseTheirs={takeTheirsInConflict}
+          />
 
           {workingModuleProgrammeArchived && (
             <ArchivedProgrammeBuilderNotice programmeName={workingModule.programmeName} />

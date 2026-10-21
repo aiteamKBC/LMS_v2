@@ -12,7 +12,10 @@ import {
 import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 import { ReviewProgressPanel } from '@/components/reviews/ReviewProgressPanel';
-import { fetchLearnerEventReviewInstance, fetchMigratedReviewForParty, type LearnerReviewDefinition } from '@/api/learnerCalendar';
+import { fetchLearnerEventReviewInstance, fetchMigratedReviewForParty, type LearnerReviewDefinition, type MonthlyLogSignatureSync } from '@/api/learnerCalendar';
+import { MonthlyLogSignatureStatus } from './MonthlyLogSignatureStatus';
+import { MigratedReviewHistory } from '@/components/reviews/MigratedReviewHistory';
+import { downloadMigratedRevisionForParty } from '@/api/learnerCalendar';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { flattenReviewFields } from '@/api/reviewInstances';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
@@ -125,7 +128,7 @@ function seedAnswersFromDefinition(definition: LearnerReviewDefinition): Record<
 
 export function LearnerReviewInstanceForm({
   definition, onSign, onDownload, signatoryName = 'Learner',
-  viewerRole = 'participant', onSaveAnswers, mcmMonthlyLog,
+  viewerRole = 'participant', onSaveAnswers, mcmMonthlyLog, monthlyLogSync, onRetryMonthlyLogSignature,
 }: {
   definition: LearnerReviewDefinition;
   onSign?: (signature: string, options?: { applyMonthlyLogSignature?: boolean }) => Promise<void>;
@@ -137,9 +140,11 @@ export function LearnerReviewInstanceForm({
   /** Persists a role-scoped subset of answers and returns the refreshed
    *  definition. Omitted (every existing caller until it opts in), the form
    *  stays fully read-only exactly as it always has. */
-  onSaveAnswers?: (answers: Record<string, unknown>) => Promise<LearnerReviewDefinition>;
+  onSaveAnswers?: (answers: Record<string, unknown>, answerVersion?: string) => Promise<LearnerReviewDefinition>;
   /** The target-month log is reviewed inside the MCM signing modal, never inline. */
   mcmMonthlyLog?: { id: string; month: string; contractKind: LearnerKind };
+  monthlyLogSync?: MonthlyLogSignatureSync;
+  onRetryMonthlyLogSignature?: () => Promise<void>;
 }) {
   const [openSectionId, setOpenSectionId] = useState('');
   const [signing, setSigning] = useState(false);
@@ -153,6 +158,8 @@ export function LearnerReviewInstanceForm({
   const [answers, setAnswers] = useState<Record<string, unknown>>(() => seedAnswersFromDefinition(definition));
   const [savingAnswers, setSavingAnswers] = useState(false);
   const [saveAnswersError, setSaveAnswersError] = useState('');
+  const answerVersion = useRef(definition.answerVersion);
+  const savingAnswersRef = useRef(false);
 
   function focusSignatureSection() {
     signatureSection.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -193,7 +200,8 @@ export function LearnerReviewInstanceForm({
   useEffect(() => {
     setSavedSignature(definition.savedSignature || readSavedLearnerSignature(signatoryName));
     setDrawingSignature(false);
-  }, [definition.savedSignature, signatoryName]);
+    setSignatureError('');
+  }, [definition.savedSignature, definition.reviewRevision, signatoryName]);
 
   useEffect(() => {
     setApplyMonthlyLogSignature(true);
@@ -206,6 +214,7 @@ export function LearnerReviewInstanceForm({
   // occurrence opened, or this component's own save below returns one).
   useEffect(() => {
     setAnswers(seedAnswersFromDefinition(definition));
+    answerVersion.current = definition.answerVersion;
   }, [definition]);
 
   const requiredSignatures = Object.values(definition.signatures).filter(state => state.required);
@@ -218,7 +227,7 @@ export function LearnerReviewInstanceForm({
   );
   // Writing follows the same lifecycle rule the backend enforces: once the
   // review reaches the signature step, its answers are frozen for everyone.
-  const canWriteAnswers = Boolean(onSaveAnswers) && !submitted;
+  const canWriteAnswers = Boolean(onSaveAnswers) && !submitted && (!definition.migratedForm || !definition.readOnly);
   const visibleRespondentFieldIds = useMemo(
     () => computeVisibleWritableFieldIds(definition.sections, answers, viewerRole),
     [definition.sections, answers, viewerRole],
@@ -250,23 +259,30 @@ export function LearnerReviewInstanceForm({
   };
 
   const handleAnswerChange = useCallback((fieldId: string, value: unknown) => {
-    if (!canWriteAnswers || !writableFieldIds.has(fieldId)) return;
+    if (!canWriteAnswers || (definition.migratedForm && savingAnswersRef.current) || !writableFieldIds.has(fieldId)) return;
     setAnswers(current => ({ ...current, [fieldId]: value }));
     setSaveAnswersError('');
-  }, [canWriteAnswers, writableFieldIds]);
+  }, [canWriteAnswers, definition.migratedForm, writableFieldIds]);
 
   const saveAnswers = async () => {
-    if (!onSaveAnswers || savingAnswers) return;
+    if (!onSaveAnswers || !canWriteAnswers || savingAnswersRef.current) return;
+    savingAnswersRef.current = true;
     setSavingAnswers(true);
     setSaveAnswersError('');
     try {
       const payload: Record<string, unknown> = {};
-      for (const fieldId of writableFieldIds) payload[fieldId] = answers[fieldId];
-      const updated = await onSaveAnswers(payload);
+      for (const fieldId of definition.migratedForm ? visibleRespondentFieldIds : writableFieldIds) {
+        payload[fieldId] = definition.migratedForm ? answers[fieldId] ?? null : answers[fieldId];
+      }
+      const updated = definition.migratedForm
+        ? await onSaveAnswers(payload, answerVersion.current)
+        : await onSaveAnswers(payload);
+      answerVersion.current = updated.answerVersion;
       setAnswers(seedAnswersFromDefinition(updated));
     } catch (reason) {
       setSaveAnswersError(reason instanceof Error ? reason.message : 'Could not save your answers. Please try again.');
     } finally {
+      savingAnswersRef.current = false;
       setSavingAnswers(false);
     }
   };
@@ -320,7 +336,7 @@ export function LearnerReviewInstanceForm({
         />
       ) : null}
 
-      {canWriteAnswers && writableFieldIds.size > 0 && (
+      {canWriteAnswers && (definition.migratedForm ? visibleRespondentFieldIds : writableFieldIds).size > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary-200 bg-primary-50/70 px-4 py-3">
           <p className="text-xs text-primary-900">
             <AppIcon className="ri-edit-2-line mr-1.5" />
@@ -387,7 +403,7 @@ export function LearnerReviewInstanceForm({
         answers={answers}
         onAnswerChange={handleAnswerChange}
         readOnly
-        fieldReadOnly={field => !canWriteAnswers || !writableFieldIds.has(field.id)}
+        fieldReadOnly={field => !canWriteAnswers || (Boolean(definition.migratedForm) && savingAnswers) || !writableFieldIds.has(field.id)}
         respondentRole={viewerRole}
         showSavedAnswerStatus
         openSectionId={openSectionId}
@@ -395,7 +411,11 @@ export function LearnerReviewInstanceForm({
       />
 
       <div ref={signatureSection} tabIndex={-1} aria-label="Signature step" className="scroll-mt-6 space-y-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">
+        {definition.migratedForm && definition.instance && <MigratedReviewHistory entries={definition.reopenHistory}
+          onDownload={number => downloadMigratedRevisionForParty(definition.instance!.id, number)} />}
         <ReviewSignatures signatures={definition.signatures} />
+        {viewerRole === 'participant' && monthlyLogSync && <MonthlyLogSignatureStatus sync={monthlyLogSync} onRetry={onRetryMonthlyLogSignature}
+          previousReviewVersion={Boolean(definition.reviewRevision && !definition.signatures.participant?.signed)} />}
         {(definition.source !== 'aptem' || definition.instance?.status === 'completed') && <ReviewPdfDownload
           availability={definition.migratedForm
             ? { available: definition.instance?.status === 'completed', reason: 'Available after completion.' }

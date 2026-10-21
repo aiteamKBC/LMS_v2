@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import SupportPage from './page';
-import { createSupportTicket, loadSupportTickets } from '@/api/supportTickets';
+import { createSupportTicket, loadSupportTickets, updateSupportTicket, type SupportTicket } from '@/api/supportTickets';
 vi.mock('@/api/supportTickets', async () => ({
   ...await vi.importActual<typeof import('@/api/supportTickets')>('@/api/supportTickets'),
   createSupportTicket: vi.fn(), loadSupportTickets: vi.fn(), updateSupportTicket: vi.fn(),
@@ -77,4 +77,48 @@ it('reports ticket loading failures without showing demo tickets', async () => {
   render(<MemoryRouter><SupportPage /></MemoryRouter>);
   await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Tickets unavailable'));
   expect(screen.queryByText('OTJH hours not showing in monthly summary')).not.toBeInTheDocument();
+});
+
+const savedTicket: SupportTicket = { id: 'ticket-1', title: 'Attachment issue', description: 'Details',
+  category: 'Technical Issue', priority: 'medium', status: 'open', requester: 'Example Learner',
+  submitted: '2026-10-19T12:00:00Z', lastUpdate: '2026-10-19T12:00:00Z', assignedTo: '', assignedTeam: 'LMS Support',
+  messages: 0, timeline: [], replies: [], attachments: [{ id: 'file-1', name: 'screenshot.png', size: 5, contentType: 'image/png' }] };
+
+it('keeps selected files on save failure and shows the saved attachment after retry', async () => {
+  vi.mocked(createSupportTicket).mockRejectedValueOnce(new Error('Storage unavailable')).mockResolvedValueOnce(savedTicket);
+  render(<MemoryRouter><SupportPage /></MemoryRouter>);
+  await screen.findByText('You have no support tickets yet.');
+  fireEvent.click(screen.getByRole('button', { name: /New Ticket/ }));
+  fireEvent.change(screen.getByLabelText('Subject'), { target: { value: savedTicket.title } });
+  fireEvent.change(screen.getByLabelText('Description'), { target: { value: savedTicket.description } });
+  const image = new File(['image'], 'screenshot.png', { type: 'image/png' });
+  fireEvent.change(screen.getByLabelText('Attachments (optional)'), { target: { files: [image] } });
+  fireEvent.click(screen.getByRole('button', { name: 'Submit Ticket' }));
+  await screen.findByText('Storage unavailable');
+  expect(screen.getByRole('button', { name: 'Remove screenshot.png' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Submit Ticket' }));
+  expect(await screen.findByRole('link', { name: 'Download screenshot.png' })).toHaveAttribute('href', '/learner_api/support/tickets/ticket-1/attachments/file-1/');
+  expect(vi.mocked(createSupportTicket).mock.calls[0][1]).toEqual([image]);
+  expect(vi.mocked(createSupportTicket).mock.calls[1]).toEqual(vi.mocked(createSupportTicket).mock.calls[0]);
+});
+
+it('adds reply files and retains them for a failed retry', async () => {
+  vi.mocked(loadSupportTickets).mockResolvedValue([savedTicket]);
+  vi.mocked(updateSupportTicket).mockRejectedValueOnce(new Error('Upload failed')).mockResolvedValueOnce({ ...savedTicket,
+    replies: [{ id: 'reply-1', sender: 'Example Learner', senderRole: 'Learner', body: 'See error log', timestamp: savedTicket.submitted,
+      attachments: [{ id: 'file-2', name: 'error.log', size: 5, contentType: 'text/plain' }] }] });
+  render(<MemoryRouter><SupportPage /></MemoryRouter>);
+  fireEvent.click(await screen.findByText(savedTicket.title));
+  fireEvent.click(screen.getByRole('button', { name: 'Reply to Ticket' }));
+  fireEvent.change(screen.getByLabelText('Your reply'), { target: { value: 'See error log' } });
+  const file = new File(['error'], 'error.log');
+  fireEvent.change(screen.getByLabelText('Attachments (optional)'), { target: { files: [file] } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send Reply' }));
+  await screen.findAllByText('Upload failed');
+  expect(screen.getByRole('button', { name: 'Remove error.log' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Send Reply' }));
+  expect(await screen.findByRole('link', { name: 'Download error.log' })).toHaveAttribute('href', '/learner_api/support/tickets/ticket-1/attachments/file-2/');
+  const calls = vi.mocked(updateSupportTicket).mock.calls;
+  expect(calls[0]).toEqual(calls[1]);
+  expect(calls[0]).toEqual(['ticket-1', expect.objectContaining({ action: 'reply', body: 'See error log' }), false, [file]]);
 });

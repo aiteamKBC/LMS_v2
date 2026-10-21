@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import * as api from '@/api/migratedReviewTemplates';
 import ReviewTemplatesPage from '../page';
+import { TemplateEditor } from '../TemplateEditor';
 import { definitionCounts } from '../templateDisplay';
 import { CurriculumLibraryHub } from '../../hubs/page';
 
@@ -33,6 +34,31 @@ function library(local?: api.MigratedTemplate): api.TemplateLibrary {
       inherited_from_global: review_family === 'PR' && !local?.is_active, programme_override_exists: !!local && review_family === 'PR' })) };
 }
 function mount() { return render(<MemoryRouter><ReviewTemplatesPage /></MemoryRouter>); }
+
+it.each(api.MIGRATED_FAMILIES)('saves optional review hours with the existing questions for %s', async family => {
+  const onSaved = vi.fn();
+  render(<TemplateEditor template={{ ...globalTemplate, review_family: family }} programmeName="Programme" onClose={vi.fn()} onSaved={onSaved} />);
+  expect(screen.getByLabelText("Counts towards learner's total OTJH")).not.toBeChecked();
+  fireEvent.change(screen.getByLabelText('Expected OTJH (hours)'), { target: { value: '1.5' } });
+  fireEvent.click(screen.getByLabelText("Counts towards learner's total OTJH"));
+  fireEvent.change(screen.getByLabelText('Question label'), { target: { value: 'Updated question' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+  await waitFor(() => expect(onSaved).toHaveBeenCalled());
+  const saved = vi.mocked(api.updateMigratedTemplate).mock.calls[0][1].definition!;
+  expect(saved.otjh).toEqual({ expectedHours: 1.5, countsTowardsOtjh: true });
+  expect(saved.sections[0].fields[0].title).toBe('Updated question');
+});
+
+it('retains configured duration when counting is turned off and preserves drafts on a failed save', async () => {
+  vi.mocked(api.updateMigratedTemplate).mockRejectedValueOnce(new Error('This template changed since it was opened.'));
+  render(<TemplateEditor template={{ ...globalTemplate, definition: { ...definition, otjh: { expectedHours: 2, countsTowardsOtjh: true } } }} programmeName="Programme" onClose={vi.fn()} onSaved={vi.fn()} />);
+  fireEvent.click(screen.getByLabelText("Counts towards learner's total OTJH"));
+  fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('This template changed');
+  expect(screen.getByLabelText('Expected OTJH (hours)')).toHaveValue(2);
+  expect(screen.getByLabelText("Counts towards learner's total OTJH")).not.toBeChecked();
+  expect(vi.mocked(api.updateMigratedTemplate).mock.calls[0][1].definition?.otjh).toEqual({ expectedHours: 2, countsTowardsOtjh: false });
+});
 it('shows question and section counts from the list without fetching whole templates', async () => {
   const response = library();
   response.templates = response.templates.map(template => ({ ...template, statistics: { questions: 61, sections: 8 } }));
@@ -60,6 +86,35 @@ beforeEach(() => {
 });
 
 describe('Migrated Review Templates workspace', () => {
+  it('offers learner but no employer permission in an MCM template', async () => {
+    const mcm = { ...globalTemplate, review_family: 'MCM' as const };
+    vi.mocked(api.listMigratedTemplates).mockResolvedValue({ ...library(), templates: [mcm] });
+    vi.mocked(api.getMigratedTemplate).mockResolvedValue(mcm);
+    mount();
+    const card = await screen.findByRole('article', { name: 'Standard MCM' });
+    fireEvent.click(within(card).getByRole('button', { name: 'Edit' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Learner')).toBeEnabled();
+    expect(within(dialog).queryByLabelText('Employer')).not.toBeInTheDocument();
+    expect(within(dialog).getByText('Coach (always)')).toBeVisible();
+  });
+
+  it('defaults to coach-only and saves learner/employer permissions independently of required answers', async () => {
+    mount();
+    const card = await screen.findByRole('article', { name: 'Standard PR' });
+    fireEvent.click(within(card).getByRole('button', { name: 'Edit' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Coach (always)')).toBeVisible();
+    expect(within(dialog).getByLabelText('Learner')).not.toBeChecked();
+    expect(within(dialog).getByLabelText('Employer')).not.toBeChecked();
+    fireEvent.click(within(dialog).getByLabelText('Learner'));
+    fireEvent.click(within(dialog).getByLabelText('Employer'));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save template' }));
+    await waitFor(() => expect(api.updateMigratedTemplate).toHaveBeenCalledWith(globalTemplate, expect.objectContaining({
+      definition: { sections: [{ ...definition.sections[0], fields: [{ ...definition.sections[0].fields[0], respondentRoles: ['participant', 'employer'] }] }] },
+    })));
+  });
+
   it('adds the Library card with the shared workspace link', () => {
     render(<MemoryRouter><CurriculumLibraryHub /></MemoryRouter>);
     const link = screen.getByRole('link', { name: /Review Templates/ });
@@ -213,7 +268,7 @@ describe('Migrated Review Templates workspace', () => {
     mount(); const card = await selectProgramme();
     fireEvent.click(within(card).getByRole('button', { name: 'Use Custom Version' }));
     let dialog = await screen.findByRole('dialog', { name: 'Use this Custom Template for this programme?' });
-    expect(dialog).toHaveTextContent('Future or uninitialised migrated reviews will use this custom version.');
+    expect(dialog).toHaveTextContent('Editable migrated reviews will use this custom version when opened by the coach or checked on save.');
     expect(api.updateMigratedTemplate).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(api.updateMigratedTemplate).not.toHaveBeenCalled();
@@ -230,7 +285,7 @@ describe('Migrated Review Templates workspace', () => {
     mount(); const card = await selectProgramme();
     fireEvent.click(within(card).getByRole('button', { name: 'Use Standard Template' }));
     const dialog = await screen.findByRole('dialog');
-    expect(dialog).toHaveTextContent('Existing reviews that already started will keep their saved version.');
+    expect(dialog).toHaveTextContent('Reviews awaiting signatures or completed keep their saved version.');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(api.resetMigratedOverride).not.toHaveBeenCalled();
     expect(card).toHaveTextContent('Using Custom Template');
@@ -252,7 +307,7 @@ describe('Migrated Review Templates workspace', () => {
     mount(); const card = await screen.findByRole('article', { name: 'Standard PR' });
     fireEvent.click(within(card).getByRole('button', { name: 'Edit' }));
     const dialog = await screen.findByRole('dialog', { name: 'Editing Standard Template' });
-    expect(dialog).toHaveTextContent('Changes apply to future or uninitialised migrated reviews using this Standard Template. Reviews already started keep their saved version.');
+    expect(dialog).toHaveTextContent('Changes apply to migrated reviews using this Standard Template while they are still editable.');
     expect(within(dialog).getByText('PR', { exact: true })).toBeVisible();
     expect(within(dialog).getByLabelText('Template name')).toBeEnabled();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Preview' }));

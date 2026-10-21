@@ -4,6 +4,7 @@ import { StrictMode, type ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import { coachFetch } from '@/lib/coachFetch';
+import { acquireAttendanceDetail, attendanceDetailKey } from '@/features/coach/attendance/api/attendanceDetailCache';
 import CoachAttendance from './page';
 import CoachAttendanceProfile from '../attendance-profile/page';
 const identity = vi.hoisted(() => ({ isInitialized: true, email: 'coach@example.com', name: 'Coach Sara' }));
@@ -441,6 +442,107 @@ describe('coach attendance overview', () => {
     expect(screen.queryByText('A · 19 Aug')).not.toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Recent' })).toBeInTheDocument();
   });
+  it('shows only the chosen occurrence even when two sessions share a date, and labels unsaved changes', async () => {
+    const original = vi.mocked(coachFetch).getMockImplementation()!;
+    vi.mocked(coachFetch).mockImplementation(async (url, init) => {
+      if (String(url).includes('sessionId=occ-2')) return new Response(JSON.stringify({ learners: [{ learnerId: '42', status: 'absent', version: 'v2' }] }));
+      return original(url, init);
+    });
+    render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
+    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'group-1' } });
+    await screen.findByRole('option', { name: /Morning session/ });
+    const row = () => within(screen.getByText('Aya Khater').closest('tr')!);
+    expect(row().getByText('A · 09 Sep')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: 'occ-1' } });
+    await waitFor(() => expect(row().getByLabelText('Attendance for Aya Khater')).toBeEnabled());
+    expect(screen.getByRole('columnheader', { name: 'Selected session' })).toBeInTheDocument();
+    expect(row().getByText('P · 16 Sep')).toHaveAttribute('title', 'Present · 16 Sep 2026 · 10:00 · Morning session');
+    expect(row().queryByText('A · 09 Sep')).not.toBeInTheDocument();
+    expect(row().queryByText('P · 26 Aug')).not.toBeInTheDocument();
+    expect(row().getByLabelText('Attendance for Aya Khater')).toHaveAccessibleDescription(/Editing only: 16 Sep 2026 · 10:00 · Morning session/);
+    fireEvent.change(row().getByLabelText('Attendance for Aya Khater'), { target: { value: 'absent' } });
+    expect(row().getByText('A · 16 Sep')).toBeInTheDocument();
+    expect(row().getByText('Unsaved')).toBeInTheDocument();
+    expect(vi.mocked(coachFetch).mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(row().getByText('P · 16 Sep')).toBeInTheDocument();
+    expect(row().queryByText('Unsaved')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: 'occ-2' } });
+    await waitFor(() => expect(row().getByLabelText('Attendance for Aya Khater')).toHaveValue('absent'));
+    expect(row().getByText('A · 16 Sep')).toHaveAttribute('title', 'Absent · 16 Sep 2026 · 15:00 · Afternoon session');
+    expect(row().queryByText('P · 16 Sep')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: '' } });
+    expect(screen.getByRole('columnheader', { name: 'Recent' })).toBeInTheDocument();
+    expect(row().getByText('A · 09 Sep')).toBeInTheDocument();
+  });
+
+  it.each(['unmarked', 'upcoming', 'in_progress'] as const)('does not turn %s into an absence in the selected-session column', async status => {
+    const original = vi.mocked(coachFetch).getMockImplementation()!;
+    vi.mocked(coachFetch).mockImplementation(async (url, init) => String(url).includes('/session?')
+      ? new Response(JSON.stringify({ learners: [{ learnerId: '42', status, version: 'v1' }] })) : original(url, init));
+    render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
+    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'group-1' } });
+    await screen.findByRole('option', { name: /Morning session/ });
+    fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: 'occ-1' } });
+    const label = { unmarked: 'Not marked', upcoming: 'Upcoming', in_progress: 'In progress' }[status];
+    expect(await screen.findByText(`${label} · 16 Sep`)).toBeInTheDocument();
+    expect(screen.queryByText('A · 09 Sep')).not.toBeInTheDocument();
+    expect(screen.queryByText('A · 16 Sep')).not.toBeInTheDocument();
+  });
+
+  it('View refreshes saved attendance and pages through all history independently of the session filter', async () => {
+    const original = vi.mocked(coachFetch).getMockImplementation()!;
+    let saved = false;
+    vi.mocked(coachFetch).mockImplementation(async (url, init) => {
+      if (init?.method === 'POST') { saved = true; return original(url, init); }
+      if (String(url).includes('/details?')) {
+        const params = new URL(String(url), 'http://test').searchParams;
+        const page = Number(params.get('page'));
+        const records = Array.from({ length: 24 }, (_, index) => ({
+          id: `microsoft-teams:history-${index}`, date: index === 0 ? '2026-09-16' : '2026-08-01',
+          title: index === 0 ? 'Morning session' : `Earlier session ${index}`, module: 'Data',
+          status: saved && index === 0 ? 'absent' : 'present', absenceReport: null,
+        }));
+        return new Response(JSON.stringify({ learner: { id: '42', name: 'Aya Khater' },
+          summary: { sessions: 24, present: saved ? 23 : 24, absent: saved ? 1 : 0, attendanceRate: saved ? 96 : 100 },
+          records: records.slice((page - 1) * 20, page * 20),
+          pagination: { page, pageSize: 20, total: 24, hasMore: page === 1 } }));
+      }
+      return original(url, init);
+    });
+    const cached = acquireAttendanceDetail(attendanceDetailKey(JSON.stringify(['coach@example.com', '', 'coach']), '42'));
+    await cached.promise;
+    cached.release();
+    render(<MemoryRouter initialEntries={['/coach/attendance']}><Routes>
+      <Route path="/coach/attendance" element={<CoachAttendance />} />
+      <Route path="/coach/attendance/:learnerId" element={<CoachAttendanceProfile />} />
+    </Routes></MemoryRouter>);
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
+    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'group-1' } });
+    await screen.findByRole('option', { name: /Morning session/ });
+    fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: 'occ-1' } });
+    await waitFor(() => expect(screen.getByLabelText('Attendance for Aya Khater')).toBeEnabled());
+    fireEvent.change(screen.getByLabelText('Attendance for Aya Khater'), { target: { value: 'absent' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply bulk update' }));
+    await screen.findByText('Attendance saved.');
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    await screen.findByText('24 records');
+    expect(screen.getByText('23 present out of 24')).toBeInTheDocument();
+    expect(screen.getAllByRole('table')[0].querySelector('[data-status="absent"]')).toHaveTextContent('Morning session');
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByText('Page 2 of 2');
+    expect(within(screen.getAllByRole('table')[0]).getByText('Earlier session 23')).toBeInTheDocument();
+    const historyRequests = vi.mocked(coachFetch).mock.calls.filter(([url]) => String(url).includes('/details?'));
+    expect(historyRequests).toHaveLength(3);
+    for (const [url] of historyRequests) {
+      const params = new URL(String(url), 'http://test').searchParams;
+      expect([...params.keys()].sort()).toEqual(['learner_id', 'page', 'pageSize']);
+      expect(params.get('learner_id')).toBe('42');
+    }
+  });
+
   it('shows paused attendance instead of historical chips', async () => {
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-2' } });
@@ -537,20 +639,25 @@ describe('coach attendance overview', () => {
     const status = await screen.findByLabelText('Attendance for Aya Khater');
     await waitFor(() => expect(status).toHaveValue(before));
     const row = screen.getByText('Aya Khater').closest('tr')!;
-    expect(row.querySelectorAll('[data-status]')).toHaveLength(2);
+    // A selected occurrence shows one chip, even with another session that day.
+    expect(row.querySelectorAll('[data-status]')).toHaveLength(1);
     const callsBefore = vi.mocked(coachFetch).mock.calls.length;
     fireEvent.change(status, { target: { value: after } });
     fireEvent.click(screen.getByRole('button', { name: 'Apply bulk update' }));
     await screen.findByText('Attendance saved.');
     expect(status).toHaveValue(after);
     expect(screen.getByText('Pending changes: 0')).toBeInTheDocument();
-    expect(row.querySelectorAll('[data-status]')).toHaveLength(2);
+    expect(row.querySelectorAll('[data-status]')).toHaveLength(1);
     expect(row.querySelectorAll('[data-status="absent"]')).toHaveLength(after === 'absent' ? 1 : 0);
-    expect(row.querySelectorAll('[data-status="present"]')).toHaveLength(after === 'present' ? 2 : 1);
+    expect(row.querySelectorAll('[data-status="present"]')).toHaveLength(after === 'present' ? 1 : 0);
     expect(vi.mocked(coachFetch).mock.calls.slice(callsBefore)).toHaveLength(1);
     fireEvent.change(status, { target: { value: before } });
     fireEvent.click(screen.getByRole('button', { name: 'Apply bulk update' }));
     await waitFor(() => expect(screen.getByText('Pending changes: 0')).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: '' } });
+    // Clearing the selection restores both historical occurrences, without merging them.
+    expect(row.querySelectorAll('[data-status]')).toHaveLength(2);
+    expect(row.querySelectorAll('[data-status="present"]')).toHaveLength(after === 'present' ? 2 : 1);
     const lastCall = vi.mocked(coachFetch).mock.calls.at(-1)!;
     expect(JSON.parse(String(lastCall[1]?.body)).records[0].version).toBe('v2');
   });

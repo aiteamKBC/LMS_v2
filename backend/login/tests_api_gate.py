@@ -237,6 +237,19 @@ class RoleRuleTests(PrefixRoleTestCase):
         self.assertIsNone(self._refusal(path, "learner"))
         self.assertEqual(self._refusal(path, "employer").status_code, 403)
 
+    def test_activity_recording_accepts_signed_in_roles_but_not_audit_reads(self):
+        path = "/curriculum_api/activity/record/"
+        for role in ("learner", "employer", "staff", "admin"):
+            with self.subTest(role=role):
+                self.assertIsNone(self._refusal(path, role))
+        with _gate_on():
+            self.assertEqual(refusal_for(path, None).status_code, 401)
+        for role in ("learner", "employer"):
+            for restricted in ("/curriculum_api/activity/", "/curriculum_api/activity/people/",
+                               "/curriculum_api/curriculum/overview/"):
+                with self.subTest(role=role, path=restricted):
+                    self.assertEqual(self._refusal(restricted, role).status_code, 403)
+
     def test_programme_audit_material_tables_are_staff_only(self):
         path = "/curriculum_api/curriculum/programme-audit/materials/"
         for role in ("learner", "employer"):

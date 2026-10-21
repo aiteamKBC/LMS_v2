@@ -13,6 +13,7 @@ import { useAttendanceOptions } from '@/features/coach/attendance/hooks/useAtten
 import type { CoachAttendanceLearner } from '@/features/coach/attendance/types/attendance.types';
 import { fetchAttendanceSession, saveBulkAttendance, type AttendanceRecent, type AttendanceSessionOption, type BulkLearner, type BulkAttendanceWarning } from '@/features/coach/attendance/api/attendanceApi';
 import { acquireAttendanceContext, attendanceContextKey, invalidateAttendanceContext } from '@/features/coach/attendance/api/attendanceContextCache';
+import { attendanceDetailKey, invalidateAttendanceDetail } from '@/features/coach/attendance/api/attendanceDetailCache';
 import { coachViewAs } from '@/lib/coachViewAs';
 import { AttendanceCorrectionMenu, type AttendanceCorrectionAction } from '@/components/feature/AttendanceCorrectionMenu';
 import { invalidateLearnerReads } from '@/api/learnerRead';
@@ -115,7 +116,8 @@ export default function CoachAttendance() {
     return () => controller.abort();
   }, [programmeId, groupId, sessionId, coach.email]);
 
-  const hasValidSession = sessions.some(session => session.id === sessionId);
+  const selectedSession = sessions.find(session => session.id === sessionId);
+  const hasValidSession = Boolean(selectedSession);
   const selectionEnabled = hasValidSession && !saving && !coach.isViewingAsCoach;
   const currentSaveScope = useRef('');
   currentSaveScope.current = JSON.stringify([coach.email, programmeId, groupId, sessionId]);
@@ -127,6 +129,7 @@ export default function CoachAttendance() {
     try {
       const payload = await saveBulkAttendance(programmeId, groupId, sessionId, [{ learnerId, status, version: row.version }]);
       invalidateAttendanceContext(contextKey); invalidateLearnerReads();
+      for (const result of payload.results) invalidateAttendanceDetail(attendanceDetailKey(attendanceScope, result.learnerId));
       if (scope !== currentSaveScope.current) return;
       setLearners(current => current.map(learner => {
         const result = payload.results.find(item => item.learnerId === learner.id);
@@ -149,6 +152,7 @@ export default function CoachAttendance() {
       })));
       if (currentCoach.current !== owner) return;
       invalidateAttendanceContext(contextKey);
+      for (const result of payload.results) invalidateAttendanceDetail(attendanceDetailKey(attendanceScope, result.learnerId));
       setLearners(current => current.map(learner => {
         const result = payload.results.find(row => row.learnerId === learner.id);
         return result ? { ...learner, recent: result.recent } : learner;
@@ -164,7 +168,7 @@ export default function CoachAttendance() {
       if (currentCoach.current === owner) setBulkError(reason instanceof Error ? reason.message : 'Unable to save attendance.');
     } finally { setSaving(false); }
   };
-  const sessionLabel = (session: Omit<AttendanceSessionOption, 'status'>) => `${shortDate(session.date)} ? ${session.time} ? ${session.title}`;
+  const sessionLabel = (session: Omit<AttendanceSessionOption, 'status'>) => `${shortDate(session.date)} · ${session.time} · ${session.title}`;
 
   const programmes = options.programmes.map(row => [row.id, row.name]);
   const groups = options.programmes.find(row => row.id === programmeId)?.groups.map(row => [row.id, `${row.name}${row.cohort && row.cohort !== '--' ? ` (${row.cohort})` : ''}`]) || [];
@@ -189,18 +193,19 @@ export default function CoachAttendance() {
 
 
   return <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Attendance" pageSubtitle="Bulk and individual attendance" userName={coach.name} userRole="Progress Coach"><main className={styles.page}>
-    <section className={styles.card} aria-labelledby="bulk-title"><CardHeading id="bulk-title" icon="ri-group-line" title="Bulk attendance" copy="Manage attendance for learners in the selected programme and group." />
+    <section className={styles.card} aria-labelledby="bulk-title"><CardHeading id="bulk-title" icon="ri-group-line" title="Bulk attendance" copy="Choose a programme and group, then load students. Select a session, choose learners and mark them Present or Absent. Click Apply bulk update to save changes for that session only. Use View to open a learner's full attendance history." />
       {options.loading && <p role="status">Loading programme groups…</p>}
       {options.error && <p role="alert">Unable to load programme groups: {options.error}</p>}
       <button type="button" disabled={saving || options.loading} onClick={options.reload}>Refresh options</button>
       <div className={styles.formRow}><Field label="Programme"><select aria-label="Programme" value={programmeId} onChange={event => { setProgrammeId(event.target.value); setGroupId(''); setQueryValues({ programme: event.target.value, group: '', page: 1 }); }} disabled={loading || saving}><option value="">Select programme</option>{programmes.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></Field><Field label="Group"><select aria-label="Group" value={groupId} onChange={event => { setGroupId(event.target.value); setQueryValues({ programme: programmeId, group: event.target.value, page: 1 }); }} disabled={!programmeId || saving}><option value="">Select group</option>{groups.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></Field><button className={styles.primary} type="button" onClick={loadStudents} disabled={!programmeId || !groupId || saving}><AppIcon name="ri-group-line" />Load students</button></div>
     </section>
-    <section className={`${styles.card} ${styles.editCard}`} aria-labelledby="edit-title"><CardHeading id="edit-title" icon="ri-calendar-edit-line" title="Attendance edit" copy="Choose a session and update selected learners." />
+    <section className={`${styles.card} ${styles.editCard}`} aria-labelledby="edit-title"><CardHeading id="edit-title" icon="ri-calendar-edit-line" title="Attendance edit" copy="Choose a session and update selected learners. Changing the session clears unsaved changes. Edit attendance saves an individual correction immediately." />
       <div className={`${styles.formRow} ${styles.sessionRow}`}><Field label="Session / occurrence"><select aria-label="Session / occurrence" value={sessionId} disabled={!programmeId || !groupId || groupLoading || sessionsLoading || sessionLoading || saving || !sessions.length} onChange={event => { sessionContext.current = JSON.stringify([coach.email, programmeId, groupId]); setSelected(new Set()); setPending({}); setSessionLearners([]); setBulkWarnings([]); setNotice(null); setSessionLoading(Boolean(event.target.value)); setSessionId(event.target.value); setQueryValues({ programme: programmeId, group: groupId, page: 1 }); }}><option value="" disabled={!sessions.length}>{sessionsLoading ? 'Loading sessions...' : sessionsError ? 'Unable to load sessions' : programmeId && groupId && !sessions.length ? 'No sessions available for this group' : 'Select session'}</option>{sessions.map(session => <option key={session.id} value={session.id}>{sessionLabel(session)}</option>)}</select></Field></div>
       {sessionsError && <p role="alert">{sessionsError} <button type="button" onClick={() => setSessionsRetry(current => current + 1)}>Retry sessions</button></p>}
       {sessionsLoading && <p role="status">Loading sessions...</p>}
       {sessionLoading && <p role="status">Loading session attendance...</p>}
       <p>{hasValidSession ? 'Select learners to mark attendance.' : 'Select a session to begin marking attendance.'}</p>
+      {selectedSession && <p className={styles.sessionScope} id="attendance-session-scope">Editing only: <strong>{sessionLabel(selectedSession)}</strong>. The table shows attendance for this session. Changes marked Unsaved need Apply bulk update.</p>}
       <div className={styles.editActions}><div className={styles.selectActions}><button className={styles.presentAction} type="button" disabled={!selectionEnabled || !selected.size || sessionLoading} onClick={() => stageStatus(selected, 'present')}><AppIcon name="ri-checkbox-circle-line" />Mark selected Present</button><button className={styles.absentAction} type="button" disabled={!selectionEnabled || !selected.size || sessionLoading} onClick={() => stageStatus(selected, 'absent')}><AppIcon name="ri-close-circle-line" />Mark selected Absent</button></div>
       <div><button className={styles.primary} type="button" disabled={!selectionEnabled || !selected.size || !Object.keys(pending).length || sessionLoading} onClick={() => void apply()}><AppIcon name="ri-check-line" />{saving ? 'Saving...' : 'Apply bulk update'}</button><button className={styles.secondary} type="button" disabled={!selectionEnabled || !Object.keys(pending).length} onClick={() => setPending({})}><AppIcon name="ri-delete-bin-line" />Discard</button></div></div>
       <div className={styles.editFooter}><div aria-live="polite" aria-atomic="true"><strong>Selected: {selected.size}</strong><strong>Pending changes: {Object.keys(pending).length}</strong></div></div>
@@ -208,8 +213,8 @@ export default function CoachAttendance() {
     </section>
     <section className={styles.card} aria-labelledby="students-title"><header className={styles.studentsHeader}><div className={styles.studentsSummary}><CardHeading id="students-title" icon="ri-user-3-line" title={`Students (${visible.length})`} copy="Learners loaded from the selected programme and group." />{bulkWarnings.length > 0 && <p className={styles.inlineWarning} role="status" title="Enrolment record unavailable.">{bulkWarnings.length} {bulkWarnings.length === 1 ? 'learner' : 'learners'} unavailable</p>}</div><Field label="Programme status"><select aria-label="Programme status" value={programStatus} onChange={event => setQueryValues({ status: event.target.value, page: 1 })}><option value="all">All statuses</option><option value="active">Active</option>{statuses.filter(value => value.toLowerCase() !== 'active').map(value => <option key={value} value={value}>{value}</option>)}</select></Field></header>
       <div className={`${styles.selectActions} ${styles.studentsSelection}`}><button type="button" disabled={!selectionEnabled || !visible.length} onClick={() => setSelected(new Set(visible.map(row => row.id)))}><AppIcon name="ri-checkbox-blank-line" />Select all</button><button type="button" disabled={!selectionEnabled || !selected.size} onClick={() => setSelected(new Set())}><AppIcon name="ri-delete-bin-line" />Clear</button></div>
-      <div className={styles.tableScroll}><table><colgroup><col className={styles.checkboxColumn} /><col className={styles.learnerColumn} /><col className={styles.emailColumn} /><col className={styles.programmeColumn} /><col className={styles.attendanceColumn} /><col /><col className={styles.detailsColumn} /></colgroup><thead><tr><th aria-label="Selection" /><th>Learner</th><th>Email</th><th>Programme</th><th>Attendance</th><th>Recent</th><th>Actions</th></tr></thead><tbody>
-        {loading ? Array.from({ length: 5 }, (_, row) => <tr key={row} aria-hidden="true">{Array.from({ length: 7 }, (_, column) => <td key={column}><SkeletonBlock className={styles.studentSkeleton} /></td>)}</tr>) : error ? <tr><td colSpan={7}><EmptyState variant="error" size="sm" title="Unable to load attendance" description={error} /></td></tr> : !loaded ? <tr><td colSpan={7}><EmptyState size="sm" title="Choose a group" description="Select a group, then load its learners." /></td></tr> : !pageRows.length ? <tr><td colSpan={7}><EmptyState size="sm" title="No learners found for this group." /></td></tr> : pageRows.map(learner => <tr key={learner.id} data-selected={selected.has(learner.id)}><td><input aria-label={`Select ${learner.learner}`} type="checkbox" disabled={!selectionEnabled} checked={selected.has(learner.id)} onChange={() => setSelected(current => { const next = new Set(current); next.has(learner.id) ? next.delete(learner.id) : next.add(learner.id); return next; })} /></td><td><div className={styles.learnerIdentity}><strong>{learner.learner}</strong></div></td><td><span className={styles.emailText} title={display(learner.email)}>{display(learner.email)}</span></td><td><span className={styles.programStatus} data-programme-status={display(learner.programStatus).toLowerCase()}>{display(learner.programStatus)}</span></td><td><select aria-label={`Attendance for ${learner.learner}`} disabled={!selectionEnabled || sessionLoading || !sessionLearners.some(row => row.learnerId === learner.id)} value={pending[learner.id] || (['present', 'absent'].includes(sessionLearners.find(row => row.learnerId === learner.id)?.status || '') ? sessionLearners.find(row => row.learnerId === learner.id)?.status : '')} onChange={event => { setSelected(current => new Set(current).add(learner.id)); stageStatus([learner.id], event.target.value as 'present' | 'absent'); }}><option value="" disabled hidden>Not marked</option><option value="present">Present</option><option value="absent">Absent</option></select></td><td>{display(learner.programStatus).toLowerCase() === 'paused' ? <span className={lastFourStyles.paused}>Attendance paused</span> : <div className={`${styles.chips} ${lastFourStyles.chips}`}>{learner.recent.map((row, index) => <span key={`${row.date}-${index}`} data-status={row.status} title={`${row.status === 'present' ? 'Present' : 'Absent'} \u00b7 ${shortDate(row.date)}`}>{row.status === 'present' ? 'P' : 'A'} · {shortDate(row.date, true)}</span>)}{!learner.recent.length && '\u2014'}</div>}</td><td>{hasValidSession && <AttendanceCorrectionMenu learnerName={learner.learner}
+      <div className={styles.tableScroll}><table><colgroup><col className={styles.checkboxColumn} /><col className={styles.learnerColumn} /><col className={styles.emailColumn} /><col className={styles.programmeColumn} /><col className={styles.attendanceColumn} /><col /><col className={styles.detailsColumn} /></colgroup><thead><tr><th aria-label="Selection" /><th>Learner</th><th>Email</th><th>Programme</th><th>Attendance</th><th>{selectedSession ? 'Selected session' : 'Recent'}</th><th>Actions</th></tr></thead><tbody>
+        {loading ? Array.from({ length: 5 }, (_, row) => <tr key={row} aria-hidden="true">{Array.from({ length: 7 }, (_, column) => <td key={column}><SkeletonBlock className={styles.studentSkeleton} /></td>)}</tr>) : error ? <tr><td colSpan={7}><EmptyState variant="error" size="sm" title="Unable to load attendance" description={error} /></td></tr> : !loaded ? <tr><td colSpan={7}><EmptyState size="sm" title="Choose a group" description="Select a group, then load its learners." /></td></tr> : !pageRows.length ? <tr><td colSpan={7}><EmptyState size="sm" title="No learners found for this group." /></td></tr> : pageRows.map(learner => <tr key={learner.id} data-selected={selected.has(learner.id)}><td><input aria-label={`Select ${learner.learner}`} type="checkbox" disabled={!selectionEnabled} checked={selected.has(learner.id)} onChange={() => setSelected(current => { const next = new Set(current); next.has(learner.id) ? next.delete(learner.id) : next.add(learner.id); return next; })} /></td><td><div className={styles.learnerIdentity}><strong>{learner.learner}</strong></div></td><td><span className={styles.emailText} title={display(learner.email)}>{display(learner.email)}</span></td><td><span className={styles.programStatus} data-programme-status={display(learner.programStatus).toLowerCase()}>{display(learner.programStatus)}</span></td><td><select aria-label={`Attendance for ${learner.learner}`} aria-describedby={selectedSession ? "attendance-session-scope" : undefined} disabled={!selectionEnabled || sessionLoading || !sessionLearners.some(row => row.learnerId === learner.id)} value={pending[learner.id] || (['present', 'absent'].includes(sessionLearners.find(row => row.learnerId === learner.id)?.status || '') ? sessionLearners.find(row => row.learnerId === learner.id)?.status : '')} onChange={event => { setSelected(current => new Set(current).add(learner.id)); stageStatus([learner.id], event.target.value as 'present' | 'absent'); }}><option value="" disabled hidden>Not marked</option><option value="present">Present</option><option value="absent">Absent</option></select></td><td>{selectedSession ? <SessionAttendance session={selectedSession} learner={sessionLearners.find(row => row.learnerId === learner.id)} pending={pending[learner.id]} loading={sessionLoading} /> : display(learner.programStatus).toLowerCase() === 'paused' ? <span className={lastFourStyles.paused}>Attendance paused</span> : <div className={`${styles.chips} ${lastFourStyles.chips}`}>{learner.recent.map((row, index) => <span key={`${row.date}-${index}`} data-status={row.status} title={`${row.status === 'present' ? 'Present' : 'Absent'} \u00b7 ${shortDate(row.date)}`}>{row.status === 'present' ? 'P' : 'A'} · {shortDate(row.date, true)}</span>)}{!learner.recent.length && '\u2014'}</div>}</td><td>{hasValidSession && <AttendanceCorrectionMenu learnerName={learner.learner}
             manualStatus={sessionLearners.find(row => row.learnerId === learner.id)?.manualStatus}
             disabled={!selectionEnabled || sessionLoading || Object.keys(pending).length > 0 || !sessionLearners.some(row => row.learnerId === learner.id)}
             saving={saving} onAction={action => void correctOne(learner.id, action)} />}
@@ -221,3 +226,20 @@ export default function CoachAttendance() {
 
 function CardHeading({ id, icon, title, copy }: { id: string; icon: string; title: string; copy: string }) { return <div className={styles.heading}><span><AppIcon className={icon} /></span><div><h1 id={id}>{title}</h1><p>{copy}</p></div></div>; }
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label><span>{label}</span>{children}</label>; }
+
+function SessionAttendance({ session, learner, pending, loading }: {
+  session: Omit<AttendanceSessionOption, 'status'>; learner?: BulkLearner;
+  pending?: 'present' | 'absent'; loading: boolean;
+}) {
+  if (loading) return <span className={styles.sessionState}>Loading attendance…</span>;
+  const status = pending || learner?.status || 'unmarked';
+  const label = !learner ? 'Unavailable' : status === 'present' ? 'Present' : status === 'absent' ? 'Absent'
+    : status === 'upcoming' ? 'Upcoming' : status === 'in_progress' ? 'In progress' : 'Not marked';
+  return <div className={styles.sessionAttendance}>
+    <div className={`${styles.chips} ${lastFourStyles.chips}`}><span data-status={status}
+      title={`${label} · ${shortDate(session.date)} · ${session.time} · ${session.title}`}>
+      {label === 'Present' ? 'P' : label === 'Absent' ? 'A' : label} · {shortDate(session.date, true)}
+    </span></div>
+    {pending && <small className={styles.unsaved}>Unsaved</small>}
+  </div>;
+}

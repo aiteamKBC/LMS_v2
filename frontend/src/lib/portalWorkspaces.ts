@@ -104,6 +104,14 @@ export const PORTAL_WORKSPACES: PortalWorkspace[] = [
     blurb: 'Programmes, modules and their content',
   },
   {
+    slug: 'support',
+    label: 'Support',
+    icon: 'ri-customer-service-2-line',
+    path: '/support/ticket-queue',
+    demoEmail: null,
+    blurb: 'Learner tickets and support replies',
+  },
+  {
     // Every employer contact as a card, each opening their existing side page
     // (/employers/:id). Under /workspace/admin so only a super-admin reaches it,
     // and no demoEmail: the list is the whole employer directory, not a demo

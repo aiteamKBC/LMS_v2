@@ -1,6 +1,6 @@
 import type { RouteObject } from "react-router-dom";
 import { Navigate } from "react-router-dom";
-import { CHAT_ENABLED, LEARNER_FEEDBACK_ENABLED } from "@/lib/featureFlags";
+import { CHAT_ENABLED, LEARNER_FEEDBACK_ENABLED, LEARNER_POST_LECTURE_FEEDBACK_ENABLED } from "@/lib/featureFlags";
 import { RequireAuth } from "@/components/feature/RequireAuth";
 import { lazyRoute } from "./lazyRoute";
 import { LearnerDashboardRedirect } from "./LearnerDashboardRedirect";
@@ -64,6 +64,7 @@ const ClubsPage = lazyRoute(() => import("../pages/learner/clubs/page"));
 const CoachAiMarking = lazyRoute(() => import("../pages/coach/ai-marking/page"));
 const CoachAttendance = lazyRoute(() => import("../pages/coach/attendance/page"));
 const CoachSupportTickets = lazyRoute(() => import("../pages/coach/support-tickets/page"));
+const CoachInfoSource = lazyRoute(() => import("../pages/coach/info-source/page"));
 const CoachAttendanceProfile = lazyRoute(() => import("../pages/coach/attendance-profile/page"));
 const CoachCaseFiles = lazyRoute(() => import("../pages/coach/case-files/page"));
 const CoachCaseload = lazyRoute(() => import("../pages/coach/caseload/page"));
@@ -274,6 +275,7 @@ const SafeguardingQAAudit = lazyRoute(() => import("@/pages/safeguarding/qa-audi
 const SafeguardingReferrals = lazyRoute(() => import("@/pages/safeguarding/referrals/page"));
 const SafeguardingReports = lazyRoute(() => import("@/pages/safeguarding/reports/page"));
 const SessionCalendarPage = lazyRoute(() => import("../pages/curriculum/session-calendar/page"));
+const ProgressTransfersPage = lazyRoute(() => import("../pages/curriculum/progress-transfers/page"));
 const StarredMessagesPage = lazyRoute(() => import("../pages/starred-messages/page"));
 const SupportDashboard = lazyRoute(() => import("@/pages/workspace/support/page"));
 const SupportEscalations = lazyRoute(() => import("@/pages/support/escalations/page"));
@@ -642,7 +644,7 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/feedback",
-    element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackPage /> : <Navigate to="/workspace/learner" replace />,
+    element: LEARNER_FEEDBACK_ENABLED || LEARNER_POST_LECTURE_FEEDBACK_ENABLED ? <LearnerFeedbackPage /> : <Navigate to="/workspace/learner" replace />,
   },
   {
     path: "/learner/feedback/review/:reviewDeliveryId",
@@ -654,7 +656,7 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/feedback/delivery/:deliveryId",
-    element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackFormPage /> : <Navigate to="/workspace/learner" replace />,
+    element: LEARNER_FEEDBACK_ENABLED || LEARNER_POST_LECTURE_FEEDBACK_ENABLED ? <LearnerFeedbackFormPage /> : <Navigate to="/workspace/learner" replace />,
   },
   {
     path: "/learner/catchup",
@@ -914,6 +916,10 @@ const routes: RouteObject[] = [
     element: <CoachSupportTickets />,
   },
   {
+    path: "/coach/info-source",
+    element: <CoachInfoSource />,
+  },
+  {
     path: "/coach/absence-reports",
     element: <Navigate to="/coach/attendance" replace />,
   },
@@ -1105,6 +1111,10 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/bulk-attendance",
     element: <CurriculumBulkAttendance />,
+  },
+  {
+    path: "/curriculum/progress-transfers",
+    element: <ProgressTransfersPage />,
   },
   {
     path: "/curriculum/quality",

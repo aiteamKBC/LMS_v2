@@ -84,6 +84,12 @@ export interface ModuleMergeResult {
   adopted: number;
   /** One sentence per real disagreement, already readable. */
   notices: string[];
+  /**
+   * The disagreements themselves. Until the reader chooses, the module holds
+   * their version of each; the Module Builder asks them to keep it or take the
+   * other one and does not save over the other editor until they have.
+   */
+  collisions: MergeCollision[];
 }
 
 /** camelCase field name -> something a person would say. */
@@ -211,7 +217,36 @@ export function mergeModuleStructures(
     module,
     adopted,
     notices: collisions.map(collision => noticeFor(module, collision)),
+    collisions,
   };
+}
+
+/**
+ * One disagreement, as the question the reader has to answer.
+ *
+ * Where the clash is, what the other editor did, and -- when it is short
+ * enough to be useful -- what they wrote. Nothing has been saved over either
+ * of them yet; the two buttons beside this sentence decide.
+ */
+export function conflictQuestion(module: ModuleCatalogueItem, collision: MergeCollision): string {
+  const where = locate(module, collision.path);
+  if (collision.kind === 'remote-deleted') {
+    return `Someone else deleted ${where || 'something'} while you were changing it.`;
+  }
+  if (collision.kind === 'local-deleted') {
+    return `Someone else changed ${where || 'something'} after you deleted it.`;
+  }
+  if (collision.kind === 'reorder') {
+    return where
+      ? `You and someone else put the components in ${where} in different orders.`
+      : 'You and someone else put the weeks in different orders.';
+  }
+  const field = humanField(collision.path);
+  const theirs = shortValue(collision.remote);
+  const at = where ? ` in ${where}` : '';
+  return theirs
+    ? `You and someone else both changed the ${field}${at}. Theirs is "${theirs}".`
+    : `You and someone else both changed the ${field}${at}.`;
 }
 
 /**

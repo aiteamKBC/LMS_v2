@@ -17,6 +17,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from coach_api.models import CoachCalendarEvent, ImportedReviewInstance
+from coach_api.booking_availability import CoachAvailabilityUnavailable
 from coach_api.review_sources import (
     review_profile_for_source, source_for_learner, ReviewCreationBlocked, require_native_review_creation,
 )
@@ -2026,6 +2027,13 @@ def learner_calendar_book(request, kind, pk):
 
         try:
             from .calendar_connections import booking_conflicts
+            existing_booking = (CoachCalendarEvent.objects.filter(event_key=event_key).first()
+                                if aptem_target is not None else None)
+            personal_exclusion = ({
+                "exclude_scheduled_date": existing_booking.scheduled_date,
+                "exclude_scheduled_time": existing_booking.scheduled_time,
+                "exclude_duration_minutes": existing_booking.duration_minutes,
+            } if existing_booking else {})
             if booking_conflicts(
                 kind,
                 pk,
@@ -2033,11 +2041,19 @@ def learner_calendar_book(request, kind, pk):
                 scheduled_time,
                 duration_minutes,
                 timezone_offset_minutes,
+                **({"business_time_zone": "Europe/London"} if aptem_target is not None else {}),
+                **personal_exclusion,
             ):
                 return _error(
                     "That time overlaps an event in your connected personal calendar. Please choose another time.",
                     409,
                 )
+
+            if aptem_target is not None:
+                from coach_api.booking_availability import ensure_coach_calendar_available, ensure_coach_outlook_available
+                ensure_coach_calendar_available(owner_email, scheduled_date, scheduled_time, duration_minutes,
+                                                exclude_record_id=existing_booking.pk if existing_booking else None)
+                ensure_coach_outlook_available(owner_email, scheduled_date, scheduled_time, duration_minutes, record=existing_booking)
 
             record, created = CoachCalendarEvent.objects.get_or_create(
                 event_key=event_key,
@@ -2052,17 +2068,21 @@ def learner_calendar_book(request, kind, pk):
                     "target_date": target_date,
                 },
             )
+            if aptem_target is not None:
+                from .imported_booking import booking_slot, reserve_imported_booking
+                imported_expected_slot = booking_slot(record)
             if aptem_target is not None and not created:
                 from coach_api.review_sources import linked_booking
                 if linked_booking(aptem_target, [record]) is None or record.owner_email.casefold() != owner_email.casefold():
                     return _error("The imported Review booking identity is inconsistent.", 409)
-                if (record.scheduled_date, record.scheduled_time, record.duration_minutes) != (scheduled_date, scheduled_time, duration_minutes):
-                    return _error("This imported Review already has a different booking request. Use reschedule to move it.", 409)
-                # Replay the existing operation. Never reset a successful sync
-                # or replace an organizer/idempotency identity on a retry.
-                record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
-                return JsonResponse({"event": _booking_response_event(record, aptem_target),
-                                     "warning": _friendly_sync_warning(warning)})
+                if record.scheduled_date and record.scheduled_time:
+                    if (record.scheduled_date, record.scheduled_time, record.duration_minutes) != (scheduled_date, scheduled_time, duration_minutes):
+                        return _error("This imported Review already has a different booking request. Use reschedule to move it.", 409)
+                    # Replay the existing operation. An unreserved placeholder
+                    # left by a busy slot may instead retry at another time.
+                    record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
+                    return JsonResponse({"event": _booking_response_event(record, aptem_target),
+                                         "warning": _friendly_sync_warning(warning)})
             review_template_id = _s(base_event.get('reviewTemplateId'))
             # A review-driven event must not become scheduled unless canonical
             # linkage is guaranteed. Rescheduling an already-linked row never
@@ -2097,12 +2117,22 @@ def learner_calendar_book(request, kind, pk):
                     else int(base_event.get('occurrenceNumber') or base_event.get('sequence') or 1)
                 )
 
-            record = persist_calendar_sync_reservation(record, review_event=base_event)
-            record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
+            if aptem_target is not None:
+                record, needs_sync = reserve_imported_booking(
+                    record, base_event, imported_expected_slot, notes=notes, expected_notes="",
+                )
+            else:
+                record = persist_calendar_sync_reservation(record, review_event=base_event)
+                needs_sync = True
+            warning = ""
+            if needs_sync:
+                record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
         except (ReviewTemplateUnavailableError, ReviewCreationBlocked) as exc:
             return _error(str(exc), 409, code=getattr(exc, "code", None))
         except LearnerCalendarConflict as exc:
             return _error(str(exc), 409)
+        except CoachAvailabilityUnavailable as exc:
+            return _error(str(exc), 503)
         except CalendarSyncInProgress:
             return _error("Calendar event synchronization is already in progress.", 409)
         except DatabaseError as exc:
@@ -2364,6 +2394,8 @@ def learner_calendar_reschedule(request, kind, pk):
         payload = json.loads(request.body or b"{}")
     except json.JSONDecodeError:
         return _error("Invalid JSON body.", 400)
+    if not isinstance(payload, dict):
+        return _error("Expected a JSON object.", 400)
 
     event_key = _s(payload.get("eventKey"))
     if not event_key:
@@ -2390,6 +2422,21 @@ def learner_calendar_reschedule(request, kind, pk):
             return _error("Booking not found.", 404)
         if record.status != CoachCalendarEvent.STATUS_SCHEDULED:
             return _error("Only an upcoming scheduled session can be rescheduled.", 409)
+        imported_event = getattr(record, '_imported_review_event', None)
+        if imported_event:
+            from .imported_booking import booking_slot, expected_booking, reserve_imported_booking
+            from coach_api.validation import ValidationError
+            try:
+                expected_slot = expected_booking(payload)
+            except (ValueError, ValidationError):
+                return _error("Refresh this booking before rescheduling; its original date, time and duration are required.", 400)
+            if "notes" in payload and payload["notes"] is not None and not isinstance(payload["notes"], str):
+                return _error("Booking notes must be text.", 400)
+            if "notes" in payload and not isinstance(payload["expectedBooking"].get("notes"), str):
+                return _error("Refresh this booking before editing its notes.", 400)
+            desired_slot = (scheduled_date, scheduled_time, duration_minutes)
+            if booking_slot(record) not in (expected_slot, desired_slot):
+                return _error("This booking was changed by another request. Refresh before rescheduling.", 409)
         late_change = _learner_catchup_change_error(request, record)
         if late_change:
             return late_change
@@ -2409,7 +2456,8 @@ def learner_calendar_reschedule(request, kind, pk):
             if busy_error:
                 return busy_error
         if (
-            record.scheduled_date == scheduled_date
+            not imported_event
+            and record.scheduled_date == scheduled_date
             and record.scheduled_time == scheduled_time
             and record.duration_minutes == duration_minutes
             and record.sync_state == CoachCalendarEvent.SYNC_SYNCED
@@ -2424,7 +2472,14 @@ def learner_calendar_reschedule(request, kind, pk):
             return JsonResponse({"event": _booking_response_event(record, imported_event), "warning": ""})
 
         from .calendar_connections import booking_conflicts
-        if booking_conflicts(
+        imported_event = getattr(record, '_imported_review_event', None)
+        unchanged_imported_slot = bool(imported_event and booking_slot(record) == desired_slot
+                                       and record.sync_state == CoachCalendarEvent.SYNC_SYNCED)
+        if imported_event and not unchanged_imported_slot:
+            from coach_api.booking_availability import ensure_coach_calendar_available, ensure_coach_outlook_available
+            ensure_coach_calendar_available(record.owner_email, scheduled_date, scheduled_time, duration_minutes, exclude_record_id=record.pk)
+            ensure_coach_outlook_available(record.owner_email, scheduled_date, scheduled_time, duration_minutes, record=record)
+        if not unchanged_imported_slot and booking_conflicts(
             kind,
             pk,
             scheduled_date,
@@ -2434,6 +2489,7 @@ def learner_calendar_reschedule(request, kind, pk):
             exclude_scheduled_date=record.scheduled_date,
             exclude_scheduled_time=record.scheduled_time,
             exclude_duration_minutes=record.duration_minutes,
+            **({"business_time_zone": "Europe/London"} if imported_event else {}),
         ):
             return _error(
                 "That time overlaps an event in your connected personal calendar. Please choose another time.",
@@ -2444,10 +2500,19 @@ def learner_calendar_reschedule(request, kind, pk):
         record.scheduled_time = scheduled_time
         record.duration_minutes = duration_minutes
         imported_event = getattr(record, '_imported_review_event', None)
-        record = persist_calendar_sync_reservation(record, **({"review_event": imported_event} if imported_event else {}))
-        record, warning, _attempted = synchronize_reserved_calendar_event(
-            record.pk, imported_event or build_booked_calendar_event(record)
-        )
+        if imported_event:
+            record, needs_sync = reserve_imported_booking(
+                record, imported_event, expected_slot,
+                notes=_s(payload.get("notes"))[:500] if "notes" in payload else None,
+                expected_notes=payload["expectedBooking"].get("notes"),
+            )
+        else:
+            record, needs_sync = persist_calendar_sync_reservation(record), True
+        warning = ""
+        if needs_sync:
+            record, warning, _attempted = synchronize_reserved_calendar_event(
+                record.pk, imported_event or build_booked_calendar_event(record)
+            )
         _mark_imported_review_scheduled(
             imported_event.get("reviewId") if imported_event else payload.get("reviewId"),
             int(imported_event["learnerId"]) if imported_event else record.learner_id, scheduled_date, scheduled_time,
@@ -2455,6 +2520,8 @@ def learner_calendar_reschedule(request, kind, pk):
         _follow_first_session_start_date(kind, pk, record, scheduled_date)
     except LearnerCalendarConflict as exc:
         return _error(str(exc), 409)
+    except CoachAvailabilityUnavailable as exc:
+        return _error(str(exc), 503)
     except CalendarSyncInProgress:
         return _error("Calendar event synchronization is already in progress.", 409)
     except DatabaseError as exc:

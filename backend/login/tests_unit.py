@@ -1719,6 +1719,13 @@ class MicrosoftSsoStartTests(SimpleTestCase):
             payload = signing.loads(state, salt=microsoft_sso.STATE_SALT)
             self.assertEqual(payload.get("download"), "android" if value == "android" else None)
 
+    def test_only_fixed_lecture_feedback_intent_survives_in_signed_state(self):
+        from urllib.parse import parse_qs, urlparse
+        for value in ('lecture-feedback', 'https://evil.test', '//evil.test'):
+            state = parse_qs(urlparse(self._authorize_url(intent=value)).query)['state'][0]
+            payload = signing.loads(state, salt=microsoft_sso.STATE_SALT)
+            self.assertEqual(payload.get('intent'), 'lecture-feedback' if value == 'lecture-feedback' else None)
+
     def test_absolute_next_is_refused(self):
         """An attacker-supplied return target would make this an open redirect."""
         from urllib.parse import parse_qs, urlparse

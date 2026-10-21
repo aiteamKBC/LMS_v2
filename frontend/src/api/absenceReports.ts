@@ -80,7 +80,10 @@ async function parseResponse<T>(response: Response): Promise<T> {
     const message = data && typeof data === 'object' && 'error' in data
       ? String((data as { error?: string }).error)
       : `Request failed (${response.status}).`;
-    throw new Error(message);
+    const reference = data && typeof data === 'object' && 'reference' in data ? data.reference : null;
+    const support = typeof reference === 'string' && /^ABS-[A-Z]+-[A-Z0-9]{3,5}-[A-F0-9]{12}$/.test(reference)
+      ? ` Support reference: ${reference}` : '';
+    throw new Error(message + support);
   }
   return data as T;
 }

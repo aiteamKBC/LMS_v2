@@ -1,8 +1,34 @@
 import { describe, expect, it } from 'vitest';
-import { componentLooksUnedited, componentTypeDescription, firstValidationMessage, normaliseComponentSettings, validateComponentAuthoring, validateModuleAuthoringStructure } from './componentAuthoringModel';
+import { componentLooksUnedited, componentTypeDescription, firstValidationMessage, MEDIA_SOURCE_TYPES, normaliseComponentSettings, normaliseVideoSourceType, providerForVideoSourceType, validateComponentAuthoring, validateModuleAuthoringStructure } from './componentAuthoringModel';
 import { createEmptyComponent } from './moduleAuthoringData';
 
 describe('normaliseComponentSettings week-template compatibility', () => {
+  it('offers HTML (MP4) as a video source and keeps it distinct', () => {
+    expect(MEDIA_SOURCE_TYPES).toContain('HTML (MP4)');
+    expect(normaliseVideoSourceType('HTML (MP4)')).toBe('HTML (MP4)');
+    expect(normaliseVideoSourceType('Upload file')).toBe('HTML (MP4)');
+    expect(providerForVideoSourceType('HTML (MP4)')).toBe('Upload file');
+  });
+
+  it('validates an HTML (MP4) URL like other HTTP video sources', () => {
+    const settings = normaliseComponentSettings('video', {
+      sourceType: 'HTML (MP4)',
+      provider: 'Upload file',
+      videoUrl: 'https://cdn.example.invalid/lesson.mp4',
+      contentStatus: 'Ready for QA',
+    });
+
+    expect(validateComponentAuthoring({
+      type: 'video',
+      title: 'MP4 lesson',
+      expectedOtjh: 0,
+      points: 10,
+      reflectionRequired: false,
+      workplaceEvidenceRequired: false,
+      settings,
+    })).toEqual([]);
+  });
+
   it('identifies every invalid component by week and title in the save message', () => {
     const assignment = (title: string) => ({
       type: 'assignment' as const,

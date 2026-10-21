@@ -3,6 +3,7 @@
 // Extracted out of the Module Builder so other authoring surfaces (e.g. the
 // Week Builder) can render the exact same editor.
 import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type ReactNode } from 'react';
+import { sanitizeCurriculumHtml } from '@/lib/curriculumHtml';
 
 type RichTextMode = 'design' | 'html';
 
@@ -25,6 +26,12 @@ export function RichTextDraft({
   const [mode, setMode] = useState<RichTextMode>(htmlOnly ? 'html' : 'design');
   const [fullscreen, setFullscreen] = useState(false);
   const lastHtmlRef = useRef(value || '');
+  // What the design surface was last filled with: the element, the browser's
+  // serialisation of it, and the stored value it came from. While the DOM
+  // still serialises the same, nothing was edited, so the stored value stands
+  // exactly as saved -- opening a component or clicking in and out of it no
+  // longer re-saves the browser's rewrite of its HTML.
+  const loadedRef = useRef<{ editor: HTMLDivElement; dom: string; value: string } | null>(null);
   const placeholder = compact
     ? 'Briefly introduce what the learner will read.'
     : 'Use headings, short paragraphs, bold key terms, and bullet lists. You can paste prepared HTML here.';
@@ -39,17 +46,40 @@ export function RichTextDraft({
   useEffect(() => {
     if (mode !== 'design') return;
     const editor = editorRef.current;
-    if (!editor || document.activeElement === editor) return;
+    if (!editor) return;
     const next = value || '';
-    // Compare against the DOM's actual content, not the last-committed ref —
-    // on mount the div starts empty (no dangerouslySetInnerHTML — see below),
-    // so this is what populates it the first time. Skipping that first sync
-    // caused every keystroke to re-set innerHTML from scratch and reset the
-    // caret to position 0, which typed each new character before the last —
-    // the "reversed while typing" bug.
-    if (editor.innerHTML === next) return;
-    editor.innerHTML = next;
-    lastHtmlRef.current = next;
+    // Filled already, and this value is the one it holds (or our own last
+    // commit). The div mounts empty (no dangerouslySetInnerHTML — see below),
+    // so a fresh element is always filled: skipping that first fill made every
+    // keystroke re-set innerHTML from scratch and reset the caret to position
+    // 0, typing each character before the last — the "reversed while typing"
+    // bug.
+    const current = loadedRef.current?.editor === editor && next === lastHtmlRef.current;
+    if (document.activeElement === editor) {
+      // Focused. The value coming back from our own keystrokes is exactly what
+      // was last committed, and re-setting it would move the caret, so it is
+      // left alone. A DIFFERENT value arriving while focused is somebody
+      // else's saved text (the live merge only replaces a field this author
+      // has not changed): it used to be ignored here and then written back
+      // over by the stale DOM on blur, silently undoing their edit. It goes
+      // in now, and the caret stays where it was in the text.
+      if (current) return;
+      const caret = caretTextOffset(editor);
+      fillEditor(editor, next);
+      if (caret !== null) placeCaretAtTextOffset(editor, caret);
+      return;
+    }
+    if (current) return;
+    fillEditor(editor, next);
+
+    /** Put a stored value on the design surface. It is sanitised first: this
+     *  is a live DOM, so an event handler in the HTML would otherwise run in
+     *  the author's session. The stored value is untouched unless they edit. */
+    function fillEditor(target: HTMLDivElement, html: string) {
+      target.innerHTML = sanitizeCurriculumHtml(html);
+      loadedRef.current = { editor: target, dom: target.innerHTML, value: html };
+      lastHtmlRef.current = html;
+    }
   }, [mode, value]);
 
   const commitHtml = useCallback((html: string) => {
@@ -58,8 +88,15 @@ export function RichTextDraft({
   }, [onChange]);
 
   const syncFromEditor = useCallback(() => {
-    const html = editorRef.current?.innerHTML || '';
-    commitHtml(html);
+    const editor = editorRef.current;
+    if (!editor) return;
+    const html = editor.innerHTML;
+    const loaded = loadedRef.current;
+    // Unchanged since it was filled (a blur with nothing typed, or an undo back
+    // to the start): the stored value, byte for byte, not the browser's copy.
+    const next = loaded && loaded.editor === editor && html === loaded.dom ? loaded.value : html;
+    if (next === lastHtmlRef.current) return;
+    commitHtml(next);
   }, [commitHtml]);
 
   const focusEditor = () => {
@@ -103,7 +140,7 @@ export function RichTextDraft({
     const html = event.clipboardData.getData('text/html');
     if (!html) return;
     event.preventDefault();
-    insertHtml(html);
+    insertHtml(sanitizeCurriculumHtml(html));
   };
 
   const shellClass = fullscreen
@@ -245,12 +282,51 @@ function RichToolbarDivider() {
   return <span className="mx-1 h-6 w-px bg-background-200" />;
 }
 
+/** Where the caret sits, as a count of text characters from the editor's start. */
+function caretTextOffset(editor: HTMLElement): number | null {
+  const selection = typeof window !== 'undefined' ? window.getSelection() : null;
+  if (!selection || !selection.rangeCount) return null;
+  const range = selection.getRangeAt(0);
+  if (!editor.contains(range.endContainer)) return null;
+  const before = range.cloneRange();
+  before.selectNodeContents(editor);
+  before.setEnd(range.endContainer, range.endOffset);
+  return before.toString().length;
+}
+
+/** Put the caret back at a text offset after the content under it was replaced. */
+function placeCaretAtTextOffset(editor: HTMLElement, offset: number) {
+  const selection = window.getSelection();
+  if (!selection) return;
+  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+  let remaining = offset;
+  let node = walker.nextNode();
+  while (node) {
+    const length = node.textContent?.length || 0;
+    if (remaining <= length) {
+      const range = document.createRange();
+      range.setStart(node, remaining);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return;
+    }
+    remaining -= length;
+    node = walker.nextNode();
+  }
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
 function htmlToPlainText(html: string) {
   if (!html) return '';
-  if (typeof document === 'undefined') return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-  const element = document.createElement('div');
-  element.innerHTML = html;
-  return (element.textContent || element.innerText || '').trim();
+  if (typeof DOMParser === 'undefined') return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  // A parsed document is inert: unlike a scratch <div> in this page, its
+  // images never load, so an onerror in stored HTML cannot run here.
+  return (new DOMParser().parseFromString(html, 'text/html').body.textContent || '').trim();
 }
 
 function escapeAttribute(value: string) {

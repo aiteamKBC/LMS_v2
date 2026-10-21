@@ -27,10 +27,12 @@ def validate_slot(scope, family, key):
         raise ValueError("Scope must be GLOBAL or PROGRAMME.")
 
 
-def validate_managed_definition(definition):
+def validate_managed_definition(definition, *, family=None):
     """Strict authoring boundary. Legacy frozen snapshots retain their renderer."""
-    if not isinstance(definition, dict) or set(definition) != {"sections"}:
-        raise ValueError("The definition must contain sections only, without answers or source data.")
+    if not isinstance(definition, dict) or "sections" not in definition or set(definition) - {"sections", "otjh"}:
+        raise ValueError("The definition may contain sections and OTJH settings only, without answers or source data.")
+    from .migrated_otjh import policy
+    policy(definition)
     sections = definition["sections"]
     if not isinstance(sections, list) or not 1 <= len(sections) <= 100:
         raise ValueError("A template needs between 1 and 100 sections.")
@@ -47,7 +49,7 @@ def validate_managed_definition(definition):
     def field_check(field, depth=0):
         if depth > 10 or len(keys) >= 500:
             raise ValueError("Use at most 500 fields and 10 conditional levels.")
-        allowed = {"key", "name", "title", "aptemType", "order", "mandatory", "description", "options", "ifTrue", "ifFalse", "semanticKey"}
+        allowed = {"key", "name", "title", "aptemType", "order", "mandatory", "description", "options", "ifTrue", "ifFalse", "semanticKey", "respondentRoles"}
         if not isinstance(field, dict) or set(field) - allowed:
             raise ValueError("Fields must contain form metadata only.")
         for label in ("key", "title"):
@@ -60,6 +62,15 @@ def validate_managed_definition(definition):
         kind = field.get("aptemType")
         if type(kind) is not int or kind not in FIELD_TYPES:
             raise ValueError(f"Unsupported field type for {field['key']}.")
+        roles = field.get("respondentRoles", [])
+        if (not isinstance(roles, list)
+                or any(role not in ("participant", "employer") for role in roles)
+                or len(roles) != len(set(roles))):
+            raise ValueError("Respondent roles must be unique Learner or Employer roles.")
+        if kind == 11 and roles:
+            raise ValueError("Headings cannot have respondent roles.")
+        if family == "MCM" and "employer" in roles:
+            raise ValueError("Employer answers are supported for Progress Reviews only.")
         ordered(field)
         if type(field.get("mandatory", False)) is not bool:
             raise ValueError("Mandatory must be true or false.")

@@ -4,6 +4,8 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { createSupportTicket, loadSupportTickets, updateSupportTicket, ticketDate, type SupportTicket, type TicketReply } from '@/api/supportTickets';
+import TicketFilePicker from '@/components/support/TicketFilePicker';
+import TicketAttachments from '@/components/support/TicketAttachments';
 
 const learnerNav = roleNavMap.learner;
 
@@ -131,9 +133,10 @@ export default function SupportPage() {
     saving.current = true; setSavingTicket(true); setTicketError('');
     requestId.current ||= crypto.randomUUID();
     try {
-      const ticket = await createSupportTicket({ requestId: requestId.current, title: newTicketSubject.trim(), description: newTicketDescription.trim(), category: newTicketCategory, priority: newTicketPriority.split(' ')[0].toLowerCase() });
+      const ticket = await createSupportTicket({ requestId: requestId.current, title: newTicketSubject.trim(), description: newTicketDescription.trim(), category: newTicketCategory, priority: newTicketPriority.split(' ')[0].toLowerCase() }, newTicketFiles);
       if (accountRef.current !== submittingAccount) return;
       saveTicketResult(ticket); setTicketModalOpen(false); setNewTicketSubject(''); setNewTicketDescription('');
+      setNewTicketFiles([]);
       requestId.current = null; setTicketSuccess('Your support ticket has been saved.');
     } catch (error) { setTicketError(error instanceof Error ? error.message : 'Could not submit ticket. Your message is kept.'); }
     finally { saving.current = false; setSavingTicket(false); }
@@ -149,6 +152,7 @@ export default function SupportPage() {
   const [newTicketCategory, setNewTicketCategory] = useState<string>('Technical Issue');
   const [newTicketSubject, setNewTicketSubject] = useState('');
   const [newTicketDescription, setNewTicketDescription] = useState('');
+  const [newTicketFiles, setNewTicketFiles] = useState<File[]>([]);
   const [newTicketPriority, setNewTicketPriority] = useState('Medium — Needs attention this week');
   const [aiQuery, setAiQuery] = useState('');
   const [aiAnswer, setAiAnswer] = useState<string | null>(null);
@@ -156,6 +160,7 @@ export default function SupportPage() {
 
   useEffect(() => {
     setNewTicketSubject(''); setNewTicketDescription(''); setReplyBody('');
+    setNewTicketFiles([]); setReplyFiles([]);
     setTicketSuccess(''); setTicketError(''); requestId.current = null; replyRequest.current = null;
   }, [auth.account?.id]);
 
@@ -196,7 +201,11 @@ export default function SupportPage() {
   );
   const [replyModalOpen, setReplyModalOpen] = useState(false);
   const [replyBody, setReplyBody] = useState('');
+  const [replyFiles, setReplyFiles] = useState<File[]>([]);
   const [replySending, setReplySending] = useState(false);
+  useEffect(() => {
+    setReplyBody(''); setReplyFiles([]); replyRequest.current = null; setReplyModalOpen(false);
+  }, [selectedTicket?.id]);
 
   // Contact Modals
   const [emailModalOpen, setEmailModalOpen] = useState(false);
@@ -237,13 +246,16 @@ export default function SupportPage() {
 
   const handleSendReply = async () => {
     if (!selectedTicket || !replyBody.trim() || saving.current) return;
+    const submittingAccount = auth.account?.id;
     saving.current = true; setReplySending(true); setTicketError('');
     if (replyRequest.current?.body !== replyBody.trim() || replyRequest.current.ticket !== selectedTicket.id) {
       replyRequest.current = { body: replyBody.trim(), ticket: selectedTicket.id, id: crypto.randomUUID() };
     }
     try {
-      saveTicketResult(await updateSupportTicket(selectedTicket.id, { action: 'reply', requestId: replyRequest.current.id, body: replyBody.trim() }));
-      setReplyBody(''); setReplyModalOpen(false); replyRequest.current = null;
+      const ticket = await updateSupportTicket(selectedTicket.id, { action: 'reply', requestId: replyRequest.current.id, body: replyBody.trim() }, false, replyFiles);
+      if (accountRef.current !== submittingAccount) return;
+      saveTicketResult(ticket);
+      setReplyBody(''); setReplyFiles([]); setReplyModalOpen(false); replyRequest.current = null;
     } catch (error) { setTicketError(error instanceof Error ? error.message : 'Could not send your reply.'); }
     finally { saving.current = false; setReplySending(false); }
   };
@@ -503,6 +515,7 @@ export default function SupportPage() {
                     {/* Description */}
                     <div className="bg-background-100/70 rounded-lg p-3">
                       <p className="text-[12px] text-foreground-600 leading-relaxed">{selectedTicket.description}</p>
+                      <TicketAttachments ticketId={selectedTicket.id} attachments={selectedTicket.attachments} />
                     </div>
 
                     {/* Timeline */}
@@ -604,6 +617,7 @@ export default function SupportPage() {
                                 <span className="text-[9px] text-foreground-400">{ticketDate(reply.timestamp)}</span>
                               </div>
                               <p className="text-foreground-600 leading-relaxed">{reply.body}</p>
+                              <TicketAttachments ticketId={selectedTicket.id} attachments={reply.attachments} />
                             </div>
                           ))}
                         </div>
@@ -928,7 +942,7 @@ export default function SupportPage() {
         {ticketModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
             <div className="absolute inset-0 bg-foreground-950/50 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => { if (!savingTicket) setTicketModalOpen(false); }}></div>
-            <div className="relative bg-background-50 rounded-2xl w-full max-w-lg mx-4 shadow-2xl border border-background-200 overflow-hidden animate-in fade-in zoom-in-95 duration-300">
+            <div className="relative bg-background-50 rounded-2xl w-full max-w-lg mx-4 shadow-2xl border border-background-200 max-h-[90dvh] overflow-y-auto animate-in fade-in zoom-in-95 duration-300">
               <div className="flex items-center justify-between px-6 py-4 border-b border-background-200/50">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Submit a New Support Ticket</h3>
                 <button disabled={savingTicket} onClick={() => { if (!savingTicket) setTicketModalOpen(false); }} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
@@ -987,6 +1001,8 @@ export default function SupportPage() {
                     className="w-full px-3 py-2.5 rounded-lg border border-background-200 bg-background-50 text-sm text-foreground-700 outline-none focus:border-primary-300 transition-smooth resize-none"
                   ></textarea>
                 </div>
+                <TicketFilePicker files={newTicketFiles} disabled={savingTicket}
+                  onChange={files => { requestId.current = null; setNewTicketFiles(files); }} />
                 <div className="flex items-center gap-2 pt-2">
                   <button disabled={savingTicket} onClick={() => { if (!savingTicket) setTicketModalOpen(false); }} className="flex-1 px-4 py-2.5 bg-background-50 border border-background-200 rounded-xl text-sm font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
                     Cancel
@@ -1003,11 +1019,11 @@ export default function SupportPage() {
         {/* Reply Modal */}
         {replyModalOpen && selectedTicket && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <div className="absolute inset-0 bg-foreground-950/50 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setReplyModalOpen(false)}></div>
-            <div className="relative bg-background-50 rounded-2xl w-full max-w-lg mx-4 shadow-2xl border border-background-200 overflow-hidden animate-in fade-in zoom-in-95 duration-300">
+            <div className="absolute inset-0 bg-foreground-950/50 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => { if (!replySending) setReplyModalOpen(false); }}></div>
+            <div className="relative bg-background-50 rounded-2xl w-full max-w-lg mx-4 shadow-2xl border border-background-200 max-h-[90dvh] overflow-y-auto animate-in fade-in zoom-in-95 duration-300">
               <div className="flex items-center justify-between px-6 py-4 border-b border-background-200/50">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Reply to #{selectedTicket.id}</h3>
-                <button onClick={() => setReplyModalOpen(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
+                <button disabled={replySending} onClick={() => setReplyModalOpen(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
                   <AppIcon className="ri-close-line text-sm"></AppIcon>
                 </button>
               </div>
@@ -1021,14 +1037,16 @@ export default function SupportPage() {
                   <label className="text-xs font-medium text-foreground-500 mb-1 block">Your reply</label>
                   <textarea
                     rows={4}
-                    value={replyBody}
+                    aria-label="Your reply" disabled={replySending} value={replyBody}
                     onChange={e => setReplyBody(e.target.value)}
                     placeholder="Type your reply here..."
                     className="w-full px-3 py-2.5 rounded-lg border border-background-200 bg-background-50 text-sm text-foreground-700 outline-none focus:border-primary-300 transition-smooth resize-none"
                   />
                 </div>
+                <TicketFilePicker files={replyFiles} disabled={replySending}
+                  onChange={files => { replyRequest.current = null; setReplyFiles(files); }} />
                 <div className="flex items-center gap-2 pt-2">
-                  <button onClick={() => setReplyModalOpen(false)} className="flex-1 px-4 py-2.5 bg-background-50 border border-background-200 rounded-xl text-sm font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
+                  <button disabled={replySending} onClick={() => setReplyModalOpen(false)} className="flex-1 px-4 py-2.5 bg-background-50 border border-background-200 rounded-xl text-sm font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
                     Cancel
                   </button>
                   <button

@@ -9,7 +9,7 @@ from .subject_quiz import imported_quiz
 from . import subject_store
 
 
-def read_review(owner, group_id, quiz_id, *, allow_attempts=False):
+def read_review(owner, group_id, quiz_id, *, allow_attempts=False, demo_preview=False):
     # Reuse the learner catalogue's membership, exclusion and completion rules.
     # Numeric quiz IDs alone are not unique across courses or component kinds.
     catalogue = canonical_learning.source_subjects(owner['enrolment_id'],
@@ -18,7 +18,7 @@ def read_review(owner, group_id, quiz_id, *, allow_attempts=False):
         if str(item.get('group_id')) == str(group_id)
         and str(item.get('source_activity_id')) == str(quiz_id)
         and item.get('catalogue_kind') == 'quiz'
-        and (allow_attempts or item.get('completed') is True)]
+        and (allow_attempts or demo_preview or item.get('completed') is True)]
     if len(matches) != 1:
         raise canonical_learning.ServiceError('Quiz not found.', 'not_found', 404)
 
