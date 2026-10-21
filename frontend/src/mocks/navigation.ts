@@ -226,7 +226,6 @@ export const employerNavItems: SidebarNavItem[] = [
 export const curriculumNavItems: SidebarNavItem[] = [
   { id: 'curriculumNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/curriculum/coach-directory' },
   { id: 'curriculum-home', label: 'Home', icon: 'ri-home-5-line', href: '/workspace/curriculum' },
-  { id: 'curriculum-progress-transfers', label: 'Transfer Progress', icon: 'ri-arrow-left-right-line', href: '/curriculum/progress-transfers' },
   {
     id: 'curriculum-programmes',
     label: 'Programmes',
@@ -361,6 +360,7 @@ export const engagementNavItems: SidebarNavItem[] = [
  * live on the learner's own page (see BoardPage's Programme panel).
  */
 export const apprenticeNavItems: SidebarNavItem[] = [
+  { id: 'enrolment-progress-transfers', label: 'Transfer Progress', icon: 'ri-arrow-left-right-line', href: '/users/progress-transfers' },
   { id: 'apprenticeNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/users/coach-directory' },
   { id: 'apprenticeNavItems-first-sessions', label: 'First sessions', icon: 'ri-calendar-check-line', href: '/users/first-sessions' },
   { id: 'apprentice-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
@@ -371,6 +371,7 @@ export const apprenticeNavItems: SidebarNavItem[] = [
  * compliance workspace pages (ILR, evidence packs, funding risk, …) rely on.
  */
 export const enrolmentNavItems: SidebarNavItem[] = [
+  { id: 'enrolment-progress-transfers', label: 'Transfer Progress', icon: 'ri-arrow-left-right-line', href: '/users/progress-transfers' },
   { id: 'enrolmentNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/users/coach-directory' },
   { id: 'enrolmentNavItems-first-sessions', label: 'First sessions', icon: 'ri-calendar-check-line', href: '/users/first-sessions' },
   { id: 'enrolment-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },

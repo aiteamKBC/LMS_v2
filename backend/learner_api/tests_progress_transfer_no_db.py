@@ -153,6 +153,24 @@ class TransferEndpointTests(SimpleTestCase):
             self.assertEqual(response.status_code,503)
             self.assertNotIn('private connection',response.content.decode())
 
+    def test_component_review_is_admin_only_and_learner_cannot_supply_mappings(self):
+        for role in ('learner', 'staff', 'employer'):
+            with patch.object(api, 'authenticate_request', return_value=SimpleNamespace(role=role)), \
+                    patch.object(api, 'review_request') as review:
+                self.assertEqual(api.admin_requests(self.request(), request_id='R1').status_code, 403)
+                review.assert_not_called()
+        with patch.object(api, 'authenticate_request', return_value=SimpleNamespace(role='admin')), \
+                patch.object(api, 'review_request', return_value={'reviewToken': 'token', 'modules': []}) as review:
+            response = api.admin_requests(self.request(), request_id='R1')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response['Cache-Control'], 'private, no-store')
+            self.assertEqual(json.loads(response.content)['reviewToken'], 'token')
+            review.assert_called_once_with('R1')
+        with patch.object(api, 'authenticate_request', return_value=SimpleNamespace(role='learner', subject_id=7)), \
+                patch.object(api, 'create_request') as create:
+            self.assertEqual(api.learner_request(self.request('post', {'confirm': True, 'mappings': []}), kind='commercial', pk=7).status_code, 400)
+            create.assert_not_called()
+
 
 class TransferWorkflowTests(SimpleTestCase):
     def setUp(self):
