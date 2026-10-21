@@ -46,9 +46,109 @@ class PostLectureBankTests(SimpleTestCase):
             SimpleNamespace(question_set_pinned=False),
         ))
 
-    def test_reconciling_attendance_does_not_draw_again_for_an_existing_lecture(self):
+    def test_unstarted_bank_delivery_from_an_older_worker_is_pinned_once(self):
+        delivery = feedback.FeedbackDelivery(id=30, form_id=4, question_set_pinned=False)
+        bank_sections = mock.Mock()
+        bank_sections.filter.return_value.exists.return_value = True
+        form = SimpleNamespace(sections=bank_sections)
+        stored = SimpleNamespace(id=30, form=form, question_set_pinned=False)
+        locked = mock.Mock()
+        locked.select_related.return_value.get.return_value = stored
+
+        def pin(row, template):
+            self.assertIs(template, form)
+            row.question_set_pinned = True
+
+        with (
+            mock.patch.object(feedback_delivery.FeedbackDelivery.objects, 'select_for_update', return_value=locked),
+            mock.patch.object(feedback_delivery.FeedbackResponse.objects, 'filter') as responses,
+            mock.patch.object(feedback_delivery, '_pin_delivery_questions', side_effect=pin) as draw,
+            mock.patch.object(feedback_delivery.transaction, 'atomic'),
+        ):
+            responses.return_value.exists.return_value = False
+            self.assertTrue(feedback_delivery.ensure_delivery_questions(delivery))
+            self.assertTrue(delivery.question_set_pinned)
+            self.assertFalse(feedback_delivery.ensure_delivery_questions(delivery))
+        draw.assert_called_once_with(stored, form)
+
+    def test_unpinned_bank_with_a_started_response_keeps_its_historical_questions(self):
+        delivery = feedback.FeedbackDelivery(id=30, form_id=4, question_set_pinned=False)
+        form = SimpleNamespace(sections=mock.Mock())
+        form.sections.filter.return_value.exists.return_value = True
+        stored = SimpleNamespace(id=30, form=form, question_set_pinned=False)
+        locked = mock.Mock()
+        locked.select_related.return_value.get.return_value = stored
+        with (
+            mock.patch.object(feedback_delivery.FeedbackDelivery.objects, 'select_for_update', return_value=locked),
+            mock.patch.object(feedback_delivery.FeedbackResponse.objects, 'filter') as responses,
+            mock.patch.object(feedback_delivery, '_pin_delivery_questions') as draw,
+            mock.patch.object(feedback_delivery.transaction, 'atomic'),
+        ):
+            responses.return_value.exists.return_value = True
+            self.assertFalse(feedback_delivery.ensure_delivery_questions(delivery))
+        draw.assert_not_called()
+        self.assertFalse(delivery.question_set_pinned)
+
+    def test_fixed_legacy_form_is_not_converted_into_a_random_bank(self):
+        delivery = feedback.FeedbackDelivery(id=30, form_id=4, question_set_pinned=False)
+        form = SimpleNamespace(sections=mock.Mock())
+        form.sections.filter.return_value.exists.return_value = False
+        stored = SimpleNamespace(id=30, form=form, question_set_pinned=False)
+        locked = mock.Mock()
+        locked.select_related.return_value.get.return_value = stored
+        with (
+            mock.patch.object(feedback_delivery.FeedbackDelivery.objects, 'select_for_update', return_value=locked),
+            mock.patch.object(feedback_delivery, '_pin_delivery_questions') as draw,
+            mock.patch.object(feedback_delivery.transaction, 'atomic'),
+        ):
+            self.assertFalse(feedback_delivery.ensure_delivery_questions(delivery))
+        draw.assert_not_called()
+
+    def test_a_second_reader_uses_the_question_set_saved_by_the_first(self):
+        delivery = feedback.FeedbackDelivery(id=30, form_id=4, question_set_pinned=False)
+        locked = mock.Mock()
+        locked.select_related.return_value.get.return_value = SimpleNamespace(question_set_pinned=True)
+        with (
+            mock.patch.object(feedback_delivery.FeedbackDelivery.objects, 'select_for_update', return_value=locked),
+            mock.patch.object(feedback_delivery, '_pin_delivery_questions') as draw,
+            mock.patch.object(feedback_delivery.transaction, 'atomic'),
+        ):
+            self.assertFalse(feedback_delivery.ensure_delivery_questions(delivery))
+        self.assertTrue(delivery.question_set_pinned)
+        draw.assert_not_called()
+
+    def test_learner_context_initializes_the_bank_before_exposing_the_form(self):
+        form = SimpleNamespace(start_date=None)
+        delivery = SimpleNamespace(form=form)
+        recipient = SimpleNamespace(delivery=delivery)
+        recipient_query = mock.Mock()
+        recipient_query.get.return_value = recipient
+        with (
+            mock.patch.object(feedback.FeedbackDeliveryRecipient.objects, 'select_related', return_value=recipient_query),
+            mock.patch.object(feedback, 'ensure_delivery_questions') as ensure,
+        ):
+            self.assertEqual(feedback._learner_feedback_context('7', delivery_id=30), (form, delivery, recipient))
+        ensure.assert_called_once_with(delivery)
+
+    def test_attendance_retry_initializes_an_unpinned_existing_bank(self):
         occurrence = feedback_delivery.LectureOccurrence(key='lecture-30', module_catalogue_id='module-1')
         delivery = SimpleNamespace(id=30)
+        form = SimpleNamespace(due_date=None)
+        with (
+            mock.patch.object(feedback_delivery, '_form_for_occurrence', return_value=form),
+            mock.patch.object(feedback_delivery.EnrolmentUser.all_learners, 'filter', return_value=[]),
+            mock.patch.object(feedback_delivery.FeedbackDelivery.objects, 'update_or_create', return_value=(delivery, False)),
+            mock.patch.object(feedback_delivery.FeedbackDeliveryRecipient.objects, 'filter') as recipients,
+            mock.patch.object(feedback_delivery, 'ensure_delivery_questions') as ensure,
+            mock.patch.object(feedback_delivery.transaction, 'atomic'),
+        ):
+            recipients.return_value.exclude.return_value.update.return_value = 0
+            feedback_delivery.sync_post_lecture_feedback(occurrence, [], attendance_finalized=True)
+        ensure.assert_called_once_with(delivery)
+
+    def test_reconciling_attendance_does_not_draw_again_for_an_existing_lecture(self):
+        occurrence = feedback_delivery.LectureOccurrence(key='lecture-30', module_catalogue_id='module-1')
+        delivery = SimpleNamespace(id=30, question_set_pinned=True)
         form = SimpleNamespace(due_date=None)
         with (
             mock.patch.object(feedback_delivery, '_form_for_occurrence', return_value=form),

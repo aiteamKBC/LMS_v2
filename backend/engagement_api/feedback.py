@@ -30,6 +30,7 @@ from learner_api import evidence_storage
 from learner_api.profile_photo import normalize_photo
 
 from .helpers import json_body, json_error
+from .feedback_delivery import ensure_delivery_questions
 from .models import (
     FeedbackAnswer, FeedbackAssignment, FeedbackDelivery, FeedbackDeliveryRecipient,
     FeedbackEventCampaign, FeedbackEventRecipient, FeedbackForm, FeedbackQuestion, FeedbackResponse,
@@ -1335,6 +1336,7 @@ def _learner_feedback_context(
         form, delivery = recipient.delivery.form, recipient.delivery
         if form.start_date and form.start_date > now:
             return None, None, None
+        ensure_delivery_questions(delivery)
         return form, delivery, recipient
     try:
         form = _forms_queryset().get(pk=form_id, status='published')
