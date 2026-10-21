@@ -8,7 +8,7 @@ import LearnerFeedbackFormPage from './page';
 
 vi.mock('@/api/feedback', async importOriginal => {
   const actual = await importOriginal<typeof import('@/api/feedback')>();
-  return { ...actual, feedbackApi: { ...actual.feedbackApi, myForm: vi.fn(), saveResponse: vi.fn(), myReviewDelivery: vi.fn(), saveReviewDeliveryResponse: vi.fn() } };
+  return { ...actual, feedbackApi: { ...actual.feedbackApi, myForm: vi.fn(), saveResponse: vi.fn(), myDelivery: vi.fn(), saveDeliveryResponse: vi.fn(), myReviewDelivery: vi.fn(), saveReviewDeliveryResponse: vi.fn() } };
 });
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { role: 'learner', subjectType: 'learner', subjectId: 61, learnerType: 'apprenticeship', displayName: 'Learner' } }, isInitialized: true }) }));
 vi.mock('@/hooks/useMyLearner', () => ({ useResolvedLearner: () => ({ kind: 'apprenticeship', id: '61' }) }));
@@ -54,5 +54,27 @@ describe('learner feedback automatic save', () => {
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
     await waitFor(() => expect(feedbackApi.saveResponse).toHaveBeenLastCalledWith(4, { '10': 'Great session' }, false), { timeout: 2500 });
     expect(await screen.findByText('All changes saved')).toBeInTheDocument();
+  });
+
+  it('shows bank categories as one page with stars before the closing question', async () => {
+    vi.mocked(feedbackApi.myDelivery).mockResolvedValue({ form: {
+      ...form,
+      sections: [
+        { id: 1, title: 'Teaching', icon: 'ri-star-line', description: '', questionsPerDelivery: 1,
+          questions: [{ id: 11, type: 'rating', text: 'Was teaching clear?', required: true, helpText: '', config: { min: 1, max: 5, display: 'stars' } }] },
+        { id: 2, title: 'Resources', icon: 'ri-star-line', description: '', questionsPerDelivery: 1,
+          questions: [{ id: 12, type: 'rating', text: 'Were resources useful?', required: true, helpText: '', config: { min: 1, max: 5, display: 'stars' } }] },
+        { id: 3, title: 'General comments', icon: 'ri-chat-3-line', description: '', questionsPerDelivery: null,
+          questions: [{ id: 13, type: 'long_text', text: 'What could we improve?', required: false, helpText: '', config: {} }] },
+      ],
+    } });
+    render(<MemoryRouter initialEntries={['/learner/feedback/delivery/44']}><Routes><Route path="/learner/feedback/delivery/:deliveryId" element={<LearnerFeedbackFormPage />} /></Routes></MemoryRouter>);
+
+    expect(await screen.findByText('Was teaching clear?')).toBeInTheDocument();
+    expect(feedbackApi.myDelivery).toHaveBeenCalledWith(44, undefined);
+    expect(screen.getByText('Were resources useful?')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'What could we improve?' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Submit' })).toBeInTheDocument();
   });
 });

@@ -20,11 +20,18 @@ function canDownloadAndroid(account: AuthUser | null) {
       && (account.access === 'coach' || account.accesses?.includes('coach'))));
 }
 
+function destinationFor(account: AuthUser, lectureFeedbackIntent: boolean) {
+  return lectureFeedbackIntent && account.role === 'learner' && account.subjectType === 'learner'
+    ? '/learner/feedback?category=lecture'
+    : postLoginRouteFor(account);
+}
+
 export default function LoginPage() {
   const { login, auth, isInitialized } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const androidDownload = new URLSearchParams(location.search).get('download') === 'android';
+  const lectureFeedbackIntent = !androidDownload && new URLSearchParams(location.search).get('lectureFeedback') === '1';
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
@@ -54,8 +61,8 @@ export default function LoginPage() {
   useEffect(() => {
     if (!isInitialized || !auth.account) return;
     if (androidDownload && canDownloadAndroid(auth.account)) return;
-    navigate(postLoginRouteFor(auth.account), { replace: true });
-  }, [isInitialized, auth.account, androidDownload, navigate]);
+    navigate(destinationFor(auth.account, lectureFeedbackIntent), { replace: true });
+  }, [isInitialized, auth.account, androidDownload, lectureFeedbackIntent, navigate]);
 
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -82,7 +89,7 @@ export default function LoginPage() {
         setIsLoading(false);
         return;
       }
-      navigate(postLoginRouteFor(account), { replace: true });
+      navigate(destinationFor(account, lectureFeedbackIntent), { replace: true });
     } catch (err) {
       if (err instanceof PasswordSetupRequired) {
         const path = androidDownload ? `${err.setPasswordPath}&download=android` : err.setPasswordPath;
@@ -104,7 +111,7 @@ export default function LoginPage() {
     try {
       // This is a full navigation so Microsoft can return to the callback that
       // creates the server session cookie.
-      window.location.href = await (androidDownload ? apiMicrosoftStart('android') : apiMicrosoftStart());
+      window.location.href = await (androidDownload ? apiMicrosoftStart('android') : lectureFeedbackIntent ? apiMicrosoftStart(undefined, 'lecture-feedback') : apiMicrosoftStart());
     } catch (err) {
       setError(
         err instanceof AuthError

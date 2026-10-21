@@ -30,6 +30,7 @@ export interface FeedbackSection {
   title: string;
   icon?: string;
   description: string;
+  questionsPerDelivery?: number | null;
   sortOrder?: number;
   questions: FeedbackQuestion[];
 }

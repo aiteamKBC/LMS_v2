@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as XLSX from 'xlsx';
 
 import { feedbackApi } from '@/api/feedback';
 import { FormBuilder } from './FormBuilder';
@@ -12,6 +13,42 @@ Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true,
 afterEach(() => vi.restoreAllMocks());
 
 describe('post-lecture feedback delivery scope', () => {
+  it('previews an uploaded bank before replacing the draft and shows one learner page', async () => {
+    const user = userEvent.setup();
+    render(<MemoryRouter><FormBuilder /></MemoryRouter>);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+      ['Category', 'Question', 'Questions per lecture', 'Type'],
+      ['Teaching', 'Was the explanation clear?', 1, 'stars'],
+      ['Teaching', 'Were the examples helpful?', 1, 'stars'],
+      ['Resources', 'Were the materials useful?', 1, 'stars'],
+      ['Resources', 'Were the activities useful?', 1, 'stars'],
+      ['', 'What could we improve?', '', 'text'],
+    ]), 'Questions');
+    const bytes = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
+    const file = new File([bytes], 'questions.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    Object.defineProperty(file, 'arrayBuffer', { value: async () => bytes });
+    await user.upload(screen.getByLabelText('Question bank file'), file);
+    expect(await screen.findByText(/4 star questions across 2 categories/)).toBeVisible();
+    expect(screen.getByRole('textbox', { name: 'Section 1 title' })).toHaveValue('Section 1');
+    await user.click(screen.getByRole('button', { name: 'Replace draft questions with this bank' }));
+    expect(screen.getByRole('textbox', { name: 'Section 1 title' })).toHaveValue('Teaching');
+    await user.click(screen.getByRole('button', { name: 'Preview' }));
+    expect(screen.getByText('1/1')).toBeVisible();
+    expect(screen.getByText('What could we improve?')).toBeVisible();
+  });
+
+  it('shows a reusable QR and lets staff draw a set number from each section', async () => {
+    const user = userEvent.setup();
+    render(<MemoryRouter><FormBuilder /></MemoryRouter>);
+
+    expect(screen.getByText('Reusable lecture feedback QR')).toBeVisible();
+    expect(screen.getByText(`${window.location.origin}/login?lectureFeedback=1`)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: '+ Add Question to section 1' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Section 1 questions per lecture' }), '1');
+    expect(screen.getByRole('combobox', { name: 'Section 1 questions per lecture' })).toHaveValue('1');
+  });
+
   it('lets the creator choose section icons and previews sections as steps', async () => {
     const user = userEvent.setup();
     render(<MemoryRouter><FormBuilder /></MemoryRouter>);
