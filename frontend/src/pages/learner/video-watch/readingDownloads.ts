@@ -1,5 +1,4 @@
-import DOMPurify from 'dompurify';
-import { normalizeReadingHtml } from '@/lib/readingHtml';
+import { normalizeAuthoredHtml, sanitizeCurriculumHtml } from '@/lib/curriculumHtml';
 
 const FILE_EXTENSION = /\.(pdf|docx?|pptx?|xlsx?|txt|csv|rtf|epub|zip|png|jpe?g|webp)$/i;
 
@@ -26,7 +25,7 @@ export function readingFiles(
   };
   if (resourceUrl) add(resourceUrl, fileName || undefined);
   for (const attachment of attachments) add(attachment.url, attachment.fileName || undefined);
-  const document = new DOMParser().parseFromString(DOMPurify.sanitize(normalizeReadingHtml(html)), 'text/html');
+  const document = new DOMParser().parseFromString(sanitizeCurriculumHtml(normalizeAuthoredHtml(html)), 'text/html');
   for (const anchor of document.querySelectorAll('a[href]')) {
     const url = anchor.getAttribute('href') || '';
     if (!url || url.startsWith('#')) continue;
@@ -44,7 +43,7 @@ export function readingFiles(
 
 /** Export source text without learner highlights or surrounding controls. */
 export function readingText(html: string): string {
-  const document = new DOMParser().parseFromString(DOMPurify.sanitize(normalizeReadingHtml(html)), 'text/html');
+  const document = new DOMParser().parseFromString(sanitizeCurriculumHtml(normalizeAuthoredHtml(html)), 'text/html');
   document.querySelectorAll('script,style,iframe,video,audio,[hidden],[aria-hidden="true"]').forEach(node => node.remove());
   document.querySelectorAll('br').forEach(node => node.replaceWith('\n'));
   document.querySelectorAll('p,div,h1,h2,h3,h4,h5,h6,li,tr,blockquote,section').forEach(node => node.append('\n\n'));

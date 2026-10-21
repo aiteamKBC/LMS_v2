@@ -123,13 +123,13 @@ describe('employer progress reviews', () => {
   it('uses the existing employer party flow for migrated reviews', async () => {
     event = { ...event, migratedForm: true, eventKey: 'imported-review:88', id: 'imported-review:88', reviewInstanceId: null, reviewTemplateId: null,
       employerSigned: false, employerSignatureRequired: true };
-    definition = { ...definition, migratedForm: true, source: 'aptem' };
+    definition = { ...definition, migratedForm: true, source: 'aptem', reviewRevision: 2 };
     vi.mocked(fetchMigratedReviewForParty).mockResolvedValue(definition);
     vi.mocked(signMigratedReviewAsParty).mockResolvedValue({ signed: true, role: 'employer' });
     mount();
     fireEvent.click(await screen.findByRole('button', { name: 'Read & sign' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Confirm employer signature' }));
-    await waitFor(() => expect(signMigratedReviewAsParty).toHaveBeenCalledWith('imported-review:88', 'data:image/png;base64,SIG'));
+    await waitFor(() => expect(signMigratedReviewAsParty).toHaveBeenCalledWith('imported-review:88', 'data:image/png;base64,SIG', { reviewRevision: 2 }));
     expect(signReviewAsEmployer).not.toHaveBeenCalled();
   });
 

@@ -1,4 +1,5 @@
 from django.urls import path
+from .migrated_reopening_views import reopen_review, coach_revision_pdf
 
 from .ai_marking import coach_marking_ai_feedback, coach_marking_ai_prompt
 from .csrf import coach_csrf_token
@@ -89,6 +90,8 @@ urlpatterns = [
     path('migrated-reviews/<str:review_id>/summary', migrated_review_summary, name='migrated-review-summary'),
     path('migrated-reviews/<str:review_id>/summary/from-upload', migrated_review_summary_upload, name='migrated-review-summary-upload'),
     path('migrated-reviews/<str:review_id>/submit', migrated_review_submit, name='migrated-review-submit'),
+    path('migrated-reviews/<str:review_id>/reopen', reopen_review, name='migrated-review-reopen'),
+    path('migrated-reviews/<str:review_id>/revisions/<int:number>/pdf', coach_revision_pdf, name='migrated-review-revision-pdf'),
     path('migrated-reviews/<str:review_id>/coach-sign', migrated_review_coach_sign, name='migrated-review-coach-sign'),
     path('migrated-reviews/<str:review_id>/complete', migrated_review_complete, name='migrated-review-complete'),
     path('migrated-reviews/<str:review_id>/generate-pdf', migrated_review_generate_pdf, name='migrated-review-generate-pdf'),

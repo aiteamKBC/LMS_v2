@@ -92,15 +92,21 @@ describe('imported Aptem booking on the meeting detail page', () => {
       scheduledDate: '2026-10-29', scheduledTime: '10:00', durationMinutes: 60,
       meetingLink: 'https://example.invalid/meeting', syncState: 'synced',
     } });
-    fetchEvents.mockResolvedValue({ events: [importedEvent({ source, status: 'scheduled', calendarEventKey: EVENT_KEY })], owner: { name: 'Coach Example' } });
+    fetchEvents.mockResolvedValue({ events: [importedEvent({
+      source, status: 'scheduled', calendarEventKey: EVENT_KEY,
+      scheduledDate: '2026-10-29', scheduledTime: '10:00',
+    })], owner: { name: 'Coach Example' } });
     fetchForm.mockResolvedValue(initial);
-    rescheduleForm.mockResolvedValue({ ...initial, booking: { ...initial.booking!, scheduledTime: '11:00' } });
+    rescheduleForm.mockResolvedValue({ ...initial, booking: { ...initial.booking!, scheduledDate: '2026-11-02', scheduledTime: '11:00' } });
     mount(source === 'mcr' ? undefined : `/coach/progress-reviews/${encodeURIComponent(EVENT_KEY)}`);
     const button = await screen.findByRole('button', { name: 'Reschedule' });
+    expect(screen.getByText('Scheduled date').nextElementSibling).toHaveTextContent('29 Oct 2026');
     fireEvent.click(button);
     await waitFor(() => expect(rescheduleForm).toHaveBeenCalledWith(EVENT_KEY,
       expect.objectContaining({ scheduledDate: '2026-10-29', scheduledTime: '10:00', durationMinutes: 60 }), initial.booking));
     expect(await screen.findByText('Meeting rescheduled.')).toBeVisible();
+    expect(screen.getByText('Scheduled date').nextElementSibling).toHaveTextContent('02 Nov 2026');
+    expect(screen.getByText('Target date').nextElementSibling).toHaveTextContent('29 Oct 2026');
     expect(bookForm).not.toHaveBeenCalled();
     expect(scheduleEvent).not.toHaveBeenCalled();
   });
@@ -112,6 +118,41 @@ describe('imported Aptem booking on the meeting detail page', () => {
     fetchForm.mockResolvedValue(importedDefinition());
   });
   afterEach(cleanup);
+
+  it.each(['mcr', 'progress-review'] as const)('does not show the planned %s date as a booking before booking succeeds', async source => {
+    const targetDate = '2027-01-29';
+    fetchEvents.mockResolvedValue({
+      events: [importedEvent({ source, targetDate, scheduledDate: targetDate, scheduledTime: null })],
+      owner: { name: 'Coach Example' },
+    });
+    const initial = importedDefinition();
+    fetchForm.mockResolvedValue({ ...initial, instance: { ...initial.instance, targetDate } });
+    bookForm.mockRejectedValueOnce(new Error('The coach is busy at this time.'));
+    mount(source === 'mcr' ? undefined : `/coach/progress-reviews/${encodeURIComponent(EVENT_KEY)}`);
+
+    const button = await screen.findByRole('button', { name: source === 'mcr' ? 'Book Meeting' : 'Book Review' });
+    expect(screen.getByText('Target date').nextElementSibling).toHaveTextContent('29 Jan 2027');
+    expect(screen.getByText('Scheduled date').nextElementSibling).toHaveTextContent('Not scheduled');
+    expect(screen.getByText('Time', { exact: true }).nextElementSibling).toHaveTextContent('Time TBC');
+    expect(bookForm).not.toHaveBeenCalled();
+
+    fireEvent.click(button);
+    expect(await screen.findByText('The coach is busy at this time.')).toBeVisible();
+    expect(screen.getByText('Scheduled date').nextElementSibling).toHaveTextContent('Not scheduled');
+    expect(screen.getByText('Target date').nextElementSibling).toHaveTextContent('29 Jan 2027');
+
+    bookForm.mockResolvedValueOnce(importedDefinition({
+      localStatus: 'scheduled',
+      booking: {
+        ...initial.booking!, booked: true, canBook: false, eventKey: EVENT_KEY,
+        scheduledDate: targetDate, scheduledTime: '09:00', syncState: 'synced',
+      },
+    }));
+    fireEvent.click(button);
+    await waitFor(() => expect(screen.getByText('Scheduled date').nextElementSibling).toHaveTextContent('29 Jan 2027'));
+    expect(screen.getByText('Target date').nextElementSibling).toHaveTextContent('29 Jan 2027');
+    expect(scheduleEvent).not.toHaveBeenCalled();
+  });
 
   it('books the imported review through its own endpoint, keyed by its Aptem identity', async () => {
     bookForm.mockResolvedValue(importedDefinition({

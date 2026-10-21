@@ -266,6 +266,7 @@ def fetch_verified_teams_attendance_rows(
     verified_profile=None,
     include_group_metadata: bool = True,
     register_schedule=None,
+    parallel_delivery_guests=None,
 ) -> list[dict]:
     """Build real attendance from completed Microsoft Teams reports.
 
@@ -322,6 +323,12 @@ def fetch_verified_teams_attendance_rows(
     # attendance below, after deciding whether a full name is unique.
     approved_guests = approved_alternative_guests(database, None,
         **({'occurrence_ids': occurrence_ids} if occurrence_ids is not None else {}))
+    # Internal read-time projection only: callers resolve equivalent curriculum
+    # slots first. This does not enrol, invite, or persist guests in the series.
+    parallel_delivery_guests = parallel_delivery_guests or {}
+    approved_guests = {key: set(value) for key, value in approved_guests.items()}
+    for key, guests in parallel_delivery_guests.items():
+        approved_guests.setdefault(key, set()).update(guests)
     if register_schedule is not None and identity_learners_by_email is not None:
         # Register projection discards other occurrences, except independently
         # approved recovery guests. Keep all those alternatives and their full
@@ -414,7 +421,7 @@ def fetch_verified_teams_attendance_rows(
         matching_emails.update(assigned_by_module.get(str(session.module_catalogue_id or '').strip(), set()))
     for occurrence_id, session_id in occurrence_series.items():
         if session_id in sessions_by_id:
-            matching_emails.update(approved_guests[occurrence_id])
+            matching_emails.update(approved_guests.get(occurrence_id, set()))
     with projection_operation('attendance_profiles'):
         matching_learners = {
             _email(learner.email): learner
@@ -672,7 +679,8 @@ def fetch_verified_teams_attendance_rows(
                     "group_name": str(module.group_name or "").strip() if module else "",
                     "is_expected": email in occurrence_expected,
                     "eligibility_reason": (
-                        "approved_recovery_guest" if email in approved_guests[occurrence.id]
+                        "parallel_delivery_guest" if email in parallel_delivery_guests.get(occurrence.id, set())
+                        else "approved_recovery_guest" if email in approved_guests.get(occurrence.id, set())
                         else "module_assignment"
                     ),
                     "scheduled_start": occurrence.scheduled_start,

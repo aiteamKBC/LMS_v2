@@ -18,6 +18,7 @@ from .migrated_templates import (
 )
 from .models import MigratedReviewTemplate
 from .migrated_template_sync import lock_template_family
+from .migrated_template_impact import answer_conflicts
 
 
 def management_endpoint(methods):
@@ -132,6 +133,10 @@ def detail(request, template_id):
             validate_slot(template.scope, template.review_family, template.programme_key)
             if template.is_active:
                 validate_managed_definition(template.definition_json, family=template.review_family)
+            if "definition" in payload or payload.get("is_active") is True:
+                conflict = answer_conflicts(template)
+                if conflict:
+                    return JsonResponse(conflict, status=409)
             template.save(update_fields=["name", "definition_json", "is_active", "updated_at"])
         response = JsonResponse(serialize_template(template, definition=True))
         response["Cache-Control"] = "no-store"

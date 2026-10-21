@@ -5,7 +5,6 @@ nor summary editing changes the Aptem source, booking, or review lifecycle.
 """
 import hashlib
 import json
-import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -20,11 +19,9 @@ from coach_api.migrated_completion_views import _coach_review
 from coach_api.models import CoachCalendarEvent, ImportedReviewInstance
 from coach_api.migrated_reviews import SCHEDULED_WORK_STATUSES, meeting_summary_field
 from coach_api.migrated_summary_binding import answer_version, binding_state, populate_answer, preserve_original
-from coach_api.migrated_summary_generation import apply_suggestion, summary_binding_response
+from coach_api.migrated_summary_generation import apply_suggestion, generation_status, summary_binding_response
+from coach_api.migrated_summary_errors import summary_generation_error
 from coach_api.migrated_template_sync import active_answers, snapshot_fingerprint
-
-
-logger = logging.getLogger(__name__)
 
 
 def _association(request, review_id, *, lock=False):
@@ -79,6 +76,10 @@ def _response(overlay, record, snapshot=None, *, errors=None, status=200):
     snapshot = snapshot if snapshot is not None else stored_coach_meeting_snapshot(record)
     state = overlay.meeting_intelligence or {}
     binding = summary_binding_response(overlay)
+    latest_status = generation_status(state)
+    codes = [code for code in state.get("errorCodes", []) if code != "AI_SUMMARY_FAILED"]
+    if latest_status == "failed":
+        codes.append("AI_SUMMARY_FAILED")
     return JsonResponse({
         "event": {
             "eventKey": record.event_key,
@@ -100,12 +101,13 @@ def _response(overlay, record, snapshot=None, *, errors=None, status=200):
             "attendanceStatus": state.get("attendanceStatus", "not-checked"),
             "recordingStatus": state.get("recordingStatus", "unknown"),
             "transcriptStatus": state.get("transcriptStatus", "not-checked"),
-            "summaryStatus": state.get("summaryStatus", "not-generated"),
+            "summaryStatus": latest_status,
+            "generationError": (state.get("summaryGeneration") or {}).get("error") if latest_status == "failed" else None,
             "transcriptArtifactId": state.get("transcriptArtifactId"),
-            "errorCodes": state.get("errorCodes", []),
+            "errorCodes": codes,
         },
         "errors": errors if errors is not None else snapshot.get("errors", []),
-        "partial": bool(errors if errors is not None else snapshot.get("partial")),
+        "partial": bool(errors if errors is not None else snapshot.get("partial")) or latest_status == "failed",
         "storage": snapshot.get("storage", {"stored": False}),
     }, status=status)
 
@@ -213,6 +215,7 @@ def migrated_review_check_session(request, review_id):
             "transcriptStatus": "available" if transcript else "unavailable" if transcript_gone else "fetch-failed" if transcript_fetch_failed or transcript_list_failed else "pending",
             "errorCodes": codes,
         })
+        generation_error = None
         if transcript and not state.get("summary"):
             transcript_hash = hashlib.sha256(transcript["text"].encode("utf-8")).hexdigest()
             # A retry after an AI error is explicit (another Check Session).
@@ -231,9 +234,12 @@ def migrated_review_check_session(request, review_id):
                     "graphEventId": record.graph_event_id, "generatedBy": locked.owner_email,
                     "transcriptTruncated": meeting_summary_transcript_excerpt(transcript["text"])[1],
                 })
+                # A successful retry supersedes diagnostics even for older
+                # templates without a bound Meeting Summary answer.
+                state.pop("summaryGeneration", None)
                 preserve_original(state)
             except Exception as exc:  # The Graph results remain useful if AI is unavailable.
-                logger.warning("Migrated meeting summary failed overlay_id=%s error_type=%s", locked.pk, type(exc).__name__)
+                generation_error = summary_generation_error(request, exc)
                 state["summaryStatus"] = "failed"
                 state["summaryError"] = "AI summary generation failed. Check Session can retry."
                 codes.append("AI_SUMMARY_FAILED")
@@ -253,10 +259,12 @@ def migrated_review_check_session(request, review_id):
                 result = populate_answer(locked, state, "")
         else:
             result = populate_answer(locked, state, "")
-            if result.get("fieldKey"):
-                state["summaryGeneration"] = {"status": "failed" if state.get("summaryStatus") == "failed" else "unavailable",
+            if result.get("fieldKey") or generation_error or state.get("summaryGeneration"):
+                state["summaryGeneration"] = {"status": "failed" if generation_error else "unavailable",
                     "source": "teams", "attemptedAt": timezone.now().isoformat(), "attemptedBy": locked.owner_email,
                     "bindingResult": result.get("status")}
+                if generation_error:
+                    state["summaryGeneration"]["error"] = generation_error
         locked.meeting_intelligence = state
         locked.save(update_fields=["meeting_intelligence", "updated_at"] + (["answers"] if result.get("status") == "populated" else []))
     return _response(locked, record, errors=errors, status=207 if errors else 200)

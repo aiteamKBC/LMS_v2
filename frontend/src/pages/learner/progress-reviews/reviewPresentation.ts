@@ -96,11 +96,32 @@ export function presentReview(session: LearnerCalendarEvent, attendance: Meeting
   return result('Check review details', 'Open the review to check its current details.', 'view', Boolean(date && date < today));
 }
 
+/**
+ * Programme order is the planned date each review carries from its source, which
+ * is also the date every row displays and the order the source numbers the plan in
+ * (coach_api/review_sources.py number_imported_events). The reader upstream orders
+ * by `date` instead, and an imported review's `date` is its completed date once it
+ * has been completed, so a review completed away from its plan sorted into a
+ * position its own displayed date contradicted. Monthly coaching already orders its
+ * timeline this way, and featuredSession already picks the next review by planned
+ * date; this keeps the reviews list, its timeline and its filters on that same key.
+ */
+function byPlannedDate(a: ReviewPresentation, b: ReviewPresentation) {
+  const first = a.session.targetDate || '9999-12-31';
+  const second = b.session.targetDate || '9999-12-31';
+  // Reviews that share a planned date and an occurrence keep the order the reader
+  // gave them, which already ends in a stable event-key comparison. An id is an
+  // opaque booking key, so ranking a tie by it would order the programme on
+  // something the learner cannot see.
+  return first.localeCompare(second)
+    || (a.session.occurrenceNumber ?? a.session.sequence) - (b.session.occurrenceNumber ?? b.session.sequence);
+}
+
 export function reviewOverview(sessions: readonly LearnerCalendarEvent[], attendance: readonly MeetingAttendance[], today: string, definitions: ReviewDefinitions = {}, viewerRole: 'participant' | 'employer' = 'participant') {
   const all = sessions.map(session => presentReview(session,
     attendance.find(item => item.id === session.id || (session.reviewId && item.id === `imported-review:${session.reviewId}`))
       || attendance.find(item => Boolean(item.calendarEventKey) && item.calendarEventKey === (session.calendarEventKey || session.eventKey)),
-    today, definitions[session.eventKey] || definitions[session.id], viewerRole));
+    today, definitions[session.eventKey] || definitions[session.id], viewerRole)).sort(byPlannedDate);
   // Reuse the existing featured-meeting ordering; never alter the programme
   // dates, persisted statuses, booking rules or the input event objects.
   const featured = featuredSession(all.filter(item => !item.past)

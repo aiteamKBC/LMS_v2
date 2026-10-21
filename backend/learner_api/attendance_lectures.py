@@ -367,6 +367,8 @@ def lecture_register(source, *, module_ids=None, records=None, learner_profile_i
     result = [_ended_unmarked_status(row, now) for row in result]
     if attended_alternatives:
         result = projection_call('attendance_recovery', _apply_attended_alternatives, result, source.id, attended_alternatives, **({} if preloaded is None else {'targets': preloaded['targets']}))
+    from .parallel_attendance import apply_parallel_attendance
+    result = projection_call('attendance_parallel', apply_parallel_attendance, result, source, records=records)
     result = projection_call('attendance_catchups', _apply_completed_catchups, result, source.id, **({} if preloaded is None else {'completed': preloaded['completed']}))
     from .attendance_confirmation import apply_confirmations, read_confirmations
     merged = _merge_register_duplicates(apply_confirmations(result, (projection_call('attendance_confirmations', read_confirmations, source.id) if preloaded is None else preloaded['confirmations'])))

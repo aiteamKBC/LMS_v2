@@ -278,7 +278,7 @@ class MonthlyLogsTests(SimpleTestCase):
         with patch.object(logs, 'detail_data', return_value=report), \
              patch.object(logs.canonical, 'enabled', return_value=False), \
              patch.object(logs.transaction, 'atomic', return_value=nullcontext()), \
-             patch.object(logs.old_repo, 'query', return_value=[]) as query:
+             patch.object(logs.old_repo, 'query', side_effect=lambda sql, params: [{'id': 42}] if 'RETURNING id' in sql else []) as query:
             result = logs.mirror_mcm_learner_signature(
                 learner, '2026-09', 'data:image/png;base64,mcm', 'Learner',
             )
@@ -298,7 +298,7 @@ class MonthlyLogsTests(SimpleTestCase):
              patch.object(logs, 'detail_data', return_value=report), \
              patch.object(logs.canonical, 'enabled', return_value=False), \
              patch.object(logs.transaction, 'atomic', return_value=nullcontext()), \
-             patch.object(logs.old_repo, 'query', return_value=[]) as query:
+             patch.object(logs.old_repo, 'query', side_effect=lambda sql, params: [{'id': 42}] if 'RETURNING id' in sql else []) as query:
             result = logs.mirror_mcm_learner_signature(
                 learner, '2026-10', 'data:image/png;base64,mcm', 'Learner',
             )
@@ -316,7 +316,7 @@ class MonthlyLogsTests(SimpleTestCase):
              patch.object(logs.canonical, 'enabled', return_value=True), \
              patch.object(logs.canonical, 'profile', return_value=owner), \
              patch.object(logs.transaction, 'atomic', return_value=nullcontext()), \
-             patch.object(logs.old_repo, 'query', return_value=[]) as query:
+             patch.object(logs.old_repo, 'query', side_effect=lambda sql, params: [{'id': 42}] if 'RETURNING id' in sql else []) as query:
             result = logs.mirror_mcm_learner_signature(
                 learner, '2026-09', 'data:image/png;base64,mcm', 'Learner',
             )
@@ -357,6 +357,23 @@ class MonthlyLogsTests(SimpleTestCase):
         )
 
         self.assertEqual(signoff._month_for(record), '2026-12')
+
+    def test_mcm_copy_does_not_report_success_when_an_unconfirmed_signature_blocks_insert(self):
+        report = {'source': 'lms', 'rows': [], 'profile': None, 'snapshot_digest': 'synthetic'}
+        learner = {**self.learner, 'aptem_id': 'synthetic'}
+        for consolidated in (True, False):
+            with self.subTest(canonical=consolidated), \
+                 patch.object(logs, 'detail_data', return_value=report), \
+                 patch.object(logs.canonical, 'enabled', return_value=consolidated), \
+                 patch.object(logs.canonical, 'profile', return_value={'id': 683, 'enrolment_id': 7, 'aptem_id': 'synthetic'}), \
+                 patch.object(logs.transaction, 'atomic', return_value=nullcontext()), \
+                 patch.object(logs.old_repo, 'query', return_value=[]) as query:
+                with self.assertRaisesMessage(logs.old.ServiceError, 'signature was not saved'):
+                    logs.mirror_mcm_learner_signature(learner, '2026-10', 'data:image/png;base64,mcm', 'Learner')
+                insert = next(call for call in query.call_args_list if 'INSERT INTO' in call.args[0])
+                self.assertIn('DO NOTHING', insert.args[0])
+                self.assertIn('RETURNING id', insert.args[0])
+                self.assertNotIn('DO UPDATE', insert.args[0])
 
     def test_mcm_signature_copy_is_idempotent_when_monthly_signature_exists(self):
         report = {'source': 'lms', 'rows': [self.row], 'profile': None,

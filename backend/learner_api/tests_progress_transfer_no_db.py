@@ -157,7 +157,7 @@ class TransferWorkflowTests(SimpleTestCase):
                     record_ids={('50','material:1'):{'1'},('51','material:2'):{'2'}},modules={})
         records = [{'id':1,'source_system':'old_lms','actual_seconds':3600},
                    {'id':2,'source_system':'old_lms','actual_seconds':7200}]
-        context = ([],['M1','M2'],records,native(),[],[],set(),set(),{},meta,[])
+        context = ([],['M1','M2'],records,native(),[],[],{('50','material:1'),('99','material:8')},set(),{},meta,[])
         cards = [{'id':f'legacy:{course}','title':'Old module','progress':40,'actualHours':hours,'activityCount':10,'completedActivityCount':4}
                  for course,hours in [('50',1),('51',2)]]
         with patch.object(store,'lock_learner',return_value=nullcontext(cursor)), \
@@ -171,6 +171,8 @@ class TransferWorkflowTests(SimpleTestCase):
             self.assertEqual(cursor.execute.call_count,3)
             payload = json.loads(cursor.execute.call_args_list[0].args[1][-1])
             self.assertEqual(payload,records)
+            snapshots = [json.loads(call.args[1][-1]) for call in cursor.execute.call_args_list[1:]]
+            self.assertEqual([snapshot['completedSourceActivities'] for snapshot in snapshots], [['material:1'], []])
             self.assertEqual(api.create_request(self.source,'commercial',self.owner,self.account),result)
             self.assertEqual(cursor.execute.call_count,3)
             entries.assert_called_once_with(self.owner)
@@ -211,6 +213,30 @@ class TransferWorkflowTests(SimpleTestCase):
         self.assertEqual(cursor.execute.call_args.args[1],[7,'legacy:50'])
         cursor.fetchone.return_value=None
         store.assert_legacy_writable(cursor,8,50)
+
+    def test_approval_matches_only_completions_frozen_at_request_not_later_source_results(self):
+        cursor = MagicMock(); cursor.fetchone.return_value = (7, 'commercial')
+        connection = MagicMock(); connection.cursor.return_value.__enter__.return_value = cursor
+        meta = metadata(); meta['replacement_courses'] = {'current:M1': 'legacy:50'}
+        meta['replacement_settings'] = {key: {'legacySettings': {'sourceLessonId': ident}}
+                                        for key, ident in [('FROZEN', 7), ('LATER', 8)]}
+        context = ([], ['M1'], [], native([component('FROZEN'), component('LATER')]),
+                   [{'source_course_ref': '50'}], [], {('50', 'material:8')}, set(), {}, meta, [])
+        for refs, expected in [(['material:7'], ['FROZEN']), ([], [])]:
+            with self.subTest(refs=refs):
+                pending = saved(modules=[item(completedSourceActivities=refs)])
+                cursor.reset_mock()
+                with patch.object(api, 'connections', {'enrolment': connection}), \
+                     patch.object(store, 'lock_learner', return_value=nullcontext(cursor)), \
+                     patch.object(store, 'read_state', side_effect=[pending, saved('approved')]), \
+                     patch.object(api, 'source_owner', return_value=(self.source, self.owner)), \
+                     patch('learner_api.my_learning.load_context', return_value=context):
+                    api.approve_request(pending['items'][0]['requestId'], self.account)
+                update = next(call for call in cursor.execute.call_args_list if 'SET snapshot=' in call.args[0])
+                snapshot = json.loads(update.args[1][0])
+                self.assertEqual(sorted(snapshot['matchedComponents']), expected)
+                self.assertEqual((snapshot['percent'], snapshot['hours']), (40, 2))
+                self.assertTrue(all('INSERT' not in call.args[0] for call in cursor.execute.call_args_list))
 
     def test_confirmation_snapshots_the_same_journal_rules_as_the_learner_screen(self):
         from .journal_sources import enabled

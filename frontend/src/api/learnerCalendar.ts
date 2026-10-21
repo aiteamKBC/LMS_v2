@@ -47,6 +47,8 @@ export interface LearnerCalendarEvent {
   meetingProvider: string;
   meetingLink: string;
   notes: string;
+  /** Editable Aptem booking notes, without the generated calendar description. */
+  bookingNotes?: string;
   reviewResponses?: Record<string, string>;
   reviewCompletedAt?: string | null;
   learnerSigned?: boolean;
@@ -128,6 +130,8 @@ export function fetchLearnerCalendarEvents(kind: LearnerKind, id: string, option
 
 /** Fetch the Curriculum-authored review form for an existing calendar occurrence. */
 export type LearnerReviewDefinition = Omit<ReviewInstanceFormDefinition, 'instance'> & {
+  /** Aptem MCM month comes from the server, not the rescheduled appointment. */
+  mcmMonthlyLog?: { month: string; sync?: MonthlyLogSignatureSync };
   instance: ReviewInstanceFormDefinition['instance'] | null;
   occurrenceNumber?: number;
   /** Reusable learner signature from enrolment.Created_users, when present. */
@@ -163,7 +167,37 @@ export async function downloadMigratedReviewForParty(eventKey: string): Promise<
   await saveReviewPdfResponse(await fetch(`${migratedReviewUrl(eventKey)}/party-pdf`, { credentials: 'include' }));
 }
 
-export function signMigratedReviewAsParty(eventKey: string, signature: string): Promise<{ signed: boolean; role: string }> {
+export async function downloadMigratedRevisionForParty(eventKey: string, number: number): Promise<void> {
+  const { saveReviewPdfResponse } = await import('./reviewPdf');
+  await saveReviewPdfResponse(await fetch(`${migratedReviewUrl(eventKey)}/revisions/${number}/pdf`, { credentials: 'include' }));
+}
+
+export interface MonthlyLogSignatureSync {
+  status: 'pending' | 'failed' | 'synced' | 'already-synced' | 'skipped';
+  month?: string;
+  message?: string;
+  reason?: string;
+}
+
+interface MigratedSignResult {
+  signed: boolean;
+  role: string;
+  monthlyLogSync?: MonthlyLogSignatureSync;
+}
+
+export function signMigratedReviewAsParty(
+  eventKey: string, signature: string, options?: { applyMonthlyLogSignature?: boolean; reviewRevision?: number },
+): Promise<MigratedSignResult> {
+  return migratedPartySignRequest(eventKey, { signature, ...options });
+}
+
+export function retryMigratedMonthlyLogSignature(eventKey: string): Promise<MigratedSignResult> {
+  return migratedPartySignRequest(eventKey, { retryMonthlyLogSignature: true });
+}
+
+function migratedPartySignRequest(eventKey: string, payload: {
+  signature?: string; applyMonthlyLogSignature?: boolean; retryMonthlyLogSignature?: boolean; reviewRevision?: number;
+}): Promise<MigratedSignResult> {
   return (async () => {
     const csrfResponse = await fetch('/learner_api/migrated-reviews/csrf', { credentials: 'include' });
     const csrf = await csrfResponse.json().catch(() => ({})) as { csrfToken?: string };
@@ -171,11 +205,11 @@ export function signMigratedReviewAsParty(eventKey: string, signature: string): 
     const response = await fetch(`${migratedReviewUrl(eventKey)}/party-sign`, {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf.csrfToken },
-      body: JSON.stringify({ signature }),
+      body: JSON.stringify(payload),
     });
-    const data = await response.json().catch(() => ({})) as { signed?: boolean; role?: string; detail?: string };
+    const data = await response.json().catch(() => ({})) as MigratedSignResult & { detail?: string };
     if (!response.ok) throw new Error(data.detail || `Signing failed (${response.status}).`);
-    return data as { signed: boolean; role: string };
+    return data;
   })();
 }
 
@@ -335,8 +369,15 @@ export async function bookLearnerCalendarSession(
 
 export type RescheduleSessionInput = Pick<
   BookSessionInput,
-  'scheduledDate' | 'scheduledTime' | 'durationMinutes' | 'timezoneOffsetMinutes'
-> & { eventKey: string; reviewId?: string };
+  'scheduledDate' | 'scheduledTime' | 'durationMinutes' | 'timezoneOffsetMinutes' | 'notes'
+> & { eventKey: string; reviewId?: string; expectedBooking?: ExpectedReviewBooking };
+
+export interface ExpectedReviewBooking {
+  scheduledDate: string;
+  scheduledTime: string;
+  durationMinutes: number;
+  notes: string;
+}
 
 /** Move an existing booking; the backend updates the same Graph/Teams event. */
 export async function rescheduleLearnerCalendarSession(

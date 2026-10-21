@@ -359,6 +359,8 @@ def apply_imported_state(event, record=None, overlay=None, *, compact=False):
             "graphWebLink": (record.graph_web_link or "") if verified else "", "meetingProvider": record.meeting_provider or "",
             "coachName": record.owner_name or "", "coachEmail": record.owner_email or "",
             "invited": verified, "reviewResponses": {} if compact else record.review_responses or {},
+            # Keep editable learner notes separate from generated calendar copy.
+            "bookingNotes": "" if compact else record.notes or "",
         })
         if record.scheduled_date:
             event["date"] = record.scheduled_date.isoformat()
