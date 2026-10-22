@@ -36,7 +36,7 @@ def install(apps, schema_editor):
         return  # Isolated unit suites use SQLite and stub the unmanaged schema.
     if schema_editor.connection.vendor != 'postgresql' or schema_editor.connection.alias != 'default':
         raise RuntimeError('Module feedback must be installed on the canonical PostgreSQL default database.')
-    schema_editor.execute(SQL)
+    schema_editor.execute(SQL, params=None)
 
 
 class Migration(migrations.Migration):
