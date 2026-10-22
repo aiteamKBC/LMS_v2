@@ -1,8 +1,8 @@
-import { createContext, useContext, useState, useCallback, useMemo, useEffect, type ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { TenantUser } from '@/mocks/users';
 import type { RoleDef, PermissionLevel, AccessScope } from '@/mocks/rbac';
-import { ALL_ROLES, ALL_PERMISSIONS, PERMISSION_LEVELS, ROUTE_PERMISSIONS, NAV_PERMISSIONS } from '@/mocks/rbac';
+import { ALL_ROLES } from '@/mocks/rbac';
 import { kbcUsers } from '@/mocks/users';
 import { kbcTenant, demoProviderTenant, type Tenant } from '@/mocks/tenant';
 import { clearChatSession } from '@/api/chat';
@@ -14,6 +14,7 @@ import { clearTutorViewAs, syncTutorViewAsAccount } from '@/lib/tutorViewAs';
 import { installSessionExpiryHandler, resetSessionExpiryNotice } from '@/lib/sessionExpiry';
 import { useToastOptional } from '@/hooks/useToast';
 import { clearAllCachedResources } from '@/api/cachedRequest';
+import { useAuthPermissions } from './useAuthPermissions';
 
 // ============================================================
 // Types
@@ -154,51 +155,14 @@ function signedOutState(): AuthState {
   return SIGNED_OUT;
 }
 
-function getLevelRank(level: PermissionLevel): number {
-  const found = PERMISSION_LEVELS.find(l => l.value === level);
-  return found?.rank ?? 0;
-}
-
-function buildPermissionMap(roles: RoleDef[]): Map<string, { level: PermissionLevel; scope: AccessScope; isAdminBypass: boolean }> {
-  const map = new Map<string, { level: PermissionLevel; scope: AccessScope; isAdminBypass: boolean }>();
-
-  for (const role of roles) {
-    for (const perm of role.permissions) {
-      const existing = map.get(perm.permissionSlug);
-      const permDef = ALL_PERMISSIONS.find(p => p.slug === perm.permissionSlug);
-
-      if (existing) {
-        const newRank = getLevelRank(perm.level);
-        const existingRank = getLevelRank(existing.level);
-        if (newRank > existingRank) {
-          existing.level = perm.level;
-        }
-        if (perm.scope === 'global' || (perm.scope === 'tenant' && existing.scope !== 'global')) {
-          existing.scope = perm.scope;
-        }
-      } else {
-        map.set(perm.permissionSlug, {
-          level: perm.level,
-          scope: perm.scope,
-          isAdminBypass: permDef?.isAdminBypass ?? false,
-        });
-      }
-    }
-  }
-
-  return map;
-}
-
-function hasWildcardAccess(roles: RoleDef[]): boolean {
-  return roles.some(r => r.slug === 'super-admin' || r.slug === 'tenant-admin');
-}
-
 // ============================================================
 // Provider
 // ============================================================
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
+  // A response started before login/logout or another tab changes identity is obsolete.
+  const identityRevision = useRef(0);
   // Optional on purpose: ToastProvider sits above this one in App.tsx, but
   // signing someone out must not depend on a toast being available.
   const toast = useToastOptional();
@@ -212,6 +176,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [initializationError, setInitializationError] = useState<string | null>(null);
   const [initializationAttempt, setInitializationAttempt] = useState(0);
   const retryInitialization = useCallback(() => {
+    identityRevision.current += 1;
     setIsInitialized(false);
     setInitializationError(null);
     setInitializationAttempt(attempt => attempt + 1);
@@ -220,10 +185,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Resolve the session cookie into an identity on mount.
   useEffect(() => {
     let cancelled = false;
+    const revision = identityRevision.current;
+    const isCurrent = () => !cancelled && revision === identityRevision.current;
     void (async () => {
       try {
         const account = await apiMe();
-        if (!cancelled) {
+        if (isCurrent()) {
           if (!account) { clearAllCachedResources(); cachedIdentity = null; }
           setAuth(account ? stateFromAccount(account) : signedOutState());
           setInitializationError(null);
@@ -231,9 +198,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch {
         // Keep protected content closed, but let the user retry the existing
         // cookie instead of sending them to sign in during a server outage.
-        if (!cancelled) setInitializationError('We could not check your session. Check your connection and try again.');
+        if (isCurrent()) setInitializationError('We could not check your session. Check your connection and try again.');
       } finally {
-        if (!cancelled) setIsInitialized(true);
+        if (isCurrent()) setIsInitialized(true);
       }
     })();
     return () => { cancelled = true; };
@@ -278,6 +245,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const uninstall = installSessionExpiryHandler(() => {
+      const revision = identityRevision.current;
       void (async () => {
         let account: AuthUser | null = null;
         try {
@@ -289,7 +257,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (!cancelled) rearmSoon();
           return;
         }
-        if (cancelled) return;
+        if (cancelled || revision !== identityRevision.current) return;
 
         if (account) {
           // Still signed in, so that 401 belonged to that one request. Keep the
@@ -329,23 +297,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const handleStorage = (e: StorageEvent) => {
       if (e.key !== AUTH_STORAGE_KEY) return;
+      const revision = ++identityRevision.current;
       if (e.newValue === null) {
         clearAllCachedResources();
         cachedIdentity = null;
         setAuth(signedOutState());
+        setIsInitialized(true);
+        setInitializationError(null);
         return;
       }
       void apiMe()
-        .then(account => setAuth(account ? stateFromAccount(account) : signedOutState()))
-        .catch(() => undefined);
+        .then(account => {
+          if (revision !== identityRevision.current) return;
+          setAuth(account ? stateFromAccount(account) : signedOutState());
+          setInitializationError(null);
+          setIsInitialized(true);
+        })
+        .catch(() => {
+          if (revision !== identityRevision.current) return;
+          setInitializationError('We could not check your session. Check your connection and try again.');
+          setIsInitialized(true);
+        });
     };
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
   }, []);
 
   const login = useCallback(async (email: string, password: string, remember = false) => {
+    const revision = ++identityRevision.current;
     // Throws AuthError on failure; the caller renders err.message.
-    const account = await apiLogin(email, password, remember);
+    let account: AuthUser;
+    try {
+      account = await apiLogin(email, password, remember);
+    } catch (error) {
+      // A failed login must not leave a superseded initial lookup pending forever.
+      if (revision === identityRevision.current) setInitializationAttempt(attempt => attempt + 1);
+      throw error;
+    }
+    if (revision !== identityRevision.current) return account;
     // Re-arm the expiry notice: this browser has a live session again.
     resetSessionExpiryNotice();
     setAuth(stateFromAccount(account));
@@ -359,6 +348,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const previewAs = useCallback((email: string) => {
     const foundUser = kbcUsers.find(u => u.email === email);
     if (!foundUser) return;
+    identityRevision.current += 1;
     syncPersonalLearningAccount(null);
     rememberSignedInLearner(undefined, undefined);
 
@@ -377,6 +367,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
+    identityRevision.current += 1;
     clearAllCachedResources();
     cachedIdentity = null;
     void clearChatSession();
@@ -387,6 +378,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearCoachViewAs();
     clearTutorViewAs();
     setAuth(signedOutState());
+    setIsInitialized(true);
+    setInitializationError(null);
     navigate('/login');
   }, [navigate]);
 
@@ -448,70 +441,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  // Build permission map from current roles
-  const permissionMap = useMemo(() => buildPermissionMap(auth.roles), [auth.roles]);
-  const isWildcard = useMemo(() => hasWildcardAccess(auth.roles), [auth.roles]);
-  const isAdminVal = useMemo(() => auth.roles.some(r => r.slug === 'super-admin' || r.slug === 'tenant-admin'), [auth.roles]);
-
-  const hasPermission = useCallback((permissionSlug: string, minLevel: PermissionLevel = 'view', _scope?: AccessScope): boolean => {
-    if (!auth.isAuthenticated) return false;
-    if (isWildcard) return true;
-
-    const perm = permissionMap.get(permissionSlug);
-    if (!perm) return false;
-
-    const requiredRank = getLevelRank(minLevel);
-    const actualRank = getLevelRank(perm.level);
-    return actualRank >= requiredRank;
-  }, [auth.isAuthenticated, isWildcard, permissionMap]);
-
-  const getPermissionLevel = useCallback((permissionSlug: string): PermissionLevel => {
-    if (isWildcard) return 'full_admin';
-    return permissionMap.get(permissionSlug)?.level ?? 'none';
-  }, [isWildcard, permissionMap]);
-
-  const getPermissionScope = useCallback((permissionSlug: string): AccessScope | null => {
-    if (isWildcard) return 'global';
-    return permissionMap.get(permissionSlug)?.scope ?? null;
-  }, [isWildcard, permissionMap]);
-
-  const canAccessRoute = useCallback((path: string): boolean => {
-    if (!auth.isAuthenticated) return path === '/' || path === '/login';
-
-    let bestMatch = ROUTE_PERMISSIONS.find(r => r.path === path);
-    if (!bestMatch) {
-      bestMatch = ROUTE_PERMISSIONS
-        .filter(r => path.startsWith(r.path))
-        .sort((a, b) => b.path.length - a.path.length)[0];
-    }
-
-    if (!bestMatch) return false;
-
-    if (bestMatch.allowedRoles?.includes('*')) return true;
-
-    if (bestMatch.allowedRoles) {
-      const userSlugs = auth.roles.map(r => r.slug);
-      return bestMatch.allowedRoles.some(r => userSlugs.includes(r));
-    }
-
-    return false;
-  }, [auth.isAuthenticated, auth.roles]);
-
-  const canSeeNavItem = useCallback((navId: string): boolean => {
-    if (!auth.isAuthenticated) return false;
-
-    const navPerm = NAV_PERMISSIONS.find(n => n.navId === navId);
-    if (!navPerm) return true;
-
-    if (navPerm.allowedRoles?.includes('*')) return true;
-
-    if (navPerm.allowedRoles) {
-      const userSlugs = auth.roles.map(r => r.slug);
-      return navPerm.allowedRoles.some(r => userSlugs.includes(r));
-    }
-
-    return true;
-  }, [auth.isAuthenticated, auth.roles]);
+  const { hasPermission, canAccessRoute, canSeeNavItem, getPermissionLevel, getPermissionScope, isAdmin: isAdminVal } = useAuthPermissions(auth.roles, auth.isAuthenticated);
 
   const value = useMemo<RbacContextValue>(() => ({
     auth,

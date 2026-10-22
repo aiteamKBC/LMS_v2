@@ -2586,7 +2586,7 @@ class CoachTimetableWindowTests(SimpleTestCase):
         },
     })
     @patch("coach_api.views.build_learner_profile_map", return_value={})
-    @patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[])
+    @patch("coach_api.views.fetch_caseload_timetable_profiles", return_value=[])
     @patch("coach_api.views.fetch_owner_active_learner_profiles", return_value=[])
     @patch("coach_api.views.coach_staff_display_name", return_value="")
     @patch("coach_api.views.collect_live_session_events", side_effect=RuntimeError("legacy staff profile schema"))
@@ -2595,7 +2595,7 @@ class CoachTimetableWindowTests(SimpleTestCase):
         collect_live_session_events,
         coach_staff_display_name,
         fetch_owner_active_learner_profiles,
-        fetch_caseload_dashboard_profiles,
+        fetch_caseload_timetable_profiles,
         build_learner_profile_map,
         resolve_coach_review_events,
         fetch_standalone_event_records,
@@ -2608,7 +2608,7 @@ class CoachTimetableWindowTests(SimpleTestCase):
         collect_live_session_events.assert_called_once()
         coach_staff_display_name.assert_called_once_with("coach@example.com")
         fetch_owner_active_learner_profiles.assert_called_once_with("coach@example.com")
-        fetch_caseload_dashboard_profiles.assert_called_once_with("coach@example.com")
+        fetch_caseload_timetable_profiles.assert_called_once_with("coach@example.com")
         build_learner_profile_map.assert_called_once_with([])
         resolve_coach_review_events.assert_called_once_with(
             "coach@example.com", "Med Maher", [], start_date=None, end_date=None,

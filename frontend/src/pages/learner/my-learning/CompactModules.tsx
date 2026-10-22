@@ -1,7 +1,8 @@
+import { useMyLearningSearch, useMyLearningModule } from '@/hooks/useMyLearning';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { LearnerKind } from '@/api/learnerDetail';
-import { readMyLearningUpcoming, useMyLearningSearch, useMyLearningModule, type MyLearningCatalogue } from '@/api/myLearning';
+import { readMyLearningUpcoming, type MyLearningCatalogue } from '@/api/myLearning';
 import { fetchLearnerCertificateTemplate, type CertificateTemplateSummary } from '@/api/learnerCertificates';
 import { SubjectCard, StudentActivityPanel, SubjectCardsSkeleton } from './SubjectWorkspace';
 import { LearningCatalogue, type UpcomingLearningLink } from './LearningCatalogue';

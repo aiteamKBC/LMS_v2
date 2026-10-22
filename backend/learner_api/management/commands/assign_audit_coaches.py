@@ -205,6 +205,8 @@ class Command(BaseCommand):
                         ).first()
                         try:
                             profile = sync_active_user(source)
+                            if profile is None:
+                                raise DatabaseError('Activation was refused; source requires review.')
                             if profile is not None:
                                 mirrors_created += 1
                         except DatabaseError as exc:

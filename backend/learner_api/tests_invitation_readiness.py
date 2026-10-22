@@ -1,5 +1,6 @@
 """Preparation remains readable without activation, DB writes or real email."""
 import json
+from contextlib import nullcontext
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -26,6 +27,7 @@ def learner(**overrides):
 
 class InvitationReadinessTests(SimpleTestCase):
     def setUp(self):
+        self.enterContext(patch("learner_api.learner_progression.locked_source", side_effect=lambda row: nullcontext(row)))
         for target, value in (
             ("learner_api.active_users.cohort_dates", (date(2025, 10, 1), None)),
             ("learner_api.learner_progression.timezone.localdate", date(2026, 9, 12)),

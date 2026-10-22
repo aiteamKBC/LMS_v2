@@ -10,6 +10,7 @@ from copy import deepcopy
 from contextlib import nullcontext
 from datetime import datetime
 import functools
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -128,6 +129,7 @@ class SearchProjectionTests(unittest.TestCase):
                                    'session_unreadable': lambda request: self.unreadable})
 
         replacement = ModuleType('learner_api.replacement_learning')
+        replacement.__package__ = 'learner_api'
         definitions(ROOT / 'replacement_learning.py',
                     {'_object', 'project_replacement_learning', 'project_approved_learning'},
                     replacement.__dict__)
@@ -135,6 +137,13 @@ class SearchProjectionTests(unittest.TestCase):
         package = ModuleType('learner_api')
         package.__path__ = []
         modules = {'learner_api': package, 'learner_api.replacement_learning': replacement}
+        # Approved manual transfers use these pure production helpers. Load only
+        # their dependency closure, without importing the service/DB module.
+        matching = ModuleType('learner_api.progress_transfer_matching')
+        matching.__dict__.update(__package__='learner_api', hashlib=hashlib, json=json, re=re)
+        definitions(ROOT / 'progress_transfer_matching.py',
+                    {'digest', 'activity_type', 'target_fingerprint'}, matching.__dict__)
+        modules[matching.__name__] = matching
         # Search must not use catalogue hours, completion, display placement or
         # demo credit reducers; the real shared assembler's search branch skips them.
         for name, functions in {

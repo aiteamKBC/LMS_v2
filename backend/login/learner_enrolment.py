@@ -60,6 +60,10 @@ class EnrolmentError(ValueError):
     """Raised with a message suitable for the console when this cannot be done."""
 
 
+class AmbiguousLearnerRecord(DatabaseError):
+    """An email is not a unique learner identity; never select or create one."""
+
+
 def existing_learner_record(email):
     """The learner enrolment row for this address, or None.
 
@@ -70,7 +74,12 @@ def existing_learner_record(email):
     email = normalize_email(email)
     if not email:
         return None
-    return EnrolmentUser.all_learners.filter(email__iexact=email).first()
+    rows = list(EnrolmentUser.all_learners.filter(email__iexact=email)[:2])
+    if len(rows) > 1:
+        # This lookup also participates in staff ownership/workspace resolution.
+        # Neither row is authoritative merely because it was returned first.
+        raise AmbiguousLearnerRecord('Learner identity is ambiguous; review required.')
+    return rows[0] if rows else None
 
 
 def can_add_learner_record(account):
@@ -85,7 +94,11 @@ def can_add_learner_record(account):
         return "This account is already a learner."
     if not normalize_email(account.email):
         return "This account has no email address."
-    if existing_learner_record(account.email) is not None:
+    try:
+        existing = existing_learner_record(account.email)
+    except AmbiguousLearnerRecord:
+        return 'Multiple learner records use this address. Identity review is required.'
+    if existing is not None:
         return "A learner record already exists for this address."
     return ""
 

@@ -71,6 +71,7 @@ class CoachErrorSecurityTests(SimpleTestCase):
         resolve.return_value = SimpleNamespace(func=explode, args=(), kwargs={})
         request = self.factory.get("/api/batch/")
         request.COOKIES = {}
+        request.login_account = SimpleNamespace(role='staff', subject_type='staff', is_active=True)
 
         result = _execute_get(
             request,
@@ -83,3 +84,10 @@ class CoachErrorSecurityTests(SimpleTestCase):
         self.assertNotIn("super-secret", body)
         self.assertEqual(json.loads(body)["error"], "internal_error")
         log_exception.assert_called_once()
+
+    @patch('config.batch.resolve')
+    def test_batch_unauthenticated_request_is_refused_before_dispatch(self, resolve):
+        request = self.factory.get('/api/batch/')
+        result = _execute_get(request, {'id': 'dashboard', 'url': '/coach_api/coach/dashboard'})
+        self.assertEqual(result['status'], 401)
+        resolve.assert_not_called()

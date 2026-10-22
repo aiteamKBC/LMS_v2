@@ -7,6 +7,7 @@ an invited learner has not signed in yet. So a corrected email kept re-sending
 the invitation to the old address, which is what a colleague reported.
 """
 import json
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -47,6 +48,9 @@ class LearnerEditSyncsAccountTests(SimpleTestCase):
         # once past that gate, which the documented switch turns off.
         with patch.dict('os.environ', {'LEARNER_API_REQUIRE_AUTH': '0'}),                 patch('learner_api.views.EnrolmentUser') as model, \
                 patch('learner_api.views.sync_account') as sync, \
+                patch('learner_api.views.locked_source', side_effect=lambda row: nullcontext(row)), \
+                patch('learner_api.learner_dates.save_verified_contact_fields',
+                      side_effect=lambda row, fields: row.save(update_fields=list(fields))), \
                 patch('learner_api.views.mirror_learner_placement'), \
                 patch('learner_api.views.stamp_cohort_window'), \
                 patch('learner_api.views.advance_learner'), \

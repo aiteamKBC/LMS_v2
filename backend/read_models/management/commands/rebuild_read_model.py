@@ -1,7 +1,7 @@
 from django.core.management.base import BaseCommand, CommandError
 
 from read_models.registry import registered
-from read_models.repository import put_read_model
+from read_models.repository import put_read_model, contact_revision
 
 
 class Command(BaseCommand):
@@ -19,6 +19,7 @@ class Command(BaseCommand):
             raise CommandError(str(exc)) from exc
         if spec.scope_type != options["scope_type"]:
             raise CommandError(f"Expected scope type {spec.scope_type!r}.")
+        revision = contact_revision(spec.model_key, spec.scope_type, options['scope_id'])
         payload = spec.builder(options["scope_id"])
         value = put_read_model(
             spec.model_key,
@@ -27,6 +28,7 @@ class Command(BaseCommand):
             payload,
             schema_version=spec.schema_version,
             ttl_seconds=spec.ttl_seconds,
+            expected_contact_revision=revision,
         )
         if value is None:
             raise CommandError("The shared read-model table is unavailable.")

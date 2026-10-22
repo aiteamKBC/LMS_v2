@@ -41,6 +41,7 @@ from .active_users import (
     stamp_cohort_window,
     sync_active_user,
 )
+from .services.activation import locked_source, require_active_profile
 from .identity import learner_profile_for_source
 from .account_deletion import delete_learner_account
 from .learner_dates import save_enrolment_fields
@@ -546,6 +547,19 @@ def _profile_enrolment_board(profile):
 
 
 def _update_profile_from_delivery_payload(profile, payload):
+    contacts = {field: str(payload.get(key) or '').strip()
+                for key, field in (('username', 'full_name'), ('phone', 'phone_number')) if key in payload}
+    if contacts:
+        from .services.contact_sync import save_profile_contact_fields
+        # Keep the rest of this edit in the same existing owning connection.
+        # Contact edits must not also introduce an unreviewed email identity.
+        with transaction.atomic(using='enrolment'):
+            if profile.enrolment_id is not None and 'email' in payload and (
+                    str(payload.get('email') or '').strip().casefold() != str(profile.email or '').strip().casefold()):
+                raise ValidationError('Change the linked email identity separately before editing contacts.')
+            save_profile_contact_fields(profile, contacts)
+            return _update_profile_from_delivery_payload(
+                profile, {key: value for key, value in payload.items() if key not in {'username', 'phone'}})
     field_map = {
         "username": "full_name",
         "email": "email",
@@ -970,35 +984,45 @@ def enrolment_user_detail(request, pk):
         except ValidationError as exc:
             return _error(str(exc), 400)
         try:
-            for attr, value in fields.items():
-                setattr(user, attr, value)
-            if fields:
-                save_enrolment_fields(user, fields)
-                # The address and name on this row ARE the sign-in identity, and
-                # the login account keeps its own copy — which is what an
-                # invitation is sent to. Correcting an email here without this
-                # left the invitation going to the old address for ever, since
-                # the account only refreshes itself when its owner signs in and
-                # an invited learner has not yet.
-                if any(field in fields for field in ACCOUNT_IDENTITY_FIELDS):
-                    sync_account("learner", user.pk, subject=user)
-                if any(field in fields for field in PLACEMENT_SOURCE_FIELDS):
-                    # A learner placed after they were created has none of the
-                    # cohort's dates, and progression cannot start them without
-                    # one. Stamped before advance_learner runs, so a learner who
-                    # is already past their start date activates on this save.
-                    stamp_cohort_window(user)
-                    # Where a learner sits is read from their permanent profile
-                    # by the workspace, the coach tools and the reports, so the
-                    # change has to reach that row too.
-                    mirror_learner_placement(user)
-                advance_learner(user)
-                if 'programme_status' in fields:
-                    # An explicit staff status edit has already changed the
-                    # source before advance_learner runs. Its transition-only
-                    # hook cannot notice Active -> Active, leaving the profile
-                    # in Delivery and hiding coach/review/calendar records.
-                    sync_active_user(user)
+            with locked_source(user) as user:
+                # Revalidate partial date updates against the locked current row.
+                validate_learner_dates(fields, user)
+                for attr, value in fields.items():
+                    setattr(user, attr, value)
+                if fields:
+                    save_enrolment_fields(user, fields)
+                    # The address and name on this row ARE the sign-in identity, and
+                    # the login account keeps its own copy — which is what an
+                    # invitation is sent to. Correcting an email here without this
+                    # left the invitation going to the old address for ever, since
+                    # the account only refreshes itself when its owner signs in and
+                    # an invited learner has not yet.
+                    if any(field in fields for field in ACCOUNT_IDENTITY_FIELDS):
+                        sync_account("learner", user.pk, subject=user)
+                    if any(field in fields for field in PLACEMENT_SOURCE_FIELDS):
+                        # A learner placed after they were created has none of the
+                        # cohort's dates, and progression cannot start them without
+                        # one. Stamped before advance_learner runs, so a learner who
+                        # is already past their start date activates on this save.
+                        stamp_cohort_window(user)
+                        # Where a learner sits is read from their permanent profile
+                        # by the workspace, the coach tools and the reports, so the
+                        # change has to reach that row too.
+                        mirror_learner_placement(user)
+                    promoted = advance_learner(user, strict=True)
+                    if 'programme_status' in fields and promoted != ACTIVE_STATUS:
+                        # An explicit staff status edit has already changed the
+                        # source before advance_learner runs. Its transition-only
+                        # hook cannot notice Active -> Active, leaving the profile
+                        # in Delivery and hiding coach/review/calendar records.
+                        if str(user.programme_status or "").strip() == ACTIVE_STATUS:
+                            require_active_profile(user)
+                        else:
+                            # A non-active sync also returns None on success;
+                            # strict mode distinguishes its actual DB failure.
+                            sync_active_user(user, strict=True)
+        except ValidationError as exc:
+            return _error(str(exc), 400)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
         return JsonResponse(to_board(user))
@@ -1065,26 +1089,25 @@ def enrolment_user_finish(request, pk):
         return _error("This learner needs an email address before enrolment can be finished.", 400)
 
     try:
-        # Programme activation is evidence/date driven. This legacy endpoint is
-        # kept for the UI, but cannot bypass unsigned documents or a future
-        # start date.
-        advance_learner(user)
-        if str(user.programme_status or "").strip() != ACTIVE_STATUS:
-            if str(getattr(user, "learner_type", "") or "").strip().casefold() == "commercial":
+        with locked_source(user) as user:
+            # Programme activation is evidence/date driven. This legacy endpoint is
+            # kept for the UI, but cannot bypass unsigned documents or a future
+            # start date.
+            promoted = advance_learner(user, strict=True)
+            if str(user.programme_status or "").strip() != ACTIVE_STATUS:
+                if str(getattr(user, "learner_type", "") or "").strip().casefold() == "commercial":
+                    return _error(
+                        "This commercial learner becomes Active once a learning plan is assigned and the programme start date has arrived.",
+                        409,
+                    )
                 return _error(
-                    "This commercial learner becomes Active once a learning plan is assigned and the programme start date has arrived.",
+                    "This learner becomes Active automatically once every compliance document is signed and the programme start date has arrived.",
                     409,
                 )
-            return _error(
-                "This learner becomes Active automatically once every compliance document is signed and the programme start date has arrived.",
-                409,
-            )
-        learner = sync_active_user(user)
+            if promoted != ACTIVE_STATUS:
+                require_active_profile(user)
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
-
-    if learner is None:
-        return _error("Could not create the learner record. Please try again.", 502)
 
     return JsonResponse(to_board(user))
 

@@ -354,9 +354,15 @@ def account_payload(account, *, subject=None):
             # ambiguous and lock them out of sign-in entirely -- so the learner
             # side is reached from the workspace switcher instead, exactly like
             # a coach who also tutors. See login.learner_enrolment.
-            from .learner_enrolment import existing_learner_record
+            from .learner_enrolment import AmbiguousLearnerRecord, existing_learner_record
 
-            learner_record = existing_learner_record(account.email)
+            try:
+                learner_record = existing_learner_record(account.email)
+            except AmbiguousLearnerRecord:
+                # Preserve the authenticated staff workspace, but never project
+                # access to an arbitrary learner. The server ownership gate also
+                # refuses this ambiguity; creation requires explicit review.
+                learner_record = None
             if learner_record is not None:
                 payload["learnerRecordId"] = learner_record.pk
                 # Needed to address the record explicitly: the bare learner

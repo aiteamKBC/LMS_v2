@@ -161,8 +161,9 @@ class Harness:
         ns.update(connections={'enrolment': SimpleNamespace(cursor=Cursor)},
                   visible_child_sql=lambda alias: f'{alias}.deleted_at IS NULL',
                   visible_week_sql=lambda alias: f'{alias}.deleted_at IS NULL')
-        support.definitions(ROOT / 'learner_detail.py', ['_error', '_reading_content', 'build_learner_detail',
-                            '_activity_module_components', '_annotate_otjh', '_apply_live_otjh_snapshot', 'learner_detail'], ns)
+        support.definitions(ROOT / 'learner_detail.py', ['_error', '_reading_content', '_authored_setting', 'build_learner_detail',
+                            '_activity_module_components', '_annotate_otjh', '_apply_live_otjh_snapshot', 'learner_detail'], ns,
+                            constants=('_AUTHORED_SETTING_KEYS',))
         if before:
             exec(compile(BEFORE, '<pre-O05-view>', 'exec'), ns)
 

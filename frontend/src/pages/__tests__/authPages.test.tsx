@@ -10,9 +10,9 @@
  * so both modes are exercised.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 
 // --- module mocks ----------------------------------------------------------
@@ -57,12 +57,16 @@ const LoginPage = (await import('../login/page')).default;
 const ForgotPasswordPage = (await import('../forgot-password/page')).default;
 const SetPasswordPage = (await import('../set-password/page')).default;
 
+function Destination() {
+  return <div aria-label="Destination">{useLocation().pathname}</div>;
+}
+
 function renderAt(ui: ReactNode, path = '/') {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path={path.split('?')[0]} element={ui} />
-        <Route path="*" element={<div>elsewhere</div>} />
+        <Route path="*" element={<Destination />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -87,7 +91,7 @@ describe('LoginPage', () => {
 
     await user.type(screen.getByLabelText(/email address/i), 'admin@kbc.test');
     await user.type(screen.getByLabelText(/^password$/i), 'Vaulted-Harbour-92!');
-    await user.click(screen.getByRole('button', { name: /sign in/i }));
+    await user.click(screen.getByRole('button', { name: 'Sign in to Workspace' }));
 
     await waitFor(() =>
       expect(login).toHaveBeenCalledWith('admin@kbc.test', 'Vaulted-Harbour-92!', false),
@@ -102,7 +106,7 @@ describe('LoginPage', () => {
     await user.type(screen.getByLabelText(/email address/i), 'admin@kbc.test');
     await user.type(screen.getByLabelText(/^password$/i), 'pw');
     await user.click(screen.getByRole('button', { name: /remember me/i }));
-    await user.click(screen.getByRole('button', { name: /sign in/i }));
+    await user.click(screen.getByRole('button', { name: 'Sign in to Workspace' }));
 
     await waitFor(() => expect(login).toHaveBeenCalledWith('admin@kbc.test', 'pw', true));
   });
@@ -116,7 +120,7 @@ describe('LoginPage', () => {
 
     await user.type(screen.getByLabelText(/email address/i), 'admin@kbc.test');
     await user.type(screen.getByLabelText(/^password$/i), 'wrong');
-    await user.click(screen.getByRole('button', { name: /sign in/i }));
+    await user.click(screen.getByRole('button', { name: 'Sign in to Workspace' }));
 
     expect(await screen.findByText('Incorrect email or password.')).toBeInTheDocument();
   });
@@ -130,22 +134,33 @@ describe('LoginPage', () => {
 
     await user.type(screen.getByLabelText(/email address/i), 'a@b.test');
     await user.type(screen.getByLabelText(/^password$/i), 'pw');
-    await user.click(screen.getByRole('button', { name: /sign in/i }));
+    await user.click(screen.getByRole('button', { name: 'Sign in to Workspace' }));
 
     expect(await screen.findByText(/temporarily locked/i)).toBeInTheDocument();
   });
 
   it('re-enables the button after a failure so the user can retry', async () => {
-    login.mockRejectedValue(new AuthError('Incorrect email or password.', 401));
+    let rejectLogin!: (reason: Error) => void;
+    login.mockImplementationOnce(() => new Promise((_, reject) => { rejectLogin = reject; }));
     const user = userEvent.setup();
     renderAt(<LoginPage />, '/login');
 
     await user.type(screen.getByLabelText(/email address/i), 'a@b.test');
     await user.type(screen.getByLabelText(/^password$/i), 'pw');
-    await user.click(screen.getByRole('button', { name: /sign in/i }));
+    await user.click(screen.getByRole('button', { name: 'Sign in to Workspace' }));
 
+    expect(screen.getByRole('button', { name: /Signing in/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Sign in with Microsoft' })).toBeDisabled();
+    expect(login).toHaveBeenCalledTimes(1);
+    await act(async () => rejectLogin(new AuthError('Incorrect email or password.', 401)));
     await screen.findByText('Incorrect email or password.');
-    expect(screen.getByRole('button', { name: /sign in/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Sign in to Workspace' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Sign in with Microsoft' })).toBeEnabled();
+    expect(screen.queryByLabelText('Destination')).not.toBeInTheDocument();
+    login.mockResolvedValueOnce({ role: 'admin' });
+    await user.click(screen.getByRole('button', { name: 'Sign in to Workspace' }));
+    expect(login).toHaveBeenCalledTimes(2);
+    expect(await screen.findByLabelText('Destination')).toHaveTextContent(/^\/workspace\/admin$/);
   });
 
   it('no longer advertises a demo password', async () => {

@@ -208,7 +208,11 @@ def commercial_board(request, pk):
             for attr, value in fields.items():
                 setattr(user, attr, value)
             try:
-                user.save(update_fields=list(fields.keys()))
+                if set(fields).intersection({'username', 'phone_number'}):
+                    from learner_api.services.contact_sync import save_verified_contact_fields
+                    save_verified_contact_fields(user, fields)
+                else:
+                    user.save(update_fields=list(fields.keys()))
             except DatabaseError as exc:
                 return _error(f"Database error: {exc}", 502)
 

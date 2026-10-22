@@ -12,6 +12,52 @@ from .tests_overview_week import native, old
 START, END = date(2026, 9, 3), date(2026, 9, 13)
 
 
+class HomeSubmissionLookupTests(SimpleTestCase):
+    def summary(self, progress, submissions, ids):
+        return summarise_home([], [{'id': key, 'type': 'assignment'} for key in ids],
+                              progress, submissions, [], START, END, [])
+
+    def test_missing_submission_hours_do_not_rescan_all_progress_per_assignment(self):
+        class CountedProgress(list):
+            scans = 0
+
+            def __iter__(self):
+                self.scans += 1
+                return super().__iter__()
+
+        for size in (10, 100):
+            with self.subTest(size=size):
+                ids = [str(index) for index in range(size)]
+                progress = CountedProgress({'componentId': key, 'verifiedSeconds': 3600} for key in ids)
+                submissions = [{'component_ref': key, 'status': 'submitted', 'actual_time_hours': None}
+                               for key in ids]
+                result = self.summary(progress, submissions, ids)
+                self.assertEqual(result['otjh']['submitted'], size)
+                print(f'Home submitted-hours fixture: rows={size}, full progress scans={progress.scans}')
+                self.assertLessEqual(progress.scans, 5)
+
+    def test_fallback_preserves_component_identity_duplicates_and_input_rows(self):
+        from copy import deepcopy
+        progress = [{'componentId': 'a', 'verifiedSeconds': 3600, 'expectedOtjh': 99},
+                    {'componentId': 'a', 'verifiedSeconds': 3600, 'expectedOtjh': 99},
+                    {'componentId': 'b', 'verifiedSeconds': 0, 'expected_otjh': 99},
+                    {'componentId': 'other', 'verifiedSeconds': 360000}]
+        original = deepcopy(progress)
+        submissions = [{'component_ref': key, 'status': 'submitted', 'actual_time_hours': None}
+                       for key in ('a', 'b')]
+        result = self.summary(progress, submissions, ('a', 'b', 'other'))
+        self.assertEqual(result['otjh']['submitted'], 1)
+        self.assertEqual(progress, original)
+
+    def test_explicit_zero_and_unknown_recorded_hours_keep_their_meanings(self):
+        progress = [{'componentId': 'a', 'verifiedSeconds': 3600},
+                    {'componentId': 'b', 'expectedOtjh': 99}]
+        submissions = [{'component_ref': 'a', 'status': 'submitted', 'actual_time_hours': 0}]
+        self.assertEqual(self.summary(progress, submissions, ('a', 'b'))['otjh']['submitted'], 0)
+        submissions.append({'component_ref': 'b', 'status': 'submitted', 'actual_time_hours': None})
+        self.assertIsNone(self.summary(progress, submissions, ('a', 'b'))['otjh']['submitted'])
+
+
 class HomeLiveHoursTests(SimpleTestCase):
     def read(self, *, actual=0, planned=175, records=(), credits=None, unavailable=False, modules=None):
         source = SimpleNamespace(pk=7, _canonical_profile={'id': 70})

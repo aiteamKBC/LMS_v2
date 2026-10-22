@@ -2112,11 +2112,16 @@ def mirror_placement_to_enrolment(profile):
         return None
 
 
-def sync_active_user(source):
-    """Upsert one permanent learner and refresh authored plan/KSB child rows."""
+def sync_active_user(source, *, strict=False):
+    """Upsert profile/children; strict writers propagate failure to outer rollback.
+
+    Non-active successful updates still return None. Legacy callers retain the
+    warning/None failure contract unless they explicitly opt into strict mode.
+    """
     from .apprenticeship_agreement import _group_dates
     from .learner_dates import learner_date_values
     from .coach_assignment import source_coach
+    from .services.contact_sync import verified_activation_profile, sync_contacts_in_transaction
 
     status = _s(getattr(source, "programme_status", ""))
     start_date, end_date, _ = _group_dates(source)
@@ -2144,12 +2149,14 @@ def sync_active_user(source):
     }
     try:
         with transaction.atomic(using="enrolment"):
+            learner, contacts = verified_activation_profile(source)
+            # Signals/audit snapshots must see current contacts on the first
+            # profile save, not a stale value corrected later in the transaction.
+            defaults.update(contacts)
             # Preserve legacy profile-only assignments, but copy an explicit
             # assignment (including an unassignment) on activation and rebuild.
             defaults.update(source_coach(source) or {})
-            # Prefer the explicit link; fall back to email for profiles created
-            # before enrolment_id existed (see identity.learner_profile_for_source).
-            learner = learner_profile_for_source(source, source.id)
+            # The contact gate resolved only an explicit verified identity.
             # Whether found or about to be created, it belongs to this source row.
             defaults["enrolment_id"] = source.id
             # Carried across on every upsert so the profile never has to guess
@@ -2210,7 +2217,11 @@ def sync_active_user(source):
                 # the enrolment source with no catalogue hydration.
                 replace_free_courses(learner, getattr(source, "free_courses", None) or [])
                 refresh_learner_ksb_snapshot(learner, source, training_plan=training_plan)
+            sync_contacts_in_transaction(source.id, using='enrolment')
+            learner.refresh_from_db(using='enrolment', fields=['full_name', 'phone_number'])
         return learner if status.lower() == ACTIVE_STATUS else None
     except DatabaseError as exc:
         logger.warning("Could not sync learner (%s)", type(exc).__name__)
+        if strict:
+            raise
         return None

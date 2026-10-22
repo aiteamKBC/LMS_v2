@@ -567,7 +567,8 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None, home_sum
         from .home_progress import read_home_progress
         progress_card = read_home_progress(
             source, home_kind, plan_activities, native, progress, assigned, end,
-            attendance_module_ids=attendance_module_ids, canonical_metrics=early_metrics)
+            attendance_module_ids=attendance_module_ids, canonical_metrics=early_metrics,
+            module_counts_only=True)
         # Week dates are always UK calendar dates; the card reads no time-zone label.
         progress_card['period'] = {key: progress_card['period'][key] for key in ('start', 'end')}
         return {'weekStart': start.isoformat(), 'weekEnd': end.isoformat(),

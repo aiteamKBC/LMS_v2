@@ -96,12 +96,20 @@ def summarise_home(activities, native, progress, submissions, assigned, start, e
     # as the historical ledger retains previously completed learning.
     actual = completed_otjh(native, progress, submissions, historical_hours)
     submitted, missing_submitted = 0, 0
+    progress_by_component = None
     for component, row in marking.items():
         if row.get('imported'):
             continue  # Already represented by the accepted historical ledger.
         value = hours(row.get('actual_time_hours'))
         if value is None:
-            matching = [item for item in progress if str(item.get('componentId') or '') == component]
+            # Build only when fallback time is needed. Keep each component's
+            # original order/duplicates for the canonical time deduplicator.
+            if progress_by_component is None:
+                progress_by_component = {}
+                for item in progress:
+                    key = str(item.get('componentId') or '')
+                    progress_by_component.setdefault(key, []).append(item)
+            matching = progress_by_component.get(component, [])
             # Use only recorded time here, never authored planned hours as actual.
             matching = [item for item in matching if item.get('reportedTime')
                         or item.get('claimedSeconds') is not None or item.get('verifiedSeconds') is not None]
@@ -155,7 +163,7 @@ def summarise_home(activities, native, progress, submissions, assigned, start, e
 
 def read_home_progress(
     source, kind, activities, native, progress, assigned, end, *,
-    attendance_module_ids=None, canonical_metrics=None,
+    attendance_module_ids=None, canonical_metrics=None, module_counts_only=False,
 ):
     start, _, _ = _group_dates(source)
     with connections['enrolment'].cursor() as cur:
@@ -189,7 +197,8 @@ def read_home_progress(
         from .module_progress import canonical_module_progress
         owner = owner or canonical_learning.require_profile(source.pk)
         profile = LearnerProfile(id=owner['id'], enrolment_id=source.pk)
-        modules = canonical_module_progress(source, profile)
+        modules = canonical_module_progress(source, profile,
+            **({'counts_only': True} if module_counts_only else {}))
         result['activities'] = {'completed': sum(module['completed'] for module in modules),
                                 'total': sum(module['total'] for module in modules)}
         result['modules'] = counts(modules, lambda module: module['total'] > 0

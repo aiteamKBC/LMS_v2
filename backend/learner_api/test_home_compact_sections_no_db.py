@@ -128,7 +128,8 @@ class HomeSummarySectionTests(SimpleTestCase):
         # The home card receives the same merged activities, attendance scope and SSOT metrics.
         args, kwargs = home.call_args
         self.assertEqual(len(list(args[2])), 2)
-        self.assertEqual(kwargs, {'attendance_module_ids': ['MOD-1', 'MOD-2'], 'canonical_metrics': metrics})
+        self.assertEqual(kwargs, {'attendance_module_ids': ['MOD-1', 'MOD-2'], 'canonical_metrics': metrics,
+                                  'module_counts_only': True})
 
     def test_home_assignment_fields_are_loaded_without_dropping_original_fields(self):
         self.assertEqual(set(HOME_SOURCE_FIELDS), {'id', 'aptem_id', 'email', 'username',
@@ -188,7 +189,8 @@ class HomeSummarySectionTests(SimpleTestCase):
         self.assertEqual(args[4], progress)
         self.assertEqual([row['module_id'] for row in args[3]], ['A'])
         self.assertEqual([row['module_id'] for row in args[2]], ['A'])
-        self.assertEqual(kwargs, {'attendance_module_ids': ['A', 'ATTENDANCE'], 'canonical_metrics': metrics})
+        self.assertEqual(kwargs, {'attendance_module_ids': ['A', 'ATTENDANCE'], 'canonical_metrics': metrics,
+                                  'module_counts_only': True})
         self.assertEqual(cursor.execute.call_args_list[0].args, (week_module.HOME_SUBJECTS_SQL, [265]))
         self.assertEqual(cursor.execute.call_args_list[-1].args[1], [['B']])
         self.assertEqual(builder.call_args_list[-1].kwargs['components'],

@@ -31,7 +31,8 @@ Where it is stored
 Those last columns are deliberately not mapped on EnrolmentUser: a mapped column
 missing from the database breaks every query on the table, sign-in included
 (see the note in models.py). They are probed and used through raw SQL instead,
-so a database without them simply never asks anybody.
+so a database without completion storage returns a retryable failure for a new
+apprentice instead of pretending that mandatory onboarding is complete.
 
     GET  /learner_api/first-login-details/<pk>/   whether it is required + prefill
     POST /learner_api/first-login-details/<pk>/   save both screens, then Onboarding
@@ -54,6 +55,7 @@ from .aptem_status import programme_status
 from .constants import DEFAULT_PROGRAMME_STATUS
 from .mappers import _s
 from .models import EnrolmentUser
+from .services.contact_sync import sync_contacts_in_transaction
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +161,10 @@ def _details(learner):
 
 def _state(request, learner, cur):
     available, completed_at = _completion(cur, learner.pk)
+    if not available and _is_apprenticeship(learner) and _is_fresh(learner):
+        # Absence/unavailability is not evidence that mandatory onboarding was
+        # completed. Keep the existing 503/retry contract, never fabricate bypass.
+        raise DatabaseError('First-login completion state is unavailable.')
     required = (
         available
         and completed_at is None
@@ -273,7 +279,7 @@ def first_login_details(request, pk):
             # Locked, and every precondition re-read under the lock, so a double
             # submit or a staff status change mid-request cannot apply twice or
             # promote a learner who is no longer at 'Fresh user'.
-            learner = EnrolmentUser.all_learners.select_for_update().filter(pk=pk).first()
+            learner = EnrolmentUser.all_learners.using(CONN).select_for_update().filter(pk=pk).first()
             if learner is None:
                 return _error("Not found.", 404)
             available, completed_at = _completion(cur, pk)
@@ -288,7 +294,7 @@ def first_login_details(request, pk):
             for attr, value in values.items():
                 setattr(learner, attr, value)
             learner.programme_status = ONBOARDING_STATUS
-            learner.save(update_fields=[*values.keys(), "programme_status"])
+            learner.save(using=CONN, update_fields=[*values.keys(), "programme_status"])
 
             cur.execute(
                 f"""
@@ -301,6 +307,7 @@ def first_login_details(request, pk):
                 """,
                 [signature, _s(learner.username), pk],
             )
+            sync_contacts_in_transaction(pk, using=CONN)
             return JsonResponse(_state(request, learner, cur))
     except DatabaseError:
         logger.exception("Could not save first-login details for learner %s.", pk)

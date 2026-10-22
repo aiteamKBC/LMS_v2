@@ -92,7 +92,10 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
   const checkingFirstLogin = useFirstLoginDetailsRedirect(
     kind, id, profile.real?.programmeStatus, ready && !preview && account.role === 'learner',
   );
-  const loadCards = ready && !onboarding && !fresh;
+  const beforeActive = !preview && account.role === 'learner' && kind === 'apprenticeship'
+    ? apprenticeHomeRedirect(profile.real?.programmeStatus) : null;
+  // Do not start shared reads for cards this render is about to leave.
+  const loadCards = ready && !onboarding && !fresh && !beforeActive;
   const schedule = useLiveLearnerRead(kind, id, loadCards, upcomingSchedule.read, upcomingSchedule.peek);
   const week = useLiveLearnerRead(kind, id, loadCards, homeSummary.read, homeSummary.peek);
   useEffect(() => { const previous = document.title; document.title = 'Student Home — Kent Business College'; return () => { document.title = previous; }; }, []);
@@ -103,8 +106,6 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
   // Student Home opens once an apprentice's programme has started; until then
   // each enrolment stage has its own page. Their own sign-in only — a staff
   // preview still shows the page, and commercial learners keep it throughout.
-  const beforeActive = !preview && account.role === 'learner' && kind === 'apprenticeship'
-    ? apprenticeHomeRedirect(profile.real.programmeStatus) : null;
   if (beforeActive) return <Navigate to={beforeActive} replace />;
   const name = profile.real.name?.trim() || (!preview && account.displayName?.trim()) || 'Learner';
   const firstName = name.split(/\s+/)[0];

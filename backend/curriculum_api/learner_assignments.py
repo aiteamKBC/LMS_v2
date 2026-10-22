@@ -229,9 +229,12 @@ def _handle(request, scope, identifier):
                         # `cache` in the catalogue slot and left `cache`
                         # unfilled, so every removal raised TypeError and the
                         # drawer showed a bare 500.
-                        changed += int(_unassign(learner, target, catalogue, cache))
+                        learner_changed = int(_unassign(learner, target, catalogue, cache))
                     else:
-                        changed += int(_assign(learner, target, catalogue, cache))
+                        learner_changed = int(_assign(learner, target, catalogue, cache))
+                # Exiting atomic can fail after the writer returns. Only count
+                # this learner once the existing transaction exits successfully.
+                changed += learner_changed
             except Exception:  # noqa: BLE001 - one learner must not sink the batch
                 logger.exception('Curriculum learner assignment failed for learner %s', learner_id)
                 failed.append(str(learner_id))

@@ -25,15 +25,11 @@ def coach_dashboard_scope_ids(limit: int):
 
 def build_coach_dashboard(owner_email: str) -> dict:
     """Build from sources and keep the legacy row current during migration."""
-    from coach_api import dashboard_service as compatibility
     from coach_api.services.dashboard.service import CoachDashboardService
 
     service = CoachDashboardService(owner_email)
-    payload = service.build_live()
-    compatibility.CoachDashboardSnapshot.objects.update_or_create(
-        owner_email=service.context.owner_email,
-        defaults={"payload": payload, "schema_version": service.SCHEMA_VERSION},
-    )
+    payload = service.refresh()
+    payload.pop('readModel', None)
     return payload
 
 

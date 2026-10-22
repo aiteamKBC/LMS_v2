@@ -25,13 +25,13 @@ class StaffOwnsLearnerTests(SimpleTestCase):
     def test_uses_the_same_normalised_email_link_as_the_session_for_both_kinds(self):
         for kind in ('commercial', 'apprenticeship'):
             with self.subTest(kind=kind):
-                self.rows.filter.return_value.first.return_value = SimpleNamespace(pk=56, learner_type=kind)
+                self.rows.filter.return_value.__getitem__.return_value = [SimpleNamespace(pk=56, learner_type=kind)]
                 self.assertTrue(permissions.staff_owns_learner(staff(email=' Student.Staff@Example.TEST '), 56))
                 self.rows.filter.assert_called_with(email__iexact='student.staff@example.test')
 
     def test_missing_or_different_link_never_matches_even_if_staff_ids_collide(self):
         for linked in (None, SimpleNamespace(pk=19)):
-            self.rows.filter.return_value.first.return_value = linked
+            self.rows.filter.return_value.__getitem__.return_value = [linked] if linked else []
             self.assertFalse(permissions.staff_owns_learner(staff(subject_id=56), 56))
 
     def test_invalid_identity_and_target_do_not_query(self):

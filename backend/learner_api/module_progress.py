@@ -118,7 +118,7 @@ def aggregate_module_progress(activity, detail, current, progress, titles=None):
             for row in sorted(subjects.values(), key=lambda row: (row['title'].casefold(), row['id']))]
 
 
-def canonical_module_progress(source, profile, *, read_projection=None):
+def canonical_module_progress(source, profile, *, read_projection=None, counts_only=False):
     """The single final calculation called by both HTTP consumers."""
     from . import canonical_learning
     from . import journal_sources
@@ -139,7 +139,10 @@ def canonical_module_progress(source, profile, *, read_projection=None):
             # than hydrating learner content a second time for its percentage.
             activity, detail, current, progress, titles = read_projection()
         else:
-            activity = canonical_learning.source_subjects(source.pk, summarize_activities, owner=owner) \
+            # Home consumes catalogue completion only. Preserve the default
+            # projection for every other caller and retain catalogue membership.
+            options = {'include_totals': False, 'include_ledger': False} if counts_only else {}
+            activity = canonical_learning.source_subjects(source.pk, summarize_activities, owner=owner, **options) \
                 if student_activity_available(source.aptem_id) else None
     finally:
         journal_sources._current.reset(token)

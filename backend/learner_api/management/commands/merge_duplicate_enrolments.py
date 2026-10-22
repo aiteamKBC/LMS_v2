@@ -116,6 +116,9 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         apply_changes = bool(options.get("apply"))
+        if apply_changes:
+            from django.core.management.base import CommandError
+            raise CommandError('Apply blocked: duplicate merge requires reviewed identity and historical-link evidence. Preview only.')
         pairs = PAIRS
         if _s(options.get("pairs")):
             try:
