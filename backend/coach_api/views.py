@@ -10116,6 +10116,23 @@ def resolve_coach_review_events(
         if int(learner.id) not in aptem_by_profile and int(learner.id) not in identity_conflicts
     ]
     events: list[dict] = list(aptem_events)
+    # Imported PRs use the same linked employer as native PR invitations.
+    # Resolve once per learner, using the already loaded source identities.
+    learners_by_id = {str(learner.id): learner for learner in learners}
+    employer_attendees: dict[str, dict[str, str]] = {}
+    for index, event in enumerate(events):
+        learner_id = str(event.get("learnerId") or "")
+        learner = learners_by_id.get(learner_id)
+        if learner is None or review_event_category(event) != "progress-review":
+            continue
+        if learner_id not in employer_attendees:
+            source_row = resolve_caseload_source_row(
+                learner, commercial_rows=commercial_rows, enrolment_rows=enrolment_rows,
+            )
+            employer_attendees[learner_id] = learner_employer_attendee(learner, source_row)
+        attendee = employer_attendees[learner_id]
+        if attendee:
+            events[index] = {**event, "employerName": attendee["name"], "employerEmail": attendee["email"]}
     issues: list[dict[str, str]] = [
         {"learnerId": str(profile_id), "code": "aptem_identity_conflict"}
         for profile_id in sorted(identity_conflicts)

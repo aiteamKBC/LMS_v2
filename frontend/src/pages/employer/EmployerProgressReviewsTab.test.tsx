@@ -53,6 +53,60 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('employer progress reviews', () => {
+  it.each(['native', 'Progress Review', 'Progress Review (+ Skills Radar)'])('joins a scheduled %s from the list and details while keeping form access', async type => {
+    const day = '2099-10-26';
+    event = { ...event, status: 'scheduled', scheduledDate: day, targetDate: day, date: day,
+      meetingLink: 'https://teams.microsoft.com/meet/synthetic', calendarEventKey: 'booked-pr' };
+    definition = { ...definition, instance: { ...definition.instance!, status: 'scheduled' } };
+    if (type !== 'native') {
+      event = { ...event, reviewTemplateId: null, reviewInstanceId: null, importedReview: {
+        id: '88', aptemReviewId: 'A-88', name: type, type, reviewerName: 'Coach', plannedDate: day, plannedTime: null,
+        completedDate: null, status: 'Not Scheduled', extractionStatus: 'complete', detailsAvailable: false, sections: [],
+      } };
+      vi.mocked(fetchEmployerProgressReviews).mockImplementation(async () => ({ events: [event], definitions: {} }));
+      vi.mocked(fetchEmployerProgressReview).mockImplementation(async () => ({ event, definition: null }));
+    }
+    mount();
+    const join = await screen.findByRole('link', { name: 'Join meeting' });
+    expect(join).toHaveAttribute('href', event.meetingLink);
+    expect(join).toHaveAttribute('target', '_blank');
+    expect(join).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(screen.queryByText('Archived review')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Book a time|Reschedule meeting|Record attendance/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'View all reviews (1)' }));
+    expect(screen.getByRole('link', { name: 'Join meeting' })).toHaveAttribute('href', event.meetingLink);
+    fireEvent.click(screen.getByRole('button', { name: 'View review' }));
+    expect(await screen.findByRole('link', { name: 'Join meeting' })).toHaveAttribute('href', event.meetingLink);
+    expect(saveEmployerReviewAnswers).not.toHaveBeenCalled();
+    expect(signReviewAsEmployer).not.toHaveBeenCalled();
+    expect(saveMigratedReviewPartyAnswers).not.toHaveBeenCalled();
+  });
+
+  it('keeps View review beside Join meeting on the meeting day', async () => {
+    const day = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
+    event = { ...event, status: 'scheduled', scheduledDate: day, targetDate: day, date: day,
+      meetingLink: 'https://teams.microsoft.com/meet/synthetic' };
+    definition = { ...definition, instance: { ...definition.instance!, status: 'scheduled' } };
+    mount();
+    expect(await screen.findByRole('link', { name: 'Join meeting' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'View review' }));
+    expect(await screen.findByRole('link', { name: 'Join meeting' })).toBeVisible();
+  });
+
+  it.each(['not-scheduled', 'cancelled', 'completed', 'unsafe-link', 'no-link'])('does not offer joining for %s in either view', async scenario => {
+    const status = ['unsafe-link', 'no-link'].includes(scenario) ? 'scheduled' : scenario;
+    event = { ...event, status, scheduledDate: '2099-10-26', targetDate: '2099-10-26', date: '2099-10-26',
+      meetingLink: scenario === 'unsafe-link' ? 'javascript:alert(1)' : scenario === 'no-link' ? '' : 'https://teams.microsoft.com/meet/synthetic' };
+    definition = { ...definition, instance: { ...definition.instance!, status },
+      signatures: { ...definition.signatures, employer: { required: false, signed: false } } };
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'View all reviews (1)' }));
+    expect(screen.queryByRole('link', { name: 'Join meeting' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'View review' }));
+    await screen.findByRole('heading', { name: 'Progress review #1' });
+    expect(screen.queryByRole('link', { name: 'Join meeting' })).not.toBeInTheDocument();
+  });
+
   it('saves an Aptem employer answer through the party endpoint and refreshes its version', async () => {
     event = { ...event, migratedForm: true, eventKey: 'imported-review:88', id: 'imported-review:88', status: 'scheduled' };
     definition = { ...definition, migratedForm: true, readOnly: false, answerVersion: 'v1', instance: { ...definition.instance!, status: 'scheduled' },
@@ -120,10 +174,13 @@ describe('employer progress reviews', () => {
     await waitFor(() => expect(saveEmployerReviewAnswers).toHaveBeenCalledWith('7', 'commercial', '499', 'instance-1', { 'employer-comment': 'Good progress at work' }));
   });
 
-  it('uses the existing employer party flow for migrated reviews', async () => {
+  it.each(['MCM', 'PR', 'PR_SKILLS_RADAR', 'PSP'] as const)('uses the employer party flow when the migrated %s template requires it', async family => {
     event = { ...event, migratedForm: true, eventKey: 'imported-review:88', id: 'imported-review:88', reviewInstanceId: null, reviewTemplateId: null,
+      source: family === 'MCM' ? 'mcr' : 'progress-review', reviewTypeCode: family === 'MCM' ? 'mcm' : 'progress_review',
+      title: family === 'PSP' ? 'Personal Support Plan' : family === 'MCM' ? 'Monthly Coaching Meeting' : 'Progress review',
       employerSigned: false, employerSignatureRequired: true };
-    definition = { ...definition, migratedForm: true, source: 'aptem', reviewRevision: 2 };
+    definition = { ...definition, migratedForm: true, source: 'aptem', reviewRevision: 2,
+      template: { ...definition.template, reviewTypeCode: family === 'PSP' ? 'aptem_psp' : family === 'MCM' ? 'aptem_mcm' : 'aptem_progress_review' } };
     vi.mocked(fetchMigratedReviewForParty).mockResolvedValue(definition);
     vi.mocked(signMigratedReviewAsParty).mockResolvedValue({ signed: true, role: 'employer' });
     mount();

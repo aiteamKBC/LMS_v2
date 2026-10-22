@@ -129,7 +129,7 @@ export default function ReviewTemplatesPage() {
                     <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${template?.is_active ? 'bg-emerald-50 text-emerald-800' : 'bg-background-100 text-foreground-500'}`}>{template ? template.is_active ? 'Active' : 'Not in use' : 'Not available'}</span>
                   </div>
                   <p className="mt-4 text-sm font-semibold text-foreground-800">Standard Template</p>
-                  {family === 'PSP' && <p className="mt-1 text-sm text-foreground-500">Personal Support Plan. Saving all required answers completes the plan without signatures.</p>}
+                  {family === 'PSP' && <p className="mt-1 text-sm text-foreground-500">Personal Support Plan. No signatures by default; choose required signers in the template.</p>}
                   <p className="mt-1 text-sm text-foreground-500">{template?.is_active ? 'Used by programmes without a custom version.' : template ? 'A standard version is saved but is not currently in use.' : 'No Standard Template Available. Import a form to get started.'}</p>
                   {template && <TemplateStatistics template={template} />}
                   <div className="mt-auto flex flex-wrap items-center gap-2 pt-5">

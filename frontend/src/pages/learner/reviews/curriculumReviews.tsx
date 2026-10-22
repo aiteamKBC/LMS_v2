@@ -6,8 +6,10 @@ import { roleNavMap } from '@/mocks/navigation';
 import { downloadLearnerMcmPdf, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers, signLearnerProgressReview, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
+import { useAuth } from '@/hooks/useAuth';
+import { needsPersonalSupportForm } from '@/api/learnerPersonalSupport';
 import { isMigratedContinuationEvent, useReviewSessions } from './useReviewSessions';
-import { downloadMigratedReviewForParty, saveMigratedReviewPartyAnswers } from '@/api/learnerCalendar';
+import { downloadMigratedReviewForParty, saveMigratedReviewPartyAnswers, signMigratedReviewAsParty } from '@/api/learnerCalendar';
 import { useMeetingAttendance } from './useMeetingAttendance';
 import { useMeetingBooking } from './useMeetingBooking';
 import type { MeetingAttendance } from '@/api/meetingAttendance';
@@ -92,11 +94,16 @@ export function CurriculumReviewPage() {
   const { reviewId } = useParams<{ reviewId: string }>();
   const { myLearner, learner, sessions, setEvents, loading, error: loadError, refresh } = useReviewSessions('review');
   const { canProgress } = useLearnerWorkspaceAccess(myLearner.id);
+  const { auth, isInitialized } = useAuth();
   const [actionError, setActionError] = useState('');
   const selected = useMemo(() => sessions.find(review => review.id === reviewId || review.eventKey === reviewId) || null, [reviewId, sessions]);
-  const migratedEvent = isMigratedContinuationEvent(selected);
+  const preparePersonalSupport = Boolean(isInitialized && auth.account?.role === 'learner'
+    && String(auth.account.subjectId) === String(myLearner.id)
+    && !listParams.get('viewAsLearner') && !listParams.get('viewAsCoach')
+    && needsPersonalSupportForm(selected));
+  const migratedEvent = isMigratedContinuationEvent(selected) || preparePersonalSupport;
   const eventKey = selected?.formEventKey || selected?.eventKey || '';
-  const instance = useLearnerReviewInstance(myLearner.kind, myLearner.id, selected?.reviewTemplateId || selected?.reviewInstanceId || migratedEvent ? eventKey : '');
+  const instance = useLearnerReviewInstance(myLearner.kind, myLearner.id, selected?.reviewTemplateId || selected?.reviewInstanceId || migratedEvent ? eventKey : '', preparePersonalSupport);
   const error = loadError || actionError;
 
   useEffect(() => {
@@ -108,6 +115,12 @@ export function CurriculumReviewPage() {
 
   const saveSignature = async (signature: string) => {
     if (!selected || !canProgress) return;
+    if (migratedEvent) {
+      await signMigratedReviewAsParty(eventKey, signature, { reviewRevision: instance.definition?.reviewRevision });
+      instance.refresh();
+      refresh();
+      return;
+    }
     const result = await signLearnerProgressReview(myLearner.kind, myLearner.id, eventKey, { name: learner?.name || 'Learner', signature });
     setEvents(current => current.map(event => event.id === selected.id ? { ...event, ...result.event } : event));
     instance.refresh();
@@ -121,7 +134,7 @@ export function CurriculumReviewPage() {
       <button type="button" onClick={() => navigate(reviewsListHref(myLearner, listParams, basePath))} className="inline-flex h-9 items-center gap-2 self-start rounded-xl border border-primary-200 bg-primary-50 px-3.5 text-xs font-bold text-primary-700 shadow-sm transition hover:bg-primary-100"><AppIcon className="ri-arrow-left-line" />Back to Reviews</button>
       {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={5} /></div> : !selected ? <section className="rounded-xl border border-background-200 bg-white p-6"><h1 className="text-xl font-bold text-foreground-900">Review not found</h1><p className="mt-2 text-sm text-foreground-500">This review is no longer available for this learner.</p></section> : <>
         <section className="rounded-2xl border border-primary-100 bg-white p-5 shadow-sm">
-          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">{selected.importedReview ? 'Saved review' : 'Curriculum Review'}</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">{selected.importedReview && !migratedEvent ? 'Saved review' : 'Review'}</p>
           <h1 className="mt-2 text-2xl font-bold text-primary-800">{curriculumReviewTitle(selected)}</h1>
           <p className="mt-1 text-sm text-foreground-500">{formatDate(selected.scheduledDate || selected.targetDate || selected.date)} · {formatTime(selected.scheduledTime)}</p>
           <div className="mt-4 grid gap-3 sm:grid-cols-3"><div><small className="text-xs text-foreground-500">Reviewer / Coach</small><p className="font-bold">{selected.coachName || 'Not assigned yet'}</p></div><div><small className="text-xs text-foreground-500">Review type</small><p className="font-bold">{selected.reviewTypeName || 'Curriculum Review'}</p></div><div><small className="text-xs text-foreground-500">Status</small><p className="font-bold capitalize">{selected.status.replaceAll('-', ' ')}</p></div></div>
@@ -135,7 +148,7 @@ export function CurriculumReviewPage() {
             <ImportedReviewSections review={{ ...selected.importedReview!, sections: [section] }} />
           </section>)}
           {!selected.importedReview.sections.length && <p className="text-sm text-foreground-500">Detailed questions and answers have not been imported for this review yet.</p>}
-        </section> : instance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={5} /></div> : instance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{instance.error}<button type="button" onClick={instance.refresh} className="ml-2 underline">Retry review</button></p> : instance.definition ? <LearnerReviewInstanceForm definition={instance.definition} onSign={canProgress && !migratedEvent ? saveSignature : undefined} onDownload={migratedEvent ? () => downloadMigratedReviewForParty(eventKey) : undefined} signatoryName={learner?.name || 'Learner'} onSaveAnswers={migratedEvent ? (canProgress ? async (answers, version) => { const updated = await saveMigratedReviewPartyAnswers(eventKey, answers, version); setEvents(current => current.map(event => event.id === selected.id ? { ...event, status: updated.instance?.status || event.status } : event)); return updated; } : undefined) : answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, eventKey, answers)} /> : <section className="rounded-xl border border-background-200 bg-white p-5 text-sm text-foreground-500">This review form is not available yet.</section>}
+        </section> : instance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={5} /></div> : instance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{instance.error}<button type="button" onClick={instance.refresh} className="ml-2 underline">Retry review</button></p> : instance.definition ? <LearnerReviewInstanceForm definition={instance.definition} onSign={canProgress ? saveSignature : undefined} onDownload={migratedEvent ? () => downloadMigratedReviewForParty(eventKey) : undefined} signatoryName={learner?.name || 'Learner'} onSaveAnswers={migratedEvent ? (canProgress ? async (answers, version) => { const updated = await saveMigratedReviewPartyAnswers(eventKey, answers, version); setEvents(current => current.map(event => event.id === selected.id ? { ...event, migratedForm: true, formEventKey: updated.instance?.id || eventKey, status: updated.instance?.status || event.status } : event)); return updated; } : undefined) : answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, eventKey, answers)} /> : <section className="rounded-xl border border-background-200 bg-white p-5 text-sm text-foreground-500">This review form is not available yet.</section>}
       </>}
     </div>
   </WorkspaceShell>;

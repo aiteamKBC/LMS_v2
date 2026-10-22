@@ -25,7 +25,9 @@ export function meetingCalendarHref(session: LearnerCalendarEvent, learner: { ki
   params.set('event', attendance?.calendarEventKey || session.calendarEventKey || session.eventKey || session.id);
   const date = session.scheduledDate || session.targetDate || session.date;
   if (date) params.set('date', date);
-  if (session.importedReview) {
+  // Viewing an existing appointment uses its durable calendar key. Review/source
+  // parameters invoke the separate imported-review scheduling lookup.
+  if (action && session.importedReview) {
     params.set('reviewId', session.importedReview.id);
     params.set('source', session.source);
   }

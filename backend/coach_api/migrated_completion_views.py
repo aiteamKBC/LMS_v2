@@ -152,7 +152,8 @@ def _party_overlay(review_id, account, *, lock=False, lock_calendar=False):
     if not overlay or not overlay.template_snapshot.get("sections"):
         return None
     from .migrated_completion import is_personal_support_form
-    if account.role == "employer" and is_personal_support_form(overlay):
+    if (account.role == "employer" and is_personal_support_form(overlay)
+            and "employer" not in required_roles(overlay)):
         return None
     profile = LearnerProfile.objects.filter(pk=overlay.learner_id).first()
     from .review_sources import enrolment_for_review_profile

@@ -13,6 +13,7 @@ export interface MigratedField {
 }
 export interface MigratedDefinition {
   otjh?: { expectedHours: number; countsTowardsOtjh: boolean };
+  signatures?: Record<'advisor' | 'participant' | 'employer', boolean>;
   sections: { key: string; title: string; order: number; fields: MigratedField[] }[];
 }
 export interface MigratedTemplate {
