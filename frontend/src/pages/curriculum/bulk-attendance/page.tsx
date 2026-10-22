@@ -6,7 +6,7 @@ import RegisterSummary from './components/RegisterSummary';
 import styles from './bulkAttendance.module.css';
 import { WorkspaceShell } from "@/components/feature/WorkspaceShell";
 import { curriculumNavItems } from "@/mocks/navigation";
-import type { AttendanceStatus, Cohort, Group, Learner, Lecture, Module } from "@/types/bulkAttendance";
+import type { AttendanceStatus, Learner, Lecture } from "@/types/bulkAttendance";
 import { useAttendance } from "@/hooks/useBulkAttendance";
 import { useBulkAttendanceData } from "@/hooks/useBulkAttendanceData";
 import {
@@ -25,6 +25,7 @@ import {
   fetchBulkAttendanceLiveDayRecords,
   fetchBulkAttendanceKbcHistory,
   fetchBulkAttendanceKbcRecent,
+  fetchBulkAttendanceDayLearners,
   BulkAttendanceSaveError,
   saveBulkAttendanceChanges,
   type BulkAttendanceChange,
@@ -68,43 +69,17 @@ function normalizeText(value: string | undefined): string {
   return (value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
-interface SessionDateScope {
-  moduleIds: Set<string>;
-  groupIds: Set<string>;
-  cohortIds: Set<string>;
-  programmeIds: Set<string>;
-}
+const HIDDEN_FILTER_NAME_PARTS = ["test", "rewan", "osama", "copy"];
+const HIDDEN_FILTER_EXACT_NAMES = new Set([
+  "gg", "tgtr", "progmon", "333", "3333", "dddd", "mm1", "m1", "m2", "m3", "m4",
+  "mm21", "mm232", "mmmm1", "mo1", "mod1", "fcv", "gdgv", "ghd", "hhj", "hjf",
+  "latestmod", "ayhaga", "ayamodual",
+]);
 
-/** Resolve the curriculum placements that have a scheduled session on one date. */
-function sessionScopeForDate(
-  lectures: Lecture[],
-  modules: Module[],
-  groups: Group[],
-  cohorts: Cohort[],
-  sessionDate: string,
-): SessionDateScope {
-  const result: SessionDateScope = {
-    moduleIds: new Set(),
-    groupIds: new Set(),
-    cohortIds: new Set(),
-    programmeIds: new Set(),
-  };
-  const modulesById = new Map(modules.map((module) => [module.id, module]));
-  const groupsById = new Map(groups.map((group) => [group.id, group]));
-  const cohortsById = new Map(cohorts.map((cohort) => [cohort.id, cohort]));
-
-  lectures.filter((lecture) => lecture.sessionDate === sessionDate).forEach((lecture) => {
-    const module = modulesById.get(lecture.moduleId);
-    const moduleId = lecture.moduleId || module?.id;
-    const groupId = lecture.groupId || module?.groupId;
-    const cohortId = lecture.cohortId || module?.cohortId || groupsById.get(groupId ?? "")?.cohortId;
-    const programmeId = lecture.programmeId || module?.programmeId || cohortsById.get(cohortId ?? "")?.programmeId;
-    if (moduleId) result.moduleIds.add(moduleId);
-    if (groupId) result.groupIds.add(groupId);
-    if (cohortId) result.cohortIds.add(cohortId);
-    if (programmeId) result.programmeIds.add(programmeId);
-  });
-  return result;
+function isHiddenFilterName(value: string | undefined): boolean {
+  const normalized = normalizeText(value);
+  return HIDDEN_FILTER_EXACT_NAMES.has(normalized)
+    || HIDDEN_FILTER_NAME_PARTS.some((part) => normalized.includes(part));
 }
 
 export default function AttendancePage() {
@@ -128,7 +103,9 @@ export default function AttendancePage() {
   const [scopeLearnersByEmail, setScopeLearnersByEmail] = useState<Map<string, CurriculumProgrammeAssignedLearner>>(new Map());
   const [scopeRosterLoading, setScopeRosterLoading] = useState(false);
   const [scopeRosterError, setScopeRosterError] = useState<string | null>(null);
-  const [date, setDate] = useState(todayIso());
+  // No date is selected initially: the register shows the full active roster.
+  // Selecting a day turns on the saved-attendance membership filter.
+  const [date, setDate] = useState("");
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<RegisterTab>("daily");
   const [historyRow, setHistoryRow] = useState<AttendanceRow | null>(null);
@@ -146,6 +123,9 @@ export default function AttendancePage() {
   const [registerSaveError, setRegisterSaveError] = useState<string | null>(null);
   const [pendingEdits, setPendingEdits] = useState<Record<string, BulkAttendanceChange>>({});
   const [kbcRecentVersion, setKbcRecentVersion] = useState(0);
+  const [dayMembership, setDayMembership] = useState<{ date: string; ids: Set<string> } | null>(null);
+  const [dayLoading, setDayLoading] = useState(true);
+  const [dayError, setDayError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [showActions, setShowActions] = useState(false);
   const [view, setView] = useState<"register" | "archive">("register");
@@ -303,15 +283,11 @@ export default function AttendancePage() {
     []
   );
 
-  const dateSessionScope = useMemo(
-    () => sessionScopeForDate(lectures, modules, groups, cohorts, date),
-    [lectures, modules, groups, cohorts, date],
-  );
-
   const scopedModules = useMemo(() => {
     const cohortById = new Map(cohorts.map((cohort) => [cohort.id, cohort]));
     const groupById = new Map(groups.map((group) => [group.id, group]));
     return modules.filter((module) => {
+      if (isHiddenFilterName(module.name)) return false;
       // Older module rows sometimes only retain their group. Resolve the
       // group’s cohort so the cascade remains correct for both row shapes.
       const moduleCohortId = module.cohortId || groupById.get(module.groupId ?? "")?.cohortId;
@@ -327,46 +303,45 @@ export default function AttendancePage() {
     const list = programmeId
       ? cohorts.filter((cohort) => cohort.programmeId === programmeId)
       : cohorts;
-    const hasSessionsOnDate = dateSessionScope.moduleIds.size > 0;
     return [
       { value: "", label: "All Cohorts" },
       ...list
-        .filter((cohort) => !hasSessionsOnDate || dateSessionScope.cohortIds.has(cohort.id))
+        .filter((cohort) => !isHiddenFilterName(cohort.name))
         .map((cohort) => ({ value: cohort.id, label: cohort.name })),
     ];
-  }, [programmeId, cohorts, dateSessionScope]);
+  }, [programmeId, cohorts]);
 
   const groupOptions = useMemo<FilterOption[]>(() => {
-    const cohortIds = cohortId
-      ? new Set([cohortId])
-      : programmeId
-      ? new Set(cohorts.filter((cohort) => cohort.programmeId === programmeId).map((cohort) => cohort.id))
-      : null;
-    const hasSessionsOnDate = dateSessionScope.moduleIds.size > 0;
-    const list = (cohortIds ? groups.filter((group) => cohortIds.has(group.cohortId)) : groups)
-      .filter((group) => !hasSessionsOnDate || dateSessionScope.groupIds.has(group.id));
+    const programmeCohortIds = new Set(
+      cohorts.filter((cohort) => cohort.programmeId === programmeId).map((cohort) => cohort.id),
+    );
+    const list = groups.filter((group) => {
+      if (cohortId) return group.cohortId === cohortId;
+      if (programmeId) {
+        return group.programmeId === programmeId || programmeCohortIds.has(group.cohortId);
+      }
+      return true;
+    });
     return [
       { value: "", label: "All Groups" },
-      ...list.map((group) => ({ value: group.id, label: group.name })),
+      ...list
+        .filter((group) => !isHiddenFilterName(group.name))
+        .map((group) => ({ value: group.id, label: group.name })),
     ];
-  }, [programmeId, cohortId, groups, cohorts, dateSessionScope]);
+  }, [programmeId, cohortId, groups, cohorts]);
 
   const moduleOptions = useMemo<FilterOption[]>(() => {
-    const hasSessionsOnDate = dateSessionScope.moduleIds.size > 0;
-    const list = scopedModules.filter((module) => !hasSessionsOnDate || dateSessionScope.moduleIds.has(module.id));
     return [
       { value: "", label: "All Modules" },
-      ...list.map((module) => ({ value: module.id, label: module.name })),
+      ...scopedModules.map((module) => ({ value: module.id, label: module.name })),
     ];
-  }, [scopedModules, dateSessionScope]);
+  }, [scopedModules]);
 
   const lectureOptions = useMemo<FilterOption[]>(() => {
     const allowedModuleIds = new Set(moduleOptions.slice(1).map((option) => option.value));
-    const hasSessionsOnDate = dateSessionScope.moduleIds.size > 0;
     const list = lectures.filter((lecture) =>
       allowedModuleIds.has(lecture.moduleId)
-      && (!moduleId || lecture.moduleId === moduleId)
-      && (!hasSessionsOnDate || lecture.sessionDate === date),
+      && (!moduleId || lecture.moduleId === moduleId),
     );
     return [
       { value: "", label: "All Lectures" },
@@ -375,7 +350,7 @@ export default function AttendancePage() {
         label: `${lecture.name} — ${formatShortDate(lecture.sessionDate)}`,
       })),
     ];
-  }, [moduleId, moduleOptions, lectures, date, dateSessionScope]);
+  }, [moduleId, moduleOptions, lectures]);
 
   const dateLectures = useMemo(() => {
     const allowedModuleIds = new Set(moduleOptions.slice(1).map((option) => option.value));
@@ -418,14 +393,34 @@ export default function AttendancePage() {
   }, [addAttendanceLectures, lectures, moduleId]);
 
   const handleDateChange = useCallback((nextDate: string, nextLectureId = "") => {
-    const nextScope = sessionScopeForDate(lectures, modules, groups, cohorts, nextDate);
     setDate(nextDate);
     setLectureId(nextLectureId);
-    if (nextScope.moduleIds.size > 0) {
-      setGroupId((current) => nextScope.groupIds.has(current) ? current : "");
-      setModuleId((current) => nextScope.moduleIds.has(current) ? current : "");
+    setSelectedIds([]);
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    if (!date) {
+      setDayMembership(null);
+      setDayError(null);
+      setDayLoading(false);
+      return () => controller.abort();
     }
-  }, [lectures, modules, groups, cohorts]);
+    setDayLoading(true);
+    setDayError(null);
+    setDayMembership(null);
+    void fetchBulkAttendanceDayLearners(date, controller.signal)
+      .then((ids) => {
+        if (!controller.signal.aborted) setDayMembership({ date, ids: new Set(ids) });
+      })
+      .catch((reason: unknown) => {
+        if (!controller.signal.aborted) setDayError(
+          reason instanceof Error ? reason.message : "Unable to load attendance for this date.",
+        );
+      })
+      .finally(() => { if (!controller.signal.aborted) setDayLoading(false); });
+    return () => controller.abort();
+  }, [date, kbcRecentVersion]);
 
   // Structured filters (Programme / Cohort / Module) applied on their own, so
   // the archive view can reuse them without the register search leaking in.
@@ -456,8 +451,9 @@ export default function AttendancePage() {
   }, [scopedLearners, query]);
 
   const activeLearners = useMemo(
-    () => filteredLearners.filter((learner) => !isArchived(learner)),
-    [filteredLearners, isArchived]
+    () => filteredLearners.filter((learner) => !isArchived(learner)
+      && (!date || (dayMembership?.date === date && Boolean(learner.kbcId && dayMembership.ids.has(learner.kbcId))))),
+    [filteredLearners, isArchived, dayMembership, date]
   );
 
   const moduleKey = selectedLecture
@@ -483,7 +479,7 @@ export default function AttendancePage() {
   });
   // A slow roster must never block changing another filter. The current
   // selection is rendered immediately while only its learner results load.
-  const pageLoading = dataLoading || attendanceLoading;
+  const pageLoading = dataLoading || attendanceLoading || dayLoading;
   const registerLoading = pageLoading || scopeRosterLoading;
   const liveDayReadKey = `${attendanceTargetKey}:${activeLearners.map(learner => learner.id).join('|')}`;
 
@@ -808,41 +804,13 @@ export default function AttendancePage() {
     }
   };
 
-  const moduleIdsByProgramme = useMemo(() => {
-    const map = new Map<string, string[]>();
-    modules.forEach((module) => {
-      const list = map.get(module.programmeId) ?? [];
-      list.push(module.id);
-      map.set(module.programmeId, list);
-    });
-    return map;
-  }, [modules]);
-
-  const lecturesByModule = useMemo(() => {
-    const map = new Map<string, Lecture[]>();
-    lectures.forEach((lecture) => {
-      const list = map.get(lecture.moduleId) ?? [];
-      list.push(lecture);
-      map.set(lecture.moduleId, list);
-    });
-    return map;
-  }, [lectures]);
-
-  const learnerLectureList = useCallback(
-    (learner: Learner): Lecture[] => {
-      const moduleIds = moduleIdsByProgramme.get(learner.programmeId) ?? [];
-      return moduleIds
-        .flatMap((moduleId) => lecturesByModule.get(moduleId) ?? [])
-        .slice()
-        .sort((a, b) => a.sessionDate.localeCompare(b.sessionDate));
-    },
-    [moduleIdsByProgramme, lecturesByModule]
-  );
-
   useEffect(() => {
     const controller = new AbortController();
     setKbcRecentError(null);
-    void fetchBulkAttendanceKbcRecent(controller.signal)
+    // Last 4 is an attendance-record view. Load the merged database result so
+    // the column never invents a date or status from the curriculum schedule;
+    // the live register wins on dates covered by both sources.
+    void fetchBulkAttendanceKbcRecent(controller.signal, { source: "all" })
       .then(({ recent, warnings }) => {
         if (controller.signal.aborted) return;
         setKbcRecent(recent);
@@ -860,58 +828,36 @@ export default function AttendancePage() {
   const lectureInfo = useMemo(() => {
     const map: Record<string, LectureInfo> = {};
     activeLearners.forEach((learner) => {
-      const list = learnerLectureList(learner);
-      const completedOrCurrent = list.filter((lecture) => lecture.sessionDate <= date);
-      const recentLectures = completedOrCurrent.length > 0 ? completedOrCurrent : list;
-      // Saved KBC attendance is the record of what happened; marks made on
-      // this page are unsaved, so they only fill in for learners KBC lacks.
-      const kbcLectures = learner.kbcId ? kbcRecent[learner.kbcId] ?? [] : [];
-      if (kbcLectures.length > 0) {
-        const current = selectedLecture ?? recentLectures[recentLectures.length - 1];
-        const latest = kbcLectures[kbcLectures.length - 1];
-        map[learner.id] = {
-          name: current?.name ?? "—",
-          // The module of the learner's latest saved attendance record.
-          moduleName: latest.moduleName
-            || current?.moduleName || (current ? moduleNameMap[current.moduleId] : "") || "",
-          date: current?.sessionDate ?? null,
-          recent: kbcLectures.slice(-4).map((record) => {
-            const saved: AttendanceStatus = record.attendance ?? "unmarked";
-            return {
-              id: `${record.source}:${record.recordKey}`,
-              name: `${record.lectureName || record.moduleName || "Lecture title not recorded"} (${record.source === "live" ? "Live register" : "KBC"})`,
-              sessionDate: record.sessionDate,
-              status: pendingEdits[`${record.source}:${record.recordKey}`]?.attendance ?? saved,
-              editable: { source: record.source, recordKey: record.recordKey, attendance: saved },
-            };
-          }),
+      // Preserve the server's chronological order, including its tie-break
+      // for multiple saved records on the same date.
+      const databaseRecords = learner.kbcId ? kbcRecent[learner.kbcId] ?? [] : [];
+      // Do not use curriculum lecture dates as placeholders here. A missing
+      // attendance row is not a lecture record, so it must not appear as one
+      // of the learner's last four database sessions.
+      const recent = databaseRecords.slice(-4).map((record) => {
+        const saved: AttendanceStatus = record.attendance ?? "unmarked";
+        return {
+          id: `${record.source}:${record.recordKey}`,
+          name: `${record.lectureName || record.moduleName || "Lecture title not recorded"} (${record.source === "live" ? "Live register" : "KBC"})`,
+          sessionDate: record.sessionDate,
+          status: pendingEdits[`${record.source}:${record.recordKey}`]?.attendance ?? saved,
+          editable: {
+            source: record.source,
+            recordKey: record.recordKey,
+            attendance: record.attendance ?? ("unmarked" as AttendanceStatus),
+          },
         };
-        return;
-      }
-      const recent = recentLectures.slice(-4).map((lecture) => ({
-        id: lecture.id,
-        name: lecture.name,
-        sessionDate: lecture.sessionDate,
-        status: getStatus(learner.id, lecture.sessionDate),
-      }));
-      const current = selectedLecture ?? recentLectures[recentLectures.length - 1];
-      if (selectedLecture && !recent.some((lecture) => lecture.id === selectedLecture.id)) {
-        recent.push({
-          id: selectedLecture.id,
-          name: selectedLecture.name,
-          sessionDate: selectedLecture.sessionDate,
-          status: getStatus(learner.id, selectedLecture.sessionDate),
-        });
-      }
+      });
+      const latestRecord = databaseRecords.at(-1);
       map[learner.id] = {
-        name: current?.name ?? "—",
-        moduleName: current?.moduleName || (current ? moduleNameMap[current.moduleId] : "") || "",
-        date: current?.sessionDate ?? null,
-        recent: recent.slice(-4),
+        name: latestRecord?.lectureName || latestRecord?.moduleName || selectedLecture?.name || "—",
+        moduleName: latestRecord?.moduleName || "",
+        date: latestRecord?.sessionDate || null,
+        recent,
       };
     });
     return map;
-  }, [activeLearners, learnerLectureList, selectedLecture, date, getStatus, moduleNameMap, kbcRecent, pendingEdits]);
+  }, [activeLearners, selectedLecture, kbcRecent, pendingEdits]);
 
   const weekDays = useMemo(() => getWeekDays(date), [date]);
 
@@ -1028,7 +974,10 @@ export default function AttendancePage() {
     setDetailHistoryWarnings([]);
     setDetailHistoryLoading(true);
     setDetailHistoryError(null);
-    void fetchBulkAttendanceKbcHistory(learnerId, controller.signal)
+    // Details is the historical audit view: include both the legacy KBC rows
+    // and the newer live-session register. The register's recent/current reads
+    // stay live-only, but a learner's history must not lose older KBC records.
+    void fetchBulkAttendanceKbcHistory(learnerId, controller.signal, { source: "all" })
       .then(({ records, warnings }) => {
         if (controller.signal.aborted) return;
         setDetailKbcHistory(records);
@@ -1047,8 +996,9 @@ export default function AttendancePage() {
     return () => controller.abort();
   }, [historyRow?.learner.id, historyRow?.learner.kbcId, detailHistoryVersion]);
 
-  const detailHistory = useMemo<LearnerHistoryRecord[]>(() => detailKbcHistory
-    .map((record) => ({
+  // History and Last 4 share the server's saved-record merge and ordering.
+  // Today's curriculum cannot invalidate an older saved attendance record.
+  const detailHistory = useMemo<LearnerHistoryRecord[]>(() => detailKbcHistory.map((record) => ({
       id: `${record.source}:${record.recordKey}`,
       recordKey: record.recordKey,
       sessionDate: record.sessionDate,
@@ -1056,11 +1006,7 @@ export default function AttendancePage() {
       lectureName: record.lectureName || record.moduleName || "Lecture title not recorded",
       attendance: record.attendance ?? ("unmarked" as AttendanceStatus),
       source: record.source,
-    }))
-    .sort((left, right) => right.sessionDate.localeCompare(left.sessionDate)
-      || left.moduleName.localeCompare(right.moduleName)
-      || left.lectureName.localeCompare(right.lectureName)),
-  [detailKbcHistory]);
+  })), [detailKbcHistory]);
   // One set of unsaved present/absent corrections, shared by View details and
   // the Last 4 badges. Each change is saved to its own source (KBC or live register).
   const toggleRecord = useCallback((record: EditableRecord) => {
@@ -1118,6 +1064,7 @@ export default function AttendancePage() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Bulk Attendance" pageSubtitle="Record attendance across learners, cohorts and modules" userName="Rachel Myers" userRole="Curriculum Designer">
+<<<<<<< HEAD
       <div className={styles.page}>
       <main id="curriculum-bulk-attendance">
         <section className={styles.intro}>
@@ -1126,6 +1073,38 @@ export default function AttendancePage() {
             <h1>{isArchiveView ? 'Learner archive' : 'Bulk attendance'}</h1>
             <p>Choose a live session, review its learners and record attendance. Saved history remains available in learner details.</p>
             <div className={styles.introTotals}><span className={styles.scopeBadge}>{dataLoading ? 'Loading learners...' : dataError ? 'Learner count unavailable' : `${activeLearners.length} learners in scope`}</span><span>Delivered-register total unavailable</span><span>Attendance-mark total unavailable</span><span>Sync time unavailable</span></div>
+=======
+      <div className="min-h-screen bg-background-100">
+      <main className="mx-auto w-full max-w-[1400px] px-4 py-6 md:px-8 md:py-8">
+        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold text-foreground-950 md:text-2xl">
+              {isArchiveView ? "Learner archive" : "Attendance register"}
+            </h2>
+            <p className="mt-1 text-sm text-foreground-500">
+              {isArchiveView ? (
+                <>
+                  {archivedTotal}{" "}
+                  {archivedTotal === 1 ? "learner" : "learners"}
+                  <span className="mx-2 text-foreground-300">•</span>
+                  Completed, EnteredEpa and Withdrawn
+                </>
+              ) : (
+                <>
+                  {date ? formatDateLabel(date) : "All dates"}
+                  <span className="mx-2 text-foreground-300">•</span>
+                  {activeModuleLabel}
+                  {selectedLecture && (
+                    <>
+                      <span className="mx-2 text-foreground-300">•</span>
+                      {selectedLecture.name} —{" "}
+                      {formatShortDate(selectedLecture.sessionDate)}
+                    </>
+                  )}
+                </>
+              )}
+            </p>
+>>>>>>> main
             {dataLoading && (
               <p className="mt-2 text-xs text-foreground-500">Loading current curriculum data…</p>
             )}
@@ -1148,6 +1127,14 @@ export default function AttendancePage() {
             {liveDayError && (
               <p className="mt-2 text-xs text-danger-600" role="alert">{liveDayError}</p>
             )}
+            {dayError && (
+              <div className="mt-2 flex items-center gap-2 text-xs text-danger-600" role="alert">
+                <span>{dayError}</span>
+                <button type="button" className="underline" onClick={() => setKbcRecentVersion((version) => version + 1)}>
+                  Retry attendance date
+                </button>
+              </div>
+            )}
             {kbcRecentError && (
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-danger-600" role="alert">
                 <span>{kbcRecentError}</span>
@@ -1164,7 +1151,7 @@ export default function AttendancePage() {
               <p key={warning} className="mt-2 text-xs text-warning-700" role="status">{warning}</p>
             ))}
             {!selectedLecture && (
-              <p className="mt-2 text-xs text-foreground-500">Open View details to see this learner's saved KBC attendance history.</p>
+              <p className="mt-2 text-xs text-foreground-500">Open View details to see this learner's saved attendance history.</p>
             )}
             {scopeRosterLoading && (
               <p className="mt-2 flex items-center gap-1.5 text-xs text-foreground-600" role="status">
@@ -1222,7 +1209,7 @@ export default function AttendancePage() {
               placeholder="All Programmes"
               options={[
                 { value: "", label: "All Programmes" },
-                ...programmes.map((programme) => ({
+                ...programmes.filter((programme) => !isHiddenFilterName(programme.name)).map((programme) => ({
                   value: programme.id,
                   label: programme.name,
                 })),
@@ -1296,6 +1283,24 @@ export default function AttendancePage() {
           </section>
         ) : (
           <>
+<<<<<<< HEAD
+=======
+            <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <RegisterTabs active={tab} onChange={setTab} />
+              <button
+                type="button"
+                onClick={() => {
+                  setAddAttendanceError(null);
+                  setShowAddAttendanceDay(true);
+                }}
+                disabled={dataLoading || scopeRosterLoading || !scopedLearners.some((learner) => !isArchived(learner))}
+                className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-primary-200 bg-background-50 px-4 py-2.5 text-sm font-semibold text-primary-700 shadow-sm transition-colors hover:border-primary-300 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+              >
+                <i className="ri-calendar-event-line text-base" />
+                Add attendance day
+              </button>
+            </div>
+>>>>>>> main
 
             {tab === "daily" && (
               <section className="mt-4 space-y-3">

@@ -786,7 +786,7 @@ class AttendanceAbsenceTests(SimpleTestCase):
                                              'recordingTime': '18:00', 'recordingDurationMinutes': '60'})
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         with patch('learner_api.absence_reports._source_learner', return_value=source), \
-             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=8000000000000000001), \
+             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=(8000000000000000001, 'future')), \
              patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
              patch('learner_api.absence_reports.learner_profile_for_source', return_value=SimpleNamespace(id=99)), \
              patch('learner_api.absence_reports.record_reported_absence') as record_absence, \
@@ -827,7 +827,7 @@ class AttendanceAbsenceTests(SimpleTestCase):
                                              'recoveryMethod': 'catch-up', 'catchupPending': '1'})
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         with patch('learner_api.absence_reports._source_learner', return_value=source), \
-             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=8000000000000000001), \
+             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=(8000000000000000001, 'future')), \
              patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
              patch('learner_api.absence_reports.learner_profile_for_source', return_value=SimpleNamespace(id=99)), \
              patch('learner_api.absence_reports.record_reported_absence') as record_absence, \
@@ -857,7 +857,7 @@ class AttendanceAbsenceTests(SimpleTestCase):
                                              'recordingTime': '18:00'})
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         with patch('learner_api.absence_reports._source_learner', return_value=source), \
-             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=123), \
+             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=(123, '')), \
              patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
              patch('learner_api.absence_reports._serialize', side_effect=lambda report: {'id': report.id}), \
              patch('learner_api.absence_reports._send_after_commit') as notify:
@@ -885,7 +885,7 @@ class AttendanceAbsenceTests(SimpleTestCase):
                                              'recordingTime': '18:00'})
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         with patch('learner_api.absence_reports._source_learner', return_value=source), \
-             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=8000000000000000001), \
+             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=(8000000000000000001, 'occ-1')), \
              patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
              patch('learner_api.absence_reports.learner_profile_for_source', side_effect=profiles) as lookup, \
              patch('learner_api.absence_reports.record_reported_absence') as record_absence, \

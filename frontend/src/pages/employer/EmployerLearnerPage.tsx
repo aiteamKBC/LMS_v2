@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { LoaderCircle } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { PageContainer } from '@/components/ui/PageContainer';
@@ -22,6 +22,7 @@ import type { ProgrammeProgressSnapshot } from '@/pages/learner/training-plan-ti
 import { EmployerLearnerHeader } from './EmployerLearnerOverview';
 import { useEmployerDashboardPlan } from './useEmployerDashboardPlan';
 import { SignModal } from './EmployerDocumentRows';
+import { EmployerDocumentPreview } from './EmployerDocumentPreview';
 import { useEmployerSigning } from './useEmployerSigning';
 import { EmployerDocumentsTable } from './EmployerDocumentsTable';
 import documentStyles from './EmployerDocumentsPage.module.css';
@@ -116,7 +117,14 @@ export default function EmployerLearnerPage() {
   const [data, setData] = useState<EmployerLearnerDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<TabKey>('overview');
+  const [params, setParams] = useSearchParams();
+  const tab: TabKey = TABS.find(item => item.key === params.get('tab'))?.key || 'overview';
+  const setTab = (nextTab: TabKey) => {
+    const next = new URLSearchParams(params);
+    if (nextTab === 'overview') next.delete('tab');
+    else next.set('tab', nextTab);
+    setParams(next);
+  };
   // The learner's own workspace payload, behind Learning plan and KSB progress. Fetched
   // once, on first use: an employer who only came to sign a document never pays
   // for it, and both tabs read the same object afterwards.
@@ -172,7 +180,6 @@ export default function EmployerLearnerPage() {
   useEffect(() => {
     setPlan(null);
     setPlanError(null);
-    setTab('overview');
   }, [employerId, kind, learnerId]);
 
   const signingActions = useEmployerSigning(employerId, load);
@@ -358,6 +365,9 @@ export default function EmployerLearnerPage() {
           </>
         )}
       </PageContainer>
+
+      {signingActions.preview && <EmployerDocumentPreview employerId={employerId}
+        target={signingActions.preview} onClose={signingActions.closePreview} />}
 
       {signingActions.signing && data && (
         <SignModal

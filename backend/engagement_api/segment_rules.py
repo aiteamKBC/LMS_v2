@@ -25,15 +25,15 @@ def integer(value, lower=0, upper=2**31-1):
     return value
 
 
-def intervals(value, elapsed_ms):
+def intervals(value, elapsed_ms, *, max_offset_ms=86400000):
     if not isinstance(value, list) or len(value) > MAX_SEGMENTS:
         raise RewardError("invalid_intervals", 400)
     checked, last_end = [], 0
     for item in value:
         if not isinstance(item, dict) or set(item) != {"startOffsetMs", "endOffsetMs"}:
             raise RewardError("invalid_interval", 400)
-        start = integer(item["startOffsetMs"], 0, 86400000)
-        end = integer(item["endOffsetMs"], 0, 86400000)
+        start = integer(item["startOffsetMs"], 0, max_offset_ms)
+        end = integer(item["endOffsetMs"], 0, max_offset_ms)
         if not start < end or end-start > MAX_SEGMENT_MS or start < last_end:
             raise RewardError("invalid_interval", 400)
         if end > elapsed_ms:

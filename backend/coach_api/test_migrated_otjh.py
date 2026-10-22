@@ -92,6 +92,37 @@ class MigratedHoursTests(TestCase):
         with patch("coach_api.migrated_completion.timezone.now", return_value=at or datetime(2026, 10, 19, 10, tzinfo=dtz.utc)):
             complete(overlay or self.overlay)
 
+    def test_reopen_and_recomplete_leave_actual_ledger_and_totals_unchanged(self):
+        from inspect import unwrap
+        from django.http import JsonResponse
+        from django.test import RequestFactory
+        from . import migrated_reopening_views as api
+        from .migrated_summary_binding import answer_version
+        from .test_migrated_pdf_parity import CONTEXT
+        self.finish()
+        self.overlay.refresh_from_db()
+        ledger = hours.query(f'SELECT * FROM {hours.table("learner_progress_entries")}')
+        totals = hours.query(f'SELECT * FROM {hours.table("learners")} ORDER BY id')
+        request = RequestFactory().post("/", json.dumps({
+            "reasonCode": "correction-required", "answerVersion": answer_version(self.overlay),
+        }), content_type="application/json")
+        request.login_account = SimpleNamespace(pk=7, role="staff", email=self.overlay.owner_email)
+        with patch.object(api, "_coach_review", return_value=(self.overlay.owner_email, {"migratedForm": True})), \
+             patch.object(api, "_locked_overlay", return_value=self.overlay), \
+             patch.object(api, "booking_for_overlay", return_value=None), \
+             patch.object(api, "_pdf_context", return_value=CONTEXT), \
+             patch.object(api, "_response", return_value=JsonResponse({"ok": True})):
+            self.assertEqual(unwrap(api.reopen_review)(request, self.overlay.event_key).status_code, 200)
+        self.assertEqual(hours.query(f'SELECT * FROM {hours.table("learner_progress_entries")}'), ledger)
+        self.overlay.status = "awaiting-signature"
+        self.overlay.template_snapshot["otjh"]["expectedHours"] = 10
+        # A closed month cannot block correcting the separate review, because
+        # neither its ledger allocation nor monthly signatures are being edited.
+        with patch("curriculum_api.learner_activity_status.require_open_month", side_effect=AssertionError("No hours write")):
+            self.finish(at=datetime(2026, 11, 1, 10, tzinfo=dtz.utc))
+        self.assertEqual(hours.query(f'SELECT * FROM {hours.table("learner_progress_entries")}'), ledger)
+        self.assertEqual(hours.query(f'SELECT * FROM {hours.table("learners")} ORDER BY id'), totals)
+
     def test_completion_credits_once_and_keeps_existing_other_learner_hours(self):
         self.finish()
         self.overlay.refresh_from_db()
@@ -177,6 +208,8 @@ class MigratedHoursTests(TestCase):
 
     def test_planned_hours_use_real_owned_imports_not_native_recurrence(self):
         self.source(2)
+        # PSP has an editable form but must not add hours or break PR totals.
+        self.source(9, family="Personal Support Plan")
         self.source(3, status="Completed")
         self.source(4, status="Cancelled")
         self.source(5, learner=18)

@@ -4,12 +4,15 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LearnerCalendarContent } from './page';
-import { bookLearnerCalendarSession, cancelLearnerCalendarSession, fetchLearnerCalendarEvents, rescheduleLearnerCalendarSession, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { bookLearnerCalendarSession, cancelLearnerCalendarSession, fetchLearnerCalendarEvents, fetchCalendarConnections, fetchPersonalCalendarAvailability, rescheduleLearnerCalendarSession, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { fetchReviewHistory } from '@/api/reviewHistory';
+import { fetchMeetingAttendance } from '@/api/meetingAttendance';
+import { meetingCalendarHref } from '../reviews/meetingBooking';
 
 vi.mock('@/hooks/useMyLearner', () => ({ useLinkedLearner: () => ({ kind: 'commercial', id: '125' }) }));
 vi.mock('@/pages/coach/shared/CoachMeetingArtifactsPanel', () => ({ CoachMeetingArtifactsPanel: () => <div>Meeting recordings</div> }));
-vi.mock('@/api/learnerCalendar', () => ({
+vi.mock('@/api/learnerCalendar', async importOriginal => ({
+  ukOffsetForDate: (await importOriginal<typeof import('@/api/learnerCalendar')>()).ukOffsetForDate,
   fetchLearnerCalendarEvents: vi.fn(),
   fetchLearnerEventReviewInstance: vi.fn(async () => ({ instance: null })),
   bookLearnerCalendarSession: vi.fn(),
@@ -22,6 +25,7 @@ vi.mock('@/api/learnerCalendar', () => ({
   startCalendarOAuth: vi.fn(), connectCredentialCalendar: vi.fn(), disconnectPersonalCalendar: vi.fn(),
 }));
 vi.mock('@/api/reviewHistory', () => ({ fetchReviewHistory: vi.fn(async () => ({ reviews: [] })) }));
+vi.mock('@/api/meetingAttendance', () => ({ fetchMeetingAttendance: vi.fn(async () => ({ sessions: [] })) }));
 
 const now = new Date(2026, 8, 23, 9, 0, 0);
 const isoDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -42,12 +46,145 @@ beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(now);
   vi.clearAllMocks();
+  vi.mocked(fetchCalendarConnections).mockResolvedValue({ connections: [] });
+  vi.mocked(fetchPersonalCalendarAvailability).mockResolvedValue({ busy: [], errors: [], connectedProviders: [] });
   vi.mocked(fetchReviewHistory).mockResolvedValue({ learnerId: null, category: 'reviews', reviews: [] });
   localStorage.clear();
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('calendar event previews', () => {
+  it.each(['Personal Support Plan', 'Monthly Coaching Meeting', 'Progress Review', 'Progress Review (+ Skills Radar)'])(
+    'opens the saved %s from View in calendar without resolving a new booking', async type => {
+      const booked = event({
+        id: 'imported-review:A-41', eventKey: 'imported-review:A-41', calendarEventKey: 'booking:41',
+        reviewId: '41', reviewSource: 'aptem', source: type === 'Monthly Coaching Meeting' ? 'mcr' : 'progress-review',
+        title: type, reviewTypeName: type, sequence: 1, importedReview: {
+          id: '41', aptemReviewId: 'A-41', name: type, type, reviewerName: 'Assigned coach',
+          plannedDate: isoDate, plannedTime: null, completedDate: null, status: 'Not Scheduled',
+          extractionStatus: 'complete', detailsAvailable: false, sections: [],
+        },
+      });
+      const href = meetingCalendarHref(booked, { kind: 'commercial', id: '125' });
+      setup([booked], new URL(href, 'http://localhost').search);
+      const dialog = await screen.findByRole('dialog', { name: `${type} #1` });
+      expect(within(dialog).getByRole('link', { name: 'Join Meeting' })).toHaveAttribute('href', booked.meetingLink);
+      expect(screen.queryByText(/no longer available/)).not.toBeInTheDocument();
+      expect(fetchReviewHistory).not.toHaveBeenCalled();
+      expect(fetchMeetingAttendance).not.toHaveBeenCalled();
+      expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+      expect(rescheduleLearnerCalendarSession).not.toHaveBeenCalled();
+      expect(cancelLearnerCalendarSession).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['progress-review', 'mcr'])('preserves the original Aptem %s slot and raw notes when rescheduling from the calendar', async source => {
+    vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(-180);
+    const booked = event({
+      id: 'imported-review:sample', eventKey: 'imported-review:sample', calendarEventKey: 'booking:41',
+      reviewId: '41', reviewSource: 'aptem', source, bookingNotes: 'Original agenda',
+      notes: 'Generated appointment description. Original agenda', title: 'Imported appointment',
+    });
+    setup([booked]);
+    vi.mocked(rescheduleLearnerCalendarSession).mockResolvedValue({ event: { ...booked, bookingNotes: '' } });
+    fireEvent.click((await screen.findAllByRole('button', { name: /Imported appointment/ }))[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Reschedule' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Reschedule Session' });
+    const notes = within(dialog).getByPlaceholderText('Add anything your coach should know before the session...');
+    expect(notes).toHaveValue('Original agenda');
+    fireEvent.change(notes, { target: { value: '' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save New Time' }));
+    await waitFor(() => expect(rescheduleLearnerCalendarSession).toHaveBeenCalledWith('commercial', '125', expect.objectContaining({
+      eventKey: 'booking:41', notes: '', timezoneOffsetMinutes: -60,
+      expectedBooking: { scheduledDate: isoDate, scheduledTime: '10:00', durationMinutes: 60, notes: 'Original agenda' },
+    })));
+    expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+  });
+
+  it('checks Aptem personal-calendar conflicts at London instants, including the full London day', async () => {
+    vi.mocked(fetchCalendarConnections).mockResolvedValue({ connections: [{
+      provider: 'google', accountEmail: 'calendar@example.test', status: 'connected', connectedAt: null, lastSyncAt: null,
+    }] });
+    vi.mocked(fetchPersonalCalendarAvailability).mockResolvedValue({
+      busy: [{ provider: 'google', start: `${isoDate}T09:00:00Z`, end: `${isoDate}T10:00:00Z` }],
+      errors: [], connectedProviders: ['google'],
+    });
+    setup([event({
+      id: 'imported-review:sample', eventKey: 'imported-review:sample', calendarEventKey: 'booking:41',
+      reviewId: '41', reviewSource: 'aptem', source: 'progress-review', scheduledTime: '13:00', title: 'Imported appointment',
+    })]);
+    fireEvent.click((await screen.findAllByRole('button', { name: /Imported appointment/ }))[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Reschedule' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Reschedule Session' });
+    fireEvent.change(within(dialog).getByLabelText(/Time/), { target: { value: '10:30' } });
+    expect(await within(dialog).findByText('This time is busy')).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'Save New Time' })).toBeDisabled();
+    expect(fetchPersonalCalendarAvailability).toHaveBeenCalledWith('commercial', '125',
+      '2026-09-22T23:00:00.000Z', '2026-09-23T23:00:00.000Z');
+    expect(rescheduleLearnerCalendarSession).not.toHaveBeenCalled();
+  });
+
+  it('does not describe failed Aptem personal-calendar checks as an available slot', async () => {
+    vi.mocked(fetchCalendarConnections).mockResolvedValue({ connections: [{
+      provider: 'google', accountEmail: 'calendar@example.test', status: 'connected', connectedAt: null, lastSyncAt: null,
+    }] });
+    vi.mocked(fetchPersonalCalendarAvailability).mockResolvedValue({
+      busy: [], errors: [{ provider: 'google', message: 'Unavailable' }], connectedProviders: ['google'],
+    });
+    setup([event({
+      id: 'imported-review:sample', eventKey: 'imported-review:sample', calendarEventKey: 'booking:41',
+      reviewId: '41', reviewSource: 'aptem', source: 'progress-review', title: 'Imported appointment',
+    })]);
+    fireEvent.click((await screen.findAllByRole('button', { name: /Imported appointment/ }))[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Reschedule' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Reschedule Session' });
+    expect(await within(dialog).findByText('Personal calendar availability could not be confirmed.')).toBeVisible();
+    expect(within(dialog).queryByText('This time is available')).not.toBeInTheDocument();
+  });
+
+  it('keeps the reschedule action for an Aptem reservation awaiting a successful calendar sync', async () => {
+    setup([event({
+      id: 'imported-review:sample', eventKey: 'imported-review:sample', calendarEventKey: 'booking:41',
+      reviewId: '41', reviewSource: 'aptem', source: 'progress-review',
+      status: 'not-scheduled', bookingStatus: 'scheduled', syncState: 'failed',
+      invited: false, title: 'Pending imported appointment',
+    })]);
+    fireEvent.click((await screen.findAllByRole('button', { name: /Pending imported appointment/ }))[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Reschedule' }));
+    expect(await screen.findByRole('dialog', { name: 'Reschedule Session' })).toBeVisible();
+  });
+
+  it('refreshes a stale Aptem calendar booking without losing the edited time or notes', async () => {
+    const booked = event({
+      id: 'imported-review:sample', eventKey: 'imported-review:sample', calendarEventKey: 'booking:41',
+      reviewId: '41', reviewSource: 'aptem', source: 'progress-review', bookingNotes: 'Original agenda',
+      title: 'Imported appointment',
+    });
+    setup([booked]);
+    fireEvent.click((await screen.findAllByRole('button', { name: /Imported appointment/ }))[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Reschedule' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Reschedule Session' });
+    fireEvent.change(within(dialog).getByLabelText(/Time/), { target: { value: '12:00' } });
+    const notes = within(dialog).getByPlaceholderText('Add anything your coach should know before the session...');
+    fireEvent.change(notes, { target: { value: 'My draft agenda' } });
+    vi.mocked(rescheduleLearnerCalendarSession).mockRejectedValueOnce(new Error('This booking changed. Refresh before rescheduling.'));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save New Time' }));
+    const refresh = await within(dialog).findByRole('button', { name: 'Refresh booking' });
+    vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({
+      learner: { kind: 'commercial', id: 125 }, events: [{ ...booked, scheduledTime: '14:00', bookingNotes: 'Coach agenda' }],
+    });
+    fireEvent.click(refresh);
+    await waitFor(() => expect(within(dialog).queryByRole('button', { name: 'Refresh booking' })).not.toBeInTheDocument());
+    expect(notes).toHaveValue('My draft agenda');
+    expect(within(dialog).getByLabelText(/Time/)).toHaveValue('12:00');
+    vi.mocked(rescheduleLearnerCalendarSession).mockResolvedValueOnce({ event: booked });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save New Time' }));
+    await waitFor(() => expect(rescheduleLearnerCalendarSession).toHaveBeenLastCalledWith('commercial', '125', expect.objectContaining({
+      scheduledTime: '12:00', notes: 'My draft agenda',
+      expectedBooking: expect.objectContaining({ scheduledTime: '14:00', notes: 'Coach agenda' }),
+    })));
+  });
+
   const aptemPlan = (reviewType = 'Personal Support Plan', overrides: Partial<LearnerCalendarEvent> = {}) => event({
     id: 'imported-plan', eventKey: 'imported-review:sample', reviewId: '41', reviewSource: 'aptem',
     source: 'progress-review', type: 'review', title: reviewType, reviewTypeName: reviewType,

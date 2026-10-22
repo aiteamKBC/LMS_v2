@@ -120,7 +120,7 @@ export default function ReviewTemplatesPage() {
           <section aria-labelledby="standard-templates-heading" className="space-y-4">
             <div><h2 id="standard-templates-heading" className="font-heading text-xl font-bold text-foreground-900">Standard Templates</h2>
               <p className="mt-1 text-sm text-foreground-500">These templates are used by all programmes unless a custom version is enabled.</p></div>
-            <div className="grid gap-4 xl:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               {MIGRATED_FAMILIES.map(family => {
                 const template = selectTemplate(family, 'GLOBAL');
                 return <article aria-label={`Standard ${FAMILY_LABELS[family]}`} key={family} className="flex min-w-0 flex-col rounded-2xl border border-background-200 bg-background-50 p-5 shadow-sm">
@@ -129,6 +129,7 @@ export default function ReviewTemplatesPage() {
                     <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${template?.is_active ? 'bg-emerald-50 text-emerald-800' : 'bg-background-100 text-foreground-500'}`}>{template ? template.is_active ? 'Active' : 'Not in use' : 'Not available'}</span>
                   </div>
                   <p className="mt-4 text-sm font-semibold text-foreground-800">Standard Template</p>
+                  {family === 'PSP' && <p className="mt-1 text-sm text-foreground-500">Personal Support Plan. No signatures by default; choose required signers in the template.</p>}
                   <p className="mt-1 text-sm text-foreground-500">{template?.is_active ? 'Used by programmes without a custom version.' : template ? 'A standard version is saved but is not currently in use.' : 'No Standard Template Available. Import a form to get started.'}</p>
                   {template && <TemplateStatistics template={template} />}
                   <div className="mt-auto flex flex-wrap items-center gap-2 pt-5">
@@ -149,7 +150,7 @@ export default function ReviewTemplatesPage() {
             </select></FormField></div>
             {programmesError && <p role="alert" className="text-sm text-red-700">{programmesError}</p>}
             {!programmeKey && <p className="rounded-xl bg-background-100 p-4 text-sm text-foreground-500">Select a programme to see which templates it uses.</p>}
-            {programmeKey && !loading && <div className="grid gap-4 xl:grid-cols-3">{MIGRATED_FAMILIES.map(family => {
+            {programmeKey && !loading && <div className="grid gap-4 xl:grid-cols-3">{MIGRATED_FAMILIES.filter(family => family !== 'PSP').map(family => {
               const custom = selectTemplate(family, 'PROGRAMME');
               const standard = versions(family, 'GLOBAL').find(t => t.is_active);
               const resolution = library.resolutions.find(r => r.review_family === family);

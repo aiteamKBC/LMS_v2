@@ -2,14 +2,17 @@ import type { SidebarNavItem } from '@/components/feature/Sidebar';
 import { useAuth } from '@/hooks/useAuth';
 
 /**
- * The employer workspace's own menu: their learners, and every document across
- * them. Both carry the employer id, so the shared static nav cannot hold them.
- * "My learners" also stays highlighted on a learner's page beneath it.
+ * One destination per menu item, so the sidebar's highlight and the content
+ * agree. `My learners` and `Progress reviews` were query strings on the home
+ * route that only scrolled the single dashboard, which left all three items
+ * rendering the same screen; they are now their own paths and own views.
  */
 export function employerPortalNav(employerId: string): SidebarNavItem[] {
   return [
-    { id: 'employer-portal-learners', label: 'My learners', icon: 'ri-group-line', href: `/employers/${employerId}` },
-    { id: 'employer-portal-documents', label: 'All documents', icon: 'ri-draft-line', href: `/employers/${employerId}/documents` },
+    { id: 'employer-portal-home', label: 'Home', icon: 'ri-home-line', href: `/employers/${employerId}` },
+    { id: 'employer-portal-learners', label: 'My learners', icon: 'ri-group-line', href: `/employers/${employerId}/learners` },
+    { id: 'employer-portal-reviews', label: 'Progress reviews', icon: 'ri-calendar-check-line', href: `/employers/${employerId}/reviews` },
+    { id: 'employer-portal-documents', label: 'Documents', icon: 'ri-draft-line', href: `/employers/${employerId}/documents` },
   ];
 }
 

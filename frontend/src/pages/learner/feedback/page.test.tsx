@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { feedbackApi, type LearnerFeedbackListItem } from '@/api/feedback';
 import LearnerFeedbackPage from './page';
 
+const flags = vi.hoisted(() => ({ fullFeedbackEnabled: true }));
+vi.mock('@/lib/featureFlags', () => ({ get LEARNER_FEEDBACK_ENABLED() { return flags.fullFeedbackEnabled; } }));
 vi.mock('@/api/feedback', () => ({ feedbackApi: { myForms: vi.fn() } }));
 const state = {
   account: { role: 'learner', subjectType: 'learner', subjectId: 61, learnerType: 'apprenticeship', displayName: 'Learner' },
@@ -27,8 +29,37 @@ const lecture: LearnerFeedbackListItem = {
 describe('learner feedback categories', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    flags.fullFeedbackEnabled = true;
     Object.assign(state.account, { role: 'learner', subjectType: 'learner', subjectId: 61, displayName: 'Learner' });
     Object.assign(state.resolved, { kind: 'apprenticeship', id: '61' });
+  });
+
+  it.each([['mid_module', 'mid-module', 'Mid-module Feedback'], ['end_module', 'end-module', 'End-module Feedback']] as const)(
+    'opens %s through its owned delivery and preserves its category', async (formType, category, title) => {
+      flags.fullFeedbackEnabled = false;
+      vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [{ ...lecture, formType, title, sessionTitle: title }] });
+      const user = userEvent.setup();
+      render(<MemoryRouter initialEntries={['/learner/feedback']}><LearnerFeedbackPage /><Location /></MemoryRouter>);
+      const types = await screen.findByRole('region', { name: 'Feedback types' });
+      await user.click(within(types).getByRole('button', { name: new RegExp(title) }));
+      await user.click(screen.getByRole('button', { name: new RegExp(title) }));
+      expect(screen.getByText(`/learner/feedback/delivery/21?category=${category}`)).toBeVisible();
+    },
+  );
+
+  it('exposes lecture and module categories in production while keeping other categories closed', async () => {
+    flags.fullFeedbackEnabled = false;
+    vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [
+      lecture,
+      { ...lecture, id: 6, deliveryId: null, eventRecipientId: 40, formType: 'post_event', title: 'Event feedback' },
+    ] });
+    render(<MemoryRouter initialEntries={['/learner/feedback?category=event']}><LearnerFeedbackPage /><Location /></MemoryRouter>);
+    const types = await screen.findByRole('region', { name: 'Feedback types' });
+    expect(within(types).getByRole('button', { name: /Lecture Feedback/ })).toBeVisible();
+    expect(within(types).getByRole('button', { name: /Mid-module Feedback/ })).toBeVisible();
+    expect(within(types).getByRole('button', { name: /End-module Feedback/ })).toBeVisible();
+    expect(within(types).queryByRole('button', { name: /Event Feedback/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('Event feedback')).not.toBeInTheDocument();
   });
 
   it('shows every feedback type, then groups attended lectures by module', async () => {

@@ -86,17 +86,21 @@ beforeEach(() => {
 });
 
 describe('Migrated Review Templates workspace', () => {
-  it('offers learner but no employer permission in an MCM template', async () => {
-    const mcm = { ...globalTemplate, review_family: 'MCM' as const };
+  it.each(['MCM', 'PSP'] as const)('offers learner but no employer permission in a %s template', async family => {
+    const mcm = { ...globalTemplate, review_family: family };
     vi.mocked(api.listMigratedTemplates).mockResolvedValue({ ...library(), templates: [mcm] });
     vi.mocked(api.getMigratedTemplate).mockResolvedValue(mcm);
     mount();
-    const card = await screen.findByRole('article', { name: 'Standard MCM' });
+    const card = await screen.findByRole('article', { name: `Standard ${family}` });
     fireEvent.click(within(card).getByRole('button', { name: 'Edit' }));
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByLabelText('Learner')).toBeEnabled();
-    expect(within(dialog).queryByLabelText('Employer')).not.toBeInTheDocument();
+    const respondents = within(within(dialog).getByRole('group', { name: 'Who can answer' }));
+    expect(respondents.getByLabelText('Learner')).toBeEnabled();
+    expect(respondents.queryByLabelText('Employer')).not.toBeInTheDocument();
     expect(within(dialog).getByText('Coach (always)')).toBeVisible();
+    if (family === 'PSP') {
+      expect(within(dialog).getByText(/No signatures are required by default/)).toBeVisible();
+    }
   });
 
   it('defaults to coach-only and saves learner/employer permissions independently of required answers', async () => {
@@ -105,10 +109,11 @@ describe('Migrated Review Templates workspace', () => {
     fireEvent.click(within(card).getByRole('button', { name: 'Edit' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('Coach (always)')).toBeVisible();
-    expect(within(dialog).getByLabelText('Learner')).not.toBeChecked();
-    expect(within(dialog).getByLabelText('Employer')).not.toBeChecked();
-    fireEvent.click(within(dialog).getByLabelText('Learner'));
-    fireEvent.click(within(dialog).getByLabelText('Employer'));
+    const respondents = within(within(dialog).getByRole('group', { name: 'Who can answer' }));
+    expect(respondents.getByLabelText('Learner')).not.toBeChecked();
+    expect(respondents.getByLabelText('Employer')).not.toBeChecked();
+    fireEvent.click(respondents.getByLabelText('Learner'));
+    fireEvent.click(respondents.getByLabelText('Employer'));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save template' }));
     await waitFor(() => expect(api.updateMigratedTemplate).toHaveBeenCalledWith(globalTemplate, expect.objectContaining({
       definition: { sections: [{ ...definition.sections[0], fields: [{ ...definition.sections[0].fields[0], respondentRoles: ['participant', 'employer'] }] }] },
@@ -122,11 +127,12 @@ describe('Migrated Review Templates workspace', () => {
     expect(within(link).getByText('Open workspace')).toBeInTheDocument();
   });
 
-  it('loads all three global families with missing and active states', async () => {
+  it('loads all four global families with missing and active states', async () => {
     mount();
     expect(await screen.findByRole('article', { name: 'Standard PR' })).toHaveTextContent('Active');
     expect(screen.getByRole('article', { name: 'Standard MCM' })).toHaveTextContent('No Standard Template Available');
     expect(screen.getByRole('article', { name: 'Standard PR + Skills Radar' })).toHaveTextContent('No Standard Template Available');
+    expect(screen.getByRole('article', { name: 'Standard PSP' })).toHaveTextContent('No Standard Template Available');
   });
 
   it('selects a programme by its stable id and displays inheritance', async () => {
@@ -135,6 +141,7 @@ describe('Migrated Review Templates workspace', () => {
     expect(card).toHaveTextContent('Using Standard Template');
     expect(card).toHaveTextContent('This programme currently uses the standard PR template.');
     expect(screen.getByRole('article', { name: 'Programme PR + Skills Radar' })).toHaveTextContent('No Standard Template Available');
+    expect(screen.queryByRole('article', { name: 'Programme PSP' })).not.toBeInTheDocument();
   });
 
   it('creates an inactive programme override from Global and opens the editor', async () => {
@@ -201,14 +208,14 @@ describe('Migrated Review Templates workspace', () => {
     expect(screen.getByRole('button', { name: 'Preview' })).toBeInTheDocument();
   });
 
-  it('imports only through an explicit historical source and leaves activation separate', async () => {
-    vi.mocked(api.importMigratedTemplate).mockResolvedValue({ ...globalTemplate, review_family: 'MCM', is_active: false });
-    mount(); const card = await screen.findByRole('article', { name: 'Standard MCM' });
+  it.each(['MCM', 'PSP'] as const)('imports %s through an explicit historical source and leaves activation separate', async family => {
+    vi.mocked(api.importMigratedTemplate).mockResolvedValue({ ...globalTemplate, review_family: family, is_active: false });
+    mount(); const card = await screen.findByRole('article', { name: `Standard ${family}` });
     fireEvent.click(within(card).getByRole('button', { name: 'Import historical form' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Import MCM Standard Template' });
+    const dialog = await screen.findByRole('dialog', { name: `Import ${family} Standard Template` });
     fireEvent.change(within(dialog).getByLabelText('Source internal review ID'), { target: { value: '17' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Import draft' }));
-    await waitFor(() => expect(api.importMigratedTemplate).toHaveBeenCalledWith('MCM', 17, 'MCM Standard Template'));
+    await waitFor(() => expect(api.importMigratedTemplate).toHaveBeenCalledWith(family, 17, `${family} Standard Template`));
     expect(api.updateMigratedTemplate).not.toHaveBeenCalled();
   });
 

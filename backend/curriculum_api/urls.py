@@ -5,6 +5,8 @@ from system_audit import activity as system_activity
 
 from . import activity, learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
 from .archive_index import curriculum_archive_index
+from .record_snapshots import curriculum_record_snapshot
+from .module_live import curriculum_live, curriculum_module_changes
 from .teams_attendee_compare import teams_meeting_attendee_comparison
 from .teams_permission_check import teams_meeting_permission_check
 from .teams_imported_participants import imported_meeting_participants
@@ -22,6 +24,7 @@ from .bulk_attendance_learners import bulk_attendance_learners
 from .bulk_attendance_kbc_history import (
     bulk_attendance_kbc_history,
     bulk_attendance_kbc_recent,
+    bulk_attendance_day_learners,
     bulk_attendance_save_attendance,
 )
 from .bulk_attendance_live_day import bulk_attendance_live_day
@@ -43,6 +46,7 @@ urlpatterns = [
     path('curriculum/bulk-attendance/learners/', bulk_attendance_learners, name='curriculum-bulk-attendance-learners'),
     path('curriculum/bulk-attendance/kbc-history/', bulk_attendance_kbc_history, name='curriculum-bulk-attendance-kbc-history'),
     path('curriculum/bulk-attendance/kbc-recent/', bulk_attendance_kbc_recent, name='curriculum-bulk-attendance-kbc-recent'),
+    path('curriculum/bulk-attendance/day-learners/', bulk_attendance_day_learners, name='curriculum-bulk-attendance-day-learners'),
     path('curriculum/bulk-attendance/attendance/', bulk_attendance_save_attendance, name='curriculum-bulk-attendance-save-attendance'),
     path('curriculum/bulk-attendance/live-day/', bulk_attendance_live_day, name='curriculum-bulk-attendance-live-day'),
     path('curriculum/bulk-attendance/live-day-records/', bulk_attendance_live_day_records, name='curriculum-bulk-attendance-live-day-records'),
@@ -94,6 +98,11 @@ urlpatterns = [
     # to nothing in cost: one Redis read, no database.
     path('curriculum/cache-epoch/', views.curriculum_cache_epoch, name='curriculum-cache-epoch'),
     path('curriculum/revisions/', views.curriculum_record_revisions, name='curriculum-record-revisions'),
+    # The record a drawer edits and its token, read together so they agree.
+    path('curriculum/record-snapshot/', curriculum_record_snapshot, name='curriculum-record-snapshot'),
+    # Module Builder live sync: the counters an open module watches, off unless
+    # CURRICULUM_LIVE_SYNC=true. See module_live.
+    path('curriculum/live/', curriculum_live, name='curriculum-live'),
     path('curriculum/preview/cohort-end-date/', views.curriculum_preview_cohort_end_date, name='curriculum-preview-cohort-end-date'),
     path('curriculum/preview/module-session-plan/', views.curriculum_preview_module_session_plan, name='curriculum-preview-module-session-plan'),
     path('curriculum/preview/tutor-availability/', views.curriculum_preview_tutor_availability, name='curriculum-preview-tutor-availability'),
@@ -159,6 +168,8 @@ urlpatterns = [
     path('curriculum/modules/<str:module_catalogue_id>/archived-structure/', views.curriculum_archived_module_structure, name='curriculum-module-archived-structure'),
     path('curriculum/modules/<str:identifier>/restore/', views.curriculum_module_restore, name='curriculum-module-restore'),
     path('curriculum/modules/<str:module_catalogue_id>/structure/', views.curriculum_module_structure, name='curriculum-module-structure'),
+    # What changed since the copy an open Module Builder holds (read-only POST).
+    path('curriculum/modules/<str:module_catalogue_id>/changes/', curriculum_module_changes, name='curriculum-module-changes'),
     path('curriculum/modules/<str:module_catalogue_id>/settings/', views.curriculum_module_settings, name='curriculum-module-settings'),
     path('curriculum/modules/<str:module_catalogue_id>/session-plan/', views.curriculum_module_session_plan, name='curriculum-module-session-plan'),
     path('curriculum/modules/<str:module_catalogue_id>/ai-material/', views.curriculum_module_ai_material, name='curriculum-module-ai-material'),

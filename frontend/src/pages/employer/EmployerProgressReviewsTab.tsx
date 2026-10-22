@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Video } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import {
   downloadEmployerProgressReview, fetchEmployerProgressReview, fetchEmployerProgressReviews, saveEmployerReviewAnswers, signReviewAsEmployer,
@@ -10,6 +10,7 @@ import {
   type LearnerReviewDefinition,
 } from '@/api/learnerCalendar';
 import ReviewsHome from '@/pages/learner/progress-reviews/ReviewsHome';
+import { presentReview } from '@/pages/learner/progress-reviews/reviewPresentation';
 import { ImportedReviewSections } from '@/pages/learner/progress-reviews/page';
 import { LearnerReviewInstanceForm } from '@/pages/learner/reviews/LearnerReviewInstanceForm';
 import styles from '@/pages/learner/progress-reviews/reviewsHome.module.css';
@@ -38,6 +39,8 @@ export function EmployerProgressReviewsTab({ employerId, kind, learnerId, employ
   });
   const review = detail.data?.event;
   const definition = detail.data?.definition;
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
+  const meeting = review ? presentReview(review, undefined, today, definition, 'employer') : null;
   const refresh = async () => {
     await Promise.all([
       client.invalidateQueries({ queryKey: listKey }),
@@ -61,7 +64,7 @@ export function EmployerProgressReviewsTab({ employerId, kind, learnerId, employ
   };
   const sign = async (signature: string) => {
     if (!review || !definition) throw new Error('This review is not ready for signing.');
-    if (review.migratedForm) await signMigratedReviewAsParty(review.eventKey, signature);
+    if (review.migratedForm) await signMigratedReviewAsParty(review.eventKey, signature, { reviewRevision: definition.reviewRevision });
     else if (definition.instance) await signReviewAsEmployer(employerId, kind, learnerId, definition.instance.id, { name: employerName, signature });
     else throw new Error('The coach must prepare this review before you can sign.');
     await refresh();
@@ -70,6 +73,7 @@ export function EmployerProgressReviewsTab({ employerId, kind, learnerId, employ
 
   if (selectedKey) return <section className={`${styles.home} space-y-4`} aria-label="Employer progress review">
     <button type="button" className={styles.secondaryButton} onClick={() => setSelectedKey(null)}><ArrowLeft size={19} aria-hidden="true" />Back to reviews</button>
+    {!detail.isPending && !detail.isError && meeting?.joinUrl && !meeting.past && <a className={styles.primaryButton} href={meeting.joinUrl} target="_blank" rel="noopener noreferrer"><Video size={19} aria-hidden="true" />Join meeting</a>}
     {detail.isPending ? <p role="status" className={styles.loading}>Loading review…</p>
       : detail.isError ? <div role="alert" className={styles.empty}><p>{errorMessage(detail.error)}</p><button type="button" className={styles.secondaryButton} onClick={() => void detail.refetch()}>Try again</button></div>
       : definition ? <LearnerReviewInstanceForm key={review?.eventKey} definition={definition} viewerRole="employer" signatoryName={employerName}
@@ -84,7 +88,7 @@ export function EmployerProgressReviewsTab({ employerId, kind, learnerId, employ
   return <div className="space-y-4">
     {list.isError && <div role="alert" className={styles.home}><p>{errorMessage(list.error)}</p><button type="button" className={styles.secondaryButton} onClick={() => void list.refetch()}>Try again</button></div>}
     <ReviewsHome sessions={list.data?.events || []} definitions={list.data?.definitions} attendance={[]}
-      learner={{ kind, id: learnerId }} lineManager={employerName} today={new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' })}
+      learner={{ kind, id: learnerId }} lineManager={employerName} today={today}
       timeZone="Europe/London" loading={list.isPending} error={list.isError ? errorMessage(list.error) : ''}
       busy={false} canAct viewerRole="employer" titleOf={event => `${event.title}${event.occurrenceNumber != null ? ` #${event.occurrenceNumber}` : ''}`}
       onOpenReview={event => setSelectedKey(event.eventKey)} onSchedule={() => undefined} onAttend={() => undefined} onReport={() => undefined} />

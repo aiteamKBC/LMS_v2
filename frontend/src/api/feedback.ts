@@ -1,5 +1,5 @@
 export type FeedbackFormStatus = 'draft' | 'published' | 'closed';
-export type FeedbackFormType = 'general' | 'post_lecture' | 'post_event' | 'event_rsvp' | 'post_mcm_review' | 'post_progress_review';
+export type FeedbackFormType = 'general' | 'post_lecture' | 'post_event' | 'event_rsvp' | 'post_mcm_review' | 'post_progress_review' | 'mid_module' | 'end_module';
 export type FeedbackDeliveryScope = 'manual' | 'all_modules' | 'module';
 export type FeedbackQuestionType = 'short_text' | 'long_text' | 'yes_no' | 'single_choice' | 'multiple_choice' | 'dropdown' | 'rating' | 'likert' | 'number' | 'date' | 'name' | 'email' | 'photo_upload';
 export interface FeedbackNameAnswer { firstName: string; lastName: string }
@@ -30,6 +30,7 @@ export interface FeedbackSection {
   title: string;
   icon?: string;
   description: string;
+  questionsPerDelivery?: number | null;
   sortOrder?: number;
   questions: FeedbackQuestion[];
 }
@@ -141,7 +142,7 @@ export interface FeedbackAnalyticsData {
 export interface FeedbackLearnerOption { id: string; name: string; email: string; programme: string; cohort: string }
 export interface FeedbackRecipient {
   key: string; learnerId: string; learnerName: string; email: string; programme: string;
-  source: 'manual' | 'attendance' | 'event_attendance' | 'completed_review'; deliveryId: number | null; occurrenceKey: string;
+  source: 'manual' | 'attendance' | 'module_assignment' | 'event_attendance' | 'completed_review'; deliveryId: number | null; occurrenceKey: string;
   sourceKey: string; sourceType: 'manual' | 'lecture' | 'event' | string;
   sourceLabel: string; sourceTitle: string; sourceSubtitle: string; sourceStartsAt: string | null;
   sessionTitle: string; sessionStartsAt: string | null; moduleName: string;

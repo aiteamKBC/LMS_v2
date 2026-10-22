@@ -92,7 +92,12 @@ class TimeTrackingSessionTests(SimpleTestCase):
             session = issue_tracking_session(activity_kind='video', activity_id='COMP-1',
                 learner_kind='apprenticeship', learner_id='230', counting_mode='active_playback',
                 issued_at=self.started_at)
-        with patch('django.core.signing.time.time', return_value=100 + 86401):
+        # Expired legacy signatures may only resume when a durable checkpoint
+        # exists. This unit test has no database; the storage suite tests both
+        # real missing and recovered rows.
+        with patch('django.core.signing.time.time', return_value=100 + 86401), \
+                patch('learner_api.timing_drafts.ActivityTimingDraft.objects') as drafts:
+            drafts.using.return_value.filter.return_value.first.return_value = None
             with self.assertRaises(TrackingSessionError) as raised:
                 verify_tracking_session(session['trackingToken'], activity_kind='video', activity_id='COMP-1',
                     learner_kind='apprenticeship', learner_id='230', claimed_seconds=12,

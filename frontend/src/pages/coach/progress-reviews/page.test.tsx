@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CoachCalendarEvent } from '../shared/calendarEvents';
 import CoachProgressReviews from './page';
-import { importedBookingDefinition, installDialogTestSupport, scheduledImportedBooking } from '../shared/__tests__/importedBookingFixtures';
+import { importedBookingDefinition, installDialogTestSupport, personalSupportBooking, scheduledImportedBooking } from '../shared/__tests__/importedBookingFixtures';
 
 const { fetchEvents, openReview, scheduleEvent, fetchForm, book, reschedule, coach } = vi.hoisted(() => ({
   fetchForm: vi.fn(), book: vi.fn(), reschedule: vi.fn(),
@@ -52,6 +52,36 @@ function LocationOutput() {
   const location = useLocation();
   return <output data-testid="route">{location.pathname}{location.search}</output>;
 }
+
+it.each([false, true])('offers PSP booking from its Review row (scheduled=%s)', async scheduled => {
+  fetchEvents.mockResolvedValue({ owner: { name: 'Coach' }, events: [review(31, {
+    id: 'imported-review:31', eventKey: 'imported-review:31', reviewSource: 'aptem', aptemReviewId: '31',
+    importedReviewType: 'Personal Support Plan', reviewTemplateId: null, hasReviewForm: false,
+    status: scheduled ? 'scheduled' : 'not-scheduled', calendarEventKey: scheduled ? 'imported-review:31' : null,
+  })] });
+  fetchForm.mockResolvedValue(personalSupportBooking(scheduled));
+  (scheduled ? reschedule : book).mockResolvedValue(personalSupportBooking(true));
+  mount('/coach/reviews');
+  fireEvent.click(await screen.findByRole('button', { name: 'More actions for Learner 31' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: scheduled ? 'Reschedule' : 'Schedule' }));
+  fireEvent.click(await screen.findByRole('button', { name: scheduled ? 'Save new time' : 'Confirm booking' }));
+  expect(await screen.findByText(scheduled ? 'Review rescheduled.' : 'Review scheduled.')).toBeVisible();
+  expect(scheduleEvent).not.toHaveBeenCalled();
+});
+
+it('includes an Aptem PSP summary in the page schedule picker', async () => {
+  fetchEvents.mockResolvedValue({ owner: { name: 'Coach' }, events: [review(31, {
+    id: 'imported-review:31', eventKey: 'imported-review:31', reviewSource: 'aptem', aptemReviewId: '31',
+    importedReviewType: 'Personal Support Plan', reviewTemplateId: null, hasReviewForm: false,
+  })] });
+  fetchForm.mockResolvedValue(personalSupportBooking());
+  mount('/coach/reviews');
+  await screen.findByText('Learner 31');
+  fireEvent.click(screen.getByRole('button', { name: 'Schedule review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Continue to booking' }));
+  expect(await screen.findByRole('button', { name: 'Confirm booking' })).toBeEnabled();
+  expect(scheduleEvent).not.toHaveBeenCalled();
+});
 
 function mount(initialPath = '/coach/progress-reviews') {
   return render(<MemoryRouter initialEntries={[initialPath]}>

@@ -17,6 +17,16 @@ class BrowserTrackingTests(rewards.RewardsFacadeTests):
         return {"trackingToken":"server-token","activityKind":"component","activityId":"PMP-AUDIO-1",
                 "eventId":"signed-1:1","sequence":1,"intervals":[],**updates}
 
+    def test_disconnected_time_needs_review_without_fabricated_success_or_lost_draft(self):
+        self.scoped()
+        with patch.object(reward_tracking, 'record_observations', side_effect=RewardError('observation_outside_timing_lease')):
+            response = reward_tracking.observations(self.request('POST', self.body()))
+        self.assertEqual(response.status_code, 409)
+        data = json.loads(response.content)
+        self.assertEqual(data['code'], 'observation_outside_timing_lease')
+        self.assertIn('Your draft is kept', data['error'])
+        self.assertIn('contact support', data['error'])
+
     def test_browser_reading_uses_visible_time_and_server_identity(self):
         self.scoped();self.mode="visible_page"
         with patch.object(reward_tracking,"record_observations",return_value={"source":"lms"}) as record:
