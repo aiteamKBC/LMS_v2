@@ -352,13 +352,14 @@ export function ReviewInstanceModal({
             initializationAttemptsRef.current.set(attemptKey, attempt);
           }
           try {
-            await attempt;
+            // Initialization returns the complete authorized form. Show it
+            // immediately instead of making a second read a prerequisite.
+            const initialized = await attempt;
             if (!active) return;
-            data = await fetchReviewInstanceForm(instanceId, controller.signal);
-            if (!active) return;
-            if (!data.migratedForm || !data.formAvailable || data.summaryOnly) {
+            if (!initialized?.migratedForm || !initialized.formAvailable || initialized.summaryOnly) {
               throw new Error('The migrated form was not available after initialization.');
             }
+            data = initialized;
           } catch (err) {
             if (!active) return;
             setInitializationFailed(true);
