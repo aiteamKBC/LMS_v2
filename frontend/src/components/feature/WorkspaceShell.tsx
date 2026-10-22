@@ -137,10 +137,11 @@ function buildBreadcrumbs(pathname: string, search: string, navItems: SidebarNav
     // Find the deepest matching item, tracking its parent group (if any).
     // Items with an empty href (group headers) are never matched directly —
     // pathname.startsWith('' + '/') would otherwise match every route.
-    let matched: SidebarNavItem | undefined;
+    let matched = navItems.find(item => item.active === true);
     let matchedParent: SidebarNavItem | undefined;
     const current = `${pathname}${search}`;
     for (const item of navItems) {
+      if (matched) break;
       if (item.href && item.href.includes('?') && item.href === current) {
         matched = item;
         break;

@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowRight, BarChart3, BriefcaseBusiness, CalendarDays, ChartNoAxesCombined, Check, ChevronLeft, ChevronRight, CircleAlert, ClipboardPenLine, Eye, GraduationCap, PlayCircle, RotateCcw, Search, Users, Workflow } from 'lucide-react';
 import type { EmployerDashboardMetrics, EmployerLearnerCard, EmployerPortal } from '@/api/employerPortal';
-import { formatReviewDate, greeting, isOpenReview, learnerHref, learnerKey, londonToday, nextReview, programmeAverages, programmePercent, relativeReviewDate, reviewDate, reviewLabels, reviewMatches, reviewState, riskLabels, riskOf, type DashboardReviews, type Loadable } from './employerDashboardData';
+import { formatReviewDate, greeting, isOpenReview, learnerHref, learnerKey, londonToday, nextReview, orderReviewJourney, programmeAverages, programmePercent, relativeReviewDate, reviewDate, reviewLabels, reviewMatches, reviewState, riskLabels, riskOf, type DashboardReviews, type Loadable } from './employerDashboardData';
 import styles from './EmployerPortalPage.module.css';
 import { EmployerReviewJourneys } from './EmployerReviewJourneys';
 
@@ -21,7 +21,8 @@ type Props = {
   today?: string;
   backAction?: ReactNode;
 };
-const percentLabel = (value: number) => `${Math.round(value)}%`;
+const progressNumber = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 2 });
+const percentLabel = (value: number) => `${progressNumber.format(value)}%`;
 
 function Avatar({ learner }: { learner: EmployerLearnerCard }) {
   const initials = learner.name.split(/\s+/).filter(Boolean).slice(0, 2).map(word => word[0]).join('').toUpperCase();
@@ -35,7 +36,7 @@ function Stat({ icon, label, value, help, tone, onClick }: {
     : <div className={styles.statCard} data-tone={tone}>{content}</div>;
 }
 function ProgressBar({ value, label }: { value: number; label: string }) {
-  return <div className={styles.progressTrack} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(value)}><span style={{ width: `${value}%` }} /></div>;
+  return <div className={styles.progressTrack} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value}><span style={{ width: `${value}%` }} /></div>;
 }
 function PanelHeader({ icon, title, action }: { icon: ReactNode; title: string; action?: ReactNode }) {
   return <header className={styles.panelHeader}><h2>{icon}{title}</h2>{action}</header>;
@@ -134,14 +135,15 @@ export function EmployerDashboard({ data, metrics, reviews, onRetry, view = 'hom
         const event = nextReview(resource?.data);
         const date = event ? reviewDate(event) : null;
         const percent = programmePercent(metrics.data, learner.id);
+        const programme = metrics.data?.learners[learner.id]?.programme;
         const risk = riskOf(metrics.data, learner);
-        return <tr key={learnerKey(learner)}><td><div className={styles.identity}><Avatar learner={learner} /><div><Link to={learnerHref(employerId, learner)} className={styles.learnerName}>{learner.name}</Link><small>{learner.email}</small></div></div></td><td>{learner.programme || 'Not assigned'}</td><td>{learner.cohort || 'Not assigned'}</td><td>{percent != null ? <div className={styles.progressCell}><strong>{percentLabel(percent)}</strong><ProgressBar value={percent} label={`${learner.name} programme progress`} /></div> : <span className={styles.unavailable}>{metrics.status === 'loading' ? 'Loading…' : 'Not available'}</span>}</td><td><span className={styles.unavailable}>Not available</span></td><td><div className={styles.reviewCell}>{resource?.status === 'ready' ? event ? <><Link to={learnerHref(employerId, learner, 'reviews')}><CalendarDays size={14} />{formatReviewDate(date)}</Link><small>{relativeReviewDate(date, today)}</small></> : <span className={styles.unavailable}>No upcoming review</span> : <span className={styles.unavailable}>{resource?.status === 'error' ? 'Not available' : 'Loading…'}</span>}</div></td><td><span className={styles.statusBadge} data-status={risk}><span />{risk !== 'unavailable' ? riskLabels[risk] : learner.programmeStatus || 'Not set'}</span>{risk === 'unavailable' && <small className={styles.statusHelp}>OTJ status unavailable</small>}</td><td><Link className={styles.viewButton} aria-label={`View ${learner.name}`} to={learnerHref(employerId, learner)}><Eye size={14} />View learner</Link></td></tr>;
+        return <tr key={learnerKey(learner)}><td><div className={styles.identity}><Avatar learner={learner} /><div><Link to={learnerHref(employerId, learner)} className={styles.learnerName}>{learner.name}</Link><small>{learner.email}</small></div></div></td><td>{learner.programme || 'Not assigned'}</td><td>{learner.cohort || 'Not assigned'}</td><td>{percent != null ? <div className={styles.progressCell}><strong>{percentLabel(percent)}</strong><ProgressBar value={percent} label={`${learner.name} programme progress`} />{programme?.completed != null && programme.total != null && <small>{progressNumber.format(programme.completed)} / {progressNumber.format(programme.total)} activities</small>}</div> : <span className={styles.unavailable}>{metrics.status === 'loading' ? 'Loading…' : 'Not available'}</span>}</td><td><span className={styles.unavailable}>Not available</span></td><td><div className={styles.reviewCell}>{resource?.status === 'ready' ? event ? <><Link to={learnerHref(employerId, learner, 'reviews')}><CalendarDays size={14} />{formatReviewDate(date)}</Link><small>{relativeReviewDate(date, today)}</small></> : <span className={styles.unavailable}>No upcoming review</span> : <span className={styles.unavailable}>{resource?.status === 'error' ? 'Not available' : 'Loading…'}</span>}</div></td><td><span className={styles.statusBadge} data-status={risk}><span />{risk !== 'unavailable' ? riskLabels[risk] : learner.programmeStatus || 'Not set'}</span>{risk === 'unavailable' && <small className={styles.statusHelp}>OTJ status unavailable</small>}</td><td><Link className={styles.viewButton} aria-label={`View ${learner.name}`} to={learnerHref(employerId, learner)}><Eye size={14} />View learner</Link></td></tr>;
       })}</tbody></table></div>{pages > 1 && <nav className={styles.pagination} aria-label="Learner pages"><span>Page {currentPage} of {pages}</span><button type="button" aria-label="Previous learner page" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}><ChevronLeft size={17} /></button><button type="button" aria-label="Next learner page" disabled={currentPage === pages} onClick={() => setPage(currentPage + 1)}><ChevronRight size={17} /></button></nav>}</>}
   </section>;
 
   const journeyPanel = <section className={styles.panel} aria-labelledby="employer-reviews"><header className={styles.panelHeader}><h2 id="employer-reviews" tabIndex={-1}><Workflow size={22} />Progress review journey</h2>{view !== 'reviews' && <Link className={styles.textButton} to={`/employers/${employerId}/reviews`}>View all<ArrowRight size={15} /></Link>}</header><div className={styles.journeys} data-wide={view === 'reviews' ? 'true' : undefined}>{journeyLearners.map(learner => {
     const resource = reviews[learnerKey(learner)];
-    const events = resource?.data || [];
+    const events = orderReviewJourney(resource?.data || []);
     const nextIndex = events.findIndex(event => reviewState(event) !== 'completed');
     const start = Math.max(0, nextIndex < 0 ? events.length - 4 : nextIndex - 1);
     const displayed = view === 'reviews' ? events : events.slice(start, start + 4);
