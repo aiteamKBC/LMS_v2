@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   fetchEmployerEnrolmentReview: vi.fn(() => Promise.resolve({ eventKey: 'enrol-eligibility-1' })),
   fetchReviewForm: vi.fn(() => Promise.resolve({})),
   downloadReviewPdf: vi.fn(),
+  buildReviewPdf: vi.fn(() => ({ output: () => new Blob(['%PDF-1.7 example'], { type: 'application/pdf' }) })),
+  fetch: vi.fn(),
   fetchMigratedReviewForParty: vi.fn(() => Promise.resolve(null)),
   signMigratedReviewAsParty: vi.fn(() => Promise.resolve({ signed: true, role: 'employer' })),
   downloadMigratedReviewForParty: vi.fn(() => Promise.resolve()),
@@ -51,13 +53,16 @@ vi.mock('@/api/employerPortal', async (importOriginal) => ({
   fetchEmployerEnrolmentReview: mocks.fetchEmployerEnrolmentReview,
 }));
 vi.mock('@/api/reviewForm', () => ({ fetchReviewForm: mocks.fetchReviewForm }));
+vi.mock('@/pages/learner/monthly-submission/AssignmentPdfPreview', () => ({ AssignmentPdfPreview: ({ url, label }: { url: string; label: string }) =>
+  <section aria-label={label} data-url={url} /> }));
 vi.mock('@/api/learnerCalendar', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/api/learnerCalendar')>(),
   fetchMigratedReviewForParty: mocks.fetchMigratedReviewForParty,
   signMigratedReviewAsParty: mocks.signMigratedReviewAsParty,
   downloadMigratedReviewForParty: mocks.downloadMigratedReviewForParty,
 }));
-vi.mock('@/pages/learner/onboarding/reviews/reviewDocument', () => ({ downloadReviewPdf: mocks.downloadReviewPdf }));
+vi.mock('@/pages/learner/onboarding/reviews/reviewDocument', () => ({ downloadReviewPdf: mocks.downloadReviewPdf,
+  buildReviewPdf: mocks.buildReviewPdf, reviewDocumentFilename: () => 'Review.pdf' }));
 // The pad's own behaviour is covered by savedSignaturePad.test.tsx; here it
 // only needs to hand a signature to the page.
 vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({
@@ -96,11 +101,11 @@ vi.mock('@/components/feature/WorkspaceShell', () => ({
 
 import EmployerLearnerPage from './EmployerLearnerPage';
 
-function renderPage() {
+function renderPage(search = '') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-    <MemoryRouter initialEntries={['/employers/7/learner/commercial/499']}>
+    <MemoryRouter initialEntries={[`/employers/7/learner/commercial/499${search}`]}>
       <Routes>
         <Route path="/employers/:employerId/learner/:kind/:learnerId" element={<EmployerLearnerPage />} />
       </Routes>
@@ -125,7 +130,7 @@ describe('EmployerLearnerPage workspace identity', () => {
     expect(shell).toHaveAttribute('data-role', 'employer');
     expect(shell).toHaveAttribute('data-role-label', 'Employer');
     expect(shell).toHaveAttribute('data-user-name', 'Test Employer');
-    expect(shell).toHaveAttribute('data-learners-href', '/employers/7');
+    expect(shell).toHaveAttribute('data-learners-href', '/employers/7/learners');
     expect(screen.getByRole('status', { name: 'Loading learner' })).toBeVisible();
     expect(screen.getByTestId('learner-loading-spinner')).toHaveClass('animate-spin');
   });
@@ -140,7 +145,7 @@ describe('EmployerLearnerPage workspace identity', () => {
     expect(shell).toHaveAttribute('data-role', 'compliance');
     expect(shell).toHaveAttribute('data-role-label', 'Employer');
     expect(shell).toHaveAttribute('data-user-name', 'Enrolment Officer');
-    expect(shell).toHaveAttribute('data-learners-href', '/employers/7');
+    expect(shell).toHaveAttribute('data-learners-href', '/employers/7/learners');
   });
 });
 
@@ -181,6 +186,13 @@ describe('EmployerLearnerPage content and review signing', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // jsdom has no native dialog implementation; browser checks exercise real focus/Escape behavior.
+    Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value: function (this: HTMLDialogElement) { this.open = true; } });
+    Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value: function (this: HTMLDialogElement) { this.open = false; } });
+    vi.stubGlobal('fetch', mocks.fetch);
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:preview');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    mocks.fetch.mockResolvedValue(new Response('%PDF-1.7 saved', { headers: { 'Content-Type': 'application/pdf' } }));
     // The app gets AppIcon from unplugin-auto-import, which vitest.config.ts
     // does not load; provide it the same way for the page's Hero.
     vi.stubGlobal('AppIcon', AppIcon);
@@ -213,6 +225,13 @@ describe('EmployerLearnerPage content and review signing', () => {
     expect(await screen.findByRole('region', { name: 'Reviews sessions' })).toBeVisible();
     expect(tab).toHaveAttribute('aria-current', 'page');
     expect(screen.queryByRole('link', { name: 'Open calendar' })).not.toBeInTheDocument();
+  });
+
+  it.each(['reviews', 'documents'])('opens the %s tab directly from the employer home link', async tabName => {
+    mocks.fetchEmployerLearner.mockResolvedValue(detail([]));
+    renderPage(`?tab=${tabName}`);
+    const label = tabName === 'reviews' ? /^Progress reviews$/ : /^Documents/;
+    expect(await screen.findByRole('button', { name: label })).toHaveAttribute('aria-current', 'page');
   });
 
   it('adds the timeline above the existing learning plan while keeping progress in Overview', async () => {
@@ -336,7 +355,7 @@ describe('EmployerLearnerPage content and review signing', () => {
       expect(within(documents).getByText(column)).toBeVisible();
     }
     expect(within(documents).getByText('Awaiting your signature')).toBeVisible();
-    expect(within(documents).getByText('Waiting on learner')).toBeVisible();
+    expect(within(documents).getByText('Awaiting completion')).toBeVisible();
     const filters = within(documents).getByRole('navigation', { name: 'Filter documents' });
     await userEvent.click(within(filters).getByRole('button', { name: /To sign/ }));
     expect(within(documents).getByText(review.label)).toBeVisible();
@@ -344,7 +363,7 @@ describe('EmployerLearnerPage content and review signing', () => {
     expect(within(documents).queryByText('Signed review')).not.toBeInTheDocument();
     await userEvent.click(within(filters).getByRole('button', { name: /Signed/ }));
     expect(within(documents).getByText('Signed review')).toBeVisible();
-    expect(within(documents).getByRole('button', { name: 'Show document' })).toBeVisible();
+    expect(within(documents).getByRole('button', { name: 'Preview' })).toBeVisible();
     expect(within(documents).queryByText(review.label)).not.toBeInTheDocument();
   });
 
@@ -369,9 +388,10 @@ describe('EmployerLearnerPage content and review signing', () => {
   });
 
   it('signs a migrated PR through the dedicated employer endpoint', async () => {
+    mocks.fetchMigratedReviewForParty.mockResolvedValueOnce({ reviewRevision: 2 } as never);
     mocks.fetchEmployerLearner.mockResolvedValue(detail([{ ...review, eventKey: 'imported-review:C5-TEST-PR', reviewInstanceId: 'imported-review:C5-TEST-PR', migratedForm: true }]));
     await signFirstReview();
-    await waitFor(() => expect(mocks.signMigratedReviewAsParty).toHaveBeenCalledWith('imported-review:C5-TEST-PR', 'data:image/png;base64,SIG'));
+    await waitFor(() => expect(mocks.signMigratedReviewAsParty).toHaveBeenCalledWith('imported-review:C5-TEST-PR', 'data:image/png;base64,SIG', { reviewRevision: 2 }));
     expect(mocks.signReviewAsEmployer).not.toHaveBeenCalled();
     expect(mocks.signEnrolmentReviewAsEmployer).not.toHaveBeenCalled();
   });
@@ -379,30 +399,34 @@ describe('EmployerLearnerPage content and review signing', () => {
   it('opens a signed legacy enrolment review through the employer portal read', async () => {
     mocks.fetchEmployerLearner.mockResolvedValue(detail([{ ...review, signed: true, signedName: 'Test Employer' }]));
     await openDocuments();
-    await userEvent.click(await screen.findByRole('button', { name: /Show document/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /^Preview$/ }));
 
-    await waitFor(() => expect(mocks.downloadReviewPdf).toHaveBeenCalledWith({ eventKey: 'enrol-eligibility-1' }, expect.anything()));
+    expect(await screen.findByRole('region', { name: review.label + ' preview' })).toHaveAttribute('data-url', 'blob:preview');
+    expect(screen.getByRole('link', { name: 'Download' })).toHaveAttribute('download', 'Review.pdf');
+    expect(mocks.downloadReviewPdf).not.toHaveBeenCalled();
     expect(mocks.fetchEmployerEnrolmentReview).toHaveBeenCalledWith('7', 'commercial', '499', 'enrol-eligibility-1');
     expect(mocks.fetchReviewForm).not.toHaveBeenCalled();
   });
 
-  it('keeps a signed migrated review unavailable until final completion', async () => {
+  it('offers preview while keeping final download unavailable before completion', async () => {
     mocks.fetchEmployerLearner.mockResolvedValue(detail([{ ...review,
       eventKey: 'imported-review:synthetic', migratedForm: true, signed: true, completed: false,
     }]));
     await openDocuments();
     expect(await screen.findByText('Signed · awaiting final completion')).toBeVisible();
-    expect(screen.queryByRole('button', { name: /Show document/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Preview$/ })).toBeVisible();
     expect(mocks.downloadMigratedReviewForParty).not.toHaveBeenCalled();
   });
 
-  it('downloads a completed migrated review through the authorized party endpoint', async () => {
+  it('previews the stored migrated PDF before offering a download', async () => {
     mocks.fetchEmployerLearner.mockResolvedValue(detail([{ ...review,
       eventKey: 'imported-review:synthetic', migratedForm: true, signed: true, completed: true,
     }]));
     await openDocuments();
-    await userEvent.click(await screen.findByRole('button', { name: /Show document/ }));
-    await waitFor(() => expect(mocks.downloadMigratedReviewForParty).toHaveBeenCalledWith('imported-review:synthetic'));
+    await userEvent.click(await screen.findByRole('button', { name: /^Preview$/ }));
+    expect(await screen.findByRole('link', { name: 'Download' })).toHaveAttribute('href', 'blob:preview');
+    expect(mocks.fetch).toHaveBeenCalledWith('/learner_api/migrated-reviews/imported-review%3Asynthetic/party-pdf', expect.objectContaining({ credentials: 'include' }));
+    expect(mocks.downloadMigratedReviewForParty).not.toHaveBeenCalled();
     expect(mocks.downloadReviewPdf).not.toHaveBeenCalled();
   });
 
@@ -410,10 +434,11 @@ describe('EmployerLearnerPage content and review signing', () => {
     mocks.fetchEmployerLearner.mockResolvedValue(detail([{ ...review,
       eventKey: 'imported-review:synthetic', migratedForm: true, signed: true, completed: true,
     }]));
-    mocks.downloadMigratedReviewForParty.mockRejectedValueOnce(new Error('The LMS PDF has not been generated yet.'));
+    mocks.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'The LMS PDF has not been generated yet.' }), { status: 409 }));
     await openDocuments();
-    await userEvent.click(await screen.findByRole('button', { name: /Show document/ }));
-    await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith('Could not open the document', 'The LMS PDF has not been generated yet.'));
+    await userEvent.click(await screen.findByRole('button', { name: /^Preview$/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The LMS PDF has not been generated yet.');
+    expect(screen.queryByRole('link', { name: 'Download' })).not.toBeInTheDocument();
     expect(mocks.downloadReviewPdf).not.toHaveBeenCalled();
   });
 });

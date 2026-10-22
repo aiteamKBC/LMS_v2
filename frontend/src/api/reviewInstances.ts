@@ -173,6 +173,11 @@ export interface ReviewInstanceFormDefinition {
   summaryOnly?: boolean;
   migratedForm?: boolean;
   answerVersion?: string;
+  reviewRevision?: number;
+  reopenHistory?: Array<{
+    number: number; reopenedAt: string; reasonCode: string; note: string;
+    reopenedBy: string; pdfAvailable: boolean;
+  }>;
   templateSync?: {
     status: 'working' | 'frozen' | 'conflict';
     upToDate: boolean | null;
@@ -195,6 +200,9 @@ export interface ReviewInstanceFormDefinition {
   sourceStatus?: string;
   localStatus?: string | null;
   booking?: {
+    /** Aptem PSP appointments do not require an editable review form. */
+    formRequired?: boolean;
+    status?: string;
     booked: boolean;
     conflict: boolean;
     canAttach?: boolean;
@@ -316,14 +324,16 @@ export async function submitMigratedReview(instanceId: string, answers: Record<s
   }));
 }
 
-export async function signMigratedReviewAsCoach(instanceId: string, signature: string) {
+export async function signMigratedReviewAsCoach(instanceId: string, signature: string, reviewRevision?: number) {
   return readJsonResponse<ReviewInstanceFormDefinition>(await coachFetch(`${migratedUrl(instanceId)}/coach-sign`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ signature }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ signature, reviewRevision }),
   }));
 }
 
-export async function completeMigratedReview(instanceId: string) {
-  return readJsonResponse<ReviewInstanceFormDefinition>(await coachFetch(`${migratedUrl(instanceId)}/complete`, { method: 'POST' }));
+export async function completeMigratedReview(instanceId: string, reviewRevision?: number) {
+  return readJsonResponse<ReviewInstanceFormDefinition>(await coachFetch(`${migratedUrl(instanceId)}/complete`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reviewRevision }),
+  }));
 }
 
 export async function generateMigratedReviewPdf(instanceId: string) {
@@ -505,6 +515,19 @@ export async function markReviewInstanceInProgressManually(
 }
 
 export type ReviewReopenReasonCode = 'correction-required' | 'incorrect-answer' | 'signature-error' | 'other';
+
+export async function reopenMigratedReview(
+  instanceId: string,
+  params: { reasonCode: ReviewReopenReasonCode; note: string; answerVersion?: string },
+) {
+  return readJsonResponse<ReviewInstanceFormDefinition>(await coachFetch(`${migratedUrl(instanceId)}/reopen`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params),
+  }));
+}
+
+export async function downloadMigratedReviewRevision(instanceId: string, number: number) {
+  await saveReviewPdfResponse(await coachFetch(`${migratedUrl(instanceId)}/revisions/${number}/pdf`));
+}
 
 export async function reopenReviewInstance(
   instanceId: string,

@@ -55,7 +55,7 @@ class PlanSaveAdvancesLearnerTests(SimpleTestCase):
                 patch("learner_api.learning_plan.EnrolmentUser") as model, \
                 patch("learner_api.learning_plan._programme_modules", return_value=CATALOGUE), \
                 patch("learner_api.learning_plan._all_modules", return_value=CATALOGUE), \
-                patch("learner_api.learning_plan._group_module_ids", return_value=[]), \
+                patch("learner_api.selectors.assignments._group_module_ids", return_value=[]), \
                 patch("learner_api.learning_plan._serialize", return_value={}):
             model.all_learners.get.return_value = learner
             response = learning_plan(request, 101)
@@ -85,7 +85,7 @@ class PlanSaveAdvancesLearnerTests(SimpleTestCase):
                 patch("learner_api.learning_plan.EnrolmentUser") as model, \
                 patch("learner_api.learning_plan._programme_modules", return_value=CATALOGUE), \
                 patch("learner_api.learning_plan._all_modules", return_value=CATALOGUE), \
-                patch("learner_api.learning_plan._group_module_ids", return_value=[]), \
+                patch("learner_api.selectors.assignments._group_module_ids", return_value=[]), \
                 patch("learner_api.learning_plan._serialize", return_value={}):
             model.all_learners.get.return_value = learner
             learning_plan(request, 101)

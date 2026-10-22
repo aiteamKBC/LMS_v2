@@ -1050,6 +1050,8 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
   const isLiveSession = component.type === 'live-session';
+  const externalTeamsCalendar = isLiveSession && !component.settings.extraTeamsMeetingUrl
+    && (component.settings.teamsMeetingType === 'linked-external' || Boolean(component.settings.liveSessionLinkOverride));
   // The date this live session itself holds. It used to fall back to the week's
   // date, which read as a scheduled session -- but a live session with no date
   // of its own is not placed on the calendar and is not sent to Teams, so a
@@ -1109,6 +1111,17 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
             <span className="tabular-nums">{component.points}pts</span>
             {component.ksbMappings.length > 0 && <span className="tabular-nums">{component.ksbMappings.length} KSB</span>}
             {scheduledDate && <span className="tabular-nums">{formatDateLabel(scheduledDate)}</span>}
+            {isLiveSession && ['missing', 'ambiguous'].includes(String(component.settings?.teamsCalendarBinding || '')) && (
+              <span
+                title={externalTeamsCalendar
+                  ? 'This date has no confirmed session in the imported Teams calendar. The organizer must check or extend the original series in Teams, then its updated dates can be imported and matched here. The existing meeting link is preserved.'
+                  : 'This date has no confirmed calendar session. Open Update Teams meeting to review the module calendar.'}
+                className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
+              >
+                <AppIcon className="ri-calendar-schedule-line text-[10px]"></AppIcon>
+                Teams date awaiting confirmation
+              </span>
+            )}
             {/* The session and its week disagree about when this runs, and the
                 session's date is the one that wins everywhere downstream. Said
                 on the row that owns the date, with the correction offered --
@@ -1116,11 +1129,13 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
                 in the session's own settings would. */}
             {dateDrift && (
               <span
-                title={`Teams calendar currently has this meeting on ${formatDateLabel(dateDrift.storedDate)}. This week is now planned for ${dateDrift.weekDates.map(formatDateLabel).join(' and ')}. Every other live session follows its week automatically; this one stays put because real attendees were invited to the booked date. Go to the Teams Meetings page and run Update there so the Teams calendar matches the date planned here -- that is what actually moves the Microsoft meeting and mails attendees the change.`}
+                title={`Teams calendar currently has this meeting on ${formatDateLabel(dateDrift.storedDate)}. This week is now planned for ${dateDrift.weekDates.map(formatDateLabel).join(' and ')}. ${externalTeamsCalendar
+                  ? 'This is an imported Teams series. Open Update Teams meeting to review and re-match its saved dates. If the planned date is missing, the organizer must update the original series in Teams before its dates can be imported. The LMS keeps the existing link and does not reschedule this series.'
+                  : 'This session keeps its confirmed date because attendees were invited to it. Open the Teams Meetings page and run Update to move the Microsoft meeting to the planned date and notify attendees.'}`}
                 className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
               >
                 <AppIcon className="ri-calendar-schedule-line text-[10px]"></AppIcon>
-                Teams calendar: {formatDateLabel(dateDrift.storedDate)} · planned here: {formatDateLabel(dateDrift.weekDates[0])} · update Teams to match
+                Teams calendar: {formatDateLabel(dateDrift.storedDate)} · planned here: {formatDateLabel(dateDrift.weekDates[0])} · {externalTeamsCalendar ? 'review imported calendar' : 'update Teams to match'}
               </span>
             )}
             {/* Says what is missing rather than filling it in: this session is
@@ -2006,7 +2021,9 @@ function VideoBody({ component, onChange, setSetting, rulePoints }: ComponentBod
           <Field label="Component duration (minutes)"><input type="number" min="0" value={Number(component.settings.durationMinutes) || 0} onChange={e => setSetting('durationMinutes', Number(e.target.value) || 0)} className={`${inputClass} tabular-nums`} /></Field>
           <Field label="Required progress (%)"><input type="number" min="0" max="100" value={Number(component.settings.requiredProgressPercentage) || 0} onChange={e => setSetting('requiredProgressPercentage', Number(e.target.value) || 0)} className={`${inputClass} tabular-nums`} /></Field>
         </div>
-        <Field label="Component content" className="mt-4"><textarea value={s('lessonContent')} onChange={e => setSetting('lessonContent', e.target.value)} rows={6} placeholder="What the learner sees alongside the video…" className={`${inputClass} resize-none`} /></Field>
+        {/* The same editor as the Module Builder writes this key with: its
+            content is HTML, which a plain textarea showed as raw tags. */}
+        <div className="mt-4"><RichTextDraft label="Component content" value={s('lessonContent')} onChange={value => setSetting('lessonContent', value)} rows={6} /></div>
       </Section>
 
       <Section title="Effort & reward">

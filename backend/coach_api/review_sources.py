@@ -241,10 +241,12 @@ def booking_for_imported_review(profile, review, overlay=None, *, lock=False):
     """Resolve the same durable appointment from a form or its occurrence."""
     from .models import CoachCalendarEvent
     from .migrated_reviews import booking_event_type, review_family
+    from .personal_support_booking import is_personal_support_plan
 
     event = {**imported_identity(review, profile.id),
              "eventKey": f"imported-review:{review['aptemReviewId']}",
-             "source": booking_event_type(review_family(review["type"])),
+             "source": ("progress-review" if is_personal_support_plan(review["type"])
+                        else booking_event_type(review_family(review["type"]))),
              **imported_learner_identity(profile)}
     if not event["source"]:
         return None
@@ -359,6 +361,8 @@ def apply_imported_state(event, record=None, overlay=None, *, compact=False):
             "graphWebLink": (record.graph_web_link or "") if verified else "", "meetingProvider": record.meeting_provider or "",
             "coachName": record.owner_name or "", "coachEmail": record.owner_email or "",
             "invited": verified, "reviewResponses": {} if compact else record.review_responses or {},
+            # Keep editable learner notes separate from generated calendar copy.
+            "bookingNotes": "" if compact else record.notes or "",
         })
         if record.scheduled_date:
             event["date"] = record.scheduled_date.isoformat()

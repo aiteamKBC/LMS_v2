@@ -111,12 +111,13 @@ class Command(BaseCommand):
                         # The pooler leaks default_transaction_read_only between
                         # clients, so each transaction states that it writes.
                         cur.execute("SET TRANSACTION READ WRITE")
-                    sync_learning_plan_mirror(source)
+                    # Propagate failure to the existing per-learner rollback/counting path.
+                    sync_learning_plan_mirror(source, strict=True)
                 mirrored += 1
             except DatabaseError as exc:
                 failed += 1
                 self.stderr.write(self.style.WARNING(
-                    f"  learner {source.pk}: {exc}"
+                    f"  learner {source.pk}: reconciliation failed ({type(exc).__name__})"
                 ))
             if mirrored and mirrored % 50 == 0:
                 self.stdout.write(f"  ... {mirrored} mirrored")

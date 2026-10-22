@@ -23,6 +23,7 @@ import {
   apiLogin,
   apiLogout,
   apiMe,
+  apiMicrosoftStart,
   apiResetPassword,
   describePasswordProblem,
   isOwnLearnerRecord,
@@ -74,6 +75,12 @@ function lastHeaders(): Record<string, string> {
 }
 
 describe('request plumbing', () => {
+  it('requests only the fixed lecture feedback destination for Microsoft sign-in', async () => {
+    fetchMock.mockResolvedValue(reply(200, { authorizationUrl: 'https://login.example.test/start' }));
+    await apiMicrosoftStart(undefined, 'lecture-feedback');
+    expect(fetchMock.mock.calls.at(-1)![0]).toBe('/login_api/microsoft/start/?intent=lecture-feedback');
+  });
+
   it('sends the session cookie and the CSRF header on every call', async () => {
     fetchMock.mockResolvedValue(reply(200, { user: ACCOUNT }));
     await apiLogin('admin@kbc.test', 'pw');
@@ -225,6 +232,15 @@ describe('apiMe', () => {
   it('still throws on a server error', async () => {
     fetchMock.mockResolvedValue(reply(502, { error: 'Database error' }));
     await expect(apiMe()).rejects.toBeInstanceOf(AuthError);
+  });
+
+  it('preserves session unavailability as a retryable failure, never signed out', async () => {
+    fetchMock.mockResolvedValue(reply(503, {
+      error: 'The sign-in service is temporarily unavailable.', code: 'session_unavailable',
+    }));
+    await expect(apiMe()).rejects.toMatchObject({ status: 503, code: 'session_unavailable' });
+    fetchMock.mockResolvedValue(reply(200, { user: ACCOUNT }));
+    await expect(apiMe()).resolves.toEqual(ACCOUNT);
   });
 });
 

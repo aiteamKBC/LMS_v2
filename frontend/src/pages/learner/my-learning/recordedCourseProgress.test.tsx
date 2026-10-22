@@ -10,8 +10,12 @@ import { StudentActivityPanel } from './SubjectWorkspace';
 import { buildUnifiedLearningSummary, subjectsFrom } from './learningSummary';
 
 vi.mock('./DeferredStudentMaterial', () => ({
-  DeferredStudentMaterial: ({ groupId, activityId, reviewQuiz, readOnly }: { groupId: number; activityId: number; reviewQuiz?: boolean; readOnly?: boolean }) =>
-    <div>{reviewQuiz && readOnly ? 'Saved quiz review' : 'Source material'} {groupId}/{activityId}</div>,
+  DeferredStudentMaterial: ({ groupId, activityId, reviewQuiz, readOnly, catalogueQuiz, onProgress }: {
+    groupId: number; activityId: number; reviewQuiz?: boolean; readOnly?: boolean;
+    catalogueQuiz?: boolean; onProgress?: unknown;
+  }) => <div data-progress-enabled={!!onProgress}>
+    {reviewQuiz && readOnly ? 'Saved quiz review' : catalogueQuiz ? 'Quiz activity' : 'Source material'} {groupId}/{activityId}
+  </div>,
 }));
 vi.mock('@/api/learnerCertificates', () => ({
   fetchLearnerCertificateTemplate: vi.fn().mockResolvedValue({ template: null, csrfToken: '' }),
@@ -62,10 +66,14 @@ describe('full historical course catalogue', () => {
     expect(row.getByText('Saved quiz review 1/10')).toBeVisible();
     expect(row.queryByText('Content not available yet')).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('region', { name: 'Your subjects' })).toHaveAttribute('aria-busy', 'false'));
-    fireEvent.click(row.getByRole('button', { name: 'Close quiz' }));
-    expect(row.queryByText('Saved quiz review 1/10')).not.toBeInTheDocument();
-    fireEvent.click(row.getByRole('button', { name: 'View quiz' }));
+    const sidebar = within(screen.getByRole('complementary', { name: 'Module activities' }));
+    fireEvent.click(sidebar.getByRole('button', { name: /Pending lesson 1-20/ }));
+    expect(row.getByText('Saved quiz review 1/10')).not.toBeVisible();
+    expect(screen.getByText('Source material 1/20')).toBeVisible();
+    // The current-week summary and expanded week both link to this same quiz.
+    fireEvent.click(sidebar.getAllByRole('button', { name: /quiz 1/i })[0]);
     expect(row.getByText('Saved quiz review 1/10')).toBeVisible();
+    expect(row.getByText('Saved quiz review 1/10')).toHaveAttribute('data-progress-enabled', 'false');
     expect(row.getByText('Complete')).toBeVisible();
     expect(row.getByText(/OTJH: 18m/)).toBeVisible();
   });
@@ -167,7 +175,8 @@ describe('full historical course catalogue', () => {
     ] };
     const subject = subjectsFrom(recovered, null)[0];
     expect(groupSubjectActivities(subject.activities).map(group => group.month)).toEqual(['introduction', '2026-03', 'undated']);
-    expect(subjectWeeks(subject).map(week => week.id)).toEqual(['introduction', '2026-03-02', 'undated']);
+    expect(subjectWeeks(subject).map(week => week.id)).toEqual(['introduction', '2026-03-06', 'undated']);
+    expect(subjectWeeks(subject)[1]).toMatchObject({ start: '2026-03-06', end: '2026-03-12' });
     expect(subject.activities.every(item => !item.completed)).toBe(true);
   });
 
@@ -182,9 +191,11 @@ describe('full historical course catalogue', () => {
       `/learner/my-learning/${kind}/77?subject=legacy%3A1&activity=catalogue%3A1%3Amaterial%3A20`);
     expect(row.queryByText('Content not available yet')).not.toBeInTheDocument();
     expect(row.getByText('Not complete')).toBeVisible();
+    expect(row.getByText('Quiz activity 1/10')).toBeVisible();
     expect(row.queryByRole('button', { name: 'Open activity' })).not.toBeInTheDocument();
     fireEvent.click(row.getByRole('link', { name: 'View source material' }));
     expect(await screen.findByText('Source material 1/20')).toBeVisible();
+    expect(row.getByText('Quiz activity 1/10')).not.toBeVisible();
     expect(screen.queryByText('Source material 1/10')).not.toBeInTheDocument();
     expect(screen.queryByText('Source material 2/20')).not.toBeInTheDocument();
   });
@@ -211,8 +222,9 @@ describe('full historical course catalogue', () => {
   });
 
   it('shows the full denominator and both completed and remaining components after opening', async () => {
-    render(<MemoryRouter><StudentActivityPanel data={catalogueData} loading={false} error={null} onRetry={vi.fn()} /></MemoryRouter>);
-    const card = screen.getByRole('button', { name: /Course 1.*Open subject/ });
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
+    render(<MemoryRouter><StudentActivityPanel data={catalogueData} kind="commercial" learnerId="77" loading={false} error={null} onRetry={vi.fn()} /></MemoryRouter>);
+    const card = await screen.findByRole('button', { name: /Course 1.*Open subject/ });
     expect(within(card).getByText('1 of 3 completed')).toBeVisible();
     expect(within(card).getByText('33.33%')).toBeVisible();
     expect(within(card).getByText('In progress')).toBeVisible();
@@ -222,14 +234,20 @@ describe('full historical course catalogue', () => {
     expect(within(screen.getByRole('button', { name: /Unstarted course.*Open subject/ })).getByText('0 of 1 completed')).toBeVisible();
     fireEvent.click(card);
     expect(screen.getByRole('complementary', { name: 'Module activities' })).toBeVisible();
-    expect(await screen.findByRole('group', { name: 'quiz 1 activity' })).toHaveTextContent('Complete');
+    const sidebar = within(screen.getByRole('complementary', { name: 'Module activities' }));
     expect(screen.getByRole('group', { name: 'Pending lesson 1-10 activity' })).toHaveTextContent('Not complete');
+    fireEvent.click(sidebar.getAllByRole('button', { name: /quiz 1/i })[0]);
+    expect(await screen.findByRole('group', { name: 'quiz 1 activity' })).toHaveTextContent('Complete');
+    fireEvent.click(sidebar.getByRole('button', { name: /Pending lesson 1-20/ }));
     expect(screen.getByRole('group', { name: 'Pending lesson 1-20 activity' })).toHaveTextContent('Not complete');
   });
 
   it('preserves links from a recorded activity to its catalogue component', async () => {
-    render(<MemoryRouter initialEntries={['/?activity=record:1']}><StudentActivityPanel data={catalogueData} loading={false} error={null} onRetry={vi.fn()} /></MemoryRouter>);
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
+    render(<MemoryRouter initialEntries={['/?activity=record:1']}><StudentActivityPanel data={catalogueData} kind="commercial" learnerId="77" loading={false} error={null} onRetry={vi.fn()} /></MemoryRouter>);
     expect(await screen.findByRole('group', { name: 'quiz 1 activity' })).toBeVisible();
+    expect(screen.getByText('Saved quiz review 1/10')).toBeVisible();
+    fireEvent.click(within(screen.getByRole('complementary', { name: 'Module activities' })).getByRole('button', { name: /Pending lesson 1-20/ }));
     expect(screen.getByRole('group', { name: 'Pending lesson 1-20 activity' })).toBeVisible();
   });
 });

@@ -95,7 +95,7 @@ class MonthlyFocusTests(SimpleTestCase):
         context = MagicMock(source=SimpleNamespace(pk=201))
         cursor = MagicMock(); connection = MagicMock(); connection.cursor.return_value.__enter__.return_value = cursor
         with patch('coach_api.monthly_focus.connections', {'enrolment': connection}), \
-             patch('learner_api.learning_plan._effective_plan_ids', return_value=['M1']), \
+             patch('learner_api.selectors.assignments._effective_plan_ids', return_value=['M1']), \
              patch('learner_api.canonical_learning.curriculum_module_ids_for', return_value=['M2']), \
              patch('coach_api.monthly_focus.rows', return_value=[]):
             read_month_lectures(context, {'id': 101}, [], '2026-10')

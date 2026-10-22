@@ -112,7 +112,7 @@ from learner_api.dashboard_metrics import (read_metrics, load_subject_attempts_b
                                             load_native_components_bulk, load_planned_hours_documents_bulk,
                                             load_contracts_bulk, load_accepted_ksb_rows_bulk)
 from learner_api.dashboard_metrics import load_export_links_bulk
-from learner_api.learning_plan import _effective_plan_ids
+from learner_api.selectors.assignments import _effective_plan_ids
 from learner_api.student_activity import load_direct_progress_records_bulk
 from learner_api.ksb_codes import extract_ksb_codes, normalize_ksb_parent_code
 from learner_api.progress_rules import progress_record_counts_as_achieved
@@ -2356,7 +2356,7 @@ def coach_learner_personal_calendar_conflicts(
     scheduled_time: time,
     duration_minutes: int,
     timezone_offset_minutes: int = 0,
-    *, exclude_record=None,
+    *, exclude_record=None, business_time_zone=None,
 ) -> bool:
     identity = learner_calendar_source_identity(learner)
     if not identity:
@@ -2367,6 +2367,8 @@ def coach_learner_personal_calendar_conflicts(
         "exclude_scheduled_time": exclude_record.scheduled_time,
         "exclude_duration_minutes": exclude_record.duration_minutes,
     }
+    if business_time_zone:
+        exclusion["business_time_zone"] = business_time_zone
     return personal_calendar_booking_conflicts(
         kind,
         source_id,
@@ -10144,6 +10146,23 @@ def resolve_coach_review_events(
         if int(learner.id) not in aptem_by_profile and int(learner.id) not in identity_conflicts
     ]
     events: list[dict] = list(aptem_events)
+    # Imported PRs use the same linked employer as native PR invitations.
+    # Resolve once per learner, using the already loaded source identities.
+    learners_by_id = {str(learner.id): learner for learner in learners}
+    employer_attendees: dict[str, dict[str, str]] = {}
+    for index, event in enumerate(events):
+        learner_id = str(event.get("learnerId") or "")
+        learner = learners_by_id.get(learner_id)
+        if learner is None or review_event_category(event) != "progress-review":
+            continue
+        if learner_id not in employer_attendees:
+            source_row = resolve_caseload_source_row(
+                learner, commercial_rows=commercial_rows, enrolment_rows=enrolment_rows,
+            )
+            employer_attendees[learner_id] = learner_employer_attendee(learner, source_row)
+        attendee = employer_attendees[learner_id]
+        if attendee:
+            events[index] = {**event, "employerName": attendee["name"], "employerEmail": attendee["email"]}
     issues: list[dict[str, str]] = [
         {"learnerId": str(profile_id), "code": "aptem_identity_conflict"}
         for profile_id in sorted(identity_conflicts)
@@ -10507,6 +10526,13 @@ def lock_learner_calendar(learner_id: int) -> None:
     )
 
 
+def ensure_coach_booking_available(owner_email, scheduled_date, scheduled_time, duration_minutes, *, exclude_record_id=None):
+    from .booking_availability import lock_coach_calendar, ensure_coach_calendar_available
+    lock_coach_calendar(owner_email)
+    ensure_coach_calendar_available(owner_email, scheduled_date, scheduled_time, duration_minutes,
+                                    exclude_record_id=exclude_record_id)
+
+
 def find_learner_calendar_conflict(
     *,
     learner_id: int,
@@ -10763,6 +10789,7 @@ def reserve_coach_calendar_booking(
                 scheduled_time=scheduled_time,
                 duration_minutes=duration_minutes,
             )
+            ensure_coach_booking_available(owner_email, scheduled_date, scheduled_time, duration_minutes)
 
             current_max = (
                 CoachCalendarEvent.objects.filter(
@@ -10952,6 +10979,8 @@ def persist_calendar_sync_reservation(
                 duration_minutes=candidate.duration_minutes,
                 exclude_record_id=candidate.pk,
             )
+            ensure_coach_booking_available(candidate.owner_email, candidate.scheduled_date, candidate.scheduled_time,
+                                           candidate.duration_minutes, exclude_record_id=candidate.pk)
         for field in mutable_fields:
             if record.review_instance_id and field in {"review_template_id", "occurrence_number"}:
                 continue
@@ -15101,12 +15130,14 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
             "historicalReview": review,
         }
     family = migrated_review_family(review.get("type"))
+    psp_initial_status = (clean_text(review.get("status")) if family == "PSP"
+                          and review.get("status") in MIGRATED_EDITABLE_STATUSES else None)
     local_programme_key = migrated_programme_key(
         getattr(learner, "programme_id", None), getattr(learner, "programme", None),
     )
     eligible_for_template = bool(
-        not saved_instance and not historical_completed and not form_available
-        and family and initial_local_status(review.get("status"))
+        not saved_instance and not historical_completed and (not form_available or family == "PSP")
+        and family and (initial_local_status(review.get("status")) or psp_initial_status)
     )
     approved_template = None
     if eligible_for_template:
@@ -15136,7 +15167,8 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     )
     review_type = clean_text(review.get("type"))
     monthly_types = {clean_text(value).casefold() for value in REVIEW_TYPES["monthly-coaching"]}
-    review_type_code = "aptem_mcm" if review_type.casefold() in monthly_types else "aptem_progress_review"
+    review_type_code = ("aptem_psp" if family == "PSP" else
+                        "aptem_mcm" if review_type.casefold() in monthly_types else "aptem_progress_review")
     is_mcm = review_type_code == "aptem_mcm"
 
     adapted_sections = []
@@ -15203,7 +15235,10 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     if migrated_form:
         try:
             from coach_api.migrated_template_sync import active_answers
-            adapted_sections, field_warnings = render_migrated_sections(snapshot, active_answers(snapshot, saved_answers))
+            adapted_sections, field_warnings = render_migrated_sections(
+                snapshot, active_answers(snapshot, saved_answers),
+                answer_audit=(getattr(saved_instance, "meeting_intelligence", None) or {}).get("answerEdits", {}),
+            )
         except ValueError:
             return None
     elif is_template_preview:
@@ -15249,7 +15284,7 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     definition = {
         **_review_learner_identity(learner),
         **({"programme": review["historicalProgramme"]} if historical_completed and review.get("historicalProgramme") else {}),
-        "readOnly": preview_only or summary_only or historical_completed or (
+        "readOnly": preview_only or summary_only or historical_completed or (family == "PSP" and not migrated_form) or (
             migrated_form and saved_instance.status not in MIGRATED_EDITABLE_STATUSES
         ),
         "source": "aptem",
@@ -15316,6 +15351,9 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         from coach_api.migrated_template_sync import snapshot_state
         definition["templateSync"] = snapshot_state(saved_instance)
         definition["answerVersion"] = answer_version(saved_instance)
+        from .migrated_reopening import revision_number, history as migrated_revision_history
+        definition["reviewRevision"] = revision_number(saved_instance)
+        definition["reopenHistory"] = migrated_revision_history(saved_instance)
         pdf_ready = saved_instance.status == ImportedReviewInstance.STATUS_COMPLETED
         definition["pdf"] = {
             "available": pdf_ready,
@@ -15378,6 +15416,11 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
             "meetingLink": calendar.meeting_link if booked else None,
             "syncState": calendar.sync_state if association_valid else None,
         }
+    from .personal_support_booking import is_personal_support_plan, booking_state
+    if is_personal_support_plan(review.get("type")):
+        _calendar, definition["booking"] = booking_state(
+            canonical_owner, learner, review, saved_instance, preview_only=preview_only,
+        )
     return definition
 
 
@@ -15483,13 +15526,16 @@ def coach_review_instance_book(request, instance_id):
         return JsonResponse({"detail": "Method not allowed."}, status=405)
     if not instance_id.startswith("imported-review:"):
         return coach_error(request, code="BOOKING_CONFLICT", message="Only imported reviews can use this booking action.", status=409)
-    if request.method == "PATCH":
-        from .migrated_rescheduling import reschedule
-        return reschedule(request, instance_id)
     owner_email = authenticated_coach_email(request).strip().casefold()
     definition = _imported_review_definition(owner_email, instance_id)
     if not definition:
         return coach_error(request, code="UNAUTHORIZED", message="Imported review not found for this coach.", status=404)
+    from .personal_support_booking import is_personal_support_plan, book
+    if is_personal_support_plan((definition.get("historicalReview") or {}).get("type")):
+        return book(request, instance_id, definition)
+    if request.method == "PATCH":
+        from .migrated_rescheduling import reschedule
+        return reschedule(request, instance_id)
     if not initial_local_status(definition.get("sourceStatus")):
         return coach_error(request, code="BOOKING_CONFLICT", message="Historical or unsupported Aptem reviews cannot be booked.", status=409)
     if not definition.get("migratedForm") or definition.get("readOnly"):
@@ -15552,6 +15598,7 @@ def coach_review_instance_book(request, instance_id):
             else:
                 if england_non_delivery_reason(scheduled_date):
                     return coach_error(request, code="BOOKING_CONFLICT", message=england_non_delivery_reason(scheduled_date), status=409)
+                ensure_coach_booking_available(owner_email, scheduled_date, scheduled_time, duration_minutes)
                 ensure_learner_calendar_available(
                     learner_id=learner_id, learner_email=clean_text(base_event.get("email")),
                     scheduled_date=scheduled_date, scheduled_time=scheduled_time,
@@ -15778,6 +15825,10 @@ def coach_review_instance_previous(request, instance_id):
     if request.method != "GET":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
 
+    if instance_id.startswith("imported-review:"):
+        from .migrated_previous import previous_review
+        return previous_review(authenticated_coach_email(request), instance_id)
+
     instance_row, error = _authorized_review_instance(request, instance_id)
     if error:
         return error
@@ -15903,7 +15954,8 @@ def coach_review_instance_answers(request, instance_id):
             from coach_api.migrated_summary_binding import AnswerConflict, check_answer_version, record_answer_edit
             from coach_api.migrated_template_sync import TemplateSyncConflict, preserve_inactive_answers, synchronize_definition_locked
             with transaction.atomic():
-                imported = _owned_migrated_overlay(owner_email, definition, lock=True)
+                imported = _owned_migrated_overlay(owner_email, definition, lock=True,
+                    lock_calendar=definition.get("template", {}).get("reviewTypeCode") == "aptem_psp")
                 if not imported or imported.status not in MIGRATED_EDITABLE_STATUSES:
                     return JsonResponse({"detail": "Imported review association or status mismatch."}, status=409)
                 try:
@@ -15921,6 +15973,8 @@ def coach_review_instance_answers(request, instance_id):
                                    edited_fields=payload.get("editedFields") if isinstance(payload.get("editedFields"), list) else ())
                 imported.answers = preserve_inactive_answers(imported.template_snapshot, imported.answers or {}, answers)
                 imported.save(update_fields=["answers", "meeting_intelligence", "updated_at"])
+                from .migrated_completion import complete_personal_support_if_ready
+                complete_personal_support_if_ready(imported)
                 # Return answers and their version from the same locked state.
                 return JsonResponse(_imported_review_definition(owner_email, imported.event_key))
         field_ids = {

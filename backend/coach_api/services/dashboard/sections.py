@@ -143,6 +143,18 @@ class DashboardSectionProjection(Func):
 def load_section(owner_email: str, section: str) -> dict | None:
     """Read the latest persisted projection without a synchronous cold rebuild."""
     from coach_api.models import CoachDashboardSnapshot
+    from read_models.repository import contact_revision
+
+    if contact_revision('coach.dashboard', 'coach', owner_email):
+        # A contact-invalidated legacy row cannot supply a section either.
+        current = CoachDashboardService(owner_email).build()
+        payload = project_section(current, section)
+        payload['readModel'] = current['readModel']
+        if section != 'meetings':
+            normalize_otjh_contract(payload)
+        if section == 'learners':
+            _overlay_latest_activity(payload)
+        return payload
 
     queryset = CoachDashboardSnapshot.objects.filter(owner_email=owner_email).order_by("-refreshed_at")
     if connections[queryset.db].vendor == "postgresql":

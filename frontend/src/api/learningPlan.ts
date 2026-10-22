@@ -9,6 +9,7 @@
 import { formatHoursMinutes } from '@/lib/format';
 import { invalidateLearnerDetailCache } from './learnerDetail';
 import type { FreeCourseAssignment } from './trainingPlan';
+import { createCachedResource } from './cachedRequest';
 const BASE = '/learner_api/learning-plan';
 const MODULE_BASE = '/learner_api/module-learners';
 
@@ -144,11 +145,19 @@ async function parse(res: Response) {
     }
     throw new Error(message);
   }
-  return res.json();
+  const body = await res.json();
+  // An explicit backend error is not a saved plan, even if a proxy/caller
+  // delivered it with a successful status. Do not infer mirror state otherwise.
+  if (typeof body?.error === 'string' && body.error) throw new Error(body.error);
+  return body;
 }
 
-export async function fetchLearningPlan(learnerId: string | number): Promise<LearningPlanResponse> {
-  return parse(await fetch(`${BASE}/${learnerId}/`));
+// Share simultaneous mounts/focus reads without retaining a saved-plan snapshot.
+const planReads = createCachedResource<LearningPlanResponse>('editable-learning-plan',
+  async id => parse(await fetch(`${BASE}/${id}/`)), 0);
+
+export function fetchLearningPlan(learnerId: string | number): Promise<LearningPlanResponse> {
+  return planReads.read(String(learnerId));
 }
 
 /**
@@ -166,6 +175,7 @@ export async function saveLearningPlan(
     modules: moduleIds.map((moduleId) => ({ moduleId })),
   };
   if (freeCourses !== undefined) body.freeCourses = freeCourses;
+  planReads.invalidate(String(learnerId));
   const result = await parse(
     await fetch(`${BASE}/${learnerId}/`, {
       method: 'PATCH',
@@ -173,6 +183,7 @@ export async function saveLearningPlan(
       body: JSON.stringify(body),
     }),
   );
+  planReads.invalidate(String(learnerId));
   invalidateLearnerDetailCache();
   return result;
 }

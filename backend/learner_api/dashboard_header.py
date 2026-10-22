@@ -14,7 +14,7 @@ from .learner_detail import (SOURCE_MODELS, _first_session_unlocked, _iso_date,
                              DEFAULT_PROGRAMME_STATUS, programme_status, access_gate,
                              learning_access, student_activity_available, _s)
 from .models import LearnerProfile
-from .learning_plan import _effective_plan_ids
+from .selectors.assignments import _effective_plan_ids
 from .overview_week import upcoming_assignment_deadlines
 from .projection_performance import measure_projection
 from .subject_content import clean_text

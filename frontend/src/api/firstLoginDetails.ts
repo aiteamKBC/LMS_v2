@@ -1,5 +1,6 @@
 import { invalidateLearnerDetailCache } from './learnerDetail';
 import { invalidateLearnerReads } from './learnerRead';
+import { createCachedResource } from './cachedRequest';
 
 // ============================================================================
 // The two screens a new apprentice completes on first sign-in — their address
@@ -53,9 +54,13 @@ async function parse(response: Response, fallback: string): Promise<FirstLoginDe
   return data as FirstLoginDetailsState;
 }
 
-export async function fetchFirstLoginDetails(learnerId: string): Promise<FirstLoginDetailsState> {
+const detailsReads = createCachedResource<FirstLoginDetailsState>('first-login-details', async learnerId => {
   const response = await fetch(url(learnerId), { credentials: 'include', cache: 'no-store' });
   return parse(response, 'Your details could not be loaded. Please try again.');
+}, 0);
+
+export function fetchFirstLoginDetails(learnerId: string): Promise<FirstLoginDetailsState> {
+  return detailsReads.read(learnerId);
 }
 
 export async function submitFirstLoginDetails(
@@ -64,6 +69,7 @@ export async function submitFirstLoginDetails(
   signature: string,
   csrfToken: string,
 ): Promise<FirstLoginDetailsState> {
+  detailsReads.invalidate(learnerId);
   const response = await fetch(url(learnerId), {
     method: 'POST',
     credentials: 'include',
@@ -71,6 +77,7 @@ export async function submitFirstLoginDetails(
     body: JSON.stringify({ ...values, signature }),
   });
   const state = await parse(response, 'Your details could not be saved. Please try again.');
+  detailsReads.invalidate(learnerId);
   // The programme status just moved to Onboarding: drop every cached read of
   // this learner so the wizard redirect and sidebar see the new status.
   invalidateLearnerDetailCache('apprenticeship', learnerId);

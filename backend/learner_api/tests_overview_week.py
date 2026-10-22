@@ -1,5 +1,6 @@
 """Weekly overview regressions. SimpleTestCase prohibits database access."""
 from datetime import date, datetime, timezone
+from copy import deepcopy
 import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -9,6 +10,8 @@ from .overview_week import (summarise_week, week_bounds, progress_day, overview_
                             merged_activities, summarise_plan, direct_hours_by_subject,
                             monthly_otjh_summary)
 from .subject_dates import activity_schedule
+from . import overview_week as week_module
+from .selectors import assignments as assignments_module
 
 START, END = date(2026, 9, 7), date(2026, 9, 13)
 
@@ -309,3 +312,140 @@ class OverviewWeekTests(SimpleTestCase):
             response = overview_week.__wrapped__.__wrapped__(RequestFactory().get('/'), 'commercial', 125)
         self.assertEqual(response.status_code, 503)
         self.assertNotIn('private SQL', json.loads(response.content)['error'])
+
+    def _navigation(self, current=(), *, saved=None, preset=(), training=None, additional=(), dates=None):
+        source = SimpleNamespace(pk=125, learning_plan=saved, training_plan=training)
+        cursor = MagicMock()
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        fresh = deepcopy(list(additional))
+        with patch.object(assignments_module, '_preset_ids_for', return_value=list(preset)) as group, \
+             patch.object(week_module, 'connections', {'enrolment': connection}), \
+             patch.object(week_module, 'rows', return_value=fresh), \
+             patch.object(week_module, 'read_builder_activity_dates', return_value=dates or {}) as calendar:
+            result = week_module._home_navigation_modules(source, list(current), START, END)
+        return result, cursor, calendar, group
+
+    def test_navigation_inherits_new_group_modules_without_changing_saved_plan(self):
+        saved = [{'moduleId': 'M1', 'placement': 'preserved'}]
+        extra = {'id': 'b', 'module_id': 'M2', 'module_title': 'Beta', 'title': 'Reading',
+                 'type': 'reading', 'section_title': 'Week 6', 'builder_week_id': 'W2',
+                 'builder_settings': {'sessionDate': '2026-09-09'}, 'builder_order': 1}
+        result, cursor, calendar, _ = self._navigation([native(module_title='Alpha')],
+            saved=saved, preset=['M1', 'M2'], additional=[extra], dates={'b': activity_schedule('9/9/2026')})
+        self.assertEqual([m['id'] for m in result], ['current:M1', 'current:M2'])
+        self.assertEqual(saved, [{'moduleId': 'M1', 'placement': 'preserved'}])
+        self.assertEqual(cursor.execute.call_args.args[1], [['M2']])
+        calendar.assert_called_once_with(cursor, ['M2'],
+            components=[('b', 'M2', 'W2', 'Reading', 'reading', {'sessionDate': '2026-09-09'})])
+        self.assertEqual(extra['builder_order'], 1)
+
+    def test_navigation_explicit_override_does_not_inherit_or_grant_source_only_modules(self):
+        result, cursor, calendar, group = self._navigation(
+            [native(), native(id='source', module_id='SOURCE', module_title='Old source')],
+            saved=[{'moduleId': 'M1', 'assignmentMode': 'explicit'}], preset=['M1', 'SOURCE'])
+        self.assertEqual([m['id'] for m in result], ['current:M1'])
+        group.assert_not_called()
+        cursor.execute.assert_not_called()
+        calendar.assert_not_called()
+
+    def test_navigation_explicit_empty_does_not_fall_back_to_mirror_or_group(self):
+        result, cursor, calendar, group = self._navigation([native()], saved=[], preset=['M1'])
+        self.assertEqual(result, [])
+        group.assert_not_called()
+        cursor.execute.assert_not_called()
+        calendar.assert_not_called()
+
+    def test_navigation_empty_training_plan_takes_precedence_over_learning_plan(self):
+        result, cursor, _, group = self._navigation([native()], training=[],
+            saved=[{'moduleId': 'M1'}], preset=['M1'])
+        self.assertEqual(result, [])
+        cursor.execute.assert_not_called()
+        group.assert_not_called()
+
+    def test_navigation_unsaved_plan_reuses_the_canonical_group_rule(self):
+        result, cursor, calendar, group = self._navigation([native()], saved=None, preset=['M1'])
+        self.assertEqual(result, [{'id': 'current:M1', 'title': 'Marketing', 'weekLabels': ['Week 6']}])
+        group.assert_called_once()
+        cursor.execute.assert_not_called()
+        calendar.assert_not_called()
+
+    def test_navigation_preserves_title_id_order_and_clean_unique_week_labels(self):
+        current = [native(module_id='Z', module_title='Zulu', section_title='Week 9'),
+                   native(id='a', module_id='A', module_title='<b>Alpha</b>', section_title=' Week 2 '),
+                   native(id='a2', module_id='A', module_title='Alpha', section_title='Week 1'),
+                   native(id='a3', module_id='A', module_title='Alpha', section_title='Week 2'),
+                   native(id='b', module_id='B', module_title='alpha', section_title='Week 1')]
+        before = deepcopy(current)
+        result, cursor, _, _ = self._navigation(current,
+            saved=[{'moduleId': mid} for mid in ['Z', 'B', 'A']])
+        self.assertEqual([m['id'] for m in result], ['current:A', 'current:B', 'current:Z'])
+        self.assertEqual(result[0], {'id': 'current:A', 'title': 'Alpha', 'weekLabels': ['Week 1', 'Week 2']})
+        self.assertEqual(current, before)
+        cursor.execute.assert_not_called()
+
+    def test_navigation_keeps_current_week_bounds_and_review_filters(self):
+        current = [native(id='start', module_id='START', date=START.isoformat()),
+                   native(id='end', module_id='END', date=END.isoformat()),
+                   native(id='future', module_id='FUTURE', date='2026-09-14'),
+                   native(id='past', module_id='PAST', date='2026-09-06'),
+                   native(id='undated', module_id='UNDATED', date=None),
+                   native(id='review', module_id='REVIEW', date_needs_review=True)]
+        result, _, _, _ = self._navigation(current,
+            saved=[{'moduleId': row['module_id']} for row in current])
+        self.assertEqual({m['id'] for m in result}, {'current:START', 'current:END'})
+
+    def test_navigation_batches_missing_modules_and_never_loads_metric_or_content_fields(self):
+        for count in (1, 10, 100):
+            with self.subTest(modules=count):
+                ids = [f'M{i}' for i in range(count)]
+                result, cursor, calendar, _ = self._navigation(saved=[{'moduleId': mid} for mid in ids])
+                self.assertEqual(result, [])
+                cursor.execute.assert_called_once()
+                sql, params = cursor.execute.call_args.args
+                self.assertEqual(params, [ids])
+                self.assertIn('c.module_catalogue_id=ANY(%s)', sql)
+                for private in ('expected_otjh', 'quiz_component_links', 'ksb_mappings', 'readingContent',
+                                'learner_progress', 'learner_activity_documents'):
+                    self.assertNotIn(private, sql)
+                calendar.assert_called_once_with(cursor, ids, components=[])
+
+    def test_navigation_delta_sql_preserves_module_child_and_week_visibility(self):
+        _, cursor, _, _ = self._navigation(saved=[{'moduleId': 'CROSS-PROGRAMME'}])
+        sql = cursor.execute.call_args.args[0]
+        self.assertIn("(m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent,'')<>'')", sql)
+        self.assertIn('w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id', sql)
+        self.assertIn(week_module.visible_child_sql('c'), sql)
+        self.assertIn(week_module.visible_week_sql('w'), sql)
+        self.assertIn('w.id IS NULL OR', sql)
+
+    def test_navigation_hidden_delta_rows_do_not_create_phantom_choices(self):
+        result, cursor, _, _ = self._navigation(saved=[{'moduleId': 'HIDDEN'}], additional=[])
+        self.assertEqual(result, [])
+        cursor.execute.assert_called_once()
+
+    def test_navigation_has_no_completion_dependency_and_retains_cross_programme_identity(self):
+        row = native(module_id='OTHER-PROGRAMME', module_title='Same title')
+        row.update(completed=False, passed=False, expected_hours=None, ksb_mappings=None)
+        with patch.object(week_module, 'merged_activities', side_effect=AssertionError('navigation only')), \
+             patch.object(week_module, 'summarise_week', side_effect=AssertionError('no second metrics')):
+            result, _, _, _ = self._navigation([row], saved=[{'moduleId': 'OTHER-PROGRAMME'}])
+        self.assertEqual(result, [{'id': 'current:OTHER-PROGRAMME', 'title': 'Same title', 'weekLabels': ['Week 6']}])
+
+    def test_navigation_preserves_existing_utc_to_uk_schedule_rule(self):
+        from .builder_activity_dates import _component_schedule
+        schedule = _component_schedule({'title': 'Undated',
+            'settings': {'sessionDateTimeUtc': '2026-09-13T23:30:00Z'}}, 'Week 6')
+        self.assertEqual(str(schedule['date']), '2026-09-14')
+        row = native(**schedule)
+        result, _, _, _ = self._navigation([row], saved=[{'moduleId': 'M1'}])
+        self.assertEqual(result, [])
+
+    def test_navigation_required_read_errors_propagate_instead_of_empty_success(self):
+        source = SimpleNamespace(training_plan=[], learning_plan=None)
+        source.training_plan = [{'moduleId': 'MISSING', 'assignmentMode': 'explicit'}]
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value.execute.side_effect = RuntimeError('read unavailable')
+        with patch.object(week_module, 'connections', {'enrolment': connection}):
+            with self.assertRaisesRegex(RuntimeError, 'read unavailable'):
+                week_module._home_navigation_modules(source, [], START, END)

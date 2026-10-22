@@ -26,7 +26,7 @@ import type { LearnerKind } from '@/api/learnerDetail';
 import { LearningHero } from './LearningCatalogue';
 import { useAuth } from '@/hooks/useAuth';
 import learningStyles from './SubjectWorkspace.module.css';
-import { useMyLearningCatalogue } from '@/api/myLearning';
+import { useMyLearningCatalogue } from '@/hooks/useMyLearning';
 import { CompactModules } from './CompactModules';
 
 const learnerNav = roleNavMap.learner;
@@ -151,7 +151,7 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
               {view === 'catalogue' && !subjectOpen && <PageTabs className={learningStyles.catalogueTabs} items={tabs} value={tab} onChange={(v) => setTab(v as TabKey)} label="My Learning section" />}
 
               {tab === 'modules' ? (
-                <CompactModules key={`${kind}:${id}`} kind={kind as LearnerKind | undefined} id={id} catalogue={catalogue.data} loading={catalogue.loading} error={catalogue.error} refresh={catalogue.refresh} showReadOnlyNotice={showReadOnlyNotice} view={view} />
+                <CompactModules key={`${kind}:${id}`} kind={kind as LearnerKind | undefined} id={id} catalogue={catalogue.data} loading={catalogue.loading} error={catalogue.error} refresh={catalogue.refresh} showReadOnlyNotice={showReadOnlyNotice} view={view} canRequestTransfer={auth.account?.role === 'learner' && String(auth.account.subjectId) === id} />
               ) : (
                 tab === 'assignments' ? <AssignmentsTab key={`${kind}:${id}`} kind={kind} id={id} real={real} loading={loading} loadError={loadError} onRetry={refresh} canTake={canTake} /> :
                 <QuizzesTab real={real} loading={loading} loadError={loadError} kind={kind} id={id} canTake={canTake} navigate={navigate} onRetry={refresh} />

@@ -35,7 +35,7 @@ from .identity import learner_profile_for_source
 from .aptem_status import programme_status
 from .constants import DEFAULT_PROGRAMME_STATUS
 from .learner_progression import access_gate, advance_learner
-from .learning_plan import effective_training_plan
+from .selectors.assignments import effective_training_plan
 from .programme_access import learning_access
 from .mappers import _s, get_training_plan, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
@@ -1035,6 +1035,13 @@ def _review_otjh_hours(learner_profile):
     # project into, so reviews contribute nothing rather than an arbitrary
     # horizon that would silently inflate the total.
     end_date = getattr(learner_profile, "end_date", None)
+    from coach_api.review_sources import resolve_review_source
+    if resolve_review_source(profile_aptem_id=getattr(learner_profile, "aptem_id", None)).kind == "aptem":
+        from coach_api.migrated_otjh import planned_meetings
+        planned = sum(row["hours"] for row in planned_meetings(learner_profile, start_date, end_date)) if start_date and end_date else 0
+        # Newly credited migrated reviews already exist in training_plan_progress
+        # and the canonical ledger. Only old Native credit is additional here.
+        return planned, review_otjh.completed_hours(learner_id)
     if not learner_id or not start_date or not end_date:
         return 0.0, review_otjh.completed_hours(learner_id) if learner_id else 0.0
 
@@ -2246,6 +2253,23 @@ def _reading_content(source, component_id):
     Match the module/week visibility used by _resolve_from_master; an arbitrary
     component id must never grant access to unassigned or deleted content.
     """
+    return _authored_setting(source, component_id, "readingContent", "contentHtml")
+
+
+def _lesson_content(source, component_id):
+    """A video's authored lesson content ("Component content" in the Module
+    Builder), read the same scoped way as a reading. List reads strip it; only
+    the one opened activity carries it."""
+    return _authored_setting(source, component_id, "lessonContent", "lessonContentHtml")
+
+
+# Settings keys this reader may select, so the key is never caller-supplied SQL.
+_AUTHORED_SETTING_KEYS = frozenset({"readingContent", "lessonContent"})
+
+
+def _authored_setting(source, component_id, setting_key, response_key):
+    if setting_key not in _AUTHORED_SETTING_KEYS:
+        raise ValueError(f"Unsupported authored setting: {setting_key!r}")
     module_ids = list(dict.fromkeys(
         _s(module.get("moduleId")) for module in effective_training_plan(source)
         if isinstance(module, dict) and _s(module.get("moduleId"))
@@ -2253,7 +2277,7 @@ def _reading_content(source, component_id):
     if not module_ids or not component_id:
         return None
     with connections["enrolment"].cursor() as cursor:
-        cursor.execute('''SELECT c.id, c.settings_json->>'readingContent'
+        cursor.execute(f'''SELECT c.id, c.settings_json->>'{setting_key}'
             FROM curriculum.components c
             JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
             JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=m.module_catalogue_id
@@ -2262,7 +2286,7 @@ def _reading_content(source, component_id):
               AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')
               AND ''' + visible_week_sql('w'), [component_id, module_ids])
         row = cursor.fetchone()
-    return {"componentId": row[0], "contentHtml": _s(row[1]) or None} if row else None
+    return {"componentId": row[0], response_key: _s(row[1]) or None} if row else None
 
 
 @learner_self_or_staff(kwarg="pk")
@@ -2277,11 +2301,21 @@ def learner_detail(request, kind, pk):
     try:
         # all_learners, not objects: the default manager is scoped to
         # apprenticeship rows, so a commercial learner would 404 here.
-        source = model.all_learners.get(pk=pk)
+        sources = model.all_learners
+        if request.GET.get("content") == "reading":
+            # This read-only branch resolves assignments and one owned lesson.
+            # Keep placement, both saved plans and title-only CSV fallback;
+            # full/detail variants still need complete rows for read-side writes.
+            sources = sources.only(
+                "id", "programme", "cohort", "group", "learning_plan", "training_plan",
+                "modules", "weeks", "components",
+            )
+        source = sources.get(pk=pk)
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     try:
         if request.GET.get("content") == "reading":
@@ -2303,6 +2337,12 @@ def learner_detail(request, kind, pk):
                 if reading is None:
                     return _error("Activity not found in this learner's plan.", 404)
                 component['contentHtml'] = reading['contentHtml']
+            if _s(component.get('type')).lower().replace('-', '_') == 'video':
+                # Shown under the player. A video the curriculum tables cannot
+                # place (legacy or replacement learning) still plays without it,
+                # so a missing row is not an error here.
+                lesson = _lesson_content(source, component_id)
+                component['lessonContentHtml'] = (lesson or {}).get('lessonContentHtml')
             response = JsonResponse(detail)
             response['Cache-Control'] = 'private, no-store'
             return response
@@ -2318,7 +2358,8 @@ def learner_detail(request, kind, pk):
     except ServiceError as exc:
         return _error(str(exc), exc.status)
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
 
 def _first_session_unlocked(source, status):
@@ -2363,7 +2404,8 @@ def learner_summary(request, kind, pk):
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     from .apprenticeship_agreement import _group_dates
 

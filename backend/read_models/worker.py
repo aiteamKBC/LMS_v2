@@ -9,12 +9,11 @@ import uuid
 
 from django.conf import settings
 from django.db import connections, transaction
-from django.db.models import Q
 from django.utils import timezone
 
 from .models import ReadModelEvent
 from .registry import registered
-from .repository import put_read_model
+from .repository import put_read_model, contact_revision
 
 
 logger = logging.getLogger(__name__)
@@ -83,31 +82,23 @@ def _mark_success(
     scope_id: str,
     refresh_started_at,
     using: str,
-) -> None:
-    """Complete the claimed events and older duplicates for the same scope.
-
-    The projection builder always reconstructs the complete current scope. Any
-    pending/retry event that existed before that reconstruction started is
-    therefore covered by the same result, even if it fell beyond this worker's
-    claim limit. Events created while the builder is running are deliberately
-    left pending so a concurrent domain change cannot be lost.
-    """
-    ReadModelEvent.objects.using(using).filter(
-        Q(pk__in=[event.pk for event in events])
-        | Q(
-            model_key=model_key,
-            scope_type=scope_type,
-            scope_id=scope_id,
-            status__in=[ReadModelEvent.STATUS_PENDING, ReadModelEvent.STATUS_RETRY],
-            created_at__lte=refresh_started_at,
+) -> int:
+    """Complete only events still owned by the exact claimed lease."""
+    # Only this lease's claimed events. A transaction may commit an event with
+    # an old created_at after the build started; timestamps cannot fence it.
+    completed = 0
+    for event in events:
+        completed += ReadModelEvent.objects.using(using).filter(
+            pk=event.pk, status=ReadModelEvent.STATUS_PROCESSING,
+            locked_by=event.locked_by, locked_at=event.locked_at,
+        ).update(
+            status=ReadModelEvent.STATUS_PROCESSED,
+            processed_at=timezone.now(),
+            locked_at=None,
+            locked_by="",
+            last_error="",
         )
-    ).update(
-        status=ReadModelEvent.STATUS_PROCESSED,
-        processed_at=timezone.now(),
-        locked_at=None,
-        locked_by="",
-        last_error="",
-    )
+    return completed
 
 
 def _mark_failure(events: list[ReadModelEvent], exc: Exception, *, using: str) -> None:
@@ -116,13 +107,16 @@ def _mark_failure(events: list[ReadModelEvent], exc: Exception, *, using: str) -
         attempts = int(event.attempts) + 1
         dead = attempts >= MAX_ATTEMPTS
         delay = min(2 ** attempts, 300)
-        ReadModelEvent.objects.using(using).filter(pk=event.pk).update(
+        ReadModelEvent.objects.using(using).filter(
+            pk=event.pk, status=ReadModelEvent.STATUS_PROCESSING,
+            locked_by=event.locked_by, locked_at=event.locked_at,
+        ).update(
             status=ReadModelEvent.STATUS_DEAD if dead else ReadModelEvent.STATUS_RETRY,
             attempts=attempts,
             available_at=now + timedelta(seconds=delay),
             locked_at=None,
             locked_by="",
-            last_error=f"{type(exc).__name__}: {str(exc)}"[:2000],
+            last_error=type(exc).__name__,
         )
 
 
@@ -162,6 +156,7 @@ def process_once(
             if spec.scope_type != scope_type:
                 raise ValueError(f"Scope type {scope_type!r} does not match registered {spec.scope_type!r}.")
             refresh_started_at = timezone.now()
+            revision = contact_revision(model_key, scope_type, scope_id, using=using)
             payload = spec.builder(scope_id)
             value = put_read_model(
                 model_key,
@@ -171,10 +166,11 @@ def process_once(
                 schema_version=spec.schema_version,
                 ttl_seconds=spec.ttl_seconds,
                 using=using,
+                expected_contact_revision=revision,
             )
             if value is None:
                 raise RuntimeError("The shared read-model table is unavailable.")
-            _mark_success(
+            confirmed = _mark_success(
                 events,
                 model_key=model_key,
                 scope_type=scope_type,
@@ -182,9 +178,10 @@ def process_once(
                 refresh_started_at=refresh_started_at,
                 using=using,
             )
-            completed += len(events)
+            completed += confirmed
+            failed += len(events) - confirmed
         except Exception as exc:
-            logger.exception("read_model_refresh_failed model=%s scope_type=%s", model_key, scope_type)
+            logger.error("read_model_refresh_failed model=%s scope_type=%s error=%s", model_key, scope_type, type(exc).__name__)
             _mark_failure(events, exc, using=using)
             failed += len(events)
     return {"claimed": len(claimed), "completed": completed, "failed": failed, "groups": len(grouped)}

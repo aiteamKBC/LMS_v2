@@ -133,6 +133,9 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         apply_changes = bool(options.get("apply"))
+        if apply_changes:
+            from django.core.management.base import CommandError
+            raise CommandError('Apply blocked: audit import has no verified stable-ID/UUID mapping. Preview only.')
 
         try:
             rows = self._snapshot_rows()

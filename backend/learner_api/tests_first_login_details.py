@@ -89,6 +89,9 @@ class ViewTests(SimpleTestCase):
         auth = patch("login.permissions.authenticate_request", side_effect=lambda request: self.account)
         auth.start()
         self.addCleanup(auth.stop)
+        sync = patch.object(f, "sync_contacts_in_transaction")
+        self.contact_sync = sync.start()
+        self.addCleanup(sync.stop)
 
     def get(self, pk=41):
         request = self.factory.get(f"/learner_api/first-login-details/{pk}/")
@@ -153,16 +156,18 @@ class ViewTests(SimpleTestCase):
         done = datetime(2026, 9, 27, 9, 0, tzinfo=timezone.utc)
         self.assertFalse(self.required_for(learner(), completion=(True, done))["required"])
 
-    def test_nobody_is_asked_until_the_column_exists(self, *_):
-        # Without it completion cannot be recorded, so the learner would be
-        # stopped at every sign-in.
-        self.assertFalse(self.required_for(learner(), completion=(False, None))["required"])
+    def test_missing_completion_storage_fails_closed_for_new_apprentice(self, *_):
+        with patch.object(f, "_learner", return_value=learner()), patch.object(f, "_completion", return_value=(False, None)):
+            response = self.get()
+        self.assertEqual(response.status_code, 503)
+        self.assertIn('error', json.loads(response.content))
 
     # ---- what is written -------------------------------------------------------
 
     def submit(self, row, body=VALID, completion=(True, None)):
         cursor = MagicMock()
         users = MagicMock()
+        users.all_learners.using.return_value = users.all_learners
         users.all_learners.select_for_update.return_value.filter.return_value.first.return_value = row
         with patch.object(f, "EnrolmentUser", users), \
                 patch.object(f, "connections", {"enrolment": MagicMock(cursor=MagicMock(return_value=cursor))}), \
@@ -193,6 +198,8 @@ class ViewTests(SimpleTestCase):
         self.assertIn('"First_login_details_completed_at" = now()', sql)
         self.assertEqual(params, [SIGNATURE, "Test Learner", 41])
         self.assertEqual(json.loads(response.content)["programmeStatus"], "Onboarding")
+        self.assertEqual(row.save.call_args.kwargs["using"], "enrolment")
+        self.contact_sync.assert_called_once_with(41, using="enrolment")
 
     def test_a_retried_submit_rewrites_nothing(self, *_):
         from datetime import datetime, timezone
@@ -204,6 +211,13 @@ class ViewTests(SimpleTestCase):
         self.assertTrue(json.loads(response.content)["alreadyCompleted"])
         row.save.assert_not_called()
         cursor.execute.assert_not_called()
+        self.contact_sync.assert_not_called()
+
+    def test_contact_sync_failure_is_not_reported_as_completion(self, *_):
+        from django.db import DatabaseError
+        self.contact_sync.side_effect = DatabaseError("Contact synchronization refused")
+        response, _cursor = self.submit(learner())
+        self.assertEqual(response.status_code, 503)
 
     def test_refuses_a_learner_who_is_no_longer_new(self, *_):
         row = learner(programme_status="Delivery")

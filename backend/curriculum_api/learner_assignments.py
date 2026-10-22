@@ -9,6 +9,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from login.permissions import staff_only
 from learner_api import learning_plan as plans
+from learner_api.selectors import assignments as assignment_reads
 from learner_api.active_users import hydrate_training_plan
 from learner_api.mappers import get_training_plan, stored_training_plan, training_plan_field
 from learner_api.models import EnrolmentUser, LearnerProfile
@@ -61,7 +62,7 @@ def _same_cohort(learner, target):
 
 
 def _assigned(learner, target, cache):
-    ids = set(plans._effective_plan_ids(learner, cache))
+    ids = set(assignment_reads._effective_plan_ids(learner, cache))
     return set(target['moduleIds']).issubset(ids) and (target['scope'] == 'module' or _same_cohort(learner, target))
 
 
@@ -86,7 +87,7 @@ def _payload(target, learners):
         if learner.pk in plan_backfill:
             learner.learning_plan, learner.training_plan = plan_backfill[learner.pk]
             assigned = _assigned(learner, target, cache)
-            module_count = len(plans._effective_plan_ids(learner, cache))
+            module_count = len(assignment_reads._effective_plan_ids(learner, cache))
         else:
             fact = facts.get(learner.pk)
             assigned = bool(fact) and target_ids.issubset(fact['effective']) and (
@@ -117,7 +118,7 @@ def _assign(learner, target, catalogue, cache):
     saved = stored_training_plan(learner)
     existing = list(saved if saved is not None else get_training_plan(learner) or [])
     existing_ids = {plans._s(entry.get('moduleId')) for entry in existing}
-    for module_id in [*plans._effective_plan_ids(learner, cache), *target['moduleIds']]:
+    for module_id in [*assignment_reads._effective_plan_ids(learner, cache), *target['moduleIds']]:
         if module_id and module_id not in existing_ids:
             existing.append(dict(catalogue.get(module_id) or {'moduleId': module_id}))
             existing_ids.add(module_id)
@@ -228,9 +229,12 @@ def _handle(request, scope, identifier):
                         # `cache` in the catalogue slot and left `cache`
                         # unfilled, so every removal raised TypeError and the
                         # drawer showed a bare 500.
-                        changed += int(_unassign(learner, target, catalogue, cache))
+                        learner_changed = int(_unassign(learner, target, catalogue, cache))
                     else:
-                        changed += int(_assign(learner, target, catalogue, cache))
+                        learner_changed = int(_assign(learner, target, catalogue, cache))
+                # Exiting atomic can fail after the writer returns. Only count
+                # this learner once the existing transaction exits successfully.
+                changed += learner_changed
             except Exception:  # noqa: BLE001 - one learner must not sink the batch
                 logger.exception('Curriculum learner assignment failed for learner %s', learner_id)
                 failed.append(str(learner_id))
@@ -327,7 +331,7 @@ def bulk_assigned_learner_counts(module_ids):
     cache = {}
     learners = EnrolmentUser.all_learners.only('id', 'programme', 'group', 'learning_plan', 'training_plan')
     for learner in learners:
-        for module_id in set(plans._effective_plan_ids(learner, cache)):
+        for module_id in set(assignment_reads._effective_plan_ids(learner, cache)):
             if module_id in wanted:
                 counts[module_id] += 1
     return counts

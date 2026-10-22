@@ -116,7 +116,11 @@ def invite_subject(subject_type, subject_id, *, subject=None, inviter=None,
     try:
         target = subject if subject is not None else fetch_subject(subject_type, subject_id)
         _, _, target_role = describe_subject(subject_type, target)
-    except (ValueError, DatabaseError) as exc:
+    except DatabaseError as exc:
+        logger.error("Could not resolve invitation subject (%s)", type(exc).__name__)
+        result["error"] = "The database service is temporarily unavailable."
+        return result
+    except ValueError as exc:
         result["error"] = str(exc)
         return result
 
@@ -140,8 +144,8 @@ def invite_subject(subject_type, subject_id, *, subject=None, inviter=None,
         result["error"] = str(exc)
         return result
     except DatabaseError as exc:
-        logger.exception("Could not create login account for %s:%s", subject_type, subject_id)
-        result["error"] = f"Database error: {exc}"
+        logger.error("Could not create login account (%s)", type(exc).__name__)
+        result["error"] = "The database service is temporarily unavailable."
         return result
 
     result["accountCreated"] = created
@@ -170,8 +174,8 @@ def invite_subject(subject_type, subject_id, *, subject=None, inviter=None,
             account, invited_by=invited_by, ip=ip, user_agent=user_agent
         )
     except DatabaseError as exc:
-        logger.exception("Could not create invitation for %s", account.email)
-        result["error"] = f"Database error: {exc}"
+        logger.error("Could not create invitation (%s)", type(exc).__name__)
+        result["error"] = "The database service is temporarily unavailable."
         return result
 
     result["invited"] = True

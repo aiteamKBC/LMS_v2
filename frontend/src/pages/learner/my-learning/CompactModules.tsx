@@ -1,7 +1,8 @@
+import { useMyLearningSearch, useMyLearningModule } from '@/hooks/useMyLearning';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { LearnerKind } from '@/api/learnerDetail';
-import { readMyLearningUpcoming, useMyLearningSearch, useMyLearningModule, type MyLearningCatalogue } from '@/api/myLearning';
+import { readMyLearningUpcoming, type MyLearningCatalogue } from '@/api/myLearning';
 import { fetchLearnerCertificateTemplate, type CertificateTemplateSummary } from '@/api/learnerCertificates';
 import { SubjectCard, StudentActivityPanel, SubjectCardsSkeleton } from './SubjectWorkspace';
 import { LearningCatalogue, type UpcomingLearningLink } from './LearningCatalogue';
@@ -9,12 +10,24 @@ import type { Subject, UnifiedLearningSummary } from './learningSummary';
 import { recommendedLearningSubject } from './subjectLearning';
 import { formatHoursMinutes } from '@/utils/learnerJourney';
 import styles from './SubjectWorkspace.module.css';
+import { TransferProgress } from './TransferProgress';
 
 const tones = ['purple', 'navy', 'green', 'gold', 'blue', 'rose'] as const;
 
-export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading, error, refresh, showReadOnlyNotice, view = 'catalogue' }: {
+function LearningReadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return <div role="alert" className="flex flex-col items-start gap-4 rounded-2xl border border-primary-100 bg-white p-6">
+    <p className="text-sm leading-relaxed text-primary-800">{message}</p>
+    <button type="button" onClick={onRetry}
+      className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-600">
+      Try again
+    </button>
+  </div>;
+}
+
+export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading, error, refresh, showReadOnlyNotice, view = 'catalogue', canRequestTransfer = false }: {
   kind?: LearnerKind; id?: string; catalogue: MyLearningCatalogue | null; loading: boolean; error: string;
   refresh: () => void; showReadOnlyNotice?: boolean; view?: 'catalogue' | 'map';
+  canRequestTransfer?: boolean;
 }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -40,7 +53,7 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
     if (!incomingCatalogue || !Object.keys(progressOverrides).length) return incomingCatalogue;
     const modules = incomingCatalogue.modules.map(card => {
       const known = progressOverrides[card.id];
-      if (!known || known.total !== card.activityCount) return card;
+      if (!known || known.total !== card.activityCount || card.transferredProgress != null || card.transferPending || card.demoProgress) return card;
       const completed = Math.max(card.completedActivityCount, known.completed);
       return { ...card, completedActivityCount: completed, progress: known.total ? Math.round(completed / known.total * 10000) / 100 : 0,
         status: completed === known.total && known.total > 0 ? 'Completed' as const : completed > 0 ? 'In progress' as const : card.status };
@@ -49,7 +62,7 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
       const rows = modules.filter(card => card.source === source);
       const total = rows.reduce((sum, card) => sum + card.activityCount, 0);
       const completed = rows.reduce((sum, card) => sum + card.completedActivityCount, 0);
-      return { subjects: rows.length, total, completed, percent: total ? Math.round(completed / total * 10000) / 100 : 0 };
+      return { subjects: rows.length, total, completed, percent: total ? Math.round(rows.reduce((sum, card) => sum + card.progress * card.activityCount, 0) / total * 100) / 100 : 0 };
     };
     return { ...incomingCatalogue, modules, summary: { ...incomingCatalogue.summary, current: count('current'), previous: count('legacy') } };
   }, [incomingCatalogue, progressOverrides]);
@@ -91,8 +104,7 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
     .map((subject,index) => [subject.id, tones[index % tones.length]]));
   if (selected) {
     if (!module.data && !module.error) return <SubjectCardsSkeleton />;
-    if (!module.data) return <div role={module.error ? 'alert' : 'status'} className="rounded-2xl border bg-white p-6">
-      {module.error || 'Loading subjects'}{module.error && <button onClick={module.refresh}>Try again</button>}</div>;
+    if (!module.data) return <LearningReadError message={module.error} onRetry={module.refresh} />;
     return <StudentActivityPanel kind={kind} learnerId={id} real={module.data.detail} data={module.data.activity}
       resolvedMetadata={module.data.metadata} catalogueSubjects={subjects} loading={module.loading} error={module.error || null}
       onRetry={module.refresh} onProgress={changes => {
@@ -102,8 +114,7 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
       schedule={{ ...module.data.schedule, modules: [...schedule.modules.filter(card => !module.data!.schedule.modules.some(item => item.id === card.id)), ...module.data.schedule.modules] }} upcomingSessions={module.data.sessions} />;
   }
   if (!catalogue && !error) return <SubjectCardsSkeleton />;
-  if (!catalogue) return <div role={error ? 'alert' : 'status'} className="rounded-2xl border bg-white p-6">
-    {error || 'Loading subjects'}{error && <button onClick={refresh}>Try again</button>}</div>;
+  if (!catalogue) return <LearningReadError message={error} onRetry={refresh} />;
   return <section aria-label="Your subjects" aria-busy={loading} className={`${styles.workspace} space-y-5`}>
     {showReadOnlyNotice && <div className="flex items-start gap-2.5 rounded-xl border border-primary-200/70 bg-primary-50/60 px-3.5 py-2.5">
       <AppIcon className="ri-eye-line mt-0.5 shrink-0 text-[15px] text-primary-600" />
@@ -117,6 +128,7 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
     {upcomingLoading && <p role="status">Loading upcoming learning…</p>}
     <p className="text-sm text-foreground-500">{catalogue.learner.name}</p>
     <LearningCatalogue summary={summary} search={search} onSearch={setSearch} current={current}
+      transferAction={canRequestTransfer && kind && id ? <TransferProgress kind={kind} learnerId={id} onRequested={refresh} /> : undefined}
       total={summary.activityCount} done={summary.completedActivityCount} percent={summary.percent}
       kind={kind} learnerId={id} activityMatches={activitySearch.ids}
       upcomingLinks={upcomingState?.catalogue === incomingCatalogue ? upcomingState.links : catalogue.upcoming}

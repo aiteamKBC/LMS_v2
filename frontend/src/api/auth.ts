@@ -228,10 +228,11 @@ export async function apiLogin(
   password: string,
   remember = false,
 ): Promise<AuthUser> {
+  inFlightGets.clear();
   const data = await request<{ user?: AuthUser; passwordSetupRequired?: boolean; setPasswordPath?: string }>('/login/', {
     method: 'POST',
     body: JSON.stringify({ email, password, remember }),
-  });
+  }).finally(() => inFlightGets.clear());
   // Only ever an in-app path from our own server; never follow anything else.
   if (data.passwordSetupRequired && data.setPasswordPath?.startsWith('/set-password?token=')) {
     throw new PasswordSetupRequired(data.setPasswordPath);
@@ -241,7 +242,8 @@ export async function apiLogin(
 }
 
 export async function apiLogout(): Promise<void> {
-  await request('/logout/', { method: 'POST' });
+  inFlightGets.clear();
+  await request('/logout/', { method: 'POST' }).finally(() => inFlightGets.clear());
 }
 
 // ---------------------------------------------------------------------------
@@ -266,8 +268,9 @@ export async function apiLogout(): Promise<void> {
  * Throws `AuthError` with code `sso_unconfigured` (503) when the deployment has
  * no Microsoft app registration wired up.
  */
-export async function apiMicrosoftStart(download?: 'android'): Promise<string> {
-  const path = download === 'android' ? '/microsoft/start/?download=android' : '/microsoft/start/';
+export async function apiMicrosoftStart(download?: 'android', intent?: 'lecture-feedback'): Promise<string> {
+  const path = download === 'android' ? '/microsoft/start/?download=android'
+    : intent === 'lecture-feedback' ? '/microsoft/start/?intent=lecture-feedback' : '/microsoft/start/';
   const data = await request<{ authorizationUrl: string }>(path);
   return data.authorizationUrl;
 }

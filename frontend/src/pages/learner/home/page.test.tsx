@@ -11,6 +11,8 @@ import { rememberSignedInLearner } from '@/hooks/useMyLearner';
 import { resetFirstLoginDetailsRedirect } from '@/hooks/useFirstLoginDetailsRedirect';
 
 const state = vi.hoisted(() => ({ profileError: '', name: 'Alex Morgan', role: 'learner', learnerType: 'apprenticeship', firstLoginRequired: false, programmeStatus: 'Active', events: [] as UpcomingEvent[], scheduleError: '', refresh: vi.fn(), modules: [] as OverviewWeek['modules'] }));
+// Keep the real support widget; its decorative animation needs canvas outside jsdom.
+vi.mock('lottie-react', () => ({ Lottie: () => null }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { id: 3, subjectId: 71, learnerType: state.learnerType, role: state.role, displayName: state.name } }, logout: vi.fn(), retryInitialization: vi.fn() }) }));
 vi.mock('@/api/firstLoginDetails', () => ({ fetchFirstLoginDetails: vi.fn(async () => ({ required: state.firstLoginRequired })) }));
 vi.mock('@/hooks/useLearnerSummaryParam', () => ({ useLearnerSummaryParam: vi.fn(() => ({ real: { id: 71, name: state.name, programmeStatus: state.programmeStatus }, loadError: state.profileError, loading: false, refresh: state.refresh })) }));
@@ -32,6 +34,31 @@ function workspace(path: string) { return render(<MemoryRouter initialEntries={[
 beforeEach(() => { resetFirstLoginDetailsRedirect(); state.learnerType = 'apprenticeship'; state.firstLoginRequired = false; state.profileError = ''; state.role = 'learner'; state.programmeStatus = 'Active'; state.events = []; state.scheduleError = ''; state.modules = []; rememberSignedInLearner(undefined, undefined); localStorage.clear(); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks(); localStorage.clear(); });
 describe('connected student home', () => {
+  it.each(['Delivery', 'Ready to enrol'])('does not load invisible cards before the %s redirect', status => {
+    state.programmeStatus = status;
+    page();
+    expect(screen.getByTestId('destination')).toHaveTextContent('/workspace/learner/dashboard');
+    expect(useLiveLearnerRead).toHaveBeenCalledWith('apprenticeship', '71', false, homeSummary.read, homeSummary.peek);
+    expect(useLiveLearnerRead).toHaveBeenCalledWith('apprenticeship', '71', false, upcomingSchedule.read, upcomingSchedule.peek);
+  });
+
+  it.each(['Delivery', 'Ready to enrol'])('keeps cards available in staff preview at %s', status => {
+    state.programmeStatus = status;
+    state.role = 'staff';
+    page();
+    expect(screen.getByRole('heading', { name: 'Alex' })).toBeInTheDocument();
+    expect(vi.mocked(useLiveLearnerRead).mock.calls.filter(call => call[3] === homeSummary.read)
+      .every(call => call[2])).toBe(true);
+  });
+
+  it.each(['Delivery', 'Ready to enrol'])('keeps commercial Home cards at %s', status => {
+    state.programmeStatus = status;
+    state.learnerType = 'commercial';
+    page();
+    expect(screen.getByRole('heading', { name: 'Alex' })).toBeInTheDocument();
+    expect(useLiveLearnerRead).toHaveBeenCalledWith('commercial', '71', true, homeSummary.read, homeSummary.peek);
+  });
+
   it('uses only the authenticated identity, with real progress and empty events', () => {
     localStorage.setItem('my_learner', JSON.stringify({ kind: 'commercial', id: 999 }));
     page();

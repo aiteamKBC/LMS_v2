@@ -3,6 +3,7 @@ from django.db import transaction
 
 from .coach_assignment import case_owner_coach
 from .identity import learner_profile_for_source
+from .services.contact_sync import save_verified_contact_fields
 
 
 DATE_FIELDS = ("learner_start_date", "learner_end_date")
@@ -24,6 +25,14 @@ def save_enrolment_fields(user, fields):
         for field, value in contact.items():
             setattr(user, field, value)
         profile_fields.update(contact)
+    if set(fields).intersection({"username", "phone_number"}):
+        profile_fields = {key: value for key, value in profile_fields.items()
+                          if key not in DATE_FIELDS or key in fields}
+        if profile_fields:
+            save_verified_contact_fields(user, fields, profile_fields=profile_fields)
+        else:
+            save_verified_contact_fields(user, fields)
+        return
     if not profile_fields:
         user.save(update_fields=list(fields))
         return

@@ -326,7 +326,14 @@ def read_training(source, kind, owner, profile, request, module_id=None):
         source._training_module_ids = ids
         if module_id is not None:
             return read_selected(source, owner, profile, records, ids, links, module_id, cur)
-        modules = module_rows(cur, ids)
+        requested_subject = request.GET.get('subject') or ''
+        rich_id = requested_subject[8:] if requested_subject.startswith('current:') else None
+        rich_id = rich_id if rich_id and rich_id in ids else None
+        rich_subject = requested_subject
+        if 'subject' not in request.GET and len(ids) == 1:
+            rich_id = ids[0]
+            rich_subject = f'current:{rich_id}'
+        modules = module_rows(cur, ids, rich_id=rich_id) if rich_id else module_rows(cur, ids)
         bound_rows = schedule._plan_session_rows(cur, str(source.email or '').strip().casefold(), ids,
             rail_only=True, navigation_only=True) if ids else []
     bounds = {r['module_id']: r for r in bound_rows}
@@ -346,11 +353,16 @@ def read_training(source, kind, owner, profile, request, module_id=None):
     coach_name = coach['coach_name']
     if not coach_name and not coach['coach_email'] and schedule.source_coach(source) is None:
         coach_name = schedule.assigned_group_coach(source, list(modules.values()))
+    # Approved same-request metadata snapshot; no second curriculum observation.
+    metadata = None
+    if rich_id and selected and selected['id'] == rich_subject and selected['moduleId'] == rich_id:
+        metadata = modules.get(rich_id)
     return {'timeline': {'start': minimum[:7], 'end': maximum[:7], 'programmeStartDate': minimum,
         'monthKeys': list(targets), 'modules': [timeline_module(m) for m in displayed],
         'reviews': reviews, 'coachName': coach_name},
         'selectedModuleId': selected['id'] if selected else None,
-        'selectedModule': selected_detail(source, owner, profile, records, selected, modules, links) if selected else None}
+        'selectedModule': selected_detail(source, owner, profile, records, selected, modules, links,
+            **({'metadata': metadata} if metadata else {})) if selected else None}
 
 
 def read_selected(source, owner, profile, records, ids, links, subject_id, cur):

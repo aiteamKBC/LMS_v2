@@ -41,7 +41,7 @@ Idempotent, and ``--dry-run`` shows the plan without writing.
     python manage.py apply_learner_type_column [--dry-run]
 """
 from django.core.management.base import BaseCommand
-from django.db import connections, transaction
+from django.db import DatabaseError, connections, transaction
 
 CONN = "enrolment"
 
@@ -147,7 +147,8 @@ class Command(BaseCommand):
                         if source is None:
                             continue
                         try:
-                            sync_active_user(source)
+                            if sync_active_user(source) is None:
+                                raise DatabaseError('Activation was refused; source requires review.')
                             created += 1
                         except Exception as exc:  # noqa: BLE001
                             failed += 1

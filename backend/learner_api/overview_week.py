@@ -54,6 +54,7 @@ HOME_SOURCE_FIELDS = (
     # Read by the home card's programme period (_group_dates); deferring them
     # cost one query each.
     'programme', 'cohort', 'start_date', 'end_date',
+    'training_plan', 'learning_plan', 'group',
 )
 from .student_activity_data import read_curriculum_schedules, apply_curriculum_schedules
 from .subject_dates import activity_schedule, as_date
@@ -459,6 +460,51 @@ def builder_components(native):
     return [component for _, component in found]
 
 
+def _home_navigation_modules(source, native, start, end):
+    """Current-week choices over effective assignments, separate from card totals."""
+    from .selectors.assignments import _effective_plan_ids, request_preset_cache
+
+    ids = list(dict.fromkeys(_effective_plan_ids(source, request_preset_cache(source))))
+    if not ids:
+        return []
+    wanted = set(ids)
+    navigation = [row for row in native if row['module_id'] in wanted]
+    represented = {row['module_id'] for row in navigation}
+    missing = [module_id for module_id in ids if module_id not in represented]
+    if missing:
+        with connections['enrolment'].cursor() as cur:
+            cur.execute(f'''SELECT c.id,c.module_catalogue_id AS module_id,m.title AS module_title,
+                c.title,c.type,w.title AS section_title,c.week_id AS builder_week_id,
+                {COMPONENT_SCHEDULE_SETTINGS} AS builder_settings,
+                row_number() OVER (ORDER BY {COMPONENT_ORDER}) AS builder_order
+                FROM curriculum.components c
+                JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
+                LEFT JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
+                WHERE c.module_catalogue_id=ANY(%s)
+                  AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent,'')<>'')
+                  AND {visible_child_sql('c')}
+                  AND (w.id IS NULL OR {visible_week_sql('w')})''', [missing])
+            additional = rows(cur)
+            dates = read_builder_activity_dates(cur, missing, components=builder_components(additional))
+        # Only fresh navigation rows are enriched; original metric rows stay intact.
+        for row in additional:
+            row.update(dates.get(str(row['id'])) or activity_schedule(
+                row['title'], section_title=row['section_title']))
+        navigation.extend(additional)
+    modules = {}
+    for row in navigation:
+        day = as_date(row.get('date'))
+        if not day or row.get('date_needs_review') or not start <= day <= end:
+            continue
+        subject = f"current:{row['module_id']}"
+        module = modules.setdefault(subject, {'id': subject,
+            'title': clean_text(row.get('module_title')) or 'Learning activities', 'weekLabels': set()})
+        if row.get('section_title'):
+            module['weekLabels'].add(clean_text(row['section_title']))
+    return sorted(({**module, 'weekLabels': sorted(module['weekLabels'])} for module in modules.values()),
+                  key=lambda module: (module['title'].casefold(), module['id']))
+
+
 def read_week(source, now=None, *, home_kind=None, dashboard_kind=None, home_summary=False, plan_only=False, monthly_hours_only=False):
     """``home_summary`` is Student Home's compact projection of the ``home`` section.
 
@@ -519,16 +565,15 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None, home_sum
     plan_activities = list(merged_activities(historical, native, progress, attempts, links))
     if home_summary:
         from .home_progress import read_home_progress
-        week = summarise_week(historical, native, progress, attempts, links, start, end,
-                              activities=plan_activities)
         progress_card = read_home_progress(
             source, home_kind, plan_activities, native, progress, assigned, end,
-            attendance_module_ids=attendance_module_ids, canonical_metrics=early_metrics)
+            attendance_module_ids=attendance_module_ids, canonical_metrics=early_metrics,
+            module_counts_only=True)
         # Week dates are always UK calendar dates; the card reads no time-zone label.
         progress_card['period'] = {key: progress_card['period'][key] for key in ('start', 'end')}
         return {'weekStart': start.isoformat(), 'weekEnd': end.isoformat(),
                 # Assignment deadlines are Upcoming's (training-plan-dashboard section=upcoming).
-                'modules': [{key: module[key] for key in ('id', 'title', 'weekLabels')} for module in week['modules']],
+                'modules': _home_navigation_modules(source, native, start, end),
                 'homeProgress': progress_card}
     if monthly_hours_only:
         return monthly_otjh_summary(plan_activities, progress)

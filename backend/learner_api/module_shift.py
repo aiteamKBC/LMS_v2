@@ -62,8 +62,8 @@ from .active_users import (
 )
 from .identity import learner_profile_for_source
 from .learner_progression import advance_learner
+from .selectors.assignments import _group_module_ids
 from .learning_plan import (
-    _group_module_ids,
     _module_payload,
     _programme_modules,
     _rows,
@@ -266,8 +266,8 @@ def module_shift_options(request):
         modules, programme_groups = _programme_shift_modules(programme, groups, cohorts)
         cohort_id, cohort_name = _cohort_of(module, groups)
     except DatabaseError as exc:
-        logger.exception("module_shift_options: lookup failed")
-        return _error(f"Database error: {exc}", 502)
+        logger.error('module_shift_options: lookup failed (%s)', type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     return JsonResponse({
         "cohort": {"id": cohort_id or "", "name": cohort_name},
@@ -647,14 +647,14 @@ def module_shift_progress(request, pk):
     except EnrolmentUser.DoesNotExist:
         return _error("Learner not found.", 404)
     except DatabaseError as exc:
-        logger.exception("module_shift_progress: lookup failed")
-        return _error(f"Database error: {exc}", 502)
+        logger.error('module_shift_progress: lookup failed (%s)', type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     try:
         weeks, suggested, reason = _progress_pairing(learner, from_id, to_id)
     except DatabaseError as exc:
-        logger.exception("module_shift_progress: pairing failed")
-        return _error(f"Database error: {exc}", 502)
+        logger.error('module_shift_progress: pairing failed (%s)', type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     return JsonResponse({
         "weeks": weeks,
@@ -979,42 +979,18 @@ def _replace_mirrored_module(profile, from_id, target):
     ``False`` asks the caller to use the full repair path when an old/incomplete
     mirror cannot be updated safely.
     """
-    matches = list(LearnerTrainingPlanModule.objects.filter(
-        learner=profile, module_ref=from_id,
-    )[:2])
-    if len(matches) != 1:
-        return False
+    from .active_users import replace_training_plan
 
-    module_row = matches[0]
-    module_row.module_ref = _s(target.get("moduleId")) or None
-    module_row.module_title = _s(target.get("moduleTitle"))
-    module_row.save(update_fields=["module_ref", "module_title"])
-    module_row.weeks.all().delete()
-
-    weeks = [week for week in target.get("weeks") or [] if isinstance(week, dict)]
-    week_rows = LearnerTrainingPlanWeek.objects.bulk_create([
-        LearnerTrainingPlanWeek(
-            plan_module=module_row,
-            position=position,
-            week_ref=_s(week.get("weekId")) or None,
-            week_title=_s(week.get("weekTitle")),
-        )
-        for position, week in enumerate(weeks, 1)
-    ])
-    if any(row.pk is None for row in week_rows):
-        week_rows = list(module_row.weeks.all().order_by("position", "id"))
-
-    LearnerTrainingPlanComponent.objects.bulk_create([
-        LearnerTrainingPlanComponent(
-            plan_week=week_row,
-            position=position,
-            component_ref=_s(component.get("componentId")) or None,
-            component_title=_s(component.get("componentTitle")),
-        )
-        for week_row, week in zip(week_rows, weeks)
-        for position, component in enumerate(week.get("components") or [], 1)
-        if isinstance(component, dict)
-    ], batch_size=1000)
+    # The normalized tree supplies the other modules verbatim. The shared
+    # reconciler locks and validates identities and refuses linked removals.
+    with transaction.atomic(using="enrolment"):
+        locked_profile = LearnerProfile.objects.using("enrolment").select_for_update().get(pk=profile.pk)
+        plan = locked_profile.training_plan
+        matches = [index for index, module in enumerate(plan) if _s(module.get("moduleId")) == from_id]
+        if len(matches) != 1:
+            return False
+        plan[matches[0]] = target
+        replace_training_plan(profile, plan)
     return True
 
 
@@ -1165,8 +1141,8 @@ def module_shift(request, pk):
     except EnrolmentUser.DoesNotExist:
         return _error("Learner not found.", 404)
     except DatabaseError as exc:
-        logger.exception("module_shift: lookup failed")
-        return _error(f"Database error: {exc}", 502)
+        logger.error('module_shift: lookup failed (%s)', type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     try:
         payload = json.loads(request.body or b"{}")
@@ -1300,5 +1276,5 @@ def module_shift(request, pk):
             "reviewsKept": counts["reviewsKept"],
         })
     except DatabaseError as exc:
-        logger.exception("module_shift: save failed")
-        return _error(f"Database error: {exc}", 502)
+        logger.error('module_shift: save failed (%s)', type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)

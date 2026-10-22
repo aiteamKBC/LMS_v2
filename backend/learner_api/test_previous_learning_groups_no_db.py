@@ -30,7 +30,8 @@ class PreviousLearningGroupsTests(TestCase):
         from unittest.mock import patch
         from django.test import RequestFactory
         from learner_api.student_activity import subject_covers
-        with patch('login.permissions._auth_gate_enabled', return_value=True), \
+        with patch('learner_api.progress_transfer.cover_transfer_metadata', return_value={}), \
+             patch('login.permissions._auth_gate_enabled', return_value=True), \
              patch('login.permissions.authenticate_request') as auth, \
              patch('learner_api.student_activity.connections') as connections, \
              patch('learner_api.student_activity.subject_store.ready', return_value=False), \

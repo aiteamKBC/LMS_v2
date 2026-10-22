@@ -5,6 +5,7 @@ from django.test import SimpleTestCase
 
 from curriculum_api import views
 from learner_api import learning_plan as plans
+from learner_api.selectors import assignments as assignment_reads
 
 
 class ManualRosterModeTests(SimpleTestCase):
@@ -14,10 +15,10 @@ class ManualRosterModeTests(SimpleTestCase):
 
     def test_manual_modules_are_filtered_without_removing_them_from_group_data(self):
         with patch.object(
-            plans,
+            assignment_reads,
             '_group_preset_rows',
             return_value=[{'module_ids': ['MOD-INHERITED', 'MOD-MANUAL']}],
-        ), patch.object(plans, '_manual_roster_module_ids', return_value={'MOD-MANUAL'}):
+        ), patch.object(assignment_reads, '_manual_roster_module_ids', return_value={'MOD-MANUAL'}):
             self.assertEqual(plans._group_module_ids('Programme', 'Group'), ['MOD-INHERITED'])
 
     def test_manual_assignment_can_still_be_explicitly_represented(self):

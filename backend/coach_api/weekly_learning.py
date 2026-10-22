@@ -113,7 +113,7 @@ def week_rows(modules, today):
 
 def read_weekly_learning(context, selection=None, *, module_id=None, include_weeks=True, include_actions=False):
     from learner_api.weekly_hours import module_activity_hours, selected_activity_hours, activity_hours_index
-    from learner_api.learning_plan import _effective_plan_ids
+    from learner_api.selectors.assignments import _effective_plan_ids
     from learner_api import canonical_learning
     from learner_api.training_plan_dashboard import rows, attach_curriculum_slots, plan_session
     from learner_api.learner_detail import _display_component_title, _display_quiz_title, _component_ksb_items, _RESOURCE_URL_KEYS

@@ -27,6 +27,41 @@ const material = { title: 'First reading', reading_html: '', media: [{ kind: 'em
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('shared subject and week selection', () => {
+  it.each(['section_title', 'title', 'builder_session', 'builder_week'])('starts a teaching week on its Tuesday session (%s)', date_source => {
+    const subject: Subject = { id: 'current:M1', title: 'Module', source: 'current', activities: [
+      { ...entry('a', '2026-09-29'), schedule: { date: '2026-09-29', week_start: '2026-09-28', week_end: '2026-10-04', date_source } },
+      { ...entry('b', '2026-10-06'), schedule: { date: '2026-10-06', week_start: '2026-10-05', week_end: '2026-10-11', date_source } },
+    ] };
+    expect(currentLearningWeek(subject, '2026-09-28')).toBeUndefined();
+    for (const today of ['2026-09-29', '2026-10-04', '2026-10-05']) {
+      expect(currentLearningWeek(subject, today)).toMatchObject({ start: '2026-09-29', end: '2026-10-05' });
+    }
+    expect(currentLearningWeek(subject, '2026-10-06')?.activities.map(a => a.id)).toEqual(['b']);
+    expect(currentLearningWeek(subject, '2026-10-12')?.id).toBe('2026-10-06');
+    expect(currentLearningWeek(subject, '2026-10-13')).toBeUndefined();
+  });
+
+  it('changes the delivery week at UK midnight across the autumn clock change', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const subject: Subject = { id: 'current:M1', title: 'Module', source: 'current', activities: ['2026-10-20', '2026-10-27'].map(date => ({
+      ...entry(date, date), schedule: { date, date_source: 'builder_week' },
+    })) };
+    vi.setSystemTime(new Date('2026-10-26T23:59:59Z'));
+    expect(currentLearningWeek(subject)?.start).toBe('2026-10-20');
+    vi.setSystemTime(new Date('2026-10-27T00:00:00Z'));
+    expect(currentLearningWeek(subject)?.start).toBe('2026-10-27');
+  });
+
+  it('does not stretch a teaching week across missing weeks of activities', () => {
+    const subject: Subject = { id: 'current:M1', title: 'Module', source: 'current', activities: ['2026-09-01', '2026-09-15'].map(date => ({
+      ...entry(date, date), schedule: { date, date_source: 'builder_week' },
+    })) };
+    expect(currentLearningWeek(subject, '2026-09-07')?.start).toBe('2026-09-01');
+    expect(currentLearningWeek(subject, '2026-09-08')).toBeUndefined();
+    expect(currentLearningWeek(subject, '2026-09-14')).toBeUndefined();
+    expect(currentLearningWeek(subject, '2026-09-15')?.start).toBe('2026-09-15');
+  });
+
   it('shows the tutor, module dates and educational-session count from the training plan in list view', () => {
     const schedule = {
       modules: [module('M1', '2026-09-01', '2026-12-18', { title: 'Leadership programme module', tutor_name: 'Tutor 2', sessions_number: 17, educational_session_count: 14 })],

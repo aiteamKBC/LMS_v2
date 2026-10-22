@@ -20,6 +20,7 @@ import type { PlanModule, PlanModuleProgress, PlanSession } from '@/api/training
 import { buildUnifiedLearningSummary, type SubjectEntry, type Subject, type CoverMetadata } from './learningSummary';
 import { PreviousLearningNotice } from './PreviousLearningNotice';
 import { SubjectActivityWorkspace } from './SubjectActivityWorkspace';
+import { resolveSubjectWeek } from './subjectLearning';
 export type { SubjectEntry, Subject, CoverMetadata, UnifiedLearningSummary } from './learningSummary';
 
 
@@ -32,13 +33,14 @@ function formatRecordedHours(hours: number) {
 
 
 
-function Progress({ done, total, label = 'Subject progress', showFormula = false, compact = false }: {
-  done: number; total: number; label?: string; showFormula?: boolean; compact?: boolean;
+function Progress({ done, total, label = 'Subject progress', showFormula = false, compact = false, aggregate, transferred }: {
+  done: number; total: number; label?: string; showFormula?: boolean; compact?: boolean; aggregate?: number; transferred?: number;
 }) {
-  const percent = total ? Math.round(done / total * 10000) / 100 : 0;
+  const percent = aggregate ?? (total ? Math.round(done / total * 10000) / 100 : 0);
   return <div className="space-y-2"><div className="flex items-center justify-between gap-2 text-xs"><span className={compact ? 'text-slate-500' : 'text-foreground-500'}>{done} of {total} completed</span><strong className={`shrink-0 tabular-nums ${compact && percent === 100 ? 'text-emerald-700' : 'text-primary-700'}`}>{percent}%</strong></div>
     <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} className={`h-1.5 overflow-hidden rounded-full ${compact ? 'bg-slate-100' : 'bg-foreground-100'}`}><div className={`h-full rounded-full motion-safe:transition-[width] ${compact ? percent === 100 ? 'bg-emerald-500' : 'bg-gradient-to-r from-primary-500 to-violet-400' : 'bg-primary-500'}`} style={{ width: `${percent}%` }} /></div>
-    {showFormula && <p className="text-xs text-foreground-500">Progress = completed activities ÷ total activities × 100{total > 0 ? ` = ${done} ÷ ${total} × 100 = ${percent}%` : '. No activities yet'}. Quizzes count as complete after passing.</p>}
+    {transferred != null ? <p className="text-xs text-foreground-500">{transferred}% transferred from the old LMS. Module progress includes new progress since approval, up to 100%. Activity counts show work completed in this LMS.</p>
+      : showFormula && <p className="text-xs text-foreground-500">Progress = completed activities ÷ total activities × 100{total > 0 ? ` = ${done} ÷ ${total} × 100 = ${percent}%` : '. No activities yet'}. Quizzes count as complete after passing.</p>}
   </div>;
 }
 
@@ -188,7 +190,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
   const startDate = planModule?.start_date ? learningDate(planModule.start_date) : 'Not scheduled';
   const endDate = planModule?.end_date ? learningDate(planModule.end_date) : 'Not scheduled';
   const sessionCount = planModule?.educational_session_count;
-  const completedHours = subject.source === 'legacy' || subject.replacementCourseRef
+  const completedHours = subject.source === 'legacy' || subject.replacementCourseRef || subject.transferredProgress != null
     ? subject.acceptedHours ?? null
     : moduleProgress?.hours.actual ?? subject.acceptedHours ?? null;
   const plannedHours = planModule?.total_otjh ?? null;
@@ -205,6 +207,8 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
               : subject.importedCourseRef ? 'Old LMS · Current learning plan' : 'New LMS · Current learning plan'}
           </span>
           {subject.source === 'legacy' && <span className={styles.learningModeBadge} data-source="legacy">Review only</span>}
+          {subject.transferPending && <span className={styles.learningModeBadge}>Transfer pending</span>}
+          {subject.demoProgress && <span className={styles.learningModeBadge}>Demo progress</span>}
           <span className={styles.status} data-state={isComplete ? 'complete' : status === 'In progress' ? 'started' : 'new'}>
             <span aria-hidden="true" className={styles.statusDot} />{status}
           </span>
@@ -219,7 +223,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
           <div><dt>Sessions</dt><dd>{sessionCount == null ? 'Not set' : `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`}</dd></div>
         </dl>
         <p className={styles.cardDescription}>Explore your learning materials and activities.</p>
-        <div className={styles.cardProgress}><Progress done={completed} total={total} compact label={`${subject.title} ${subject.source === 'legacy' ? 'previous learning' : 'current plan'} activities progress`} />
+        <div className={styles.cardProgress}><Progress done={completed} total={total} compact aggregate={subject.aggregateProgress ?? subject.card?.progress} transferred={subject.transferredProgress} label={`${subject.title} ${subject.source === 'legacy' ? 'previous learning' : 'current plan'} activities progress`} />
           <HoursProgress completed={completedHours} planned={plannedHours} label={`${subject.title} hours progress`} />
           {subject.recordedHistory && <p className="mt-2 text-xs text-foreground-500">Recorded activities only · Full catalogue: {subject.catalogueCount ?? 0}</p>}
         </div>
@@ -402,7 +406,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
     || (active ? planModulesBySubject.get(active.id)?.curriculumSlots : undefined));
   const activeWeek = activityTarget ? weeks.find(week => week.activities.some(entry => entry.id === activityTarget.entry.id))
     : continueCurrentWeek && active ? continuingLearningWeek(active)
-    : selectedWeek ? weeks.find(week => week.id === selectedWeek) : undefined;
+    : selectedWeek ? resolveSubjectWeek(weeks, selectedWeek) : undefined;
   // The header and course cards describe the same complete catalogue. Programme
   // metrics count ledger records, which can omit activities not yet started.
   const total = summary.activityCount;
@@ -436,7 +440,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
       <div className="flex flex-wrap items-center justify-between gap-3"><button onClick={() => select()} className={styles.textLink}><ChevronLeft size={17} />All subjects</button><Link to={learningHref('map', kind, learnerId, active.id)} className={styles.textLink}><MapIcon size={17} />View learning map<ArrowRight size={16} /></Link></div>
       <SubjectActivityWorkspace key={`${kind}:${learnerId}:${active.id}`} subject={active} weeks={weeks} requestedWeek={activeWeek?.id}
         requestedActivity={activityTarget?.entry.id} search={search} kind={kind} learnerId={learnerId}
-        progress={<Progress done={active.activities.filter(entry => entry.completed).length} total={active.activities.length} showFormula />}
+        progress={<>{active.demoProgress && <p className="mb-2 text-sm">Demo progress for a transfer rehearsal. No study hours or completed activities are claimed.</p>}<Progress done={active.activities.filter(entry => entry.completed).length} total={active.activities.length} showFormula={!active.demoProgress} aggregate={active.aggregateProgress} transferred={active.transferredProgress} /></>}
         renderWeekProgress={week => <><HolidayNoteHint note={week.weekId ? holidayNotes.get(week.weekId) : undefined} className="mb-2" /><Progress done={week.activities.filter(entry => entry.completed).length} total={week.activities.length} label="Week progress" /></>}
         renderActivity={entry => <ActivityRow entry={entry} kind={kind} learnerId={learnerId} direct
           onProgress={result => { if (entry.legacy) recordProgress(entry.legacy.activity_id, result); }} />} />

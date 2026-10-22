@@ -19,6 +19,11 @@ CACHE_NAMESPACE = "coach-dashboard-summary:v5"
 SECTION_NAMES = ("summary", "learners", "meetings", "risk")
 
 
+def _contact_cache_invalidated(coach_identity):
+    from read_models.repository import contact_revision
+    return bool(contact_revision('coach.dashboard', 'coach', normalize_email(coach_identity)))
+
+
 def dashboard_section_cache_key(coach_identity: str, section: str) -> str:
     if section not in SECTION_NAMES:
         raise ValueError("Unknown Dashboard section.")
@@ -28,6 +33,8 @@ def dashboard_section_cache_key(coach_identity: str, section: str) -> str:
 
 def get_cached_dashboard_section(coach_identity: str, section: str):
     try:
+        if _contact_cache_invalidated(coach_identity):
+            return None
         return cache.get(dashboard_section_cache_key(coach_identity, section))
     except Exception:
         logger.warning("coach_dashboard_section_cache_read_failed", exc_info=True)
@@ -36,6 +43,8 @@ def get_cached_dashboard_section(coach_identity: str, section: str):
 
 def cache_dashboard_section(coach_identity: str, section: str, payload: dict) -> None:
     try:
+        if _contact_cache_invalidated(coach_identity):
+            return
         cache.set(dashboard_section_cache_key(coach_identity, section), payload, timeout=coach_dashboard_cache_ttl())
     except Exception:
         logger.warning("coach_dashboard_section_cache_write_failed", exc_info=True)
@@ -62,6 +71,8 @@ def coach_dashboard_cache_ttl() -> int:
 def get_cached_coach_dashboard(coach_identity: str):
     key = coach_dashboard_cache_key(coach_identity)
     try:
+        if _contact_cache_invalidated(coach_identity):
+            return None
         payload = cache.get(key)
     except Exception:  # noqa: BLE001 - cache availability must not gate reads
         logger.warning(
@@ -80,6 +91,8 @@ def get_cached_coach_dashboard(coach_identity: str):
 
 def cache_coach_dashboard(coach_identity: str, payload: dict) -> None:
     try:
+        if _contact_cache_invalidated(coach_identity):
+            return
         _invalidate_sections(coach_identity)
         cache.set(
             coach_dashboard_cache_key(coach_identity),

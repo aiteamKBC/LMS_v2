@@ -38,7 +38,7 @@ class MonthlyAssignmentRequiredTests(SimpleTestCase):
         cursor = connection.cursor.return_value.__enter__.return_value
         cursor.fetchone.side_effect = [(own_settings,), (1,) if flagged_elsewhere else None]
         with patch('learner_api.assignment_settings.connections', {'enrolment': connection}), \
-                patch('learner_api.learning_plan.effective_training_plan', return_value=list(plan)):
+                patch('learner_api.selectors.assignments.effective_training_plan', return_value=list(plan)):
             return monthly_assignment_required('COMP-1', SimpleNamespace(pk=1)), cursor
 
     def test_every_assignment_is_monthly_until_one_is_flagged(self):
@@ -54,7 +54,7 @@ class MonthlyAssignmentRequiredTests(SimpleTestCase):
 
     def test_a_plan_without_module_ids_and_a_failed_read_keep_the_original_requirement(self):
         self.assertTrue(self.required({}, flagged_elsewhere=True, plan=[{'moduleTitle': 'Legacy'}])[0])
-        with patch('learner_api.learning_plan.effective_training_plan', side_effect=DatabaseError):
+        with patch('learner_api.selectors.assignments.effective_training_plan', side_effect=DatabaseError):
             self.assertTrue(monthly_assignment_required('COMP-1', SimpleNamespace(pk=1)))
 
 

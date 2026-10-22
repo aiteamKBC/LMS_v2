@@ -21,7 +21,7 @@ from django.utils.dateparse import parse_datetime
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 from .identity import learner_profile_for_source
-from .mappers import get_training_plan, training_plan_field
+from .mappers import get_training_plan, mirrored_training_plan, training_plan_field
 from .models import (
     EnrolmentUser,
     KsbDefinition,
@@ -607,69 +607,120 @@ def completed_hours_from_progress(progress, components=None):
 
 
 def replace_training_plan(learner, plan):
-    """Rebuild the learner's plan_modules/weeks/components mirror.
+    """Reconcile stable parent/ref identities without detaching historical progress.
 
-    One insert per level, not one per row. Written row by row this cost a
-    separate round trip for every module and every week -- a learner on five
-    thirteen-week modules paid about 140 of them, which is why assigning a
-    single learner to a module sat there for several seconds against a remote
-    database. The rows written are identical; only the number of trips changed.
+    No archive state exists on this graph. Removing a linked component therefore
+    fails closed rather than retaining it as a current assignment or clearing its
+    FK. References, including orphans, are never resolved by title or position.
     """
-    LearnerTrainingPlanModule.objects.filter(learner=learner).delete()
-    modules = list(plan or [])
-    if not modules:
-        return
+    if plan is not None and not isinstance(plan, list):
+        raise DatabaseError("Training plan must be an array or NULL")
 
-    module_rows = LearnerTrainingPlanModule.objects.bulk_create([
-        LearnerTrainingPlanModule(
-            learner=learner,
-            position=module_position,
-            module_ref=_s(module.get("moduleId")) or None,
-            module_title=_s(module.get("moduleTitle")),
-        )
-        for module_position, module in enumerate(modules, 1)
-    ])
-    # Postgres hands the ids back from a bulk insert; a backend that cannot has
-    # to be asked for them, or the children below have no parent to point at.
-    if any(row.pk is None for row in module_rows):
-        module_rows = list(LearnerTrainingPlanModule.objects
-                           .filter(learner=learner).order_by("position", "id"))
+    def entries(items, ref_field, parent_key=()):
+        if not isinstance(items, list):
+            raise DatabaseError("Invalid training plan children")
+        result = {}
+        for position, item in enumerate(items, 1):
+            if not isinstance(item, dict):
+                raise DatabaseError("Invalid training plan entry")
+            ref = _s(item.get(ref_field))
+            key = (*parent_key, ref)
+            if not ref or key in result:
+                raise DatabaseError("Ambiguous training plan identity")
+            result[key] = (position, item)
+        return result
 
-    week_plan = [
-        (module_row, week_position, week)
-        for module_row, module in zip(module_rows, modules)
-        for week_position, week in enumerate(module.get("weeks") or [], 1)
-    ]
-    if not week_plan:
-        return
+    desired_modules = entries(plan or [], "moduleId")
+    desired_weeks, desired_components = {}, {}
+    for key, (_, module) in desired_modules.items():
+        weeks = entries(module.get("weeks") or [], "weekId", key)
+        desired_weeks.update(weeks)
+        for week_key, (_, week) in weeks.items():
+            desired_components.update(entries(week.get("components") or [], "componentId", week_key))
 
-    week_rows = LearnerTrainingPlanWeek.objects.bulk_create([
-        LearnerTrainingPlanWeek(
-            plan_module=module_row,
-            position=week_position,
-            week_ref=_s(week.get("weekId")) or None,
-            week_title=_s(week.get("weekTitle")),
-        )
-        for module_row, week_position, week in week_plan
-    ])
-    if any(row.pk is None for row in week_rows):
-        saved = {
-            (row.plan_module_id, row.position): row
-            for row in LearnerTrainingPlanWeek.objects
-            .filter(plan_module__in=module_rows).order_by("plan_module_id", "position", "id")
-        }
-        week_rows = [saved[(module_row.pk, week_position)] for module_row, week_position, _ in week_plan]
+    # All graph reads/writes use the same established owner connection. Locking
+    # the profile serializes cooperating writers, even when its graph is empty.
+    with transaction.atomic(using="enrolment"):
+        LearnerProfile.objects.using("enrolment").select_for_update().get(pk=learner.pk)
+        models = (LearnerTrainingPlanModule, LearnerTrainingPlanWeek, LearnerTrainingPlanComponent)
+        managers = [model.objects.using("enrolment") for model in models]
+        rows = [list(managers[0].select_for_update().filter(learner_id=learner.pk).order_by("id"))]
+        rows.append(list(managers[1].select_for_update().filter(plan_module_id__in=[r.pk for r in rows[0]]).order_by("id")))
+        rows.append(list(managers[2].select_for_update().filter(plan_week_id__in=[r.pk for r in rows[1]]).order_by("id")))
 
-    LearnerTrainingPlanComponent.objects.bulk_create([
-        LearnerTrainingPlanComponent(
-            plan_week=week_row,
-            position=position,
-            component_ref=_s(component.get("componentId")) or None,
-            component_title=_s(component.get("componentTitle")),
-        )
-        for week_row, (_, _, week) in zip(week_rows, week_plan)
-        for position, component in enumerate(week.get("components") or [], 1)
-    ], batch_size=1000)
+        existing = []
+        parent_keys = {learner.pk: ()}
+        for level, (ref_field, parent_field) in enumerate((
+            ("module_ref", "learner_id"), ("week_ref", "plan_module_id"), ("component_ref", "plan_week_id"),
+        )):
+            indexed, next_parents = {}, {}
+            for row in rows[level]:
+                ref = _s(getattr(row, ref_field))
+                key = (*parent_keys[getattr(row, parent_field)], ref)
+                if not ref or key in indexed:
+                    raise DatabaseError("Ambiguous existing training plan identity")
+                indexed[key] = row
+                next_parents[row.pk] = key
+            existing.append(indexed)
+            parent_keys = next_parents
+
+        desired = (desired_modules, desired_weeks, desired_components)
+        removed = [[row.pk for key, row in old.items() if key not in new]
+                   for old, new in zip(existing, desired)]
+        if removed[2]:
+            # The live FK is intentionally not exposed by the legacy ORM model.
+            # Locking components above blocks concurrent FK references while
+            # checking and deleting; include all progress, even deleted history
+            # and inconsistent/foreign learner owners, rather than clearing any.
+            with connections["enrolment"].cursor() as cursor:
+                cursor.execute(
+                    'SELECT 1 FROM "Learner".learner_progress_entries '
+                    'WHERE plan_component_id = ANY(%s) LIMIT 1', [removed[2]],
+                )
+                if cursor.fetchone() is not None:
+                    raise DatabaseError("Training plan removal blocked by historical progress links")
+
+        # Validate the whole graph before the first write. Delete bottom-up only
+        # after proving that no removed component has a progress reference.
+        for manager, ids in reversed(list(zip(managers, removed))):
+            if ids:
+                manager.filter(pk__in=ids).delete()
+
+        parent_rows = {(): learner}
+        for level, (ref_field, title_field, input_ref, input_title, parent_field) in enumerate((
+            ("module_ref", "module_title", "moduleId", "moduleTitle", "learner"),
+            ("week_ref", "week_title", "weekId", "weekTitle", "plan_module"),
+            ("component_ref", "component_title", "componentId", "componentTitle", "plan_week"),
+        )):
+            # Live UNIQUE(parent,position) constraints are immediate: park rows
+            # above both old and new ranges before a swap or an insertion.
+            moving = [row for key, row in existing[level].items()
+                      if key in desired[level] and row.position != desired[level][key][0]]
+            if moving:
+                offset = max([r.position for r in rows[level]] + [len(desired[level]), 0]) + 1
+                for index, row in enumerate(moving):
+                    row.position = offset + index
+                managers[level].bulk_update(moving, ["position"], batch_size=1000)
+            created, updated, resolved = [], [], {}
+            for key, (position, item) in desired[level].items():
+                row = existing[level].get(key)
+                title = _s(item.get(input_title))
+                if row is None:
+                    row = models[level](**{parent_field: parent_rows[key[:-1]],
+                                          ref_field: key[-1], title_field: title, "position": position})
+                    created.append(row)
+                elif row.position != position or getattr(row, title_field) != title:
+                    row.position = position
+                    setattr(row, title_field, title)
+                    updated.append(row)
+                resolved[key] = row
+            if updated:
+                managers[level].bulk_update(updated, ["position", title_field], batch_size=1000)
+            if created:
+                managers[level].bulk_create(created, batch_size=1000)
+                if any(row.pk is None for row in created):
+                    raise DatabaseError("Training plan reconciliation requires returned row IDs")
+            parent_rows = resolved
 
 
 def replace_free_courses(learner, free_courses):
@@ -2061,11 +2112,16 @@ def mirror_placement_to_enrolment(profile):
         return None
 
 
-def sync_active_user(source):
-    """Upsert one permanent learner and refresh authored plan/KSB child rows."""
+def sync_active_user(source, *, strict=False):
+    """Upsert profile/children; strict writers propagate failure to outer rollback.
+
+    Non-active successful updates still return None. Legacy callers retain the
+    warning/None failure contract unless they explicitly opt into strict mode.
+    """
     from .apprenticeship_agreement import _group_dates
     from .learner_dates import learner_date_values
     from .coach_assignment import source_coach
+    from .services.contact_sync import verified_activation_profile, sync_contacts_in_transaction
 
     status = _s(getattr(source, "programme_status", ""))
     start_date, end_date, _ = _group_dates(source)
@@ -2086,19 +2142,21 @@ def sync_active_user(source):
         # edited. Same resolver the learner's own "My learning" page uses; None
         # when nothing is assigned, which is the honest state for a learner
         # whose programme has no live modules.
-        "learning_plan": get_training_plan(source) or None,
+        "learning_plan": mirrored_training_plan(source),
         "start_date": start_date,
         "end_date": end_date,
         "gateway_review_date": end_date - timedelta(days=90) if end_date else None,
     }
     try:
         with transaction.atomic(using="enrolment"):
+            learner, contacts = verified_activation_profile(source)
+            # Signals/audit snapshots must see current contacts on the first
+            # profile save, not a stale value corrected later in the transaction.
+            defaults.update(contacts)
             # Preserve legacy profile-only assignments, but copy an explicit
             # assignment (including an unassignment) on activation and rebuild.
             defaults.update(source_coach(source) or {})
-            # Prefer the explicit link; fall back to email for profiles created
-            # before enrolment_id existed (see identity.learner_profile_for_source).
-            learner = learner_profile_for_source(source, source.id)
+            # The contact gate resolved only an explicit verified identity.
             # Whether found or about to be created, it belongs to this source row.
             defaults["enrolment_id"] = source.id
             # Carried across on every upsert so the profile never has to guess
@@ -2159,7 +2217,11 @@ def sync_active_user(source):
                 # the enrolment source with no catalogue hydration.
                 replace_free_courses(learner, getattr(source, "free_courses", None) or [])
                 refresh_learner_ksb_snapshot(learner, source, training_plan=training_plan)
+            sync_contacts_in_transaction(source.id, using='enrolment')
+            learner.refresh_from_db(using='enrolment', fields=['full_name', 'phone_number'])
         return learner if status.lower() == ACTIVE_STATUS else None
     except DatabaseError as exc:
-        logger.warning("Could not sync learner %s: %s", source.id, exc)
+        logger.warning("Could not sync learner (%s)", type(exc).__name__)
+        if strict:
+            raise
         return None

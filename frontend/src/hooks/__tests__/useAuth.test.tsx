@@ -172,6 +172,21 @@ describe('hydration from the session cookie', () => {
     expect(result.current.initializationError).toBeNull();
     expect(apiLogin).not.toHaveBeenCalled();
   });
+
+  it('allows retry after a 503 without logging out or discarding stored identity', async () => {
+    localStorage.setItem('kbc_auth_email', ADMIN.email);
+    apiMe.mockRejectedValueOnce(Object.assign(new Error('Temporarily unavailable'), {
+      status: 503, code: 'session_unavailable',
+    }));
+    const { result } = await renderAuth();
+    expect(result.current.initializationError).toBeTruthy();
+    expect(localStorage.getItem('kbc_auth_email')).toBe(ADMIN.email);
+    apiMe.mockResolvedValueOnce(ADMIN);
+    act(() => result.current.retryInitialization());
+    await waitFor(() => expect(result.current.auth.account).toEqual(ADMIN));
+    expect(apiLogout).not.toHaveBeenCalled();
+    expect(apiLogin).not.toHaveBeenCalled();
+  });
 });
 
 describe('login', () => {
@@ -311,5 +326,38 @@ describe('previewAs', () => {
     const { result } = await renderAuth();
     act(() => result.current.previewAs('nobody@nowhere.test'));
     expect(result.current.auth.isAuthenticated).toBe(false);
+  });
+});
+
+
+describe('superseded identity reads', () => {
+  it('does not restore an initial session response after logout', async () => {
+    let resolve!: (value: typeof ADMIN) => void;
+    apiMe.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    act(() => result.current.logout());
+    await act(async () => resolve(ADMIN));
+    expect(result.current.auth.account).toBeNull();
+    expect(result.current.isInitialized).toBe(true);
+  });
+
+  it('does not overwrite a new login with an older initial response', async () => {
+    let resolve!: (value: typeof ADMIN | null) => void;
+    apiMe.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    apiLogin.mockResolvedValue(ADMIN);
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await act(async () => { await result.current.login(ADMIN.email, 'password'); });
+    await act(async () => resolve(null));
+    expect(result.current.auth.account).toEqual(ADMIN);
+  });
+
+  it('does not restore a cross-tab read after a later cross-tab logout', async () => {
+    const { result } = await renderAuth();
+    let resolve!: (value: typeof ADMIN) => void;
+    apiMe.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    act(() => window.dispatchEvent(new StorageEvent('storage', { key: 'kbc_auth_email', newValue: ADMIN.email })));
+    act(() => window.dispatchEvent(new StorageEvent('storage', { key: 'kbc_auth_email', newValue: null })));
+    await act(async () => resolve(ADMIN));
+    expect(result.current.auth.account).toBeNull();
   });
 });

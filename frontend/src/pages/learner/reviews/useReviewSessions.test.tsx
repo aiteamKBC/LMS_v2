@@ -3,12 +3,14 @@ import { cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testin
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchLearnerCalendarEvents, type BookSessionResponse, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { fetchLearnerDetail } from '@/api/learnerDetail';
+import { fetchLearnerReviewSessions } from '@/api/reviewSessions';
 import { fetchReviewHistory } from '@/api/reviewHistory';
 import { useReviewSessions } from './useReviewSessions';
 import { useMeetingBooking } from './useMeetingBooking';
 
 vi.mock('@/api/learnerCalendar', () => ({ fetchLearnerCalendarEvents: vi.fn() }));
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn() }));
+vi.mock('@/api/reviewSessions', () => ({ fetchLearnerReviewSessions: vi.fn() }));
 vi.mock('@/api/reviewHistory', () => ({ fetchReviewHistory: vi.fn() }));
 vi.mock('@/hooks/useMyLearner', () => ({ useLinkedLearner: () => ({ kind: 'commercial', id: '121' }) }));
 vi.mock('@/hooks/useRefreshOnReturn', () => ({ useLiveRefresh: vi.fn() }));
@@ -30,7 +32,8 @@ afterEach(() => { cleanup(); vi.clearAllMocks(); });
 describe.each(['Monthly Coaching Meeting', 'Progress Review', 'Progress Review (+ Skills Radar)'])('%s source-owned sessions', type => {
   it.each(['completed', 'scheduled', 'not-scheduled', 'in-progress', 'awaiting-signature'])('shows the imported %s row with both identities intact', async status => {
     const event = imported(type, status);
-    vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind: 'commercial', id: 121 }, events: [event] });
+    vi.mocked(event.source === 'mcr' ? fetchLearnerCalendarEvents : fetchLearnerReviewSessions)
+      .mockResolvedValue({ learner: { kind: 'commercial', id: 121 }, events: [event] });
     const { result } = renderHook(() => useReviewSessions(event.source as 'mcr' | 'progress-review'));
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.sessions).toEqual([event]);
@@ -42,7 +45,7 @@ describe.each(['Monthly Coaching Meeting', 'Progress Review', 'Progress Review (
 it('keeps same-date PR and Skills Radar rows distinct and exposes local completion separately', async () => {
   const events = [imported('Progress Review', 'scheduled'), { ...imported('Progress Review (+ Skills Radar)', 'completed', '402'),
     sequence: 2, sourceStatus: 'not-scheduled', calendarEventKey: 'existing-booking', migratedForm: true }];
-  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind: 'commercial', id: 121 }, events });
+  vi.mocked(fetchLearnerReviewSessions).mockResolvedValue({ learner: { kind: 'commercial', id: 121 }, events });
   const { result } = renderHook(() => useReviewSessions('progress-review'));
   await waitFor(() => expect(result.current.loading).toBe(false));
   expect(result.current.sessions).toEqual(events);

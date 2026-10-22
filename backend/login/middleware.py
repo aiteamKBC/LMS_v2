@@ -10,13 +10,13 @@ and login endpoints themselves.
 
 Failures are swallowed. If the auth database is briefly unreachable, an
 anonymous request must still be served rather than 500ing the whole site; the
-protected views will then correctly refuse it as unauthenticated.
+protected views refuse it as temporarily unavailable without ending its session.
 """
 from __future__ import annotations
 
 import logging
 
-from django.db import DatabaseError, InterfaceError, OperationalError, close_old_connections, connections, router
+from django.db import InterfaceError, OperationalError, close_old_connections, connections, router
 
 from .sessions import (
     RENEWED_UNTIL_ATTR,
@@ -70,8 +70,8 @@ class LoginSessionMiddleware:
     def __call__(self, request):
         try:
             _authenticate_with_file_retry(request)
-        except DatabaseError:
-            logger.exception("Could not resolve login session")
+        except Exception as exc:  # A failed lookup must never masquerade as session expiry.
+            logger.error("Could not resolve login session (%s)", type(exc).__name__)
             request.login_session = None
             request.login_account = None
             setattr(request, RENEWED_UNTIL_ATTR, None)

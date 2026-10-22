@@ -13,30 +13,52 @@ from PIL import Image as PillowImage, UnidentifiedImageError
 from django.db import transaction
 from django.utils import timezone
 
-from .migrated_reviews import SCHEDULED_WORK_STATUSES, validate_answers
+from .migrated_reviews import EDITABLE_STATUSES, SCHEDULED_WORK_STATUSES, _visible_fields, validate_answers
 from .migrated_template_sync import active_answers, preserve_inactive_answers
 from .models import ImportedReviewInstance, MigratedReviewDocument, MigratedReviewSignature
+from .migrated_signature_rules import ROLES, requirements_for_definition, requirements_for_family
 
 
-ROLES = ("advisor", "participant", "employer", "referrer")
-# Audited against active native MCM/PR templates and their frozen instances.
-FAMILY_REQUIRED_ROLES = {"MCM": ("advisor", "participant"), "PR": ("advisor", "participant", "employer")}
-# This family previously used PR rules; separating template selection preserves them.
-FAMILY_REQUIRED_ROLES["PR_SKILLS_RADAR"] = FAMILY_REQUIRED_ROLES["PR"]
 IMAGE_PATTERN = re.compile(r"^data:image/(?:png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$", re.I)
-
-
-def requirements_for_family(family):
-    if family not in FAMILY_REQUIRED_ROLES:
-        raise ValueError("Unsupported migrated review family.")
-    return {role: role in FAMILY_REQUIRED_ROLES[family] for role in ROLES}
 
 
 def required_roles(overlay):
     rules = overlay.signature_requirements or {}
     if not rules:
-        rules = requirements_for_family(overlay.migrated_template.review_family)
+        family = (overlay.template_snapshot.get("templateSource") or {}).get("family") or overlay.migrated_template.review_family
+        rules = requirements_for_family(family)
     return tuple(role for role in ROLES if rules.get(role) is True)
+
+
+def is_personal_support_form(overlay):
+    family = (overlay.template_snapshot.get("templateSource") or {}).get("family")
+    return (family or getattr(getattr(overlay, "migrated_template", None), "review_family", None)) == "PSP"
+
+
+def complete_personal_support_if_ready(overlay):
+    """Called only after an authorized, version-checked save under row locks.
+
+    Partial drafts remain editable. A full save freezes the selected signature
+    requirements and completes immediately only when none are required. Neither
+    path needs a booking, Graph call or hours allocation or rewrites the source.
+    """
+    if not is_personal_support_form(overlay) or overlay.status not in EDITABLE_STATUSES:
+        return False
+    answers = active_answers(overlay.template_snapshot, overlay.answers)
+    validate_answers(overlay.template_snapshot, answers)
+    if any(field.get("mandatory") and field.get("aptemType") != 11
+           and (answers.get(field["key"]) is None or not str(answers.get(field["key"], "")).strip())
+           for field in _visible_fields(overlay.template_snapshot, answers)):
+        return False
+    overlay.signature_requirements = requirements_for_definition(overlay.template_snapshot, "PSP")
+    needs_signatures = bool(required_roles(overlay))
+    overlay.status = (ImportedReviewInstance.STATUS_AWAITING_SIGNATURE if needs_signatures
+                      else ImportedReviewInstance.STATUS_COMPLETED)
+    overlay.completed_at = None if needs_signatures else timezone.now()
+    overlay.save(update_fields=["signature_requirements", "status", "completed_at", "updated_at"])
+    from .migrated_completion_views import _mirror_status
+    _mirror_status(overlay)
+    return True
 
 
 def signature_states(overlay):
@@ -53,13 +75,32 @@ def signature_states(overlay):
 
 
 def submit(overlay, answers):
+    if is_personal_support_form(overlay):
+        if overlay.status not in EDITABLE_STATUSES:
+            raise ValueError("This Personal Support Plan is read-only.")
+        validate_answers(overlay.template_snapshot, answers, completing=True)
+        overlay.answers = preserve_inactive_answers(overlay.template_snapshot, overlay.answers or {}, answers)
+        # Use the same saved signature policy as the normal answer-save endpoint.
+        with transaction.atomic():
+            if not complete_personal_support_if_ready(overlay):
+                raise ValueError("Required review fields are unanswered.")
+            overlay.save(update_fields=["answers", "updated_at"])
+        return
     if overlay.status not in SCHEDULED_WORK_STATUSES:
         raise ValueError("Only a scheduled or in-progress migrated review can be submitted.")
     validate_answers(overlay.template_snapshot, answers, completing=True)
-    overlay.signature_requirements = requirements_for_family(overlay.migrated_template.review_family)
+    family = (overlay.template_snapshot.get("templateSource") or {}).get("family") or overlay.migrated_template.review_family
+    overlay.signature_requirements = requirements_for_definition(overlay.template_snapshot, family)
     overlay.answers = preserve_inactive_answers(overlay.template_snapshot, overlay.answers or {}, answers)
     overlay.status = ImportedReviewInstance.STATUS_AWAITING_SIGNATURE
-    overlay.save(update_fields=["answers", "signature_requirements", "status", "updated_at"])
+    # Completion and any configured hours allocation must roll back together if
+    # submission fails, including endpoints which catch validation errors.
+    if required_roles(overlay):
+        overlay.save(update_fields=["answers", "signature_requirements", "status", "updated_at"])
+    else:
+        with transaction.atomic():
+            overlay.save(update_fields=["answers", "signature_requirements", "status", "updated_at"])
+            complete(overlay)
 
 
 def validate_signature_image(signature):
@@ -109,9 +150,24 @@ def complete(overlay):
     signed = set(overlay.migrated_signatures.values_list("role", flat=True))
     if set(required_roles(overlay)) - signed:
         raise ValueError("All required signatures must be saved before completion.")
+    from .migrated_otjh import hours_for
+    # Reopening corrects the review document, not its original hours allocation.
+    # A previously completed zero-credit review must not be backfilled either.
+    previously_completed = (getattr(overlay, "meeting_intelligence", None) or {}).get("reopenCompletedAt")
+    if not is_personal_support_form(overlay) and not previously_completed and hours_for(overlay.template_snapshot) > 0:
+        return _complete_with_hours(overlay)
     overlay.status = ImportedReviewInstance.STATUS_COMPLETED
     overlay.completed_at = timezone.now()
     overlay.save(update_fields=["status", "completed_at", "updated_at"])
+
+
+@transaction.atomic
+def _complete_with_hours(overlay):
+    overlay.status = ImportedReviewInstance.STATUS_COMPLETED
+    overlay.completed_at = timezone.now()
+    from .migrated_otjh import record_completion
+    record_completion(overlay)
+    overlay.save(update_fields=["status", "completed_at", "meeting_intelligence", "updated_at"])
 
 
 def build_pdf(overlay, *, learner_name, learner_email, programme, scheduled_date,

@@ -414,6 +414,7 @@ class ImportedContinuationIdentityTests(TestCase):
                 stack.enter_context(patch.object(calendar, 'booking_date_restriction', return_value=None))
                 stack.enter_context(patch.object(calendar, 'coaching_events_for_learner', return_value=[event]))
                 stack.enter_context(patch('learner_api.calendar_connections.booking_conflicts', return_value=False))
+                stack.enter_context(patch('coach_api.booking_availability.ensure_coach_outlook_available'))
                 stack.enter_context(patch.object(views, 'england_non_delivery_reason', return_value=None))
                 stack.enter_context(patch.object(views, 'ensure_learner_session_not_booked_in_week'))
                 stack.enter_context(patch.object(views, 'ensure_learner_calendar_available'))
@@ -426,7 +427,7 @@ class ImportedContinuationIdentityTests(TestCase):
                     return ''
                 graph = stack.enter_context(patch.object(views, 'sync_calendar_event_to_graph', side_effect=sync))
                 payload = {'sessionType': event['source'], 'eventKey': event['eventKey'], 'reviewId': event['reviewId'],
-                    'scheduledDate': '2099-11-19', 'scheduledTime': '10:00', 'durationMinutes': 60}
+                    'scheduledDate': '2099-11-20', 'scheduledTime': f'{9 + index}:00', 'durationMinutes': 60}
                 request = lambda data: RequestFactory().post('/book/', data=json.dumps(data), content_type='application/json')
                 first = unwrap(calendar.learner_calendar_book)(request(payload), 'commercial', 121)
                 self.assertEqual(first.status_code, 201, first.content)
@@ -436,7 +437,7 @@ class ImportedContinuationIdentityTests(TestCase):
                 identity = (record.pk, record.operation_id, record.graph_event_id, record.graph_organizer_email)
                 replay = unwrap(calendar.learner_calendar_book)(request(payload), 'commercial', 121)
                 self.assertEqual(replay.status_code, 200, replay.content)
-                conflict = unwrap(calendar.learner_calendar_book)(request({**payload, 'scheduledTime': '12:00'}), 'commercial', 121)
+                conflict = unwrap(calendar.learner_calendar_book)(request({**payload, 'scheduledTime': '15:00'}), 'commercial', 121)
                 self.assertEqual(conflict.status_code, 409, conflict.content)
                 record.refresh_from_db()
                 self.assertEqual(identity, (record.pk, record.operation_id, record.graph_event_id, record.graph_organizer_email))

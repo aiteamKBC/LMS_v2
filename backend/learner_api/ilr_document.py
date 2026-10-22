@@ -64,8 +64,8 @@ def _wizard_personal(learner_id):
         from enrolment_api.models import WizardPersonalDetails
 
         return WizardPersonalDetails.objects.filter(learner_id=learner_id).first()
-    except DatabaseError:
-        logger.exception("_wizard_personal: lookup failed")
+    except DatabaseError as exc:
+        logger.error('_wizard_personal: lookup failed (%s)', type(exc).__name__)
         return None
 
 
@@ -75,8 +75,8 @@ def _rpl_detail(learner_id):
         from .models import RplReviewDetail
 
         return RplReviewDetail.objects.filter(learner_id=learner_id).first()
-    except DatabaseError:
-        logger.exception("_rpl_detail: lookup failed")
+    except DatabaseError as exc:
+        logger.error('_rpl_detail: lookup failed (%s)', type(exc).__name__)
         return None
 
 
@@ -86,8 +86,8 @@ def _wizard_ilr_details(learner_id):
         from enrolment_api.models import WizardIlrLearnerDetails
 
         return WizardIlrLearnerDetails.objects.filter(learner_id=learner_id).first()
-    except DatabaseError:
-        logger.exception("_wizard_ilr_details: lookup failed")
+    except DatabaseError as exc:
+        logger.error('_wizard_ilr_details: lookup failed (%s)', type(exc).__name__)
         return None
 
 
@@ -105,8 +105,8 @@ def _extended_ilr(learner_id):
         from enrolment_api.models import ExtendedIlr
 
         return ExtendedIlr.objects.filter(learner_id=learner_id).first()
-    except DatabaseError:
-        logger.exception("_extended_ilr: lookup failed")
+    except DatabaseError as exc:
+        logger.error('_extended_ilr: lookup failed (%s)', type(exc).__name__)
         return None
 
 
@@ -255,8 +255,8 @@ def ilr_document(request, pk):
         answers = derive_answers(learner)
         document = _active_document(_learner_kind(learner), learner.pk)
     except DatabaseError as exc:
-        logger.exception("ilr_document: build failed")
-        return _error(f"Database error: {exc}", 502)
+        logger.error('ilr_document: build failed (%s)', type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     return JsonResponse({
         "learner": {
@@ -302,8 +302,8 @@ def issue_ilr(request, pk):
                 answers=answers,
             )
     except DatabaseError as exc:
-        logger.exception("issue_ilr: failed")
-        return _error(f"Database error: {exc}", 502)
+        logger.error('issue_ilr: failed (%s)', type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     return JsonResponse({"document": _document_json(document)}, status=201)
 
@@ -366,8 +366,8 @@ def sign_ilr(request, pk):
             document.save()
         promoted = advance_learner(learner)
     except DatabaseError as exc:
-        logger.exception("sign_ilr: failed")
-        return _error(f"Database error: {exc}", 502)
+        logger.error('sign_ilr: failed (%s)', type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     return JsonResponse({
         "document": _document_json(document),

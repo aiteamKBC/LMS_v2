@@ -52,14 +52,17 @@ class Profile:
     objects = Mock()
 fixture_module("learner_api.models", EnrolmentUser=Source, LearnerProfile=Profile)
 fixture_module("learner_api.learner_detail", build_learner_detail=Mock())
-fixture_module("learner_api.learning_plan", effective_training_plan=Mock())
+fixture_module("learner_api.selectors.assignments", effective_training_plan=Mock())
 rules_path = ROOT.parent / "learner_api" / "progress_rules.py"
 rules_spec = importlib.util.spec_from_file_location("learner_api.progress_rules", rules_path)
 rules = importlib.util.module_from_spec(rules_spec)
 sys.modules["learner_api.progress_rules"] = rules
 rules_spec.loader.exec_module(rules)
 class TrackingSessionError(ValueError):
-    pass
+    # Match the maintained timing exception, including its public reason code.
+    def __init__(self, message, *, code='invalid_tracking_session'):
+        super().__init__(message)
+        self.code = code
 timer = fixture_module("learner_api.time_tracking", TrackingSessionError=TrackingSessionError,
                        verify_tracking_session=Mock(), start_time_tracking=Mock())
 components = fixture_module("learner_api.components", submit_component_progress=Mock())

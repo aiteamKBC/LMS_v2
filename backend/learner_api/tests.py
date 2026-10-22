@@ -243,6 +243,12 @@ class AssignmentFormReadinessTests(SimpleTestCase):
 
 
 class LearnerProgressionTests(SimpleTestCase):
+    def setUp(self):
+        # These cases own eligibility rules; PostgreSQL tests own the new lock
+        # and rollback boundary, with the real source/profile transactions.
+        self.enterContext(patch('learner_api.learner_progression.locked_source',
+                                side_effect=lambda row: nullcontext(row)))
+
     def _learner(self, status, start_date="2026-09-01", learner_type="apprenticeship", plan=None):
         return SimpleNamespace(
             pk=19,

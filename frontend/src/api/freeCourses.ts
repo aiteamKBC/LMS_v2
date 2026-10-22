@@ -42,7 +42,6 @@ export interface FreeCourseWeek {
   weekId: string;
   weekNumber: number;
   weekTitle: string;
-  displayOrder: number;
   activities: FreeCourseActivity[];
 }
 

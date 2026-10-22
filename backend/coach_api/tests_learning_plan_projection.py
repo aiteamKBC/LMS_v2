@@ -195,7 +195,7 @@ class LearningPlanJourneyParityTests(SimpleTestCase):
              patch('coach_api.learning_plan_projection.rows', side_effect=[scheduled, authored, []]), \
              patch('coach_api.learning_plan_projection.canonical_learning.require_profile', return_value={'id':101}), \
              patch('coach_api.learning_plan_projection.canonical_learning.curriculum_module_ids_for', return_value=[]), \
-             patch('learner_api.learning_plan._effective_plan_ids', return_value=['M1']), \
+             patch('learner_api.selectors.assignments._effective_plan_ids', return_value=['M1']), \
              patch('learner_api.training_plan_dashboard.attach_curriculum_slots', side_effect=slots), \
              patch('learner_api.module_progress.canonical_module_progress', return_value=[
                  {'id':'current:M1','title':'Module','percent':33.33,'completed':1,'total':3}]) as canonical, \

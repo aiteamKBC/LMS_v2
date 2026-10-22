@@ -7,6 +7,7 @@ attendance_status for live rows.
 """
 import json
 import re
+from datetime import date
 
 import psycopg
 from psycopg.rows import dict_row
@@ -21,6 +22,49 @@ def _live_register(kbc_id=None):
     # Imported here so the KBC reader stays usable without the ORM loaded.
     from .bulk_attendance_live_register import read_live_register_or_warning
     return read_live_register_or_warning(kbc_id)
+
+
+def _live_day_learner_ids(session_date):
+    from .bulk_attendance_live_register import read_live_day_learner_ids
+    return read_live_day_learner_ids(session_date)
+
+
+def read_kbc_day_learner_ids(dsn, session_date):
+    """Membership in a saved day, including real unmarked records."""
+    with psycopg.connect(dsn, connect_timeout=10) as connection:
+        connection.read_only = True
+        connection.execute("SET LOCAL statement_timeout = '10s'")
+        return {
+            str(row[0]).strip()
+            for row in connection.execute(
+                '''SELECT DISTINCT "ID"::text FROM public.kbc_attendance
+                   WHERE "date" = %s AND "ID" IS NOT NULL''',
+                [session_date],
+            ).fetchall()
+        }
+
+
+@require_GET
+def bulk_attendance_day_learners(request):
+    from django.db import DatabaseError
+
+    value = str(request.GET.get('date') or '').strip()
+    try:
+        if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
+            raise ValueError
+        session_date = date.fromisoformat(value)
+    except ValueError:
+        return JsonResponse({'error': 'Choose a valid attendance date.'}, status=400)
+    try:
+        dsn = learner_directory_dsn()
+        if not dsn:
+            return JsonResponse({'error': 'KBC attendance is not configured.'}, status=503)
+        # No recent-record limit: old days must work even outside Last 4.
+        learner_ids = read_kbc_day_learner_ids(dsn, session_date)
+        learner_ids.update(_live_day_learner_ids(session_date))
+    except (psycopg.Error, DatabaseError):
+        return JsonResponse({'error': 'Unable to load attendance for this date. Please try again.'}, status=503)
+    return _with_warnings({'date': value, 'learnerIds': sorted(learner_ids)}, None)
 
 
 def _save_live_attendance(changes):
@@ -169,10 +213,11 @@ RECENT_LECTURE_LIMIT = 4
 
 
 def read_kbc_recent_attendance(dsn, limit=RECENT_LECTURE_LIMIT):
-    """Each learner's latest marked lectures, oldest first, in one query.
+    """Rows from each learner's latest ``limit`` dates, oldest first.
 
-    Same rule as the coach dashboard's last-four: dated, not in the future and
-    marked present or absent.
+    Unmarked rows are included because they are still real learner attendance
+    records. Rank dates rather than individual rows: a day replaced by Live
+    can contain many KBC rows. The endpoint takes four records after merging.
     """
     # Neon's pooler rejects startup `options`; set the timeout per transaction.
     with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10) as connection:
@@ -192,13 +237,12 @@ def read_kbc_recent_attendance(dsn, limit=RECENT_LECTURE_LIMIT):
                         coalesce("lecture_name", '') AS "lectureName",
                         "Attendance" AS attendance_value,
                         "attendance_status" AS source_status,
-                        row_number() OVER (
+                        dense_rank() OVER (
                             PARTITION BY "ID"::text
-                            ORDER BY "date" DESC, "key" DESC
+                            ORDER BY "date" DESC
                         ) AS recent_rank
                     FROM public.kbc_attendance
                     WHERE "ID" IS NOT NULL
-                      AND "Attendance" IN (0, 1)
                       AND "date" IS NOT NULL
                       AND "date" <= CURRENT_DATE
                 ) recent
@@ -232,17 +276,21 @@ def _with_warnings(payload, warning):
 
 @require_GET
 def bulk_attendance_kbc_recent(request):
+    live_only = request.GET.get('source') == 'live'
     live, warning = _live_register()
-    try:
-        dsn = learner_directory_dsn()
-        if not dsn:
-            return JsonResponse({'error': 'KBC attendance is not configured.'}, status=503)
-        # A KBC row the live register replaces must not cost a learner one of
-        # their four slots, so read enough KBC rows to still fill all four.
-        kbc = read_kbc_recent_attendance(dsn, RECENT_LECTURE_LIMIT + live_days_per_learner(live))
-    except psycopg.Error:
-        # Database driver errors can expose connection information.
-        return JsonResponse({'error': 'Unable to load recent KBC attendance. Please try again.'}, status=503)
+    kbc = {}
+    if not live_only:
+        try:
+            dsn = learner_directory_dsn()
+            if not dsn:
+                return JsonResponse({'error': 'KBC attendance is not configured.'}, status=503)
+            # Read four candidate dates plus the dates Live may replace.
+            # Each date can contain multiple records; never truncate those
+            # before applying the same merge policy as full history.
+            kbc = read_kbc_recent_attendance(dsn, RECENT_LECTURE_LIMIT + live_days_per_learner(live))
+        except psycopg.Error:
+            # Database driver errors can expose connection information.
+            return JsonResponse({'error': 'Unable to load recent KBC attendance. Please try again.'}, status=503)
 
     recent = {
         learner_id: merge_live_over_kbc(kbc.get(learner_id, []), live.get(learner_id, []))[-RECENT_LECTURE_LIMIT:]
@@ -257,14 +305,17 @@ def bulk_attendance_kbc_history(request):
     if not re.fullmatch(r'\d{1,20}', learner_id):
         return JsonResponse({'error': 'A valid learner is required.'}, status=400)
 
-    try:
-        dsn = learner_directory_dsn()
-        if not dsn:
-            return JsonResponse({'error': 'KBC attendance is not configured.'}, status=503)
-        records = read_kbc_attendance_history(dsn, learner_id)
-    except psycopg.Error:
-        # Database driver errors can expose connection information.
-        return JsonResponse({'error': 'Unable to load KBC attendance history. Please try again.'}, status=503)
+    live_only = request.GET.get('source') == 'live'
+    records = []
+    if not live_only:
+        try:
+            dsn = learner_directory_dsn()
+            if not dsn:
+                return JsonResponse({'error': 'KBC attendance is not configured.'}, status=503)
+            records = read_kbc_attendance_history(dsn, learner_id)
+        except psycopg.Error:
+            # Driver errors can expose connection information.
+            return JsonResponse({'error': 'Unable to load KBC attendance history. Please try again.'}, status=503)
 
     live, warning = _live_register(learner_id)
     merged = merge_live_over_kbc(records, live.get(learner_id, []))

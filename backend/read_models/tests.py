@@ -142,7 +142,7 @@ class SharedReadModelTests(TestCase):
             {ReadModelEvent.STATUS_PROCESSED},
         )
 
-    def test_worker_coalesces_same_scope_events_beyond_claim_limit(self):
+    def test_worker_does_not_complete_unclaimed_events_by_timestamp(self):
         calls = []
         model_key = "test.coalesced-across-batches"
         register(ReadModelSpec(
@@ -162,10 +162,12 @@ class SharedReadModelTests(TestCase):
 
         first = process_once(limit=2, worker_id="test-worker")
         second = process_once(limit=2, worker_id="test-worker")
+        third = process_once(limit=2, worker_id="test-worker")
 
         self.assertEqual(first, {"claimed": 2, "completed": 2, "failed": 0, "groups": 1})
-        self.assertEqual(second, {"claimed": 0, "completed": 0, "failed": 0, "groups": 0})
-        self.assertEqual(calls, ["7"])
+        self.assertEqual(second, {"claimed": 2, "completed": 2, "failed": 0, "groups": 1})
+        self.assertEqual(third, {"claimed": 1, "completed": 1, "failed": 0, "groups": 1})
+        self.assertEqual(calls, ["7", "7", "7"])
         self.assertEqual(
             set(ReadModelEvent.objects.values_list("status", flat=True)),
             {ReadModelEvent.STATUS_PROCESSED},
@@ -234,7 +236,7 @@ class SharedReadModelTests(TestCase):
             [ReadModelEvent.STATUS_PROCESSED, ReadModelEvent.STATUS_PENDING],
         )
 
-    @patch("read_models.worker.logger.exception")
+    @patch("read_models.worker.logger.error")
     def test_worker_failure_is_retried_without_losing_the_event(self, log_exception):
         model_key = "test.failure"
         register(ReadModelSpec(
@@ -257,7 +259,7 @@ class SharedReadModelTests(TestCase):
         self.assertEqual(result["failed"], 1)
         self.assertEqual(event.status, ReadModelEvent.STATUS_RETRY)
         self.assertEqual(event.attempts, 1)
-        self.assertIn("RuntimeError: temporary failure", event.last_error)
+        self.assertEqual("RuntimeError", event.last_error)
         self.assertFalse(ReadModel.objects.filter(model_key=model_key).exists())
         log_exception.assert_called_once()
 

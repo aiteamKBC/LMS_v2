@@ -12,7 +12,11 @@ import {
 import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 import { ReviewProgressPanel } from '@/components/reviews/ReviewProgressPanel';
-import { fetchLearnerEventReviewInstance, fetchMigratedReviewForParty, type LearnerReviewDefinition } from '@/api/learnerCalendar';
+import { fetchLearnerEventReviewInstance, fetchMigratedReviewForParty, type LearnerReviewDefinition, type MonthlyLogSignatureSync } from '@/api/learnerCalendar';
+import { MonthlyLogSignatureStatus } from './MonthlyLogSignatureStatus';
+import { MigratedReviewHistory } from '@/components/reviews/MigratedReviewHistory';
+import { downloadMigratedRevisionForParty } from '@/api/learnerCalendar';
+import { prepareLearnerPersonalSupport } from '@/api/learnerPersonalSupport';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { flattenReviewFields } from '@/api/reviewInstances';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
@@ -72,12 +76,14 @@ function writeSavedLearnerSignature(name: string, signature: string): void {
 
 /**
  * Loads a booked instance or an unscheduled occurrence's template preview.
- * This hook only issues a GET; opening a form never creates an instance.
+ * Reads existing forms. An owned, unfinished Aptem PSP can explicitly opt in
+ * to preparing its working copy automatically on open.
  */
 export function useLearnerReviewInstance(
   kind: LearnerKind,
   learnerId: string,
   eventKey: string,
+  preparePersonalSupport = false,
 ): LearnerReviewInstanceState {
   const [definition, setDefinition] = useState<LearnerReviewDefinition | null>(null);
   const [loading, setLoading] = useState(false);
@@ -96,7 +102,9 @@ export function useLearnerReviewInstance(
     setLoading(true);
     setDefinition(null);
     setError('');
-    (eventKey.startsWith('imported-review:')
+    (preparePersonalSupport
+      ? prepareLearnerPersonalSupport(eventKey, controller.signal)
+      : eventKey.startsWith('imported-review:')
       ? fetchMigratedReviewForParty(eventKey, controller.signal)
       : fetchLearnerEventReviewInstance(kind, learnerId, eventKey, controller.signal))
       .then((data) => {
@@ -110,7 +118,7 @@ export function useLearnerReviewInstance(
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [kind, learnerId, eventKey, revision]);
+  }, [kind, learnerId, eventKey, revision, preparePersonalSupport]);
 
   return { definition, loading, error, refresh };
 }
@@ -124,8 +132,8 @@ function seedAnswersFromDefinition(definition: LearnerReviewDefinition): Record<
 }
 
 export function LearnerReviewInstanceForm({
-  definition, onSign, onDownload, signatoryName = 'Learner',
-  viewerRole = 'participant', onSaveAnswers, mcmMonthlyLog,
+  definition: incomingDefinition, onSign, onDownload, signatoryName = 'Learner',
+  viewerRole = 'participant', onSaveAnswers, mcmMonthlyLog, monthlyLogSync, onRetryMonthlyLogSignature,
 }: {
   definition: LearnerReviewDefinition;
   onSign?: (signature: string, options?: { applyMonthlyLogSignature?: boolean }) => Promise<void>;
@@ -137,10 +145,16 @@ export function LearnerReviewInstanceForm({
   /** Persists a role-scoped subset of answers and returns the refreshed
    *  definition. Omitted (every existing caller until it opts in), the form
    *  stays fully read-only exactly as it always has. */
-  onSaveAnswers?: (answers: Record<string, unknown>) => Promise<LearnerReviewDefinition>;
+  onSaveAnswers?: (answers: Record<string, unknown>, answerVersion?: string) => Promise<LearnerReviewDefinition>;
   /** The target-month log is reviewed inside the MCM signing modal, never inline. */
   mcmMonthlyLog?: { id: string; month: string; contractKind: LearnerKind };
+  monthlyLogSync?: MonthlyLogSignatureSync;
+  onRetryMonthlyLogSignature?: () => Promise<void>;
 }) {
+  const [savedPersonalSupport, setSavedPersonalSupport] = useState<LearnerReviewDefinition | null>(null);
+  useEffect(() => setSavedPersonalSupport(null), [incomingDefinition]);
+  const definition = savedPersonalSupport || incomingDefinition;
+  const personalSupportForm = Boolean(definition.migratedForm && definition.template.reviewTypeCode === 'aptem_psp');
   const [openSectionId, setOpenSectionId] = useState('');
   const [signing, setSigning] = useState(false);
   const [signatureError, setSignatureError] = useState('');
@@ -153,6 +167,8 @@ export function LearnerReviewInstanceForm({
   const [answers, setAnswers] = useState<Record<string, unknown>>(() => seedAnswersFromDefinition(definition));
   const [savingAnswers, setSavingAnswers] = useState(false);
   const [saveAnswersError, setSaveAnswersError] = useState('');
+  const answerVersion = useRef(definition.answerVersion);
+  const savingAnswersRef = useRef(false);
 
   function focusSignatureSection() {
     signatureSection.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -193,7 +209,8 @@ export function LearnerReviewInstanceForm({
   useEffect(() => {
     setSavedSignature(definition.savedSignature || readSavedLearnerSignature(signatoryName));
     setDrawingSignature(false);
-  }, [definition.savedSignature, signatoryName]);
+    setSignatureError('');
+  }, [definition.savedSignature, definition.reviewRevision, signatoryName]);
 
   useEffect(() => {
     setApplyMonthlyLogSignature(true);
@@ -206,9 +223,11 @@ export function LearnerReviewInstanceForm({
   // occurrence opened, or this component's own save below returns one).
   useEffect(() => {
     setAnswers(seedAnswersFromDefinition(definition));
+    answerVersion.current = definition.answerVersion;
   }, [definition]);
 
   const requiredSignatures = Object.values(definition.signatures).filter(state => state.required);
+  const signatureFreePersonalSupport = personalSupportForm && requiredSignatures.length === 0;
   const submitted = ['awaiting-signature', 'completed'].includes(definition.instance?.status || '');
   // Exactly the fields the Curriculum template opted this viewer into
   // answering -- every other field stays read-only regardless of onSaveAnswers.
@@ -218,7 +237,7 @@ export function LearnerReviewInstanceForm({
   );
   // Writing follows the same lifecycle rule the backend enforces: once the
   // review reaches the signature step, its answers are frozen for everyone.
-  const canWriteAnswers = Boolean(onSaveAnswers) && !submitted;
+  const canWriteAnswers = Boolean(onSaveAnswers) && !submitted && (!definition.migratedForm || !definition.readOnly);
   const visibleRespondentFieldIds = useMemo(
     () => computeVisibleWritableFieldIds(definition.sections, answers, viewerRole),
     [definition.sections, answers, viewerRole],
@@ -250,23 +269,31 @@ export function LearnerReviewInstanceForm({
   };
 
   const handleAnswerChange = useCallback((fieldId: string, value: unknown) => {
-    if (!canWriteAnswers || !writableFieldIds.has(fieldId)) return;
+    if (!canWriteAnswers || (definition.migratedForm && savingAnswersRef.current) || !writableFieldIds.has(fieldId)) return;
     setAnswers(current => ({ ...current, [fieldId]: value }));
     setSaveAnswersError('');
-  }, [canWriteAnswers, writableFieldIds]);
+  }, [canWriteAnswers, definition.migratedForm, writableFieldIds]);
 
   const saveAnswers = async () => {
-    if (!onSaveAnswers || savingAnswers) return;
+    if (!onSaveAnswers || !canWriteAnswers || savingAnswersRef.current) return;
+    savingAnswersRef.current = true;
     setSavingAnswers(true);
     setSaveAnswersError('');
     try {
       const payload: Record<string, unknown> = {};
-      for (const fieldId of writableFieldIds) payload[fieldId] = answers[fieldId];
-      const updated = await onSaveAnswers(payload);
+      for (const fieldId of definition.migratedForm ? visibleRespondentFieldIds : writableFieldIds) {
+        payload[fieldId] = definition.migratedForm ? answers[fieldId] ?? null : answers[fieldId];
+      }
+      const updated = definition.migratedForm
+        ? await onSaveAnswers(payload, answerVersion.current)
+        : await onSaveAnswers(payload);
+      answerVersion.current = updated.answerVersion;
       setAnswers(seedAnswersFromDefinition(updated));
+      if (personalSupportForm) setSavedPersonalSupport(updated);
     } catch (reason) {
       setSaveAnswersError(reason instanceof Error ? reason.message : 'Could not save your answers. Please try again.');
     } finally {
+      savingAnswersRef.current = false;
       setSavingAnswers(false);
     }
   };
@@ -288,13 +315,15 @@ export function LearnerReviewInstanceForm({
         {/* The Review Template's own name is the title. The Review Type only
             classifies/routes the occurrence and is never displayed here. */}
         <h2 className="mt-0.5 text-sm font-bold text-foreground-900" data-testid="learner-review-instance-title">
-          {definition.template.name} #{definition.instance?.occurrenceNumber || definition.occurrenceNumber}
+          {definition.template.name}{!personalSupportForm && <> #{definition.instance?.occurrenceNumber || definition.occurrenceNumber}</>}
         </h2>
         <p className="mt-1 text-xs text-primary-800">
           <AppIcon className="ri-information-line mr-1.5" />
-          Review your coach's notes and the agreed next steps.
+          {personalSupportForm ? signatureFreePersonalSupport ? 'Save your answers to complete the plan once all required questions are answered.' : 'Saving all required answers sends the plan for the selected signatures.' : "Review your coach's notes and the agreed next steps."}
         </p>
       </div>
+
+      {personalSupportForm && definition.instance?.status === 'completed' && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 font-semibold text-emerald-800">Personal Support Plan completed</p>}
 
       {requiredSignatures.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-4">
         <div className="min-w-0 flex-1 basis-64">
@@ -320,7 +349,7 @@ export function LearnerReviewInstanceForm({
         />
       ) : null}
 
-      {canWriteAnswers && writableFieldIds.size > 0 && (
+      {canWriteAnswers && (definition.migratedForm ? visibleRespondentFieldIds : writableFieldIds).size > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary-200 bg-primary-50/70 px-4 py-3">
           <p className="text-xs text-primary-900">
             <AppIcon className="ri-edit-2-line mr-1.5" />
@@ -387,16 +416,21 @@ export function LearnerReviewInstanceForm({
         answers={answers}
         onAnswerChange={handleAnswerChange}
         readOnly
-        fieldReadOnly={field => !canWriteAnswers || !writableFieldIds.has(field.id)}
+        fieldReadOnly={field => !canWriteAnswers || (Boolean(definition.migratedForm) && savingAnswers) || !writableFieldIds.has(field.id)}
         respondentRole={viewerRole}
         showSavedAnswerStatus
         openSectionId={openSectionId}
         onOpenSectionChange={setOpenSectionId}
       />
 
-      <div ref={signatureSection} tabIndex={-1} aria-label="Signature step" className="scroll-mt-6 space-y-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">
-        <ReviewSignatures signatures={definition.signatures} />
+      <div ref={signatureSection} tabIndex={-1} aria-label={signatureFreePersonalSupport ? 'Review documents' : 'Signature step'} className="scroll-mt-6 space-y-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">
+        {definition.migratedForm && definition.instance && <MigratedReviewHistory entries={definition.reopenHistory} signatureFree={signatureFreePersonalSupport}
+          onDownload={number => downloadMigratedRevisionForParty(definition.instance!.id, number)} />}
+        {!signatureFreePersonalSupport && <ReviewSignatures signatures={definition.signatures} />}
+        {viewerRole === 'participant' && monthlyLogSync && <MonthlyLogSignatureStatus sync={monthlyLogSync} onRetry={onRetryMonthlyLogSignature}
+          previousReviewVersion={Boolean(definition.reviewRevision && !definition.signatures.participant?.signed)} />}
         {(definition.source !== 'aptem' || definition.instance?.status === 'completed') && <ReviewPdfDownload
+          label={personalSupportForm ? 'Download PDF' : undefined}
           availability={definition.migratedForm
             ? { available: definition.instance?.status === 'completed', reason: 'Available after completion.' }
             : definition.pdf}

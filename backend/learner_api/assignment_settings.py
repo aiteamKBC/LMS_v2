@@ -47,7 +47,7 @@ def monthly_assignment_required(component_id, source):
     reads its components from, so the page and this check agree on which
     assignments are monthly. Any failure keeps the original requirement.
     """
-    from .learning_plan import effective_training_plan
+    from .selectors.assignments import effective_training_plan
     try:
         module_ids = sorted({
             str(entry.get("moduleId") or "").strip()

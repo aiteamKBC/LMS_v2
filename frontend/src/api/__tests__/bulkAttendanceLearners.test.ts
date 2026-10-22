@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import {
   fetchBulkAttendanceKbcHistory,
   fetchBulkAttendanceKbcRecent,
+  fetchBulkAttendanceDayLearners,
   fetchBulkAttendanceLearners,
   fetchBulkAttendanceLiveDayRecords,
   BulkAttendanceSaveError,
@@ -10,6 +11,20 @@ import {
 } from '../bulkAttendanceLearners';
 
 afterEach(() => vi.unstubAllGlobals());
+
+it('reads exact-day membership with authentication and rejects mismatched or failed responses', async () => {
+  const fetch = vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ date: '2020-01-02', learnerIds: ['301', '302'] })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ date: '2020-01-03', learnerIds: ['301'] })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Day unavailable' }), { status: 503 }));
+  vi.stubGlobal('fetch', fetch);
+  const controller = new AbortController();
+  await expect(fetchBulkAttendanceDayLearners('2020-01-02', controller.signal)).resolves.toEqual(['301', '302']);
+  expect(fetch).toHaveBeenCalledWith('/curriculum_api/curriculum/bulk-attendance/day-learners/?date=2020-01-02',
+    expect.objectContaining({ credentials: 'include', signal: controller.signal }));
+  await expect(fetchBulkAttendanceDayLearners('2020-01-02')).rejects.toThrow('invalid response');
+  await expect(fetchBulkAttendanceDayLearners('2020-01-02')).rejects.toThrow('Day unavailable');
+});
 
 it('reads learner names with the authenticated transport and abort signal', async () => {
   const learners = [{ id: '42', name: 'Alex Example', email: 'alex@example.invalid' }];
@@ -41,12 +56,13 @@ it('fetches the complete KBC history for one learner only when requested', async
   vi.stubGlobal('fetch', fetch);
   const controller = new AbortController();
 
-  await expect(fetchBulkAttendanceKbcHistory('42', controller.signal)).resolves.toEqual({ records, warnings });
+  await expect(fetchBulkAttendanceKbcHistory('42', controller.signal, { source: 'all' })).resolves.toEqual({ records, warnings });
   const [url, options] = fetch.mock.calls[0] as [string, RequestInit];
   const query = new URL(url, 'https://lms.example.invalid').searchParams;
   expect(url).toContain('/curriculum_api/curriculum/bulk-attendance/kbc-history/');
   expect(query.get('learner_id')).toBe('42');
-  expect([...query.keys()]).toEqual(['learner_id']);
+  expect([...query.keys()]).toEqual(['learner_id', 'source']);
+  expect(query.get('source')).toBe('all');
   expect(options).toEqual(expect.objectContaining({ credentials: 'include', signal: controller.signal }));
 });
 
@@ -61,7 +77,7 @@ it('reads every learner\'s recent KBC lectures in one authenticated request', as
 
   await expect(fetchBulkAttendanceKbcRecent(controller.signal)).resolves.toEqual({ recent, warnings: [] });
   expect(fetch).toHaveBeenCalledTimes(1);
-  expect(fetch).toHaveBeenCalledWith('/curriculum_api/curriculum/bulk-attendance/kbc-recent/',
+  expect(fetch).toHaveBeenCalledWith('/curriculum_api/curriculum/bulk-attendance/kbc-recent/?source=live',
     expect.objectContaining({ credentials: 'include', signal: controller.signal }));
 });
 

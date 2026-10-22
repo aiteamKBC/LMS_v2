@@ -20,7 +20,7 @@ describe('resolved review stream dashboard helpers', () => {
     const aptem = event({
       id: 'imported-review:A-1', eventKey: 'imported-review:A-1', reviewSource: 'aptem',
       aptemReviewId: 'A-1', status: 'confirmed', scheduledTime: '10:00', hasReviewForm: true,
-      enrolmentId: 'ENR-A-1',
+      enrolmentId: 'ENR-A-1', calendarEventKey: 'native-booking:A-1',
     });
     const native = event({
       id: 'native-1', eventKey: 'native-1', reviewSource: 'curriculum', status: 'scheduled',
@@ -40,6 +40,19 @@ describe('resolved review stream dashboard helpers', () => {
     const native = event({ reviewSource: 'curriculum', reviewInstanceId: 'REVI-2' });
     expect(reviewActionMatrix(aptem)).toMatchObject({ schedule: null, view: true, viewForm: true });
     expect(reviewActionMatrix(native)).toMatchObject({ schedule: null, view: true, viewForm: true });
+  });
+
+  it.each(['Progress Review', 'Progress Review (+ Skills Radar)', 'Monthly Coaching Meeting'])('offers first booking for an Aptem %s with source dates but no local booking', importedReviewType => {
+    expect(reviewActionMatrix(event({ reviewSource: 'aptem', importedReviewType, status: 'scheduled', scheduledTime: '10:00' })).schedule).toBe('Schedule');
+    expect(reviewActionMatrix(event({ reviewSource: 'aptem', importedReviewType, status: 'not-scheduled' })).schedule).toBe('Schedule');
+  });
+
+  it.each(['completed', 'cancelled', 'in-progress', 'awaiting-signature'] as const)('never offers Aptem booking in %s', status => {
+    expect(reviewActionMatrix(event({ reviewSource: 'aptem', status, calendarEventKey: 'native-booking:1' })).schedule).toBeNull();
+  });
+
+  it('does not offer migrated booking for unsupported imported review types', () => {
+    expect(reviewActionMatrix(event({ reviewSource: 'aptem', importedReviewType: 'RPL and Experience', status: 'not-scheduled' })).schedule).toBeNull();
   });
 
   it('preserves cancelled rows and never offers Schedule', () => {

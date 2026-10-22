@@ -50,10 +50,15 @@ class StructureTransportTests(SimpleTestCase):
                 patch.object(views, 'authoring_fetch_all', side_effect=read), \
                 patch.object(views, 'apply_module_session_plan_to_weeks'), \
                 patch.object(views, 'teams_delivery_metadata_from_live_session', return_value={}):
-            expected = views.structure_payload_with_revision(lambda: views.get_authoring_structure_payload('M1'), 'M1')
+            # The editor's read also carries the per-item fingerprints its
+            # partial saves are merged by, computed from that same payload.
+            expected = views.with_item_fingerprints(
+                views.structure_payload_with_revision(lambda: views.get_authoring_structure_payload('M1'), 'M1'),
+            )
             calls.clear()
             actual = views.read_module_structure_with_revision('M1')
             self.assertEqual(actual, expected)
+            self.assertEqual(sorted(actual['itemFingerprints']['components']), ['C1'])
             for _, table, _, _ in views.STRUCTURE_REVISION_SOURCES:
                 self.assertEqual(calls.count(table), 1, table)
             rows[views.AUTHORING_COMPONENTS_TABLE][0]['title'] = 'Changed by another editor'

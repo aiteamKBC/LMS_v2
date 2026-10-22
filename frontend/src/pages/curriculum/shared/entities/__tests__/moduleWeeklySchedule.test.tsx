@@ -6,6 +6,12 @@ import { createGroupModule, previewModuleSessionPlan, previewTutorAvailabilityRo
 import type { CurriculumGroup, CurriculumModule } from '@/lib/curriculumApi';
 import { ModuleFormDrawer, moduleFormTarget, type ModuleFormTarget } from '../moduleForm';
 
+// Out of the concurrency path, which drawerRecordConcurrency covers: the server
+// reports no version for these records, so their saves go unguarded.
+vi.mock('../recordSnapshot', () => ({
+  fetchCurriculumRecordSnapshot: vi.fn(async () => ({ revision: '', record: null })),
+}));
+
 vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
   showCurriculumAlert: vi.fn(), showCurriculumConfirm: vi.fn(),
 }));

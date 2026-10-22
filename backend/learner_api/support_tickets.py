@@ -4,12 +4,14 @@ import json
 from uuid import UUID
 
 from django.db import DatabaseError, connections, transaction
-from django.http import JsonResponse
+from django.core.exceptions import RequestDataTooBig, TooManyFilesSent
+from django.http import HttpResponseBase, JsonResponse
 from django.middleware.csrf import get_token
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_protect
 
 from login.permissions import authenticate_request, _unauthenticated, _accesses_of
+from . import support_ticket_files as files
 
 TABLE = '"Learner".support_tickets'
 CATEGORIES = {'Technical Issue', 'Learning Support', 'Data / MIS', 'Coaching Query', 'Safeguarding Concern', 'Other'}
@@ -43,19 +45,36 @@ def endpoint(staff=False):
                     raise TicketError('Method not allowed.', 405)
                 body = {}
                 if request.method == 'POST':
-                    if len(request.body) > 40000:
-                        raise TicketError('The request is too large.', 413)
-                    body = json.loads(request.body or b'{}')
+                    if request.content_type == 'multipart/form-data':
+                        if int(request.META.get('CONTENT_LENGTH') or 0) > files.MAX_TOTAL_BYTES + 40000:
+                            raise TicketError('The request is too large.', 413)
+                        if set(request.POST) != {'payload'} or set(request.FILES) - {'attachments'}:
+                            raise TicketError('The request contains unsupported fields.')
+                        payload = request.POST['payload']
+                        if len(payload.encode('utf-8')) > 40000:
+                            raise TicketError('The request is too large.', 413)
+                        body = json.loads(payload)
+                        if request.FILES and (staff or kwargs.get('attachment_id')):
+                            raise TicketError('Only learners can upload support attachments.', 403)
+                    else:
+                        if len(request.body) > 40000:
+                            raise TicketError('The request is too large.', 413)
+                        body = json.loads(request.body or b'{}')
                     if not isinstance(body, dict):
                         raise TicketError('A JSON object is required.')
                 result = view(request, account, body, staff=staff, *args, **kwargs)
+                if isinstance(result, HttpResponseBase):
+                    result['Cache-Control'] = 'private, no-store'
+                    return result
                 if 'ticket' in result:
                     result['ticket'] = public_ticket(result['ticket'])
                 if 'tickets' in result:
                     result['tickets'] = [public_ticket(ticket) for ticket in result['tickets']]
                 response = JsonResponse({**result, 'csrfToken': get_token(request)})
-            except TicketError as exc:
+            except (TicketError, files.AttachmentError) as exc:
                 response = JsonResponse({'error': str(exc)}, status=exc.status)
+            except (RequestDataTooBig, TooManyFilesSent):
+                response = JsonResponse({'error': 'The attachment request is too large.'}, status=413)
             except (ValueError, TypeError, UnicodeDecodeError):
                 response = JsonResponse({'error': 'Invalid support ticket request.'}, status=400)
             except DatabaseError:
@@ -83,8 +102,10 @@ def unpack(row):
 
 
 def public_ticket(ticket):
-    return {**ticket, 'replies': [{key: value for key, value in reply.items() if key != 'accountId'}
-                                 for reply in ticket.get('replies', [])]}
+    return {**ticket, 'attachments': files.public(ticket.get('attachments', [])),
+            'replies': [{**{key: value for key, value in reply.items() if key not in {'accountId', 'attachments'}},
+                         'attachments': files.public(reply.get('attachments', []))}
+                        for reply in ticket.get('replies', [])]}
 
 
 def collection(request, account, body, *, staff):
@@ -106,26 +127,33 @@ def collection(request, account, body, *, staff):
     description = text_field(body, 'description', 10000)
     if body.get('category') not in CATEGORIES or body.get('priority') not in PRIORITIES:
         raise TicketError('Select a valid category and priority.')
+    prepared = files.prepare(request.FILES.getlist('attachments'), ticket_id)
     now = timezone.now().isoformat()
     data = dict(id=ticket_id, title=title, description=description, category=body['category'],
                 priority=body['priority'], status='open', submitted=now, lastUpdate=now,
                 requester=account.display_name or 'Learner', assignedTo='', assignedTeam='LMS Support',
-                messages=0, timeline=[{'event': 'Opened', 'timestamp': now}], replies=[])
-    with transaction.atomic(using='enrolment'), connections['enrolment'].cursor() as cursor:
+                messages=0, timeline=[{'event': 'Opened', 'timestamp': now}], replies=[],
+                attachments=[item for item, _ in prepared])
+    with files.upload_session() as staged, transaction.atomic(using='enrolment'), connections['enrolment'].cursor() as cursor:
         cursor.execute(f'INSERT INTO {TABLE} (id,owner_account_id,enrolment_id,data) VALUES (%s,%s,%s,%s::jsonb) ON CONFLICT(id) DO NOTHING',
                        [ticket_id, account.pk, account.subject_id, json.dumps(data)])
-        cursor.execute(f'SELECT data FROM {TABLE} WHERE id=%s AND owner_account_id=%s', [ticket_id, account.pk])
+        inserted = cursor.rowcount == 1
+        cursor.execute(f'SELECT data FROM {TABLE} WHERE id=%s AND owner_account_id=%s FOR UPDATE', [ticket_id, account.pk])
         row = cursor.fetchone()
         if not row:
             raise TicketError('This request ID has already been used.', 409)
         saved = unpack(row)
         if any(saved.get(key) != data[key] for key in ('title', 'description', 'category', 'priority')):
             raise TicketError('This request ID belongs to a different ticket. Reload the ticket list before retrying.', 409)
+        if not files.matches(saved.get('attachments', []), prepared):
+            raise TicketError('This request ID belongs to different attachments. Reload the ticket list before retrying.', 409)
+        if inserted:
+            files.save(prepared, staged)
     return {'ticket': saved}
 
 
 def detail(request, account, body, ticket_id, *, staff):
-    with transaction.atomic(using='enrolment'), connections['enrolment'].cursor() as cursor:
+    with files.upload_session() as staged, transaction.atomic(using='enrolment'), connections['enrolment'].cursor() as cursor:
         where, params = ('', []) if staff else (' AND owner_account_id=%s', [account.pk])
         cursor.execute(f'SELECT data FROM {TABLE} WHERE id=%s{where} FOR UPDATE', [str(ticket_id), *params])
         row = cursor.fetchone()
@@ -135,18 +163,24 @@ def detail(request, account, body, ticket_id, *, staff):
         if request.method == 'GET':
             return {'ticket': ticket}
         action = body.get('action')
+        if request.FILES and action != 'reply':
+            raise TicketError('Attachments can only be added to a reply.')
         now = timezone.now().isoformat()
         if action == 'reply':
             only(body, {'action', 'requestId', 'body'})
             reply_id = str(UUID(text_field(body, 'requestId', 36)))
             message = text_field(body, 'body', 4000)
+            prepared = files.prepare(request.FILES.getlist('attachments'), str(ticket_id))
             previous = next((reply for reply in ticket['replies'] if reply['id'] == reply_id), None)
             if previous:
-                if previous.get('accountId') != account.pk or previous['body'] != message:
+                if (previous.get('accountId') != account.pk or previous['body'] != message
+                        or not files.matches(previous.get('attachments', []), prepared)):
                     raise TicketError('This reply ID has already been used.', 409)
                 return {'ticket': ticket}
+            files.save(prepared, staged)
             ticket['replies'].append(dict(id=reply_id, accountId=account.pk, sender=account.display_name or ('Support' if staff else 'Learner'),
-                                          senderRole='Support' if staff else 'Learner', body=message, timestamp=now))
+                                          senderRole='Support' if staff else 'Learner', body=message, timestamp=now,
+                                          attachments=[item for item, _ in prepared]))
             ticket['messages'] = len(ticket['replies'])
         elif action == 'status' and staff:
             only(body, {'action', 'status', 'expectedStatus'})
@@ -175,7 +209,27 @@ def detail(request, account, body, ticket_id, *, staff):
     return {'ticket': ticket}
 
 
+def attachment(request, account, body, ticket_id, attachment_id, *, staff):
+    if request.method != 'GET':
+        raise TicketError('Method not allowed.', 405)
+    with connections['enrolment'].cursor() as cursor:
+        where, params = ('', []) if staff else (' AND owner_account_id=%s', [account.pk])
+        cursor.execute(f'SELECT data FROM {TABLE} WHERE id=%s{where}', [str(ticket_id), *params])
+        row = cursor.fetchone()
+    if not row:
+        raise TicketError('Ticket not found.', 404)
+    ticket = unpack(row)
+    items = [*ticket.get('attachments', []),
+             *(item for reply in ticket.get('replies', []) for item in reply.get('attachments', []))]
+    item = next((item for item in items if item['id'] == str(attachment_id)), None)
+    if item is None:
+        raise TicketError('Attachment not found.', 404)
+    return files.download(item)
+
+
 learner_tickets = endpoint()(collection)
 learner_ticket = endpoint()(detail)
 staff_tickets = endpoint(staff=True)(collection)
 staff_ticket = endpoint(staff=True)(detail)
+learner_attachment = endpoint()(attachment)
+staff_attachment = endpoint(staff=True)(attachment)
