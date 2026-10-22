@@ -43,13 +43,14 @@ export function presentReview(session: LearnerCalendarEvent, attendance: Meeting
         .includes((value || '').trim().toLowerCase().replace(/[ _]+/g, '-')));
   const importedBooking = Boolean(imported && (session.calendarEventKey || attendance?.calendarEventKey)
     && !imported.completedDate && !['completed', 'awaiting-signature', 'cancelled'].includes(importedStatus || '')
-    && ['progress review', 'progress review (+ skills radar)'].includes(imported.type.trim().toLowerCase()));
+    && ['progress review', 'progress review (+ skills radar)', 'personal support plan'].includes(imported.type.trim().toLowerCase()));
   const booked = (!imported || importedBooking) && Boolean(scheduledDate) && ['scheduled', 'in-progress'].includes(status)
     && !['not-scheduled', 'planned', 'failed', 'unknown'].includes(bookingStatus);
   const isToday = booked && scheduledDate === today;
   const joinUrl = booked ? meetingJoinUrl({ ...session, meetingLink: attendance ? attendance.meetingLink : session.meetingLink }) : null;
   const base = { session, attendance, status, date, booked, isToday, joinUrl,
-    canReschedule: booked && status === 'scheduled' && !attendance?.attendanceConfirmed
+    // A coach-booked PSP can be joined here; learner booking remains limited to PR.
+    canReschedule: booked && (!imported || Boolean(importedProgressReview)) && status === 'scheduled' && !attendance?.attendanceConfirmed
       && ![storedStatus, submittedStatus, session.bookingStatus, importedStatus].includes('in-progress') };
   const result = (label: string, description: string, action: ReviewPresentation['action'], past = false, needsAttention = false): ReviewPresentation =>
     ({ ...base, label, description, action, past, needsAttention });
@@ -63,7 +64,7 @@ export function presentReview(session: LearnerCalendarEvent, attendance: Meeting
       return result('Your signature is needed', 'Read the review and agreed next steps, then sign as employer.', 'sign', true, true);
     }
     if (signed) return result('Your signature is saved', 'Your employer signature is saved. You can read the review and check the other signatures.', 'view', true);
-    if (session.importedReview && !session.migratedForm) return result(status === 'completed' ? 'Completed' : 'Archived review', 'Read this saved review and its attachments.', 'view', true);
+    if (session.importedReview && !session.migratedForm && !booked) return result(status === 'completed' ? 'Completed' : 'Archived review', 'Read this saved review and its attachments.', 'view', true);
     if (['awaiting-signature', 'completed'].includes(status)) return result(status === 'completed' ? 'Completed' : 'Waiting for signatures', 'Read the review and check its signature status.', 'view', true);
     if (booked) return result(isToday ? 'Today' : status === 'in-progress' ? 'In progress' : 'Scheduled', 'Review the learner’s progress and agreed next steps.', isToday && joinUrl ? 'join' : 'view', Boolean(date && date < today));
     return result(['not-scheduled', 'planned'].includes(status) ? 'Not scheduled' : 'In preparation', 'The coach is preparing this review. You can read the available details and answer any employer questions.', 'view');
