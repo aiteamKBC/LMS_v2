@@ -47,6 +47,75 @@ describe('coach attendance detail', () => {
     expect(vi.mocked(coachFetch).mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
   });
 
+  it.each([
+    ['lazy', 'Recorded mode'],
+    ['live', 'Attendance mode'],
+    [undefined, 'Not available'],
+  ])('shows the saved %s learning mode in the profile and PDF without inferring it from history', async (attendanceMode, label) => {
+    vi.mocked(coachFetch).mockResolvedValue(new Response(JSON.stringify({ ...payload([]), attendanceMode })));
+    render(pageElement);
+    await screen.findByRole('heading', { name: 'Synthetic Learner' });
+    expect(screen.getAllByText(label)).toHaveLength(2);
+    expect(within(screen.getByLabelText('Student attendance report')).getByText('Learning mode').nextElementSibling).toHaveTextContent(label);
+  });
+
+  it('shows awaiting recordings across all history and PDF pages as counted absences', async () => {
+    const print = vi.spyOn(window, 'print').mockImplementation(() => undefined);
+    const records = Array.from({ length: 24 }, (_, index) => ({ ...record(index + 1),
+      status: index === 0 ? 'present' : 'awaiting_recording' }));
+    vi.mocked(coachFetch).mockImplementation(async url => {
+      const page = Number(new URL(String(url), 'http://test').searchParams.get('page'));
+      return new Response(JSON.stringify({ ...payload(records.slice((page - 1) * 20, page * 20), page, 24),
+        attendanceMode: 'lazy', awaitingRecording: 23,
+        summary: { attendanceRate: 4, sessions: 24, present: 1, absent: 23 } }));
+    });
+    render(pageElement);
+    await screen.findByText('24 records');
+    const summary = within(screen.getByLabelText('Attendance summary'));
+    expect(summary.getByText('4%')).toBeInTheDocument();
+    expect(summary.getByText('1 present out of 24')).toBeInTheDocument();
+    expect(summary.getByText('23 absent')).toBeInTheDocument();
+    expect(summary.getByText('23 awaiting recording — counted as absent until completed in this view and PDF report')).toBeInTheDocument();
+    expect(within(screen.getAllByRole('table')[0]).getAllByText('Awaiting Recording')).toHaveLength(19);
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByText('Page 2 of 2');
+    expect(within(screen.getAllByRole('table')[0]).getAllByText('Awaiting Recording')).toHaveLength(4);
+    fireEvent.click(screen.getByRole('button', { name: 'Export PDF' }));
+    await waitFor(() => expect(print).toHaveBeenCalledTimes(1));
+    const report = within(screen.getByLabelText('Student attendance report'));
+    expect(report.getAllByText('Awaiting Recording')).toHaveLength(23);
+    expect(report.getByText('Total lectures').nextElementSibling).toHaveTextContent('24');
+    expect(report.getByText('Absent').nextElementSibling).toHaveTextContent('23');
+    expect(report.getByText('Attendance rate').nextElementSibling).toHaveTextContent('4%');
+    expect(report.getByText(/23 awaiting recording\. In this report/)).toBeInTheDocument();
+    expect(report.getByText('Recorded mode')).toBeInTheDocument();
+  });
+
+  it('requires an explicit correction when editing an awaiting recording, and Cancel never writes', async () => {
+    vi.mocked(coachFetch).mockResolvedValue(new Response(JSON.stringify({ ...payload([{ ...record(), status: 'awaiting_recording' }]),
+      attendanceMode: 'lazy', awaitingRecording: 1,
+      summary: { attendanceRate: 0, sessions: 1, present: 0, absent: 1 } })));
+    render(pageElement);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    expect(screen.getByLabelText('Manual attendance status')).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Manual attendance status'), { target: { value: 'present' } });
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel edit' }));
+    expect(vi.mocked(coachFetch).mock.calls.some(([, init]) => init?.method)).toBe(false);
+    expect(within(screen.getAllByRole('table')[0]).getByText('Awaiting Recording')).toBeInTheDocument();
+  });
+
+  it('offers retry and a return link when history cannot load', async () => {
+    vi.mocked(coachFetch).mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'Unavailable' }), { status: 503 }));
+    render(pageElement);
+    await screen.findByText('Unable to load this attendance profile.');
+    expect(screen.getByRole('button', { name: 'Back' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry attendance history' }));
+    expect(await screen.findByRole('heading', { name: 'Synthetic Learner' })).toBeInTheDocument();
+    expect(coachFetch).toHaveBeenCalledTimes(2);
+  });
+
   it('opens once under StrictMode and reuses the same learner on rerender and revisit', async () => {
     const strictPage = <StrictMode>{pageElement}</StrictMode>;
     const first = render(strictPage);

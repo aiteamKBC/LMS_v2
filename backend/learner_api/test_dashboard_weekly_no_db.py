@@ -124,7 +124,8 @@ class DashboardWeeklyTests(SimpleTestCase):
         weeks = [{'module': 'Module', 'moduleId': 'M1', 'week': 'Same title', 'weekId': wid} for wid in ('W1', 'W2')]
         cursor = MagicMock()
         cursor.fetchall.side_effect = [[('M1', 'Module', 'P', 'Programme')],
-            [(9, 'W1', 'Quiz', 4, 10, 'mins', 'P', 'Programme', 'Module')], [], []]
+            [(9, 'W1', 'Quiz', 4, 10, 'mins', 'P', 'Programme', 'Module')], [], [],
+            []]  # Independent quiz: no authored component or revision.
         connection = MagicMock()
         connection.cursor.return_value.__enter__.return_value = cursor
         with patch.object(learner_detail, 'connections', {'enrolment': connection}):

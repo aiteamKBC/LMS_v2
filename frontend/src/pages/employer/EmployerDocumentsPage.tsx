@@ -2,7 +2,6 @@ import { useEffect, useState, type ComponentType } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   CheckCircle2,
-  ChevronRight,
   Clock3,
   FileText,
   LoaderCircle,
@@ -14,33 +13,39 @@ import { PageContainer } from '@/components/ui/PageContainer';
 import { fetchEmployerDocuments, type EmployerDocuments } from '@/api/employerPortal';
 import { btnSecondary } from '@/pages/users/components/ui';
 import { SignModal } from './EmployerDocumentRows';
+import { EmployerDocumentPreview } from './EmployerDocumentPreview';
 import { documentState as stateOf, useEmployerSigning } from './useEmployerSigning';
-import { EmployerDocumentsTable } from './EmployerDocumentsTable';
+import { EmployerDocumentsTable, type DocumentFilter } from './EmployerDocumentsTable';
 import { useEmployerPortalChrome } from './employerPortalNav';
 import styles from './EmployerDocumentsPage.module.css';
 
 type IconComponent = ComponentType<{ className?: string; 'aria-hidden'?: boolean }>;
 
+/** Each card is this list's filter control, so the counts and the filters stay one thing. */
 function SummaryCard({
   label,
   value,
   tone,
   Icon,
+  active,
+  onSelect,
 }: {
   label: string;
   value: number;
   tone: 'amber' | 'violet' | 'green' | 'purple';
   Icon: IconComponent;
+  active: boolean;
+  onSelect: () => void;
 }) {
   return (
-    <article className={`${styles.summaryCard} ${styles[`summary_${tone}`]}`}>
+    <button type="button" onClick={onSelect} aria-pressed={active}
+      className={`${styles.summaryCard} ${styles[`summary_${tone}`]}`}>
       <span className={styles.summaryIcon}><Icon aria-hidden /></span>
       <span className={styles.summaryCopy}>
         <span className={styles.summaryLabel}>{label}</span>
         <span className={styles.summaryValue}>{value}</span>
       </span>
-      <ChevronRight className={styles.summaryChevron} aria-hidden />
-    </article>
+    </button>
   );
 }
 
@@ -50,6 +55,7 @@ export default function EmployerDocumentsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<DocumentFilter>('all');
 
   const load = () => {
     setLoading(true);
@@ -65,7 +71,8 @@ export default function EmployerDocumentsPage() {
   const signingActions = useEmployerSigning(employerId, load);
   const { shell } = useEmployerPortalChrome(employerId, data?.employer.name);
 
-  const items = data?.items ?? [];
+  // This document queue starts at signing readiness; unfinished reviews stay in Progress reviews.
+  const items = (data?.items ?? []).filter(item => item.signable || item.signed);
   const counts = { 'to-sign': 0, waiting: 0, signed: 0, all: items.length };
   for (const item of items) counts[stateOf(item)] += 1;
 
@@ -120,18 +127,23 @@ export default function EmployerDocumentsPage() {
           {data && !error && (
             <>
               <section className={styles.summaryGrid} aria-label="Document summary">
-                <SummaryCard label="Awaiting your signature" value={counts['to-sign']} tone="amber" Icon={Clock3} />
-                <SummaryCard label="Waiting on others" value={counts.waiting} tone="violet" Icon={Clock3} />
-                <SummaryCard label="Signed" value={counts.signed} tone="green" Icon={CheckCircle2} />
-                <SummaryCard label="All documents" value={counts.all} tone="purple" Icon={FileText} />
+                <SummaryCard label="All documents" value={counts.all} tone="purple" Icon={FileText}
+                  active={filter === 'all'} onSelect={() => setFilter('all')} />
+                <SummaryCard label="Awaiting your signature" value={counts['to-sign']} tone="amber" Icon={Clock3}
+                  active={filter === 'to-sign'} onSelect={() => setFilter('to-sign')} />
+                <SummaryCard label="Signed" value={counts.signed} tone="green" Icon={CheckCircle2}
+                  active={filter === 'signed'} onSelect={() => setFilter('signed')} />
               </section>
 
-              <EmployerDocumentsTable items={items} employerId={employerId} search={search}
+              <EmployerDocumentsTable items={items} employerId={employerId} search={search} filter={filter}
                 opening={signingActions.opening} onSign={signingActions.startSigning} onShow={signingActions.openDocument} />
             </>
           )}
         </div>
       </PageContainer>
+
+      {signingActions.preview && <EmployerDocumentPreview employerId={employerId}
+        target={signingActions.preview} onClose={signingActions.closePreview} />}
 
       {signingActions.signing && data && (
         <SignModal

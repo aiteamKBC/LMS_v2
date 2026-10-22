@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CoachCalendarEvent } from './calendarEvents';
 import ImportedReviewBookingDialog from './ImportedReviewBookingDialog';
-import { importedBookingDefinition, installDialogTestSupport, scheduledImportedBooking } from './__tests__/importedBookingFixtures';
+import { importedBookingDefinition, installDialogTestSupport, personalSupportBooking, scheduledImportedBooking } from './__tests__/importedBookingFixtures';
 
 const { fetchForm, initializeForm, book, reschedule } = vi.hoisted(() => ({
   fetchForm: vi.fn(), initializeForm: vi.fn(), book: vi.fn(), reschedule: vi.fn(),
@@ -31,6 +31,35 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('Aptem booking from a coach list', () => {
+  it.each([false, true])('books a PSP summary independently of its read-only form (scheduled=%s)', async scheduled => {
+    const current = personalSupportBooking(scheduled);
+    fetchForm.mockResolvedValue(current);
+    book.mockResolvedValue(personalSupportBooking(true));
+    reschedule.mockResolvedValue(personalSupportBooking(true));
+    mount({ event: { ...event, importedReviewType: 'Personal Support Plan', hasReviewForm: false } });
+    expect(await screen.findByRole('heading', { name: `${scheduled ? 'Reschedule' : 'Schedule'} Personal Support Plan` })).toBeVisible();
+    fireEvent.click(await screen.findByRole('button', { name: scheduled ? 'Save new time' : 'Confirm booking' }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({
+      eventKey: event.eventKey, calendarEventKey: 'imported-review:31', status: 'scheduled',
+    }), scheduled ? 'Review rescheduled.' : 'Review scheduled.'));
+    expect(initializeForm).not.toHaveBeenCalled();
+    expect(scheduled ? reschedule : book).toHaveBeenCalledOnce();
+  });
+
+  it.each(['completed', 'in-progress', 'awaiting-signature', 'cancelled'])('does not bypass PSP lifecycle permissions for %s', async status => {
+    const current = personalSupportBooking();
+    fetchForm.mockResolvedValue({ ...current, booking: { ...current.booking!, status, canBook: false } });
+    mount({ event: { ...event, importedReviewType: 'Personal Support Plan' } });
+    await screen.findByText(/Booking is not available/);
+    expect(screen.queryByRole('button', { name: 'Confirm booking' })).not.toBeInTheDocument();
+  });
+
+  it('keeps PSP booking disabled in coach preview', async () => {
+    fetchForm.mockResolvedValue(personalSupportBooking());
+    mount({ viewingAsCoach: true });
+    await screen.findByText(/coach preview is read-only/);
+    expect(screen.queryByRole('button', { name: 'Confirm booking' })).not.toBeInTheDocument();
+  });
   it('initializes an eligible summary then books its own review without changing its row identity', async () => {
     fetchForm.mockResolvedValueOnce(importedBookingDefinition({ migratedForm: false, formAvailable: false, canInitialize: true }));
     mount();

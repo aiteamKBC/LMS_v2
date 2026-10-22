@@ -105,5 +105,20 @@ def summary_binding_response(overlay):
                       replacementAvailable=bool(text and text != result.get("answer") and result["state"] != "NEVER_POPULATED"))
     elif result.get("status") == "summary-too-long":
         result["suggestionText"] = meeting_summary_plain_text(state.get("aiSummaryOriginal") or {})
-    result["generationStatus"] = (state.get("summaryGeneration") or {}).get("status")
+    generation = state.get("summaryGeneration") or {}
+    latest_status = generation_status(state)
+    result["generationStatus"] = latest_status if latest_status in {"ready", "failed", "unavailable"} else None
+    result["generationAttemptedAt"] = generation.get("attemptedAt")
+    if result["generationStatus"] == "failed" and generation.get("error"):
+        result["generationError"] = generation["error"]
     return result
+
+
+def generation_status(state):
+    """Latest attempt drives presentation; keep older summary/provenance intact."""
+    status = (state.get("summaryGeneration") or {}).get("status")
+    if status in {"ready", "failed", "unavailable"}:
+        return status
+    if isinstance((state.get("latestSummarySuggestion") or {}).get("summary"), dict):
+        return "ready"
+    return state.get("summaryStatus", "not-generated")

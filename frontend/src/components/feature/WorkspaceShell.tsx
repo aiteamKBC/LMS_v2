@@ -137,10 +137,11 @@ function buildBreadcrumbs(pathname: string, search: string, navItems: SidebarNav
     // Find the deepest matching item, tracking its parent group (if any).
     // Items with an empty href (group headers) are never matched directly —
     // pathname.startsWith('' + '/') would otherwise match every route.
-    let matched: SidebarNavItem | undefined;
+    let matched = navItems.find(item => item.active === true);
     let matchedParent: SidebarNavItem | undefined;
     const current = `${pathname}${search}`;
     for (const item of navItems) {
+      if (matched) break;
       if (item.href && item.href.includes('?') && item.href === current) {
         matched = item;
         break;
@@ -276,7 +277,9 @@ export function WorkspaceShell({
         ? homeDashboardPath : learnerHref(page, routeLearner.kind, routeLearner.id), children } : children ? { ...item, children } : item;
     })
     : navItems;
-  const workspaceNavItems = auth.account?.role === 'admin' && !navItems.some(item => item.id === 'personal-courses')
+  // A builder preview leaves only by returning to the builder kept under it.
+  const previewing = personal?.mode === 'preview' || personal?.mode === 'all';
+  const workspaceNavItems = auth.account?.role === 'admin' && !previewing && !navItems.some(item => item.id === 'personal-courses')
     ? [...stableNavItems, { id: 'personal-courses', label: 'My Courses', icon: 'ri-graduation-cap-line', href: '/my-courses' }]
     : stableNavItems;
   const navigate = useNavigate();

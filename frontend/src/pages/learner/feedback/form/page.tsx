@@ -5,6 +5,7 @@ import { feedbackApi, type FeedbackAnswerValue, type FeedbackForm } from '@/api/
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { FeedbackFormExperience } from '@/features/feedback/FormRenderer';
 import { missingRequiredQuestionIds } from '@/features/feedback/formPresentation';
+import { lecturePresentationSections } from '@/features/feedback/lecturePresentation';
 import { useAuth } from '@/hooks/useAuth';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { roleNavMap } from '@/mocks/navigation';
@@ -57,7 +58,7 @@ export default function LearnerFeedbackFormPage() {
     if (autoSaveTimer.current !== null) window.clearTimeout(autoSaveTimer.current);
   }, []);
 
-  const sections = useMemo(() => form?.sections || [], [form]);
+  const sections = useMemo(() => form ? lecturePresentationSections(form.formType, form.sections || []) : [], [form]);
   function nextStep() {
     const missing = missingRequiredQuestionIds(sections[step], answers);
     setInvalidQuestionIds(missing);
@@ -130,7 +131,7 @@ export default function LearnerFeedbackFormPage() {
     if (learnerKind) previewParams.set('kind', learnerKind);
   }
   if (eventRecipientId) previewParams.set('eventRecipientId', String(eventRecipientId));
-  if (requestedCategory && ['lecture', 'mcm', 'progress-review', 'event', 'general'].includes(requestedCategory)) previewParams.set('category', requestedCategory);
+  if (requestedCategory && ['lecture', 'mid-module', 'end-module', 'mcm', 'progress-review', 'event', 'general'].includes(requestedCategory)) previewParams.set('category', requestedCategory);
   const previewQuery = previewParams.toString() ? `?${previewParams}` : '';
   return <WorkspaceShell role="learner" roleLabel={nav.label} navItems={nav.items} workspaceLabel={nav.workspaceLabel} pageTitle={form?.title || 'Feedback'} pageSubtitle="Complete your assigned feedback form" userName={auth.account?.displayName || 'Learner'} userRole="Learner">
     <div className="p-6">

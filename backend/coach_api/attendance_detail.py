@@ -6,10 +6,12 @@ from django.db import connections
 from django.utils import timezone
 
 from learner_api import attendance_lectures as canonical
+from learner_api import recorded_attendance
 from learner_api.attendance import kbc_attendance_rows
-from learner_api.attendance_rules import attendance_outcome
+from learner_api.attendance_rules import INVALID, attendance_outcome
 from learner_api.teams_attendance import fetch_verified_teams_attendance_rows
 from .attendance_projection import pagination_params
+from .bulk_register import learner_rows as saved_attendance_rows
 from .models import CoachAbsenceReport, CoachManualAttendance
 
 
@@ -17,7 +19,7 @@ def historical_schedule(source, now, legacy_rows=()):
     if not source.email:
         return []
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute(canonical.ATTENDANCE_SUBJECTS_SQL, [source.id])
+        cursor.execute(canonical.ATTENDANCE_SUBJECTS_SQL, [canonical.effective_assigned_module_ids(source)])
         modules = [row[0] for row in cursor.fetchall()]
         if not modules:
             return []
@@ -108,33 +110,59 @@ def occurrence_order(row):
     return start.timestamp(), identity
 
 
-def detail_records(source, learner_profile_id, params):
-    page, size = pagination_params(params)
+def counted_history(source, learner_profile_id):
+    """All visible history, before pagination or display/report enrichment."""
     now = timezone.now()
     # Counts require all historical canonical evidence (including corrections,
     # confirmations and recovery). Future schedules and full-history DTOs are
     # unnecessary. Only page rows get title/report enrichment and serialization.
     legacy_rows = kbc_attendance_rows(source)
+    saved = saved_attendance_rows(source, learner_profile_id=learner_profile_id, apply_adjustments=False)
     scheduled = historical_schedule(source, now, legacy_rows)
+    scheduled_ids = {str(row['session_id']) for row in scheduled}
+    # A saved historical result survives a later change to the current plan.
+    # The same scoped reader as Bulk excludes cancelled/deleted occurrences.
+    scheduled.extend(dict(row) for row in saved if str(row['session_id']) not in scheduled_ids
+                     and row.get('scheduled_end') and row['scheduled_end'] <= now)
+    evidence = historical_evidence(source, scheduled, legacy_rows)
+    # The canonical merger gives saved learner outcomes precedence over raw
+    # Teams evidence, then applies recovery, confirmations and manual corrections.
+    evidence.extend({**row, 'source': 'live-register', 'learner_email': source.email} for row in saved)
     rows = canonical.lecture_register(source, learner_profile_id=learner_profile_id,
-        scheduled=scheduled, records=historical_evidence(source, scheduled, legacy_rows))
+        scheduled=scheduled, records=evidence)
     manual = CoachManualAttendance.objects.filter(learner_id=learner_profile_id).only(
         'id', 'status', 'session_date', 'module_name', 'session_title')
     rows.extend({'source': 'coach-manual', 'session_id': str(row.id),
         'session_date': row.session_date, 'module_title': row.module_name,
         'session_title': row.session_title, 'attendance_status': row.status,
         '_manual': True} for row in manual)
-    counted = []
-    present = 0
+    history = []
+    present = counted_total = awaiting_total = 0
     for row in rows:
         status, eligible = attendance_outcome(row, now)
-        if eligible:
-            counted.append((row, status))
+        awaiting_recording = status == 'awaiting_recording' and row.get('session_date') and not any(
+            str(row.get(key) or '').strip().lower() in INVALID
+            for key in ('status', 'session_status', 'occurrence_status', 'attendance_status'))
+        # Coach View/PDF counts unfinished recordings as absences. Keep the
+        # shared learner rule and persisted attendance evidence unchanged.
+        if eligible or awaiting_recording:
+            counted_total += 1
             present += status == 'present'
-    counted.sort(key=lambda item: occurrence_order(item[0]), reverse=True)
-    total = len(counted)
+            awaiting_total += bool(awaiting_recording)
+            history.append((row, status))
+    history.sort(key=lambda item: occurrence_order(item[0]), reverse=True)
+    return history, {
+        'present': present, 'absent': counted_total - present, 'sessions': counted_total,
+        'attendanceRate': round(100 * present / counted_total) if counted_total else None,
+    }, awaiting_total
+
+
+def detail_records(source, learner_profile_id, params):
+    page, size = pagination_params(params)
+    history, summary, awaiting_total = counted_history(source, learner_profile_id)
+    total = len(history)
     start = (page - 1) * size
-    selected = counted[start:start + size]
+    selected = history[start:start + size]
     components = page_components([row for row, _ in selected])
     report_ids = [str(canonical.report_id(row)) for row, _ in selected if not row.get('_manual')]
     reports = {str(report.attendance_id): report for report in
@@ -156,7 +184,8 @@ def detail_records(source, learner_profile_id, params):
         if row.get('legacy_ambiguity'):
             record['legacyAmbiguity'] = row['legacy_ambiguity']
         records.append(record)
-    return {'summary': {'present': present, 'absent': total - present, 'sessions': total,
-                        'attendanceRate': round(100 * present / total) if total else None},
+    return {'attendanceMode': recorded_attendance.saved_delivery_mode(source.id),
+            'awaitingRecording': awaiting_total,
+            'summary': summary,
             'records': records,
             'pagination': {'page': page, 'pageSize': size, 'total': total, 'hasMore': start + size < total}}

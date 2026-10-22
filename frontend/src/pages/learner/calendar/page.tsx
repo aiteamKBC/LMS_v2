@@ -22,6 +22,7 @@ import {
   fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers,
   fetchCalendarConnections, startCalendarOAuth, connectCredentialCalendar,
   disconnectPersonalCalendar, fetchPersonalCalendarAvailability,
+  ukOffsetForDate,
   type LearnerCalendarEvent, type BookableSessionType, type PersonalCalendarConnection,
   type PersonalCalendarProvider, type CalendarBusySlot, type BookingCalendarRules,
 } from '@/api/learnerCalendar';
@@ -36,10 +37,10 @@ import {
   type CalendarStatusKey,
   type MeetingTypeKey,
 } from '@/pages/coach/timetable/calendarColors';
-import { meetingBookingWarning } from '../reviews/meetingBooking';
+import { aptemBookingSnapshot, isAptemReview, meetingBookingWarning } from '../reviews/meetingBooking';
 import { useImportedMeetingBooking } from '../reviews/useImportedMeetingBooking';
 import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
-import { firstAvailableBookingDate, mcmBookingDateRestrictionMessage, parseBookingDay } from '../reviews/bookingDates';
+import { bookingInstant, firstAvailableBookingDate, mcmBookingDateRestrictionMessage, parseBookingDay } from '../reviews/bookingDates';
 import CoachSessionTypePicker, { COACH_APPROVAL_SESSION_TYPES } from './CoachSessionTypePicker';
 
 /** The header's secondary-actions menu — everything that isn't booking a
@@ -221,7 +222,8 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
     reviewTypeIsSystem: ev.reviewTypeIsSystem,
     importedReview: ev.importedReview,
     durationMinutes: ev.durationMinutes || 60,
-    bookingStatus: ev.status,
+    bookingStatus: isAptemReview(ev) && ev.calendarEventKey && ev.scheduledDate && ev.scheduledTime
+      && ev.bookingStatus === 'scheduled' && ['not-scheduled', 'scheduled'].includes(ev.status) ? 'scheduled' : ev.status,
     meetingOutcome: ev.meetingOutcome ?? null,
     watchedRecording: Boolean(ev.watchedRecording),
     bookingSessionType: BOOKABLE_COACH_SESSION_TYPES.has(ev.source as BookableSessionType)
@@ -230,6 +232,7 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
     timeToBeConfirmed: !scheduledTime,
     syncWarning: meetingBookingWarning(ev),
     bookingReviewId: ev.reviewId,
+    bookingSnapshot: aptemBookingSnapshot(ev),
     assignmentMonth: ev.assignmentMonth,
     changeClosed: Boolean(ev.changeClosed),
   };
@@ -627,6 +630,9 @@ function LearnerCalendarBody() {
   const [busySlots, setBusySlots] = useState<CalendarBusySlot[]>([]);
   const [visibleBusySlots, setVisibleBusySlots] = useState<CalendarBusySlot[]>([]);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [availabilityUnconfirmed, setAvailabilityUnconfirmed] = useState(false);
+  const aptemBooking = Boolean(rescheduleEvent?.bookingReviewId || rescheduleEvent?.importedReview
+    || bookingSourceEvent?.bookingReviewId || bookingSourceEvent?.importedReview);
   const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const handledFocusEventRef = useRef<string | null>(null);
 
@@ -865,7 +871,7 @@ function LearnerCalendarBody() {
     setBookDate(event.isoDate);
     setBookTime(event.time.split('\u2013')[0].trim());
     setBookDuration(String(event.durationMinutes || calculatedDuration || 60));
-    setBookNotes('');
+    setBookNotes(event.bookingSnapshot?.notes || '');
     setOtherSessionType('');
     setBookError(null);
     setShowDayDrawer(false);
@@ -966,18 +972,26 @@ function LearnerCalendarBody() {
     const day = parseBookingDay(bookDate);
     if (!showBookModal || calendarConnections.length === 0 || !day) {
       setBusySlots([]);
+      setAvailabilityUnconfirmed(false);
       return;
     }
-    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0).toISOString();
-    const end = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59).toISOString();
+    const nextDay = new Date(Date.parse(`${bookDate}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    const start = aptemBooking ? new Date(bookingInstant(bookDate, '00:00')).toISOString()
+      : new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0).toISOString();
+    const end = aptemBooking ? new Date(bookingInstant(nextDay, '00:00')).toISOString()
+      : new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59).toISOString();
     let cancelled = false;
     setAvailabilityLoading(true);
+    setAvailabilityUnconfirmed(false);
     fetchPersonalCalendarAvailability(myLearner.kind, myLearner.id, start, end)
-      .then((result) => { if (!cancelled) setBusySlots(Array.isArray(result?.busy) ? result.busy : []); })
-      .catch(() => { if (!cancelled) setBusySlots([]); })
+      .then((result) => { if (!cancelled) {
+        setBusySlots(Array.isArray(result?.busy) ? result.busy : []);
+        setAvailabilityUnconfirmed(!Array.isArray(result?.busy) || Boolean(result.errors?.length));
+      } })
+      .catch(() => { if (!cancelled) { setBusySlots([]); setAvailabilityUnconfirmed(true); } })
       .finally(() => { if (!cancelled) setAvailabilityLoading(false); });
     return () => { cancelled = true; };
-  }, [showBookModal, calendarConnections.length, bookDate, myLearner.kind, myLearner.id]);
+  }, [showBookModal, calendarConnections.length, bookDate, myLearner.kind, myLearner.id, aptemBooking]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1007,10 +1021,12 @@ function LearnerCalendarBody() {
 
   const selectedSlotConflicts = useMemo(() => {
     if (!bookDate || !bookTime) return false;
-    const start = new Date(`${bookDate}T${bookTime}:00`).getTime();
+    const start = aptemBooking ? bookingInstant(bookDate, bookTime) : new Date(`${bookDate}T${bookTime}:00`).getTime();
     const end = start + parseInt(bookDuration || '60') * 60_000;
     const rescheduledStart = rescheduleEvent?.isoDate && !rescheduleEvent.timeToBeConfirmed
-      ? new Date(`${rescheduleEvent.isoDate}T${rescheduleEvent.time.split('\u2013')[0].trim()}:00`).getTime()
+      ? aptemBooking
+        ? bookingInstant(rescheduleEvent.isoDate, rescheduleEvent.time.split('\u2013')[0].trim())
+        : new Date(`${rescheduleEvent.isoDate}T${rescheduleEvent.time.split('\u2013')[0].trim()}:00`).getTime()
       : null;
     const rescheduledEnd = rescheduledStart === null
       ? null
@@ -1021,7 +1037,7 @@ function LearnerCalendarBody() {
       if (slotStart === rescheduledStart && slotEnd === rescheduledEnd) return false;
       return start < slotEnd && end > slotStart;
     });
-  }, [bookDate, bookTime, bookDuration, busySlots, rescheduleEvent]);
+  }, [bookDate, bookTime, bookDuration, busySlots, rescheduleEvent, aptemBooking]);
 
   const selectedLmsConflict = useMemo(() => {
     if (!bookDate || !bookTime) return null;
@@ -1136,7 +1152,11 @@ function LearnerCalendarBody() {
             scheduledDate: bookDate,
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
-            timezoneOffsetMinutes: new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
+            timezoneOffsetMinutes: aptemBooking ? ukOffsetForDate(bookDate) : new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
+            ...(rescheduleEvent.bookingSnapshot ? {
+              expectedBooking: rescheduleEvent.bookingSnapshot,
+              notes: bookNotes.trim(),
+            } : {}),
           })
         : await bookLearnerCalendarSession(myLearner.kind, myLearner.id, {
             assignmentMonth: importedReviewBooking ? importedReviewDate.slice(0, 7) : undefined,
@@ -1149,7 +1169,7 @@ function LearnerCalendarBody() {
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
             notes: requestNotes || undefined,
-            timezoneOffsetMinutes: new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
+            timezoneOffsetMinutes: aptemBooking ? ukOffsetForDate(bookDate) : new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
           });
       // A read started before this save must not restore the old appointment.
       calendarWriteVersionRef.current += 1;
@@ -1186,6 +1206,27 @@ function LearnerCalendarBody() {
       setTimeout(() => setAddToCalendarToast(null), 4000);
     } catch (err) {
       setBookError(err instanceof Error ? err.message : 'Booking failed.');
+    } finally {
+      setBookSubmitting(false);
+    }
+  };
+
+  const refreshAptemBooking = async () => {
+    if (!rescheduleEvent?.bookingReviewId || bookSubmitting) return;
+    setBookSubmitting(true);
+    try {
+      const result = await fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true });
+      const fresh = result.events.find(event => String(event.reviewId) === String(rescheduleEvent.bookingReviewId));
+      const mapped = fresh && mapCoachEvent(fresh);
+      if (!mapped?.bookingSnapshot || mapped.bookingStatus !== 'scheduled') {
+        throw new Error('This review can no longer be rescheduled. Close this window and refresh the page.');
+      }
+      // Refresh the original slot used for conflict detection without losing the draft.
+      setRescheduleEvent(mapped);
+      setMyEvents(previous => [...previous.filter(event => event.id !== rescheduleEvent.id && event.id !== mapped.id), mapped]);
+      setBookError(null);
+    } catch (error) {
+      setBookError(error instanceof Error ? error.message : 'Could not refresh this booking.');
     } finally {
       setBookSubmitting(false);
     }
@@ -1454,9 +1495,9 @@ function LearnerCalendarBody() {
                 </div>
               )}
               {calendarConnections.length > 0 ? (
-                <div className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 ${selectedSlotConflicts ? 'border-red-200 bg-red-50 text-red-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
-                  <AppIcon className={`${availabilityLoading ? 'ri-loader-4-line animate-spin' : selectedSlotConflicts ? 'ri-calendar-close-line' : 'ri-calendar-check-line'} mt-0.5`} />
-                  <div><p className="text-xs font-semibold">{availabilityLoading ? 'Checking your personal calendar…' : selectedSlotConflicts ? 'This time is busy' : 'This time is available'}</p><p className="mt-0.5 text-[10px] opacity-75">Checked against {calendarConnections.length} connected calendar{calendarConnections.length === 1 ? '' : 's'}.</p></div>
+                <div className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 ${selectedSlotConflicts ? 'border-red-200 bg-red-50 text-red-700' : aptemBooking && availabilityUnconfirmed ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+                  <AppIcon className={`${availabilityLoading ? 'ri-loader-4-line animate-spin' : selectedSlotConflicts ? 'ri-calendar-close-line' : aptemBooking && availabilityUnconfirmed ? 'ri-error-warning-line' : 'ri-calendar-check-line'} mt-0.5`} />
+                  <div><p className="text-xs font-semibold">{availabilityLoading ? 'Checking your personal calendar…' : selectedSlotConflicts ? 'This time is busy' : aptemBooking && availabilityUnconfirmed ? 'Personal calendar availability could not be confirmed.' : 'This time is available'}</p><p className="mt-0.5 text-[10px] opacity-75">{aptemBooking && availabilityUnconfirmed ? 'The server will check again before booking.' : `Checked against ${calendarConnections.length} connected calendar${calendarConnections.length === 1 ? '' : 's'}.`}</p></div>
                 </div>
               ) : (
                 <button type="button" onClick={() => { setShowBookModal(false); setShowCalendarConnect(true); }} className="flex w-full items-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 py-2.5 text-left text-xs font-semibold text-primary-700"><AppIcon className="ri-calendar-2-line" />Connect your personal calendar to prevent booking conflicts</button>
@@ -1470,7 +1511,7 @@ function LearnerCalendarBody() {
                   <option value="60">1 hour</option>
                 </select>
               </div>
-              {!rescheduleEvent && <div>
+              {(!rescheduleEvent || rescheduleEvent.bookingSnapshot) && <div>
                 <label className="text-xs font-semibold text-foreground-500 mb-1.5 block">What would you like to cover? (optional)</label>
                 <textarea value={bookNotes} onChange={(e) => setBookNotes(e.target.value)} placeholder="Add anything your coach should know before the session..." maxLength={500} rows={3} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all resize-none" />
                 <span className="text-[10px] text-foreground-400 mt-0.5 block">{bookNotes.length}/500</span>
@@ -1479,6 +1520,11 @@ function LearnerCalendarBody() {
                 <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 flex items-center gap-2">
                   <AppIcon className="ri-error-warning-line text-red-500"></AppIcon>
                   <p className="text-xs text-red-700">{bookError}</p>
+                  {rescheduleEvent?.bookingReviewId && /refresh/i.test(bookError) && <button type="button"
+                    disabled={bookSubmitting} onClick={refreshAptemBooking}
+                    className="shrink-0 rounded-lg border border-red-200 px-2 py-1 text-xs font-semibold text-red-700">
+                    Refresh booking
+                  </button>}
                 </div>
               )}
             </div>

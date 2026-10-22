@@ -3,13 +3,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone as datetime_timezone
+from secrets import SystemRandom
 
 from django.db import connection, transaction
 from django.utils import timezone
 
 from learner_api.models import EnrolmentUser
 
-from .models import FeedbackDelivery, FeedbackDeliveryRecipient, FeedbackForm
+from .models import FeedbackDelivery, FeedbackDeliveryQuestion, FeedbackDeliveryRecipient, FeedbackForm, FeedbackResponse
+
+
+_random = SystemRandom()
 
 
 @dataclass(frozen=True)
@@ -61,6 +65,70 @@ def _form_for_occurrence(occurrence_key, module_id):
     )
 
 
+def _pin_delivery_questions(delivery, form):
+    """Draw each section quota once; null quotas retain every bank question."""
+    selected = []
+    sections = list(form.sections.prefetch_related('questions').all())
+    previous_texts = set()
+    if any(section.questions_per_delivery is not None for section in sections):
+        previous = FeedbackDelivery.objects.filter(
+            module_catalogue_id=delivery.module_catalogue_id,
+            form__template_key=form.template_key,
+            question_set_pinned=True,
+            available_at__lte=delivery.available_at,
+        ).exclude(pk=delivery.pk).order_by('-available_at', '-id').first()
+        if previous:
+            previous_texts = {
+                item.question.question_text.strip().casefold()
+                for item in previous.selected_questions.select_related('question').all()
+            }
+    for section in sections:
+        questions = list(section.questions.all())
+        count = section.questions_per_delivery
+        if count is not None:
+            if count < 1 or count > len(questions):
+                raise ValueError(f'Question bank for "{section.title}" has fewer questions than its delivery count.')
+            fresh = [question for question in questions
+                     if question.question_text.strip().casefold() not in previous_texts]
+            chosen = _random.sample(fresh, min(count, len(fresh)))
+            if len(chosen) < count:
+                remaining = [question for question in questions if question not in chosen]
+                chosen += _random.sample(remaining, count - len(chosen))
+            questions = chosen
+        selected.extend(sorted(questions, key=lambda question: (question.sort_order, question.id)))
+    if not selected:
+        raise ValueError('Post-lecture feedback needs at least one question.')
+    FeedbackDeliveryQuestion.objects.bulk_create([
+        FeedbackDeliveryQuestion(delivery=delivery, question=question, sort_order=index)
+        for index, question in enumerate(selected)
+    ])
+    delivery.question_set_pinned = True
+    delivery.save(update_fields=['question_set_pinned', 'updated_at'])
+
+
+def ensure_delivery_questions(delivery):
+    """Complete an unstarted bank delivery left by a pre-bank worker.
+
+    Lock the occurrence so simultaneous opens cannot draw different sets.
+    A response, including an autosaved draft, freezes the historical full
+    question set. Legacy forms without section quotas remain unchanged.
+    """
+    if delivery.question_set_pinned:
+        return False
+    with transaction.atomic():
+        stored = FeedbackDelivery.objects.select_for_update().select_related('form').get(pk=delivery.pk)
+        if stored.question_set_pinned:
+            delivery.question_set_pinned = True
+            return False
+        if not stored.form.sections.filter(questions_per_delivery__isnull=False).exists():
+            return False
+        if FeedbackResponse.objects.filter(delivery_id=stored.id).exists():
+            return False
+        _pin_delivery_questions(stored, stored.form)
+        delivery.question_set_pinned = True
+        return True
+
+
 def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=False):
     """Create delivery recipients for published templates matching a lecture.
 
@@ -92,7 +160,7 @@ def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=Fa
     revoked_count = 0
     with transaction.atomic():
         for form in forms:
-            delivery, _ = FeedbackDelivery.objects.update_or_create(
+            delivery, created = FeedbackDelivery.objects.update_or_create(
                 occurrence_key=occurrence_key,
                 defaults={
                     'form': form,
@@ -113,6 +181,10 @@ def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=Fa
                     'status': 'open',
                 },
             )
+            if created:
+                _pin_delivery_questions(delivery, form)
+            else:
+                ensure_delivery_questions(delivery)
             deliveries.append(delivery.id)
             revoked_count += FeedbackDeliveryRecipient.objects.filter(
                 delivery=delivery, revoked_at__isnull=True,

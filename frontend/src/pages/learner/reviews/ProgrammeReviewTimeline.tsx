@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CalendarDays, Check, ChevronLeft, ChevronRight, Circle, Clock3, X } from 'lucide-react';
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Circle, Clock3, Signature, X } from 'lucide-react';
 import type { TimelineStatus } from './reviewTimelineStatus';
 import styles from './programmeReviewTimeline.module.css';
 
@@ -12,10 +12,10 @@ export interface TimelineReview {
 }
 
 const statusLabels: Record<TimelineStatus, string> = {
-  planned: 'Planned', scheduled: 'Scheduled', 'in-progress': 'In Progress', attended: 'Attended', missed: 'Missed',
+  planned: 'Planned', scheduled: 'Scheduled', 'in-progress': 'In Progress', 'awaiting-signature': 'Awaiting signatures', attended: 'Attended', missed: 'Missed',
 };
 
-const icons = { planned: Circle, scheduled: CalendarDays, 'in-progress': Clock3, attended: Check, missed: X };
+const icons = { planned: Circle, scheduled: CalendarDays, 'in-progress': Clock3, 'awaiting-signature': Signature, attended: Check, missed: X };
 
 function dateLabel(value: string | null) {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return 'Date to confirm';

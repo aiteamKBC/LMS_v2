@@ -12,6 +12,8 @@ from coach_api.migrated_completion_views import (
     migrated_review_party_csrf, migrated_review_party_detail, migrated_review_party_pdf, migrated_review_party_sign,
     migrated_review_party_answers,
 )
+from coach_api.migrated_reopening_views import party_revision_pdf
+from coach_api.personal_support_access import prepare_learner_personal_support
 from curriculum_api import recording_views
 from . import monthly_logs
 from .dashboard_metrics import learner_metrics
@@ -55,7 +57,9 @@ urlpatterns = [
     path("mobile/", include("learner_api.mobile_urls")),
     path('migrated-reviews/csrf', migrated_review_party_csrf, name='migrated-review-party-csrf'),
     path('migrated-reviews/<str:review_id>/party', migrated_review_party_detail, name='migrated-review-party-detail'),
+    path('migrated-reviews/<str:review_id>/prepare-psp', prepare_learner_personal_support, name='learner-prepare-personal-support'),
     path('migrated-reviews/<str:review_id>/party-pdf', migrated_review_party_pdf, name='migrated-review-party-pdf'),
+    path('migrated-reviews/<str:review_id>/revisions/<int:number>/pdf', party_revision_pdf, name='migrated-review-party-revision-pdf'),
     path('migrated-reviews/<str:review_id>/party-sign', migrated_review_party_sign, name='migrated-review-party-sign'),
     path('migrated-reviews/<str:review_id>/party-answers', migrated_review_party_answers, name='migrated-review-party-answers'),
     path("reflection/extra-activities/", extra_activities.list_extra_activities, name="learner-extra-activities"),
@@ -211,11 +215,17 @@ urlpatterns = [
         employer_portal.employer_portal_legacy_assignment_file,
         name="employer-portal-legacy-assignment-file",
     ),
+    path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/documents/<str:document_kind>/<str:document_id>/",
+         employer_portal.employer_document_preview, name="employer-document-preview"),
+    path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/events/<path:event_key>/review/pdf/",
+         employer_portal.employer_review_instance, {"as_pdf": True}, name="employer-review-instance-pdf"),
     path(
         "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/events/<path:event_key>/review/",
         employer_portal.employer_review_instance,
         name="employer-review-instance",
     ),
+    path("employer-portal/<int:employer_id>/dashboard-metrics/",
+         employer_portal.employer_dashboard_metrics, name="employer-dashboard-metrics"),
     path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/progress-reviews/",
          employer_portal.employer_portal_progress_reviews, name="employer-progress-reviews"),
     path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/progress-reviews/<path:event_key>/pdf/",
@@ -290,6 +300,7 @@ urlpatterns = [
     path("curriculum/legacy-otjh/", curriculum.legacy_otjh, name="curriculum-legacy-otjh"),
     # Signed start time shared by quizzes and learning components.
     path("time-tracking/start/", time_tracking.start_time_tracking, name="time-tracking-start"),
+    path("time-tracking/checkpoint/", time_tracking.checkpoint_time_tracking, name="time-tracking-checkpoint"),
     path("time-tracking/observations/", reward_tracking.observations, name="reward-time-observations"),
     path("time-tracking/clock/", reward_tracking.clock, name="reward-time-clock"),
     path("working-hours/holidays/", working_hours_holidays.working_hours_holidays, name="working-hours-holidays"),

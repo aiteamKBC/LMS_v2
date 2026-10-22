@@ -1,17 +1,21 @@
 import copy
 import json
+from io import StringIO
 from inspect import unwrap
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.db import IntegrityError, connection, transaction
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import RequestFactory, TestCase
 from django.test.utils import CaptureQueriesContext
 
 from . import migrated_template_views as api, views
 from .migrated_reviews import review_family
 from .migrated_templates import (
-    resolve_template, snapshot_assignment_valid, snapshot_for, validate_managed_definition,
+    historical_candidate, resolve_template, snapshot_assignment_valid, snapshot_for,
+    template_family, validate_managed_definition,
 )
 from .models import ImportedReviewInstance, MigratedReviewTemplate
 
@@ -23,6 +27,57 @@ DEFINITION = {"sections": [{"key": "review", "title": "Review", "order": 0, "fie
 
 
 class MigratedTemplateManagementTests(TestCase):
+    def test_signature_settings_round_trip_and_copy_without_changing_other_templates(self):
+        rules = {"advisor": False, "participant": True, "employer": False}
+        for family in ("MCM", "PR", "PR_SKILLS_RADAR"):
+            with self.subTest(family=family):
+                template = self.template(family=family)
+                other = self.template("PROGRAMME", family=family, key="id:other")
+                definition = {**copy.deepcopy(DEFINITION), "signatures": rules}
+                response = self.request(api.detail, "patch", {
+                    "updated_at": template.updated_at.isoformat(), "definition": definition,
+                }, template.pk)
+                self.assertEqual(response.status_code, 200, response.content)
+                template.refresh_from_db()
+                renamed = self.request(api.detail, "patch", {
+                    "updated_at": template.updated_at.isoformat(), "name": "Renamed",
+                }, template.pk)
+                self.assertEqual(json.loads(renamed.content)["definition"]["signatures"], rules)
+                copied = self.request(api.collection, "post", {"scope": "PROGRAMME", "review_family": family,
+                    "programme_key": "id:copy", "name": "Copy"})
+                self.assertEqual(copied.status_code, 201, copied.content)
+                self.assertEqual(json.loads(copied.content)["definition"]["signatures"], rules)
+                other.refresh_from_db()
+                self.assertNotIn("signatures", other.definition_json)
+
+    def test_signature_settings_reject_invalid_payloads_and_accept_psp_choices(self):
+        template = self.template()
+        rules = {"advisor": True, "participant": False, "employer": False}
+        for invalid in (None, [], {}, {"advisor": True}, {**rules, "referrer": True},
+                        {**rules, "participant": "false"}, {**rules, "employer": 1}):
+            with self.subTest(invalid=invalid):
+                response = self.request(api.detail, "patch", {"updated_at": template.updated_at.isoformat(),
+                    "definition": {**DEFINITION, "signatures": invalid}}, template.pk)
+                self.assertEqual(response.status_code, 400)
+                template.refresh_from_db()
+                self.assertEqual(template.definition_json, DEFINITION)
+        psp = self.template(family="PSP")
+        response = self.request(api.detail, "patch", {"updated_at": psp.updated_at.isoformat(),
+            "definition": {**DEFINITION, "signatures": rules}}, psp.pk)
+        self.assertEqual(response.status_code, 200, response.content)
+        psp.refresh_from_db()
+        self.assertEqual(psp.definition_json["signatures"], rules)
+
+    def test_signature_only_edits_obey_access_csrf_and_version_checks(self):
+        template = self.template()
+        payload = {"updated_at": template.updated_at.isoformat(), "definition": {**DEFINITION,
+            "signatures": {"advisor": False, "participant": False, "employer": False}}}
+        self.assertEqual(self.request(api.detail, "patch", payload, template.pk, csrf=True).status_code, 403)
+        with patch("login.permissions._accesses_of", return_value=frozenset()):
+            self.assertEqual(self.request(api.detail, "patch", payload, template.pk).status_code, 403)
+        self.assertEqual(self.request(api.detail, "patch", payload, template.pk).status_code, 200)
+        self.assertEqual(self.request(api.detail, "patch", payload, template.pk).status_code, 409)
+
     def setUp(self):
         self.factory = RequestFactory()
         self.account = SimpleNamespace(role="staff", subject_type="staff", subject_id=1)
@@ -41,6 +96,136 @@ class MigratedTemplateManagementTests(TestCase):
         request._dont_enforce_csrf_checks = not csrf
         return view(request, pk) if pk else view(request)
 
+    def working_review(self, template, *, answers=None, status="in-progress", number=1):
+        return ImportedReviewInstance.objects.create(
+            event_key=f"imported-review:authoring-{number}", owner_email="coach@example.invalid",
+            learner_id=100 + number, source_review_id=9000 + number, migrated_template=template,
+            template_snapshot=snapshot_for(template), status=status,
+            answers=answers if answers is not None else {"progress": "Synthetic saved answer"},
+        )
+
+    def test_incompatible_edit_is_rejected_atomically_for_all_working_statuses_and_families(self):
+        cases = [(scope, family) for scope in ("GLOBAL", "PROGRAMME") for family in ("MCM", "PR", "PR_SKILLS_RADAR")]
+        for number, (scope, family) in enumerate(cases, 1):
+            template = self.template(scope, family=family, key="id:synthetic" if scope == "PROGRAMME" else "")
+            review = self.working_review(template, number=number)
+            for status in ("not-scheduled", "scheduled", "in-progress"):
+                with self.subTest(scope=scope, family=family, status=status):
+                    review.status = status
+                    review.save(update_fields=["status"])
+                    before = (copy.deepcopy(review.template_snapshot), copy.deepcopy(review.answers), review.updated_at)
+                    version = template.updated_at
+                    definition = copy.deepcopy(template.definition_json)
+                    definition["sections"][0]["fields"][0]["aptemType"] = 2
+                    response = self.request(api.detail, "patch", {
+                        "name": "Must not persist", "definition": definition, "is_active": False,
+                        "updated_at": version.isoformat(),
+                    }, template.pk)
+                    self.assertEqual(response.status_code, 409)
+                    body = json.loads(response.content)
+                    self.assertEqual(body["code"], "template_answer_conflict")
+                    self.assertEqual(body["fields"], ["progress"])
+                    self.assertEqual(body["affectedReviews"], 1)
+                    self.assertNotIn("Synthetic saved answer", response.content.decode())
+                    self.assertNotIn("coach@example.invalid", response.content.decode())
+                    template.refresh_from_db()
+                    review.refresh_from_db()
+                    self.assertEqual(template.definition_json, DEFINITION)
+                    self.assertEqual(template.name, "Approved form")
+                    self.assertTrue(template.is_active)
+                    self.assertEqual(template.updated_at, version)
+                    self.assertEqual((review.template_snapshot, review.answers, review.updated_at), before)
+
+    def test_used_list_option_is_protected_but_unused_options_can_change(self):
+        template = self.template()
+        question = template.definition_json["sections"][0]["fields"][0]
+        question.update(aptemType=5, options=["Used", "Unused"])
+        template.save()
+        review = self.working_review(template, answers={"progress": "Used"})
+        definition = copy.deepcopy(template.definition_json)
+        definition["sections"][0]["fields"][0]["options"] = ["Unused"]
+        response = self.request(api.detail, "patch", {
+            "definition": definition, "updated_at": template.updated_at.isoformat(),
+        }, template.pk)
+        self.assertEqual(response.status_code, 409)
+        definition["sections"][0]["fields"][0]["options"] = ["Used", "New option"]
+        response = self.request(api.detail, "patch", {
+            "definition": definition, "updated_at": template.updated_at.isoformat(),
+        }, template.pk)
+        self.assertEqual(response.status_code, 200)
+        template.refresh_from_db()
+        review.refresh_from_db()
+        self.assertEqual(template.definition_json["sections"][0]["fields"][0]["options"], ["Used", "New option"])
+        self.assertEqual(review.answers, {"progress": "Used"})
+        self.assertEqual(review.template_snapshot["sections"][0]["fields"][0]["options"], ["Used", "Unused"])
+
+    def test_compatible_text_edit_addition_and_removal_preserve_saved_reviews(self):
+        template = self.template()
+        review = self.working_review(template)
+        before = (copy.deepcopy(review.template_snapshot), copy.deepcopy(review.answers), review.updated_at)
+        definition = copy.deepcopy(template.definition_json)
+        definition["sections"][0]["title"] = "Renamed section"
+        definition["sections"][0]["fields"][0].update(aptemType=1, title="New label")
+        definition["sections"][0]["fields"].append({"key": "new", "title": "New question", "aptemType": 13})
+        for remove in (False, True):
+            with self.subTest(remove=remove):
+                if remove:
+                    definition["sections"][0]["fields"].pop(0)
+                response = self.request(api.detail, "patch", {
+                    "definition": definition, "updated_at": template.updated_at.isoformat(),
+                }, template.pk)
+                self.assertEqual(response.status_code, 200)
+                template.refresh_from_db()
+                review.refresh_from_db()
+                self.assertEqual((review.template_snapshot, review.answers, review.updated_at), before)
+
+    def test_unanswered_type_change_ignores_frozen_and_other_template_reviews(self):
+        template = self.template()
+        own = self.working_review(template, answers={})
+        frozen = [self.working_review(template, status=status, number=i)
+                  for i, status in enumerate(("awaiting-signature", "completed"), 2)]
+        other = self.working_review(self.template("PROGRAMME", key="id:other"), number=4)
+        snapshots = [copy.deepcopy(row.template_snapshot) for row in [own, *frozen, other]]
+        definition = copy.deepcopy(template.definition_json)
+        definition["sections"][0]["fields"][0]["aptemType"] = 2
+        response = self.request(api.detail, "patch", {
+            "definition": definition, "updated_at": template.updated_at.isoformat(),
+        }, template.pk)
+        self.assertEqual(response.status_code, 200)
+        for row, snapshot in zip([own, *frozen, other], snapshots):
+            row.refresh_from_db()
+            self.assertEqual(row.template_snapshot, snapshot)
+        self.assertEqual(other.answers, {"progress": "Synthetic saved answer"})
+
+    def test_hidden_conditional_answer_is_protected_and_conflicts_are_aggregated(self):
+        template = self.template()
+        question = template.definition_json["sections"][0]["fields"][0]
+        question.update(aptemType=6, ifTrue=[{"key": "followup", "title": "Follow-up", "aptemType": 13}])
+        template.save()
+        for number in (1, 2):
+            self.working_review(template, answers={"progress": "no", "followup": "Preserved answer"}, number=number)
+        definition = copy.deepcopy(template.definition_json)
+        definition["sections"][0]["fields"][0]["ifTrue"][0]["aptemType"] = 2
+        response = self.request(api.detail, "patch", {
+            "definition": definition, "updated_at": template.updated_at.isoformat(),
+        }, template.pk)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(json.loads(response.content)["fields"], ["followup"])
+        self.assertEqual(json.loads(response.content)["affectedReviews"], 2)
+
+    def test_reactivating_linked_template_checks_answers_before_enabling(self):
+        template = self.template(active=False)
+        self.working_review(template)
+        # Reproduce an incompatible draft created before the authoring guard.
+        template.definition_json["sections"][0]["fields"][0]["aptemType"] = 2
+        template.save()
+        response = self.request(api.detail, "patch", {
+            "is_active": True, "updated_at": template.updated_at.isoformat(),
+        }, template.pk)
+        self.assertEqual(response.status_code, 409)
+        template.refresh_from_db()
+        self.assertFalse(template.is_active)
+
     def test_all_audited_source_names_and_legacy_aliases(self):
         for source, expected in [("Monthly Coaching Meeting", "MCM"), ("Monthly Coaching", "MCM"),
                                  ("MCM", "MCM"), ("Progress Review", "PR"),
@@ -49,8 +234,91 @@ class MigratedTemplateManagementTests(TestCase):
                 self.assertEqual(review_family(value), expected)
         self.assertIsNone(review_family("Progress Review Master"))
 
+    def test_psp_library_and_runtime_recognize_the_same_family(self):
+        for source in ("Personal Support Plan", " PERSONAL SUPPORT PLAN "):
+            self.assertEqual(template_family(source), "PSP")
+            self.assertEqual(review_family(source), "PSP")
+        self.assertIsNone(template_family("Personal Support Plan draft"))
+
+    def test_psp_global_can_be_listed_edited_previewed_and_enabled(self):
+        template = self.template(family="PSP", active=False)
+        body = json.loads(self.request(api.collection).content)
+        self.assertIn("PSP", [row["review_family"] for row in body["resolutions"]])
+        preview = self.request(api.preview, data={"template_id": template.pk})
+        self.assertEqual(preview.status_code, 200)
+        self.assertTrue(json.loads(preview.content)["readOnly"])
+        response = self.request(api.detail, "patch", {
+            "name": "Personal Support Plan", "is_active": True,
+            "updated_at": template.updated_at.isoformat(),
+        }, template.pk)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(resolve_template(None, "PSP"), template)
+        self.assertEqual(ImportedReviewInstance.objects.count(), 0)
+        response = self.request(api.collection, "post", {
+            "scope": "PROGRAMME", "programme_key": "id:P1", "review_family": "PSP", "name": "Local PSP",
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(MigratedReviewTemplate.objects.count(), 1)
+
+    def test_psp_import_strips_answers_and_keeps_conditional_metadata(self):
+        from unittest.mock import MagicMock
+        cursor = MagicMock()
+        source = [{"section_name": "Learner information", "source_payload": {"fullName": "Private learner"}},
+                  {"section_name": "Additional Support", "source_payload": {
+                      "needs": True, "details": "Private health answer", "fields": [{
+                          "name": "needs", "title": "Support needed?", "type": 6, "isMandatory": True,
+                          "ifTrue": [{"name": "details", "title": "Details", "type": 13}],
+                      }],
+                  }}]
+        cursor.fetchone.side_effect = [(100, "200", "Personal Support Plan", "Completed", 300, source), ("P1", "Programme")]
+        with patch("coach_api.migrated_templates.connections") as connections:
+            connections["default"].cursor.return_value.__enter__.return_value = cursor
+            definition, metadata = historical_candidate(100, "PSP")
+        self.assertEqual(len(definition["sections"]), 1)
+        field = definition["sections"][0]["fields"][0]
+        self.assertEqual(field["ifTrue"][0]["title"], "Details")
+        self.assertTrue(field["mandatory"])
+        self.assertNotIn("Private", json.dumps((definition, metadata)))
+        self.assertEqual(metadata["sourceReviewId"], 100)
+
+    def test_psp_import_rejects_incomplete_and_wrong_family_sources(self):
+        from unittest.mock import MagicMock
+        for source_type, status in [("Personal Support Plan", "Scheduled"), ("Progress Review", "Completed")]:
+            cursor = MagicMock()
+            cursor.fetchone.return_value = (100, "200", source_type, status, 300, [])
+            with self.subTest(source_type=source_type, status=status), patch("coach_api.migrated_templates.connections") as connections:
+                connections["default"].cursor.return_value.__enter__.return_value = cursor
+                with self.assertRaisesRegex(ValueError, "Completed Aptem"):
+                    historical_candidate(100, "PSP")
+
+    def test_global_import_command_is_dry_run_by_default_and_idempotent_on_create(self):
+        path = "coach_api.management.commands.import_global_migrated_review_template.historical_candidate"
+        options = {"source_review_id": 100, "review_family": "PSP", "name": "Personal Support Plan", "stdout": StringIO()}
+        with patch(path, return_value=(DEFINITION, {"sourceReviewId": 100})):
+            call_command("import_global_migrated_review_template", **options)
+            self.assertFalse(MigratedReviewTemplate.objects.exists())
+            call_command("import_global_migrated_review_template", create=True, **options)
+            template = MigratedReviewTemplate.objects.get()
+            self.assertEqual((template.scope, template.programme_key, template.review_family), ("GLOBAL", "", "PSP"))
+            self.assertFalse(template.is_active)
+            call_command("import_global_migrated_review_template", create=True, **options)
+            self.assertEqual(MigratedReviewTemplate.objects.count(), 1)
+            template.name = "Edited by administrator"
+            template.definition_json = {"sections": [{**DEFINITION["sections"][0], "title": "Edited"}]}
+            template.save()
+            with self.assertRaisesRegex(CommandError, "already exists"):
+                call_command("import_global_migrated_review_template", create=True, **options)
+            template.refresh_from_db()
+            self.assertEqual(template.name, "Edited by administrator")
+
     def test_mcm_template_api_rejects_employer_question_permissions(self):
-        template = self.template(family="MCM")
+        self.check_no_employer_permissions("MCM")
+
+    def test_psp_template_api_rejects_employer_question_permissions(self):
+        self.check_no_employer_permissions("PSP")
+
+    def check_no_employer_permissions(self, family):
+        template = self.template(family=family)
         updated = copy.deepcopy(template.definition_json)
         updated["sections"][0]["fields"][0]["respondentRoles"] = ["employer"]
         response = self.request(api.detail, "patch", {"definition": updated, "updated_at": template.updated_at.isoformat()}, template.pk)

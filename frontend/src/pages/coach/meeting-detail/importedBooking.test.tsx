@@ -81,26 +81,56 @@ function mount(path = `/coach/meetings/${encodeURIComponent(EVENT_KEY)}`) {
     <Routes>
       <Route path="/coach/meetings/:eventKey" element={<CoachMeetingDetail />} />
       <Route path="/coach/progress-reviews/:eventKey" element={<CoachMeetingDetail />} />
+      <Route path="/coach/reviews/:eventKey" element={<CoachMeetingDetail />} />
     </Routes>
   </MemoryRouter>);
 }
 
 describe('imported Aptem booking on the meeting detail page', () => {
+  it.each([false, true])('books a PSP with no form from review details (scheduled=%s)', async scheduled => {
+    const initial = importedDefinition({ readOnly: true, migratedForm: false, summaryOnly: true,
+      formAvailable: false, canInitialize: false, localStatus: null });
+    initial.booking = { ...initial.booking!, formRequired: false, status: scheduled ? 'scheduled' : 'not-scheduled',
+      booked: scheduled, canBook: !scheduled, canReschedule: scheduled, eventKey: scheduled ? EVENT_KEY : null,
+      scheduledDate: scheduled ? '2026-10-29' : null, scheduledTime: scheduled ? '10:00' : null, durationMinutes: 60 };
+    fetchEvents.mockResolvedValue({ owner: { name: 'Coach' }, events: [importedEvent({
+      type: 'review', source: 'progress-review', importedReviewType: 'Personal Support Plan',
+      status: scheduled ? 'scheduled' : 'not-scheduled',
+    })] });
+    fetchForm.mockResolvedValue(initial);
+    (scheduled ? rescheduleForm : bookForm).mockResolvedValue({ ...initial, booking: {
+      ...initial.booking, booked: true, status: 'scheduled', canBook: false, canReschedule: true,
+      eventKey: EVENT_KEY, scheduledDate: '2026-10-29', scheduledTime: '11:00', syncState: 'synced',
+    } });
+    mount(`/coach/reviews/${encodeURIComponent(EVENT_KEY)}`);
+    fireEvent.click(await screen.findByRole('button', { name: scheduled ? 'Reschedule' : 'Book Review' }));
+    await waitFor(() => expect(scheduled ? rescheduleForm : bookForm).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByText('Time', { exact: true }).nextElementSibling).toHaveTextContent('11:00'));
+    expect(screen.getByRole('button', { name: 'Reschedule' })).toBeEnabled();
+    expect(initializeForm).not.toHaveBeenCalled();
+    expect(scheduleEvent).not.toHaveBeenCalled();
+  });
   it.each(['mcr', 'progress-review'] as const)('reschedules a booked %s through its imported identity', async source => {
     const initial = importedDefinition({ localStatus: 'scheduled', booking: {
       booked: true, conflict: false, canBook: false, canReschedule: true, eventKey: EVENT_KEY,
       scheduledDate: '2026-10-29', scheduledTime: '10:00', durationMinutes: 60,
       meetingLink: 'https://example.invalid/meeting', syncState: 'synced',
     } });
-    fetchEvents.mockResolvedValue({ events: [importedEvent({ source, status: 'scheduled', calendarEventKey: EVENT_KEY })], owner: { name: 'Coach Example' } });
+    fetchEvents.mockResolvedValue({ events: [importedEvent({
+      source, status: 'scheduled', calendarEventKey: EVENT_KEY,
+      scheduledDate: '2026-10-29', scheduledTime: '10:00',
+    })], owner: { name: 'Coach Example' } });
     fetchForm.mockResolvedValue(initial);
-    rescheduleForm.mockResolvedValue({ ...initial, booking: { ...initial.booking!, scheduledTime: '11:00' } });
+    rescheduleForm.mockResolvedValue({ ...initial, booking: { ...initial.booking!, scheduledDate: '2026-11-02', scheduledTime: '11:00' } });
     mount(source === 'mcr' ? undefined : `/coach/progress-reviews/${encodeURIComponent(EVENT_KEY)}`);
     const button = await screen.findByRole('button', { name: 'Reschedule' });
+    expect(screen.getByText('Scheduled date').nextElementSibling).toHaveTextContent('29 Oct 2026');
     fireEvent.click(button);
     await waitFor(() => expect(rescheduleForm).toHaveBeenCalledWith(EVENT_KEY,
       expect.objectContaining({ scheduledDate: '2026-10-29', scheduledTime: '10:00', durationMinutes: 60 }), initial.booking));
     expect(await screen.findByText('Meeting rescheduled.')).toBeVisible();
+    expect(screen.getByText('Scheduled date').nextElementSibling).toHaveTextContent('02 Nov 2026');
+    expect(screen.getByText('Target date').nextElementSibling).toHaveTextContent('29 Oct 2026');
     expect(bookForm).not.toHaveBeenCalled();
     expect(scheduleEvent).not.toHaveBeenCalled();
   });
@@ -112,6 +142,41 @@ describe('imported Aptem booking on the meeting detail page', () => {
     fetchForm.mockResolvedValue(importedDefinition());
   });
   afterEach(cleanup);
+
+  it.each(['mcr', 'progress-review'] as const)('does not show the planned %s date as a booking before booking succeeds', async source => {
+    const targetDate = '2027-01-29';
+    fetchEvents.mockResolvedValue({
+      events: [importedEvent({ source, targetDate, scheduledDate: targetDate, scheduledTime: null })],
+      owner: { name: 'Coach Example' },
+    });
+    const initial = importedDefinition();
+    fetchForm.mockResolvedValue({ ...initial, instance: { ...initial.instance, targetDate } });
+    bookForm.mockRejectedValueOnce(new Error('The coach is busy at this time.'));
+    mount(source === 'mcr' ? undefined : `/coach/progress-reviews/${encodeURIComponent(EVENT_KEY)}`);
+
+    const button = await screen.findByRole('button', { name: source === 'mcr' ? 'Book Meeting' : 'Book Review' });
+    expect(screen.getByText('Target date').nextElementSibling).toHaveTextContent('29 Jan 2027');
+    expect(screen.getByText('Scheduled date').nextElementSibling).toHaveTextContent('Not scheduled');
+    expect(screen.getByText('Time', { exact: true }).nextElementSibling).toHaveTextContent('Time TBC');
+    expect(bookForm).not.toHaveBeenCalled();
+
+    fireEvent.click(button);
+    expect(await screen.findByText('The coach is busy at this time.')).toBeVisible();
+    expect(screen.getByText('Scheduled date').nextElementSibling).toHaveTextContent('Not scheduled');
+    expect(screen.getByText('Target date').nextElementSibling).toHaveTextContent('29 Jan 2027');
+
+    bookForm.mockResolvedValueOnce(importedDefinition({
+      localStatus: 'scheduled',
+      booking: {
+        ...initial.booking!, booked: true, canBook: false, eventKey: EVENT_KEY,
+        scheduledDate: targetDate, scheduledTime: '09:00', syncState: 'synced',
+      },
+    }));
+    fireEvent.click(button);
+    await waitFor(() => expect(screen.getByText('Scheduled date').nextElementSibling).toHaveTextContent('29 Jan 2027'));
+    expect(screen.getByText('Target date').nextElementSibling).toHaveTextContent('29 Jan 2027');
+    expect(scheduleEvent).not.toHaveBeenCalled();
+  });
 
   it('books the imported review through its own endpoint, keyed by its Aptem identity', async () => {
     bookForm.mockResolvedValue(importedDefinition({

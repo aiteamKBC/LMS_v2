@@ -2021,7 +2021,9 @@ function VideoBody({ component, onChange, setSetting, rulePoints }: ComponentBod
           <Field label="Component duration (minutes)"><input type="number" min="0" value={Number(component.settings.durationMinutes) || 0} onChange={e => setSetting('durationMinutes', Number(e.target.value) || 0)} className={`${inputClass} tabular-nums`} /></Field>
           <Field label="Required progress (%)"><input type="number" min="0" max="100" value={Number(component.settings.requiredProgressPercentage) || 0} onChange={e => setSetting('requiredProgressPercentage', Number(e.target.value) || 0)} className={`${inputClass} tabular-nums`} /></Field>
         </div>
-        <Field label="Component content" className="mt-4"><textarea value={s('lessonContent')} onChange={e => setSetting('lessonContent', e.target.value)} rows={6} placeholder="What the learner sees alongside the video…" className={`${inputClass} resize-none`} /></Field>
+        {/* The same editor as the Module Builder writes this key with: its
+            content is HTML, which a plain textarea showed as raw tags. */}
+        <div className="mt-4"><RichTextDraft label="Component content" value={s('lessonContent')} onChange={value => setSetting('lessonContent', value)} rows={6} /></div>
       </Section>
 
       <Section title="Effort & reward">

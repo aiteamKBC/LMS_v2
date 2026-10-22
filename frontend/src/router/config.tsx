@@ -1,6 +1,6 @@
 import type { RouteObject } from "react-router-dom";
 import { Navigate } from "react-router-dom";
-import { CHAT_ENABLED, LEARNER_FEEDBACK_ENABLED } from "@/lib/featureFlags";
+import { CHAT_ENABLED, LEARNER_FEEDBACK_ENABLED, LEARNER_POST_LECTURE_FEEDBACK_ENABLED } from "@/lib/featureFlags";
 import { RequireAuth } from "@/components/feature/RequireAuth";
 import { lazyRoute } from "./lazyRoute";
 import { LearnerDashboardRedirect } from "./LearnerDashboardRedirect";
@@ -524,6 +524,17 @@ const routes: RouteObject[] = [
     element: <EmployerPortalPage />,
   },
   {
+    // The two sidebar sections. Same page component, which reads the section
+    // from the path; the static segments outrank the :kind/:learnerId and
+    // documents patterns below, so those keep matching their own pages.
+    path: "/employers/:employerId/learners",
+    element: <EmployerPortalPage />,
+  },
+  {
+    path: "/employers/:employerId/reviews",
+    element: <EmployerPortalPage />,
+  },
+  {
     // Every document across the employer's learners.
     path: "/employers/:employerId/documents",
     element: <EmployerDocumentsPage />,
@@ -644,7 +655,7 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/feedback",
-    element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackPage /> : <Navigate to="/workspace/learner" replace />,
+    element: LEARNER_FEEDBACK_ENABLED || LEARNER_POST_LECTURE_FEEDBACK_ENABLED ? <LearnerFeedbackPage /> : <Navigate to="/workspace/learner" replace />,
   },
   {
     path: "/learner/feedback/review/:reviewDeliveryId",
@@ -656,7 +667,7 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/feedback/delivery/:deliveryId",
-    element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackFormPage /> : <Navigate to="/workspace/learner" replace />,
+    element: LEARNER_FEEDBACK_ENABLED || LEARNER_POST_LECTURE_FEEDBACK_ENABLED ? <LearnerFeedbackFormPage /> : <Navigate to="/workspace/learner" replace />,
   },
   {
     path: "/learner/catchup",
@@ -1114,6 +1125,10 @@ const routes: RouteObject[] = [
   },
   {
     path: "/curriculum/progress-transfers",
+    element: <Navigate to="/users/progress-transfers" replace />,
+  },
+  {
+    path: "/users/progress-transfers",
     element: <ProgressTransfersPage />,
   },
   {
