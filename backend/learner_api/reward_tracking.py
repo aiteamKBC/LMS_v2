@@ -69,6 +69,9 @@ def observations(request):
             raise mobile.MobileError(str(exc), 400, exc.code) from None
         raise mobile.MobileError("The timing session does not match this activity.",400,"invalid_tracking_session") from None
     except RewardError as exc:
+        if exc.code == 'observation_outside_timing_lease':
+            raise mobile.MobileError('Some time was recorded while the timing session was disconnected and needs review. '
+                                     'Your draft is kept. Please contact support before finishing.', exc.status, exc.code) from None
         raise mobile.MobileError("Study time could not be confirmed. "+exc.code.replace("_"," ")+".",exc.status,exc.code) from None
 
 

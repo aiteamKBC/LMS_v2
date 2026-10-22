@@ -18,7 +18,7 @@ export function canInitializeMigratedReview(data: ReviewInstanceFormDefinition):
     && data.instance.id.startsWith('imported-review:')
     && data.canInitialize === true
     && !data.migratedForm
-    && !data.formAvailable
+    && (!data.formAvailable || data.template.reviewTypeCode === 'aptem_psp')
     && data.sourceStatus?.trim().toLowerCase() !== 'completed'
     && data.instance.status.trim().toLowerCase() !== 'completed'
     && !data.instance.completedAt;

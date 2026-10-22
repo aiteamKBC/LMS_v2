@@ -15,6 +15,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import MonthlyCoachingPage from '../../monthly-coaching/page';
 import ProgressReviewsPage from '../../progress-reviews/page';
+import { CurriculumReviewPage } from '../curriculumReviews';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { ToastProvider } from '@/hooks/useToast';
 import { clearAllCachedResources } from '@/api/cachedRequest';
@@ -23,8 +24,9 @@ import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../LearnerR
 import type { ReviewInstanceFormDefinition } from '@/api/reviewInstances';
 
 const access = vi.hoisted(() => ({ canProgress: true }));
+const viewer = vi.hoisted(() => ({ role: 'learner', subjectId: 12 }));
 vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => access }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { user: { fullName: 'Aya Khater' } }, isInitialized: true }) }));
+vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { user: { fullName: 'Aya Khater' }, account: viewer }, isInitialized: true }) }));
 vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({
   SignaturePad: ({ onCommit, onCancel }: { onCommit: (signature: string) => void; onCancel: () => void }) => (
     <div>
@@ -146,6 +148,8 @@ beforeEach(() => {
   window.localStorage.clear();
   requested = [];
   access.canProgress = true;
+  viewer.role = 'learner';
+  viewer.subjectId = 12;
   definitionError = '';
   blankDefinition = false;
   reviewDefinition = definition();
@@ -238,6 +242,152 @@ const mountProgressReview = (id: string) => render(
 );
 
 describe('Learner Review View opens the generic Curriculum form', () => {
+  function unpreparedPsp(status = 'not-scheduled') {
+    const key = 'imported-review:unprepared-psp';
+    events = [event({ id: key, source: 'progress-review', title: 'Personal Support Plan',
+      importedReviewType: 'Personal Support Plan', reviewTypeName: 'Personal Support Plan',
+      reviewInstanceId: null, reviewTemplateId: null, migratedForm: false, status, sourceStatus: status,
+      importedReview: { id: '1', type: 'Personal Support Plan', name: 'Personal Support Plan', status, sections: [] } as LearnerCalendarEvent['importedReview'] })];
+    reviewDefinition = { ...reviewDefinition, source: 'aptem', migratedForm: true, readOnly: false, answerVersion: 'psp-v1',
+      template: { ...reviewDefinition.template, name: 'Personal Support Plan', reviewTypeCode: 'aptem_psp' },
+      instance: { ...reviewDefinition.instance!, id: key, status },
+      signatures: { advisor: { required: false, signed: false }, participant: { required: false, signed: false },
+        employer: { required: false, signed: false }, referrer: { required: false, signed: false } },
+      sections: [{ id: 'psp', title: 'Support plan questions', enabled: true, displayOrder: 0, estimatedMinutes: 0,
+        fields: [{ id: 'goal', title: 'Agreed goal', fieldType: 'text', required: true, displayOrder: 0,
+          configuration: { respondentRoles: ['participant'] }, answer: 'Imported goal' }] }] };
+    return key;
+  }
+
+  function mountReview(key: string, suffix = '') {
+    return render(<ToastProvider><MemoryRouter initialEntries={[`/learner/reviews/${key}${suffix}`]}>
+      <Routes><Route path="/learner/reviews/:reviewId" element={<CurriculumReviewPage />} /></Routes>
+    </MemoryRouter></ToastProvider>);
+  }
+
+  it.each(['not-scheduled', 'scheduled', 'in-progress'])('opens the active PSP template automatically before a coach initializes it (%s)', async status => {
+    const key = unpreparedPsp(status);
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    const prepares: RequestInit[] = [];
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).endsWith('/csrf')) return new Response(JSON.stringify({ csrfToken: 'synthetic' }));
+      if (String(input).endsWith('/prepare-psp')) {
+        prepares.push(init!);
+        return new Response(JSON.stringify(reviewDefinition));
+      }
+      if (String(input).endsWith('/party')) return new Response(JSON.stringify(reviewDefinition));
+      if (String(input).endsWith('/party-answers')) {
+        expect(JSON.parse(String(init?.body))).toEqual({ answers: { goal: 'Updated goal' }, answerVersion: 'psp-v1' });
+        reviewDefinition = { ...reviewDefinition, readOnly: true, answerVersion: 'psp-v2',
+          instance: { ...reviewDefinition.instance!, status: 'completed' },
+          sections: reviewDefinition.sections.map(section => ({ ...section, fields: section.fields.map(field => ({ ...field, answer: 'Updated goal' })) })) };
+        return new Response(JSON.stringify(reviewDefinition));
+      }
+      return originalFetch(input, init);
+    });
+    mountReview(key);
+    expect(await screen.findByDisplayValue('Imported goal')).toBeVisible();
+    expect(screen.queryByText(/Detailed questions and answers have not been imported/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Initialize/ })).not.toBeInTheDocument();
+    expect(prepares).toHaveLength(1);
+    expect(prepares[0]).toMatchObject({ method: 'POST', body: '{}', headers: { 'X-CSRFToken': 'synthetic' } });
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Updated goal' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save my answers' }));
+    expect(await screen.findByText('Personal Support Plan completed')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Download PDF' })).toBeVisible();
+    expect(screen.queryByText(/Detailed questions and answers have not been imported/)).not.toBeInTheDocument();
+  });
+
+  it('shows an unavailable PSP template error and retries preparation', async () => {
+    const key = unpreparedPsp();
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    let attempts = 0;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).endsWith('/csrf')) return new Response(JSON.stringify({ csrfToken: 'synthetic' }));
+      if (String(input).endsWith('/prepare-psp')) {
+        attempts += 1;
+        return attempts === 1
+          ? new Response(JSON.stringify({ detail: 'An active Personal Support Plan template is not available.' }), { status: 409 })
+          : new Response(JSON.stringify(reviewDefinition));
+      }
+      return originalFetch(input, init);
+    });
+    mountReview(key);
+    expect(await screen.findByRole('alert')).toHaveTextContent('An active Personal Support Plan template is not available.');
+    fireEvent.click(screen.getByRole('button', { name: 'Retry review' }));
+    expect(await screen.findByDisplayValue('Imported goal')).toBeVisible();
+    expect(attempts).toBe(2);
+  });
+
+  it.each(['completed', 'cancelled', 'staff-preview', 'foreign-learner', 'query-preview', 'completed-date', 'progress-review'])('does not initialize historical, other-family or preview reviews (%s)', async scenario => {
+    const key = unpreparedPsp(['completed', 'cancelled'].includes(scenario) ? scenario : 'not-scheduled');
+    if (scenario === 'staff-preview') viewer.role = 'staff';
+    if (scenario === 'foreign-learner') viewer.subjectId = 99;
+    if (scenario === 'completed-date') events[0].importedReview!.completedDate = '2026-09-01';
+    if (scenario === 'progress-review') events[0].importedReviewType = 'Progress Review';
+    mountReview(key, scenario === 'query-preview' ? '?viewAsLearner=12' : '');
+    expect(await screen.findByText(scenario === 'progress-review' ? 'Review not found' : /Detailed questions and answers have not been imported/)).toBeVisible();
+    expect(vi.mocked(fetch).mock.calls.some(([url, init]) => String(url).endsWith('/prepare-psp') || init?.method === 'POST')).toBe(false);
+  });
+
+  it.each([false, true])('saves a PSP continuation from Reviews using its configured signature policy (learner required: %s)', async required => {
+    const key = 'imported-review:psp-test';
+    events = [event({ id: key, eventKey: key, source: 'progress-review', importedReviewType: 'Personal Support Plan',
+      reviewTypeName: 'Personal Support Plan', migratedForm: true, formEventKey: key,
+      reviewInstanceId: null, reviewTemplateId: null,
+      importedReview: { id: '1', type: 'Personal Support Plan', name: 'Personal Support Plan', sections: [] } as LearnerCalendarEvent['importedReview'] })];
+    reviewDefinition = { ...reviewDefinition, source: 'aptem', migratedForm: true, readOnly: false, answerVersion: 'psp-v1',
+      template: { ...reviewDefinition.template, name: 'Personal Support Plan', reviewTypeCode: 'aptem_psp' },
+      instance: { ...reviewDefinition.instance!, id: key, status: 'not-scheduled' },
+      signatures: { advisor: { required: false, signed: false }, participant: { required, signed: false },
+        employer: { required: false, signed: false }, referrer: { required: false, signed: false } },
+      sections: [{ id: 'psp', title: 'Support plan', enabled: true, displayOrder: 0, estimatedMinutes: 0,
+        fields: [{ id: 'goal', title: 'Agreed goal', fieldType: 'text', required: true, displayOrder: 0,
+          configuration: { respondentRoles: ['participant'] }, answer: '' }] }] };
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    const writes: unknown[] = [];
+    const signatureWrites: unknown[] = [];
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/party')) return new Response(JSON.stringify(reviewDefinition));
+      if (url.endsWith('/csrf')) return new Response(JSON.stringify({ csrfToken: 'synthetic' }));
+      if (url.endsWith('/party-answers')) {
+        writes.push(JSON.parse(String(init?.body)));
+        reviewDefinition = { ...reviewDefinition, readOnly: true, answerVersion: 'psp-v2',
+          instance: { ...reviewDefinition.instance!, status: required ? 'awaiting-signature' : 'completed' } };
+        return new Response(JSON.stringify(reviewDefinition));
+      }
+      if (url.endsWith('/party-sign')) {
+        signatureWrites.push(JSON.parse(String(init?.body)));
+        reviewDefinition = { ...reviewDefinition, instance: { ...reviewDefinition.instance!, status: 'completed' },
+          signatures: { ...reviewDefinition.signatures, participant: { required: true, signed: true, signedName: 'Synthetic learner' } } };
+        events[0].status = 'completed';
+        return new Response(JSON.stringify({ signed: true, role: 'participant' }));
+      }
+      return originalFetch(input, init);
+    });
+    render(<ToastProvider><MemoryRouter initialEntries={[`/learner/reviews/${key}`]}>
+      <Routes><Route path="/learner/reviews/:reviewId" element={<CurriculumReviewPage />} /></Routes>
+    </MemoryRouter></ToastProvider>);
+    expect(await screen.findByText('Agreed goal')).toBeVisible();
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'My agreed goal' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save my answers/ }));
+    if (required) {
+      expect(await screen.findByText('Your signature is required')).toBeVisible();
+      expect(screen.getByRole('region', { name: 'Review signatures' })).toBeVisible();
+      expect(screen.queryByText('Personal Support Plan completed')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Sign' }));
+      expect(await screen.findByText('Personal Support Plan completed')).toBeVisible();
+      expect(signatureWrites).toEqual([{ signature: 'data:image/png;base64,c2F2ZWQ=' }]);
+    } else {
+      expect(await screen.findByText('Personal Support Plan completed')).toBeVisible();
+      expect(screen.queryByLabelText('Signature step')).not.toBeInTheDocument();
+    }
+    expect(writes).toEqual([{ answers: { goal: 'My agreed goal' }, answerVersion: 'psp-v1' }]);
+    expect(screen.queryByRole('button', { name: /Save my answers/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download PDF' })).toBeVisible();
+  });
+
   function aptemMcm(sync?: LearnerReviewDefinition['mcmMonthlyLog']) {
     const key = 'imported-review:monthly-log-signature';
     events = [event({ id: key, eventKey: key, migratedForm: true, reviewInstanceId: null, reviewTemplateId: null,

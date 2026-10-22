@@ -47,7 +47,7 @@ describe('coach attendance overview', () => {
     identity.email = 'coach@example.com';
     vi.mocked(coachFetch).mockImplementation(async (url, options) => {
       if (options?.method === 'POST') return new Response(JSON.stringify({ results: JSON.parse(String(options.body)).records.map((row: { learnerId: string; status: string }) => ({ ...row, version: 'v-new', recent: [{ date: '2026-09-16', status: row.status }], sessionOccurrenceId: 'occ-2', attendanceRecord: { ...row, sessionId: 'teams:occ-2', sessionDate: '2026-09-16', counted: true } })) }));
-      if (String(url).endsWith('/options')) return new Response(JSON.stringify(optionsPayload));
+      if (String(url).includes('/options')) return new Response(JSON.stringify(optionsPayload));
       if (String(url).includes('/session?')) return new Response(JSON.stringify({ learners: [{ learnerId: '42', status: 'present', version: 'v1' }] }));
       if (String(url).includes('/context?')) return new Response(JSON.stringify(groupPayload(String(url))));
       throw new Error(`Unexpected request: ${url}`);
@@ -66,11 +66,155 @@ describe('coach attendance overview', () => {
     });
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Group / module' }), { target: { value: 'group-1' } });
     await screen.findByRole('option', { name: /Morning session/ });
     fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: 'occ-1' } });
     await waitFor(() => expect(screen.getByLabelText('Attendance for Mona Test')).toBeEnabled());
   }
+
+  function modulePayload() {
+    return { programmes: [{ id: 'programme-1', name: 'Data', groups: [
+      { id: 'group-1', name: 'Cairo A', cohort: '--', modules: [
+        { key: 'risk', name: 'Risk Management', learnerIds: ['42'], sessionIds: ['occ-1'],
+          recentByLearner: { '42': [{ date: '2026-09-16', status: 'present' }] } },
+        { key: 'legacy', name: 'Older module', learnerIds: ['9'], sessionIds: [],
+          recentByLearner: { '9': [{ date: '2025-01-02', status: 'absent' }] } },
+      ] },
+      { id: 'group-2', name: 'Cairo B', cohort: '--', modules: [
+        { key: 'risk', name: 'Risk Management', learnerIds: ['9'], sessionIds: ['occ-2'], recentByLearner: {} },
+      ] },
+    ] }] };
+  }
+
+  function mockModules() {
+    const original = vi.mocked(coachFetch).getMockImplementation()!;
+    vi.mocked(coachFetch).mockImplementation(async (url, options) => {
+      if (String(url).includes('includeModules=1')) return new Response(JSON.stringify(modulePayload()));
+      if (String(url).includes('/context?') && String(url).includes('groupId=group-1')) {
+        return new Response(JSON.stringify(groupPayload(String(url), [learners[0], { ...learners[2], groupId: 'group-1' }])));
+      }
+      return original(url, options);
+    });
+  }
+
+  it('lists modules under each group and filters learners, sessions and recent attendance within that group', async () => {
+    mockModules();
+    render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
+    fireEvent.change(await screen.findByLabelText('Programme'), { target: { value: 'programme-1' } });
+    await screen.findByRole('option', { name: 'Risk Management — Cairo A' });
+    expect(screen.getByRole('option', { name: 'Risk Management — Cairo B' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Group / module'), { target: { value: '["group-1","risk"]' } });
+    await screen.findByText('Aya Khater');
+    expect(screen.queryByText('Mona Test')).not.toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Morning session/ })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /Afternoon session/ })).not.toBeInTheDocument();
+    expect(screen.getByText('Students (1)')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Group / module'), { target: { value: 'group-1' } });
+    await screen.findByText('Mona Test');
+    expect(screen.getByRole('option', { name: /Afternoon session/ })).toBeInTheDocument();
+    expect(screen.getByText('Students (2)')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Group / module'), { target: { value: '["group-2","risk"]' } });
+    await waitFor(() => expect(screen.queryByText('Aya Khater')).not.toBeInTheDocument());
+    await screen.findByText('Mona Test');
+    expect(screen.getByRole('option', { name: /Afternoon session/ })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /Morning session/ })).not.toBeInTheDocument();
+  });
+
+  it('keeps a historical-only module selectable and its learner history reachable without bulk writes', async () => {
+    mockModules();
+    render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
+    fireEvent.change(await screen.findByLabelText('Programme'), { target: { value: 'programme-1' } });
+    await screen.findByRole('option', { name: 'Older module — Cairo A' });
+    fireEvent.change(screen.getByLabelText('Group / module'), { target: { value: '["group-1","legacy"]' } });
+    await screen.findByText('Mona Test');
+    expect(screen.queryByText('Aya Khater')).not.toBeInTheDocument();
+    expect(screen.getByText('A · 02 Jan')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'View' })).toBeEnabled();
+    expect(screen.getByLabelText('Session / occurrence')).toBeDisabled();
+    expect(screen.getByText("Use View to see this module's attendance history.")).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Apply bulk update' })).toBeDisabled();
+    expect(vi.mocked(coachFetch).mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+  });
+
+  it('clears the previous session and pending edits when switching modules within one group', async () => {
+    mockModules();
+    render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
+    fireEvent.change(await screen.findByLabelText('Programme'), { target: { value: 'programme-1' } });
+    await screen.findByRole('option', { name: 'Risk Management — Cairo A' });
+    fireEvent.change(screen.getByLabelText('Group / module'), { target: { value: '["group-1","risk"]' } });
+    await screen.findByRole('option', { name: /Morning session/ });
+    fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: 'occ-1' } });
+    await waitFor(() => expect(screen.getByLabelText('Attendance for Aya Khater')).toBeEnabled());
+    fireEvent.change(screen.getByLabelText('Attendance for Aya Khater'), { target: { value: 'absent' } });
+    expect(screen.getByText('Pending changes: 1')).toBeInTheDocument();
+    const before = vi.mocked(coachFetch).mock.calls.length;
+    fireEvent.change(screen.getByLabelText('Group / module'), { target: { value: '["group-1","legacy"]' } });
+    await screen.findByText('Mona Test');
+    expect(screen.getByLabelText('Session / occurrence')).toHaveValue('');
+    expect(screen.getByText('Pending changes: 0')).toBeInTheDocument();
+    expect(vi.mocked(coachFetch).mock.calls.slice(before)).toHaveLength(0);
+  });
+
+  it('restores module filters from the URL without briefly showing the full group', async () => {
+    mockModules();
+    render(<MemoryRouter initialEntries={['/?programme=programme-1&group=group-1&module=risk']}><CoachAttendance /></MemoryRouter>);
+    expect(screen.queryByText('Mona Test')).not.toBeInTheDocument();
+    await screen.findByText('Aya Khater');
+    expect(screen.getByLabelText('Group / module')).toHaveValue('["group-1","risk"]');
+    expect(screen.queryByText('Mona Test')).not.toBeInTheDocument();
+  });
+
+  it('reports module loading failures and retries without dropping the group options', async () => {
+    mockModules();
+    const original = vi.mocked(coachFetch).getMockImplementation()!;
+    let failed = true;
+    vi.mocked(coachFetch).mockImplementation(async (url, init) => failed && String(url).includes('includeModules=1')
+      ? new Response(JSON.stringify({ detail: 'Module source unavailable' }), { status: 503 }) : original(url, init));
+    render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
+    fireEvent.change(await screen.findByLabelText('Programme'), { target: { value: 'programme-1' } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load attendance modules');
+    expect(screen.getByRole('option', { name: 'Cairo A' })).toBeInTheDocument();
+    failed = false;
+    fireEvent.click(screen.getByRole('button', { name: 'Retry modules' }));
+    await screen.findByRole('option', { name: 'Risk Management — Cairo A' });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('saves only the selected module learner with the real group id and refreshes module history', async () => {
+    mockModules();
+    const original = vi.mocked(coachFetch).getMockImplementation()!;
+    let saved = false;
+    vi.mocked(coachFetch).mockImplementation(async (url, init) => {
+      if (init?.method === 'POST') saved = true;
+      if (saved && String(url).includes('includeModules=1')) {
+        const payload = modulePayload();
+        payload.programmes[0].groups[0].modules[0].recentByLearner = { '42': [{ date: '2026-09-16', status: 'absent' }] };
+        return new Response(JSON.stringify(payload));
+      }
+      return original(url, init);
+    });
+    render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
+    fireEvent.change(await screen.findByLabelText('Programme'), { target: { value: 'programme-1' } });
+    await screen.findByRole('option', { name: 'Risk Management — Cairo A' });
+    fireEvent.change(screen.getByLabelText('Group / module'), { target: { value: '["group-1","risk"]' } });
+    await screen.findByRole('option', { name: /Morning session/ });
+    fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: 'occ-1' } });
+    await waitFor(() => expect(screen.getByLabelText('Attendance for Aya Khater')).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Mark selected Absent' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply bulk update' }));
+    await screen.findByText('Attendance saved.');
+    await waitFor(() => expect(screen.queryByText('Loading attendance modules…')).not.toBeInTheDocument());
+    const writes = vi.mocked(coachFetch).mock.calls.filter(([, init]) => init?.method === 'POST');
+    expect(writes).toHaveLength(1);
+    expect(JSON.parse(String(writes[0][1]?.body))).toMatchObject({
+      programmeId: 'programme-1', groupId: 'group-1', sessionOccurrenceId: 'occ-1',
+      records: [{ learnerId: '42', status: 'absent', version: 'v1' }],
+    });
+    fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: '' } });
+    expect(screen.getByText('A · 16 Sep')).toBeInTheDocument();
+    expect(screen.queryByText('Mona Test')).not.toBeInTheDocument();
+  });
 
   it('saves and resets an individual correction through the scoped bulk endpoint', async () => {
     await renderSelectionRoster();
@@ -92,7 +236,7 @@ describe('coach attendance overview', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Confirm reset' }));
     await screen.findByText('Manual correction reset. Original attendance restored.');
     expect(screen.getByLabelText(`Attendance for ${learners[0].learner}`)).toHaveValue('absent');
-    expect(JSON.parse(String(vi.mocked(coachFetch).mock.calls.at(-1)![1]?.body))).toMatchObject({
+    expect(JSON.parse(String(vi.mocked(coachFetch).mock.calls.filter(([, init]) => init?.method === 'POST').at(-1)![1]?.body))).toMatchObject({
       programmeId: 'programme-1', groupId: 'group-1', sessionOccurrenceId: 'occ-1',
       records: [{ learnerId: '42', status: 'reset', version: 'v2' }],
     });
@@ -101,7 +245,7 @@ describe('coach attendance overview', () => {
   it('requires a session, resets edits on occurrence changes and preserves request counts', async () => {
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
-    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'group-1' } });
+    fireEvent.change(screen.getByLabelText('Group / module'), { target: { value: 'group-1' } });
     await screen.findByText('Aya Khater');
     await screen.findByRole('option', { name: /Morning session/ });
     const checkbox = () => screen.getByRole('checkbox', { name: 'Select Aya Khater' });
@@ -146,7 +290,8 @@ describe('coach attendance overview', () => {
     expect(urls.filter(url => url.includes('/context?'))).toHaveLength(1);
     expect(urls.filter(url => url.includes('/sessions?') || url.includes('/group?'))).toHaveLength(0);
     expect(urls.filter(url => url.includes('/session?'))).toHaveLength(2);
-    expect(urls).toHaveLength(4);
+    expect(urls.filter(url => url.includes('/options?'))).toEqual(['/coach_api/coach/attendance/options?programmeId=programme-1&includeModules=1']);
+    expect(urls).toHaveLength(5);
   });
 
   it('synchronizes selection, bulk actions and Clear immediately without requests', async () => {
@@ -227,8 +372,9 @@ describe('coach attendance overview', () => {
     expect(vi.mocked(coachFetch).mock.calls).toHaveLength(requests);
     fireEvent.click(screen.getByRole('button', { name: 'Apply bulk update' }));
     await screen.findByText('Attendance saved.');
-    expect(vi.mocked(coachFetch).mock.calls.slice(requests)).toHaveLength(1);
-    const save = vi.mocked(coachFetch).mock.calls.at(-1)!;
+    expect(vi.mocked(coachFetch).mock.calls.slice(requests)).toHaveLength(2);
+    expect(vi.mocked(coachFetch).mock.calls.at(-1)![0]).toContain('/options?programmeId=programme-1&includeModules=1');
+    const save = vi.mocked(coachFetch).mock.calls[requests];
     expect(save[0]).toBe('/coach_api/coach/attendance/bulk');
     expect(save[1]?.method).toBe('POST');
     expect(JSON.parse(String(save[1]?.body))).toEqual({ programmeId: 'programme-1', groupId: 'group-1',
@@ -248,7 +394,7 @@ describe('coach attendance overview', () => {
     });
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Group / module' }), { target: { value: 'group-1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Load students' }));
     await screen.findByRole('option', { name: /Morning session/ });
     fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: 'occ-1' } });
@@ -272,7 +418,7 @@ describe('coach attendance overview', () => {
     });
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Group / module' }), { target: { value: 'group-1' } });
     await screen.findByRole('option', { name: /Morning session/ });
     fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: 'occ-1' } });
     const status = await screen.findByLabelText('Attendance for Aya Khater');
@@ -297,17 +443,19 @@ describe('coach attendance overview', () => {
     await waitFor(() => expect(programme).toBeEnabled());
     expect(vi.mocked(coachFetch).mock.calls.map(([url]) => url)).toEqual(['/coach_api/coach/attendance/options']);
     fireEvent.change(programme, { target: { value: 'programme-1' } });
-    expect(vi.mocked(coachFetch).mock.calls).toHaveLength(1);
-    expect(within(screen.getByLabelText('Group')).getAllByRole('option').map(row => (row as HTMLOptionElement).value)).toEqual(['', 'group-1', 'group-2']);
-    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'group-1' } });
-    await screen.findByText('Aya Khater');
+    await waitFor(() => expect(screen.queryByText('Loading attendance modules…')).not.toBeInTheDocument());
     expect(vi.mocked(coachFetch).mock.calls).toHaveLength(2);
+    expect(vi.mocked(coachFetch).mock.calls[1][0]).toContain('/options?programmeId=programme-1&includeModules=1');
+    expect(within(screen.getByLabelText('Group / module')).getAllByRole('option').map(row => (row as HTMLOptionElement).value)).toEqual(['', 'group-1', 'group-2']);
+    fireEvent.change(screen.getByLabelText('Group / module'), { target: { value: 'group-1' } });
+    await screen.findByText('Aya Khater');
+    expect(vi.mocked(coachFetch).mock.calls).toHaveLength(3);
     await screen.findByRole('option', { name: /Morning session/ });
     fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: 'occ-1' } });
     await waitFor(() => expect(screen.getByLabelText('Attendance for Aya Khater')).toBeEnabled());
-    expect(vi.mocked(coachFetch).mock.calls).toHaveLength(3);
-    expect(vi.mocked(coachFetch).mock.calls[1][0]).toContain('/context?programmeId=programme-1&groupId=group-1');
-    expect(vi.mocked(coachFetch).mock.calls[2][0]).toContain('/session?programmeId=programme-1&groupId=group-1&sessionId=occ-1');
+    expect(vi.mocked(coachFetch).mock.calls).toHaveLength(4);
+    expect(vi.mocked(coachFetch).mock.calls[2][0]).toContain('/context?programmeId=programme-1&groupId=group-1');
+    expect(vi.mocked(coachFetch).mock.calls[3][0]).toContain('/session?programmeId=programme-1&groupId=group-1&sessionId=occ-1');
     fireEvent.click(screen.getByRole('button', { name: 'Load students' }));
     expect(vi.mocked(coachFetch).mock.calls.filter(([url]) => String(url).includes('/context?'))).toHaveLength(1);
     expect(vi.mocked(coachFetch).mock.calls.some(([url]) => String(url).includes('/bulk?'))).toBe(false);
@@ -320,7 +468,7 @@ describe('coach attendance overview', () => {
     });
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
-    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'group-1' } });
+    fireEvent.change(screen.getByLabelText('Group / module'), { target: { value: 'group-1' } });
     await screen.findByText('Aya Khater');
     const empty = await screen.findByRole('option', { name: 'No sessions available for this group' });
     expect(empty).toBeDisabled();
@@ -337,7 +485,7 @@ describe('coach attendance overview', () => {
     });
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
-    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'group-1' } });
+    fireEvent.change(screen.getByLabelText('Group / module'), { target: { value: 'group-1' } });
     expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load attendance sessions.');
     expect(screen.queryByRole('option', { name: 'No sessions available for this group' })).not.toBeInTheDocument();
     fail = false;
@@ -363,12 +511,12 @@ describe('coach attendance overview', () => {
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     await waitFor(() => expect(screen.getByLabelText('Programme')).toBeEnabled());
     fireEvent.change(screen.getByLabelText('Programme'), { target: { value: 'programme-1' } });
-    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'group-1' } });
+    fireEvent.change(screen.getByLabelText('Group / module'), { target: { value: 'group-1' } });
     await screen.findByRole('option', { name: /Morning session/ });
     fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: 'occ-1' } });
     await waitFor(() => expect(screen.getByLabelText('Attendance for Aya Khater')).toBeEnabled());
     const before = vi.mocked(coachFetch).mock.calls.length;
-    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'group-2' } });
+    fireEvent.change(screen.getByLabelText('Group / module'), { target: { value: 'group-2' } });
     await screen.findByText('Mona Test');
     expect(screen.getByLabelText('Session / occurrence')).toHaveValue('');
     expect(vi.mocked(coachFetch).mock.calls.slice(before).map(([url]) => url)).toEqual([
@@ -379,7 +527,7 @@ describe('coach attendance overview', () => {
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     await waitFor(() => expect(screen.getByLabelText('Programme')).toBeEnabled());
     fireEvent.change(screen.getByLabelText('Programme'), { target: { value: 'programme-1' } });
-    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'group-1' } });
+    fireEvent.change(screen.getByLabelText('Group / module'), { target: { value: 'group-1' } });
     await screen.findByRole('option', { name: /Morning session/ });
     fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: 'occ-1' } });
     await waitFor(() => expect(screen.getByLabelText('Attendance for Aya Khater')).toBeEnabled());
@@ -389,7 +537,8 @@ describe('coach attendance overview', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh options' })).toBeEnabled());
     expect(screen.getByLabelText('Attendance for Aya Khater')).toHaveValue('absent');
     expect(screen.getByText('Pending changes: 1')).toBeInTheDocument();
-    expect(vi.mocked(coachFetch).mock.calls.slice(before).map(([url]) => url)).toEqual(['/coach_api/coach/attendance/options']);
+    expect(vi.mocked(coachFetch).mock.calls.slice(before).map(([url]) => url)).toEqual([
+      '/coach_api/coach/attendance/options', '/coach_api/coach/attendance/options?programmeId=programme-1&includeModules=1']);
   });
   it('uses current canonical membership and never appends unrelated groups', async () => {
     vi.mocked(coachFetch).mockResolvedValueOnce(new Response(JSON.stringify({ programmes: [
@@ -400,20 +549,20 @@ describe('coach attendance overview', () => {
     await waitFor(() => expect(programme).toBeEnabled());
     expect(within(programme).getAllByRole('option').map(option => (option as HTMLOptionElement).value)).toEqual(['', 'programme-2']);
     fireEvent.change(programme, { target: { value: 'programme-2' } });
-    expect(within(screen.getByLabelText('Group')).getAllByRole('option').map(option => (option as HTMLOptionElement).value)).toEqual(['', 'group-1']);
+    expect(within(screen.getByLabelText('Group / module')).getAllByRole('option').map(option => (option as HTMLOptionElement).value)).toEqual(['', 'group-1']);
     expect(screen.getByRole('button', { name: 'Load students' })).toBeDisabled();
   });
   it('changes the coach cache key, clears the roster, and reuses cached options on remount', async () => {
     const view = render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     await waitFor(() => expect(screen.getByLabelText('Programme')).toBeEnabled());
     fireEvent.change(screen.getByLabelText('Programme'), { target: { value: 'programme-1' } });
-    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'group-1' } });
+    fireEvent.change(screen.getByLabelText('Group / module'), { target: { value: 'group-1' } });
     await screen.findByText('Aya Khater');
     identity.email = 'other@example.com';
     view.rerender(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     await waitFor(() => expect(screen.getByLabelText('Programme')).toBeEnabled());
     expect(screen.queryByText('Aya Khater')).not.toBeInTheDocument();
-    expect(screen.getByLabelText('Group')).toHaveValue('');
+    expect(screen.getByLabelText('Group / module')).toHaveValue('');
     expect(vi.mocked(coachFetch).mock.calls.filter(([url]) => String(url).endsWith('/options'))).toHaveLength(2);
     view.unmount();
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
@@ -423,7 +572,7 @@ describe('coach attendance overview', () => {
   it('filters by stable ids and shows recent status chips', async () => {
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     const programme = await screen.findByRole('combobox', { name: 'Programme' });
-    const group = screen.getByRole('combobox', { name: 'Group' });
+    const group = screen.getByRole('combobox', { name: 'Group / module' });
     expect(programme.compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(group).toBeDisabled();
     expect(within(programme).getByRole('option', { name: 'Data' })).toHaveValue('programme-1');
@@ -450,7 +599,7 @@ describe('coach attendance overview', () => {
     });
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
-    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'group-1' } });
+    fireEvent.change(screen.getByLabelText('Group / module'), { target: { value: 'group-1' } });
     await screen.findByRole('option', { name: /Morning session/ });
     const row = () => within(screen.getByText('Aya Khater').closest('tr')!);
     expect(row().getByText('A · 09 Sep')).toBeInTheDocument();
@@ -483,7 +632,7 @@ describe('coach attendance overview', () => {
       ? new Response(JSON.stringify({ learners: [{ learnerId: '42', status, version: 'v1' }] })) : original(url, init));
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
-    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'group-1' } });
+    fireEvent.change(screen.getByLabelText('Group / module'), { target: { value: 'group-1' } });
     await screen.findByRole('option', { name: /Morning session/ });
     fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: 'occ-1' } });
     const label = { unmarked: 'Not marked', upcoming: 'Upcoming', in_progress: 'In progress' }[status];
@@ -520,7 +669,7 @@ describe('coach attendance overview', () => {
       <Route path="/coach/attendance/:learnerId" element={<CoachAttendanceProfile />} />
     </Routes></MemoryRouter>);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
-    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'group-1' } });
+    fireEvent.change(screen.getByLabelText('Group / module'), { target: { value: 'group-1' } });
     await screen.findByRole('option', { name: /Morning session/ });
     fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: 'occ-1' } });
     await waitFor(() => expect(screen.getByLabelText('Attendance for Aya Khater')).toBeEnabled());
@@ -546,7 +695,7 @@ describe('coach attendance overview', () => {
   it('shows paused attendance instead of historical chips', async () => {
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-2' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Group / module' }), { target: { value: 'group-1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Load students' }));
     expect(await screen.findByText('Attendance paused')).toBeInTheDocument();
     expect(screen.queryByText('P · 16 Sep')).not.toBeInTheDocument();
@@ -554,7 +703,7 @@ describe('coach attendance overview', () => {
   it('loads distinct same-day sessions and applies an individual status without canonical refresh', async () => {
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Group / module' }), { target: { value: 'group-1' } });
     const session = screen.getByLabelText('Session / occurrence');
     expect(await within(session).findByRole('option', { name: /Morning session/ })).toHaveValue('occ-1');
     expect(within(session).getByRole('option', { name: /Afternoon session/ })).toHaveValue('occ-2');
@@ -574,13 +723,13 @@ describe('coach attendance overview', () => {
     vi.mocked(coachFetch).mockImplementation(async (url, options) => {
       if (String(url).includes('/details?')) return new Response(JSON.stringify({ learner: { id: '42', name: 'Aya Khater' }, summary: { attendanceRate: 0, sessions: 1, present: 0, absent: 1 }, records: [{ id: 'microsoft-teams:occ-1', title: 'Morning session', date: '2026-09-16', status: 'absent', module: 'Module', absenceReport: null }], pagination: { page: 1, pageSize: 20, total: 1, hasMore: false } }));
       if (options?.method === 'POST') { saved = true; return new Response(JSON.stringify({ results: JSON.parse(String(options.body)).records.map((row: { learnerId: string; status: string }) => ({ ...row, version: 'v-new', recent: [{ date: '2026-09-16', status: row.status }], sessionOccurrenceId: 'occ-1', attendanceRecord: { ...row, sessionId: 'teams:occ-1', sessionDate: '2026-09-16', counted: true } })) })); }
-      if (String(url).endsWith('/options')) return new Response(JSON.stringify(optionsPayload));
+      if (String(url).includes('/options')) return new Response(JSON.stringify(optionsPayload));
       if (String(url).includes('/session?')) return new Response(JSON.stringify({ learners: [{ learnerId: '42', status: saved ? 'absent' : 'present', version: 'v1' }, { learnerId: '9', status: saved ? 'present' : null, version: 'v2' }] }));
       return new Response(JSON.stringify(groupPayload(String(url), groupLearners)));
     });
     render(<MemoryRouter initialEntries={["/coach/attendance"]}><Routes><Route path="/coach/attendance" element={<CoachAttendance />} /><Route path="/coach/attendance/:learnerId" element={<CoachAttendanceProfile />} /></Routes></MemoryRouter>);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Group / module' }), { target: { value: 'group-1' } });
     await screen.findByRole('option', { name: /Morning session/ });
     fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: 'occ-1' } });
     expect(await screen.findByLabelText('Attendance for Mona Test')).toHaveValue('');
@@ -604,7 +753,7 @@ describe('coach attendance overview', () => {
   it.each([409, 503])('keeps pending attendance after a %s save failure and only reports conflicts for 409', async (httpStatus) => {
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Group / module' }), { target: { value: 'group-1' } });
     await screen.findByRole('option', { name: /Morning session/ });
     fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: 'occ-1' } });
     const status = await screen.findByLabelText('Attendance for Aya Khater');
@@ -633,7 +782,7 @@ describe('coach attendance overview', () => {
     });
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Group / module' }), { target: { value: 'group-1' } });
     await screen.findByRole('option', { name: /Morning session/ });
     fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: 'occ-1' } });
     const status = await screen.findByLabelText('Attendance for Aya Khater');
@@ -650,7 +799,8 @@ describe('coach attendance overview', () => {
     expect(row.querySelectorAll('[data-status]')).toHaveLength(1);
     expect(row.querySelectorAll('[data-status="absent"]')).toHaveLength(after === 'absent' ? 1 : 0);
     expect(row.querySelectorAll('[data-status="present"]')).toHaveLength(after === 'present' ? 1 : 0);
-    expect(vi.mocked(coachFetch).mock.calls.slice(callsBefore)).toHaveLength(1);
+    expect(vi.mocked(coachFetch).mock.calls.slice(callsBefore)).toHaveLength(2);
+    expect(vi.mocked(coachFetch).mock.calls.at(-1)![0]).toContain('/options?programmeId=programme-1&includeModules=1');
     fireEvent.change(status, { target: { value: before } });
     fireEvent.click(screen.getByRole('button', { name: 'Apply bulk update' }));
     await waitFor(() => expect(screen.getByText('Pending changes: 0')).toBeInTheDocument());
@@ -658,13 +808,13 @@ describe('coach attendance overview', () => {
     // Clearing the selection restores both historical occurrences, without merging them.
     expect(row.querySelectorAll('[data-status]')).toHaveLength(2);
     expect(row.querySelectorAll('[data-status="present"]')).toHaveLength(after === 'present' ? 2 : 1);
-    const lastCall = vi.mocked(coachFetch).mock.calls.at(-1)!;
+    const lastCall = vi.mocked(coachFetch).mock.calls.filter(([, init]) => init?.method === 'POST').at(-1)!;
     expect(JSON.parse(String(lastCall[1]?.body)).records[0].version).toBe('v2');
   });
   it('navigates with the stable learner id', async () => {
     render(<MemoryRouter><Routes><Route path="*" element={<><CoachAttendance /><Location /></>} /></Routes></MemoryRouter>);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Group / module' }), { target: { value: 'group-1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Load students' }));
     fireEvent.click(await screen.findByRole('button', { name: 'View' }));
     expect(screen.getByText('/coach/attendance/42')).toBeInTheDocument();
@@ -673,7 +823,7 @@ describe('coach attendance overview', () => {
     render(<MemoryRouter initialEntries={['/coach/attendance?group=group-1&programme=programme-1&status=active']}><Routes><Route path="/coach/attendance" element={<CoachAttendance />} /></Routes></MemoryRouter>);
     expect(await screen.findByText('Aya Khater')).toBeInTheDocument();
     expect(screen.queryByText('Ayman Learner')).not.toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Group' })).toHaveValue('group-1');
+    expect(screen.getByRole('combobox', { name: 'Group / module' })).toHaveValue('group-1');
     expect(screen.getByRole('combobox', { name: 'Programme' })).toHaveValue('programme-1');
   });
 });

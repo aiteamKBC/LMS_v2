@@ -18,6 +18,8 @@ export interface Group {
   id: string;
   name: string;
   cohortId: string;
+  programmeId?: string;
+  moduleIds?: string[];
 }
 
 export interface Module {
@@ -25,8 +27,11 @@ export interface Module {
   rosterId?: string;
   name: string;
   programmeId: string;
+  programmeName?: string;
   cohortId?: string;
+  cohortName?: string;
   groupId?: string;
+  groupName?: string;
 }
 
 export interface Lecture {

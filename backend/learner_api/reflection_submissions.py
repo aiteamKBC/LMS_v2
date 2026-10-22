@@ -524,6 +524,7 @@ def get_reflection_submission(request):
         return _error("activityType and activityId must be provided together.")
 
     from .assignment_topics import topic_id, aggregate_statuses
+    from .submission_visibility import VISIBLE_SUBMISSION_SQL
     try:
         selected_topic = topic_id(request.GET.get("assignmentTopicId"))
     except ValueError as exc:
@@ -536,9 +537,10 @@ def get_reflection_submission(request):
             return classified_response(learner_kind, learner_id, activity_id)
         with connections["enrolment"].cursor() as cur:
             if activity_type == "assignment" and request.GET.get("view") == "topics":
-                cur.execute('''SELECT assignment_topic_id, status, full_submission, submitted_at
-                    FROM "Learner".learning_reflection_submissions
+                cur.execute(f'''SELECT assignment_topic_id, status, full_submission, submitted_at
+                    FROM "Learner".learning_reflection_submissions AS submission
                     WHERE learner_kind=%s AND learner_id=%s AND activity_type=\'assignment\' AND activity_id=%s
+                      AND {VISIBLE_SUBMISSION_SQL}
                     ORDER BY assignment_topic_id''', [learner_kind, learner_id, activity_id])
                 states = []
                 for identity, status, content, submitted_at in cur.fetchall():
@@ -550,11 +552,12 @@ def get_reflection_submission(request):
                 return JsonResponse({"topics": states})
             if not activity_type:
                 cur.execute(
-                    """
+                    f"""
                     select activity_type, activity_id, status,
                            full_submission -> 'assignmentAttemptHistory'
-                    from "Learner"."learning_reflection_submissions"
+                    from "Learner"."learning_reflection_submissions" AS submission
                     where learner_kind = %s and learner_id = %s
+                      and {VISIBLE_SUBMISSION_SQL}
                     """,
                     [learner_kind, learner_id],
                 )
@@ -565,15 +568,16 @@ def get_reflection_submission(request):
                 )
 
             cur.execute(
-                """
+                f"""
                 select id, status, full_submission, coach_feedback,
                        reviewed_by, reviewed_at, submitted_at
-                from "Learner"."learning_reflection_submissions"
+                from "Learner"."learning_reflection_submissions" AS submission
                 where learner_kind = %s
                   and learner_id = %s
                   and activity_type = %s
                   and activity_id = %s
                   and (%s::text IS NULL OR assignment_topic_id = %s)
+                  and {VISIBLE_SUBMISSION_SQL}
                 order by case status when \'accepted\' then 0 when \'submitted_for_tutor_review\' then 1 else 2 end, submitted_at desc
                 limit 1
                 """,

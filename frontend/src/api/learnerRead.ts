@@ -3,6 +3,7 @@ import { createCachedResource, invalidateCachedResource } from './cachedRequest'
 
 export const LEARNER_READ_TIMEOUT_MS = 45_000;
 export const LEARNER_SOURCE_READ_TIMEOUT_MS = 180_000;
+export const MY_LEARNING_READ_TIMEOUT_MS = 120_000;
 const TRANSIENT_READ_RETRY_DELAY_MS = 600;
 
 export class LearnerReadError extends Error {
@@ -61,8 +62,13 @@ async function fetchJson(key: string): Promise<unknown> {
   ];
   // Previous-learning reads can verify several original accounts and courses.
   // Keep their shared request alive while the bounded upstream reads finish.
-  const timeoutMs = /^\/learner_api\/(student-activity|metrics)\//.test(url)
-    ? LEARNER_SOURCE_READ_TIMEOUT_MS : LEARNER_READ_TIMEOUT_MS;
+  // My Learning aggregates the whole plan. Its deadline must cover the local
+  // server's 65s connection checkout plus projection time, not abort at 45s
+  // while that server is still legitimately waiting for a connection.
+  const timeoutMs = /^\/learner_api\/my-learning\//.test(url)
+    ? MY_LEARNING_READ_TIMEOUT_MS
+    : /^\/learner_api\/(student-activity|metrics)\//.test(url)
+      ? LEARNER_SOURCE_READ_TIMEOUT_MS : LEARNER_READ_TIMEOUT_MS;
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout>;
   const deadline = new Promise<never>((_resolve, reject) => {

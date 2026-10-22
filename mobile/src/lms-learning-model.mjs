@@ -1,4 +1,5 @@
 import {parseYouTubeVideoId} from './youtube-player.mjs';
+import {audioAlternativeUrl} from './audio-alternative.mjs';
 export const PMP_ID='MOD-KBC-PMP-M01-SMR';
 export const PMP_TITLE='Stakeholder Management and Reporting';
 const validId=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,179}$/.test(value);
@@ -78,7 +79,7 @@ export function normaliseLmsLearning(raw,narrationIndex={},presentationIndex={},
   activities.push({id:row.componentId,moduleId,weekId:row.weekId,weekNumber,weekTitle:row.week||'Learning week',
    pointNumber,title:row.component||'Learning activity',mode,kind:song?'song':narration?'narration':mode,stage,requirement,
    recommended:!song&&!['assignment','practice'].includes(stage)&&(mode!=='quiz'||requirement!=='optional'),
-   url:resource,available:mode==='quiz'||!!resource,order:Number.isFinite(row.displayOrder)?row.displayOrder:presentation.displayOrder??position,
+   url:resource,alternativeYouTubeUrl:mode==='audio'&&resource?audioAlternativeUrl(row.alternativeYouTubeUrl):null,available:mode==='quiz'||!!resource,order:Number.isFinite(row.displayOrder)?row.displayOrder:presentation.displayOrder??position,
    transcriptAvailable:row.transcriptAvailable===true,
    rewardObservationsSupported:row.rewardObservationsSupported!==false,
    joinUrl:typeof row.liveSessionUrl==='string'?row.liveSessionUrl:null,

@@ -81,11 +81,35 @@ function mount(path = `/coach/meetings/${encodeURIComponent(EVENT_KEY)}`) {
     <Routes>
       <Route path="/coach/meetings/:eventKey" element={<CoachMeetingDetail />} />
       <Route path="/coach/progress-reviews/:eventKey" element={<CoachMeetingDetail />} />
+      <Route path="/coach/reviews/:eventKey" element={<CoachMeetingDetail />} />
     </Routes>
   </MemoryRouter>);
 }
 
 describe('imported Aptem booking on the meeting detail page', () => {
+  it.each([false, true])('books a PSP with no form from review details (scheduled=%s)', async scheduled => {
+    const initial = importedDefinition({ readOnly: true, migratedForm: false, summaryOnly: true,
+      formAvailable: false, canInitialize: false, localStatus: null });
+    initial.booking = { ...initial.booking!, formRequired: false, status: scheduled ? 'scheduled' : 'not-scheduled',
+      booked: scheduled, canBook: !scheduled, canReschedule: scheduled, eventKey: scheduled ? EVENT_KEY : null,
+      scheduledDate: scheduled ? '2026-10-29' : null, scheduledTime: scheduled ? '10:00' : null, durationMinutes: 60 };
+    fetchEvents.mockResolvedValue({ owner: { name: 'Coach' }, events: [importedEvent({
+      type: 'review', source: 'progress-review', importedReviewType: 'Personal Support Plan',
+      status: scheduled ? 'scheduled' : 'not-scheduled',
+    })] });
+    fetchForm.mockResolvedValue(initial);
+    (scheduled ? rescheduleForm : bookForm).mockResolvedValue({ ...initial, booking: {
+      ...initial.booking, booked: true, status: 'scheduled', canBook: false, canReschedule: true,
+      eventKey: EVENT_KEY, scheduledDate: '2026-10-29', scheduledTime: '11:00', syncState: 'synced',
+    } });
+    mount(`/coach/reviews/${encodeURIComponent(EVENT_KEY)}`);
+    fireEvent.click(await screen.findByRole('button', { name: scheduled ? 'Reschedule' : 'Book Review' }));
+    await waitFor(() => expect(scheduled ? rescheduleForm : bookForm).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByText('Time', { exact: true }).nextElementSibling).toHaveTextContent('11:00'));
+    expect(screen.getByRole('button', { name: 'Reschedule' })).toBeEnabled();
+    expect(initializeForm).not.toHaveBeenCalled();
+    expect(scheduleEvent).not.toHaveBeenCalled();
+  });
   it.each(['mcr', 'progress-review'] as const)('reschedules a booked %s through its imported identity', async source => {
     const initial = importedDefinition({ localStatus: 'scheduled', booking: {
       booked: true, conflict: false, canBook: false, canReschedule: true, eventKey: EVENT_KEY,

@@ -40,6 +40,10 @@ function asDate(value: string | undefined): string {
   return value?.slice(0, 10) ?? "";
 }
 
+function normalizeLabel(value: unknown): string {
+  return String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 function overviewFailureHint(reason: unknown): string {
   if (reason instanceof Error && reason.message.toLowerCase().includes("timed out")) {
     return " The curriculum API timed out; check its server database/network connection and retry.";
@@ -65,31 +69,66 @@ function toBulkData(
     code: programme.sourceId || String(programme.id),
   }));
 
+  const programmeByName = new Map(
+    programmes.map((programme) => [normalizeLabel(programme.name), programme.id]),
+  );
+  const programmeById = new Map(programmes.map((programme) => [programme.id, programme]));
+
+  const resolveProgrammeId = (rawId: unknown, name: unknown): string => {
+    const candidate = String(rawId ?? "");
+    return (candidate && programmeById.has(candidate))
+      ? candidate
+      : programmeByName.get(normalizeLabel(name)) || candidate;
+  };
+
   const cohorts: Cohort[] = (overview?.cohorts ?? []).map((cohort) => ({
     id: String(cohort.id),
     name: cohort.name,
-    programmeId: String(cohort.programmeId),
+    programmeId: resolveProgrammeId(cohort.programmeId, cohort.programme),
     startDate: asDate(cohort.startDate),
     endDate: asDate(cohort.endDate),
   }));
 
-  const groups: Group[] = (overview?.groups ?? []).map((group) => ({
-    id: String(group.id),
-    name: group.name,
-    cohortId: String(group.cohortId),
-  }));
+  const cohortById = new Map(cohorts.map((cohort) => [cohort.id, cohort]));
+  const cohortByName = new Map(
+    cohorts.map((cohort) => [`${cohort.programmeId}:${normalizeLabel(cohort.name)}`, cohort]),
+  );
 
-  const modules: Module[] = (overview?.modules ?? []).map((module) => ({
-    id: String(module.id),
-    rosterId: String(module.moduleCatalogueId || module.id),
-    name: module.name,
-    programmeId: String(module.programmeId ?? ""),
-    cohortId: module.cohortId ? String(module.cohortId) : undefined,
-    groupId: module.groupId ? String(module.groupId) : undefined,
-  }));
+  const resolveCohortId = (rawId: unknown, programmeId: string, name: unknown): string => {
+    const candidate = String(rawId ?? "");
+    const byId = candidate ? cohortById.get(candidate) : undefined;
+    if (byId && (!programmeId || byId.programmeId === programmeId)) return candidate;
+    return cohortByName.get(`${programmeId}:${normalizeLabel(name)}`)?.id || candidate;
+  };
+
+  const groups: Group[] = (overview?.groups ?? []).map((group) => {
+    const programmeFromCohort = cohortById.get(String(group.cohortId || ""))?.programmeId;
+    const programmeId = resolveProgrammeId(group.programmeId || programmeFromCohort, group.programme);
+    const cohortId = resolveCohortId(group.cohortId, programmeId, group.cohort);
+    return {
+      id: String(group.id),
+      name: group.name,
+      cohortId,
+      programmeId,
+      moduleIds: (group.moduleIds ?? []).map(String),
+    };
+  });
+
+  const groupById = new Map(groups.map((group) => [group.id, group]));
+  const groupByName = new Map(
+    groups.map((group) => [`${group.cohortId}:${normalizeLabel(group.name)}`, group]),
+  );
+
+  const resolveGroupId = (rawId: unknown, cohortId: string, name: unknown): string => {
+    const candidate = String(rawId ?? "");
+    const byId = candidate ? groupById.get(candidate) : undefined;
+    if (byId && (!cohortId || byId.cohortId === cohortId)) return candidate;
+    return groupByName.get(`${cohortId}:${normalizeLabel(name)}`)?.id || candidate;
+  };
 
   const moduleIdsByAlias = new Map<string, string | null>();
-  (overview?.modules ?? []).forEach((module) => {
+  const moduleRows = overview?.modules ?? [];
+  moduleRows.forEach((module) => {
     const id = String(module.id);
     [
       module.id,
@@ -109,6 +148,33 @@ function toBulkData(
       });
   });
 
+  const modules: Module[] = moduleRows.map((module) => {
+    const programmeId = resolveProgrammeId(module.programmeId, module.programme);
+    const cohortId = resolveCohortId(module.cohortId, programmeId, module.cohort);
+    return {
+      id: String(module.id),
+      rosterId: String(module.moduleCatalogueId || module.id),
+      name: module.name,
+      programmeId,
+      programmeName: module.programme,
+      cohortId: cohortId || undefined,
+      cohortName: module.cohort,
+      groupId: resolveGroupId(module.groupId, cohortId, module.group) || undefined,
+      groupName: module.group,
+    };
+  });
+
+  // Some curriculum rows carry the module membership on the Group instead of
+  // repeating groupId on every module. Resolve those memberships once so the
+  // cascading filters still work for both payload shapes.
+  groups.forEach((group) => {
+    group.moduleIds?.forEach((alias) => {
+      const moduleId = moduleIdsByAlias.get(alias);
+      const module = moduleId ? modules.find((item) => item.id === moduleId) : undefined;
+      if (module && !module.groupId) module.groupId = group.id;
+    });
+  });
+
   const moduleById = new Map(modules.map((module) => [module.id, module]));
   const lectures: Lecture[] = sessions.map((session) => {
     const aliases = [
@@ -124,6 +190,9 @@ function toBulkData(
       .find((id): id is string => Boolean(id));
     const mappedModule = moduleById.get(mappedModuleId ?? "");
     const curriculumModuleName = mappedModule?.name || "";
+    const programmeId = mappedModule?.programmeId || resolveProgrammeId(session.programmeId, session.programme);
+    const cohortId = mappedModule?.cohortId || resolveCohortId(session.cohortId, programmeId, session.cohort);
+    const groupId = mappedModule?.groupId || resolveGroupId(session.groupId, cohortId, session.group);
     return {
       id: String(session.id),
       name: session.title,
@@ -131,17 +200,13 @@ function toBulkData(
       moduleCatalogueId: mappedModule?.rosterId || (session.moduleCatalogueId ? String(session.moduleCatalogueId) : undefined),
       moduleName: session.module || curriculumModuleName,
       moduleAliases: [session.module, curriculumModuleName].filter(Boolean),
-      programmeId: String(session.programmeId ?? mappedModule?.programmeId ?? ""),
-      cohortId: String(session.cohortId ?? mappedModule?.cohortId ?? ""),
-      groupId: String(session.groupId ?? mappedModule?.groupId ?? ""),
+      programmeId,
+      cohortId,
+      groupId,
       sessionDate: asDate(session.date),
     };
   });
 
-  const cohortById = new Map(cohorts.map((cohort) => [cohort.id, cohort]));
-  const cohortByName = new Map(cohorts.map((cohort) => [`${cohort.programmeId}:${cohort.name}`, cohort]));
-  const groupById = new Map(groups.map((group) => [group.id, group]));
-  const groupByName = new Map(groups.map((group) => [`${group.cohortId}:${group.name}`, group]));
   const placements: Learner[] = [];
 
   rosters.forEach((assignedLearners, programmeId) => {
@@ -231,11 +296,15 @@ export function useBulkAttendanceData(archiveIds: string[] = []): BulkAttendance
       // The compact payload is the fast path for these filters. If it fails,
       // retry once with the full overview so a projection-specific failure does
       // not leave the programme and cohort selectors empty.
-      fetchCurriculumOverview(controller.signal, { compact: true }).catch(() =>
-        fetchCurriculumOverview(controller.signal),
+      // Filter choices must include archived/planned curriculum rows as well as
+      // active rows. Attendance itself is still scoped by the selected date
+      // and the live-session register; visibility here only controls the
+      // entities available in the cascading selectors.
+      fetchCurriculumOverview(controller.signal, { compact: true, visibility: "all" }).catch(() =>
+        fetchCurriculumOverview(controller.signal, { visibility: "all" }),
       ),
       fetchBulkAttendanceLearners(controller.signal),
-      fetchCurriculumSessions(controller.signal),
+      fetchCurriculumSessions(controller.signal, { visibility: "all" }),
     ])
       .then(async ([overviewResult, directoryResult, sessionsResult]) => {
         const nextOverview = overviewResult.status === "fulfilled" ? overviewResult.value : null;
@@ -259,7 +328,6 @@ export function useBulkAttendanceData(archiveIds: string[] = []): BulkAttendance
         if (sessionsResult.status === "rejected" && !nextOverview?.sessions?.length) {
           loadErrors.push("The lecture list could not be loaded. Try again to refresh it.");
         }
-
         if (directoryFailed) {
           loadErrors.unshift(directoryResult.reason instanceof Error
             ? directoryResult.reason.message

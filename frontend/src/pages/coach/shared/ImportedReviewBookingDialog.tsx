@@ -68,15 +68,17 @@ export default function ImportedReviewBookingDialog({ event, viewingAsCoach, onC
   }, [instanceId, viewingAsCoach, reload]);
 
   const booking = definition?.booking;
-  const locked = viewingAsCoach || definition?.readOnly || definition?.previewOnly
+  const independentBooking = booking?.formRequired === false;
+  const locked = viewingAsCoach || (!independentBooking && definition?.readOnly) || definition?.previewOnly
     || definition?.templateSync?.status === 'conflict' || booking?.conflict
     || Boolean(definition?.instance.completedAt)
-    || ['completed', 'in-progress', 'awaiting-signature', 'cancelled'].includes(definition?.localStatus || definition?.instance.status || '');
-  const eligible = Boolean(definition?.source === 'aptem' && definition.migratedForm && booking && !locked
+    || ['completed', 'in-progress', 'awaiting-signature', 'cancelled'].includes(booking?.status || definition?.localStatus || definition?.instance.status || '');
+  const eligible = Boolean(definition?.source === 'aptem' && (definition.migratedForm || independentBooking) && booking && !locked
     && (booking.canBook || booking.canAttach || booking.canReschedule));
   const attaching = Boolean(booking?.canAttach && !booking.canReschedule);
   const rescheduling = definition ? Boolean(booking?.canReschedule) : Boolean(event.calendarEventKey && event.status === 'scheduled');
-  const title = `${rescheduling ? 'Reschedule' : 'Schedule'} ${reviewCategory(event) === 'mcr' ? 'monthly coaching meeting' : 'progress review'}`;
+  const reviewTitle = event.importedReviewType || (reviewCategory(event) === 'mcr' ? 'monthly coaching meeting' : 'progress review');
+  const title = `${rescheduling ? 'Reschedule' : 'Schedule'} ${reviewTitle}`;
   const unavailable = viewingAsCoach || definition?.previewOnly
     ? 'This coach preview is read-only. The assigned coach can manage the booking.'
     : booking?.conflict || definition?.templateSync?.status === 'conflict'
@@ -114,7 +116,7 @@ export default function ImportedReviewBookingDialog({ event, viewingAsCoach, onC
       // reconciled native booking. Never replace one with the other.
       onSaved(normalizeResolvedReview({
         ...event,
-        status: (updated.localStatus || updated.instance.status) as CoachCalendarEvent['status'],
+        status: (saved.status || updated.localStatus || updated.instance.status) as CoachCalendarEvent['status'],
         calendarEventKey: saved.eventKey,
         scheduledDate: saved.scheduledDate,
         scheduledTime: saved.scheduledTime,

@@ -18,8 +18,21 @@ import type { MonthlyLogHours, LogSummary, LogDetail } from '@/features/monthly-
 import type { ActivityContent } from '@/features/old-otjh/api';
 import type { ReviewFormResponse } from '@/api/reviewForm';
 import type { LearnerCalendarEvent, LearnerReviewDefinition } from '@/api/learnerCalendar';
+import type { ProgressMetric } from '@/api/learnerMetrics';
 
 const BASE = '/learner_api/employer-portal';
+
+export type EmployerDashboardMetrics = {
+  asOf: string;
+  learners: Record<string, {
+    programme: Pick<ProgressMetric, 'completed' | 'total' | 'percent' | 'status'> | null;
+    risk: 'on-track' | 'need-attention' | 'at-risk' | 'unavailable';
+  }>;
+};
+
+export function fetchEmployerDashboardMetrics(employerId: string, signal?: AbortSignal) {
+  return request<EmployerDashboardMetrics>(`${BASE}/${employerId}/dashboard-metrics/`, { signal });
+}
 
 export type EmployerProgressReviews = {
   events: LearnerCalendarEvent[];
@@ -190,9 +203,16 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    throw new Error(res.ok
+      ? 'The employer portal returned an unexpected response. Please try again.'
+      : `Could not load employer portal data (${res.status}). Please try again.`);
+  }
   if (!res.ok) {
-    throw new Error((data && data.error) || `Request failed (${res.status})`);
+    throw new Error((data && (data.error || data.detail)) || `Request failed (${res.status})`);
   }
   return data as T;
 }

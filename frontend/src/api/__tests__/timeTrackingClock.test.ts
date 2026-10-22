@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { startTimeTracking, resumeTimeTracking } from '../timeTracking';
+import { startTimeTracking, resumeTimeTracking, checkpointTimeTracking } from '../timeTracking';
 import { trackingOffsets } from '@/lib/trackingClock';
 import type { TimeTrackingSession } from '../timeTracking';
 vi.mock('@/lib/personalLearning', () => ({ learningFetch: (...args: unknown[]) => fetch(...args as [string, RequestInit]) }));
@@ -35,4 +35,40 @@ it('refuses failed or mismatched calibration without silently starting a new ses
   await expect(resumeTimeTracking(session, 'video', 'v1')).rejects.toThrow('expired');
   request.mockResolvedValue({ ok: true, json: async () => ({ sessionId: 'other', elapsedMilliseconds: 1000 }) });
   await expect(resumeTimeTracking(session, 'video', 'v1')).rejects.toThrow('did not confirm');
+});
+
+it('recovers an old session through the owner-scoped checkpoint without replacing its identity', async () => {
+  vi.spyOn(performance, 'now').mockReturnValue(100);
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ...session,
+    persistent: true, savedSeconds: 600, elapsedMilliseconds: 172800000 }) }));
+  const restored = await checkpointTimeTracking(session, 'component', 'reading', 'commercial', '7', 300);
+  expect(restored).toMatchObject({ ...session, savedSeconds: 600, persistent: true });
+  expect(vi.mocked(fetch).mock.calls[0][0]).toBe('/learner_api/time-tracking/checkpoint/?kind=commercial&learnerId=7');
+  expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string)).toEqual({
+    trackingToken: session.trackingToken, activityKind: 'component', activityId: 'reading', elapsedSeconds: 300,
+  });
+  expect(trackingOffsets(restored, 100, 1100)).toEqual({ start: 172800000, end: 172801000 });
+});
+
+it('serializes heartbeat and Finish without dropping the newer checkpoint', async () => {
+  let release!: () => void;
+  const request = vi.fn().mockImplementationOnce(() => new Promise(resolve => { release = () => resolve({ ok: true,
+    json: async () => ({ ...session, persistent: true, savedSeconds: 300, elapsedMilliseconds: 300000 }) });
+  })).mockResolvedValue({ ok: true, json: async () => ({ ...session, persistent: true, savedSeconds: 320, elapsedMilliseconds: 320000 }) });
+  vi.stubGlobal('fetch', request);
+  const heartbeat = checkpointTimeTracking(session, 'component', 'reading', 'commercial', '7', 300);
+  const finish = checkpointTimeTracking(session, 'component', 'reading', 'commercial', '7', 320);
+  expect(request).toHaveBeenCalledTimes(1);
+  release();
+  await heartbeat;
+  expect((await finish).savedSeconds).toBe(320);
+  expect(JSON.parse(request.mock.calls[1][1].body).elapsedSeconds).toBe(320);
+});
+
+it('does not accept a replacement identity or a failed checkpoint as successful recovery', async () => {
+  const request = vi.fn().mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'offline' }) })
+    .mockResolvedValue({ ok: true, json: async () => ({ ...session, sessionId: 'different', persistent: true, savedSeconds: 300, elapsedMilliseconds: 300000 }) });
+  vi.stubGlobal('fetch', request);
+  await expect(checkpointTimeTracking(session, 'component', 'reading', 'commercial', '7', 300)).rejects.toThrow('offline');
+  await expect(checkpointTimeTracking(session, 'component', 'reading', 'commercial', '7', 300)).rejects.toThrow('did not confirm');
 });

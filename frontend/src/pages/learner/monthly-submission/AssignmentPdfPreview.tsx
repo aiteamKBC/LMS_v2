@@ -3,7 +3,7 @@ import styles from './monthlySubmission.module.css';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
-export function AssignmentPdfPreview({ url, filename }: { url: string; filename: string }) {
+export function AssignmentPdfPreview({ url, filename, label = 'Assignment report PDF preview' }: { url: string; filename: string; label?: string }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [page, setPage] = useState(1);
@@ -49,7 +49,7 @@ export function AssignmentPdfPreview({ url, filename }: { url: string; filename:
     })().catch(() => { if (active) { setBusy(false); setError('This page could not be previewed. You can still download the PDF.'); } });
     return () => { active = false; render?.cancel(); };
   }, [pdf, page]);
-  return <section className={styles.pdfViewer} aria-label="Assignment report PDF preview">
+  return <section className={styles.pdfViewer} aria-label={label}>
     <p className="mb-3 break-words text-sm font-semibold">{filename}</p>
     {pdf && <div className={styles.pdfToolbar}>
       <button type="button" disabled={page === 1 || busy} onClick={() => setPage(value => value - 1)}>Previous page</button>
