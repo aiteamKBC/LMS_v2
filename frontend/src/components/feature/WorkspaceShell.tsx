@@ -276,7 +276,9 @@ export function WorkspaceShell({
         ? homeDashboardPath : learnerHref(page, routeLearner.kind, routeLearner.id), children } : children ? { ...item, children } : item;
     })
     : navItems;
-  const workspaceNavItems = auth.account?.role === 'admin' && !navItems.some(item => item.id === 'personal-courses')
+  // A builder preview leaves only by returning to the builder kept under it.
+  const previewing = personal?.mode === 'preview' || personal?.mode === 'all';
+  const workspaceNavItems = auth.account?.role === 'admin' && !previewing && !navItems.some(item => item.id === 'personal-courses')
     ? [...stableNavItems, { id: 'personal-courses', label: 'My Courses', icon: 'ri-graduation-cap-line', href: '/my-courses' }]
     : stableNavItems;
   const navigate = useNavigate();
