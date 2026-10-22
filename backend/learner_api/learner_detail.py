@@ -641,6 +641,7 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
     explicit_module_ids_by_quiz = {}
     explicit_week_ids_by_quiz_module = {}
     quiz_rows_by_id = {}
+    authored_quizzes = set()
 
     def store_quiz_rows(rows):
         for row in rows:
@@ -747,6 +748,52 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
                         [module_titles],
                     )
                     store_quiz_rows(cur.fetchall())
+            represented = {
+                (_s(c.get('moduleId')), str(c['quizMeta']['quizId']))
+                for c in components if c.get('isQuiz') and isinstance(c.get('quizMeta'), dict)
+                and c['quizMeta'].get('quizId') is not None
+            }
+            pending_modules, pending_quizzes = set(), set()
+            for quiz in quiz_rows_by_id.values():
+                targets = _matching_module_ids_for_quiz_record(
+                    quiz, modules_by_id, explicit_module_ids_by_quiz.get(quiz['id'], set()))
+                if not targets and quiz['weekId'] in resolved_week_ids:
+                    targets = [mid for mid, items in weeks_by_module_id.items()
+                               if any(item['weekId'] == quiz['weekId'] for item in items)]
+                for mid in targets:
+                    if (mid, str(quiz['id'])) not in represented:
+                        pending_modules.add(mid)
+                        pending_quizzes.add(quiz['id'])
+            if pending_modules and pending_quizzes:
+                # A quiz that belongs (or belonged) to a builder component is
+                # delivered only through the current authored component tree.
+                # Deleted/relinked slots must not reappear through stale course
+                # links or quiz metadata. Keep history for progress, and scope
+                # ownership per module so independent assignments still work.
+                # Already represented quizzes need no history scan.
+                scope_ids = sorted(pending_modules)
+                quiz_ids = sorted(pending_quizzes)
+                quiz_refs = [str(quiz_id) for quiz_id in quiz_ids]
+                cur.execute(
+                    """
+                    SELECT c.module_catalogue_id, c.settings_json->>'linkedQuizId'
+                    FROM curriculum.components c
+                    WHERE c.module_catalogue_id = ANY(%s)
+                      AND c.settings_json->>'linkedQuizId' = ANY(%s)
+                    UNION
+                    SELECT c.module_catalogue_id, link.quiz_id::text
+                    FROM curriculum.quiz_component_links link
+                    JOIN curriculum.components c ON c.id = link.component_id
+                    WHERE c.module_catalogue_id = ANY(%s) AND link.quiz_id = ANY(%s)
+                    UNION
+                    SELECT r.module_catalogue_id, r.snapshot->'settings_json'->>'linkedQuizId'
+                    FROM curriculum.record_revisions r
+                    WHERE r.entity_type = 'component' AND r.module_catalogue_id = ANY(%s)
+                      AND r.snapshot->'settings_json'->>'linkedQuizId' = ANY(%s)
+                    """,
+                    [scope_ids, quiz_refs, scope_ids, quiz_ids, scope_ids, quiz_refs],
+                )
+                authored_quizzes = {(_s(module_id), str(quiz_id)) for module_id, quiz_id in cur.fetchall()}
     except DatabaseError as exc:
         logger.warning("Could not look up learner-visible quizzes: %s", exc)
         if strict:
@@ -796,7 +843,7 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
     # Builder placement is authoritative. A published quiz may still have an
     # old/missing week_id; that must not append a second copy of a quiz already
     # linked to a component in this module. Other modules remain independent.
-    seen_quizzes = set()
+    seen_quizzes = set(authored_quizzes)
     for component in next_components:
         quiz_meta = component.get("quizMeta")
         if not component.get("isQuiz") or not isinstance(quiz_meta, dict):
@@ -1546,6 +1593,11 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             # Python str.strip's exact Unicode whitespace set, used by _s.
             strip_chars = ("\t\n\v\f\r \x1c\x1d\x1e\x1f\x85\xa0\u1680" +
                            ''.join(map(chr, range(0x2000, 0x200B))) + "\u2028\u2029\u202f\u205f\u3000")
+            # Preserve absent versus explicitly cleared builder quiz links in
+            # narrow projections too; only absent links use the legacy table.
+            quiz_settings_sql = ("CASE WHEN settings_json::jsonb ? 'linkedQuizId' THEN "
+                                 "jsonb_build_object('linkedQuizId',settings_json->'linkedQuizId') "
+                                 "ELSE '{}'::jsonb END")
             if identities_only:
                 # Dashboard rails need identities and quiz links only. Preserve
                 # the removed-video rule without transferring lesson bodies.
@@ -1553,7 +1605,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     'audioUrl', 'uploadedFileUrl', 'liveSessionUrl', 'teamsMeetingUrl',
                     'recordingSeriesId', 'recordingSessionNumber', 'recordingDate')))
                 video_sql = ','.join(f"'{key}',settings_json->'{key}'" for key in video_keys)
-                settings_sql = "jsonb_build_object('linkedQuizId',settings_json->'linkedQuizId') || " + (
+                settings_sql = quiz_settings_sql + " || " + (
                     "CASE WHEN lower(replace(btrim(type),'-','_'))='video' THEN "
                     f"jsonb_build_object({video_sql},'readingContent',CASE WHEN "
                     f"coalesce(btrim(settings_json->>'readingContent','{strip_chars}'),'')<>'' THEN 'content' ELSE '' END) "
@@ -1582,7 +1634,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 noise = ('&nbsp;|[' + _JS_SPACE + ']').replace("'", "''")
                 description_sql = ("CASE WHEN regexp_replace(regexp_replace(coalesce(description,''),"
                     "'<[^>]*>','','g'),'" + noise + "','','g')<>'' THEN 'content' ELSE '' END")
-                keys = tuple(dict.fromkeys((*_RESOURCE_URL_KEYS, 'linkedQuizId', 'videoUrl', 'embedCode',
+                keys = tuple(dict.fromkeys((*_RESOURCE_URL_KEYS, 'videoUrl', 'embedCode',
                     'podcastUrl', 'audioUrl', 'liveSessionUrl', 'teamsMeetingUrl', 'teamsLiveSessionId',
                     'teamsSessionNumber', 'recordingSeriesId', 'recordingSessionNumber', 'recordingDate',
                     'sessionDate', 'sessionTime', 'sessionDateTimeUtc', 'durationMinutes',
@@ -1590,7 +1642,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     'assignmentContent', 'submissionInstructions', 'assignmentFileUrl', 'assignmentFileName',
                     'uploadedFileName', 'reflectionPrompt', 'podcastReflectionQuestion', 'readingReflectionPrompts',
                     'learnerGuidance', 'sourceType', 'resourceSource', 'fileSource')))
-                settings_sql = "jsonb_build_object(" + ','.join(f"'{key}',settings_json->'{key}'" for key in keys) + ") || " + (
+                settings_sql = quiz_settings_sql + " || jsonb_build_object(" + ','.join(f"'{key}',settings_json->'{key}'" for key in keys) + ") || " + (
                     "jsonb_build_object('_readingContentAvailable',coalesce(regexp_replace("
                     "settings_json->>'readingContent','<[^>]*>|&nbsp;|\\s','','g'),'')<>'')")
 
@@ -1652,6 +1704,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             # Resolve both so learner quiz pages receive isQuiz + quizMeta instead
             # of treating a linked quiz as an ordinary generic component.
             quiz_id_by_component = {}
+            authored_quiz_component_ids = set()
             fallback_module_ids = set()
             component_ids = [row[0] for row in master_components]
             for comp_id, _week_id, mid, ctype, _ctitle, _cdesc, settings, _live_link, _order, _ksb_mappings, _reflection_required, _reflection_question, _tutor_validation, *_otjh in master_components:
@@ -1662,6 +1715,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                         settings = {}
                 if not isinstance(settings, dict):
                     settings = {}
+                if 'linkedQuizId' in settings:
+                    authored_quiz_component_ids.add(comp_id)
                 linked_quiz_id = settings.get("linkedQuizId")
                 try:
                     if linked_quiz_id not in (None, ""):
@@ -1698,9 +1753,11 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                         'duration':row[5], 'timeUnit':row[6]} for row in joined
                         if row[2] is not None and row[2] not in quiz_meta_by_id})
             if batched_links is not None:
-                quiz_id_by_component.update(batched_links)
+                quiz_id_by_component.update((cid, qid) for cid, qid in batched_links
+                                            if cid not in authored_quiz_component_ids)
             elif resolved_metadata is not None and 'quiz_links' in resolved_metadata:
-                quiz_id_by_component.update({cid: qid for cid, qid in resolved_metadata['quiz_links'].items() if cid in component_ids})
+                quiz_id_by_component.update({cid: qid for cid, qid in resolved_metadata['quiz_links'].items()
+                                             if cid in component_ids and cid not in authored_quiz_component_ids})
             elif component_ids and compact_content:
                 # Reuse identities that passed the module and visibility
                 # predicates above instead of scanning components again.
@@ -1721,7 +1778,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                             f"AND {visible_child_sql('component')}", [module_ids, component_ids])
                         quiz_links = cur.fetchall()
                     for component_id, quiz_id in quiz_links:
-                        quiz_id_by_component[component_id] = quiz_id
+                        if component_id not in authored_quiz_component_ids:
+                            quiz_id_by_component[component_id] = quiz_id
             elif component_ids and (not catalogue_facts or any(row[3] == 'quiz' for row in master_components)):
                 cur.execute(
                     "SELECT link.component_id, link.quiz_id "
@@ -1733,7 +1791,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     [module_ids, component_ids],
                 )
                 for component_id, quiz_id in cur.fetchall():
-                    quiz_id_by_component[component_id] = quiz_id
+                    if component_id not in authored_quiz_component_ids:
+                        quiz_id_by_component[component_id] = quiz_id
 
             linked_quiz_ids = sorted(set(quiz_id_by_component.values()))
             missing_quiz_ids = [qid for qid in linked_quiz_ids if qid not in quiz_meta_by_id]

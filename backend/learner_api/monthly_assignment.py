@@ -159,17 +159,51 @@ def approved_evidence_ids(payload):
         return {str(row[0]) for row in cur.fetchall()}
 
 
+def coaching_meeting_booked(kind, learner_id, meeting_key):
+    """Verify the owned appointment for checks and topic inheritance, without writes."""
+    from .calendar import _learner_calendar_record, coaching_events_for_learner, SOURCE_MODELS
+    from coach_api.review_sources import review_profile_for_source, source_for_learner
+
+    booked_statuses = ("scheduled", "in-progress", "completed", "awaiting-signature")
+    record = _learner_calendar_record(kind, learner_id, meeting_key)
+    if record is not None:
+        return bool(record.event_type == "mcr" and record.scheduled_date and record.status in booked_statuses)
+
+    # Aptem can own a scheduled appointment without an LMS calendar row. The
+    # read-only calendar adapter already verifies its source/learner identity.
+    # Do not create a local booking just to satisfy assignment validation.
+    if not meeting_key.startswith("imported-review:"):
+        return False
+    model = SOURCE_MODELS.get(kind)
+    learner = model.all_learners.filter(pk=learner_id).first() if model else None
+    if learner is None:
+        return False
+    profile = review_profile_for_source(learner)
+    if profile is None or source_for_learner(learner, profile).kind != "aptem":
+        return False
+    events = coaching_events_for_learner(learner, profile, only_sources={"mcr"}, dates_only=True)
+    matches = [event for event in events if event.get("eventKey") == meeting_key]
+    if len(matches) != 1:
+        return False
+    event = matches[0]
+    return bool(
+        event.get("reviewSource") == "aptem" and event.get("source") == "mcr"
+        and str(event.get("learnerId")) == str(profile.id)
+        and event.get("scheduledDate") and event.get("status") in booked_statuses
+        and event.get("sourceStatus") in booked_statuses
+        # An unresolved local booking must not fall back to an older source status.
+        and not event.get("calendarEventKey")
+    )
+
+
 def booked_coaching(payload):
     if resubmission_booking_satisfied(payload):
         return True
-    from .calendar import _learner_calendar_record
     monthly = mapping(payload.get("monthlyAssignment"))
     # Any booked MCM counts, whatever its date; the month only has to be valid.
     if not month_bounds(monthly.get("month"))[0] or not text(monthly.get("meetingKey")):
         return False
-    record = _learner_calendar_record(payload.get("learnerKind"), int(payload.get("learnerId")), monthly["meetingKey"])
-    return bool(record and record.event_type == "mcr" and record.scheduled_date
-                and record.status in ("scheduled", "in-progress", "completed", "awaiting-signature"))
+    return coaching_meeting_booked(payload.get("learnerKind"), int(payload.get("learnerId")), monthly["meetingKey"])
 
 
 def resubmission_booking_satisfied(payload):

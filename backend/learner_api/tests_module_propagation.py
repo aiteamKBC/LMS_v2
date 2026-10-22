@@ -323,12 +323,49 @@ class LiveAssignedModuleTests(SimpleTestCase):
             [(90, 'MOD-NEW', '')],
             [(90, '', 'Assessment', 3, 30, 'Minutes', '', '', '')],
             [],
+            [],  # No authored component or revision owns this independent quiz.
         ]
         with patch('learner_api.learner_detail.connections', {'enrolment': connection}):
             weeks, components = _append_week_quizzes([], [], assigned_modules=[MODULE])
         self.assertEqual(weeks[0]['moduleId'], 'MOD-NEW')
         self.assertEqual(components[0]['quizMeta']['quizId'], 90)
         self.assertTrue(components[0]['isQuiz'])
+
+    def test_current_quiz_selection_overrides_stale_normalized_link_in_each_projection(self):
+        cached = {'module_titles': {'MOD-NEW': 'New module'},
+                  'weeks': [('W1', 'MOD-NEW', 'Week 1', 1, 0)], 'quiz_links': {'Q': 10}}
+        for options in ({}, {'compact_content': True}, {'resolved_metadata': cached},
+                        {'compact': True, 'identities_only': True, 'catalogue_facts': True}):
+            with self.subTest(options=options):
+                linked = [('Q', 10, 10, 'Old quiz', 3, 10, 'Minutes')] if options.get('catalogue_facts') else [('Q', 10)]
+                rows = [[('MOD-NEW', 'New module')], [('W1', 'MOD-NEW', 'Week 1', 1, 0)],
+                        [('Q', 'W1', 'MOD-NEW', 'quiz', 'Assessment', '', {'linkedQuizId': '11'}, '', 0, [], False, None, False)]]
+                if 'resolved_metadata' in options:
+                    rows = rows[2:]
+                if 'resolved_metadata' not in options:
+                    rows.append(linked)
+                rows.append([(10, 'Old quiz', 3, 10, 'Minutes'), (11, 'New quiz', 5, 20, 'Minutes')])
+                result, _ = self.resolve(rows, assigned=[MODULE], **options)
+                self.assertEqual(result[2][0]['quizMeta']['quizId'], 11)
+
+    def test_explicitly_cleared_quiz_cannot_reuse_normalized_link(self):
+        for value in ('', None):
+            with self.subTest(value=value):
+                result, _ = self.resolve([
+                    [('MOD-NEW', 'New module')], [('W1', 'MOD-NEW', 'Week 1', 1, 0)],
+                    [('Q', 'W1', 'MOD-NEW', 'quiz', 'Assessment', '', {'linkedQuizId': value}, '', 0, [], False, None, False)],
+                    [('Q', 10)], [(10, 'Old quiz', 3, 10, 'Minutes')],
+                ], assigned=[MODULE])
+                self.assertFalse(result[2][0]['isQuiz'])
+                self.assertIsNone(result[2][0]['quizMeta'])
+
+    def test_legacy_quiz_without_builder_selection_still_uses_normalized_link(self):
+        result, _ = self.resolve([
+            [('MOD-NEW', 'New module')], [('W1', 'MOD-NEW', 'Week 1', 1, 0)],
+            [('Q', 'W1', 'MOD-NEW', 'quiz', 'Assessment', '', {}, '', 0, [], False, None, False)],
+            [('Q', 10)], [(10, 'Legacy quiz', 3, 10, 'Minutes')],
+        ], assigned=[MODULE])
+        self.assertEqual(result[2][0]['quizMeta']['quizId'], 10)
 
     def test_deleted_new_module_does_not_regain_its_quizzes(self):
         connection = MagicMock()
