@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight, BookOpen, CalendarDays, Check, CircleAlert, ClipboardPenLine, Layers, LoaderCircle, Users, Workflow } from 'lucide-react';
 import type { EmployerLearnerCard } from '@/api/employerPortal';
-import { formatReviewDate, learnerHref, learnerKey, reviewDate, reviewLabels, reviewState, type DashboardReviews } from './employerDashboardData';
+import { formatReviewDate, learnerHref, learnerKey, orderReviewJourney, reviewDate, reviewLabels, reviewState, type DashboardReviews } from './employerDashboardData';
 import styles from './EmployerReviewJourneys.module.css';
 
 type Props = {
@@ -37,7 +37,7 @@ export function EmployerReviewJourneys({ employerId, learners, totalLearners, re
       {learners.map(learner => {
         const resource = reviews[learnerKey(learner)];
         const ready = resource?.status === 'ready';
-        const events = resource?.data || [];
+        const events = orderReviewJourney(resource?.data || []);
         const completed = events.filter(event => reviewState(event) === 'completed').length;
         const signatures = events.filter(event => reviewState(event) === 'signature').length;
         const href = learnerHref(employerId, learner, 'reviews');

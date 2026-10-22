@@ -166,6 +166,44 @@ class EmployerPortalOverviewTests(SimpleTestCase):
                         else:
                             self.assertEqual(json.loads(response.content), {"events": [], "definitions": {}})
 
+    def test_scheduled_progress_review_link_is_shared_for_owned_native_and_aptem_reviews(self):
+        for kind in ("commercial", "apprenticeship"):
+            for review_type in ("native", "Progress Review", "Progress Review (+ Skills Radar)"):
+                event = {"id": "scheduled-pr", "eventKey": "scheduled-pr", "source": "progress-review",
+                         "status": "scheduled", "scheduledDate": "2026-10-26", "sequence": 1,
+                         "meetingLink": "https://teams.microsoft.com/meet/synthetic"}
+                if review_type == "native":
+                    event.update(reviewInstanceId="instance-a", reviewTypeCode="progress_review")
+                else:
+                    event.update(importedReviewType=review_type, calendarEventKey="booked-pr",
+                                 importedReview={"type": review_type, "status": "Not Scheduled", "completedDate": None})
+                definition = {"instance": {"id": "instance-a", "status": "in-progress"}, "signatures": {}}
+                with self.subTest(kind=kind, review_type=review_type), \
+                        mock.patch.object(employer_portal, "SOURCE_MODELS", {kind: _model(self.learner)}), \
+                        mock.patch("learner_api.calendar._calendar_profile", return_value=SimpleNamespace(pk=55)), \
+                        mock.patch("learner_api.calendar.coaching_events_for_learner", return_value=[event]), \
+                        mock.patch.object(employer_portal, "_employer_progress_definition", return_value=definition):
+                    rows = json.loads(self.progress_reviews(kind=kind).content)["events"]
+                    detail = json.loads(self.progress_reviews(kind=kind, event_key=event["eventKey"]).content)
+                    self.assertEqual(rows[0]["meetingLink"], event["meetingLink"])
+                    self.assertEqual(detail["event"]["meetingLink"], event["meetingLink"])
+
+    def test_unscheduled_terminal_and_unverified_reviews_do_not_expose_a_join_link(self):
+        base = {"id": "imported-review:88", "eventKey": "imported-review:88", "source": "progress-review",
+                "importedReviewType": "Progress Review", "status": "scheduled", "scheduledDate": "2026-10-26",
+                "calendarEventKey": "booked-pr", "meetingLink": "https://teams.microsoft.com/meet/synthetic",
+                "importedReview": {"type": "Progress Review", "completedDate": None}}
+        cases = [{"status": status} for status in ("not-scheduled", "completed", "awaiting-signature", "cancelled")]
+        cases += [{"bookingStatus": "cancelled"}, {"scheduledDate": None}, {"calendarEventKey": None},
+                  {"importedReview": {"completedDate": "2026-10-25"}}, {"meetingLink": "", "syncState": "failed"}]
+        for values in cases:
+            with self.subTest(values=values), \
+                    mock.patch("learner_api.calendar._calendar_profile", return_value=SimpleNamespace(pk=55)), \
+                    mock.patch("learner_api.calendar.coaching_events_for_learner", return_value=[{**base, **values}]):
+                response = self.progress_reviews(event_key=base["eventKey"])
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(json.loads(response.content)["event"]["meetingLink"], "")
+
     def test_progress_reviews_use_the_learner_source_and_employer_template_visibility(self):
         events = [
             {"id": "owned", "eventKey": "owned", "source": "progress-review", "reviewTypeCode": "progress_review", "reviewInstanceId": "instance-a", "sequence": 1, "meetingLink": "https://teams.example/join"},
@@ -252,6 +290,31 @@ class EmployerPortalOverviewTests(SimpleTestCase):
         row = json.loads(response.content)["events"][0]
         self.assertTrue(row["employerSigned"])
         self.assertTrue(row["employerSignatureRequired"])
+
+    def test_migrated_mcm_and_psp_are_available_only_if_employer_required(self):
+        event = {"id": "imported-review:mcm", "eventKey": "imported-review:mcm", "source": "mcr",
+                 "importedReviewType": "Monthly Coaching Meeting", "migratedForm": True,
+                 "meetingLink": "https://example.invalid/meeting"}
+        for kind, family in ((kind, family) for kind in ("commercial", "apprenticeship") for family in ("MCM", "PSP")):
+            event.update(source="mcr" if family == "MCM" else "progress-review",
+                         importedReviewType="Monthly Coaching Meeting" if family == "MCM" else "Personal Support Plan")
+            for required in (True, False):
+                with self.subTest(kind=kind, family=family, required=required), \
+                        mock.patch.object(employer_portal, "SOURCE_MODELS", {kind: _model(self.learner)}), \
+                        mock.patch("learner_api.calendar._calendar_profile", return_value=SimpleNamespace(pk=55)), \
+                        mock.patch("learner_api.calendar.coaching_events_for_learner", return_value=[event]), \
+                        mock.patch.object(employer_portal.ImportedReviewInstance.objects, "filter") as lookup, \
+                        mock.patch.object(employer_portal, "signature_states", return_value={"employer": {"signed": False, "required": required}}):
+                    lookup.return_value.first.return_value = SimpleNamespace(event_key=event["eventKey"],
+                        template_snapshot={"templateSource": {"family": family}})
+                    response = self.progress_reviews(kind=kind)
+                    rows = json.loads(response.content)["events"]
+                    self.assertEqual(len(rows), int(required))
+                    if required:
+                        self.assertEqual(rows[0]["meetingLink"], "")
+                    detail = self.progress_reviews(kind=kind, event_key=event["eventKey"])
+                    self.assertEqual(detail.status_code, 200 if required else 404)
+                    lookup.assert_called_with(event_key=event["eventKey"], learner_id=55)
 
     def logs(self, method="get", employer_id=9, learner_id=101, **parts):
         request = getattr(self.factory, method)("/monthly-logs/")

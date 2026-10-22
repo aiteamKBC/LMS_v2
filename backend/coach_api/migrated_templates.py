@@ -7,6 +7,7 @@ from django.db import connections
 
 from .migrated_reviews import FIELD_TYPES, candidate_definition, meeting_summary_field, render_sections, review_family
 from .models import MigratedReviewTemplate
+from .migrated_signature_rules import validate_template_signatures
 
 
 FAMILIES = ("MCM", "PR", "PR_SKILLS_RADAR", "PSP")
@@ -36,8 +37,9 @@ def validate_slot(scope, family, key):
 
 def validate_managed_definition(definition, *, family=None):
     """Strict authoring boundary. Legacy frozen snapshots retain their renderer."""
-    if not isinstance(definition, dict) or "sections" not in definition or set(definition) - {"sections", "otjh"}:
-        raise ValueError("The definition may contain sections and OTJH settings only, without answers or source data.")
+    if not isinstance(definition, dict) or "sections" not in definition or set(definition) - {"sections", "otjh", "signatures"}:
+        raise ValueError("The definition may contain sections, OTJH and signature settings only, without answers or source data.")
+    validate_template_signatures(definition, family)
     from .migrated_otjh import policy
     policy(definition)
     sections = definition["sections"]

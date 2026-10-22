@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   directory: vi.fn(),
   kbcHistory: vi.fn(),
   kbcRecent: vi.fn(),
+  dayLearners: vi.fn(),
   save: vi.fn(),
   addLiveDay: vi.fn(),
   liveDayRecords: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock('@/api/bulkAttendanceLearners', () => ({
   fetchBulkAttendanceLearners: mocks.directory,
   fetchBulkAttendanceKbcHistory: mocks.kbcHistory,
   fetchBulkAttendanceKbcRecent: mocks.kbcRecent,
+  fetchBulkAttendanceDayLearners: mocks.dayLearners,
   saveBulkAttendanceChanges: mocks.save,
   createBulkAttendanceLiveDay: mocks.addLiveDay,
   fetchBulkAttendanceLiveDayRecords: mocks.liveDayRecords,
@@ -71,9 +73,83 @@ beforeEach(() => {
   mocks.directory.mockResolvedValue({ learners: directory, warnings: [] });
   mocks.kbcHistory.mockResolvedValue({ records: [], warnings: [] });
   mocks.kbcRecent.mockResolvedValue({ recent: {}, warnings: [] });
+  mocks.dayLearners.mockResolvedValue(directory.map((learner) => learner.id));
   mocks.save.mockResolvedValue(['live:7']);
   mocks.addLiveDay.mockResolvedValue({ created: 1, updated: 0 });
   mocks.liveDayRecords.mockResolvedValue([]);
+});
+
+it('filters by saved day membership outside Last 4 while keeping complete history', async () => {
+  const recent = [{
+    recordKey: 'saved-1', learnerId: '301', sessionDate: '2026-10-14',
+    moduleName: 'Module A', lectureName: 'Recent lecture', attendance: 'present', source: 'live',
+  }];
+  mocks.kbcRecent.mockResolvedValue({ recent: { '301': recent }, warnings: [] });
+  mocks.kbcHistory.mockResolvedValue({ records: [...recent, {
+    ...recent[0], recordKey: 'old-1', sessionDate: '2020-01-02', lectureName: 'Historical lecture', source: 'kbc',
+  }], warnings: [] });
+  mocks.dayLearners.mockImplementation(async (day: string) => day === '2020-01-02' ? ['301'] : []);
+  render(<AttendancePage />);
+  const dateInput = screen.getByLabelText('Date');
+  fireEvent.change(dateInput, { target: { value: '2020-01-02' } });
+  await screen.findByRole('button', { name: 'Alex Example' });
+  expect(screen.queryByRole('button', { name: 'Morgan Sample' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'View all 1 learners' })).toBeVisible();
+  expect(screen.getByText('Oct 14')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'View details for Alex Example' }));
+  expect(await screen.findByText('Historical lecture')).toBeVisible();
+  expect(screen.getByText('Recent lecture')).toBeVisible();
+  expect(mocks.kbcHistory).toHaveBeenCalledWith('301', expect.any(AbortSignal), { source: 'all' });
+});
+
+it('ignores an old date response and keeps empty days empty with a usable add-day action', async () => {
+  let finishOld!: (ids: string[]) => void;
+  mocks.dayLearners.mockImplementation((day: string) => day === '2020-01-02'
+    ? new Promise<string[]>((resolve) => { finishOld = resolve; })
+    : Promise.resolve(day === '2020-01-03' ? ['302'] : []));
+  render(<AttendancePage />);
+  const dateInput = screen.getByLabelText('Date');
+  fireEvent.change(dateInput, { target: { value: '2020-01-02' } });
+  await waitFor(() => expect(finishOld).toBeTypeOf('function'));
+  fireEvent.change(dateInput, { target: { value: '2020-01-03' } });
+  await screen.findByRole('button', { name: 'Morgan Sample' });
+  await act(async () => finishOld(['301']));
+  expect(screen.queryByRole('button', { name: 'Alex Example' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Morgan Sample' })).toBeVisible();
+  fireEvent.change(dateInput, { target: { value: '2020-01-04' } });
+  await screen.findByText('No learners found');
+  expect(screen.queryByRole('button', { name: 'Morgan Sample' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Add attendance day' })).toBeEnabled();
+});
+
+it('reports a failed day read and retries rather than showing the unfiltered directory', async () => {
+  mocks.dayLearners.mockRejectedValueOnce(new Error('Day unavailable')).mockResolvedValue(['301']);
+  render(<AttendancePage />);
+  fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2020-01-02' } });
+  expect(await screen.findByText('Day unavailable')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Alex Example' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry attendance date' }));
+  expect(await screen.findByRole('button', { name: 'Alex Example' })).toBeVisible();
+});
+
+it('intersects the selected day with the group roster and learner search', async () => {
+  mocks.overview.mockResolvedValue({ ...overview, groups: [{ id: 'G1', name: 'Group A', cohortId: 'C1' }] });
+  mocks.dayLearners.mockResolvedValue(['302', '303']);
+  mocks.roster.mockResolvedValue({ assignedLearners: [
+    { id: 1, email: 'alex@example.invalid', groupId: 'G1' },
+    { id: 2, email: 'morgan@example.invalid', groupId: 'G1' },
+  ] });
+  render(<AttendancePage />);
+  fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2020-01-02' } });
+  await screen.findByRole('button', { name: 'Morgan Sample' });
+  fireEvent.click(screen.getByRole('button', { name: /^Group\s*All Groups$/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Group A' }));
+  await screen.findByRole('button', { name: 'Morgan Sample' });
+  expect(screen.queryByRole('button', { name: 'Alex Example' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Riley Past' })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByPlaceholderText('Search learner by name or email'), { target: { value: 'Alex' } });
+  await screen.findByText('No learners found');
+  expect(screen.queryByRole('button', { name: 'Alex Example' })).not.toBeInTheDocument();
 });
 
 it('archives only Completed, EnteredEpa and Withdrawn learners and shows every status', async () => {
@@ -145,6 +221,95 @@ it('filters the register by group using that group\'s roster', async () => {
   expect(screen.queryByRole('button', { name: 'Group B' })).not.toBeInTheDocument();
 });
 
+it('starts without a date filter and shows the full active roster', async () => {
+  mocks.dayLearners.mockImplementation(() => new Promise(() => undefined));
+  render(<AttendancePage />);
+  const dateInput = screen.getByLabelText('Date') as HTMLInputElement;
+  expect(dateInput.value).toBe('');
+  for (const name of ['Alex Example', 'Morgan Sample', 'Riley Past']) {
+    expect(await screen.findByRole('button', { name })).toBeVisible();
+  }
+  expect(screen.queryByText('Unable to load attendance for this date.')).not.toBeInTheDocument();
+});
+
+it('hides test, rewan, osama and known test names from every filter category', async () => {
+  mocks.overview.mockResolvedValue({
+    ...overview,
+    programmes: [
+      { id: 'P1', name: 'Engineering' },
+      { id: 'P2', name: 'Test LMS Curriculum' },
+      { id: 'P3', name: 'Rewan 2' },
+      { id: 'P4', name: 'Osama-Final-Prog' },
+    ],
+    cohorts: [
+      { id: 'C1', name: 'Autumn', programmeId: 'P1' },
+      { id: 'C2', name: 'Test cohort', programmeId: 'P1' },
+    ],
+    groups: [
+      { id: 'G1', name: 'Group A', cohortId: 'C1' },
+      { id: 'G2', name: 'Osama Group', cohortId: 'C1' },
+      { id: 'G3', name: 'gg', cohortId: 'C1' },
+    ],
+    modules: [
+      { id: 'M1', moduleCatalogueId: 'MC1', name: 'Visible Module', programmeId: 'P1', groupId: 'G1' },
+      { id: 'M2', moduleCatalogueId: 'MC2', name: 'Test 45', programmeId: 'P1', groupId: 'G1' },
+      { id: 'M3', moduleCatalogueId: 'MC3', name: 'Rewan test', programmeId: 'P1', groupId: 'G1' },
+      { id: 'M4', moduleCatalogueId: 'MC4', name: 'Osama-prog', programmeId: 'P1', groupId: 'G1' },
+      { id: 'M5', moduleCatalogueId: 'MC5', name: 'AI in Project Control copy', programmeId: 'P1', groupId: 'G1' },
+      { id: 'M6', moduleCatalogueId: 'MC6', name: '333', programmeId: 'P1', groupId: 'G1' },
+      { id: 'M7', moduleCatalogueId: 'MC7', name: 'latest mod', programmeId: 'P1', groupId: 'G1' },
+    ],
+  });
+  render(<AttendancePage />);
+  await screen.findByRole('button', { name: 'Alex Example' });
+
+  fireEvent.click(screen.getByRole('button', { name: /^Programme\s*All Programmes$/ }));
+  expect(screen.getByRole('button', { name: 'Engineering' })).toBeVisible();
+  for (const name of ['Test LMS Curriculum', 'Rewan 2', 'Osama-Final-Prog']) {
+    expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'Engineering' }));
+
+  fireEvent.click(screen.getByRole('button', { name: /^Cohort\s*All Cohorts$/ }));
+  expect(screen.getByRole('button', { name: 'Autumn' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Test cohort' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Autumn' }));
+
+  fireEvent.click(screen.getByRole('button', { name: /^Group\s*All Groups$/ }));
+  expect(screen.getByRole('button', { name: 'Group A' })).toBeVisible();
+  for (const name of ['Osama Group', 'gg']) {
+    expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+  }
+
+  fireEvent.click(screen.getByRole('button', { name: /^Module\s*All Modules$/ }));
+  expect(screen.getByRole('button', { name: 'Visible Module' })).toBeVisible();
+  for (const name of ['Test 45', 'Rewan test', 'Osama-prog', 'AI in Project Control copy', '333', 'latest mod']) {
+    expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+  }
+});
+
+it('uses overview modules as the catalogue while retaining their learner roster scope', async () => {
+  mocks.overview.mockResolvedValue({
+    ...overview,
+    modules: [{ id: 'REAL', moduleCatalogueId: 'MC-real', name: 'Real overview module', programmeId: 'P1' }],
+  });
+  mocks.roster.mockImplementation(async (scope: string, identifier: string) => (
+    scope === 'module' && identifier === 'MC-real'
+      ? { assignedLearners: [{ id: 9, email: 'morgan@example.invalid', cohort: 'Autumn', group: 'Group A' }] }
+      : { assignedLearners: [] }
+  ));
+  render(<AttendancePage />);
+  await screen.findByRole('button', { name: 'Alex Example' });
+  fireEvent.click(screen.getByRole('button', { name: /^Module\s*All Modules$/ }));
+  expect(screen.getByRole('button', { name: 'Real overview module' })).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Real overview module' }));
+  await waitFor(() => expect(mocks.roster).toHaveBeenCalledWith(
+    'module', 'MC-real', { learnerStatus: 'all' }, expect.any(AbortSignal), { timeoutMs: 60000, compact: true },
+  ));
+  expect(await screen.findByRole('button', { name: 'Morgan Sample' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Alex Example' })).not.toBeInTheDocument();
+});
+
 it('cascades programme, cohort, group, module and lecture choices', async () => {
   mocks.overview.mockResolvedValue({
     programmes: [
@@ -197,7 +362,7 @@ it('cascades programme, cohort, group, module and lecture choices', async () => 
   ));
   fireEvent.click(screen.getByRole('button', { name: /^Cohort\s*All Cohorts$/ }));
   expect(screen.getByRole('button', { name: 'Autumn' })).toBeVisible();
-  expect(screen.queryByRole('button', { name: 'Winter' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Winter' })).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Spring' })).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole('button', { name: 'Autumn' }));
@@ -350,7 +515,7 @@ it('offers a retry when a filter roster cannot be loaded', async () => {
   expect(mocks.roster).toHaveBeenCalledTimes(2);
 });
 
-it('filters groups and modules by date, then loads the displayed live attendance records', async () => {
+it('keeps the full filter hierarchy while loading date-scoped live attendance', async () => {
   mocks.overview.mockResolvedValue({
     programmes: [{ id: 'P1', name: 'Engineering' }],
     cohorts: [{ id: 'C1', name: 'Autumn', programmeId: 'P1' }],
@@ -383,10 +548,10 @@ it('filters groups and modules by date, then loads the displayed live attendance
 
   fireEvent.click(screen.getByRole('button', { name: /^Group\s*All Groups$/ }));
   expect(screen.getByRole('button', { name: 'Group A' })).toBeVisible();
-  expect(screen.queryByRole('button', { name: 'Group B' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Group B' })).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: /^Module\s*All Modules$/ }));
   expect(screen.getByRole('button', { name: 'Module A' })).toBeVisible();
-  expect(screen.queryByRole('button', { name: 'Module B' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Module B' })).toBeVisible();
 
   fireEvent.click(screen.getByRole('button', { name: 'Module A' }));
   await waitFor(() => expect(mocks.liveDayRecords).toHaveBeenCalledWith('2026-10-17', 'MC1', expect.any(AbortSignal)));
@@ -402,7 +567,88 @@ it('opens View details when a learner is chosen in the learner directory', async
     fireEvent.click(entry);
   });
   expect(await screen.findByRole('dialog', { name: 'Morgan Sample' })).toBeVisible();
-  await waitFor(() => expect(mocks.kbcHistory).toHaveBeenCalledWith('302', expect.any(AbortSignal)));
+  await waitFor(() => expect(mocks.kbcHistory).toHaveBeenCalledWith('302', expect.any(AbortSignal), { source: 'all' }));
+});
+
+it("shows the same four saved KBC and live records as history despite a different curriculum schedule", async () => {
+  mocks.overview.mockResolvedValue({
+    ...overview,
+    cohorts: [{ id: 'C1', name: 'Autumn', programmeId: 'P1' }],
+    modules: [{
+      id: 'M1', moduleCatalogueId: 'MC1', name: 'Customer Journey Optimisation',
+      programmeId: 'P1', cohortId: 'C1', groupId: 'G1', cohort: 'Autumn', group: 'Group A',
+    }],
+  });
+  mocks.sessions.mockResolvedValue([
+    { id: 'S1', title: 'Lecture 1', moduleId: 'M1', moduleCatalogueId: 'MC1', date: '2026-10-10' },
+    { id: 'S2', title: 'Lecture 2', moduleId: 'M1', moduleCatalogueId: 'MC1', date: '2026-10-11' },
+    { id: 'S3', title: 'Lecture 3', moduleId: 'M1', moduleCatalogueId: 'MC1', date: '2026-10-12' },
+    { id: 'S4', title: 'Lecture 4', moduleId: 'M1', moduleCatalogueId: 'MC1', date: '2026-10-13' },
+  ]);
+  mocks.directory.mockResolvedValue({
+    learners: [{ ...directory[0], group: 'Group A' }], warnings: [],
+  });
+  const records = [
+    { recordKey: 'kbc:1', learnerId: '301', sessionDate: '2026-10-10', moduleName: 'Customer Journey (legacy title)', lectureName: 'Lecture 1', sessionNumber: 1, attendance: 'present', source: 'kbc' },
+    { recordKey: 'kbc:2', learnerId: '301', sessionDate: '2026-10-11', moduleName: 'Customer Journey Optimisation', lectureName: 'Lecture 2', sessionNumber: 2, attendance: 'present', source: 'kbc' },
+    { recordKey: 'live:3', learnerId: '301', sessionDate: '2026-10-12', moduleName: 'Customer Journey Optimisation', lectureName: 'Lecture 3', sessionNumber: 3, attendance: 'absent', source: 'live' },
+    { recordKey: 'kbc:4', learnerId: '301', sessionDate: '2026-10-15', moduleName: 'Customer Journey Optimisation', lectureName: 'Lecture 4', sessionNumber: 4, attendance: 'absent', source: 'kbc' },
+  ];
+  mocks.kbcRecent.mockResolvedValue({ recent: { '301': records }, warnings: [] });
+  mocks.kbcHistory.mockResolvedValue({ records: [...records].reverse().concat([
+    { recordKey: 'kbc:0', learnerId: '301', sessionDate: '2026-10-01', moduleName: 'Customer Journey Optimisation', lectureName: 'Lecture 0', sessionNumber: 0, attendance: 'present', source: 'kbc' },
+  ]), warnings: [] });
+
+  render(<AttendancePage />);
+  await screen.findByRole('button', { name: 'Alex Example' });
+  expect(screen.getByTitle(/Lecture 1/)).toBeVisible();
+  expect(screen.getByTitle(/Lecture 2/)).toBeVisible();
+  expect(screen.getByTitle(/Lecture 3/)).toBeVisible();
+  expect(screen.getByTitle(/Lecture 4/)).toBeVisible();
+  expect(screen.getByTitle(/Lecture 1 \(KBC\).*Present/)).toBeVisible();
+  expect(screen.getByTitle(/Lecture 4 \(KBC\).*Absent/)).toBeVisible();
+  expect(screen.queryByText('Oct 13')).not.toBeInTheDocument();
+  expect(mocks.kbcRecent).toHaveBeenCalledWith(expect.any(AbortSignal), { source: 'all' });
+
+  fireEvent.click(screen.getByRole('button', { name: 'View details for Alex Example' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Alex Example' });
+  expect(await within(dialog).findByText('Lecture 4')).toBeVisible();
+  expect(within(dialog).getByText('Thu, Oct 15, 2026')).toBeVisible();
+  expect(within(dialog).getAllByRole('button', { name: /^Change .* for Lecture/ })
+    .slice(0, 4).map((button) => button.getAttribute('aria-label')))
+    .toEqual([
+      'Change absent to present for Lecture 4',
+      'Change absent to present for Lecture 3',
+      'Change present to absent for Lecture 2',
+      'Change present to absent for Lecture 1',
+    ]);
+});
+
+it('shows all four live lectures when their module title no longer matches the schedule', async () => {
+  mocks.overview.mockResolvedValue({
+    ...overview,
+    modules: [{ id: 'M1', moduleCatalogueId: 'MC1', name: 'Customer Journey Optimisation', programmeId: 'P1' }],
+  });
+  mocks.sessions.mockResolvedValue([
+    { id: 'S1', title: 'Scheduled 1', moduleId: 'M1', moduleCatalogueId: 'MC1', date: '2026-10-10' },
+    { id: 'S2', title: 'Scheduled 2', moduleId: 'M1', moduleCatalogueId: 'MC1', date: '2026-10-11' },
+    { id: 'S3', title: 'Scheduled 3', moduleId: 'M1', moduleCatalogueId: 'MC1', date: '2026-10-12' },
+    { id: 'S4', title: 'Scheduled 4', moduleId: 'M1', moduleCatalogueId: 'MC1', date: '2026-10-13' },
+  ]);
+  mocks.directory.mockResolvedValue({ learners: [directory[0]], warnings: [] });
+  mocks.kbcRecent.mockResolvedValue({ recent: { '301': [
+    { recordKey: 'live:1', learnerId: '301', sessionDate: '2026-10-14', moduleName: 'Renamed module', lectureName: 'Live 1', sessionNumber: 1, attendance: 'present', source: 'live' },
+    { recordKey: 'live:2', learnerId: '301', sessionDate: '2026-10-15', moduleName: 'Renamed module', lectureName: 'Live 2', sessionNumber: 2, attendance: 'absent', source: 'live' },
+    { recordKey: 'live:3', learnerId: '301', sessionDate: '2026-10-16', moduleName: 'Renamed module', lectureName: 'Live 3', sessionNumber: 3, attendance: 'present', source: 'live' },
+    { recordKey: 'live:4', learnerId: '301', sessionDate: '2026-10-17', moduleName: 'Renamed module', lectureName: 'Live 4', sessionNumber: 4, attendance: 'absent', source: 'live' },
+  ] }, warnings: [] });
+
+  render(<AttendancePage />);
+  await screen.findByRole('button', { name: 'Alex Example' });
+  expect(screen.getByTitle(/Live 1 \(Live register\).*Present/)).toBeVisible();
+  expect(screen.getByTitle(/Live 2 \(Live register\).*Absent/)).toBeVisible();
+  expect(screen.getByTitle(/Live 3 \(Live register\).*Present/)).toBeVisible();
+  expect(screen.getByTitle(/Live 4 \(Live register\).*Absent/)).toBeVisible();
 });
 
 it('switches and saves any record, KBC or live, present or absent or unmarked', async () => {
@@ -498,29 +744,30 @@ it('keeps unsaved changes, including after closing, and reports the error when s
 it('switches a Last 4 badge and saves it from the register', async () => {
   mocks.kbcRecent.mockResolvedValue({
     recent: { '301': [{
-      recordKey: 'k9', learnerId: '301', sessionDate: '2026-10-01', moduleName: 'Project Controls',
-      lectureName: 'Lecture 9', sessionNumber: 9, attendance: 'absent', source: 'kbc',
+      recordKey: 'live:9', learnerId: '301', sessionDate: '2026-10-01', moduleName: 'Project Controls',
+      lectureName: 'Lecture 9', sessionNumber: 9, attendance: 'absent', source: 'live',
     }] },
     warnings: [],
   });
-  mocks.save.mockResolvedValue(['k9']);
+  mocks.save.mockResolvedValue(['live:9']);
   render(<AttendancePage />);
-  const badge = await screen.findByRole('button', { name: /^Lecture 9 \(KBC\) • .* • Absent\. Click to mark present$/ });
+  await screen.findByRole('button', { name: 'Alex Example' });
+  const badge = await screen.findByRole('button', { name: /^Lecture 9 \(Live register\) • .* • Absent\. Click to mark present$/ });
   fireEvent.click(badge);
-  expect(await screen.findByRole('button', { name: /^Lecture 9 \(KBC\) • .* • Present\. Click to mark absent$/ })).toBeVisible();
+  expect(await screen.findByRole('button', { name: /^Lecture 9 \(Live register\) • .* • Present\. Click to mark absent$/ })).toBeVisible();
   expect(screen.getByText('1 attendance correction not saved')).toBeVisible();
 
   const bar = screen.getByRole('region', { name: 'Unsaved attendance corrections' });
   await act(async () => {
     fireEvent.click(within(bar).getByRole('button', { name: /^Save$/ }));
   });
-  expect(mocks.save).toHaveBeenCalledWith([{ source: 'kbc', recordKey: 'k9', attendance: 'present' }]);
+  expect(mocks.save).toHaveBeenCalledWith([{ source: 'live', recordKey: 'live:9', attendance: 'present' }]);
   await waitFor(() => expect(mocks.kbcRecent).toHaveBeenCalledTimes(2));
   expect(screen.queryByText(/attendance correction not saved/)).not.toBeInTheDocument();
 });
 
-it("shows each learner's last four saved lectures from KBC and the live register", async () => {
-  const record = (key: string, sessionDate: string, attendance: 'present' | 'absent', source: 'kbc' | 'live' = 'kbc') => ({
+it("shows the latest four saved database lectures, including legacy KBC rows", async () => {
+  const record = (key: string, sessionDate: string, attendance: 'present' | 'absent', source: 'live' | 'kbc' = 'live') => ({
     recordKey: key, learnerId: '301', sessionDate, moduleName: 'Project Controls',
     lectureName: `Lecture ${key}`, sessionNumber: null, attendance, source,
   });
@@ -530,7 +777,8 @@ it("shows each learner's last four saved lectures from KBC and the live register
         record('1', '2026-09-17', 'present'),
         record('2', '2026-09-24', 'absent'),
         record('3', '2026-10-01', 'present'),
-        record('4', '2026-10-08', 'absent', 'live'),
+        record('4', '2026-10-08', 'absent'),
+        record('legacy', '2026-10-09', 'present', 'kbc'),
       ],
     },
     warnings: [],
@@ -539,9 +787,10 @@ it("shows each learner's last four saved lectures from KBC and the live register
   render(<AttendancePage />);
   await screen.findByRole('button', { name: 'Alex Example' });
 
-  expect(await screen.findByTitle(/^Lecture 1 \(KBC\) • .* • Present$/)).toBeInTheDocument();
-  expect(screen.getByTitle(/^Lecture 2 \(KBC\) • .* • Absent$/)).toBeInTheDocument();
+  expect(screen.getByTitle(/^Lecture 2 \(Live register\) • .* • Absent$/)).toBeInTheDocument();
   expect(screen.getByTitle(/^Lecture 4 \(Live register\) • .* • Absent$/)).toBeInTheDocument();
+  expect(screen.getByTitle(/^Lecture legacy \(KBC\) • .* • Present$/)).toBeInTheDocument();
+  expect(screen.queryByTitle(/^Lecture 1 \(Live register\)/)).not.toBeInTheDocument();
   expect(mocks.kbcRecent).toHaveBeenCalledTimes(1);
   expect(mocks.kbcHistory).not.toHaveBeenCalled();
 });
@@ -601,7 +850,7 @@ it('loads every KBC attendance record only after View details is pressed', async
   });
 
   expect(await screen.findByRole('dialog', { name: 'Alex Example' })).toBeVisible();
-  await waitFor(() => expect(mocks.kbcHistory).toHaveBeenCalledWith('301', expect.any(AbortSignal)));
+  await waitFor(() => expect(mocks.kbcHistory).toHaveBeenCalledWith('301', expect.any(AbortSignal), { source: 'all' }));
   const dialog = screen.getByRole('dialog', { name: 'Alex Example' });
   expect(await within(dialog).findByText('Lecture 1: Kickoff')).toBeVisible();
   expect(within(dialog).getByText('Lecture 2: Checkpoint')).toBeVisible();

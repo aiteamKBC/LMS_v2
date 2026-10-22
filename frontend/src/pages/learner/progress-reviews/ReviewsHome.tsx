@@ -107,6 +107,9 @@ export default function ReviewsHome(props: ReviewsHomeProps) {
       {state.action === 'join' && state.joinUrl
         ? <a className={className} href={state.joinUrl} target="_blank" rel="noopener noreferrer"><Video size={19} aria-hidden="true"/>Join meeting</a>
         : reviewLink(state, <><FileText size={19} aria-hidden="true"/>{state.action === 'sign' && props.canAct ? 'Read & sign' : 'View review'}</>, className)}
+      {employer && state.joinUrl && !state.past && (state.action === 'join'
+        ? reviewLink(state, <><FileText size={19} aria-hidden="true"/>View review</>, styles.secondaryButton)
+        : <a className={styles.secondaryButton} href={state.joinUrl} target="_blank" rel="noopener noreferrer"><Video size={19} aria-hidden="true"/>Join meeting</a>)}
       {!employer && state.canReschedule && (!state.attendance?.missed || state.session.importedReview) && <button type="button" className={styles.secondaryButton} disabled={!props.canAct || props.busy} onClick={() => props.onSchedule(state.session)}><CalendarDays size={19} aria-hidden="true"/>Reschedule meeting</button>}
     </>;
   }

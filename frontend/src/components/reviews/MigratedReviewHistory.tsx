@@ -26,7 +26,7 @@ export function MigratedReviewHistory({ entries, onDownload, signatureFree = fal
   return (
     <details className="rounded-xl border border-background-200 bg-white p-4">
       <summary className="cursor-pointer font-semibold text-foreground-900">Previous review versions ({entries.length})</summary>
-      <p className="mt-2 text-sm text-foreground-600">{signatureFree ? 'These versions retain the answers recorded before each correction.' : 'These versions retain the answers and signatures recorded before each correction.'}</p>
+      <p className="mt-2 text-sm text-foreground-600">These versions retain the answers and any signatures recorded before each correction.</p>
       <ul className="mt-3 divide-y divide-background-200">
         {entries.map(entry => (
           <li key={entry.number} className="flex flex-wrap items-start justify-between gap-3 py-3 text-sm">

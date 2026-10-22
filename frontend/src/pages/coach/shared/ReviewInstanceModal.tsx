@@ -352,13 +352,14 @@ export function ReviewInstanceModal({
             initializationAttemptsRef.current.set(attemptKey, attempt);
           }
           try {
-            await attempt;
+            // Initialization returns the complete authorized form. Show it
+            // immediately instead of making a second read a prerequisite.
+            const initialized = await attempt;
             if (!active) return;
-            data = await fetchReviewInstanceForm(instanceId, controller.signal);
-            if (!active) return;
-            if (!data.migratedForm || !data.formAvailable || data.summaryOnly) {
+            if (!initialized?.migratedForm || !initialized.formAvailable || initialized.summaryOnly) {
               throw new Error('The migrated form was not available after initialization.');
             }
+            data = initialized;
           } catch (err) {
             if (!active) return;
             setInitializationFailed(true);
@@ -471,10 +472,11 @@ export function ReviewInstanceModal({
   const advisorSignatureSaved = Boolean(definition && advisorSignature?.required && advisorSignature.signed);
   const requiredSignatures = definition ? Object.values(definition.signatures).filter(state => state.required) : [];
   const personalSupportForm = Boolean(definition?.migratedForm && definition.template.reviewTypeCode === 'aptem_psp');
+  const signatureFreePersonalSupport = personalSupportForm && requiredSignatures.length === 0;
   const allRequiredSignaturesSaved = requiredSignatures.length > 0 && requiredSignatures.every(state => state.signed);
   const waitingForOtherSignatures = Boolean(
     definition
-    && !personalSupportForm
+    && !signatureFreePersonalSupport
     && isSignatureStage
     && !advisorSignaturePending
     && !allRequiredSignaturesSaved,
@@ -953,13 +955,13 @@ export function ReviewInstanceModal({
             {definition.migratedForm && isSignatureStage && !isViewingAsCoach && (
               <section aria-label="Reopen review" className="rounded-xl border border-amber-200 bg-amber-50 p-4">
                 <p className="font-semibold text-amber-950">Correct this review</p>
-                <p className="mt-1 text-sm text-amber-900">{personalSupportForm ? 'Reopen the form to correct its answers. Previous versions are retained.' : 'Reopen the form and collect new signatures. Previous versions are retained. Recorded hours and Monthly Log signatures stay unchanged.'}</p>
+                <p className="mt-1 text-sm text-amber-900">{signatureFreePersonalSupport ? 'Reopen the form to correct its answers. Previous versions are retained.' : 'Reopen the form and collect new signatures. Previous versions are retained. Recorded hours and Monthly Log signatures stay unchanged.'}</p>
                 <button type="button" disabled={busy} onClick={() => setShowReopenConfirmation(true)}
                   className="mt-3 min-h-11 rounded-lg bg-amber-700 px-4 py-2 font-semibold text-white disabled:opacity-50">Reopen review</button>
               </section>
             )}
             {definition.migratedForm && (
-              <MigratedReviewHistory entries={definition.reopenHistory} signatureFree={personalSupportForm}
+              <MigratedReviewHistory entries={definition.reopenHistory} signatureFree={signatureFreePersonalSupport}
                 onDownload={number => downloadMigratedReviewRevision(definition.instance.id, number)} />
             )}
             {initializationFailed && !isViewingAsCoach ? (
@@ -1019,7 +1021,7 @@ export function ReviewInstanceModal({
               </button>
             ) : null}
             {personalSupportForm && !formReadOnly ? (
-              <p className="text-sm text-primary-800">Save your answers to complete this Personal Support Plan once all required questions are answered.</p>
+              <p className="text-sm text-primary-800">{signatureFreePersonalSupport ? 'Save your answers to complete this Personal Support Plan once all required questions are answered.' : 'Save all required answers to send this Personal Support Plan for the selected signatures.'}</p>
             ) : null}
             {definition.migratedForm && !personalSupportForm && definition.localStatus === 'not-scheduled' && !isViewingAsCoach ? (
               <p className="text-sm text-amber-800">This form can be saved as a draft. Starting the review requires a scheduled state.</p>
@@ -1051,7 +1053,7 @@ export function ReviewInstanceModal({
                     <AppIcon className="ri-error-warning-line mt-0.5 text-xl text-amber-600" />
                     <div>
                       <h2 id="reopen-confirmation-title" className="text-base font-bold text-foreground-900">{definition.migratedForm && definition.instance.status !== 'completed' ? 'Reopen this Review for corrections?' : 'Edit this completed Review?'}</h2>
-                      <p className="mt-2 text-sm leading-6 text-foreground-600">{personalSupportForm ? 'The completed version is retained in the review history. Save the corrected answers to complete the Personal Support Plan again.' : 'Reopening will clear the current signatures after recording an audit snapshot. Everyone must sign this Review again before it can be completed.'}</p>
+                      <p className="mt-2 text-sm leading-6 text-foreground-600">{signatureFreePersonalSupport ? 'The completed version is retained in the review history. Save the corrected answers to complete the Personal Support Plan again.' : personalSupportForm ? 'Reopening retains the previous version and clears the current signatures. Save the corrected answers, then collect the selected signatures again.' : 'Reopening will clear the current signatures after recording an audit snapshot. Everyone must sign this Review again before it can be completed.'}</p>
                       {definition.migratedForm && !personalSupportForm && <p className="mt-2 text-sm text-foreground-600">The old signed PDF is retained. Recorded hours and Monthly Log signatures will not change.</p>}
                     </div>
                   </div>
@@ -1061,7 +1063,7 @@ export function ReviewInstanceModal({
                         disabled={reopening} className="mt-1 block min-h-11 w-full rounded-lg border border-background-300 bg-white p-2">
                         <option value="correction-required">Correction required</option>
                         <option value="incorrect-answer">Incorrect answer</option>
-                        {!personalSupportForm && <option value="signature-error">Signature error</option>}
+                        {!signatureFreePersonalSupport && <option value="signature-error">Signature error</option>}
                         <option value="other">Other</option>
                       </select>
                     </label>
@@ -1090,7 +1092,9 @@ export function ReviewInstanceModal({
                 : initializationFailed
                 ? 'The review form could not be opened. Retry to load it. Saved information is unchanged.'
                 : personalSupportForm
-                ? isImportedReadOnly ? 'This completed Personal Support Plan is read-only.' : 'Save your answers. The plan completes when all required questions are answered.'
+                ? isImportedReadOnly
+                  ? definition.instance.status === 'awaiting-signature' ? 'Submitted answers are locked while the selected parties sign this Personal Support Plan.' : 'This completed Personal Support Plan is read-only.'
+                  : signatureFreePersonalSupport ? 'Save your answers. The plan completes when all required questions are answered.' : 'Save all required answers to send this Personal Support Plan for the selected signatures.'
                 : canInitializeMigrated
                 ? 'An approved form is available to start this review. Its questions can update until you submit it for signatures.'
                 : isSummaryOnly
@@ -1444,7 +1448,7 @@ export function ReviewInstanceModal({
                 returned. */}
             {(definition.migratedForm && isSignatureStage) || (!definition.migratedForm && (isHistoricalPdfAvailable || (EXPORTABLE_REVIEW_TYPES.includes(definition.template.reviewTypeCode || '') && isSignatureStage))) ? (
               <>
-                {!personalSupportForm && (definition.migratedForm || !isHistoricalPdfAvailable) && <ReviewSignatures signatures={definition.signatures} />}
+                {!signatureFreePersonalSupport && (definition.migratedForm || !isHistoricalPdfAvailable) && <ReviewSignatures signatures={definition.signatures} />}
                 {definition.migratedForm && definition.localStatus === 'awaiting-signature' && allRequiredSignaturesSaved && !isViewingAsCoach ? (
                   <button type="button" onClick={() => { void finalizeMigrated(); }} disabled={busy} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60">Complete review</button>
                 ) : null}
@@ -1471,7 +1475,7 @@ export function ReviewInstanceModal({
         <button type="button" onClick={onClose} disabled={busy} className="h-10 rounded-lg px-4 text-xs font-semibold text-foreground-500 transition hover:bg-background-100 disabled:opacity-50">{pageMode ? 'Back' : 'Cancel'}</button>
         {!formReadOnly ? <div className="flex gap-2">
           <button type="button" onClick={saveDraft} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-background-300 bg-white px-5 text-xs font-bold text-foreground-700 shadow-sm transition hover:bg-background-100 disabled:opacity-60">
-            <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-save-line'}></AppIcon>{personalSupportForm ? missingFieldIds.size ? 'Save draft' : 'Save & complete' : 'Save draft'}
+            <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-save-line'}></AppIcon>{personalSupportForm ? missingFieldIds.size ? 'Save draft' : signatureFreePersonalSupport ? 'Save & complete' : 'Save & send for signatures' : 'Save draft'}
           </button>
           {!personalSupportForm && (!definition?.migratedForm || definition.localStatus === 'scheduled' || definition.localStatus === 'in-progress') ? <button type="button" onClick={complete} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60">
             <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'}></AppIcon>

@@ -43,7 +43,7 @@ class CancelledReviewTests(SimpleTestCase):
         other_learners = SimpleNamespace(**{**vars(overlay), "learner_id": 671, "event_key": "imported-review:OTHER"})
         states = {
             "advisor": {"signed": True}, "participant": {"signed": False},
-            "employer": {"signed": False, "signedName": None, "signedAt": None},
+            "employer": {"required": True, "signed": False, "signedName": None, "signedAt": None},
         }
         with patch.object(EnrolmentReview.objects, "filter", return_value=queryset), \
                 patch.object(employer_portal, "SOURCE_MODELS", {}), \
@@ -52,7 +52,13 @@ class CancelledReviewTests(SimpleTestCase):
                 patch.object(employer_portal, "imported_document_dates", return_value={(670, 407): "2026-10-21"}), \
                 patch.object(employer_portal, "signature_states", return_value=states):
             migrated.return_value.prefetch_related.return_value.filter.return_value = [overlay, other_learners]
-            rows = employer_portal._review_signing_rows("apprenticeship", 670)
+            for family in ("MCM", "PR", "PR_SKILLS_RADAR", "PSP"):
+                overlay.migrated_template.review_family = family
+                rows = employer_portal._review_signing_rows("apprenticeship", 670)
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]["reviewType"], "aptem_psp" if family == "PSP" else "aptem_mcm" if family == "MCM" else "aptem_progress_review")
+            states["employer"]["required"] = False
+            self.assertEqual(employer_portal._review_signing_rows("apprenticeship", 670), [])
         self.assertEqual(len(rows), 1)
         self.assertTrue(rows[0]["migratedForm"])
         self.assertEqual(rows[0]["eventKey"], overlay.event_key)

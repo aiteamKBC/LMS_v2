@@ -69,12 +69,16 @@ def review_pdf_data(overlay, signatures, *, learner_name, learner_email,
 
 def render_migrated_pdf(overlay, signatures, **context):
     definition, information = review_pdf_data(overlay, signatures, **context)
+    signature_roles = SIGNATURE_ORDER
+    if definition["template"]["reviewFamily"] == "PSP":
+        signature_roles = tuple(role for role in SIGNATURE_ORDER
+                                if (overlay.signature_requirements or {}).get(role) or signatures.get(role))
     return render_review_pdf(
-        definition, information, signature_roles=() if pdf_family(overlay) == "PSP" else SIGNATURE_ORDER,
+        definition, information, signature_roles=signature_roles,
         # A migrated bound summary is a normal saved answer at its frozen
         # position. No extra AI block or cross-review RAG history is invented.
         mcm_summary_block=False, rag_history_block=False,
-        provenance=PROVENANCE, keep_signature_blocks=pdf_family(overlay) != "PSP",
+        provenance=PROVENANCE, keep_signature_blocks=bool(signature_roles),
         # Migrated signature validation already permits up to 4000 x 4000.
         # Reusing Native presentation must not reject an existing valid mark.
         signature_image_max_pixels=16_000_000,

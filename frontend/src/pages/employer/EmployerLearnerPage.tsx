@@ -198,7 +198,7 @@ export default function EmployerLearnerPage() {
     : unsigned > 0 ? `${unsigned} not signed yet` : null;
 
   const { shell } = useEmployerPortalChrome(employerId, data?.employer.name);
-  const backToLearners = () => navigate(`/employers/${employerId}`);
+  const backToLearners = () => navigate(`/employers/${employerId}/learners`);
 
   return (
     <WorkspaceShell {...shell} pageTitle="Learner" pageSubtitle={learner?.name ?? 'Learner'}>

@@ -49,6 +49,7 @@ import { CompletionTimeDialog } from '@/components/feature/CompletionTimeDialog'
 import { CompletionValidationError, type WorkingRuleReason } from '@/lib/completionValidation';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { ActivitySidebar } from './ActivitySidebar';
+import { AudioYouTubeAlternative } from './AudioYouTubeAlternative';
 import { isNavigableComponent, placeActivity, weekDisplayLabel, type ActivityPlacement } from './weekPreview';
 import { componentRoute } from './componentRoute';
 import { ActivityElapsedTimer } from './ActivityElapsedTimer';
@@ -2666,6 +2667,7 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
     tick(); window.addEventListener('focus', tick);
     return () => { clearTimeout(timer); window.removeEventListener('focus', tick); };
   }, [sessionEnd, preview]);
+  const primaryAudioRef = useRef<HTMLAudioElement>(null);
   if (contentKind === 'video' && parsed) {
     // The video's "Component content" from the Module Builder, shown under the
     // player. Its own field: title, description and video URL are unchanged.
@@ -2699,6 +2701,7 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
             controls
             preload="metadata"
             className="w-full"
+            ref={primaryAudioRef}
             src={audioSource}
             onPlaying={() => onPlayingChange(true)}
             onWaiting={() => onPlayingChange(false)}
@@ -2728,6 +2731,10 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
         {component.audioUrl && (
           <a href={proxiedMaterialUrl(component.audioUrl)} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-600 hover:text-violet-700"><AppIcon className="ri-external-link-line" />Open in a new tab</a>
         )}
+        {audioSource && <AudioYouTubeAlternative url={component.alternativeYouTubeUrl} onLeave={() => {
+          primaryAudioRef.current?.pause();
+          onPlayingChange(false);
+        }} />}
         <ExtraComponentFiles component={component} title={title} primaryUrl={component.audioUrl} audio />
       </div>
     );

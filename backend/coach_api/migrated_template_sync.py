@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from .migrated_reviews import EDITABLE_STATUSES, all_fields, validate_answers, _visible_fields
 from .migrated_templates import FAMILIES, fingerprint, resolve_template, snapshot_for, validate_managed_definition
+from .migrated_signature_rules import requirements_for_definition
 
 
 class TemplateSyncConflict(ValueError):
@@ -42,7 +43,7 @@ def lock_template_family(family):
 
 def snapshot_fingerprint(snapshot):
     # Exclude bookkeeping and retained field history from the definition version.
-    return fingerprint({key: snapshot.get(key) for key in ("sections", "name", "templateSource", "otjh")})
+    return fingerprint({key: snapshot.get(key) for key in ("sections", "name", "templateSource", "otjh", "signatures")})
 
 
 def snapshot_state(overlay):
@@ -122,9 +123,15 @@ def synchronize_locked(overlay, family, programme_key):
     if overlay.migrated_template_id == template.pk and snapshot_fingerprint(overlay.template_snapshot) == snapshot_fingerprint(snapshot_for(template)):
         return False
     latest = merge_snapshot(overlay.template_snapshot, overlay.answers or {}, template, family)
+    update_fields = ["template_snapshot", "migrated_template", "updated_at"]
+    if "signatures" in latest or "signatures" in overlay.template_snapshot:
+        # Unrelated edits to legacy templates must not reset stored rules.
+        # Removing explicit settings restores the family defaults.
+        overlay.signature_requirements = requirements_for_definition(latest, family)
+        update_fields.append("signature_requirements")
     overlay.template_snapshot = latest
     overlay.migrated_template = template
-    overlay.save(update_fields=["template_snapshot", "migrated_template", "updated_at"])
+    overlay.save(update_fields=update_fields)
     return True
 
 
