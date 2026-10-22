@@ -94,11 +94,12 @@ describe('Migrated Review Templates workspace', () => {
     const card = await screen.findByRole('article', { name: `Standard ${family}` });
     fireEvent.click(within(card).getByRole('button', { name: 'Edit' }));
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByLabelText('Learner')).toBeEnabled();
-    expect(within(dialog).queryByLabelText('Employer')).not.toBeInTheDocument();
+    const respondents = within(within(dialog).getByRole('group', { name: 'Who can answer' }));
+    expect(respondents.getByLabelText('Learner')).toBeEnabled();
+    expect(respondents.queryByLabelText('Employer')).not.toBeInTheDocument();
     expect(within(dialog).getByText('Coach (always)')).toBeVisible();
     if (family === 'PSP') {
-      expect(within(dialog).getByText(/Saving all required answers completes the plan without signatures/)).toBeVisible();
+      expect(within(dialog).getByText(/No signatures are required by default/)).toBeVisible();
     }
   });
 
@@ -108,10 +109,11 @@ describe('Migrated Review Templates workspace', () => {
     fireEvent.click(within(card).getByRole('button', { name: 'Edit' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('Coach (always)')).toBeVisible();
-    expect(within(dialog).getByLabelText('Learner')).not.toBeChecked();
-    expect(within(dialog).getByLabelText('Employer')).not.toBeChecked();
-    fireEvent.click(within(dialog).getByLabelText('Learner'));
-    fireEvent.click(within(dialog).getByLabelText('Employer'));
+    const respondents = within(within(dialog).getByRole('group', { name: 'Who can answer' }));
+    expect(respondents.getByLabelText('Learner')).not.toBeChecked();
+    expect(respondents.getByLabelText('Employer')).not.toBeChecked();
+    fireEvent.click(respondents.getByLabelText('Learner'));
+    fireEvent.click(respondents.getByLabelText('Employer'));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save template' }));
     await waitFor(() => expect(api.updateMigratedTemplate).toHaveBeenCalledWith(globalTemplate, expect.objectContaining({
       definition: { sections: [{ ...definition.sections[0], fields: [{ ...definition.sections[0].fields[0], respondentRoles: ['participant', 'employer'] }] }] },

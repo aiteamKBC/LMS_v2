@@ -125,7 +125,7 @@ beforeEach(() => {
   });
 });
 
-describe('Personal Support Plan completion without signatures', () => {
+describe('Personal Support Plan completion and optional signatures', () => {
   function psp(status = 'not-scheduled') {
     const result = migratedDefinition(status);
     result.template.reviewTypeCode = 'aptem_psp';
@@ -168,6 +168,26 @@ describe('Personal Support Plan completion without signatures', () => {
     expect(screen.getByText('Personal Support Plan completed')).toBeVisible();
     expect(screen.queryByLabelText('Signature step')).not.toBeInTheDocument();
     expect(screen.queryByText(/Awaiting required signatures|All signatures saved/)).not.toBeInTheDocument();
+  });
+
+  it('saves a configured PSP for signatures and waits for the selected parties after the coach signs', async () => {
+    const draft = psp();
+    draft.signatures.advisor.required = true;
+    draft.signatures.participant.required = true;
+    const submitted = { ...draft, readOnly: true, localStatus: 'awaiting-signature', instance: { ...draft.instance, status: 'awaiting-signature' } };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(draft);
+    vi.mocked(saveReviewInstanceAnswers).mockResolvedValue(submitted);
+    vi.mocked(signMigratedReviewAsCoach).mockResolvedValue({ ...submitted,
+      signatures: { ...submitted.signatures, advisor: { required: true, signed: true, signedName: 'Sam Coach' } } });
+    const { onStatusChange } = mount(draft.instance.id);
+    fireEvent.click(await screen.findByRole('button', { name: 'Save & send for signatures' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm coach signature' }));
+    await waitFor(() => expect(signMigratedReviewAsCoach).toHaveBeenCalled());
+    expect(onStatusChange).toHaveBeenCalledWith('awaiting-signature');
+    expect(await screen.findByText(/waiting for the remaining required signatures/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Save & complete' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Review completed')).not.toBeInTheDocument();
+    expect(submitMigratedReview).not.toHaveBeenCalled();
   });
 });
 

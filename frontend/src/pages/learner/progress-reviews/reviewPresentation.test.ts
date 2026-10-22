@@ -127,6 +127,25 @@ describe('review presentation preserves review and booking rules', () => {
     });
   });
 
+  it.each(['scheduled', 'in-progress'])('recognises a coach-booked PSP that is %s without offering learner rescheduling', status => {
+    const row = aptem({ status, importedReview: { ...aptem().importedReview!, type: 'Personal Support Plan' } });
+    expect(presentReview(row, undefined, today)).toMatchObject({
+      booked: true, past: false, action: 'join', joinUrl: row.meetingLink, canReschedule: false,
+    });
+  });
+
+  it.each(['unbooked', 'completed', 'cancelled', 'source-completed'])('does not expose a meeting link for a %s PSP', state => {
+    const row = aptem({
+      status: ['completed', 'cancelled'].includes(state) ? state : 'scheduled',
+      calendarEventKey: state === 'unbooked' ? undefined : 'booking:11',
+      importedReview: { ...aptem().importedReview!, type: 'Personal Support Plan',
+        completedDate: state === 'source-completed' ? today : null },
+    });
+    expect(presentReview(row, undefined, today)).toMatchObject({
+      booked: false, action: 'view', joinUrl: null, canReschedule: false,
+    });
+  });
+
   it.each(['Progress Review', 'Progress Review (+ Skills Radar)'])('keeps an unbooked Aptem %s in upcoming reviews with a booking action', type => {
     const row = aptem({ status: 'not-scheduled', calendarEventKey: undefined, scheduledDate: null, scheduledTime: null,
       targetDate: '2027-03-11', importedReview: { ...aptem().importedReview!, type, status: 'Not Scheduled' } });

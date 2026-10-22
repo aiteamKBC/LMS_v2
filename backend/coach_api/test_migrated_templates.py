@@ -27,6 +27,57 @@ DEFINITION = {"sections": [{"key": "review", "title": "Review", "order": 0, "fie
 
 
 class MigratedTemplateManagementTests(TestCase):
+    def test_signature_settings_round_trip_and_copy_without_changing_other_templates(self):
+        rules = {"advisor": False, "participant": True, "employer": False}
+        for family in ("MCM", "PR", "PR_SKILLS_RADAR"):
+            with self.subTest(family=family):
+                template = self.template(family=family)
+                other = self.template("PROGRAMME", family=family, key="id:other")
+                definition = {**copy.deepcopy(DEFINITION), "signatures": rules}
+                response = self.request(api.detail, "patch", {
+                    "updated_at": template.updated_at.isoformat(), "definition": definition,
+                }, template.pk)
+                self.assertEqual(response.status_code, 200, response.content)
+                template.refresh_from_db()
+                renamed = self.request(api.detail, "patch", {
+                    "updated_at": template.updated_at.isoformat(), "name": "Renamed",
+                }, template.pk)
+                self.assertEqual(json.loads(renamed.content)["definition"]["signatures"], rules)
+                copied = self.request(api.collection, "post", {"scope": "PROGRAMME", "review_family": family,
+                    "programme_key": "id:copy", "name": "Copy"})
+                self.assertEqual(copied.status_code, 201, copied.content)
+                self.assertEqual(json.loads(copied.content)["definition"]["signatures"], rules)
+                other.refresh_from_db()
+                self.assertNotIn("signatures", other.definition_json)
+
+    def test_signature_settings_reject_invalid_payloads_and_accept_psp_choices(self):
+        template = self.template()
+        rules = {"advisor": True, "participant": False, "employer": False}
+        for invalid in (None, [], {}, {"advisor": True}, {**rules, "referrer": True},
+                        {**rules, "participant": "false"}, {**rules, "employer": 1}):
+            with self.subTest(invalid=invalid):
+                response = self.request(api.detail, "patch", {"updated_at": template.updated_at.isoformat(),
+                    "definition": {**DEFINITION, "signatures": invalid}}, template.pk)
+                self.assertEqual(response.status_code, 400)
+                template.refresh_from_db()
+                self.assertEqual(template.definition_json, DEFINITION)
+        psp = self.template(family="PSP")
+        response = self.request(api.detail, "patch", {"updated_at": psp.updated_at.isoformat(),
+            "definition": {**DEFINITION, "signatures": rules}}, psp.pk)
+        self.assertEqual(response.status_code, 200, response.content)
+        psp.refresh_from_db()
+        self.assertEqual(psp.definition_json["signatures"], rules)
+
+    def test_signature_only_edits_obey_access_csrf_and_version_checks(self):
+        template = self.template()
+        payload = {"updated_at": template.updated_at.isoformat(), "definition": {**DEFINITION,
+            "signatures": {"advisor": False, "participant": False, "employer": False}}}
+        self.assertEqual(self.request(api.detail, "patch", payload, template.pk, csrf=True).status_code, 403)
+        with patch("login.permissions._accesses_of", return_value=frozenset()):
+            self.assertEqual(self.request(api.detail, "patch", payload, template.pk).status_code, 403)
+        self.assertEqual(self.request(api.detail, "patch", payload, template.pk).status_code, 200)
+        self.assertEqual(self.request(api.detail, "patch", payload, template.pk).status_code, 409)
+
     def setUp(self):
         self.factory = RequestFactory()
         self.account = SimpleNamespace(role="staff", subject_type="staff", subject_id=1)

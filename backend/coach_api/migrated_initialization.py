@@ -5,7 +5,7 @@ from .models import ImportedReviewInstance
 from .migrated_reviews import initial_local_status, review_family, validate_definition
 from .migrated_templates import resolve_template, snapshot_for
 from .migrated_template_sync import lock_template_family
-from .migrated_completion import requirements_for_family
+from .migrated_signature_rules import requirements_for_definition
 
 
 def initialize_imported_review(owner_email, definition):
@@ -31,7 +31,7 @@ def initialize_imported_review(owner_email, definition):
             defaults={
                 "learner_id": definition["instance"]["learnerId"], "source_review_id": source_id,
                 "migrated_template": template, "template_snapshot": snapshot_for(template),
-                "signature_requirements": requirements_for_family(family), "answers": answers,
+                "signature_requirements": requirements_for_definition(template.definition_json, family), "answers": answers,
                 "status": status,
             },
         )
