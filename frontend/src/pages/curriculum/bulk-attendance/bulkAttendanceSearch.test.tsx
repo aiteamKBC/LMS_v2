@@ -91,7 +91,7 @@ it('filters by saved day membership outside Last 4 while keeping complete histor
   }], warnings: [] });
   mocks.dayLearners.mockImplementation(async (day: string) => day === '2020-01-02' ? ['301'] : []);
   render(<AttendancePage />);
-  const dateInput = screen.getByLabelText('Date');
+  const dateInput = screen.getByLabelText('Jump to date');
   fireEvent.change(dateInput, { target: { value: '2020-01-02' } });
   await screen.findByRole('button', { name: 'Alex Example' });
   expect(screen.queryByRole('button', { name: 'Morgan Sample' })).not.toBeInTheDocument();
@@ -109,7 +109,7 @@ it('ignores an old date response and keeps empty days empty with a usable add-da
     ? new Promise<string[]>((resolve) => { finishOld = resolve; })
     : Promise.resolve(day === '2020-01-03' ? ['302'] : []));
   render(<AttendancePage />);
-  const dateInput = screen.getByLabelText('Date');
+  const dateInput = screen.getByLabelText('Jump to date');
   fireEvent.change(dateInput, { target: { value: '2020-01-02' } });
   await waitFor(() => expect(finishOld).toBeTypeOf('function'));
   fireEvent.change(dateInput, { target: { value: '2020-01-03' } });
@@ -126,7 +126,7 @@ it('ignores an old date response and keeps empty days empty with a usable add-da
 it('reports a failed day read and retries rather than showing the unfiltered directory', async () => {
   mocks.dayLearners.mockRejectedValueOnce(new Error('Day unavailable')).mockResolvedValue(['301']);
   render(<AttendancePage />);
-  fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2020-01-02' } });
+  fireEvent.change(screen.getByLabelText('Jump to date'), { target: { value: '2020-01-02' } });
   expect(await screen.findByText('Day unavailable')).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Alex Example' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Retry attendance date' }));
@@ -141,7 +141,7 @@ it('intersects the selected day with the group roster and learner search', async
     { id: 2, email: 'morgan@example.invalid', groupId: 'G1' },
   ] });
   render(<AttendancePage />);
-  fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2020-01-02' } });
+  fireEvent.change(screen.getByLabelText('Jump to date'), { target: { value: '2020-01-02' } });
   await screen.findByRole('button', { name: 'Morgan Sample' });
   fireEvent.click(screen.getByRole('button', { name: /^Group\s*All Groups$/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Group A' }));
@@ -225,7 +225,7 @@ it('filters the register by group using that group\'s roster', async () => {
 it('starts without a date filter and shows the full active roster', async () => {
   mocks.dayLearners.mockImplementation(() => new Promise(() => undefined));
   render(<AttendancePage />);
-  const dateInput = screen.getByLabelText('Date') as HTMLInputElement;
+  const dateInput = screen.getByLabelText('Jump to date') as HTMLInputElement;
   expect(dateInput.value).toBe('');
   for (const name of ['Alex Example', 'Morgan Sample', 'Riley Past']) {
     expect(await screen.findByRole('button', { name })).toBeVisible();

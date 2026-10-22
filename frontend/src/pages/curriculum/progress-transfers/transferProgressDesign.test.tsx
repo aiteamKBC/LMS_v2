@@ -1,11 +1,11 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as api from '@/api/progressTransfer';
 import { TransferRequests } from './page';
 
-vi.mock('@/api/progressTransfer', () => ({ getTransferRequests: vi.fn(), approveTransferRequest: vi.fn() }));
+vi.mock('@/api/progressTransfer', () => ({ getTransferRequests: vi.fn(), getTransferReview: vi.fn(), approveTransferRequest: vi.fn() }));
 
 const module = (id = 'M1', percent = 40, hours = 2): api.TransferModule => ({ courseRef: `legacy:${id}`, moduleId: id, oldTitle: `Old ${id}`, newTitle: `New ${id}`, percent, hours });
 const request = (id = 'R1', changes: Partial<api.AdminTransfer> = {}): api.AdminTransfer => ({ requestId: id, learnerId: '7', learnerKind: 'commercial', learnerName: 'Same learner', programme: 'Programme A', status: 'pending', requestedAt: '2026-10-19T09:00:00Z', approvedAt: null, modules: [module()], ...changes });
@@ -17,7 +17,11 @@ const pendingSection = () => within(screen.getByRole('region', { name: 'Pending 
 const history = () => within(screen.getByRole('table'));
 const metric = (name: string) => within(screen.getByRole('article', { name }));
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; };
+const decisions = { reviewToken: 'review', mappings: [] };
+// Approval waits for the component-matching review the service requires.
+const approveInDialog = async () => { const button = within(screen.getByRole('dialog')).getByRole('button', { name: 'Approve transfer' }); await waitFor(() => expect(button).toBeEnabled()); fireEvent.click(button); return button; };
 
+beforeEach(() => { vi.mocked(api.getTransferReview).mockResolvedValue({ reviewToken: 'review', csrfToken: 'csrf', modules: [] }); });
 afterEach(() => vi.resetAllMocks());
 
 describe('Transfer Progress design and supported operations', () => {
@@ -111,21 +115,21 @@ describe('Transfer Progress design and supported operations', () => {
   it('keeps card approval as a review step and prevents duplicate submissions while the service is working', async () => {
     const post = deferred<api.ProgressTransferRequest>();vi.mocked(api.getTransferRequests).mockResolvedValue(response([request()]));vi.mocked(api.approveTransferRequest).mockReturnValue(post.promise);show();
     fireEvent.click(await screen.findByRole('button', { name: 'Approve transfer' }));expect(api.approveTransferRequest).not.toHaveBeenCalled();
-    const dialog = within(screen.getByRole('dialog'));const confirm = dialog.getByRole('button', { name: 'Approve transfer' });fireEvent.click(confirm);fireEvent.click(confirm);
-    expect(api.approveTransferRequest).toHaveBeenCalledExactlyOnceWith('R1', 'csrf');expect(dialog.getByRole('button', { name: 'Transferring…' })).toBeDisabled();expect(dialog.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    const dialog = within(screen.getByRole('dialog'));const confirm = await approveInDialog();fireEvent.click(confirm);
+    expect(api.approveTransferRequest).toHaveBeenCalledExactlyOnceWith('R1', 'csrf', decisions);expect(dialog.getByRole('button', { name: 'Transferring…' })).toBeDisabled();expect(dialog.getByRole('button', { name: 'Cancel' })).toBeDisabled();
     fireEvent.keyDown(document, { key: 'Escape' });expect(screen.getByRole('dialog')).toBeInTheDocument();
     await act(async () => post.resolve(approved('R1')));await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 
   it('refreshes from offset zero after approval rather than continuing a reordered page', async () => {
     vi.mocked(api.getTransferRequests).mockResolvedValueOnce(response([request()], 50)).mockResolvedValueOnce(response([approved('A1')]));vi.mocked(api.approveTransferRequest).mockResolvedValue(approved('R1'));show();
-    fireEvent.click(await screen.findByRole('button', { name: 'Review details' }));fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Approve transfer' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Review details' }));await approveInDialog();
     await screen.findByText('Transfer approved. The learner can now open the new modules.');await waitFor(() => expect(api.getTransferRequests).toHaveBeenCalledTimes(2));expect(api.getTransferRequests).toHaveBeenLastCalledWith(0, expect.any(AbortSignal));
   });
 
   it('keeps a committed approval truthful if the reconciliation read fails, then unlocks after a fresh read', async () => {
     vi.mocked(api.getTransferRequests).mockResolvedValueOnce(response([request(), request('R2')], 50)).mockRejectedValueOnce(new Error('Refresh unavailable')).mockResolvedValueOnce(response([request('R2'), approved('R1')]));vi.mocked(api.approveTransferRequest).mockResolvedValue(approved('R1'));show();
-    fireEvent.click(await within(await screen.findByRole('article', { name: 'Request R1 for Same learner' })).findByRole('button', { name: 'Review details' }));fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Approve transfer' }));
+    fireEvent.click(await within(await screen.findByRole('article', { name: 'Request R1 for Same learner' })).findByRole('button', { name: 'Review details' }));await approveInDialog();
     expect(await screen.findByText('Transfer approved. The learner can now open the new modules.')).toBeVisible();expect(await screen.findByRole('alert')).toHaveTextContent('Refresh unavailable');await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(card('R2').getByRole('button', { name: 'Approve transfer' })).toBeDisabled();expect(screen.getByRole('button', { name: 'Load more requests' })).toBeDisabled();expect(metric('Approved').getByText('1')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Retry refresh' }));await waitFor(() => expect(card('R2').getByRole('button', { name: 'Approve transfer' })).toBeEnabled());expect(api.approveTransferRequest).toHaveBeenCalledTimes(1);
@@ -133,21 +137,21 @@ describe('Transfer Progress design and supported operations', () => {
 
   it('shows a server mapping conflict and retries without any client progress writes', async () => {
     vi.mocked(api.getTransferRequests).mockResolvedValue(response([request()]));vi.mocked(api.approveTransferRequest).mockRejectedValueOnce(new Error('A module assignment or course mapping changed. Review it before approving this request.')).mockResolvedValue(approved('R1'));show();
-    fireEvent.click(await screen.findByRole('button', { name: 'Review details' }));fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Approve transfer' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Review details' }));await approveInDialog();
     expect(await screen.findByRole('alert')).toHaveTextContent('mapping changed');expect(api.getTransferRequests).toHaveBeenCalledTimes(1);expect(card().getByText('Same learner')).toBeVisible();
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Approve transfer' }));await waitFor(() => expect(api.approveTransferRequest).toHaveBeenCalledTimes(2));
-    expect(vi.mocked(api.approveTransferRequest).mock.calls.every(args => args.length === 2 && args[0] === 'R1' && args[1] === 'csrf')).toBe(true);
+    expect(vi.mocked(api.approveTransferRequest).mock.calls.every(args => args.length === 3 && args[0] === 'R1' && args[1] === 'csrf' && args[2]?.reviewToken === 'review')).toBe(true);
   });
 
   it('accepts the authoritative approved result when another administrator already decided the request', async () => {
     const decided = approved('R1');vi.mocked(api.getTransferRequests).mockResolvedValueOnce(response([request()])).mockResolvedValueOnce(response([decided]));vi.mocked(api.approveTransferRequest).mockResolvedValue(decided);show();
-    fireEvent.click(await screen.findByRole('button', { name: 'Review details' }));fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Approve transfer' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Review details' }));await approveInDialog();
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());expect(history().getByText('Request R1')).toBeVisible();expect(pendingSection().queryByRole('article')).not.toBeInTheDocument();
   });
 
   it('does not confirm the wrong request response or pretend an unconfirmed operation succeeded', async () => {
     vi.mocked(api.getTransferRequests).mockResolvedValue(response([request()]));vi.mocked(api.approveTransferRequest).mockResolvedValue(approved('WRONG'));show();
-    fireEvent.click(await screen.findByRole('button', { name: 'Review details' }));fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Approve transfer' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Review details' }));await approveInDialog();
     expect(await screen.findByRole('alert')).toHaveTextContent('The service did not confirm this request');expect(screen.queryByText('Transfer approved. The learner can now open the new modules.')).not.toBeInTheDocument();
   });
 

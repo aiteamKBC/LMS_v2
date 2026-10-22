@@ -15,7 +15,7 @@ interface SessionPickerProps {
 export default function SessionPicker({ sessions, selectedId, date, loading, eligibleCount, markedCount, onChange }: SessionPickerProps) {
   return <section className={styles.picker} aria-label="Pick a session">
     <div className={styles.stepHeading}><span className={styles.stepIcon}><AppIcon className="ri-calendar-line" /></span>
-      <div><p>Step 1 · Pick a session</p><h2>{formatDateLabel(date)}{eligibleCount !== null ? ` · ${eligibleCount} learners in scope` : ''}</h2></div>
+      <div><p>Step 1 · Pick a session</p><h2>{date ? formatDateLabel(date) : 'All dates'}{eligibleCount !== null ? ` · ${eligibleCount} learners in scope` : ''}</h2></div>
       <label className={styles.dateJump}><AppIcon className="ri-calendar-line" /><span>Jump to date</span><input type="date" aria-label="Jump to date" value={date} onChange={event => onChange(event.target.value)} /></label>
     </div>
     <div className={styles.dateStrip} aria-label="Scheduled sessions">

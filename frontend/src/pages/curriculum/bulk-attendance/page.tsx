@@ -1064,7 +1064,6 @@ export default function AttendancePage() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Bulk Attendance" pageSubtitle="Record attendance across learners, cohorts and modules" userName="Rachel Myers" userRole="Curriculum Designer">
-<<<<<<< HEAD
       <div className={styles.page}>
       <main id="curriculum-bulk-attendance">
         <section className={styles.intro}>
@@ -1073,38 +1072,6 @@ export default function AttendancePage() {
             <h1>{isArchiveView ? 'Learner archive' : 'Bulk attendance'}</h1>
             <p>Choose a live session, review its learners and record attendance. Saved history remains available in learner details.</p>
             <div className={styles.introTotals}><span className={styles.scopeBadge}>{dataLoading ? 'Loading learners...' : dataError ? 'Learner count unavailable' : `${activeLearners.length} learners in scope`}</span><span>Delivered-register total unavailable</span><span>Attendance-mark total unavailable</span><span>Sync time unavailable</span></div>
-=======
-      <div className="min-h-screen bg-background-100">
-      <main className="mx-auto w-full max-w-[1400px] px-4 py-6 md:px-8 md:py-8">
-        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-          <div>
-            <h2 className="text-xl font-semibold text-foreground-950 md:text-2xl">
-              {isArchiveView ? "Learner archive" : "Attendance register"}
-            </h2>
-            <p className="mt-1 text-sm text-foreground-500">
-              {isArchiveView ? (
-                <>
-                  {archivedTotal}{" "}
-                  {archivedTotal === 1 ? "learner" : "learners"}
-                  <span className="mx-2 text-foreground-300">•</span>
-                  Completed, EnteredEpa and Withdrawn
-                </>
-              ) : (
-                <>
-                  {date ? formatDateLabel(date) : "All dates"}
-                  <span className="mx-2 text-foreground-300">•</span>
-                  {activeModuleLabel}
-                  {selectedLecture && (
-                    <>
-                      <span className="mx-2 text-foreground-300">•</span>
-                      {selectedLecture.name} —{" "}
-                      {formatShortDate(selectedLecture.sessionDate)}
-                    </>
-                  )}
-                </>
-              )}
-            </p>
->>>>>>> main
             {dataLoading && (
               <p className="mt-2 text-xs text-foreground-500">Loading current curriculum data…</p>
             )}
@@ -1189,7 +1156,7 @@ export default function AttendancePage() {
                   setAddAttendanceError(null);
                   setShowAddAttendanceDay(true);
                 }}
-                disabled={pageLoading || activeLearners.length === 0}
+                disabled={dataLoading || scopeRosterLoading || !scopedLearners.some((learner) => !isArchived(learner))}
                 className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-primary-200 bg-background-50 px-4 py-2.5 text-sm font-semibold text-primary-700 shadow-sm transition-colors hover:border-primary-300 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
               >
                 <i className="ri-calendar-event-line text-base" />
@@ -1283,30 +1250,12 @@ export default function AttendancePage() {
           </section>
         ) : (
           <>
-<<<<<<< HEAD
-=======
-            <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <RegisterTabs active={tab} onChange={setTab} />
-              <button
-                type="button"
-                onClick={() => {
-                  setAddAttendanceError(null);
-                  setShowAddAttendanceDay(true);
-                }}
-                disabled={dataLoading || scopeRosterLoading || !scopedLearners.some((learner) => !isArchived(learner))}
-                className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-primary-200 bg-background-50 px-4 py-2.5 text-sm font-semibold text-primary-700 shadow-sm transition-colors hover:border-primary-300 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
-              >
-                <i className="ri-calendar-event-line text-base" />
-                Add attendance day
-              </button>
-            </div>
->>>>>>> main
 
             {tab === "daily" && (
               <section className="mt-4 space-y-3">
                 <SessionPicker sessions={pickerLectures} selectedId={selectedLecture?.id} date={date} loading={dataLoading} eligibleCount={currentRegisterReady ? visibleRows.length : null} markedCount={currentRegisterReady ? currentCounts.present + currentCounts.absent : null} onChange={handleDateChange} />
                 <section className={styles.register}>
-                <RegisterSummary title={`${formatDateLabel(date)}${selectedLecture ? ` - ${selectedLecture.name}` : ''}`} ready={currentRegisterReady} {...currentCounts} />
+                <RegisterSummary title={`${date ? formatDateLabel(date) : 'All dates'}${selectedLecture ? ` - ${selectedLecture.name}` : ''}`} ready={currentRegisterReady} {...currentCounts} />
                 {!currentRegisterReady && <p className={styles.registerNotice}>{ambiguousTarget ? 'More than one session shares this module and date. The current save workflow cannot distinguish them; use an existing saved history record for corrections.' : dirty ? 'Save or undo existing register changes before using the current-session controls.' : selectedLecture ? 'Waiting for a complete session roster and saved register. Resolve any loading errors before marking.' : 'Choose a session above to view and mark its register. Recent history can still be reviewed below.'}</p>}
 
                 <div className={styles.registerToolbar}>

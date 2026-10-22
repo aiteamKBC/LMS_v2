@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { approveTransferRequest, getTransferRequests, type AdminTransfers } from '@/api/progressTransfer';
+import { approveTransferRequest, getTransferRequests, type AdminTransfers, type TransferDecisions } from '@/api/progressTransfer';
 
 /** Keep the service's paginated order and identities; names never join requests. */
 export function useTransferRequests() {
@@ -60,7 +60,8 @@ export function useTransferRequests() {
     if (offset != null && !readingRef.current && !savingRef.current && !needsRefresh) void read(offset, true);
   };
 
-  async function approve(requestId: string) {
+  /** `decisions` and `reviewCsrfToken` come from the component-matching review the admin confirmed. */
+  async function approve(requestId: string, decisions: TransferDecisions, reviewCsrfToken = '') {
     const snapshot = current.current;
     const request = snapshot?.requests.find(row => row.requestId === requestId);
     if (!request || request.status !== 'pending' || !snapshot || readingRef.current || savingRef.current || needsRefresh) return false;
@@ -70,7 +71,7 @@ export function useTransferRequests() {
     setSaveError('');
     setNotice('');
     try {
-      const result = await approveTransferRequest(requestId, snapshot.csrfToken);
+      const result = await approveTransferRequest(requestId, reviewCsrfToken || snapshot.csrfToken, decisions);
       if (!mounted.current) return false;
       if (result.requestId !== requestId || result.status !== 'approved' || !Array.isArray(result.modules)) {
         setNeedsRefresh(true);

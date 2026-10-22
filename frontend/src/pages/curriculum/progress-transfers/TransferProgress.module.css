@@ -124,6 +124,21 @@
 .information > svg { flex-shrink: 0; margin-top: 2px; }
 .information strong { display: block; margin-bottom: 4px; color: #4c7278; font-weight: 600; }
 .historyNote { padding: 11px 12px; border: 1px solid #e2dfe8; border-radius: 8px; background: #f0f0f5; color: #8c7e97; font-size: 11px; line-height: 1.65; }
+.matching { display: grid; gap: 9px; min-width: 0; }
+.matchStatus { padding: 11px 13px; border: 1px solid #c5e0e3; border-radius: 8px; background: #f0f8f9; color: #66868c; font-size: 11px; line-height: 1.6; }
+.matchWarning { border-color: #eed9a6; background: #fffaf0; color: #8a7449; }
+.matchIntro { color: #8c7e97; font-size: 11px; line-height: 1.65; }
+.matchModule { overflow: hidden; border: 1px solid #e2dfe8; border-radius: 8px; background: #fff; }
+.matchModule > h4 { margin: 0; padding: 10px 12px; background: #f6f5f9; color: #61516e; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.matchModule > p { padding: 12px; color: #8c7e97; font-size: 11px; line-height: 1.6; }
+.matchRow { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; padding: 12px; border-top: 1px solid #eeebf3; }
+.matchRow > div, .matchRow > label { display: grid; align-content: start; justify-items: start; gap: 4px; min-width: 0; }
+.matchRow strong { font-size: 12px; font-weight: 500; line-height: 1.5; overflow-wrap: anywhere; }
+.matchRow small { color: #9e8fa8; font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.matchRow label > span { color: #9e8fa8; font-size: 10px; text-transform: uppercase; }
+.matchRow select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 36px; padding: 7px 10px; border: 1px solid #dfd8e9; border-radius: 8px; background: #fff; color: #51435f; font-size: 11px; }
+.matchRow select:focus-visible { outline: 2px solid #a78bc5; outline-offset: 2px; }
+.matchRow .matchError { color: #a15b67; }
 @media (max-width: 1100px) { .requestGrid { grid-template-columns: minmax(0,1fr); } .metrics { grid-template-columns: repeat(2,minmax(0,1fr)); } .introLine { flex-wrap: wrap; } .steps { grid-template-columns: minmax(0,1fr); } }
-@media (max-width: 650px) { .page { padding: 12px 8px 20px; gap: 13px; } .intro { padding: 16px; } .page .intro h1 { font-size: 24px; } .metrics { grid-template-columns: minmax(0,1fr); } .request { padding: 12px; } .filters, .filterFields { align-items: stretch; } .filterFields { width: 100%; } .field { flex: 1; } .search { min-width: 0; } .field select { width: 100%; min-width: 0; max-width: none; } .filterFields > .button { align-self: flex-end; } .drawerHeader { display: grid; grid-template-columns: 36px minmax(0,1fr); } .drawerHeader .badge { grid-column: 2; justify-self: start; margin-left: 0; } }
+@media (max-width: 650px) { .matchRow { grid-template-columns: minmax(0,1fr); } .page { padding: 12px 8px 20px; gap: 13px; } .intro { padding: 16px; } .page .intro h1 { font-size: 24px; } .metrics { grid-template-columns: minmax(0,1fr); } .request { padding: 12px; } .filters, .filterFields { align-items: stretch; } .filterFields { width: 100%; } .field { flex: 1; } .search { min-width: 0; } .field select { width: 100%; min-width: 0; max-width: none; } .filterFields > .button { align-self: flex-end; } .drawerHeader { display: grid; grid-template-columns: 36px minmax(0,1fr); } .drawerHeader .badge { grid-column: 2; justify-self: start; margin-left: 0; } }
 @media (max-width: 380px) { .requestFacts { grid-template-columns: minmax(0,1fr); } .mapping { grid-template-columns: minmax(0,1fr); } .mapping > svg { transform: rotate(90deg); } .drawer > div:nth-child(2) { padding: 13px; } .tabs { width: 100%; } .tabs button { flex: 1; } }

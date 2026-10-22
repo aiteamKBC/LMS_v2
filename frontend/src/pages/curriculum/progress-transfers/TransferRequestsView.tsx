@@ -1,11 +1,12 @@
 import { useId, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeftRight, ArrowRight, CalendarDays, CheckCheck, ChevronRight, CircleAlert, CircleX, Clock3, Download, Eye, Hourglass, Layers, RefreshCw, Search, ShieldCheck, type LucideIcon } from 'lucide-react';
-import type { AdminTransfer, TransferModule } from '@/api/progressTransfer';
+import type { AdminTransfer, TransferDecisions, TransferMapping, TransferModule, TransferReview } from '@/api/progressTransfer';
 import { Modal } from '@/pages/users/components/Modal';
 import { formatSystemTimestamp } from '@/lib/format';
 import { formatHoursMinutes } from '@/utils/learnerJourney';
 import { useTransferRequests } from './useTransferRequests';
+import { useTransferReview } from './useTransferReview';
 import styles from './TransferProgress.module.css';
 
 const description = 'Review learner requests to move saved module progress and recorded hours from the old LMS.';
@@ -56,10 +57,71 @@ function RequestCard({ request, busy, canApprove, onReview }: { request: AdminTr
   </article>;
 }
 
-function RequestDetails({ request, saving, busy, canApprove, error, onClose, onApprove }: {
-  request: AdminTransfer; saving: boolean; busy: boolean; canApprove: boolean; error: string; onClose: () => void; onApprove: () => void;
+const plannedHours = (value: number | null | undefined) => `New component planned hours: ${value == null ? 'Not specified' : formatHoursMinutes(value)}. Actual transferred hours are unchanged.`;
+
+function ComponentMatching({ review, mappings, disabled, onChange }: {
+  review: TransferReview; mappings: TransferMapping[]; disabled: boolean; onChange: (value: TransferMapping[]) => void;
+}) {
+  const unmatched = review.modules.reduce((count, module) => count + module.sources.filter(source => !source.automaticTargetId).length, 0);
+  return <section className={styles.matching} aria-label="Component matching">
+    <h3>Component matching</h3>
+    <p role="status" className={`${styles.matchStatus} ${unmatched ? styles.matchWarning : ''}`}>{unmatched
+      ? `${unmatched} completed old ${unmatched === 1 ? 'component has' : 'components have'} no automatic match. Review each item below before confirming.`
+      : 'All completed source components with recorded activity progress have been matched.'}</p>
+    <p className={styles.matchIntro}>Every completed old component needs a match before approval. Choose the equivalent component in the new module. Matched completions are included in the transferred percentage; actual transferred hours stay unchanged.</p>
+    {review.modules.map(module => <div key={module.moduleId} className={styles.matchModule}>
+      <h4>{module.title}</h4>
+      {!module.sources.length && <p>No individual completed activities were recorded for this module. Its saved percentage and hours will still transfer.</p>}
+      {module.sources.map(source => {
+        const value = mappings.find(mapping => mapping.moduleId === module.moduleId && mapping.sourceActivityRef === source.sourceActivityRef);
+        // Each destination takes one source: automatic matches and the other manual choices are used up.
+        const used = new Set([...module.sources.flatMap(row => row.automaticTargetId ? [row.automaticTargetId] : []),
+          ...mappings.filter(mapping => mapping.moduleId === module.moduleId && mapping.sourceActivityRef !== source.sourceActivityRef).map(mapping => mapping.targetComponentId)]);
+        const automatic = module.targets.find(target => target.componentId === source.automaticTargetId);
+        const manualTarget = module.targets.find(target => target.componentId === value?.targetComponentId);
+        const candidates = module.targets.filter(target => target.type === source.type && source.type !== 'unknown');
+        return <div className={styles.matchRow} key={source.sourceActivityRef}>
+          <div><strong>{source.title}</strong><small>{source.week || 'No week specified'} · {source.type} · {source.sourceActivityRef}</small></div>
+          {source.automaticTargetId ? <div><Badge approved>Automatically matched</Badge><strong>{automatic?.title || source.automaticTargetId}</strong><small>{automatic?.week}</small></div>
+            : <label><span>Match in new module</span><select aria-label={`Match ${source.title} (${source.sourceActivityRef}) in ${module.title}`} disabled={disabled} value={value?.targetComponentId ?? ''}
+              onChange={event => onChange([...mappings.filter(mapping => mapping.moduleId !== module.moduleId || mapping.sourceActivityRef !== source.sourceActivityRef),
+                ...(event.target.value ? [{ moduleId: module.moduleId, sourceActivityRef: source.sourceActivityRef, targetComponentId: event.target.value }] : [])])}>
+              <option value="">Choose a matching component</option>
+              {candidates.map(target => <option key={target.componentId} value={target.componentId} disabled={used.has(target.componentId)}>{target.week ? `${target.week} · ` : ''}{target.title} ({target.type} · {target.componentId})</option>)}
+            </select><small>Choose only an equivalent activity. Each destination can be used once.</small>
+              {!candidates.length && <small className={styles.matchError}>No compatible component is available. Check the source type or add the equivalent component to the new module, then reload matches.</small>}
+              {manualTarget && <small>{plannedHours(manualTarget.plannedHours)}</small>}
+            </label>}
+        </div>;
+      })}
+    </div>)}
+  </section>;
+}
+
+function ApprovedMatches({ request }: { request: AdminTransfer }) {
+  const modules = request.modules.filter(module => module.componentMatches?.length);
+  if (!modules.length) return null;
+  return <section className={styles.matching} aria-label="Approved component matches">
+    <h3>Approved component matches</h3>
+    {modules.map(module => <div key={moduleKey(module)} className={styles.matchModule}>
+      <h4>{module.newTitle}</h4>{module.componentMatches?.map(match => <div key={match.sourceActivityRef} className={styles.matchRow}>
+        <div><strong>{match.sourceTitle}</strong><small>{match.sourceActivityRef}</small></div>
+        <div><strong>{match.targetTitle}</strong><small>{match.manual ? 'Manual match' : 'Automatic match'}</small>
+          {match.manual && <small>{plannedHours(match.plannedHours)}</small>}</div>
+      </div>)}
+    </div>)}
+  </section>;
+}
+
+function RequestDetails({ request, saving, busy, canApprove, error, onClose, onApprove, onClearError }: {
+  request: AdminTransfer; saving: boolean; busy: boolean; canApprove: boolean; error: string; onClose: () => void;
+  onApprove: (decisions: TransferDecisions, csrfToken: string) => void; onClearError: () => void;
 }) {
   const pending = request.status === 'pending';
+  const matching = useTransferReview(request.requestId, pending);
+  const { review } = matching;
+  const ready = !!review && matching.unresolved === 0;
+  const approve = () => { if (review && ready) onApprove({ reviewToken: review.reviewToken, mappings: matching.mappings }, review.csrfToken); };
   return <Modal className={styles.drawer} title={<span className={styles.drawerHeader}>
     <span className={styles.drawerIcon}><ArrowLeftRight size={18} aria-hidden="true" /></span>
     <span className={styles.drawerTitle}><span className={styles.eyebrow}>Transfer progress</span><strong>{request.learnerName}</strong><span>{request.programme || 'Programme not provided'}</span></span>
@@ -67,7 +129,7 @@ function RequestDetails({ request, saving, busy, canApprove, error, onClose, onA
   </span>} onClose={onClose} dismissible={!saving} footer={<>
     <button type="button" className={`${styles.button} ${styles.cancel}`} disabled={saving} onClick={onClose}>{pending ? 'Cancel' : 'Close'}</button>
     {pending && <><button type="button" className={styles.button} disabled title="Declining transfer requests is not available."><CircleX size={14} aria-hidden="true" />Decline unavailable</button>
-      <button type="button" className={`${styles.button} ${styles.primary}`} disabled={busy || !canApprove} onClick={onApprove}><CheckCheck size={14} aria-hidden="true" />{saving ? 'Transferring…' : 'Approve transfer'}</button></>}
+      <button type="button" className={`${styles.button} ${styles.primary}`} disabled={busy || !canApprove || !ready} onClick={approve}><CheckCheck size={14} aria-hidden="true" />{saving ? 'Transferring…' : 'Approve transfer'}</button></>}
   </>}>
     <div className={styles.details} aria-busy={busy}>
       <section><h3>Request</h3><dl className={styles.requestFacts}>
@@ -81,6 +143,13 @@ function RequestDetails({ request, saving, busy, canApprove, error, onClose, onA
         <div className={styles.mapping}><div><strong>{item.oldTitle}</strong><small>Old LMS · {item.courseRef}</small></div><ArrowRight size={14} aria-hidden="true" /><div><strong>{item.newTitle}</strong><small>New LMS · {item.moduleId}</small></div></div>
         <div className={styles.moduleFacts}><Badge>{percent(item.percent) === null ? 'Progress unavailable' : `${item.percent}% saved progress`}</Badge><span>{hoursLabel(validHours(item.hours) ? item.hours : null)} recorded</span>{item.demoProgress && <Badge>Demo progress</Badge>}</div><SavedProgress item={item} />
       </li>)}</ul></section>
+      {pending && <>
+        {matching.error ? <div role="alert" className={styles.error}>{matching.error}<button type="button" onClick={matching.reload}>Retry matching</button></div>
+          : !review ? <p role="status" className={styles.matchStatus}>Checking component matches…</p>
+            : <ComponentMatching review={review} mappings={matching.mappings} disabled={saving} onChange={matching.setMappings} />}
+        {(review || error) && <button type="button" className={styles.button} disabled={saving} onClick={() => { matching.reload(); onClearError(); }}><RefreshCw size={13} aria-hidden="true" />Reload component matches</button>}
+      </>}
+      {!pending && <ApprovedMatches request={request} />}
       <div className={styles.information}><Layers size={16} aria-hidden="true" /><div><strong>Matched activity credit</strong>Completed activities with verified matching source identities stay completed within the transferred percentage. New progress is added up to 100%.</div></div>
       <p className={styles.historyNote}><ShieldCheck size={14} aria-hidden="true" /> Historic learning records and evidence are retained. Programme versions, decision actors and request notes are not provided with this request.</p>
       {pending && !canApprove && <p className={styles.error}>Refresh requests before approving this transfer.</p>}
@@ -108,12 +177,12 @@ export function TransferRequests() {
   const value = (result: string | number) => initial ? 'Loading…' : data ? result : 'Unavailable';
   const review = (requestId: string) => { clearSaveError(); setSelectedId(requestId); };
   const close = () => { if (!saving) setSelectedId(null); };
-  const confirm = async () => { if (selected && await approve(selected.requestId)) setSelectedId(null); };
+  const confirm = async (decisions: TransferDecisions, csrfToken: string) => { if (selected && await approve(selected.requestId, decisions, csrfToken)) setSelectedId(null); };
 
   return <div id="curriculum-progress-transfers" className={styles.page}>
     <section className={styles.intro} aria-labelledby="transfer-heading">
-      <nav className={styles.breadcrumb} aria-label="Breadcrumb"><Link to="/workspace/curriculum">Curriculum</Link><ChevronRight size={11} aria-hidden="true" /><span>Transfer Progress</span></nav>
-      <div className={styles.introLine}><div><span className={styles.eyebrow}>Curriculum operations</span><h1 id="transfer-heading">Transfer Progress</h1><p>{description}</p>
+      <nav className={styles.breadcrumb} aria-label="Breadcrumb"><Link to="/users">Enrolment</Link><ChevronRight size={11} aria-hidden="true" /><span>Transfer Progress</span></nav>
+      <div className={styles.introLine}><div><span className={styles.eyebrow}>Enrolment operations</span><h1 id="transfer-heading">Transfer Progress</h1><p>{description}</p>
         <div className={styles.introMeta}><Badge>{value(`${pending.length} requests waiting`)}</Badge><span>{data ? `${history.length} approved · ${carried} on loaded approved requests` : initial ? 'Loading requests…' : 'Request summary unavailable'}</span></div>
       </div><div className={styles.actions}><button type="button" className={styles.button} disabled title="A transfer-log export is not available in this workspace." aria-describedby={`${historyId}-capabilities`}><Download size={14} aria-hidden="true" />Export log</button><button type="button" className={styles.button} disabled={busy} onClick={refresh}><RefreshCw size={14} aria-hidden="true" />Refresh</button></div></div>
     </section>
@@ -163,6 +232,6 @@ export function TransferRequests() {
       <li><strong><span>3</span>Confirm the exact request</strong><p>Approval rechecks the module assignments. Historic learning records and evidence are retained.</p></li>
     </ol></section>
     <p id={`${historyId}-capabilities`} className={styles.capabilities}>Declining requests and exporting a decision log are not available in this workspace. Programme versions, employer/cohort details, withheld hours and overlapping weeks are not provided.</p>
-    {selected && <RequestDetails request={selected} saving={saving} busy={busy} canApprove={canApprove} error={saveError} onClose={close} onApprove={() => void confirm()} />}
+    {selected && <RequestDetails request={selected} saving={saving} busy={busy} canApprove={canApprove} error={saveError} onClose={close} onApprove={(decisions, csrfToken) => void confirm(decisions, csrfToken)} onClearError={clearSaveError} />}
   </div>;
 }
