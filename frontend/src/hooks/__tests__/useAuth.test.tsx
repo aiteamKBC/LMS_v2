@@ -38,7 +38,8 @@ vi.mock('@/api/auth', async () => {
 // The provider clears the chat session on sign-out; irrelevant here.
 vi.mock('@/api/chat', () => ({ clearChatSession: vi.fn() }));
 
-const { AuthProvider, useAuth } = await import('../useAuth');
+const { AuthProvider } = await import('../AuthProvider');
+const { useAuth } = await import('../useAuth');
 
 const ADMIN = {
   id: 1,
@@ -75,11 +76,13 @@ beforeEach(() => {
   apiLogin.mockReset();
   apiLogout.mockReset().mockResolvedValue(undefined);
   localStorage.clear();
+  sessionStorage.clear();
 });
 
 afterEach(() => {
   rememberSignedInLearner(undefined, undefined);
   localStorage.clear();
+  sessionStorage.clear();
 });
 
 describe('learner identity lifecycle', () => {
@@ -281,7 +284,11 @@ describe('logout', () => {
     await act(async () => { await result.current.login('l@kbc.test', 'pw'); });
     expect(cached.peek('125')).toBeUndefined();
     await cached.read('125');
+    sessionStorage.setItem('learner_status:commercial:125', 'Active');
+    sessionStorage.setItem('learner_onboarding_status:commercial:125', 'Submitted');
     act(() => result.current.logout());
+    expect(sessionStorage.getItem('learner_status:commercial:125')).toBeNull();
+    expect(sessionStorage.getItem('learner_onboarding_status:commercial:125')).toBeNull();
     expect(cached.peek('125')).toBeUndefined();
   });
 
@@ -359,5 +366,62 @@ describe('superseded identity reads', () => {
     act(() => window.dispatchEvent(new StorageEvent('storage', { key: 'kbc_auth_email', newValue: null })));
     await act(async () => resolve(ADMIN));
     expect(result.current.auth.account).toBeNull();
+  });
+});
+
+
+describe('access cache boundaries', () => {
+  const staff = { ...ADMIN, role: 'staff' as const, access: 'coach', accesses: ['coach'],
+    learnerRecordId: 271, learnerRecordKind: 'apprenticeship',
+    accessWorkspaces: [{ access: 'coach', home: '/workspace/coach', navRole: 'coach' }] };
+
+  it.each([
+    { permissions: [] }, { accesses: ['coach', 'tutor'] },
+    { learnerRecordId: 272 }, { learnerRecordKind: 'commercial' },
+    { accessWorkspaces: [] }, { accessHome: '/workspace/tutor' },
+    { accessNavRole: 'tutor' }, { hasLegacyRecord: true }, { role: 'admin' as const },
+  ])('invalidates snapshots when refreshed access changes: %j', async (change) => {
+    apiMe.mockResolvedValue(staff);
+    const { result } = await renderAuth();
+    const resource = createCachedResource('access-boundary', async () => 'old');
+    await resource.read('271');
+    apiMe.mockResolvedValue({ ...staff, ...change });
+    act(() => result.current.retryInitialization());
+    await waitFor(() => expect(result.current.isInitialized).toBe(true));
+    expect(resource.peek('271')).toBeUndefined();
+    expect(apiMe).toHaveBeenCalledTimes(2);
+    expect(result.current.auth.account).toEqual({ ...staff, ...change });
+  });
+
+  it('retains snapshots for unchanged access and display-only changes', async () => {
+    apiMe.mockResolvedValue(staff);
+    const { result } = await renderAuth();
+    const resource = createCachedResource('unchanged-access', async () => 'current');
+    await resource.read('271');
+    apiMe.mockResolvedValue({ ...staff, displayName: 'Updated name', lastLoginAt: '2026-10-22' });
+    act(() => result.current.retryInitialization());
+    await waitFor(() => expect(result.current.isInitialized).toBe(true));
+    expect(resource.peek('271')).toBe('current');
+  });
+
+  it('clears snapshots when a cross-tab identity check finds no session', async () => {
+    apiMe.mockResolvedValue(staff);
+    const { result } = await renderAuth();
+    const resource = createCachedResource('tab-access', async () => 'old');
+    await resource.read('271');
+    apiMe.mockResolvedValue(null);
+    act(() => window.dispatchEvent(new StorageEvent('storage', { key: 'kbc_auth_email', newValue: 'another@example.test' })));
+    await waitFor(() => expect(result.current.auth.account).toBeNull());
+    expect(resource.peek('271')).toBeUndefined();
+  });
+
+  it('drops snapshots for demo workspace switching without requesting me again', async () => {
+    apiMe.mockResolvedValue(staff);
+    const { result } = await renderAuth();
+    const resource = createCachedResource('demo-access', async () => 'old');
+    await resource.read('271');
+    act(() => result.current.previewAs('learner@kbc.test'));
+    expect(resource.peek('271')).toBeUndefined();
+    expect(apiMe).toHaveBeenCalledTimes(1);
   });
 });

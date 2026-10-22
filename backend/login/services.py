@@ -274,10 +274,15 @@ def request_password_link(email, *, ip=None, user_agent=None):
         else:
             send_reset(account, ip=ip, user_agent=user_agent)
         return
-    if LoginAccount.objects.filter(email=email).exists():
-        # Two active accounts share the address, or its account is deactivated.
-        return
-    learner_ids = list(EnrolmentUser.all_learners.filter(email__iexact=email).values_list("pk", flat=True)[:2])
+    from . import learner_auth_runtime
+    if learner_auth_runtime.enabled():
+        candidate = learner_auth_runtime.provisioning_candidate(email)
+        learner_ids = [candidate] if candidate is not None else []
+    else:
+        if LoginAccount.objects.filter(email=email).exists():
+            # Two active accounts share the address, or its account is deactivated.
+            return
+        learner_ids = list(EnrolmentUser.all_learners.filter(email__iexact=email).values_list("pk", flat=True)[:2])
     if len(learner_ids) != 1:
         return
     try:
@@ -384,9 +389,14 @@ def default_password_setup(email, *, ip=None, user_agent=None):
 
     account = account_for_email(email)
     if account is None:
-        if LoginAccount.objects.filter(email=email).exists():
-            return None
-        learner_ids = list(EnrolmentUser.all_learners.filter(email__iexact=email).values_list("pk", flat=True)[:2])
+        from . import learner_auth_runtime
+        if learner_auth_runtime.enabled():
+            candidate = learner_auth_runtime.provisioning_candidate(email)
+            learner_ids = [candidate] if candidate is not None else []
+        else:
+            if LoginAccount.objects.filter(email=email).exists():
+                return None
+            learner_ids = list(EnrolmentUser.all_learners.filter(email__iexact=email).values_list("pk", flat=True)[:2])
         if len(learner_ids) != 1:
             return None
         try:

@@ -33,7 +33,7 @@ from __future__ import annotations
 import json
 import logging
 
-from django.db import DatabaseError
+from django.db import DatabaseError, transaction
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -350,11 +350,13 @@ def change_password(request):
 
     account.password_hash = hash_password(new_password)
     account.password_set_at = timezone.now()
-    account.save(update_fields=["password_hash", "password_set_at", "updated_at"])
+    with transaction.atomic(using="enrolment"):
+        account.save(update_fields=["password_hash", "password_set_at", "updated_at"])
 
-    # Keep the caller signed in, drop every other session.
-    session = getattr(request, "login_session", None)
-    revoke_all_for_account(account, except_session_id=session.id if session else None)
+        # Keep the caller signed in, drop every other session. Failure must
+        # roll back the password too, including synchronous mirror failures.
+        session = getattr(request, "login_session", None)
+        revoke_all_for_account(account, except_session_id=session.id if session else None)
 
     record(
         EVENT_PASSWORD_CHANGED, email=account.email, account_id=account.id,
@@ -627,8 +629,16 @@ def invitation_link_view(request):
 def health(request):
     """Readiness of the auth subsystem. Reports names of missing settings only."""
     try:
-        accounts = LoginAccount.objects.count()
-        with_password = LoginAccount.objects.exclude(password_hash="").count()
+        from . import learner_auth_runtime
+        if learner_auth_runtime.enabled():
+            from .learner_auth_reader import _read_query
+            with _read_query() as query:
+                row = query('SELECT count(*) AS total, count(*) FILTER (WHERE "Password_hash" <> %s) AS passwords '
+                            'FROM "Learner"."Login_accounts"', [''])[0]
+                accounts, with_password = row['total'], row['passwords']
+        else:
+            accounts = LoginAccount.objects.count()
+            with_password = LoginAccount.objects.exclude(password_hash="").count()
         db_ok, db_error = True, None
     except DatabaseError as exc:
         accounts = with_password = None

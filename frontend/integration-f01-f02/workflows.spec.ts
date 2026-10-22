@@ -43,7 +43,31 @@ test('401 shows sign-in; temporary sign-in failure allows retry', async ({ page,
 });
 
 test('First Login keeps personal values when moving to signature and back', async ({ page, api }) => {
-  session(api);
+  // First Login details apply to apprentices; commercial learners skip this form.
+  session(api, { ...learner, learnerType: 'apprenticeship' });
+  api.on('GET', '/login_api/learner-entry/', () => ({ body: {
+    classification: 'new', required: false, canAccess: true,
+  } }));
+  api.on('GET', '/learner_api/calendar/apprenticeship/701/first-session/', () => ({ body: {
+    caseOwner: null, booked: false, event: null, startsOn: null, access: 'enrolling', canBook: false,
+  } }));
+  api.on('GET', '/learner_api/learner-summary/apprenticeship/701/', () => ({ body: {
+    id: '701', name: learner.displayName, email: learner.email, phone: firstLogin.details.phone,
+    programme: learner.programme, programmeStatus: firstLogin.programmeStatus,
+    onboardingStatus: 'Draft', firstSessionUnlocked: false, studentActivityAvailable: false,
+    cohort: '', group: '', employer: '', employerId: null, organization: '',
+    learnerType: 'apprenticeship', isActive: true,
+  } }));
+  api.on('POST', '/curriculum_api/activity/record/', route => {
+    const body = route.request().postDataJSON();
+    expect(body.visitId).toEqual(expect.any(String));
+    expect(body.events.length).toBeGreaterThan(0);
+    for (const event of body.events) {
+      expect(event.path).toBe('/learner/welcome');
+      expect(event.kind).toBe('page_view');
+    }
+    return { body: { available: true, recorded: body.events.length } };
+  });
   api.on('GET', '/learner_api/first-login-details/701/', () => ({ body: firstLogin }));
   await page.goto('/learner/welcome');
   await expect(page.getByRole('heading', { name: /Welcome/ })).toBeVisible();
@@ -51,7 +75,10 @@ test('First Login keeps personal values when moving to signature and back', asyn
   await expect(page.getByRole('tablist', { name: 'How to sign' })).toBeVisible();
   await page.getByRole('button', { name: /^Back/ }).click();
   await expect(page.getByLabel(/^Address line 1/i)).toHaveValue('1 Synthetic Street');
-  expect(api.requests.filter(r => r.method === 'POST')).toHaveLength(0);
+  // Let the real batching timer fire so the exact telemetry fixture is exercised.
+  await expect.poll(() => api.requests.filter(r => r.path === '/curriculum_api/activity/record/').length).toBeGreaterThan(0);
+  // Navigation telemetry is permitted; saving personal details/signatures is not.
+  expect(api.requests.filter(r => r.method === 'POST' && r.path !== '/curriculum_api/activity/record/')).toHaveLength(0);
 });
 
 test('learner catalogue retains canonical module progress and retries 503', async ({ page, api }) => {
@@ -140,8 +167,14 @@ test('login keyboard and layout work in each locale/theme/viewport', async ({ pa
   const email = page.getByLabel(/email address/i);
   await email.focus();
   await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: 'Forgot password?', exact: true })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.getByLabel(/^password$/i)).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: 'Show password', exact: true })).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
   await expect(page.getByLabel(/^password$/i)).toBeFocused();
   await expect(page.locator('html')).toHaveAttribute('dir', info.project.name.includes('arabic') ? 'rtl' : 'ltr');
-  await expect(page.locator('html')).toHaveClass(info.project.name.includes('dark') ? /dark/ : /^(?!.*dark)/);
+  await expect(page.locator('html')).toHaveAttribute('data-theme', info.project.name.includes('dark') ? 'dark' : 'light');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });

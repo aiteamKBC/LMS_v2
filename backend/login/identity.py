@@ -286,6 +286,9 @@ def account_for_email(email):
     None rather than guessing — and ``views.login`` reports it as a plain
     credential failure so the ambiguity is not disclosed to an anonymous caller.
     """
+    from . import learner_auth_runtime
+    if learner_auth_runtime.enabled():
+        return learner_auth_runtime.account_for_email(email)
     matches = list(
         LoginAccount.objects.filter(email=normalize_email(email), is_active=True)[:2]
     )
@@ -294,7 +297,7 @@ def account_for_email(email):
     return None
 
 
-def account_payload(account, *, subject=None):
+def account_payload(account, *, subject=None, learner_record_resolver=None):
     """The ``/me`` document: identity and role, and nothing sensitive.
 
     Never includes the password hash, lockout counters or session token. The
@@ -302,6 +305,9 @@ def account_payload(account, *, subject=None):
     gating; both are recomputed server-side on every request, so tampering with
     the stored copy in the browser achieves nothing.
     """
+    from . import learner_auth_runtime
+    if learner_auth_runtime.enabled() and subject is None:
+        return learner_auth_runtime.payload(account)
     subject = subject if subject is not None else fetch_subject(
         account.subject_type, account.subject_id
     )
@@ -357,7 +363,8 @@ def account_payload(account, *, subject=None):
             from .learner_enrolment import AmbiguousLearnerRecord, existing_learner_record
 
             try:
-                learner_record = existing_learner_record(account.email)
+                resolver = learner_record_resolver or existing_learner_record
+                learner_record = resolver(account.email)
             except AmbiguousLearnerRecord:
                 # Preserve the authenticated staff workspace, but never project
                 # access to an arbitrary learner. The server ownership gate also

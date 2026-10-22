@@ -1,3 +1,4 @@
+import { invalidateAuthCaches } from '../authCache';
 /**
  * Who may act *as* the learner whose workspace is open.
  *
@@ -14,7 +15,7 @@
  * before the session has resolved.
  */
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import type { AuthUser } from '@/api/auth';
 
 const authState = vi.fn();
@@ -185,5 +186,56 @@ describe('useLearnerWorkspaceAccess', () => {
     // cannot write anything regardless — every progress endpoint 401s them.
     signedIn(null);
     expect(access('56').canProgress).toBe(true);
+  });
+});
+
+
+describe('coach cache lifecycle', () => {
+  const coach: AuthUser = { ...ADMIN, id: 901, role: 'staff', access: 'coach', accesses: ['coach'] };
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('rechecks an allowed preview after invalidation and rejects an obsolete answer', async () => {
+    let finish!: (value: Response) => void;
+    const transport = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }))
+      .mockResolvedValue(new Response(JSON.stringify({ canAct: false })));
+    vi.stubGlobal('fetch', transport);
+    signedIn(coach);
+    const { result } = renderHook(() => useLearnerWorkspaceAccess('271'));
+    act(() => invalidateAuthCaches());
+    await waitFor(() => expect(result.current.showReadOnlyNotice).toBe(true));
+    await act(async () => finish(new Response(JSON.stringify({ canAct: true }))));
+    expect(result.current.canProgress).toBe(false);
+    expect(transport).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not reuse permission after a grant is removed and restored', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ canAct: true }))));
+    signedIn(coach);
+    const { result, rerender } = renderHook(() => useLearnerWorkspaceAccess('272'));
+    await waitFor(() => expect(result.current.canProgress).toBe(true));
+    signedIn({ ...coach, accesses: [], access: '' });
+    act(() => invalidateAuthCaches());
+    rerender();
+    expect(result.current.canProgress).toBe(false);
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ canAct: false })));
+    signedIn(coach);
+    act(() => invalidateAuthCaches());
+    rerender();
+    await waitFor(() => expect(result.current.showReadOnlyNotice).toBe(true));
+    expect(result.current.canProgress).toBe(false);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a forbidden preview read-only and retries network failures on remount', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue(new Response('{}', { status: 403 })));
+    signedIn(coach);
+    const first = renderHook(() => useLearnerWorkspaceAccess('273'));
+    await waitFor(() => expect(first.result.current.showReadOnlyNotice).toBe(true));
+    first.unmount();
+    const second = renderHook(() => useLearnerWorkspaceAccess('273'));
+    await waitFor(() => expect(second.result.current.showReadOnlyNotice).toBe(true));
+    expect(second.result.current.canProgress).toBe(false);
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 });

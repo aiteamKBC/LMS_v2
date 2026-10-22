@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from './useAuth';
+import { authCacheIdentity, registerAuthCacheReset, useAuthCacheRevision } from './authCache';
 import { parsePersonalLearning } from '@/lib/personalLearning';
 
 /**
@@ -29,13 +30,14 @@ export interface LearnerWorkspaceAccess {
 // One question per coach and learner, shared by every component on the page.
 // A failed answer is dropped so the next mount asks again.
 const coachAnswers = new Map<string, Promise<boolean>>();
+registerAuthCacheReset(() => coachAnswers.clear());
 function coachCanAct(key: string, learnerId: string): Promise<boolean> {
   let answer = coachAnswers.get(key);
   if (!answer) {
     answer = fetch(`/login_api/learner-action-access/?learnerId=${encodeURIComponent(learnerId)}`, { credentials: 'include' })
       .then((response) => (response.ok ? response.json() : Promise.reject(new Error(String(response.status)))))
       .then((body) => body?.canAct === true)
-      .catch(() => { coachAnswers.delete(key); return false; });
+      .catch(() => { if (coachAnswers.get(key) === answer) coachAnswers.delete(key); return false; });
     coachAnswers.set(key, answer);
   }
   return answer;
@@ -49,6 +51,7 @@ export function useLearnerWorkspaceAccess(
   learnerId?: string | number | null,
 ): LearnerWorkspaceAccess {
   const { auth, isInitialized } = useAuth();
+  const revision = useAuthCacheRevision();
   const account = auth.account;
   const personal = parsePersonalLearning(learnerId);
   const validLearner = Number.isSafeInteger(Number(learnerId)) && Number(learnerId) > 0;
@@ -82,7 +85,7 @@ export function useLearnerWorkspaceAccess(
   // a coach asks it. Fail closed: no answer yet, or any error, is read-only.
   const coachKey = isInitialized && !personal && !isStaffSelf && validLearner && account?.role === 'staff'
     && (account.accesses ?? [account.access]).includes('coach')
-    ? `${account.id}:${learnerId}` : null;
+    ? `${revision}:${authCacheIdentity(account)}:${learnerId}` : null;
   const [coachAnswer, setCoachAnswer] = useState<{ key: string; canAct: boolean } | null>(null);
   useEffect(() => {
     if (!coachKey) return;

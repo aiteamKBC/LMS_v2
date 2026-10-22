@@ -88,6 +88,10 @@ def is_authenticated(request):
     ``request.user`` covers a Django-admin session; ``request.login_account`` is
     the platform's own, set by ``login.middleware.LoginSessionMiddleware``.
     """
+    from login import learner_auth_runtime
+    if learner_auth_runtime.enabled() and request.COOKIES.get('kbc_session'):
+        account = getattr(request, 'login_account', None)
+        return bool(account and account.is_active)
     user = getattr(request, "user", None)
     if user is not None and getattr(user, "is_authenticated", False):
         return True
@@ -106,6 +110,8 @@ def _accesses_of(account):
     ``== "enrolment"`` of somebody who holds enrolment AND coach would refuse
     them the enrolment workspace they were deliberately given.
     """
+    if getattr(account, '_learner_auth', False):
+        return account._learner_auth_grants
     if account.subject_type != "staff":
         return frozenset()
     from django.db import DatabaseError
@@ -181,6 +187,9 @@ def _employs(account, learner_id):
     """Whether the learner's employer record is this employer account's own."""
     if learner_id is None:
         return False
+    from login import learner_auth_runtime
+    if learner_auth_runtime.enabled():
+        return learner_auth_runtime.owns(account, learner_id, 'employer')
     from learner_api.models import EnrolmentUser
 
     employer_id = (

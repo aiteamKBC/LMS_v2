@@ -43,7 +43,10 @@ def _authenticate_with_file_retry(request):
                 or hasattr(request, 'login_account')):
             raise
         from .models import LoginSession
-        connection = connections[router.db_for_read(LoginSession) or 'default']
+        from . import learner_auth_runtime
+        from config.learner_auth import ALIAS
+        alias = ALIAS if learner_auth_runtime.enabled() else router.db_for_read(LoginSession) or 'default'
+        connection = connections[alias]
         if connection.in_atomic_block:
             raise
         connection.close()

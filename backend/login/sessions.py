@@ -144,6 +144,9 @@ def resolve_session(token):
     active. The account is fetched in the same query so the common case — an
     authenticated request — costs one round-trip.
     """
+    from . import learner_auth_runtime
+    if learner_auth_runtime.enabled():
+        return learner_auth_runtime.resolve_session(token)
     if not token:
         return None
 
@@ -374,9 +377,15 @@ def refresh_session_cookie(request, response):
 
 def revoke_session(session):
     if session.revoked_at is None:
-        session.revoked_at = timezone.now()
-        session.save(update_fields=["revoked_at"])
-        _event("session.revoked", session, reason="signed_out")
+        revoked_at = timezone.now()
+        # Another logout or password reset may have revoked this stale instance.
+        # Never replace the first revocation timestamp or trip monotonic guards.
+        changed = LoginSession.objects.filter(
+            pk=session.pk, revoked_at__isnull=True,
+        ).update(revoked_at=revoked_at)
+        if changed:
+            session.revoked_at = revoked_at
+            _event("session.revoked", session, reason="signed_out")
 
 
 def revoke_all_for_account(account, *, except_session_id=None):
@@ -449,6 +458,8 @@ def _refresh_staff_role(account):
     reports unreadable staff grants as temporary unavailability instead of
     letting a restricted monitoring account use a broader stale role.
     """
+    if getattr(account, '_learner_auth', False):
+        return
     if account is None or account.subject_type != "staff":
         return
     try:
