@@ -121,8 +121,16 @@ def session_option(occurrence, module):
 def coach_attendance_options(request):
     from .views import authenticated_coach_email
     try:
-        _, learners = attendance_placements(authenticated_coach_email(request))
-        return JsonResponse(placement_options(learners))
+        profiles, learners = attendance_placements(authenticated_coach_email(request))
+        payload = placement_options(learners)
+        if request.GET.get('includeModules') == '1':
+            from .attendance_modules import with_module_options
+            programme_id = request.GET.get('programmeId', '')
+            programme = next((row for row in payload['programmes'] if row['id'] == programme_id), None)
+            if programme is None:
+                return JsonResponse({'detail': 'Programme is outside your caseload.'}, status=403)
+            payload = {'programmes': [with_module_options(programme, profiles, learners)]}
+        return JsonResponse(payload)
     except Exception:
         log.exception('coach_attendance_options_failed')
         return JsonResponse({'detail': 'Unable to load attendance options.'}, status=503)

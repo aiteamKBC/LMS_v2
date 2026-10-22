@@ -1125,6 +1125,10 @@ const routes: RouteObject[] = [
   },
   {
     path: "/curriculum/progress-transfers",
+    element: <Navigate to="/users/progress-transfers" replace />,
+  },
+  {
+    path: "/users/progress-transfers",
     element: <ProgressTransfersPage />,
   },
   {

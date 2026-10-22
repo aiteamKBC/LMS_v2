@@ -10,7 +10,7 @@ from django.utils import timezone
 
 from learner_api.models import EnrolmentUser
 
-from .models import FeedbackDelivery, FeedbackDeliveryQuestion, FeedbackDeliveryRecipient, FeedbackForm
+from .models import FeedbackDelivery, FeedbackDeliveryQuestion, FeedbackDeliveryRecipient, FeedbackForm, FeedbackResponse
 
 
 _random = SystemRandom()
@@ -106,6 +106,29 @@ def _pin_delivery_questions(delivery, form):
     delivery.save(update_fields=['question_set_pinned', 'updated_at'])
 
 
+def ensure_delivery_questions(delivery):
+    """Complete an unstarted bank delivery left by a pre-bank worker.
+
+    Lock the occurrence so simultaneous opens cannot draw different sets.
+    A response, including an autosaved draft, freezes the historical full
+    question set. Legacy forms without section quotas remain unchanged.
+    """
+    if delivery.question_set_pinned:
+        return False
+    with transaction.atomic():
+        stored = FeedbackDelivery.objects.select_for_update().select_related('form').get(pk=delivery.pk)
+        if stored.question_set_pinned:
+            delivery.question_set_pinned = True
+            return False
+        if not stored.form.sections.filter(questions_per_delivery__isnull=False).exists():
+            return False
+        if FeedbackResponse.objects.filter(delivery_id=stored.id).exists():
+            return False
+        _pin_delivery_questions(stored, stored.form)
+        delivery.question_set_pinned = True
+        return True
+
+
 def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=False):
     """Create delivery recipients for published templates matching a lecture.
 
@@ -160,6 +183,8 @@ def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=Fa
             )
             if created:
                 _pin_delivery_questions(delivery, form)
+            else:
+                ensure_delivery_questions(delivery)
             deliveries.append(delivery.id)
             revoked_count += FeedbackDeliveryRecipient.objects.filter(
                 delivery=delivery, revoked_at__isnull=True,

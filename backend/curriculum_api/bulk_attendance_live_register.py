@@ -8,6 +8,7 @@ A saved correction changes only ``attendance_status``. The Teams attendance
 sync still owns this table and may recalculate the row on its next run.
 """
 import logging
+from datetime import datetime, time, timedelta
 
 from django.db import DatabaseError, connections, router, transaction
 from django.utils import timezone
@@ -117,6 +118,25 @@ def read_live_register_or_warning(kbc_id=None):
         return read_live_register_records(kbc_id), None
     except DatabaseError:
         return {}, LIVE_REGISTER_WARNING
+
+
+def read_live_day_learner_ids(session_date):
+    """Read only saved register membership within the business calendar day."""
+    zone = timezone.get_current_timezone()
+    start = timezone.make_aware(datetime.combine(session_date, time.min), zone)
+    end = timezone.make_aware(datetime.combine(session_date + timedelta(days=1), time.min), zone)
+    occurrence_ids = LiveSessionOccurrence.objects.filter(
+        scheduled_start__gte=start, scheduled_start__lt=end,
+    ).values_list('id', flat=True)
+    profile_ids = list(LiveSessionLearnerAttendance.objects.filter(
+        occurrence_id__in=occurrence_ids,
+    ).values_list('learner_profile_id', flat=True).distinct())
+    profiles = list(LearnerProfile.objects.filter(id__in=profile_ids).only('id', 'enrolment_id', 'aptem_id'))
+    if not profiles:
+        return set()
+    from coach_api.views import resolve_effective_aptem_ids
+    identities, _conflicts = resolve_effective_aptem_ids(profiles)
+    return {str(identity) for identity in identities.values() if identity is not None}
 
 
 def save_live_attendance(changes):

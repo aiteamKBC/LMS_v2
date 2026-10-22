@@ -158,7 +158,21 @@
 .moduleTable td .demoBadge { display: block; margin-top: 6px; }
 .moduleTable .numeric { white-space: nowrap; color: #56378a; font-weight: 650; font-variant-numeric: tabular-nums; }
 
+.matching { display: grid; gap: 14px; }
+.matching h2 { color: #332345; font-size: 18px; font-weight: 650; }
+.matchWarning { padding: 12px 16px; border: 1px solid #efd49e; border-radius: 10px; background: #fff8e9; color: #80531a; }
+.matchModule { border: 1px solid #e7def2; border-radius: 12px; overflow: hidden; }
+.matchModule h3 { padding: 14px; background: #f7f3fc; color: #483064; font-size: 15px; font-weight: 650; }
+.matchModule > p { padding: 14px; }
+.matchRow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; padding: 16px; border-top: 1px solid #eee8f5; }
+.matchRow > div, .matchRow label { display: grid; align-content: start; gap: 6px; min-width: 0; }
+.matchRow strong { color: #49345e; font-weight: 600; overflow-wrap: anywhere; }
+.matchRow small { font-size: 12px; color: #776783; }
+.matchRow select { width: 100%; min-width: 0; min-height: 42px; padding: 8px; border: 1px solid #d8cae9; border-radius: 8px; background: white; color: #49345e; }
+.matchRow select:focus-visible { outline: 2px solid #7446b7; outline-offset: 2px; }
+
 @media (max-width: 640px) {
+  .matchRow { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .page { gap: 16px; }
   .pageHeader { align-items: flex-start; flex-wrap: wrap; gap: 12px; }
   .heading { gap: 10px; }
