@@ -18,12 +18,12 @@ def learner(pk=1, **values):
 class EffectiveAttendanceAssignmentsTests(SimpleTestCase):
     def test_inherited_modules_match_learning_plan_for_both_learner_types(self):
         for kind in ('commercial', 'apprenticeship'):
-            with self.subTest(kind=kind), patch('learner_api.learning_plan._group_module_ids', return_value=['NEW', 'OLD']):
+            with self.subTest(kind=kind), patch('learner_api.selectors.assignments._group_module_ids', return_value=['NEW', 'OLD']):
                 source = learner(learner_type=kind, learning_plan=[{'moduleId': 'OLD'}])
                 self.assertEqual(assigned_module_ids(source), ['OLD', 'NEW'])
 
     def test_missing_plan_inherits_but_empty_or_explicit_plan_does_not(self):
-        with patch('learner_api.learning_plan._group_module_ids', return_value=['GROUP']) as preset:
+        with patch('learner_api.selectors.assignments._group_module_ids', return_value=['GROUP']) as preset:
             self.assertEqual(assigned_module_ids(learner()), ['GROUP'])
             preset.reset_mock()
             self.assertEqual(assigned_module_ids(learner(training_plan=[])), [])
@@ -67,7 +67,7 @@ class EffectiveAttendanceAssignmentsTests(SimpleTestCase):
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
         cursor.fetchall.return_value = [('NEW', 'Inherited module')]
-        with patch('learner_api.learning_plan._group_module_ids', return_value=['NEW']), \
+        with patch('learner_api.selectors.assignments._group_module_ids', return_value=['NEW']), \
              patch('learner_api.attendance_lectures.connections', {'enrolment': connection}), \
              patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
             self.assertEqual(read_assigned_modules(source), [{'id': 'NEW', 'title': 'Inherited module'}])

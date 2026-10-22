@@ -10,11 +10,11 @@ class PresetCacheTests(SimpleTestCase):
         return SimpleNamespace(programme='Programme', group='G1', training_plan=None, learning_plan=None, **extra)
 
     def test_installed_cache_reads_the_group_preset_once(self):
-        from . import learning_plan
         source = self.learner(_plan_preset_cache={})
-        with patch.object(learning_plan, '_group_module_ids', return_value=['M1', 'M2']) as preset:
-            first = learning_plan._effective_plan_ids(source, learning_plan.request_preset_cache(source))
-            second = learning_plan._effective_plan_ids(source, learning_plan.request_preset_cache(source))
+        from .selectors import assignments as assignment_reads
+        with patch.object(assignment_reads, '_group_module_ids', return_value=['M1', 'M2']) as preset:
+            first = assignment_reads._effective_plan_ids(source, assignment_reads.request_preset_cache(source))
+            second = assignment_reads._effective_plan_ids(source, assignment_reads.request_preset_cache(source))
         preset.assert_called_once_with('Programme', 'G1')
         self.assertEqual(first, ['M1', 'M2'])
         self.assertEqual(second, first)
@@ -23,11 +23,11 @@ class PresetCacheTests(SimpleTestCase):
         self.assertEqual(source._plan_preset_cache[('Programme', 'G1')], ['M1', 'M2'])
 
     def test_without_an_installed_cache_each_resolution_is_independent(self):
-        from . import learning_plan
         source = self.learner()
-        with patch.object(learning_plan, '_group_module_ids', return_value=['M1']) as preset:
-            learning_plan._effective_plan_ids(source, learning_plan.request_preset_cache(source))
-            learning_plan._effective_plan_ids(source, learning_plan.request_preset_cache(source))
+        from .selectors import assignments as assignment_reads
+        with patch.object(assignment_reads, '_group_module_ids', return_value=['M1']) as preset:
+            assignment_reads._effective_plan_ids(source, assignment_reads.request_preset_cache(source))
+            assignment_reads._effective_plan_ids(source, assignment_reads.request_preset_cache(source))
         self.assertEqual(preset.call_count, 2)
         self.assertFalse(hasattr(source, '_plan_preset_cache'))
 
@@ -93,13 +93,14 @@ class BuilderLinkReuseTests(SimpleTestCase):
 
     def test_overview_plan_then_learning_reads_module_titles_once(self):
         from . import dashboard_tabs, training_plan_dashboard, weekly_learning, student_activity_access, \
-            builder_activity_dates, learning_plan, student_activity, canonical_learning
+            builder_activity_dates, student_activity, canonical_learning
+        from .selectors import assignments as assignment_reads
         source = SimpleNamespace(pk=265, aptem_id=None, _plan_preset_cache={}, _builder_link_cache={})
         read = self.reader()
         cursor = MagicMock()
         cursor.__enter__.return_value = cursor
         with patch.object(training_plan_dashboard, '_effective_plan_ids', return_value=['M1', 'M2']), \
-             patch.object(learning_plan, '_effective_plan_ids', return_value=['M1', 'M2']), \
+             patch.object(assignment_reads, '_effective_plan_ids', return_value=['M1', 'M2']), \
              patch.object(canonical_learning, 'curriculum_module_ids_for', return_value=[]), \
              patch.object(training_plan_dashboard, '_builder_subject_metadata', read), \
              patch.object(student_activity, '_builder_subject_metadata', read), \
@@ -152,14 +153,15 @@ class BuilderDatesReuseTests(SimpleTestCase):
         dates.assert_called_once()
 
     def test_learning_projection_publishes_the_dates_it_reads(self):
-        from . import dashboard_tabs, weekly_learning, student_activity_access, builder_activity_dates, learning_plan, student_activity
+        from . import dashboard_tabs, weekly_learning, student_activity_access, builder_activity_dates, student_activity
+        from .selectors import assignments as assignment_reads
         source = SimpleNamespace(pk=265, aptem_id=None, _plan_preset_cache={})
         cursor = MagicMock()
         cursor.__enter__.return_value = cursor
         read = {'C1': {'date': '2026-11-02'}}
         with patch.object(weekly_learning, 'build_learning_content_summary', return_value={'components': []}), \
              patch.object(student_activity_access, 'student_activity_available', return_value=False), \
-             patch.object(learning_plan, '_effective_plan_ids', return_value=['M1']), \
+             patch.object(assignment_reads, '_effective_plan_ids', return_value=['M1']), \
              patch.object(student_activity, '_builder_subject_metadata', return_value=({}, {})), \
              patch.object(builder_activity_dates, 'read_builder_activity_dates', return_value=read) as dates, \
              patch.object(dashboard_tabs, 'connections', {'enrolment': SimpleNamespace(cursor=lambda: cursor)}):

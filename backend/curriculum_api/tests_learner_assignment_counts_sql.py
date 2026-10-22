@@ -38,7 +38,7 @@ class ReductionTests(SimpleTestCase):
     """`counts_from_plan_facts` against the rules in `_effective_plan_ids`."""
 
     def counts(self, facts, wanted=('MOD-1', 'MOD-2'), preset=()):
-        with patch.object(sqlcounts.plans, '_group_module_ids', return_value=list(preset)):
+        with patch.object(sqlcounts.assignment_reads, '_group_module_ids', return_value=list(preset)):
             counts, ambiguous = sqlcounts.counts_from_plan_facts(facts, wanted)
         self.assertEqual(ambiguous, [])
         return counts
@@ -71,7 +71,7 @@ class ReductionTests(SimpleTestCase):
         # A null programme/group has to reach _group_module_ids as ('', ''), the
         # blank pair its own guard answers [] to -- not as None, which would go
         # to the database as a parameter and match nothing in a different way.
-        with patch.object(sqlcounts.plans, '_group_module_ids',
+        with patch.object(sqlcounts.assignment_reads, '_group_module_ids',
                           side_effect=lambda programme, group: ['MOD-2'] if group else []) as lookup:
             counts, _ = sqlcounts.counts_from_plan_facts(
                 [fact(programme=None, grp=None, has_plan=False, id_count=0)],
@@ -86,7 +86,7 @@ class ReductionTests(SimpleTestCase):
 
     def test_the_preset_lookup_is_shared_across_learners(self):
         facts = [fact(learner_id=i, has_plan=False, id_count=0) for i in range(1, 6)]
-        with patch.object(sqlcounts.plans, '_group_module_ids', return_value=['MOD-1']) as lookup:
+        with patch.object(sqlcounts.assignment_reads, '_group_module_ids', return_value=['MOD-1']) as lookup:
             counts, _ = sqlcounts.counts_from_plan_facts(facts, ('MOD-1',))
         self.assertEqual(lookup.call_count, 1)
         self.assertEqual(counts, {'MOD-1': 5})

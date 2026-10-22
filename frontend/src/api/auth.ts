@@ -228,10 +228,11 @@ export async function apiLogin(
   password: string,
   remember = false,
 ): Promise<AuthUser> {
+  inFlightGets.clear();
   const data = await request<{ user?: AuthUser; passwordSetupRequired?: boolean; setPasswordPath?: string }>('/login/', {
     method: 'POST',
     body: JSON.stringify({ email, password, remember }),
-  });
+  }).finally(() => inFlightGets.clear());
   // Only ever an in-app path from our own server; never follow anything else.
   if (data.passwordSetupRequired && data.setPasswordPath?.startsWith('/set-password?token=')) {
     throw new PasswordSetupRequired(data.setPasswordPath);
@@ -241,7 +242,8 @@ export async function apiLogin(
 }
 
 export async function apiLogout(): Promise<void> {
-  await request('/logout/', { method: 'POST' });
+  inFlightGets.clear();
+  await request('/logout/', { method: 'POST' }).finally(() => inFlightGets.clear());
 }
 
 // ---------------------------------------------------------------------------

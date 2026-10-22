@@ -7,7 +7,9 @@ from django.db import DatabaseError, connections
 from django.test import RequestFactory, SimpleTestCase, TransactionTestCase
 
 from . import learner_assignments as assignments
-from learner_api.learning_plan import _effective_plan_ids, _serialize
+from learner_api.learning_plan import _serialize
+from learner_api.selectors.assignments import _effective_plan_ids
+from learner_api.selectors import assignments as assignment_reads
 
 
 def learner(plan=None, **overrides):
@@ -28,7 +30,7 @@ CATALOGUE = {key: {'moduleId': key, 'moduleTitle': key, 'hours': 1, 'programmeId
 class AssignmentTests(SimpleTestCase):
     def setUp(self):
         self.mirror = self.enterContext(patch.object(assignments.plans, 'sync_learning_plan_mirror'))
-        self.enterContext(patch.object(assignments.plans, '_group_module_ids', return_value=[]))
+        self.enterContext(patch.object(assignment_reads, '_group_module_ids', return_value=[]))
         self.enterContext(patch.object(assignments, 'hydrate_training_plan', side_effect=lambda plan, **kw: [dict(m, weeks=[]) for m in plan]))
         self.profiles = self.enterContext(patch.object(assignments, 'LearnerProfile'))
 
@@ -45,7 +47,7 @@ class AssignmentTests(SimpleTestCase):
 
     def test_single_module_after_empty_plan_never_inherits_group_siblings(self):
         row = learner([])
-        with patch.object(assignments.plans, '_group_module_ids', return_value=['MOD-2']):
+        with patch.object(assignment_reads, '_group_module_ids', return_value=['MOD-2']):
             assignments._assign(row, MODULE, CATALOGUE, {})
             self.assertEqual(_effective_plan_ids(row, {}), ['MOD-1'])
             with patch.object(assignments.plans, '_programme_modules', return_value=list(CATALOGUE.values())), \
@@ -57,7 +59,7 @@ class AssignmentTests(SimpleTestCase):
 
     def test_unsaved_learner_keeps_modules_they_already_inherit(self):
         row = learner()
-        with patch.object(assignments.plans, '_group_module_ids', return_value=['OLD']):
+        with patch.object(assignment_reads, '_group_module_ids', return_value=['OLD']):
             assignments._assign(row, MODULE, CATALOGUE, {})
         self.assertEqual([entry['moduleId'] for entry in row.learning_plan], ['OLD', 'MOD-1'])
 

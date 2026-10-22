@@ -233,6 +233,15 @@ describe('apiMe', () => {
     fetchMock.mockResolvedValue(reply(502, { error: 'Database error' }));
     await expect(apiMe()).rejects.toBeInstanceOf(AuthError);
   });
+
+  it('preserves session unavailability as a retryable failure, never signed out', async () => {
+    fetchMock.mockResolvedValue(reply(503, {
+      error: 'The sign-in service is temporarily unavailable.', code: 'session_unavailable',
+    }));
+    await expect(apiMe()).rejects.toMatchObject({ status: 503, code: 'session_unavailable' });
+    fetchMock.mockResolvedValue(reply(200, { user: ACCOUNT }));
+    await expect(apiMe()).resolves.toEqual(ACCOUNT);
+  });
 });
 
 describe('token flows', () => {

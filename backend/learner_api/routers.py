@@ -12,7 +12,7 @@ APP_LABELS = frozenset({"learner_api", "enrolment_api", "login"})
 ENROLMENT_DB = "enrolment"
 # Aliases that must never receive a Django migration: their schemas are created
 # and owned outside this project.
-NON_MIGRATED_DATABASES = frozenset({ENROLMENT_DB, "audit", "audit_clone", "kbc_attendance"})
+NON_MIGRATED_DATABASES = frozenset({ENROLMENT_DB, "audit", "audit_clone", "kbc_attendance", "learner_auth_read"})
 
 
 class EnrolmentRouter:

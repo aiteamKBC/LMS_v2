@@ -1,5 +1,6 @@
 """Case-owner edits and the coach picker must produce the same assignment."""
 import json
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
@@ -14,7 +15,7 @@ from .views import enrolment_user_detail, learner_coach
 
 def learner(**overrides):
     values = dict(pk=501, id=501, email='learner@example.com', aptem_id=None,
-                  learner_type='commercial', programme_status='Active',
+                  learner_type='commercial', programme_status='Active', training_plan=[],
                   case_owner='Rewan Yasser', coach_name='Rewan Yasser',
                   coach_email='rewan@example.com', save=Mock())
     return SimpleNamespace(**{**values, **overrides})
@@ -34,6 +35,7 @@ class CaseOwnerSaveTests(SimpleTestCase):
         model = self.enterContext(patch('learner_api.views.EnrolmentUser'))
         model.all_learners.filter.return_value.first.return_value = self.source
         self.enterContext(patch('learner_api.views.advance_learner'))
+        self.enterContext(patch('learner_api.views.locked_source', side_effect=lambda row: nullcontext(row)))
         self.enterContext(patch('learner_api.views.to_board', return_value={}))
         self.atomic = self.enterContext(patch('learner_api.learner_dates.transaction.atomic'))
         self.resolve = self.enterContext(patch('learner_api.learner_dates.learner_profile_for_source',
@@ -153,6 +155,8 @@ class CoachResolutionTests(SimpleTestCase):
             with self.subTest(name=name):
                 source = learner(case_owner=name, coach_name=name, coach_email=email)
                 with patch('learner_api.apprenticeship_agreement._group_dates', return_value=(None, None, None)), \
+                        patch('learner_api.services.contact_sync.verified_activation_profile', return_value=(None, {})), \
+                        patch('learner_api.services.contact_sync.sync_contacts_in_transaction'), \
                         patch('learner_api.active_users.get_training_plan', return_value=[]), \
                         patch('learner_api.active_users.transaction.atomic'), \
                         patch('learner_api.active_users.learner_profile_for_source', return_value=None), \
@@ -161,6 +165,7 @@ class CoachResolutionTests(SimpleTestCase):
                         patch('learner_api.active_users._linkable_placement_ids', return_value=(None, None)), \
                         patch('learner_api.active_users.LearnerProfile.objects.create') as create, \
                         patch('learner_api.active_users.replace_training_plan'), \
+                        patch('learner_api.active_users.replace_free_courses'), \
                         patch('learner_api.active_users.refresh_learner_ksb_snapshot'):
                     sync_active_user(source)
                 self.assertEqual(create.call_args.kwargs['coach_name'], name)
@@ -176,6 +181,7 @@ class CoachResolutionTests(SimpleTestCase):
                         patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
                         patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
                         patch('learner_api.training_plan_dashboard.assigned_group_coach', return_value='Group coach'), \
+                        patch('learner_api.training_plan_dashboard.coach_phone', return_value=None), \
                         patch('learner_api.calendar.coaching_events_for_learner', return_value=[]), \
                         patch('learner_api.training_plan_dashboard.booking_url', side_effect=lambda value: value or None):
                     profiles.objects.filter.return_value.first.return_value = profile()

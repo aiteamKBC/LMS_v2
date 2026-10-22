@@ -201,7 +201,8 @@ class CourseCatalogueTests(unittest.TestCase):
                   'verified_catalogue_scope': json.dumps(self.verified_scope('material:20'))}
         records = [self.record(), self.record(2, sources=[{
             'source_system': 'old_lms', 'source_course_ref': '50', 'source_activity_id': 'quiz:10'}])]
-        owner = {'id': 7, 'name': 'Synthetic learner', 'aptem_id': 70}
+        # Match profile_for_enrolment: profile PK and enrolment PK are distinct.
+        owner = {'id': 7, 'enrolment_id': 17, 'name': 'Synthetic learner', 'aptem_id': 70}
         self.scope['targets_for'] = Mock(return_value={})
         for overview in (False, True):
             with self.subTest(overview=overview):
@@ -251,12 +252,14 @@ class CourseCatalogueTests(unittest.TestCase):
         self.assertEqual(query.call_args_list[0].args[1], [7])
 
     def test_subject_endpoint_projects_the_owned_catalogue_without_any_progress(self):
-        self.scope['profile'] = Mock(return_value={'id': 7, 'name': 'Synthetic learner', 'aptem_id': 70})
+        self.scope['profile'] = Mock(return_value={
+            'id': 7, 'enrolment_id': 17, 'name': 'Synthetic learner', 'aptem_id': 70})
         self.scope['entries_for'] = Mock(return_value=[])
         self.scope['targets_for'] = Mock(return_value={})
         self.scope['query'].side_effect = [
             [{**course, 'id': index + 1} for index, course in enumerate(self.courses)], self.catalogue, []]
         result = self.scope['source_subjects'](17, lambda items: {'activities': items})
+        self.scope['profile'].assert_called_once_with(17)
         self.assertEqual(result['progress_basis'], 'catalogue_activities')
         self.assertEqual(len(result['activities']), 4)
         self.assertEqual(result['recorded_otjh_total'], 0)

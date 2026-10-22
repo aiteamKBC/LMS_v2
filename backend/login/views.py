@@ -31,8 +31,9 @@ project's JSON endpoints are written (``@csrf_exempt`` throughout learner_api).
 from __future__ import annotations
 
 import json
+import logging
 
-from django.db import DatabaseError
+from django.db import DatabaseError, transaction
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -48,7 +49,7 @@ from .invitations import (
     record,
 )
 from .models import EVENT_LOGIN, EVENT_LOGOUT, EVENT_PASSWORD_CHANGED, LoginAccount
-from .permissions import login_required, require_role
+from .permissions import _unavailable, login_required, require_role
 from .services import default_password_setup, invite_subject, issue_invitation_link, request_password_link
 from .security import (
     PasswordPolicyError,
@@ -73,7 +74,11 @@ from .sessions import (
     revoke_all_for_account,
     revoke_session,
     set_session_cookie,
+    session_unreadable,
 )
+
+logger = logging.getLogger(__name__)
+
 
 #: Returned for every bad sign-in, regardless of the underlying cause.
 GENERIC_LOGIN_ERROR = "Incorrect email or password."
@@ -153,7 +158,8 @@ def login(request):
     try:
         account = identity.account_for_email(email)
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     if is_default_learner_password(password) and (account is None or not account.has_password):
         # A learner who has never set a password, using the shared first-sign-in
@@ -163,7 +169,8 @@ def login(request):
         try:
             setup_path = default_password_setup(email, ip=ip, user_agent=ua)
         except DatabaseError as exc:
-            return _error(f"Database error: {exc}", 502)
+            logger.error("Database operation failed (%s)", type(exc).__name__)
+            return _error("The database service is temporarily unavailable.", 502)
         if setup_path:
             record(EVENT_LOGIN, email=email, succeeded=False, reason="default_password_setup", ip=ip, user_agent=ua)
             response = JsonResponse({"passwordSetupRequired": True, "setPasswordPath": setup_path})
@@ -251,13 +258,20 @@ def logout(request):
 @require_GET
 def me(request):
     """The signed-in identity, or 401. The SPA calls this on every page load."""
-    account = authenticate_request(request)
+    try:
+        account = authenticate_request(request)
+    except Exception as exc:  # Session lookup failure is not session expiry.
+        logger.error("Session lookup failed (%s)", type(exc).__name__)
+        return _unavailable()
+    if session_unreadable(request) or getattr(account, "_staff_access_unavailable", False):
+        return _unavailable()
     if account is None:
         return _error("Not authenticated.", 401, code="unauthenticated")
     try:
         return JsonResponse({"user": identity.account_payload(account)})
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
 
 @require_GET
@@ -271,7 +285,13 @@ def learner_action_access(request):
     """
     from .permissions import coach_owns_learner, staff_owns_learner
 
-    account = authenticate_request(request)
+    try:
+        account = authenticate_request(request)
+    except Exception as exc:  # Session lookup failure is not session expiry.
+        logger.error("Session lookup failed (%s)", type(exc).__name__)
+        return _unavailable()
+    if session_unreadable(request) or getattr(account, "_staff_access_unavailable", False):
+        return _unavailable()
     if account is None:
         return _error("Not authenticated.", 401, code="unauthenticated")
     try:
@@ -330,11 +350,13 @@ def change_password(request):
 
     account.password_hash = hash_password(new_password)
     account.password_set_at = timezone.now()
-    account.save(update_fields=["password_hash", "password_set_at", "updated_at"])
+    with transaction.atomic(using="enrolment"):
+        account.save(update_fields=["password_hash", "password_set_at", "updated_at"])
 
-    # Keep the caller signed in, drop every other session.
-    session = getattr(request, "login_session", None)
-    revoke_all_for_account(account, except_session_id=session.id if session else None)
+        # Keep the caller signed in, drop every other session. Failure must
+        # roll back the password too, including synchronous mirror failures.
+        session = getattr(request, "login_session", None)
+        revoke_all_for_account(account, except_session_id=session.id if session else None)
 
     record(
         EVENT_PASSWORD_CHANGED, email=account.email, account_id=account.id,
@@ -382,7 +404,8 @@ def forgot_password(request):
 
         request_password_link(email, ip=ip, user_agent=ua)
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     return uniform
 
@@ -398,7 +421,8 @@ def reset_info(request):
     except TokenError as exc:
         return _error(str(exc), 400, code="invalid_token")
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
 
 @csrf_exempt
@@ -429,7 +453,8 @@ def reset_password(request):
     except PasswordPolicyError as exc:
         return _error(str(exc), 400, code="weak_password")
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     # Deliberately does not sign the person in. Making them use the password
     # they just chose confirms they know it, and keeps a stolen reset link one
@@ -452,7 +477,8 @@ def invitation_info(request):
     except TokenError as exc:
         return _error(str(exc), 400, code="invalid_token")
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
 
 @csrf_exempt
@@ -483,7 +509,8 @@ def accept_invitation_view(request):
     except PasswordPolicyError as exc:
         return _error(str(exc), 400, code="weak_password")
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     return JsonResponse({
         "ok": True,
@@ -581,7 +608,8 @@ def invitation_link_view(request):
             ip=client_ip(request), user_agent=user_agent(request),
         )
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
     if outcome["forbidden"]:
         return _error(outcome["error"], 403, code="forbidden")
     if not outcome["link"]:
@@ -601,12 +629,21 @@ def invitation_link_view(request):
 def health(request):
     """Readiness of the auth subsystem. Reports names of missing settings only."""
     try:
-        accounts = LoginAccount.objects.count()
-        with_password = LoginAccount.objects.exclude(password_hash="").count()
+        from . import learner_auth_runtime
+        if learner_auth_runtime.enabled():
+            from .learner_auth_reader import _read_query
+            with _read_query() as query:
+                row = query('SELECT count(*) AS total, count(*) FILTER (WHERE "Password_hash" <> %s) AS passwords '
+                            'FROM "Learner"."Login_accounts"', [''])[0]
+                accounts, with_password = row['total'], row['passwords']
+        else:
+            accounts = LoginAccount.objects.count()
+            with_password = LoginAccount.objects.exclude(password_hash="").count()
         db_ok, db_error = True, None
     except DatabaseError as exc:
         accounts = with_password = None
-        db_ok, db_error = False, str(exc)
+        logger.error("Auth health database read failed (%s)", type(exc).__name__)
+        db_ok, db_error = False, "The database service is temporarily unavailable."
 
     return JsonResponse({
         "ok": db_ok,

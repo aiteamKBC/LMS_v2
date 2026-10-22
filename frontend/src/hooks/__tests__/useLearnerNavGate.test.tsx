@@ -1,3 +1,4 @@
+import { invalidateAuthCaches } from '../authCache';
 /**
  * The learner sidebar must never show a menu the learner isn't entitled to,
  * not even for one frame.
@@ -19,7 +20,7 @@ vi.mock('../useMyLearner', () => ({
   getRememberedLearner: () => getRememberedLearner(),
 }));
 
-import { useLearnerNavGate, syncLearnerStatus } from '../useLearnerNavGate';
+import { useLearnerNavGate, syncLearnerStatus, useEnrolmentSubmitted } from '../useLearnerNavGate';
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
 
 const FULL_NAV: SidebarNavItem[] = [
@@ -212,4 +213,47 @@ describe('useLearnerNavGate', () => {
 
     await waitFor(() => expect(result.current).toEqual(FULL_NAV));
   });
+});
+
+
+describe('auth navigation cache lifecycle', () => {
+  it('drops stored eligibility and refreshes mounted navigation once at an auth boundary', async () => {
+    getRememberedLearner.mockReturnValue({ kind: 'apprenticeship', id: 'auth-nav' });
+    fetchLearnerSummary.mockResolvedValue({ programmeStatus: 'Onboarding', onboardingStatus: 'Draft' });
+    const { result, rerender } = renderHook(() => useLearnerNavGate('learner', FULL_NAV));
+    await waitFor(() => expect(result.current.length).toBeGreaterThan(0));
+    expect(fetchLearnerSummary).toHaveBeenCalledTimes(1);
+    sessionStorage.setItem('unrelated-preference', 'keep');
+    fetchLearnerSummary.mockResolvedValue({ programmeStatus: 'Active', onboardingStatus: 'Submitted' });
+    act(() => invalidateAuthCaches());
+    expect(sessionStorage.getItem('learner_onboarding_status:apprenticeship:auth-nav')).toBeNull();
+    await waitFor(() => expect(fetchLearnerSummary).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.current.map(item => item.id)).toContain('learner-attendance'));
+    rerender();
+    expect(fetchLearnerSummary).toHaveBeenCalledTimes(2);
+    expect(sessionStorage.getItem('unrelated-preference')).toBe('keep');
+  });
+
+  it('cannot restore stored eligibility from a request started before logout', async () => {
+    getRememberedLearner.mockReturnValue({ kind: 'apprenticeship', id: 'old-nav' });
+    let finish!: (value: { programmeStatus: string }) => void;
+    fetchLearnerSummary.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const view = renderHook(() => useLearnerNavGate('learner', FULL_NAV));
+    view.unmount();
+    act(() => invalidateAuthCaches());
+    await act(async () => finish({ programmeStatus: 'Delivery' }));
+    expect(sessionStorage.getItem('learner_status:apprenticeship:old-nav')).toBeNull();
+  });
+});
+
+
+it('rechecks mounted onboarding eligibility after invalidation', async () => {
+  fetchLearnerSummary.mockResolvedValue({ onboardingStatus: 'Submitted' });
+  const { result, rerender } = renderHook(() => useEnrolmentSubmitted('apprenticeship', 'auth-onboarding'));
+  await waitFor(() => expect(result.current).toBe(true));
+  fetchLearnerSummary.mockResolvedValue({ onboardingStatus: 'Draft' });
+  act(() => invalidateAuthCaches());
+  await waitFor(() => expect(result.current).toBe(false));
+  rerender();
+  expect(fetchLearnerSummary).toHaveBeenCalledTimes(2);
 });

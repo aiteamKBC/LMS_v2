@@ -26,7 +26,7 @@ import type { LearnerKind } from '@/api/learnerDetail';
 import { LearningHero } from './LearningCatalogue';
 import { useAuth } from '@/hooks/useAuth';
 import learningStyles from './SubjectWorkspace.module.css';
-import { useMyLearningCatalogue } from '@/api/myLearning';
+import { useMyLearningCatalogue } from '@/hooks/useMyLearning';
 import { CompactModules } from './CompactModules';
 
 const learnerNav = roleNavMap.learner;

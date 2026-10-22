@@ -74,7 +74,7 @@ def learning_projection(source, owner, records, *, compact_content=False, monthl
             'section_title', 'source_activity_id', 'catalogue_kind', 'best_score_percent',
             'quiz_score', 'quiz_maximum_score', *(('planned',) if monthly_assignments else ())) if key in item}
             for item in activity['activities']]
-    from .learning_plan import _effective_plan_ids, request_preset_cache
+    from .selectors.assignments import _effective_plan_ids, request_preset_cache
     ids = _effective_plan_ids(source, request_preset_cache(source))
     refs = [f'current:{module_id}' for module_id in ids]
     refs.extend(f"current:{item['moduleId']}" for item in detail['components'] if item.get('moduleId'))

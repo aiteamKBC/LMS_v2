@@ -175,7 +175,7 @@ class CaseFileOverviewTests(SimpleTestCase):
         source = SimpleNamespace(pk=201, programme='Synthetic')
         components = [{'moduleId': 'M1', 'module': 'Module', 'componentId': 'C1'}]
         connection = MagicMock()
-        with patch('learner_api.learning_plan.effective_training_plan', return_value=[{'moduleId': 'M1'}]), \
+        with patch('learner_api.selectors.assignments.effective_training_plan', return_value=[{'moduleId': 'M1'}]), \
              patch('learner_api.mappers.get_training_plan', return_value=[]), \
              patch('learner_api.mappers.flatten_training_plan', return_value=([], [], [])), \
              patch('learner_api.learner_detail._resolve_from_master', return_value=(['Module'], [], components)) as resolve, \

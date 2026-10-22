@@ -19,7 +19,7 @@ from login.sessions import authenticate_request
 from .learner_detail import SOURCE_MODELS
 from .active_users import completed_hours_value_from_progress
 from .models import EnrolmentUser, LearnerProfile, LearnerProgressEntry
-from .learning_plan import _effective_plan_ids
+from .selectors.assignments import _effective_plan_ids
 from .student_activity_data import (read_audit_hour_totals, read_evidenced_ksb_counts_bulk,
                                     read_student_activity, read_student_material)
 from .student_activity_access import student_activity_available

@@ -1,3 +1,4 @@
+import { getAuthCacheRevision, registerAuthCacheReset, useAuthCacheRevision } from './authCache';
 import { useEffect, useState } from 'react';
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
 import { fetchLearnerSummary, type LearnerKind, type LearnerSummary } from '@/api/learnerDetail';
@@ -27,6 +28,14 @@ const readyKey = (key: string) => `learner_ready_for_learning:${key}`;
 const readyCache = new Map<string, boolean>();
 const onboardingKey = (key: string) => `learner_onboarding_status:${key}`;
 const onboardingCache = new Map<string, string>();
+
+// These hints belong to the authenticated viewer, including staff previews.
+registerAuthCacheReset(() => {
+  statusCache.clear();
+  readyCache.clear();
+  onboardingCache.clear();
+
+});
 
 /** Last known enrolment-wizard status ('Submitted', 'Completed'…), or undefined if never seen. */
 function cachedOnboarding(key: string): string | undefined {
@@ -192,12 +201,15 @@ export function markFirstSessionUnlocked(kind: string | undefined, id: string | 
  * sidebar's fallback to the full menu.
  */
 export function useEnrolmentSubmitted(kind: string | undefined, id: string | undefined): boolean | null {
+  const revision = useAuthCacheRevision();
   const cacheKey = kind && id ? `${kind}:${id}` : '';
   const read = () => {
     const value = cacheKey ? cachedOnboarding(cacheKey) : undefined;
     return value === undefined ? null : reviewsOpen(value);
   };
-  const [submitted, setSubmitted] = useState<boolean | null>(read);
+  const stateKey = `${revision}:${cacheKey}`;
+  const [submission, setSubmission] = useState({ key: stateKey, value: read() });
+  const setSubmitted = (value: boolean | null) => setSubmission({ key: stateKey, value });
 
   useEffect(() => {
     if (!cacheKey) return;
@@ -208,32 +220,35 @@ export function useEnrolmentSubmitted(kind: string | undefined, id: string | und
     if (cachedOnboarding(cacheKey) === undefined) {
       fetchLearnerSummary(kind as LearnerKind, id!)
         .then((detail) => {
+          if (cancelled || revision !== getAuthCacheRevision()) return;
           const value = detail.onboardingStatus ?? ONBOARDING_UNKNOWN;
           rememberOnboarding(cacheKey, value);
           if (!cancelled) setSubmitted(reviewsOpen(value));
         })
-        .catch(() => { if (!cancelled) setSubmitted(true); });
+        .catch(() => { if (!cancelled && revision === getAuthCacheRevision()) setSubmitted(true); });
     }
     return () => {
       cancelled = true;
       listeners.delete(notify);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cacheKey]);
+  }, [cacheKey, revision]);
 
-  return submitted;
+  return submission.key === stateKey ? submission.value : read();
 }
 
 export function useLearnerNavGate(role: string, navItems: SidebarNavItem[], reviewingLearner = false): SidebarNavItem[] {
+  const revision = useAuthCacheRevision();
   const learner = role === 'learner' ? getRememberedLearner() : null;
   const cacheKey = learner ? `${learner.kind}:${learner.id}` : '';
-  const [status, setStatus] = useState<string | null>(
-    cacheKey ? cachedStatus(cacheKey) : null,
-  );
-  const [history, setHistory] = useState({ key: cacheKey, available: cachedHistory(cacheKey) === true });
-  const [ready, setReady] = useState({ key: cacheKey, available: cachedReady(cacheKey) === true });
-  const [onboarding, setOnboarding] = useState({ key: cacheKey, status: cachedOnboarding(cacheKey) });
-  const [firstSession, setFirstSession] = useState({ key: cacheKey, unlocked: cachedFirstSession(cacheKey) });
+  const stateKey = `${revision}:${cacheKey}`;
+  const [statusState, setStatusState] = useState({ key: stateKey, value: cacheKey ? cachedStatus(cacheKey) : null });
+  const status = statusState.key === stateKey ? statusState.value : cachedStatus(cacheKey);
+  const setStatus = (value: string | null) => setStatusState({ key: stateKey, value });
+  const [history, setHistory] = useState({ key: stateKey, available: cachedHistory(cacheKey) === true });
+  const [ready, setReady] = useState({ key: stateKey, available: cachedReady(cacheKey) === true });
+  const [onboarding, setOnboarding] = useState({ key: stateKey, status: cachedOnboarding(cacheKey) });
+  const [firstSession, setFirstSession] = useState({ key: stateKey, unlocked: cachedFirstSession(cacheKey) });
 
   // Re-read the cache whenever syncLearnerStatus corrects it, so a learner
   // whose status changed mid-session gets their menu back without a reload.
@@ -241,23 +256,26 @@ export function useLearnerNavGate(role: string, navItems: SidebarNavItem[], revi
     if (!cacheKey) return;
     const notify = () => {
       setStatus(cachedStatus(cacheKey));
-      setHistory({ key: cacheKey, available: cachedHistory(cacheKey) === true });
-      setReady({ key: cacheKey, available: cachedReady(cacheKey) === true });
+      setHistory({ key: stateKey, available: cachedHistory(cacheKey) === true });
+      setReady({ key: stateKey, available: cachedReady(cacheKey) === true });
       const onboardingNow = cachedOnboarding(cacheKey);
-      setOnboarding((previous) => previous.key === cacheKey && previous.status === onboardingNow
-        ? previous : { key: cacheKey, status: onboardingNow });
+      setOnboarding((previous) => previous.key === stateKey && previous.status === onboardingNow
+        ? previous : { key: stateKey, status: onboardingNow });
       const firstSessionNow = cachedFirstSession(cacheKey);
-      setFirstSession((previous) => previous.key === cacheKey && previous.unlocked === firstSessionNow
-        ? previous : { key: cacheKey, unlocked: firstSessionNow });
+      setFirstSession((previous) => previous.key === stateKey && previous.unlocked === firstSessionNow
+        ? previous : { key: stateKey, unlocked: firstSessionNow });
     };
     listeners.add(notify);
     return () => {
       listeners.delete(notify);
     };
-  }, [cacheKey]);
+    // stateKey includes the auth revision; callbacks must follow that boundary.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cacheKey, stateKey]);
 
   useEffect(() => {
     if (!learner || !cacheKey) return;
+    setStatus(cachedStatus(cacheKey));
     const cached = cachedStatus(cacheKey);
     if (cached !== null) {
       setStatus(cached);
@@ -280,6 +298,7 @@ export function useLearnerNavGate(role: string, navItems: SidebarNavItem[], revi
     let cancelled = false;
     fetchLearnerSummary(learner.kind, learner.id)
       .then((detail) => {
+        if (cancelled || revision !== getAuthCacheRevision()) return;
         // A learner account used to be remembered as apprenticeship by default.
         // Trust the API's stored learner type and repair that stale browser
         // value, otherwise commercial-only sidebar rules never take effect.
@@ -302,19 +321,19 @@ export function useLearnerNavGate(role: string, navItems: SidebarNavItem[], revi
           // Only a real change re-renders: a new object every time would loop
           // (render → effect → fetch → render) for a payload without the field.
           const onboardingNow = cachedOnboarding(cacheKey);
-          setOnboarding((previous) => previous.key === cacheKey && previous.status === onboardingNow
-            ? previous : { key: cacheKey, status: onboardingNow });
+          setOnboarding((previous) => previous.key === stateKey && previous.status === onboardingNow
+            ? previous : { key: stateKey, status: onboardingNow });
           // A summary without the flag (an older server) is remembered as open,
           // so it is not looked up again on every page — the page itself checks.
           if (cachedFirstSession(cacheKey) === undefined) rememberFirstSession(cacheKey, detail?.firstSessionUnlocked ?? true);
           const firstSessionNow = cachedFirstSession(cacheKey);
-          setFirstSession((previous) => previous.key === cacheKey && previous.unlocked === firstSessionNow
-            ? previous : { key: cacheKey, unlocked: firstSessionNow });
+          setFirstSession((previous) => previous.key === stateKey && previous.unlocked === firstSessionNow
+            ? previous : { key: stateKey, unlocked: firstSessionNow });
           const readyNow = cachedReady(cacheKey) === true;
-          setReady((previous) => previous.key === cacheKey && previous.available === readyNow
-            ? previous : { key: cacheKey, available: readyNow });
-          setHistory((previous) => previous.key === cacheKey && previous.available === !!detail.studentActivityAvailable
-            ? previous : { key: cacheKey, available: !!detail.studentActivityAvailable });
+          setReady((previous) => previous.key === stateKey && previous.available === readyNow
+            ? previous : { key: stateKey, available: readyNow });
+          setHistory((previous) => previous.key === stateKey && previous.available === !!detail.studentActivityAvailable
+            ? previous : { key: stateKey, available: !!detail.studentActivityAvailable });
         }
       })
       .catch(() => {
@@ -322,12 +341,14 @@ export function useLearnerNavGate(role: string, navItems: SidebarNavItem[], revi
         // so fall back to the full nav rather than a guess. Deliberately NOT
         // cached: a dropped request would otherwise pin the full menu on an
         // onboarding learner for the rest of the session.
-        if (!cancelled) setStatus('');
+        if (!cancelled && revision === getAuthCacheRevision()) setStatus('');
       });
     return () => {
       cancelled = true;
     };
-  }, [learner, cacheKey]);
+    // Depend on the learner identity, not a freshly allocated remembered object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cacheKey, revision]);
 
   // Not a learner — the gate doesn't apply.
   if (!learner) return navItems;
@@ -339,11 +360,11 @@ export function useLearnerNavGate(role: string, navItems: SidebarNavItem[], revi
   // moment is honest; showing the full menu would be showing the wrong one, and
   // an onboarding learner would see it visibly collapse once the status lands.
   if (status === null) return [];
-  const hasPreviousLearning = history.key === cacheKey ? history.available : cachedHistory(cacheKey) === true;
-  const readyForLearning = ready.key === cacheKey ? ready.available : cachedReady(cacheKey) === true;
-  const onboardingStatus = onboarding.key === cacheKey ? onboarding.status : cachedOnboarding(cacheKey);
+  const hasPreviousLearning = history.key === stateKey ? history.available : cachedHistory(cacheKey) === true;
+  const readyForLearning = ready.key === stateKey ? ready.available : cachedReady(cacheKey) === true;
+  const onboardingStatus = onboarding.key === stateKey ? onboarding.status : cachedOnboarding(cacheKey);
   // Unknown (an older payload, or not looked up yet) leaves Reviews open.
   const enrolmentSubmitted = reviewsOpen(onboardingStatus);
-  const firstSessionUnlocked = (firstSession.key === cacheKey ? firstSession.unlocked : cachedFirstSession(cacheKey)) ?? true;
+  const firstSessionUnlocked = (firstSession.key === stateKey ? firstSession.unlocked : cachedFirstSession(cacheKey)) ?? true;
   return navItemsForStatus(status, navItems, learner.kind, hasPreviousLearning, readyForLearning, enrolmentSubmitted, firstSessionUnlocked);
 }

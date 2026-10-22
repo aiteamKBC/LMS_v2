@@ -633,6 +633,12 @@ def get_training_plan(source):
     return _legacy_plan_from_csv(source)
 
 
+def mirrored_training_plan(source):
+    """Keep explicit [] distinct from absence while retaining legacy decoding."""
+    stored = stored_training_plan(source)
+    return stored if stored is not None else (get_training_plan(source) or None)
+
+
 class ValidationError(Exception):
     """Raised with a user-facing message when a payload fails validation."""
 

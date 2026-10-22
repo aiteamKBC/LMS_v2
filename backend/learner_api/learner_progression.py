@@ -28,6 +28,7 @@ from django.db import DatabaseError
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 
+from .services.activation import locked_source, require_active_profile
 from .constants import DELIVERY_PROGRAMME_STATUS
 from .mappers import _s
 from .aptem_status import programme_status
@@ -243,76 +244,85 @@ def access_gate(learner):
         return result
 
 
-def advance_learner(learner):
-    """Move a learner as far forward as their evidence allows.
+def advance_learner(learner, *, strict=False):
+    """Advance from fresh locked evidence; failed activation rolls status back.
 
-    Runs the steps in order so one call can carry a learner from Delivery to
-    Active when their documents are signed and the start date has already
-    passed. Returns the new status when it changed, else None. Never raises: a
-    failure here must not fail whatever action triggered it.
+    Default callers retain the status-or-None contract. Explicit write callers
+    use strict=True to expose the existing database-error response. A refused
+    transition remains eligible for the next normal action/sweep; no replay of
+    signatures, invitations or unsafe identity matching occurs here.
     """
-    try:
-        changed = None
-        if programme_status(learner).casefold() == 'withdrawn':
-            return None
-
-        # A saved plan and dates prepare delivery; sending the platform
-        # invitation is the explicit release step. Existing Active learners
-        # remain active even if imported dates or plans are incomplete.
-        if _learner_kind(learner).casefold() == "commercial":
-            current = _s(learner.programme_status)
-            if current in COMMERCIAL_PRE_START_STATUSES:
-                start = _programme_start_date(learner)
-                ready_to_start = (
-                    _has_assigned_learning_plan(learner)
-                    and start is not None
-                    and start <= timezone.localdate()
-                    and _has_platform_invitation(learner)
-                )
-                target = ACTIVE_STATUS if ready_to_start else DELIVERY_PROGRAMME_STATUS
-                if current != target:
-                    learner.programme_status = target
-                    learner.save(update_fields=["programme_status"])
-                    changed = target
-                    if target == ACTIVE_STATUS:
-                        # Only on the actual transition — becoming Active
-                        # creates/refreshes the permanent learner profile.
-                        # Re-syncing an already-active learner on every read
-                        # (this ran unconditionally before) is the N+1 cost
-                        # that made GET /learner_api/enrolment-users/ take
-                        # ~2 minutes: a full atomic upsert per commercial
-                        # learner, every single list read, whether or not
-                        # anything changed.
-                        from .active_users import sync_active_user
-
-                        sync_active_user(learner)
-                return changed
-            return None
-
-        # ---- Delivery -> Ready to enrol ----
-        if _s(learner.programme_status) == DELIVERY_PROGRAMME_STATUS:
-            if compliance_documents_complete(_learner_kind(learner), learner.pk):
-                learner.programme_status = READY_TO_ENROL_STATUS
-                learner.save(update_fields=["programme_status"])
-                changed = READY_TO_ENROL_STATUS
-
-        # ---- Ready to enrol -> Active ----
-        if _s(learner.programme_status) == READY_TO_ENROL_STATUS:
-            start = _programme_start_date(learner)
-            if start and start <= timezone.localdate():
-                learner.programme_status = ACTIVE_STATUS
-                learner.save(update_fields=["programme_status"])
-                # Becoming Active also creates/refreshes the permanent learner
-                # profile used by the learning workspace, coach tools and plan.
-                from .active_users import sync_active_user
-
-                sync_active_user(learner)
-                changed = ACTIVE_STATUS
-
-        return changed
-    except DatabaseError:
-        logger.exception("advance_learner: failed for learner %s", getattr(learner, "pk", "?"))
+    if programme_status(learner).casefold() in {'active', 'withdrawn', 'completed', 'on break'}:
         return None
+    try:
+        with locked_source(learner) as fresh:
+            changed = _advance_locked(fresh)
+        learner.programme_status = fresh.programme_status
+        return changed
+    except DatabaseError as exc:
+        logger.warning('Learner progression deferred source_id=%s error=%s',
+                       getattr(learner, 'pk', None), type(exc).__name__)
+        if strict:
+            raise
+        return None
+
+
+def _advance_locked(learner):
+    """Existing progression rules, inside the source/profile transaction."""
+    changed = None
+    if programme_status(learner).casefold() == 'withdrawn':
+        return None
+
+    # A saved plan and dates prepare delivery; sending the platform
+    # invitation is the explicit release step. Existing Active learners
+    # remain active even if imported dates or plans are incomplete.
+    if _learner_kind(learner).casefold() == "commercial":
+        current = _s(learner.programme_status)
+        if current in COMMERCIAL_PRE_START_STATUSES:
+            start = _programme_start_date(learner)
+            ready_to_start = (
+                _has_assigned_learning_plan(learner)
+                and start is not None
+                and start <= timezone.localdate()
+                and _has_platform_invitation(learner)
+            )
+            target = ACTIVE_STATUS if ready_to_start else DELIVERY_PROGRAMME_STATUS
+            if current != target:
+                learner.programme_status = target
+                learner.save(update_fields=["programme_status"])
+                changed = target
+                if target == ACTIVE_STATUS:
+                    # Only on the actual transition — becoming Active
+                    # creates/refreshes the permanent learner profile.
+                    # Re-syncing an already-active learner on every read
+                    # (this ran unconditionally before) is the N+1 cost
+                    # that made GET /learner_api/enrolment-users/ take
+                    # ~2 minutes: a full atomic upsert per commercial
+                    # learner, every single list read, whether or not
+                    # anything changed.
+                    require_active_profile(learner)
+            return changed
+        return None
+
+    # ---- Delivery -> Ready to enrol ----
+    if _s(learner.programme_status) == DELIVERY_PROGRAMME_STATUS:
+        if compliance_documents_complete(_learner_kind(learner), learner.pk):
+            learner.programme_status = READY_TO_ENROL_STATUS
+            learner.save(update_fields=["programme_status"])
+            changed = READY_TO_ENROL_STATUS
+
+    # ---- Ready to enrol -> Active ----
+    if _s(learner.programme_status) == READY_TO_ENROL_STATUS:
+        start = _programme_start_date(learner)
+        if start and start <= timezone.localdate():
+            learner.programme_status = ACTIVE_STATUS
+            learner.save(update_fields=["programme_status"])
+            # Becoming Active also creates/refreshes the permanent learner
+            # profile used by the learning workspace, coach tools and plan.
+            require_active_profile(learner)
+            changed = ACTIVE_STATUS
+
+    return changed
 
 
 def advance_learner_by_id(learner_id):

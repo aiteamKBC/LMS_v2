@@ -36,7 +36,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from enrolment_api.auth import employer_signing_party_error, enrolment_login_required
 
-from .learning_plan import _saved_modules, learner_group_module_ids, learner_programme_modules
+from .selectors.training_plan_documents import _plan_modules
 from .learner_progression import advance_learner
 from .mappers import _s
 from .models import ApprenticeshipAgreement, EnrolmentUser
@@ -75,8 +75,8 @@ def _employer_address(learner):
         from .models import Employer
 
         employer = Employer.objects.filter(pk=employer_id).first()
-    except DatabaseError:
-        logger.exception("_employer_address: employer lookup failed")
+    except DatabaseError as exc:
+        logger.error('_employer_address: employer lookup failed (%s)', type(exc).__name__)
         return ""
     if employer is None:
         return ""
@@ -89,18 +89,6 @@ def _employer_address(learner):
         _s(getattr(employer, "post_code", "")),
     ]
     return "\n".join(p for p in parts if p)
-
-
-def _plan_modules(learner):
-    """The learner's learning-plan modules, with hours. Group preset if unsaved."""
-    catalogue = {m["moduleId"]: m for m in learner_programme_modules(learner)}
-
-    saved = _saved_modules(learner)
-    if saved:
-        module_ids = [_s(m.get("moduleId")) for m in saved]
-    else:
-        module_ids = learner_group_module_ids(learner)
-    return [catalogue[i] for i in module_ids if i in catalogue]
 
 
 def _to_date(value):
@@ -303,8 +291,8 @@ def apprenticeship_agreement(request, pk):
         derived = derive_particulars(learner)
         agreement = _active_agreement(_learner_kind(learner), learner.pk)
     except DatabaseError as exc:
-        logger.exception("apprenticeship_agreement: build failed")
-        return _error(f"Database error: {exc}", 502)
+        logger.error('apprenticeship_agreement: build failed (%s)', type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     return JsonResponse({
         "learner": {
@@ -385,8 +373,8 @@ def issue_agreement(request, pk):
                 plan_modules=derived["planModules"],
             )
     except DatabaseError as exc:
-        logger.exception("issue_agreement: failed")
-        return _error(f"Database error: {exc}", 502)
+        logger.error('issue_agreement: failed (%s)', type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     return JsonResponse({"agreement": _agreement_json(agreement)}, status=201)
 
@@ -459,8 +447,8 @@ def sign_agreement(request, pk):
             agreement.save()
         promoted = advance_learner(learner)
     except DatabaseError as exc:
-        logger.exception("sign_agreement: failed")
-        return _error(f"Database error: {exc}", 502)
+        logger.error('sign_agreement: failed (%s)', type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     return JsonResponse({
         "agreement": _agreement_json(agreement),

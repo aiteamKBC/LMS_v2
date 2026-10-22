@@ -152,7 +152,7 @@ class WeeklyLearningTests(SimpleTestCase):
         context.profile.progress_entries.filter.return_value.filter.return_value = context.profile.progress_entries.filter.return_value
         with patch('coach_api.weekly_learning.connections') as connections, \
              patch('coach_api.weekly_learning.read_weekly_live_evidence', return_value=live_evidence or ([], [])), \
-             patch('learner_api.learning_plan._effective_plan_ids', return_value=['M1']), \
+             patch('learner_api.selectors.assignments._effective_plan_ids', return_value=['M1']), \
              patch('learner_api.canonical_learning.require_profile', return_value={}), \
              patch('learner_api.canonical_learning.curriculum_module_ids_for', return_value=[]), \
              patch('learner_api.canonical_learning.entries_for', return_value=records if records is not None else [

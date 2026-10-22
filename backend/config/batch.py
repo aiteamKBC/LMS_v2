@@ -9,7 +9,7 @@ from django.urls import Resolver404, resolve
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
-from login.api_gate import refusal_for
+from login.api_gate import refusal_for, ApiSessionGateMiddleware
 
 
 ALLOWED_API_PREFIXES = (
@@ -74,9 +74,7 @@ def _execute_get(parent_request, item):
     refusal = refusal_for(
         parsed.path,
         getattr(parent_request, "login_account", None),
-        django_user_is_authenticated=bool(
-            getattr(getattr(parent_request, "user", None), "is_authenticated", False)
-        ),
+        django_user_is_authenticated=ApiSessionGateMiddleware._django_user(parent_request),
     )
     if refusal is not None:
         return {

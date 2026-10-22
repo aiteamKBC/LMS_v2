@@ -168,11 +168,15 @@ def _find_coach_staff(email: str):
     # combined in exactly one place (login.identity.accesses_for_staff).
     from login.identity import accesses_for_staff
 
-    candidates = (
-        StaffUser.objects.annotate(staff_email_key=Lower(Trim("email")))
-        .filter(staff_email_key=email)
-        .only("id", "email", "access", "access_extra", "username")
-    )
+    from login import learner_auth_runtime
+    if learner_auth_runtime.enabled():
+        candidates = learner_auth_runtime.coach_candidates(email)
+    else:
+        candidates = (
+            StaffUser.objects.annotate(staff_email_key=Lower(Trim("email")))
+            .filter(staff_email_key=email)
+            .only("id", "email", "access", "access_extra", "username")
+        )
     for staff in candidates:
         if ACCESS_COACH in accesses_for_staff(staff):
             return staff
@@ -220,11 +224,14 @@ def coach_access_required(view):
         if account.subject_type != "staff":
             return _forbidden()
 
-        staff = (
-            StaffUser.objects.filter(pk=account.subject_id)
-            .only("id", "email", "access", "username")
-            .first()
-        )
+        if getattr(account, '_learner_auth', False):
+            staff = account._learner_auth_subject
+        else:
+            staff = (
+                StaffUser.objects.filter(pk=account.subject_id)
+                .only("id", "email", "access", "username")
+                .first()
+            )
         if staff is None:
             return _forbidden()
 

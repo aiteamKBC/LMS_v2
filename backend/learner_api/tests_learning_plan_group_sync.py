@@ -54,7 +54,7 @@ class GroupSyncTests(SimpleTestCase):
                 patch("learner_api.learning_plan._all_modules", return_value=catalogue), \
                 patch("learner_api.learning_plan._modules_by_id",
                       side_effect=lambda ids, catalogue=catalogue: {m["moduleId"]: m for m in catalogue if m["moduleId"] in set(ids)}), \
-                patch("learner_api.learning_plan._group_module_ids", return_value=preset):
+                patch("learner_api.selectors.assignments._group_module_ids", return_value=preset):
             model.all_learners.get.return_value = learner
             response = learning_plan(request, 19)
         return json.loads(response.content)
@@ -125,7 +125,7 @@ class GroupSyncTests(SimpleTestCase):
                 patch("learner_api.learning_plan._all_modules", return_value=catalogue), \
                 patch("learner_api.learning_plan._modules_by_id",
                       side_effect=lambda ids, catalogue=catalogue: {m["moduleId"]: m for m in catalogue if m["moduleId"] in set(ids)}), \
-                patch("learner_api.learning_plan._group_module_ids", return_value=preset), \
+                patch("learner_api.selectors.assignments._group_module_ids", return_value=preset), \
                 patch("learner_api.learning_plan.sync_learning_plan_mirror"), \
                 patch("learner_api.learning_plan.advance_learner"):
             model.all_learners.get.return_value = learner
@@ -176,11 +176,11 @@ class ModulePickerAgreesWithThePlanTests(SimpleTestCase):
 
     def test_a_module_inherited_from_the_group_reads_as_assigned(self):
         learner = _learner([{"moduleId": "MOD-1"}])
-        with patch("learner_api.learning_plan._group_module_ids", return_value=["MOD-1", "MOD-2"]):
+        with patch("learner_api.selectors.assignments._group_module_ids", return_value=["MOD-1", "MOD-2"]):
             self.assertEqual(_effective_plan_ids(learner, {}), ["MOD-1", "MOD-2"])
 
     def test_an_emptied_plan_reads_as_assigned_to_nothing(self):
-        with patch("learner_api.learning_plan._group_module_ids") as preset:
+        with patch("learner_api.selectors.assignments._group_module_ids") as preset:
             self.assertEqual(_effective_plan_ids(_learner([]), {}), [])
         # Not merely empty -- the group is never consulted for an emptied plan.
         preset.assert_not_called()
@@ -188,7 +188,7 @@ class ModulePickerAgreesWithThePlanTests(SimpleTestCase):
     def test_learner_read_appends_inherited_modules_without_saving_them(self):
         saved = [{"moduleId": "MOD-1", "moduleTitle": "Agreed module", "weeks": []}]
         learner = _learner(saved)
-        with patch("learner_api.learning_plan._group_module_ids", return_value=["MOD-1", "MOD-2"]):
+        with patch("learner_api.selectors.assignments._group_module_ids", return_value=["MOD-1", "MOD-2"]):
             effective = effective_training_plan(learner)
 
         self.assertEqual([module["moduleId"] for module in effective], ["MOD-1", "MOD-2"])
@@ -197,6 +197,6 @@ class ModulePickerAgreesWithThePlanTests(SimpleTestCase):
 
     def test_explicit_learner_read_does_not_add_group_modules(self):
         saved = [{"moduleId": "MOD-1", "assignmentMode": "explicit"}]
-        with patch("learner_api.learning_plan._group_module_ids") as preset:
+        with patch("learner_api.selectors.assignments._group_module_ids") as preset:
             self.assertEqual(effective_training_plan(_learner(saved)), saved)
         preset.assert_not_called()

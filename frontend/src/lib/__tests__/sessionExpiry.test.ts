@@ -84,6 +84,18 @@ describe('installSessionExpiryHandler', () => {
     expect(onExpired).not.toHaveBeenCalled();
   });
 
+  it('does not expire a session on temporary authentication or protected API failures', async () => {
+    respondWith = () => new Response('{"code":"session_unavailable"}', { status: 503 });
+    const onExpired = install();
+    for (const path of ['/login_api/me/', '/login_api/learner-action-access/?learnerId=1',
+      '/learner_api/learner-detail/commercial/1/']) {
+      const response = await window.fetch(path);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ code: 'session_unavailable' });
+    }
+    expect(onExpired).not.toHaveBeenCalled();
+  });
+
   it('reports once when a page fires many requests at once', async () => {
     respondWith = () => new Response('{}', { status: 401 });
     const onExpired = install();

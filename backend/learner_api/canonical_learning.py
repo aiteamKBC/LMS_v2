@@ -12,6 +12,7 @@ from old_otjh import repository
 from old_otjh.repository import query
 from old_otjh.service import ServiceError
 from .selectors import identity as identity_selector
+from login import learner_auth_runtime
 from .ksb_exclusions import not_excluded_sql
 from .monthly_log_sources import decoded, number, row
 from .current_learning import (
@@ -87,6 +88,9 @@ def require_profile(learner_id):
 
 
 def profile(learner_id):
+    if learner_auth_runtime.enabled():
+        from login.learner_auth_reader import LearnerAuthReader
+        return LearnerAuthReader().profile_for_enrolment(learner_id, error_type=ServiceError)
     return identity_selector.profile_for_enrolment(learner_id, query=query, error_type=ServiceError)
 
 

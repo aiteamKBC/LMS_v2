@@ -196,7 +196,7 @@ it('gives a workspace borrowing the learner look one working Sign out', () => {
   expect(sidebar.style.width).toBe('240px');
   expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
 
-  fireEvent.click(within(sidebar).getByRole('button', { name: 'Collapse learner navigation' }));
+  fireEvent.click(within(sidebar).getByRole('button', { name: 'Collapse Employer navigation' }));
   expect(sidebar.style.width).toBe('64px');
   expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('64px');
   expect(localStorage.getItem('kbc_learner_sidebar_collapsed')).toBe('true');
@@ -223,7 +223,11 @@ it.each(['/users', '/users/42', '/users/42/wizard/introduction', '/employers/8',
     fireEvent.click(within(sidebar).getByRole('button', { name: 'Expand navigation' }));
     const panel = within(document.getElementById('compliance-secondary-navigation')!);
     expect(panel.getAllByRole('link')).toHaveLength(1);
-    expect(panel.getByRole('link', { name: 'Users' })).toHaveAttribute('href', '/users');
+    // /users selects its active item. Employer routes have no matching item
+    // in this menu, so the secondary preview uses the first (Transfer Progress).
+    const employerRoute = path.startsWith('/employers/');
+    expect(panel.getByRole('link', { name: employerRoute ? 'Transfer Progress' : 'Users' }))
+      .toHaveAttribute('href', employerRoute ? '/users/progress-transfers' : '/users');
     expect(panel.queryByRole('link', { name: 'Roles' })).toBeNull();
     expect(screen.getByTestId('route')).toHaveTextContent(path);
   },

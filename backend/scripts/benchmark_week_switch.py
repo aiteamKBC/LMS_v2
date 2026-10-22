@@ -46,7 +46,7 @@ def main():
     with connections['enrolment'].cursor() as cursor:
         cursor.execute("SELECT module_catalogue_id FROM curriculum.modules WHERE lower(title)='ai in marketing'")
         candidates = [row[0] for row in cursor.fetchall()]
-    from learner_api.learning_plan import _effective_plan_ids
+    from learner_api.selectors.assignments import _effective_plan_ids
     source = weekly.assignment_projection(weekly.SOURCE_MODELS['commercial'].all_learners.only(*weekly.WEEKLY_SOURCE_FIELDS)).get(pk=265)
     source.training_plan, source.learning_plan = source._weekly_training_plan, source._weekly_learning_plan
     module_ids = set(_effective_plan_ids(source, {}))

@@ -8,6 +8,8 @@ def staff_download_allowed(account):
         return True
     if account.role != "staff" or account.subject_type != "staff":
         return False
+    if getattr(account, '_learner_auth', False):
+        return 'coach' in account._learner_auth_grants
     from learner_api.models import StaffUser
     from .identity import accesses_for_staff
 

@@ -58,9 +58,10 @@ def _refresh_worker(coach_identity: str, reason: str) -> None:
     from . import dashboard_cache
     from .read_model import build_coach_dashboard
     from .services.dashboard.service import CoachDashboardService
-    from read_models.repository import put_read_model
+    from read_models.repository import put_read_model, contact_revision
 
     canonical = normalize_email(coach_identity)
+    revision = contact_revision('coach.dashboard', 'coach', canonical)
     payload = build_coach_dashboard(canonical)
     value = put_read_model(
         "coach.dashboard",
@@ -69,8 +70,11 @@ def _refresh_worker(coach_identity: str, reason: str) -> None:
         payload,
         schema_version=CoachDashboardService.SCHEMA_VERSION,
         ttl_seconds=max(int(getattr(settings, "COACH_DASHBOARD_SNAPSHOT_MAX_AGE", 30)), 1),
+        expected_contact_revision=revision,
     )
     response = dict(payload)
+    if value is None:
+        raise RuntimeError('Dashboard changed during refresh; retry through the outbox.')
     if value is not None:
         response["readModel"] = {
             "version": value.schema_version,

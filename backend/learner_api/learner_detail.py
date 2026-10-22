@@ -35,7 +35,7 @@ from .identity import learner_profile_for_source
 from .aptem_status import programme_status
 from .constants import DEFAULT_PROGRAMME_STATUS
 from .learner_progression import access_gate, advance_learner
-from .learning_plan import effective_training_plan
+from .selectors.assignments import effective_training_plan
 from .programme_access import learning_access
 from .mappers import _s, get_training_plan, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
@@ -2418,11 +2418,21 @@ def learner_detail(request, kind, pk):
     try:
         # all_learners, not objects: the default manager is scoped to
         # apprenticeship rows, so a commercial learner would 404 here.
-        source = model.all_learners.get(pk=pk)
+        sources = model.all_learners
+        if request.GET.get("content") == "reading":
+            # This read-only branch resolves assignments and one owned lesson.
+            # Keep placement, both saved plans and title-only CSV fallback;
+            # full/detail variants still need complete rows for read-side writes.
+            sources = sources.only(
+                "id", "programme", "cohort", "group", "learning_plan", "training_plan",
+                "modules", "weeks", "components",
+            )
+        source = sources.get(pk=pk)
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     try:
         if request.GET.get("content") == "reading":
@@ -2465,7 +2475,8 @@ def learner_detail(request, kind, pk):
     except ServiceError as exc:
         return _error(str(exc), exc.status)
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
 
 def _first_session_unlocked(source, status):
@@ -2510,7 +2521,8 @@ def learner_summary(request, kind, pk):
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
 
     from .apprenticeship_agreement import _group_dates
 

@@ -180,8 +180,18 @@ class TokenError(ValueError):
     """Raised when a token is unknown, already used, or expired."""
 
 
-def _load_token(model, token):
-    row = model.objects.select_related("account").filter(token_hash=hash_token(token)).first()
+def _load_token(model, token, *, for_update=False):
+    from . import learner_auth_runtime
+    if not for_update and learner_auth_runtime.enabled():
+        return learner_auth_runtime.peek_token(model, token)
+    if for_update:
+        # Redemption callers already hold an enrolment atomic transaction.
+        # Avoid joining/locking the account: load it only after token validation.
+        # A waiting redeemer sees committed Used_at and gets the usual error.
+        rows = model.objects.select_for_update()
+    else:
+        rows = model.objects.select_related("account")
+    row = rows.filter(token_hash=hash_token(token)).first()
     # One message for all three failure modes: distinguishing "expired" from
     # "never existed" tells an attacker holding a guessed token whether it was
     # ever real.
@@ -208,7 +218,7 @@ def peek_invitation(token):
 @transaction.atomic(using="enrolment")
 def accept_invitation(token, new_password, *, ip=None, user_agent=None):
     """Redeem an invitation: set the first password and activate the account."""
-    invitation = _load_token(Invitation, token)
+    invitation = _load_token(Invitation, token, for_update=True)
     account = invitation.account
 
     validate_password_strength(
@@ -310,7 +320,7 @@ def peek_reset(token):
 @transaction.atomic(using="enrolment")
 def complete_reset(token, new_password, *, ip=None, user_agent=None):
     """Redeem a reset token: set the new password and sign the account out everywhere."""
-    reset = _load_token(PasswordReset, token)
+    reset = _load_token(PasswordReset, token, for_update=True)
     account = reset.account
 
     validate_password_strength(

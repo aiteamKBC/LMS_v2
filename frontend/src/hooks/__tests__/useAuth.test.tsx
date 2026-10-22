@@ -38,7 +38,8 @@ vi.mock('@/api/auth', async () => {
 // The provider clears the chat session on sign-out; irrelevant here.
 vi.mock('@/api/chat', () => ({ clearChatSession: vi.fn() }));
 
-const { AuthProvider, useAuth } = await import('../useAuth');
+const { AuthProvider } = await import('../AuthProvider');
+const { useAuth } = await import('../useAuth');
 
 const ADMIN = {
   id: 1,
@@ -75,11 +76,13 @@ beforeEach(() => {
   apiLogin.mockReset();
   apiLogout.mockReset().mockResolvedValue(undefined);
   localStorage.clear();
+  sessionStorage.clear();
 });
 
 afterEach(() => {
   rememberSignedInLearner(undefined, undefined);
   localStorage.clear();
+  sessionStorage.clear();
 });
 
 describe('learner identity lifecycle', () => {
@@ -170,6 +173,21 @@ describe('hydration from the session cookie', () => {
 
     expect(result.current.auth.account).toEqual(ADMIN);
     expect(result.current.initializationError).toBeNull();
+    expect(apiLogin).not.toHaveBeenCalled();
+  });
+
+  it('allows retry after a 503 without logging out or discarding stored identity', async () => {
+    localStorage.setItem('kbc_auth_email', ADMIN.email);
+    apiMe.mockRejectedValueOnce(Object.assign(new Error('Temporarily unavailable'), {
+      status: 503, code: 'session_unavailable',
+    }));
+    const { result } = await renderAuth();
+    expect(result.current.initializationError).toBeTruthy();
+    expect(localStorage.getItem('kbc_auth_email')).toBe(ADMIN.email);
+    apiMe.mockResolvedValueOnce(ADMIN);
+    act(() => result.current.retryInitialization());
+    await waitFor(() => expect(result.current.auth.account).toEqual(ADMIN));
+    expect(apiLogout).not.toHaveBeenCalled();
     expect(apiLogin).not.toHaveBeenCalled();
   });
 });
@@ -266,7 +284,11 @@ describe('logout', () => {
     await act(async () => { await result.current.login('l@kbc.test', 'pw'); });
     expect(cached.peek('125')).toBeUndefined();
     await cached.read('125');
+    sessionStorage.setItem('learner_status:commercial:125', 'Active');
+    sessionStorage.setItem('learner_onboarding_status:commercial:125', 'Submitted');
     act(() => result.current.logout());
+    expect(sessionStorage.getItem('learner_status:commercial:125')).toBeNull();
+    expect(sessionStorage.getItem('learner_onboarding_status:commercial:125')).toBeNull();
     expect(cached.peek('125')).toBeUndefined();
   });
 
@@ -311,5 +333,95 @@ describe('previewAs', () => {
     const { result } = await renderAuth();
     act(() => result.current.previewAs('nobody@nowhere.test'));
     expect(result.current.auth.isAuthenticated).toBe(false);
+  });
+});
+
+
+describe('superseded identity reads', () => {
+  it('does not restore an initial session response after logout', async () => {
+    let resolve!: (value: typeof ADMIN) => void;
+    apiMe.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    act(() => result.current.logout());
+    await act(async () => resolve(ADMIN));
+    expect(result.current.auth.account).toBeNull();
+    expect(result.current.isInitialized).toBe(true);
+  });
+
+  it('does not overwrite a new login with an older initial response', async () => {
+    let resolve!: (value: typeof ADMIN | null) => void;
+    apiMe.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    apiLogin.mockResolvedValue(ADMIN);
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await act(async () => { await result.current.login(ADMIN.email, 'password'); });
+    await act(async () => resolve(null));
+    expect(result.current.auth.account).toEqual(ADMIN);
+  });
+
+  it('does not restore a cross-tab read after a later cross-tab logout', async () => {
+    const { result } = await renderAuth();
+    let resolve!: (value: typeof ADMIN) => void;
+    apiMe.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    act(() => window.dispatchEvent(new StorageEvent('storage', { key: 'kbc_auth_email', newValue: ADMIN.email })));
+    act(() => window.dispatchEvent(new StorageEvent('storage', { key: 'kbc_auth_email', newValue: null })));
+    await act(async () => resolve(ADMIN));
+    expect(result.current.auth.account).toBeNull();
+  });
+});
+
+
+describe('access cache boundaries', () => {
+  const staff = { ...ADMIN, role: 'staff' as const, access: 'coach', accesses: ['coach'],
+    learnerRecordId: 271, learnerRecordKind: 'apprenticeship',
+    accessWorkspaces: [{ access: 'coach', home: '/workspace/coach', navRole: 'coach' }] };
+
+  it.each([
+    { permissions: [] }, { accesses: ['coach', 'tutor'] },
+    { learnerRecordId: 272 }, { learnerRecordKind: 'commercial' },
+    { accessWorkspaces: [] }, { accessHome: '/workspace/tutor' },
+    { accessNavRole: 'tutor' }, { hasLegacyRecord: true }, { role: 'admin' as const },
+  ])('invalidates snapshots when refreshed access changes: %j', async (change) => {
+    apiMe.mockResolvedValue(staff);
+    const { result } = await renderAuth();
+    const resource = createCachedResource('access-boundary', async () => 'old');
+    await resource.read('271');
+    apiMe.mockResolvedValue({ ...staff, ...change });
+    act(() => result.current.retryInitialization());
+    await waitFor(() => expect(result.current.isInitialized).toBe(true));
+    expect(resource.peek('271')).toBeUndefined();
+    expect(apiMe).toHaveBeenCalledTimes(2);
+    expect(result.current.auth.account).toEqual({ ...staff, ...change });
+  });
+
+  it('retains snapshots for unchanged access and display-only changes', async () => {
+    apiMe.mockResolvedValue(staff);
+    const { result } = await renderAuth();
+    const resource = createCachedResource('unchanged-access', async () => 'current');
+    await resource.read('271');
+    apiMe.mockResolvedValue({ ...staff, displayName: 'Updated name', lastLoginAt: '2026-10-22' });
+    act(() => result.current.retryInitialization());
+    await waitFor(() => expect(result.current.isInitialized).toBe(true));
+    expect(resource.peek('271')).toBe('current');
+  });
+
+  it('clears snapshots when a cross-tab identity check finds no session', async () => {
+    apiMe.mockResolvedValue(staff);
+    const { result } = await renderAuth();
+    const resource = createCachedResource('tab-access', async () => 'old');
+    await resource.read('271');
+    apiMe.mockResolvedValue(null);
+    act(() => window.dispatchEvent(new StorageEvent('storage', { key: 'kbc_auth_email', newValue: 'another@example.test' })));
+    await waitFor(() => expect(result.current.auth.account).toBeNull());
+    expect(resource.peek('271')).toBeUndefined();
+  });
+
+  it('drops snapshots for demo workspace switching without requesting me again', async () => {
+    apiMe.mockResolvedValue(staff);
+    const { result } = await renderAuth();
+    const resource = createCachedResource('demo-access', async () => 'old');
+    await resource.read('271');
+    act(() => result.current.previewAs('learner@kbc.test'));
+    expect(resource.peek('271')).toBeUndefined();
+    expect(apiMe).toHaveBeenCalledTimes(1);
   });
 });

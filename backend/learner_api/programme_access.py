@@ -25,6 +25,21 @@ def _month_cohort_key(value):
     return None
 
 
+def _cohort_rows(statement, params, *, single=True):
+    from login import learner_auth_runtime
+    if learner_auth_runtime.enabled():
+        from login.learner_auth_reader import _read_query
+        with _read_query() as query:
+            rows = query(statement.replace('curriculum.cohorts', '"Learner".cohort_access_facts'), params)
+            return [tuple(row.values()) for row in rows]
+    with connections['default'].cursor() as cursor:
+        cursor.execute(statement, params)
+        if single:
+            row = cursor.fetchone()
+            return [row] if row is not None else []
+        return cursor.fetchall()
+
+
 def learning_access(source):
     programme = str(getattr(source, 'programme', '') or '').strip()
     cohort = str(getattr(source, 'cohort', '') or '').strip()
@@ -34,34 +49,23 @@ def learning_access(source):
     cohort_id = placement_ids(source)['cohort_id']
     if cohort_id or (programme and cohort):
         # A copied individual date must not open teaching before the cohort.
-        with connections['default'].cursor() as cursor:
-            if cohort_id:
-                cursor.execute(
-                    '''SELECT start_date FROM curriculum.cohorts
-                       WHERE cohort_id = %s AND deleted_at IS NULL''', [cohort_id],
-                )
-            else:
-                cursor.execute(
-                    '''SELECT start_date FROM curriculum.cohorts
-                       WHERE programme_name = %s AND cohort_name = %s AND deleted_at IS NULL
-                       ORDER BY updated_at DESC NULLS LAST LIMIT 1''',
-                    [programme, cohort],
-                )
-            row = cursor.fetchone()
-            # Imported enrolments use full month names while authoring may use
-            # abbreviations. Resolve only a unique active cohort in this exact
-            # programme; a missing date or ambiguous alias must remain blocked.
-            key = _month_cohort_key(cohort)
-            if not cohort_id and row is None and key is not None:
-                cursor.execute(
-                    '''SELECT cohort_name, start_date FROM curriculum.cohorts
-                       WHERE programme_name = %s AND deleted_at IS NULL''',
-                    [programme],
-                )
-                matches = [candidate for candidate in cursor.fetchall()
-                           if _month_cohort_key(candidate[0]) == key]
-                if len(matches) == 1:
-                    row = (matches[0][1],)
+        if cohort_id:
+            rows = _cohort_rows(
+                'SELECT start_date FROM curriculum.cohorts WHERE cohort_id=%s AND deleted_at IS NULL',
+                [cohort_id])
+        else:
+            rows = _cohort_rows(
+                'SELECT start_date FROM curriculum.cohorts WHERE programme_name=%s AND cohort_name=%s '
+                'AND deleted_at IS NULL ORDER BY updated_at DESC NULLS LAST LIMIT 1', [programme, cohort])
+        row = rows[0] if rows else None
+        key = _month_cohort_key(cohort)
+        if not cohort_id and row is None and key is not None:
+            candidates = _cohort_rows(
+                'SELECT cohort_name, start_date FROM curriculum.cohorts '
+                'WHERE programme_name=%s AND deleted_at IS NULL', [programme], single=False)
+            matches = [candidate for candidate in candidates if _month_cohort_key(candidate[0]) == key]
+            if len(matches) == 1:
+                row = (matches[0][1],)
         start = _to_date(row[0]) if row else None
     else:
         start = _to_date(getattr(source, 'start_date', None))
@@ -108,7 +112,13 @@ def requires_started_programme(path, method='GET'):
 def _start_refusal(account, *, submitting=False):
     """403 while this learner's cohort has not started; None once it has."""
     try:
-        source = EnrolmentUser.all_learners.only('programme', 'cohort', 'start_date').get(pk=account.subject_id)
+        from login import learner_auth_runtime
+        if learner_auth_runtime.enabled():
+            source = learner_auth_runtime.programme_source(account.subject_id)
+            if source is None:
+                raise EnrolmentUser.DoesNotExist
+        else:
+            source = EnrolmentUser.all_learners.only('programme', 'cohort', 'start_date').get(pk=account.subject_id)
         access = learning_access(source)
     except EnrolmentUser.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)

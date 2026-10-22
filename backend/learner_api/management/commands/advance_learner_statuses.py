@@ -7,7 +7,8 @@ the command is an idempotent safety net for days with no user activity.
     python manage.py advance_learner_statuses
     python manage.py advance_learner_statuses --check
 """
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
+from django.db import DatabaseError
 
 from ...constants import DELIVERY_PROGRAMME_STATUS
 from ...learner_progression import READY_TO_ENROL_STATUS, advance_learner
@@ -52,7 +53,13 @@ class Command(BaseCommand):
                 if after == before:
                     continue
             else:
-                after = advance_learner(learner)
+                try:
+                    after = advance_learner(learner, strict=True)
+                except DatabaseError as exc:
+                    raise CommandError(
+                        f'Progression deferred for source {learner.pk} ({type(exc).__name__}); '
+                        'its transition was rolled back. Review the cause before rerunning.'
+                    ) from None
                 if not after:
                     continue
 

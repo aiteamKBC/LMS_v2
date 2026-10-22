@@ -116,7 +116,11 @@ def invite_subject(subject_type, subject_id, *, subject=None, inviter=None,
     try:
         target = subject if subject is not None else fetch_subject(subject_type, subject_id)
         _, _, target_role = describe_subject(subject_type, target)
-    except (ValueError, DatabaseError) as exc:
+    except DatabaseError as exc:
+        logger.error("Could not resolve invitation subject (%s)", type(exc).__name__)
+        result["error"] = "The database service is temporarily unavailable."
+        return result
+    except ValueError as exc:
         result["error"] = str(exc)
         return result
 
@@ -140,8 +144,8 @@ def invite_subject(subject_type, subject_id, *, subject=None, inviter=None,
         result["error"] = str(exc)
         return result
     except DatabaseError as exc:
-        logger.exception("Could not create login account for %s:%s", subject_type, subject_id)
-        result["error"] = f"Database error: {exc}"
+        logger.error("Could not create login account (%s)", type(exc).__name__)
+        result["error"] = "The database service is temporarily unavailable."
         return result
 
     result["accountCreated"] = created
@@ -170,8 +174,8 @@ def invite_subject(subject_type, subject_id, *, subject=None, inviter=None,
             account, invited_by=invited_by, ip=ip, user_agent=user_agent
         )
     except DatabaseError as exc:
-        logger.exception("Could not create invitation for %s", account.email)
-        result["error"] = f"Database error: {exc}"
+        logger.error("Could not create invitation (%s)", type(exc).__name__)
+        result["error"] = "The database service is temporarily unavailable."
         return result
 
     result["invited"] = True
@@ -270,10 +274,15 @@ def request_password_link(email, *, ip=None, user_agent=None):
         else:
             send_reset(account, ip=ip, user_agent=user_agent)
         return
-    if LoginAccount.objects.filter(email=email).exists():
-        # Two active accounts share the address, or its account is deactivated.
-        return
-    learner_ids = list(EnrolmentUser.all_learners.filter(email__iexact=email).values_list("pk", flat=True)[:2])
+    from . import learner_auth_runtime
+    if learner_auth_runtime.enabled():
+        candidate = learner_auth_runtime.provisioning_candidate(email)
+        learner_ids = [candidate] if candidate is not None else []
+    else:
+        if LoginAccount.objects.filter(email=email).exists():
+            # Two active accounts share the address, or its account is deactivated.
+            return
+        learner_ids = list(EnrolmentUser.all_learners.filter(email__iexact=email).values_list("pk", flat=True)[:2])
     if len(learner_ids) != 1:
         return
     try:
@@ -380,9 +389,14 @@ def default_password_setup(email, *, ip=None, user_agent=None):
 
     account = account_for_email(email)
     if account is None:
-        if LoginAccount.objects.filter(email=email).exists():
-            return None
-        learner_ids = list(EnrolmentUser.all_learners.filter(email__iexact=email).values_list("pk", flat=True)[:2])
+        from . import learner_auth_runtime
+        if learner_auth_runtime.enabled():
+            candidate = learner_auth_runtime.provisioning_candidate(email)
+            learner_ids = [candidate] if candidate is not None else []
+        else:
+            if LoginAccount.objects.filter(email=email).exists():
+                return None
+            learner_ids = list(EnrolmentUser.all_learners.filter(email__iexact=email).values_list("pk", flat=True)[:2])
         if len(learner_ids) != 1:
             return None
         try:

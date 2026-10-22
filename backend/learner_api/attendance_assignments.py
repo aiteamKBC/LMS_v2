@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from django.db import connections
 
-from .learning_plan import _effective_plan_ids, group_module_ids_bulk, request_preset_cache
+from .selectors.assignments import _effective_plan_ids, group_module_ids_bulk, request_preset_cache
 from .models import LearnerProfile
 
 

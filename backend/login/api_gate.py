@@ -428,6 +428,11 @@ class ApiSessionGateMiddleware:
         this identity is one of two ways past the gate and the caller still has
         to satisfy the platform session instead. Same posture as ``_account``.
         """
+        from . import learner_auth_runtime
+        # A platform cookie selects the platform identity, including refusal.
+        # Standalone Django-admin sessions retain their existing boundary.
+        if learner_auth_runtime.enabled() and request.COOKIES.get('kbc_session'):
+            return False
         user = getattr(request, "user", None)
         if user is None:
             return False

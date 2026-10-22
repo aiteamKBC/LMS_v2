@@ -323,6 +323,12 @@ def recent_failure_count(*, ip=None, email=None, event=None, window=THROTTLE_WIN
     """
     from .models import LoginAudit
 
+    from . import learner_auth_runtime
+    if learner_auth_runtime.enabled():
+        from .learner_auth_reader import LearnerAuthReader
+        return LearnerAuthReader().recent_auth_event_count(
+            since=timezone.now() - window, only_failures=only_failures,
+            ip=ip, email=email, event=event)
     qs = LoginAudit.objects.filter(created_at__gte=timezone.now() - window)
     if only_failures:
         qs = qs.filter(succeeded=False)

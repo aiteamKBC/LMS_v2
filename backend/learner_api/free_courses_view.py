@@ -18,6 +18,7 @@ here, in-process, and only the learner's *assigned* courses are ever returned.
 """
 
 import json
+import logging
 
 from django.db import DatabaseError
 from django.http import JsonResponse
@@ -51,6 +52,9 @@ from .quizzes import _fetch_quiz, _grade_question
 from quiz_api.answer_keys import quiz_submission_error
 
 FREE_COURSES_PROGRAMME_ID = "FREE-COURSES"
+
+
+logger = logging.getLogger(__name__)
 
 
 def _error(message, status):
@@ -363,7 +367,8 @@ def submit_free_course_quiz(request, kind, pk, component_id):
     try:
         quiz = _fetch_quiz(quiz_id)
     except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        logger.error("Database operation failed (%s)", type(exc).__name__)
+        return _error("The database service is temporarily unavailable.", 502)
     if quiz is None:
         return _error("Quiz not found.", 404)
 

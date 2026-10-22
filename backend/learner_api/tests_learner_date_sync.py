@@ -50,12 +50,24 @@ class LearnerDateSyncTests(SimpleTestCase):
     def test_unrelated_edit_does_not_touch_profile(self):
         source = Mock()
         with patch('learner_api.learner_dates.learner_profile_for_source') as resolve:
-            save_enrolment_fields(source, {'phone_number': '07000000000'})
+            save_enrolment_fields(source, {'title': 'Ms'})
         resolve.assert_not_called()
+
+    def test_contact_edit_uses_verified_boundary_without_legacy_matching(self):
+        source = Mock()
+        fields = {'phone_number': '07000000000'}
+        with patch('learner_api.learner_dates.save_verified_contact_fields') as save, \
+                patch('learner_api.learner_dates.learner_profile_for_source') as resolve:
+            save_enrolment_fields(source, fields)
+        save.assert_called_once_with(source, fields)
+        resolve.assert_not_called()
+        source.save.assert_not_called()
 
     def test_activation_copies_header_dates_into_new_profile(self):
         source = SimpleNamespace(id=132, programme_status='Active', learner_start_date='2028-01-01', learner_end_date='2028-12-31')
         with patch('learner_api.apprenticeship_agreement._group_dates', return_value=(None, None, None)), \
+                patch('learner_api.services.contact_sync.verified_activation_profile', return_value=(None, {})), \
+                patch('learner_api.services.contact_sync.sync_contacts_in_transaction'), \
                 patch('learner_api.active_users.get_training_plan', return_value=[]), \
                 patch('learner_api.active_users.transaction.atomic'), \
                 patch('learner_api.active_users.learner_profile_for_source', return_value=None), \
@@ -64,8 +76,18 @@ class LearnerDateSyncTests(SimpleTestCase):
                 patch('learner_api.active_users._linkable_placement_ids', return_value=(None, None)), \
                 patch('learner_api.active_users.LearnerProfile.objects.create') as create, \
                 patch('learner_api.active_users.replace_training_plan'), \
+                patch('learner_api.active_users.replace_free_courses'), \
                 patch('learner_api.active_users.refresh_learner_ksb_snapshot'):
             sync_active_user(source)
         self.assertEqual(create.call_args.kwargs['learner_start_date'], '2028-01-01')
         self.assertEqual(create.call_args.kwargs['learner_end_date'], '2028-12-31')
         self.assertEqual(create.call_args.kwargs['enrolment_id'], 132)
+
+    def test_mixed_contact_date_edit_does_not_copy_unsupplied_stale_date(self):
+        source = SimpleNamespace(learner_start_date='2028-01-01', learner_end_date='old snapshot')
+        fields = {'phone_number': '07700900123', 'learner_start_date': '2028-01-01'}
+        with patch('learner_api.learner_dates.save_verified_contact_fields') as save, \
+                patch('learner_api.learner_dates.learner_profile_for_source') as resolve:
+            save_enrolment_fields(source, fields)
+        save.assert_called_once_with(source, fields, profile_fields={'learner_start_date': '2028-01-01'})
+        resolve.assert_not_called()

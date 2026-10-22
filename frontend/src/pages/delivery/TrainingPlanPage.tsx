@@ -105,8 +105,6 @@ export default function TrainingPlanPage() {
 
   // built tree
   const [plan, setPlan] = useState<BuiltModule[]>([]);
-  const [weekOptions, setWeekOptions] = useState<Record<string, WeekItem[]>>({});
-  const [componentOptions, setComponentOptions] = useState<Record<string, ComponentItem[]>>({});
 
   const [saving, setSaving] = useState(false);
 
@@ -159,17 +157,13 @@ export default function TrainingPlanPage() {
       }
 
       const builtModules: BuiltModule[] = [];
-      const nextWeekOptions: Record<string, WeekItem[]> = {};
-      const nextComponentOptions: Record<string, ComponentItem[]> = {};
       for (const m of saved.trainingPlan) {
         const weeksForModule = await fetchWeeks(m.moduleId).catch(() => [] as WeekItem[]);
         if (cancelled) return;
-        nextWeekOptions[m.moduleId] = weeksForModule;
         const builtWeeks: BuiltWeek[] = [];
         for (const w of m.weeks) {
           const comps = await fetchComponents(w.weekId).catch(() => [] as ComponentItem[]);
           if (cancelled) return;
-          nextComponentOptions[w.weekId] = comps;
           builtWeeks.push({
             id: w.weekId,
             title: w.weekTitle,
@@ -211,8 +205,6 @@ export default function TrainingPlanPage() {
         }
       }
 
-      setWeekOptions(nextWeekOptions);
-      setComponentOptions(nextComponentOptions);
       setPlan(builtModules);
     }
 
@@ -249,16 +241,10 @@ export default function TrainingPlanPage() {
     setPlan((prev) => [...prev, { ...item, weeks: [] }]);
     fetchWeeks(item.id)
       .then(async (weeks) => {
-        setWeekOptions((prev) => ({ ...prev, [item.id]: weeks }));
         // Fetch every week's components in parallel, then build the full tree.
         const compsByWeek = await Promise.all(
           weeks.map((w) => fetchComponents(w.id).catch(() => [] as ComponentItem[])),
         );
-        setComponentOptions((prev) => {
-          const next = { ...prev };
-          weeks.forEach((w, i) => { next[w.id] = compsByWeek[i]; });
-          return next;
-        });
         const builtWeeks: BuiltWeek[] = weeks.map((w, i) => ({ ...w, components: compsByWeek[i] }));
         setPlan((prev) => prev.map((m) => m.id === item.id ? { ...m, weeks: builtWeeks } : m));
       })

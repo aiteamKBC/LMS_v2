@@ -26,7 +26,7 @@ from login.permissions import auth_gate_enabled
 from login.sessions import authenticate_request, session_unreadable
 from .models import EnrolmentUser, LearnerProfile
 from .learner_detail import build_learner_detail
-from .learning_plan import effective_training_plan
+from .selectors.assignments import effective_training_plan
 from .mobile_progress import measured_time, project_progress
 from .presentation_json import presentation_object
 from .android_download import installer_response

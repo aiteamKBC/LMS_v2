@@ -1,9 +1,10 @@
+import { useMyLearningSearch, useMyLearningCatalogue, useMyLearningModule } from '@/hooks/useMyLearning';
 import { StrictMode } from 'react';
 import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import MyLearningPage from './page';
-import { useMyLearningSearch, useMyLearningCatalogue, useMyLearningModule, myLearningCatalogue, type MyLearningCatalogue } from '@/api/myLearning';
+import { myLearningCatalogue, type MyLearningCatalogue } from '@/api/myLearning';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import { invalidateLearnerReads } from '@/api/learnerRead';
 import { buildUnifiedLearningSummary } from './learningSummary';

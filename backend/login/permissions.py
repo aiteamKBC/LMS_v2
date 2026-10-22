@@ -310,6 +310,8 @@ def _accesses_of(account):
     reason ``role`` is recomputed per request: an access changed in the console
     must take effect on the account's next request, not their next sign-in.
     """
+    if getattr(account, '_learner_auth', False):
+        return account._learner_auth_grants
     if account.subject_type != "staff":
         return frozenset()
     from django.db import DatabaseError
@@ -451,6 +453,9 @@ def staff_owns_learner(account, learner_id):
         return False
     from django.db import DatabaseError
     from .learner_enrolment import existing_learner_record
+    from . import learner_auth_runtime
+    if learner_auth_runtime.enabled():
+        return learner_auth_runtime.owns(account, learner_id, 'staff_self')
 
     try:
         learner = existing_learner_record(account.email)
@@ -468,6 +473,9 @@ def coach_owns_learner(account, learner_id):
     if (getattr(account, "role", None) != "staff" or getattr(account, "subject_type", None) != "staff"
             or not learner_id or learner_id <= 0):
         return False
+    from . import learner_auth_runtime
+    if learner_auth_runtime.enabled():
+        return learner_auth_runtime.owns(account, learner_id, 'coach')
     from django.db import DatabaseError
     from django.db.models.functions import Lower, Trim
 

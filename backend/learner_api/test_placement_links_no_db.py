@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, Mock, patch
 from django.test import SimpleTestCase
 
 from . import learning_plan
+from .selectors import assignments as assignment_reads
 from .active_users import cohort_delivery_window, mirror_learner_placement
 from .apprenticeship_agreement import _group_dates
 from .learner_detail import _apply_cohort_schedule, _cohort_schedule
@@ -162,8 +163,8 @@ class LearningPlanByIdTests(SimpleTestCase):
         self.assertEqual(rows.call_args.args[1], ['Programme', 'Programme'])
 
     def test_the_group_preset_is_read_by_group_id(self):
-        with patch.object(learning_plan, '_rows', return_value=[{'module_ids': ['M1', 'M2']}]) as rows, \
-                patch.object(learning_plan, '_manual_roster_module_ids', return_value={'M2'}):
+        with patch.object(assignment_reads, '_rows', return_value=[{'module_ids': ['M1', 'M2']}]) as rows, \
+                patch.object(assignment_reads, '_manual_roster_module_ids', return_value={'M2'}):
             self.assertEqual(learning_plan._group_module_ids('P', 'Old group name', group_id='GRP-1'), ['M1'])
         sql, params = rows.call_args.args
         self.assertEqual(params, ['GRP-1'])
@@ -174,7 +175,7 @@ class LearningPlanByIdTests(SimpleTestCase):
         learner = SimpleNamespace(programme='Old programme', group='Old group',
                                   programme_id='PROG-1', cohort_id='COH-1', group_id='GRP-1')
         with patch.object(learning_plan, '_programme_modules', return_value=[]) as catalogue, \
-                patch.object(learning_plan, '_group_module_ids', return_value=[]) as preset:
+                patch.object(assignment_reads, '_group_module_ids', return_value=[]) as preset:
             learning_plan.learner_programme_modules(learner)
             learning_plan.learner_group_module_ids(learner)
         catalogue.assert_called_once_with('Old programme', 'PROG-1')
@@ -183,8 +184,8 @@ class LearningPlanByIdTests(SimpleTestCase):
     def test_the_request_cache_keys_a_linked_group_by_its_id(self):
         learner = SimpleNamespace(programme='P', group='G', group_id='GRP-1')
         cache = {}
-        with patch.object(learning_plan, '_group_module_ids', return_value=['M1']) as preset:
-            self.assertEqual(learning_plan._preset_ids_for(learner, cache), ['M1'])
-            learning_plan._preset_ids_for(learner, cache)
+        with patch.object(assignment_reads, '_group_module_ids', return_value=['M1']) as preset:
+            self.assertEqual(assignment_reads._preset_ids_for(learner, cache), ['M1'])
+            assignment_reads._preset_ids_for(learner, cache)
         preset.assert_called_once_with('', '', group_id='GRP-1')
         self.assertEqual(cache, {('group_id', 'GRP-1'): ['M1']})

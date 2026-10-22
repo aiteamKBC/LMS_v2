@@ -1,7 +1,10 @@
+from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from django.db import DatabaseError
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from old_otjh.service import ServiceError
@@ -70,6 +73,7 @@ class HomeSummarySectionTests(SimpleTestCase):
              patch.object(week_module, '_direct_progress_records', return_value=[]) as progress, \
              patch.object(week_module, 'rows', return_value=[]), \
              patch.object(week_module, 'read_builder_activity_dates', return_value={}), \
+             patch('learner_api.selectors.assignments._effective_plan_ids', return_value=[]), \
              patch('learner_api.home_progress.read_home_progress', return_value={'otjh': {}, 'period': {'start': None, 'end': '2026-10-18'}}):
             week_module.read_week(source, home_kind='commercial', home_summary=True)
 
@@ -102,6 +106,7 @@ class HomeSummarySectionTests(SimpleTestCase):
              patch.object(week_module, '_direct_progress_records', return_value=[]), \
              patch.object(week_module, 'rows', return_value=native), \
              patch.object(week_module, 'read_builder_activity_dates', return_value=dates) as builder, \
+             patch('learner_api.selectors.assignments._effective_plan_ids', return_value=['MOD-1']), \
              patch('learner_api.home_progress.read_home_progress', return_value={
                  'otjh': {}, 'period': {'start': '2026-01-05', 'end': '2026-10-18', 'timezone': 'Europe/London'}}) as home:
             payload = week_module.read_week(SimpleNamespace(pk=265), now=now,
@@ -123,7 +128,101 @@ class HomeSummarySectionTests(SimpleTestCase):
         # The home card receives the same merged activities, attendance scope and SSOT metrics.
         args, kwargs = home.call_args
         self.assertEqual(len(list(args[2])), 2)
-        self.assertEqual(kwargs, {'attendance_module_ids': ['MOD-1', 'MOD-2'], 'canonical_metrics': metrics})
+        self.assertEqual(kwargs, {'attendance_module_ids': ['MOD-1', 'MOD-2'], 'canonical_metrics': metrics,
+                                  'module_counts_only': True})
+
+    def test_home_assignment_fields_are_loaded_without_dropping_original_fields(self):
+        self.assertEqual(set(HOME_SOURCE_FIELDS), {'id', 'aptem_id', 'email', 'username',
+            'programme', 'cohort', 'start_date', 'end_date', 'training_plan', 'learning_plan', 'group'})
+
+    def test_missing_identity_prevents_even_the_assignment_navigation_read(self):
+        with patch.object(week_module.canonical_learning, 'require_profile',
+                          side_effect=ServiceError('not linked', 'ssot_identity_required', 409)), \
+             patch('learner_api.selectors.assignments._effective_plan_ids') as assignments, \
+             patch.object(week_module, 'connections') as connections:
+            with self.assertRaises(ServiceError):
+                week_module.read_week(SimpleNamespace(pk=265), home_kind='commercial', home_summary=True)
+        assignments.assert_not_called()
+        connections.__getitem__.assert_not_called()
+
+    def test_inherited_navigation_preserves_every_home_calculation_input(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [('A', 'Alpha', True), ('ATTENDANCE', 'Attendance only', False)]
+        original = {'id': 'a', 'module_id': 'A', 'module_title': 'Alpha', 'title': 'Reading',
+            'type': 'reading', 'section_title': 'Week 3', 'expected_hours': 2, 'ksb_mappings': [],
+            'quiz_id': None, 'builder_week_id': 'WA', 'builder_settings': {}, 'builder_order': 1}
+        additional = {'id': 'b', 'module_id': 'B', 'module_title': 'Beta', 'title': 'Inherited',
+            'type': 'reading', 'section_title': 'Week 3',
+            'builder_week_id': 'WB', 'builder_settings': {}, 'builder_order': 1}
+        dates = {key: {'date': '2026-10-14', 'date_needs_review': False} for key in ('a', 'b')}
+        progress = [{'componentId': 'a', 'kind': 'component', 'passed': None}]
+        metrics = {'otjh': {'actual': 0, 'planned': None}}
+        native_rows = [deepcopy(original)]
+        captured = {}
+
+        def home(*args, **kwargs):
+            captured['before'] = deepcopy((args[2:], kwargs))
+            return {'otjh': {'actual': 0, 'planned': None}, 'activities': {'completed': 1, 'total': 1},
+                    'period': {'start': None, 'end': '2026-10-18', 'timezone': 'Europe/London'}}
+
+        with patch.object(week_module.canonical_learning, 'require_profile', return_value={'id': 9}), \
+             patch.object(week_module.canonical_learning, 'metrics', return_value=metrics), \
+             patch.object(week_module, 'connections', cursor_connections(cursor)), \
+             patch.object(week_module, '_direct_progress_records', return_value=progress), \
+             patch.object(week_module, 'rows', side_effect=[native_rows, [deepcopy(additional)]]), \
+             patch.object(week_module, 'read_builder_activity_dates',
+                          side_effect=[{'a': dates['a']}, {'b': dates['b']}]) as builder, \
+             patch('learner_api.selectors.assignments._effective_plan_ids', return_value=['A', 'B']), \
+             patch('learner_api.home_progress.read_home_progress', side_effect=home) as card:
+            payload = week_module.read_week(SimpleNamespace(pk=265),
+                now=datetime(2026, 10, 14, tzinfo=timezone.utc), home_kind='commercial', home_summary=True)
+
+        self.assertEqual(payload['modules'], [
+            {'id': 'current:A', 'title': 'Alpha', 'weekLabels': ['Week 3']},
+            {'id': 'current:B', 'title': 'Beta', 'weekLabels': ['Week 3']}])
+        self.assertEqual(set(payload), {'weekStart', 'weekEnd', 'modules', 'homeProgress'})
+        self.assertEqual(payload['homeProgress'], {'otjh': {'actual': 0, 'planned': None},
+            'activities': {'completed': 1, 'total': 1}, 'period': {'start': None, 'end': '2026-10-18'}})
+        args, kwargs = card.call_args
+        self.assertEqual((args[2:], kwargs), captured['before'])
+        self.assertEqual(args[5], [('A', 'Alpha')])
+        self.assertEqual(args[4], progress)
+        self.assertEqual([row['module_id'] for row in args[3]], ['A'])
+        self.assertEqual([row['module_id'] for row in args[2]], ['A'])
+        self.assertEqual(kwargs, {'attendance_module_ids': ['A', 'ATTENDANCE'], 'canonical_metrics': metrics,
+                                  'module_counts_only': True})
+        self.assertEqual(cursor.execute.call_args_list[0].args, (week_module.HOME_SUBJECTS_SQL, [265]))
+        self.assertEqual(cursor.execute.call_args_list[-1].args[1], [['B']])
+        self.assertEqual(builder.call_args_list[-1].kwargs['components'],
+                         [('b', 'B', 'WB', 'Inherited', 'reading', {})])
+        self.assertNotIn('b', {row['id'] for row in native_rows})
+
+    def test_navigation_read_failure_keeps_existing_private_retryable_error(self):
+        model = MagicMock()
+        model.DoesNotExist = type('Missing', (Exception,), {})
+        with patch.dict('learner_api.overview_week.SOURCE_MODELS', {'commercial': model}), \
+             patch.object(week_module, 'read_week', side_effect=DatabaseError('private navigation SQL')):
+            response = overview_week.__wrapped__.__wrapped__(
+                RequestFactory().get('/?section=home-summary'), 'commercial', 265)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(json.loads(response.content), {'error': 'Could not load this week. Please try again.'})
+
+    def test_compact_navigation_additions_do_not_change_the_full_home_branch(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = []
+        with patch.object(week_module, 'connections', cursor_connections(cursor)), \
+             patch.object(week_module, '_direct_progress_records', return_value=[]), \
+             patch.object(week_module, 'rows', return_value=[]), \
+             patch.object(week_module, 'read_builder_activity_dates', return_value={}), \
+             patch.object(week_module.canonical_learning, 'metrics', return_value={'otjh': {}}), \
+             patch('learner_api.home_progress.read_home_progress', return_value={}), \
+             patch.object(week_module, '_home_navigation_modules', side_effect=AssertionError('compact only')) as navigation:
+            payload = week_module.read_week(SimpleNamespace(pk=265),
+                now=datetime(2026, 10, 14, tzinfo=timezone.utc), home_kind='commercial')
+        navigation.assert_not_called()
+        self.assertEqual(payload['modules'], [])
+        self.assertIn('planSubjects', payload)
+        self.assertIn('monthlyOtjh', payload)
 
 
 def session_row(occurrence_id, start, status='scheduled'):
@@ -150,8 +249,19 @@ class ComponentSqlTests(SimpleTestCase):
         sql = week_module.component_sql("'[]'::jsonb", builder_columns=True)
         self.assertIn(f'{COMPONENT_SCHEDULE_SETTINGS} AS builder_settings', sql)
         self.assertIn('c.week_id AS builder_week_id', sql)
-        # The same component and week filters as before.
-        self.assertIn("(w.id IS NULL OR w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')", sql)
+        # Missing weeks remain allowed; deleted weeks need their module's archive event.
+        # Keep this expectation independent of the production visibility helper.
+        self.assertIn(
+            "(w.id IS NULL OR (w.deleted_at IS NULL OR EXISTS ("
+            "SELECT 1 FROM curriculum.modules archived_module "
+            "WHERE archived_module.module_catalogue_id=w.module_catalogue_id "
+            "AND archived_module.deleted_at IS NOT NULL "
+            "AND COALESCE(w.deleted_via_parent, '') <> '' "
+            "AND w.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) "
+            "AND w.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' "
+            "AND archived_module.deleted_at + interval '5 minutes')))", sql)
+        self.assertNotIn(
+            "(w.id IS NULL OR w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')", sql)
 
 
 class UpcomingSectionTests(SimpleTestCase):

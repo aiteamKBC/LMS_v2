@@ -860,6 +860,13 @@ if USE_SECURITY_TEST_BRANCH:
 
 DATABASE_ROUTERS = ['learner_api.routers.EnrolmentRouter']
 
+# Prepared only: no request handler selects this adapter and no ORM router uses
+# this alias. Enabling the adapter alone does not switch live authentication.
+from .learner_auth import configure_learner_auth  # noqa: E402
+
+LEARNER_AUTH_READS_ENABLED, _learner_auth_databases = configure_learner_auth(os.environ)
+DATABASES.update(_learner_auth_databases)
+
 # Bound how long a query can run once a connection is open. connect_timeout
 # (above) only bounds *opening* a connection — a query that then stalls on a
 # held lock, or a Neon compute that is slow to wake, has nothing else capping

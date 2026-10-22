@@ -39,7 +39,9 @@ class CoachDashboardService:
 
     def build(self) -> dict:
         """Read the persistent projection; build once only if it is absent."""
-        if getattr(settings, "COACH_DASHBOARD_SHARED_READ_MODEL_ENABLED", False):
+        from read_models.repository import contact_revision
+        contact_changed = bool(contact_revision('coach.dashboard', 'coach', self.context.owner_email))
+        if contact_changed or getattr(settings, "COACH_DASHBOARD_SHARED_READ_MODEL_ENABLED", False):
             from coach_api.read_model import MODEL_KEY, SCOPE_TYPE
             from read_models.repository import get_read_model
 
@@ -57,6 +59,9 @@ class CoachDashboardService:
                     "refreshedAt": shared.refreshed_at.isoformat(),
                 }
                 return self.normalize_start_dates(payload, refresh_otjh=True)
+            if contact_changed:
+                # Never fall back to a legacy snapshot invalidated by contacts.
+                return self.refresh()
 
         # Resolve through the compatibility module so existing patch points and
         # operational tooling remain valid during the module relocation.
@@ -187,23 +192,30 @@ class CoachDashboardService:
 
     def refresh(self) -> dict:
         from coach_api import dashboard_service as compatibility
+        from django.db import connections, transaction, DatabaseError
+        from read_models.repository import contact_revision, _scope_lock
+        revision = contact_revision('coach.dashboard', 'coach', self.context.owner_email)
         payload = self.build_live()
-        snapshot, _created = compatibility.CoachDashboardSnapshot.objects.update_or_create(
-            owner_email=self.context.owner_email,
-            defaults={"payload": payload, "schema_version": self.SCHEMA_VERSION},
-        )
-        shared = None
-        if getattr(settings, "READ_MODEL_DUAL_WRITE_ENABLED", False):
-            from coach_api.read_model import MODEL_KEY, SCOPE_TYPE
-            from read_models.repository import put_read_model
-            shared = put_read_model(
-                MODEL_KEY,
-                SCOPE_TYPE,
-                self.context.owner_email,
-                payload,
-                schema_version=self.SCHEMA_VERSION,
-                ttl_seconds=max(int(getattr(settings, "COACH_DASHBOARD_SNAPSHOT_MAX_AGE", 30)), 1),
+        with transaction.atomic(using='default'):
+            with connections['default'].cursor() as cursor:
+                _scope_lock(cursor, 'coach.dashboard', 'coach', self.context.owner_email)
+            if contact_revision('coach.dashboard', 'coach', self.context.owner_email) != revision:
+                raise DatabaseError('Dashboard contact state changed during refresh.')
+            snapshot, _created = compatibility.CoachDashboardSnapshot.objects.using('default').update_or_create(
+                owner_email=self.context.owner_email,
+                defaults={"payload": payload, "schema_version": self.SCHEMA_VERSION},
             )
+            shared = None
+            if revision or getattr(settings, "READ_MODEL_DUAL_WRITE_ENABLED", False):
+                from read_models.repository import put_read_model
+                shared = put_read_model(
+                    'coach.dashboard', 'coach', self.context.owner_email, payload,
+                    schema_version=self.SCHEMA_VERSION,
+                    ttl_seconds=max(int(getattr(settings, "COACH_DASHBOARD_SNAPSHOT_MAX_AGE", 30)), 1),
+                    expected_contact_revision=revision,
+                )
+                if shared is None:
+                    raise DatabaseError('Dashboard publication failed.')
         response_payload = dict(payload)
         response_payload["readModel"] = {
             "version": self.SCHEMA_VERSION,

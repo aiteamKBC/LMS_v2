@@ -30,6 +30,9 @@ def functions(filename, scope, names=None):
     if filename == 'canonical_learning.py':
         from learner_api.selectors import identity as identity_selector
         scope.setdefault('identity_selector', identity_selector)
+        # Preserve disabled-path characterization; enabled reads are exercised
+        # by login/test_learner_auth_http.py on real disposable PostgreSQL.
+        scope.setdefault('learner_auth_runtime', SimpleNamespace(enabled=lambda: False))
     nodes = [node for node in ast.parse((ROOT / filename).read_text(encoding='utf-8')).body
              if isinstance(node, ast.FunctionDef) and (names is None or node.name in names)]
     for node in nodes:
