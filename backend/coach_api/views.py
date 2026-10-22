@@ -4696,6 +4696,36 @@ def monthly_event_matches_learner(event: dict, learner: dict) -> bool:
     return bool(event_email and learner_email and event_email == learner_email)
 
 
+def index_monthly_events(events: list[dict]) -> dict[str, dict[str, list[tuple[int, dict]]]]:
+    """Index one month's events once by the two established learner identities."""
+    by_id: dict[str, list[tuple[int, dict]]] = defaultdict(list)
+    by_email: dict[str, list[tuple[int, dict]]] = defaultdict(list)
+    for position, event in enumerate(events):
+        learner_id = clean_text(event.get("learnerId"))
+        email = normalize_email(event.get("email"))
+        if learner_id:
+            by_id[learner_id].append((position, event))
+        if email:
+            by_email[email].append((position, event))
+    return {"by_id": by_id, "by_email": by_email}
+
+
+def indexed_monthly_events_for_learner(event_index: dict, learner: dict) -> list[dict]:
+    """Return the same ordered OR-match set as monthly_event_matches_learner."""
+    candidates = [
+        *event_index["by_id"].get(clean_text(learner.get("id")), []),
+        *event_index["by_email"].get(normalize_email(learner.get("email")), []),
+    ]
+    # An event carrying both identifiers appears in both buckets. Preserve its
+    # original order while returning it only once.
+    unique = {position: event for position, event in candidates}
+    return [
+        event
+        for position, event in sorted(unique.items())
+        if monthly_event_matches_learner(event, learner)
+    ]
+
+
 def monthly_event_type_label(event: dict) -> str:
     source = review_event_category(event)
     if source == "mcr":
@@ -13196,6 +13226,7 @@ def coach_monthly_activity(request):
             for event in timetable_payload.get("events", [])
             if monthly_event_is_between(event, start_date, end_date)
         ]
+        event_index = index_monthly_events(events)
         active_pairs = [
             (row, learner)
             for row in rows
@@ -13226,7 +13257,7 @@ def coach_monthly_activity(request):
             build_monthly_activity_learner(
                 row,
                 learner,
-                events,
+                indexed_monthly_events_for_learner(event_index, learner),
                 start_date,
                 end_date,
                 attendance_rows=attendance_by_learner_id.get(to_int(learner.get("id")), []),
@@ -14038,6 +14069,16 @@ MARKING_QUEUE_COLUMNS = """
     reviewed_at, submitted_at, full_submission
 """
 
+# The list returns the same serialized fields as before, but submissionAttempts
+# only reads these three keys from full_submission. Detail reads stay complete.
+MARKING_QUEUE_LIST_COLUMNS = MARKING_QUEUE_COLUMNS.rsplit("full_submission", 1)[0] + """
+    jsonb_build_object(
+        'assignmentAttemptHistory', full_submission -> 'assignmentAttemptHistory',
+        'assignmentAnswer', full_submission -> 'assignmentAnswer',
+        'learningReflection', full_submission -> 'learningReflection'
+    ) as full_submission
+"""
+
 
 def serialize_marking_submission(row, *, now=None):
     from learner_api.assignment_attempts import submission_attempts
@@ -14379,7 +14420,7 @@ def coach_marking_queue(request, submission_id=None):
             filtered_total = cur.fetchone()[0]
             cur.execute(
                 f"""
-                select {MARKING_QUEUE_COLUMNS}
+                select {MARKING_QUEUE_LIST_COLUMNS}
                   from "Learner".learning_reflection_submissions
                  where {item_where}
                  order by case when status = 'submitted_for_tutor_review' then 0 else 1 end,

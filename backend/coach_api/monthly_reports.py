@@ -24,10 +24,23 @@ from learner_api.models import LearnerProfile
 from learner_api.monthly_reports import (
     MONTH_KEY_RE,
     SELECT_COLUMNS,
+    _json_column,
     _row_to_report,
 )
 
 logger = logging.getLogger(__name__)
+
+
+LIST_SELECT_COLUMNS = """
+    id, learner_kind, learner_id, learner_name, programme_name,
+    month_key, month_label, status, summary_metrics, attachments,
+    learned_summary, submitted_at, updated_at, selected_ksbs,
+    (coalesce(signature, '') <> '') as signed, signed_name, signed_at,
+    jsonb_array_length(
+        case when jsonb_typeof(activity_snapshot) = 'array'
+             then activity_snapshot else '[]'::jsonb end
+    ) as activity_count
+"""
 
 
 def _normalize_email(value):
@@ -79,6 +92,30 @@ def _summary_row(report):
     }
 
 
+def _list_row_to_summary(row):
+    """Serialize the list projection without hydrating snapshots/signatures."""
+    return {
+        "id": str(row[0]),
+        "learnerKind": row[1],
+        "learnerId": row[2],
+        "learnerName": row[3],
+        "programmeName": row[4],
+        "monthKey": row[5],
+        "monthLabel": row[6],
+        "status": row[7],
+        "summaryMetrics": _json_column(row[8], {}),
+        "attachments": _json_column(row[9], []),
+        "learnedSummary": row[10],
+        "submittedAt": row[11].isoformat() if row[11] else None,
+        "updatedAt": row[12].isoformat() if row[12] else None,
+        "selectedKsbs": _json_column(row[13], []),
+        "signed": bool(row[14]),
+        "signedName": row[15] or "",
+        "signedAt": row[16].isoformat() if row[16] else None,
+        "activityCount": row[17] or 0,
+    }
+
+
 @require_GET
 @coach_access_required
 def coach_monthly_reports(request):
@@ -116,7 +153,7 @@ def coach_monthly_reports(request):
         with connections["enrolment"].cursor() as cur:
             cur.execute(
                 f"""
-                select {SELECT_COLUMNS}
+                select {LIST_SELECT_COLUMNS}
                   from "Learner".learner_monthly_reports
                  where {where}
                  order by learner_name asc nulls last, month_key desc
@@ -157,7 +194,7 @@ def coach_monthly_reports(request):
 
     return JsonResponse(
         {
-            "items": [_summary_row(_row_to_report(row)) for row in rows],
+            "items": [_list_row_to_summary(row) for row in rows],
             "months": months,
             "learners": learners,
         }

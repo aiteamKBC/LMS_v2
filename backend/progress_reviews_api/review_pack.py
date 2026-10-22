@@ -528,11 +528,10 @@ def _classify_evidence(row: dict) -> str:
 
 def _build_evidence_sections(kind, learner_id, period: ReviewPeriod, warnings: list):
     try:
-        from learner_api.evidence import _marking_status, ensure_evidence_tables
+        from learner_api.evidence import _marking_status
         from learner_api.evidence_storage import azure_configured, get_download_sas
         from django.db import connections
 
-        ensure_evidence_tables()
         with connections["enrolment"].cursor() as cur:
             cur.execute(
                 'select id, original_filename, content_type, size_bytes, status, '
@@ -549,7 +548,7 @@ def _build_evidence_sections(kind, learner_id, period: ReviewPeriod, warnings: l
         logger.warning("Progress review: evidence lookup failed for learner %s: %s", learner_id, exc)
         warnings.append("Evidence records could not be loaded; evidence section is empty.")
         return [], [], []
-    except Exception as exc:  # ensure_evidence_tables/network
+    except Exception as exc:  # storage/network or unexpected source failure
         logger.warning("Progress review: evidence lookup failed for learner %s: %s", learner_id, exc)
         warnings.append("Evidence records could not be loaded; evidence section is empty.")
         return [], [], []

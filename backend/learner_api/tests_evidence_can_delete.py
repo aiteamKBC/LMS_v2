@@ -74,7 +74,6 @@ class EvidenceUploadDeleteTests(SimpleTestCase):
         connection = self.enterContext(patch.object(evidence, "_conn"))
         connection.return_value.cursor.return_value.__enter__.return_value = cursor
         self.enterContext(patch.object(evidence, "azure_configured", return_value=True))
-        self.enterContext(patch.object(evidence, "ensure_evidence_tables"))
         self.enterContext(patch.object(evidence, "upload_to_quarantine"))
         self.enterContext(patch.object(evidence, "move_blob"))
         self.enterContext(patch.object(evidence, "blob_url", return_value="https://files.example.test/evidence"))
@@ -98,7 +97,6 @@ class EvidenceUploadDeleteTests(SimpleTestCase):
         cursor.fetchone.return_value = None
         connection = self.enterContext(patch.object(evidence, "_conn"))
         connection.return_value.cursor.return_value.__enter__.return_value = cursor
-        self.enterContext(patch.object(evidence, "ensure_evidence_tables"))
         delete_blob = self.enterContext(patch.object(evidence, "delete_blob"))
         request = self.factory.delete("/evidence/file-id/")
 
@@ -121,7 +119,6 @@ class EvidenceUploadDeleteTests(SimpleTestCase):
         cursor.fetchone.return_value = ("commercial/56/COMP-1/file.pdf", "approved", "COMP-1", None)
         connection = self.enterContext(patch.object(evidence, "_conn"))
         connection.return_value.cursor.return_value.__enter__.return_value = cursor
-        self.enterContext(patch.object(evidence, "ensure_evidence_tables"))
         self.enterContext(patch.object(evidence, "_is_submitted_for_marking", return_value=False))
         self.enterContext(patch.object(evidence, "azure_configured", return_value=False))
         request = self.factory.delete("/evidence/file-id/")
@@ -143,20 +140,19 @@ class EvidenceUploadDeleteTests(SimpleTestCase):
 
 
 class SubmittedForMarkingTests(SimpleTestCase):
-    def _cursor(self, *, submission_row, profile_ids=("101",)):
+    def _cursor(self, *, submission_rows, profile_ids=("248",)):
         cursor = MagicMock()
-        cursor.fetchone.return_value = submission_row
+        cursor.fetchall.side_effect = [
+            [(profile_id,) for profile_id in profile_ids],
+            submission_rows,
+        ]
         conn = patch("learner_api.evidence._conn").start()
         conn.return_value.cursor.return_value.__enter__.return_value = cursor
-        patch(
-            "learner_api.evidence._learner_profile_ids_for_source",
-            return_value=list(profile_ids),
-        ).start()
         self.addCleanup(patch.stopall)
         return cursor
 
     def test_an_activity_sent_to_a_coach_is_locked(self):
-        self._cursor(submission_row=(1,))
+        self._cursor(submission_rows=[("COMP-1", "submitted_for_tutor_review")])
 
         self.assertTrue(_is_submitted_for_marking("commercial", "101", "COMP-1"))
 
@@ -164,7 +160,7 @@ class SubmittedForMarkingTests(SimpleTestCase):
         # The bug this replaces. Finishing an activity writes a progress entry;
         # it does not hand anything to a coach, and the learner must still be
         # able to swap a file they uploaded by mistake.
-        self._cursor(submission_row=None)
+        self._cursor(submission_rows=[])
 
         self.assertFalse(_is_submitted_for_marking("commercial", "101", "COMP-1"))
 
@@ -183,17 +179,21 @@ class SubmittedForMarkingTests(SimpleTestCase):
 
         self.assertTrue(_is_submitted_for_marking("commercial", "101", "COMP-1"))
 
-    def test_the_lookup_accepts_both_learner_id_shapes(self):
+    def test_the_lookup_accepts_a_verified_legacy_profile_id(self):
         # Submissions are keyed on the enrolment id the learner page uses, but
-        # historic rows carry a profile id, so both have to be searched or an
-        # older submission would not lock its evidence.
-        cursor = self._cursor(submission_row=(1,), profile_ids=("101", "248"))
+        # unambiguous historic rows can carry a linked profile id. Both shapes
+        # are searched without treating unrelated numeric ids as equivalent.
+        cursor = self._cursor(
+            submission_rows=[("COMP-1", "accepted")], profile_ids=("248",)
+        )
 
         _is_submitted_for_marking("commercial", "101", "COMP-1")
 
-        candidates = cursor.execute.call_args[0][1][2]
+        candidates = cursor.execute.call_args_list[-1].args[1][2]
         self.assertIn("101", candidates)
         self.assertIn("248", candidates)
+        bridge_sql = cursor.execute.call_args_list[0].args[0]
+        self.assertIn("other.id <> %s", bridge_sql)
 
 
 class CanDeleteContractTests(SimpleTestCase):

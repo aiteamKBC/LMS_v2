@@ -94,6 +94,9 @@ def learner_month(request, learner_id, month):
     learner, _ = logs.scope(request, learner_id)
     # Deep report context (including prior signatures used by import/download)
     # is requested only after an explicit month open, never by overview rows.
-    return JsonResponse({'summary': {**logs.summary_data(learner, include_open=True),
+    facts = logs.canonical_monthly_facts(learner, include_open=True)
+    return JsonResponse({'summary': {**logs.summary_data(learner, include_open=True,
+                                                         canonical_facts=facts),
                                      'csrf_token': get_token(request)},
-                         'detail': logs.detail_data(learner, month, include_open=True)})
+                         'detail': logs.detail_data(learner, month, include_open=True,
+                                                    canonical_facts=facts)})

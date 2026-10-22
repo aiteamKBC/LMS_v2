@@ -27,9 +27,10 @@ class _FakeCursor:
     def __init__(self, columns, rows):
         self.description = [(c,) for c in columns]
         self._rows = rows
+        self.statements = []
 
-    def execute(self, *args, **kwargs):
-        pass
+    def execute(self, sql, *args, **kwargs):
+        self.statements.append(sql)
 
     def fetchall(self):
         return self._rows
@@ -102,9 +103,8 @@ class BuildEvidenceSectionsTests(SimpleTestCase):
 
     @patch("learner_api.evidence_storage.azure_configured", return_value=False)
     @patch("learner_api.evidence._marking_status", return_value="")
-    @patch("learner_api.evidence.ensure_evidence_tables")
     def test_a_json_string_training_plan_details_does_not_crash_the_pipeline(
-        self, mock_ensure, mock_marking, mock_azure_configured,
+        self, mock_marking, mock_azure_configured,
     ):
         period = build_review_period(date(2026, 6, 15), review_number=1)
         row = (
@@ -112,7 +112,8 @@ class BuildEvidenceSectionsTests(SimpleTestCase):
             "comp-1", date(2026, 5, 1), '{"componentTitle": "Campaign brief", "ksbCodes": ["K1"]}',
             "comp-1", 55, "evidence-approved", "a/b/brief.pdf",
         )
-        fake_connection = _FakeConnection(_FakeCursor(EVIDENCE_COLUMNS, [row]))
+        fake_cursor = _FakeCursor(EVIDENCE_COLUMNS, [row])
+        fake_connection = _FakeConnection(fake_cursor)
 
         with patch("django.db.connections", {"enrolment": fake_connection}):
             warnings = []
@@ -123,11 +124,12 @@ class BuildEvidenceSectionsTests(SimpleTestCase):
         self.assertEqual(evidence[0]["ksb_mappings"], ["K1"])
         self.assertEqual(len(assignments), 1)  # linked via component_ref -> classified as an assignment
         self.assertEqual(workplace, [])
+        self.assertEqual(len(fake_cursor.statements), 1)
+        self.assertTrue(fake_cursor.statements[0].lstrip().lower().startswith("select"))
 
     @patch("learner_api.evidence_storage.azure_configured", return_value=False)
     @patch("learner_api.evidence._marking_status", return_value="")
-    @patch("learner_api.evidence.ensure_evidence_tables")
-    def test_an_already_decoded_dict_still_works(self, mock_ensure, mock_marking, mock_azure_configured):
+    def test_an_already_decoded_dict_still_works(self, mock_marking, mock_azure_configured):
         period = build_review_period(date(2026, 6, 15), review_number=1)
         row = (
             "ev-2", "photo.png", "image/png", 2048, "approved", "clean",

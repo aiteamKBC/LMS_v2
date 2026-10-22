@@ -552,7 +552,11 @@ def get_reflection_submission(request):
                 cur.execute(
                     """
                     select activity_type, activity_id, status,
-                           full_submission -> 'assignmentAttemptHistory'
+                           case
+                             when jsonb_typeof(full_submission -> 'assignmentAttemptHistory') = 'array'
+                             then jsonb_array_length(full_submission -> 'assignmentAttemptHistory')
+                             else 0
+                           end
                     from "Learner"."learning_reflection_submissions"
                     where learner_kind = %s and learner_id = %s
                     """,

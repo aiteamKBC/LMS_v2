@@ -160,8 +160,12 @@ def aggregate_statuses(rows):
         history = row[3] if len(row) > 3 else None
         key = (kind, activity)
         previous = result.get(key)
-        history = json.loads(history) if isinstance(history, str) else history
-        count = len(history or []) + int(bool(status) and status != 'draft')
+        if isinstance(history, int) and not isinstance(history, bool):
+            history_count = history
+        else:
+            history = json.loads(history) if isinstance(history, str) else history
+            history_count = len(history or [])
+        count = history_count + int(bool(status) and status != 'draft')
         if previous is None:
             result[key] = {'activityType': kind, 'activityId': activity, 'status': status,
                            **({'submissionCount': count} if kind == 'assignment' else {})}

@@ -8,8 +8,9 @@ import json
 import logging
 import re
 from collections import defaultdict
+from dataclasses import dataclass
 from functools import wraps
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 
 from django.db import DatabaseError, transaction
 from django.conf import settings
@@ -32,6 +33,27 @@ from .subject_content import ContentUnavailable
 logger = logging.getLogger(__name__)
 VERSION = 'lms-monthly-log-v1'
 MONTH_LOCKS = '"Audit".monthly_log_locks'
+
+
+@dataclass(frozen=True)
+class CanonicalMonthlyFacts:
+    """Canonical monthly reads shared only by callers in the current request.
+
+    The container is never persisted or cached.  Records remain learner-wide so
+    canonical reconciliation and source deduplication run before month selection.
+    """
+
+    route_learner_id: object
+    canonical_learner_id: object
+    include_open: bool
+    include_future: bool
+    ensure_month: str | None
+    owner: dict
+    records: tuple
+    signatures: tuple
+    targets: dict
+    grouped_rows: dict
+    locks: dict
 
 
 def endpoint(*methods):
@@ -358,35 +380,96 @@ def current_months(learner, signs=(), *, include_open=False, include_future=Fals
     return grouped
 
 
-def summary_data(learner, *, include_open=False, include_future=False, ensure_month=None):
+def canonical_monthly_facts(learner, *, include_open=False, include_future=False, ensure_month=None):
+    """Load one learner's canonical monthly facts once for a single request."""
+    owner = learner.get('_canonical_profile')
+    if owner is None:
+        raise old.ServiceError(
+            'The learner is not linked to the consolidated learning record.',
+            'ssot_identity_required',
+            409,
+        )
+    records = canonical.entries_for(owner)
+    signs = canonical.signatures_for(owner)
+    targets = canonical.targets_for(owner)
+    rows = canonical.rows_for(owner, records)
+    grouped = defaultdict(list)
+    open_month = timezone.localdate().strftime('%Y-%m')
+
+    def allowed_month(month):
+        return (
+            month < open_month
+            or (include_open and month == open_month)
+            or (include_future and month > open_month)
+        )
+
+    for item in rows:
+        month = item.get('reporting_month')
+        if month and allowed_month(month):
+            grouped[month].append(item)
+    for month in {*targets, *(sign['report_month'] for sign in signs)}:
+        if allowed_month(month):
+            grouped.setdefault(month, [])
+    if ensure_month and allowed_month(ensure_month):
+        grouped.setdefault(ensure_month, [])
+    locks = lock_states(learner['id'], grouped, canonical_owner=owner)
+    return CanonicalMonthlyFacts(
+        route_learner_id=learner['id'],
+        canonical_learner_id=owner['id'],
+        include_open=include_open,
+        include_future=include_future,
+        ensure_month=ensure_month,
+        owner=MappingProxyType(dict(owner)),
+        records=tuple(records),
+        signatures=tuple(signs),
+        targets=MappingProxyType(dict(targets)),
+        grouped_rows=MappingProxyType({month: tuple(month_rows) for month, month_rows in grouped.items()}),
+        locks=MappingProxyType({month: MappingProxyType(dict(lock)) for month, lock in locks.items()}),
+    )
+
+
+def _canonical_monthly_facts(learner, facts, *, include_open, include_future, ensure_month):
+    """Return matching request facts, refusing accidental cross-learner reuse."""
+    owner = learner.get('_canonical_profile')
+    if facts is None:
+        return canonical_monthly_facts(
+            learner,
+            include_open=include_open,
+            include_future=include_future,
+            ensure_month=ensure_month,
+        )
+    if (
+        owner is None
+        or str(facts.route_learner_id) != str(learner.get('id'))
+        or str(facts.canonical_learner_id) != str(owner.get('id'))
+        or facts.include_open != include_open
+        or facts.include_future != include_future
+        or facts.ensure_month != ensure_month
+    ):
+        raise old.ServiceError(
+            'The consolidated learner identity needs review.',
+            'identity_review_required',
+            409,
+        )
+    return facts
+
+
+def summary_data(learner, *, include_open=False, include_future=False, ensure_month=None,
+                 canonical_facts=None):
     canonical_owner = learner.get('_canonical_profile')
     if canonical_owner is not None:
+        facts = _canonical_monthly_facts(
+            learner,
+            canonical_facts,
+            include_open=include_open,
+            include_future=include_future,
+            ensure_month=ensure_month,
+        )
         retained = {'months': []}
-        records = canonical.entries_for(canonical_owner)
-        signs = canonical.signatures_for(canonical_owner)
-        targets = canonical.targets_for(canonical_owner)
-        grouped = defaultdict(list)
-        open_month = timezone.localdate().strftime('%Y-%m')
-        def allowed_month(month):
-            return (
-                month < open_month
-                or (include_open and month == open_month)
-                or (include_future and month > open_month)
-            )
-        for item in canonical.rows_for(canonical_owner, records):
-            month = item.get('reporting_month')
-            if month and allowed_month(month):
-                grouped[month].append(item)
-        for month in {*targets, *(sign['report_month'] for sign in signs)}:
-            if allowed_month(month):
-                grouped.setdefault(month, [])
-        if ensure_month and allowed_month(ensure_month):
-            grouped.setdefault(ensure_month, [])
-        locks = lock_states(learner['id'], grouped, canonical_owner=canonical_owner)
-        months = [month_state(month, rows, signs, targets.get(month), learner_id=learner['id'],
-                              lock=locks[month])
-                  for month, rows in grouped.items()]
-        programme_metrics = canonical.metrics_from_records(records, targets)['otjh']
+        months = [month_state(month, rows, facts.signatures, facts.targets.get(month), learner_id=learner['id'],
+                              lock=facts.locks[month])
+                  for month, rows in facts.grouped_rows.items()]
+        programme_metrics = canonical.metrics_from_records(facts.records, facts.targets)['otjh']
         training_plan_totals = {
             'accepted_hours': programme_metrics.get('completed_actual', programme_metrics.get('actual')),
             'planned_hours': programme_metrics['planned'],
@@ -418,9 +501,11 @@ def summary_data(learner, *, include_open=False, include_future=False, ensure_mo
             'read_only': learner['_view_as']}
 
 
-def detail_data(learner, month, *, include_open=False, include_future=False, demo=False, ensure_month=None):
+def detail_data(learner, month, *, include_open=False, include_future=False, demo=False, ensure_month=None,
+                canonical_facts=None):
     (valid_month_key if include_future else valid_month)(month)
-    consolidated = canonical.enabled(learner['id'])
+    canonical_owner = learner.get('_canonical_profile')
+    consolidated = canonical_owner is not None or canonical.enabled(learner['id'])
     if not consolidated and learner.get('aptem_id') and month <= old_repo.CUTOFF:
         if history.enabled(learner):
             detail = public_detail(learner, history.detail(learner, month, demo=demo))
@@ -433,6 +518,31 @@ def detail_data(learner, month, *, include_open=False, include_future=False, dem
         return {**detail, 'source': 'legacy', 'demo_only': demo}
     if not include_open:
         require_closed_month(month)
+    if canonical_owner is not None:
+        facts = _canonical_monthly_facts(
+            learner,
+            canonical_facts,
+            include_open=include_open,
+            include_future=include_future,
+            ensure_month=ensure_month,
+        )
+        fact_rows = facts.grouped_rows.get(month)
+        if fact_rows is None:
+            raise old.ServiceError('No activities are recorded for this month.', 'not_found', 404)
+        rows = list(fact_rows)
+        profile = learner.get('_profile') or {}
+        report_profile = {
+            'start_date': profile.get('start_date'),
+            'planned_end_date': profile.get('end_date'),
+            'first_evidence_date': None,
+        }
+        target = facts.targets.get(month, 0 if journal_sources.enabled() else None)
+        return {
+            **month_state(month, rows, facts.signatures, target, learner_id=learner['id'],
+                          lock=facts.locks[month]),
+            'rows': rows,
+            'profile': report_profile,
+        }
     signs = signatures(learner)
     rows = current_months(learner, signs, include_open=include_open, include_future=include_future,
                           ensure_month=ensure_month).get(month)

@@ -30,10 +30,8 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from .identity import learner_profile_for_source
-
 from .active_users import ComponentReferenceError, save_progress_record
-from .models import CommercialUser, EnrolmentUser
+from .assessments.permissions import QuizAccessDenied, authorize_quiz_access
 from .time_tracking import TrackingSessionError, tracking_session_already_used, verify_tracking_session
 from .working_rules import (
     DeclaredCompletionError,
@@ -44,11 +42,6 @@ from login.permissions import learner_self_or_admin
 from quiz_api.answer_keys import choice_label, quiz_submission_error
 
 logger = logging.getLogger(__name__)
-
-SOURCE_MODELS = {
-    "commercial": CommercialUser,
-    "apprenticeship": EnrolmentUser,
-}
 
 IMAGE_MATCHING_KIND = "image_matching_pair"
 IMAGE_SOURCE_PATTERN = re.compile(r"\.(png|jpe?g|gif|webp|svg)(?:[?#].*)?$", flags=re.IGNORECASE)
@@ -93,12 +86,42 @@ def record_quiz_attempt(*, kind, learner_id, source, quiz, attempt_number, passe
             }],
             using='enrolment',
         )
-    except Exception:
-        logger.warning('Could not record a quiz attempt in the Audit Trail.', exc_info=True)
+    except Exception as exc:
+        # Database diagnostics can include the rejected row.  This audit row
+        # contains learner identity, so log only the failure class.
+        logger.warning(
+            "Could not record a quiz attempt in the Audit Trail (error_type=%s).",
+            type(exc).__name__,
+        )
 
 
 def _error(message, status):
     return JsonResponse({"error": message}, status=status)
+
+
+def _database_error(operation, quiz_id, *, status=502):
+    # PostgreSQL exception details may repeat rejected row values.  A quiz
+    # attempt can contain learner answers, so keep diagnostics to operation,
+    # object id and exception class rather than logging the exception text.
+    import sys
+
+    error_type = sys.exc_info()[0]
+    logger.error(
+        "Quiz database operation failed during %s (quiz_id=%s, error_type=%s).",
+        operation,
+        quiz_id,
+        error_type.__name__ if error_type else "DatabaseError",
+    )
+    return _error("Quiz service is temporarily unavailable. Please try again.", status)
+
+
+def _authorize_or_error(request, quiz_id, **kwargs):
+    try:
+        return authorize_quiz_access(request, quiz_id, **kwargs), None
+    except QuizAccessDenied as exc:
+        return None, _error(exc.message, exc.status)
+    except DatabaseError:
+        return None, _database_error("authorization", quiz_id)
 
 
 def _format_clock(seconds):
@@ -241,10 +264,18 @@ def _scrub_answer_key(quiz):
 def quiz_detail(request, quiz_id):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
+    _context, error = _authorize_or_error(
+        request,
+        quiz_id,
+        learner_id=request.GET.get("learnerId"),
+        allow_staff_preview=True,
+    )
+    if error is not None:
+        return error
     try:
         quiz = _fetch_quiz(quiz_id)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DatabaseError:
+        return _database_error("detail lookup", quiz_id)
     if quiz is None:
         return _error("Quiz not found.", 404)
     return JsonResponse(_scrub_answer_key(quiz))
@@ -444,14 +475,22 @@ def submit_quiz_attempt(request, quiz_id):
 
     kind = (request.GET.get("kind") or "").strip()
     learner_id = (request.GET.get("learnerId") or "").strip()
-    model = SOURCE_MODELS.get(kind)
-    if model is None or not learner_id:
+    if kind not in {"commercial", "apprenticeship"} or not learner_id:
         return _error("kind and learnerId query params are required.", 400)
+
+    access, error = _authorize_or_error(
+        request,
+        quiz_id,
+        learner_id=learner_id,
+        kind=kind,
+    )
+    if error is not None:
+        return error
 
     try:
         payload = json.loads(request.body.decode("utf-8")) if request.body else {}
-    except (ValueError, UnicodeDecodeError) as exc:
-        return _error(f"Invalid JSON body: {exc}", 400)
+    except (ValueError, UnicodeDecodeError):
+        return _error("Invalid JSON body.", 400)
 
     # Working rules are decided here, before the quiz is fetched, graded or
     # persisted: a refusal must leave no attempt, no progress record, no audit
@@ -465,7 +504,12 @@ def submit_quiz_attempt(request, quiz_id):
         )
     except DeclaredCompletionError as exc:
         return JsonResponse(validation_response_payload(exc), status=409)
-    except DatabaseError:
+    except DatabaseError as exc:
+        logger.error(
+            "Could not verify the quiz working-hours calendar (quiz_id=%s, error_type=%s).",
+            quiz_id,
+            type(exc).__name__,
+        )
         return _error("Could not verify the working-hours holiday calendar. Please try again.", 503)
 
     submitted_answers = payload.get("answers") or {}
@@ -481,8 +525,8 @@ def submit_quiz_attempt(request, quiz_id):
 
     try:
         quiz = _fetch_quiz(quiz_id)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DatabaseError:
+        return _database_error("submission lookup", quiz_id)
     if quiz is None:
         return _error("Quiz not found.", 404)
 
@@ -541,19 +585,14 @@ def submit_quiz_attempt(request, quiz_id):
     grade_decimal = round((earned / possible), 2) if possible else 0.0  # 0.90 form
     passed = grade_pct >= (quiz["passingGrade"] or 0)
 
-    try:
-        source = model.objects.get(pk=learner_id)
-    except model.DoesNotExist:
-        return _error("Learner not found.", 404)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    source = access.source
+    active = access.profile
 
     try:
-        active = learner_profile_for_source(source, learner_id, active_only=True)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
-
-    history = (active.training_plan_progress if active and isinstance(active.training_plan_progress, list) else [])
+        progress = active.training_plan_progress
+    except DatabaseError:
+        return _database_error("attempt history lookup", quiz_id)
+    history = progress if isinstance(progress, list) else []
     # 1-based attempt number for THIS quiz — count prior quiz-kind records for it.
     # Normalised progress rows expose the CharField quiz_ref as text, whereas
     # curriculum quiz ids are integers. Canonicalise both sides so retakes are
@@ -577,7 +616,11 @@ def submit_quiz_attempt(request, quiz_id):
         )
     except TrackingSessionError as exc:
         return _error(str(exc), 400)
-    if tracking_session_already_used(tracking["sessionId"]):
+    try:
+        tracking_session_used = tracking_session_already_used(tracking["sessionId"])
+    except DatabaseError:
+        return _database_error("tracking session lookup", quiz_id)
+    if tracking_session_used:
         return _error("This activity timing session has already been submitted.", 409)
     started_at = tracking["startedAt"].isoformat()
     submitted_at = submitted_at_dt.isoformat()
@@ -634,9 +677,9 @@ def submit_quiz_attempt(request, quiz_id):
         except IntegrityError as exc:
             if "learner_progress_tracking_session_uq" in str(exc):
                 return _error("This activity timing session has already been submitted.", 409)
-            return _error(f"Database error saving attempt: {exc}", 502)
-        except DatabaseError as exc:
-            return _error(f"Database error saving attempt: {exc}", 502)
+            return _database_error("attempt persistence", quiz_id)
+        except DatabaseError:
+            return _database_error("attempt persistence", quiz_id)
         record_quiz_attempt(
             kind=kind, learner_id=learner_id, source=source, quiz=quiz,
             attempt_number=attempt_number, passed=passed, grade_pct=grade_pct,

@@ -18,7 +18,7 @@ from django.conf import settings
 from django.db import DatabaseError, connection, transaction
 
 from curriculum_api import schema_gate as curriculum_schema_gate
-from django.db.models import Max
+from django.db.models import Exists, Max, OuterRef, Prefetch, prefetch_related_objects
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.utils import timezone
 from django.views.decorators.clickjacking import xframe_options_sameorigin
@@ -30,7 +30,7 @@ from .question_images import validate_question_image
 from .answer_keys import choice_key_error, choice_label, quiz_publication_error
 from .key_readiness import quiz_requires_valid_key
 from .intake import InvalidQuizIntake, intake_error, key_indexes
-from learner_api.models import LearnerProfile
+from learner_api.models import LearnerProfile, LearnerProgressEntry
 
 logger = logging.getLogger(__name__)
 
@@ -3605,12 +3605,33 @@ def quiz_students(request, pk):
 
     try:
         question_lookup, answer_lookup = _quiz_question_lookup(pk)
-        active_users = LearnerProfile.objects.filter(
-            lifecycle_status="active"
-        ).prefetch_related(
-            "progress_entries__ksb_links",
-            "progress_entries__quiz_answers__correct_answers",
-            "progress_entries__quiz_answers__chosen_answers",
+        # Keep the existing serializer, but constrain both the learner set and
+        # its prefetched progress graph to this quiz in PostgreSQL.
+        quiz_progress = (
+            LearnerProgressEntry.objects
+            .filter(kind="quiz", quiz_ref=str(pk), deleted_at__isnull=True)
+            .prefetch_related(
+                "ksb_links",
+                "quiz_answers__correct_answers",
+                "quiz_answers__chosen_answers",
+            )
+        )
+        matching_progress = LearnerProgressEntry.objects.filter(
+            learner_id=OuterRef("pk"),
+            kind="quiz",
+            quiz_ref=str(pk),
+            deleted_at__isnull=True,
+        )
+        active_users = (
+            LearnerProfile.objects
+            .filter(lifecycle_status="active")
+            .annotate(has_quiz_attempt=Exists(matching_progress))
+            .filter(has_quiz_attempt=True)
+            .only(
+                "id", "full_name", "email", "programme", "cohort",
+                "group_name", "lifecycle_status",
+            )
+            .prefetch_related(Prefetch("progress_entries", queryset=quiz_progress))
         )
         students = []
         all_grade_percents = []
@@ -4288,7 +4309,11 @@ def question_bank(request):
         .filter(is_archived=False)
         .exclude(quiz__status="trash")
         .select_related("quiz")
-        .prefetch_related("answers")
+        .only(
+            "id", "question_text", "question_type", "image_url", "explanation",
+            "sort_order", "quiz_id", "quiz__programme", "quiz__programme_id",
+            "quiz__module", "quiz__title", "quiz__status",
+        )
     )
     if query:
         base_queryset = base_queryset.filter(question_text__icontains=query)
@@ -4306,7 +4331,11 @@ def question_bank(request):
     all_questions = list(
         base_queryset.order_by("quiz__programme_id", "quiz__module", "quiz__title", "sort_order", "id")
     )
-    available_quizzes = list(QuizPackage.objects.exclude(status="trash").order_by("programme_id", "title"))
+    available_quizzes = list(
+        QuizPackage.objects.exclude(status="trash")
+        .only("id", "title", "module", "programme", "programme_id", "questions", "status")
+        .order_by("programme_id", "title")
+    )
     def resolve_programme(quiz):
         if quiz.programme:
             return quiz.programme, quiz.programme
@@ -4344,12 +4373,26 @@ def question_bank(request):
             "status": question.quiz.status,
         }
 
-    questions = []
-    for question in all_questions:
-        key, programme_name = question_programme_info[question.id]
+    selected_questions = [
+        question
+        for question in all_questions
+        if selected_programme == "all" or selected_programme == question_programme_info[question.id][0]
+    ]
+    # Programme totals and linked-quiz signatures need complete question
+    # metadata, but answer rows are only needed for questions in the response.
+    prefetch_related_objects(
+        selected_questions,
+        Prefetch(
+            "answers",
+            queryset=QuizAnswer.objects.only(
+                "id", "question_id", "answer_text", "is_correct", "sort_order",
+            ),
+        ),
+    )
 
-        if selected_programme != "all" and selected_programme != key:
-            continue
+    questions = []
+    for question in selected_questions:
+        key, programme_name = question_programme_info[question.id]
 
         signature = (
             key,
