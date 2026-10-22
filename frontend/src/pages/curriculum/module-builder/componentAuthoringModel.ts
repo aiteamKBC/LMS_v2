@@ -45,7 +45,7 @@ export interface ComponentAuthoringDefinition {
   defaultSettings: ComponentSettings;
 }
 
-export const MEDIA_SOURCE_TYPES = ['YouTube', 'External Link', 'Embed'] as const;
+export const MEDIA_SOURCE_TYPES = ['YouTube', 'External Link', 'HTML (MP4)', 'Embed'] as const;
 export const PODCAST_SOURCE_TYPES = ['External URL', 'LMS resource', 'Device upload', 'Embed'] as const;
 export const READING_SOURCE_TYPES = ['Written in LMS', 'URL', 'LMS resource'] as const;
 export const CONTENT_STATUSES = ['Draft', 'Ready for QA', 'Needs changes', 'Approved'] as const;
@@ -458,6 +458,8 @@ const LIVE_SESSION_TRACKING_SETTING_KEYS = [
   // the Teams identity and occurrence metadata while keeping the chosen link
   // through the next module-structure save.
   'liveSessionLinkOverride',
+  'teamsCalendarBinding',
+  'teamsMainLinkInherited',
 ] as const;
 
 /**
@@ -492,9 +494,12 @@ export function allowedSettingKeysForType(type: ModuleComponentType) {
 
 export function normaliseComponentSettings(type: ModuleComponentType, settings: ComponentSettings = {}): ComponentSettings {
   let storedLegacy: ComponentSettings = {};
-  if (typeof settings.legacySettings === 'string') {
+  const rawLegacy: unknown = settings.legacySettings;
+  if (rawLegacy && typeof rawLegacy === 'object' && !Array.isArray(rawLegacy)) {
+    storedLegacy = rawLegacy as ComponentSettings;
+  } else if (typeof rawLegacy === 'string') {
     try {
-      const parsed = JSON.parse(settings.legacySettings);
+      const parsed = JSON.parse(rawLegacy);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) storedLegacy = parsed as ComponentSettings;
     } catch {
       storedLegacy = {};
@@ -550,14 +555,16 @@ export function normaliseComponentSettings(type: ModuleComponentType, settings: 
   const defaults = getDefaultComponentSettings(type);
   const allowed = allowedSettingKeysForType(type);
   const next: ComponentSettings = { ...defaults };
-  const legacySettings: Record<string, ComponentSettingValue> = {};
+  const legacySettings: Record<string, unknown> = Object.create(null);
   Object.entries(source).forEach(([key, value]) => {
-    if (value === null || value === undefined) return;
+    if (value === undefined) return;
     if (key === 'legacySettings') return;
     if (allowed.has(key)) {
-      next[key] = value;
-    } else if (['string', 'number', 'boolean'].includes(typeof value) || Array.isArray(value)) {
-      legacySettings[key] = value as ComponentSettingValue;
+      if (value !== null) next[key] = value;
+    } else {
+      // Quarantined JSON is opaque authored data, including nested values/null.
+      // Ordinary editor saves must not discard fields this editor does not own.
+      legacySettings[key] = value;
     }
   });
   if (Object.keys(legacySettings).length) next.legacySettings = JSON.stringify(legacySettings);
@@ -571,15 +578,17 @@ export function normaliseComponentSettings(type: ModuleComponentType, settings: 
 export function normaliseVideoSourceType(value: string) {
   const clean = String(value || '').trim();
   if ((MEDIA_SOURCE_TYPES as readonly string[]).includes(clean)) return clean;
-  // HTML (MP4) and Vimeo are retired sources -- a component saved with one of
-  // them keeps its stored URL, which is still a plain link, so it lands on
-  // External Link instead of losing the value.
-  if (clean === 'Upload file' || clean === 'HTML (MP4)' || clean === 'Vimeo' || clean === 'External link') return 'External Link';
+  // Older source labels are kept readable while the current source list stays
+  // deliberately small. HTML (MP4) is a supported source in the builder and
+  // must remain distinct so the editor can show the MP4-specific field label.
+  if (clean === 'Upload file') return 'HTML (MP4)';
+  if (clean === 'Vimeo' || clean === 'External link') return 'External Link';
   if (clean === 'Shortcode') return 'YouTube';
   return 'YouTube';
 }
 
 export function providerForVideoSourceType(sourceType: string) {
+  if (sourceType === 'HTML (MP4)') return 'Upload file';
   if (sourceType === 'External Link') return 'External link';
   return sourceType;
 }

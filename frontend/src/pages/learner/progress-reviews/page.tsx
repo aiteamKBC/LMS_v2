@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { downloadLearnerMcmPdf, downloadMigratedReviewForParty, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers, signLearnerProgressReview, signMigratedReviewAsParty, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { downloadLearnerMcmPdf, downloadMigratedReviewForParty, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers, saveMigratedReviewPartyAnswers, signLearnerProgressReview, signMigratedReviewAsParty, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { responsesForSection, type ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
@@ -19,7 +19,7 @@ import AbsenceReportDialog from '../attendance/components/AbsenceReportDialog';
 import AbsenceReportForm from '../attendance/components/AbsenceReportForm';
 import { useMeetingBooking } from '../reviews/useMeetingBooking';
 import ReviewsHome from './ReviewsHome';
-import { reviewsListHref } from './reviewPresentation';
+import { reviewOverview, reviewsListHref } from './reviewPresentation';
 import { useCoachingReviewDefinitions } from '../monthly-coaching/useCoachingReviewDefinitions';
 import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
@@ -261,7 +261,7 @@ export function ProgressReviewsListPage() {
 }
 
 function ProgressReviewsList() {
-  const { myLearner, learner, sessions: reviews, setEvents, bookingCalendar, loading, error, refresh } = useReviewSessions('progress-review');
+  const { myLearner, learner, sessions: reviews, setEvents, bookingCalendar, loading, error, refresh } = useReviewSessions('progress-review', true);
   const attendance = useMeetingAttendance(myLearner);
   const [absence, setAbsence] = useState<MeetingAttendance | null>(null);
   // Reuse the existing read-only signature loader; opening this page cannot
@@ -302,8 +302,9 @@ export default function ProgressReviewsPage() {
   const navigate = useNavigate();
   const [listParams] = useSearchParams();
   const { reviewId } = useParams<{ reviewId: string }>();
-  const { myLearner, learner, sessions: reviews, setEvents, loading, error: loadError, refresh } = useReviewSessions('progress-review');
+  const { myLearner, learner, sessions: reviews, setEvents, bookingCalendar, loading, error: loadError, refresh } = useReviewSessions('progress-review');
   const { canProgress } = useLearnerWorkspaceAccess(myLearner.id);
+  const attendance = useMeetingAttendance(myLearner);
   const [actionError, setError] = useState('');
   const error = loadError || actionError;
   const [selectedId, setSelectedId] = useState(reviewId || '');
@@ -334,6 +335,12 @@ export default function ProgressReviewsPage() {
   );
   const selectedIndex = selected ? reviews.findIndex((review) => review.id === selected.id) : -1;
   const previousReview = selectedIndex > 0 ? reviews[selectedIndex - 1] : null;
+  const booking = useMeetingBooking({ learner: myLearner, rules: bookingCalendar, attendance: attendance.data?.sessions || [],
+    titleOf: progressReviewTitle, setEvents, refresh: () => { refresh(); attendance.refresh(); } });
+  const selectedPresentation = selected ? reviewOverview([selected], attendance.data?.sessions || [],
+    attendance.data?.today || bookingCalendar?.today || isoDate(new Date()), { [selected.id]: reviewInstance.definition }).all[0] : null;
+  const canBook = selectedPresentation?.action === 'schedule';
+  const canReschedule = selectedPresentation?.canReschedule;
 
   const progressVariance = asNumber(learner?.progressVariance);
 
@@ -369,7 +376,9 @@ export default function ProgressReviewsPage() {
   const saveSignature = async (signature: string) => {
     if (!selected || !canProgress) return;
     if (migratedEvent) {
-      await signMigratedReviewAsParty(selected.formEventKey || selected.eventKey || selected.id, signature);
+      await signMigratedReviewAsParty(selected.formEventKey || selected.eventKey || selected.id, signature, {
+        reviewRevision: reviewInstance.definition?.reviewRevision,
+      });
       reviewInstance.refresh();
       return;
     }
@@ -391,6 +400,9 @@ export default function ProgressReviewsPage() {
     >
       <div className={`page-container ${styles.page} min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6`}>
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}<button type="button" onClick={refresh} className="ml-3 font-bold underline">Try again</button></div>}
+        {booking.notice}
+        {booking.dialog}
+        {attendance.error && <p role="alert" className="rounded-xl bg-red-50 p-4 text-base text-red-700">{attendance.error}<button type="button" onClick={attendance.refresh} className="ml-2 min-h-12 underline">Retry attendance</button></p>}
 
         <button type="button" onClick={() => navigate(reviewsListHref(myLearner, listParams))} className="inline-flex h-9 items-center gap-2 self-start rounded-xl border border-primary-200 bg-primary-50 px-3.5 text-xs font-bold text-primary-700 shadow-sm transition hover:-translate-x-0.5 hover:bg-primary-100">
           <AppIcon className="ri-arrow-left-line" /> Back to Reviews
@@ -443,6 +455,8 @@ export default function ProgressReviewsPage() {
                       <p className="mt-1 text-sm text-foreground-500">{formatDate(reviewDate(selected), true)} at {formatTime(selected?.scheduledTime)}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
+                      {canBook && <button type="button" disabled={!canProgress || reviewInstance.loading} onClick={() => booking.openBooking(selected)} className={`${styles.primaryButton} inline-flex items-center rounded-lg px-4 py-2.5 text-xs font-extrabold disabled:opacity-50`}><AppIcon className="ri-calendar-line mr-1.5" />Book a time</button>}
+                      {canReschedule && <button type="button" disabled={!canProgress || !attendance.data || Boolean(attendance.error) || reviewInstance.loading || Boolean(reviewInstance.error)} onClick={() => booking.openBooking(selected)} className={`${styles.primaryButton} inline-flex items-center rounded-lg px-4 py-2.5 text-xs font-extrabold disabled:opacity-50`}><AppIcon className="ri-calendar-line mr-1.5" />Reschedule meeting</button>}
                       {selected?.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className={`${styles.primaryButton} meeting-join-action inline-flex items-center rounded-lg px-4 py-2.5 text-xs font-extrabold`}><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}
                       {selected.importedReview && <ReviewPdfDownload availability={{ available: true, reason: '' }} label="Download PDF" onDownload={() => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} />}
                       {!selected.importedReview && <button type="button" onClick={showSlides} className="inline-flex items-center rounded-lg border border-primary-200/60 bg-white px-3.5 py-2 text-xs font-bold text-primary-900 shadow-sm hover:bg-primary-50 disabled:opacity-60"><AppIcon className="ri-slideshow-line mr-1.5" />Show slides</button>}
@@ -488,7 +502,7 @@ export default function ProgressReviewsPage() {
                 </div>
               </section>
 
-              {reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}<button type="button" onClick={reviewInstance.refresh} className="ml-2 underline">Retry review</button></p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} onDownload={migratedEvent ? () => downloadMigratedReviewForParty(selected.formEventKey || selected.eventKey || selected.id) : undefined} onSign={canProgress ? saveSignature : undefined} signatoryName={learner?.name || 'Learner'} onSaveAnswers={migratedEvent ? undefined : answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, selected.eventKey || selected.id, answers)} /> : instanceBacked ? <p className="p-4 text-sm text-foreground-500">This review form is not available.</p> : <>
+              {reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}<button type="button" onClick={reviewInstance.refresh} className="ml-2 underline">Retry review</button></p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} onDownload={migratedEvent ? () => downloadMigratedReviewForParty(selected.formEventKey || selected.eventKey || selected.id) : undefined} onSign={canProgress ? saveSignature : undefined} signatoryName={learner?.name || 'Learner'} onSaveAnswers={migratedEvent ? (canProgress ? (answers, version) => saveMigratedReviewPartyAnswers(selected.formEventKey || selected.eventKey || selected.id, answers, version) : undefined) : answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, selected.eventKey || selected.id, answers)} /> : instanceBacked ? <p className="p-4 text-sm text-foreground-500">This review form is not available.</p> : <>
               {selected.importedReview ? <div className="space-y-3">
                 {selected.importedReview.sections.map((section, index) => <Accordion key={section.id} id={`imported-section:${section.id}`} title={section.name.replace(/\s+(completed|incomplete)$/i, '').trim()} icon="ri-file-list-3-line" open={openSections.includes(`imported-section:${section.id}`) || (!openSections.some((id) => id.startsWith('imported-section:')) && index === 0)} onToggle={toggleSection}>
                   <ImportedReviewSections review={{ ...selected.importedReview, sections: [section] }} />

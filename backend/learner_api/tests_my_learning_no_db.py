@@ -37,6 +37,30 @@ def fake_connections():
 
 
 class MyLearningAggregateTests(SimpleTestCase):
+    def test_undated_execution_month_matches_detail_and_next_activity_preview(self):
+        from .course_catalogue_display import catalogue_display_context, display_schedule
+        course = {'id': 3, 'source_course_ref': '50', 'source_course_title': 'Old'}
+        definitions = [{'source_course_ref': '50', 'source_course_title': 'Old',
+            'source_activity_id': f'material:{ident}', 'source_activity_title': title,
+            'source_section_title': section, 'source_payload': {}}
+            for ident, title, section in [(7, 'Undated lesson', ''), (8, 'June lesson', 'June 2026')]]
+        record = {'id': 1, 'accepted': False, 'actual_seconds': 0, 'activity_status': 'in_progress',
+            'reporting_month': '2026-03', 'sources': [{'source_system': 'old_lms',
+                'source_course_ref': '50', 'source_activity_id': 'material:7'}]}
+        with patch.object(canonical, 'query', return_value=definitions):
+            rows, done, started, hours, _ = learning.course_facts({'id': 9}, [record], [course])
+        self.assertNotIn('_learner_schedule', definitions[0])
+        projected = catalogue_display_context(rows, [])
+        self.assertEqual(display_schedule(projected[0])['month'], '2026-03')
+        detail = canonical.recorded_course_items([course], projected, [record], include_catalogue=True)[0]
+        self.assertEqual(detail[0]['month'], '2026-03')
+        self.assertEqual(detail[1]['month'], '2026-06')
+        cards, _ = self.cards(native(), [course], rows, done, started, hours, records=[record])
+        card = next(card for card in cards if card['source'] == 'legacy')
+        self.assertEqual(card['nextTitle'], 'Undated lesson')
+        self.assertEqual(card['completedActivityCount'], 0)
+        self.assertEqual(card['activityCount'], 2)
+
     def cards(self, content, courses=(), definitions=(), done=None, started=None, hours=None, meta=None, records=()):
         from . import course_catalogue_display
         meta = meta or metadata()
@@ -80,25 +104,27 @@ class MyLearningAggregateTests(SimpleTestCase):
         self.assertEqual([c['id'] for c in cards],['legacy:50'])
         self.assertIsNone(cards[0]['planModule'])
 
-    def test_verified_replacement_preserves_old_completion_and_unique_hours(self):
+    def test_verified_replacement_keeps_old_catalogue_until_transfer_approval(self):
         meta=metadata();meta['replacement_courses']={'current:M1':'legacy:50'}
         meta['replacement_settings']={'C1':{'legacySettings':{'sourceLessonId':7,'sourceMaterialKey':'reading-7'}}}
         meta['record_ids']={('50','material:7'):{'1'}}
         course={'id':3,'source_course_ref':'50','source_course_title':'Old'}
         definitions=[{'source_course_ref':'50','source_activity_id':'material:7','source_activity_title':'Old reading','source_course_title':'Old'}]
         record={'id':1,'accepted':True,'actual_seconds':3600,'ksbs':[],'module_ref':'50'}
-        cards,summary=self.cards(native([component()]),[course],definitions,{('50','material:7')},meta=meta,records=[record])
-        self.assertEqual(summary['current']['completed'],1)
-        self.assertEqual(summary['previous']['total'],0)
-        self.assertEqual(cards[0]['replacementCourseRef'],'legacy:50')
+        cards,summary=self.cards(native([component()]),[course],definitions,{('50','material:7')},hours={'50':1},meta=meta,records=[record])
+        self.assertEqual(summary['current']['completed'],0)
+        self.assertEqual(summary['previous']['total'],1)
+        self.assertEqual(summary['previous']['completed'],1)
+        self.assertEqual(cards[0]['id'],'legacy:50')
+        self.assertNotIn('replacementCourseRef',cards[0])
         self.assertEqual(cards[0]['actualHours'],1)
         self.assertFalse(cards[0]['finalTestPassed'])
 
-    def test_final_quiz_requires_a_real_pass_even_when_old_completion_is_carried(self):
+    def test_final_quiz_ignores_old_component_completion_hints(self):
         content=native([component('Q1',isQuiz=True,quizMeta={'quizId':1},previousLearning={'completed':True})])
         content['components'][0]['component']='Final test'
         cards,_=self.cards(content)
-        self.assertEqual(cards[0]['completedActivityCount'],1)
+        self.assertEqual(cards[0]['completedActivityCount'],0)
         self.assertFalse(cards[0]['finalTestPassed'])
 
     def test_global_dedupe_and_empty_subjects(self):
@@ -410,7 +436,7 @@ class MyLearningSearchTests(SimpleTestCase):
         self.assertEqual(context[5],[])
         for reader in forbidden:reader.assert_not_called()
 
-    def test_upcoming_expansion_keeps_carried_completion_and_skips_covers_and_programme_metrics(self):
+    def test_upcoming_expansion_ignores_old_completion_hints_and_skips_unneeded_reads(self):
         from . import subject_store,course_catalogue_display
         content=native([component('TASK',type='assignment',previousLearning={'completed':True})])
         meta=metadata();meta['modules']={'M1':{'id':'M1','title':'One'}}
@@ -418,7 +444,8 @@ class MyLearningSearchTests(SimpleTestCase):
         context=([],[],[],content,[],[],set(),set(),{},meta,[])
         with patch.object(learning,'load_context',return_value=context),patch.object(course_catalogue_display,'read_export_placements',return_value=[]),patch.object(subject_store,'covers_for') as covers,patch.object(canonical,'programme_planned_hours') as planned:
             result=learning.read_catalogue(SimpleNamespace(pk=7),'commercial',{'id':9},upcoming_only=True)
-        self.assertEqual(result,{'upcoming':[]})
+        self.assertEqual(len(result['upcoming']),1)
+        self.assertEqual(result['upcoming'][0]['href'],'/learner/component/commercial/7/TASK')
         covers.assert_not_called();planned.assert_not_called()
 
     def test_search_matches_each_title_and_preserves_owned_exclusions_without_full_historical_reads(self):
@@ -452,6 +479,25 @@ class MyLearningSearchTests(SimpleTestCase):
         self.assertEqual(len(first['matches']),50);self.assertEqual(first['nextOffset'],50)
         self.assertEqual(len(second['matches']),11);self.assertIsNone(second['nextOffset'])
         hours.assert_not_called();placements.assert_not_called()
+
+    def test_upcoming_omits_assignments_without_a_due_date(self):
+        rows = native([component(ident, type='assignment')
+                       for ident in ('UNDATED', 'NO_TIMING', 'MISSING', 'FUTURE')])
+        meta = metadata()
+        meta['activity_dates'] = {
+            'UNDATED': {'due_timing': 'End of week', 'week_end': None},
+            'NO_TIMING': {'due_timing': None, 'week_end': '2099-01-02'},
+            'MISSING': {'due_timing': 'End of week'},
+            'FUTURE': {'due_timing': 'End of week', 'week_end': '2099-01-02'},
+        }
+        for kind in ('commercial', 'apprenticeship'):
+            for limit in (4, None):
+                with self.subTest(kind=kind, limit=limit), patch.object(canonical, 'query', return_value=[]):
+                    links = learning.upcoming_links(SimpleNamespace(pk=7), kind, ['M1'], rows,
+                        meta, {'current:M1'}, limit=limit)
+                self.assertEqual([link['id'] for link in links], ['deadline:native:FUTURE'])
+                self.assertEqual(links[0]['date'], '2099-01-02')
+                self.assertEqual(links[0]['href'], f'/learner/component/{kind}/7/FUTURE')
 
     def test_upcoming_is_narrow_future_bounded_and_keeps_component_action_links(self):
         source=SimpleNamespace(pk=7)

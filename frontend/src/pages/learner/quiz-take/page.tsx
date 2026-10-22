@@ -1,3 +1,4 @@
+import { archiveTimingDraft, timingSessionExpired } from '@/lib/timingRecovery';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { observeRewardInterval, flushRewardObservations, clearRewardObservations } from '@/lib/rewardTracking';
 import { createPortal } from 'react-dom';
@@ -30,7 +31,7 @@ import { rememberLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
-import { startTimeTracking, type TimeTrackingSession } from '@/api/timeTracking';
+import { startTimeTracking, checkpointTimeTracking, type TimeTrackingSession } from '@/api/timeTracking';
 import { ComponentAccessNotice } from '@/components/feature/ComponentAccessNotice';
 import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
 import { CompletionTimeDialog } from '@/components/feature/CompletionTimeDialog';
@@ -173,6 +174,12 @@ export default function QuizTakePage() {
   const [answers, setAnswers] = useState<Record<string, QuizAnswerValue>>({});
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [expiredTiming, setExpiredTiming] = useState(false);
+  const [recoveringTiming, setRecoveringTiming] = useState(false);
+  const [timingNotice, setTimingNotice] = useState('');
+  const recoveryInFlight = useRef(false);
+  const [timingGeneration, setTimingGeneration] = useState(0);
+  useEffect(() => { setExpiredTiming(false); setTimingNotice(''); }, [kind, id, quizId]);
   const [submitError, setSubmitError] = useState<string | null>(null);
   // Open only after the server refused the Submit click's instant.
   const [correction, setCorrection] = useState<{ reason: WorkingRuleReason | ''; holidayName: string } | null>(null);
@@ -186,6 +193,33 @@ export default function QuizTakePage() {
   const completionInFlightRef = useRef(false);
   const trackingSessionRef = useRef<TimeTrackingSession | null>(null);
   const trackingPromiseRef = useRef<Promise<TimeTrackingSession> | null>(null);
+  const elapsedRef = useRef(elapsedSeconds);
+  elapsedRef.current = elapsedSeconds;
+  const [timingSyncError, setTimingSyncError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!quizId || !kind || !id || (phase !== 'quiz' && phase !== 'reflect')) return;
+    let cancelled = false;
+    let busy = false;
+    const sync = async () => {
+      const session = trackingSessionRef.current;
+      if (!session?.persistent || busy || completionInFlightRef.current) return;
+      busy = true;
+      try {
+        const restored = await checkpointTimeTracking(session, 'quiz', quizId, kind, id, elapsedRef.current);
+        if (cancelled || trackingSessionRef.current?.sessionId !== session.sessionId) return;
+        trackingSessionRef.current = restored;
+        if (restored.rewardTracking) await flushRewardObservations(restored, 'quiz', quizId);
+        if (!cancelled) setTimingSyncError(null);
+      } catch (error) {
+        if (!cancelled) setTimingSyncError(`Your time could not sync. Keep this page open; your answers are kept. ${error instanceof Error ? error.message : 'Retry when connected.'}`);
+      }
+      finally { busy = false; }
+    };
+    const interval = setInterval(() => void sync(), 60000);
+    window.addEventListener('online', sync);
+    return () => { cancelled = true; clearInterval(interval); window.removeEventListener('online', sync); };
+  }, [quizId, kind, id, phase]);
 
   useEffect(() => {
     if (!quizId) return;
@@ -245,7 +279,7 @@ export default function QuizTakePage() {
       last = now;
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [phase, reflectionChoiceOpen, componentAccess.open]);
+  }, [phase, reflectionChoiceOpen, componentAccess.open, timingGeneration]);
 
   useEffect(() => {
     if (phase !== 'quiz') return;
@@ -304,6 +338,22 @@ export default function QuizTakePage() {
     setPhase('quiz');
   };
 
+  const restartTiming = async () => {
+    if (recoveryInFlight.current || !quiz || !kind || !id || !canUseComponent) return;
+    recoveryInFlight.current = true; setRecoveringTiming(true);
+    try {
+      archiveTimingDraft(`learner_quiz_timer:v1:${kind}:${id}:${quiz.id}`, trackingSessionRef.current,
+        elapsedSeconds, { answers, reflection: lastSubmissionRef.current });
+      if (!trackingSessionRef.current) throw new Error('Keep this page open and contact support to restore your time.');
+      const session = await checkpointTimeTracking(trackingSessionRef.current, 'quiz', String(quiz.id), kind, id, elapsedSeconds);
+      trackingSessionRef.current = session; trackingPromiseRef.current = Promise.resolve(session);
+      setElapsedSeconds(value => Math.max(value, session.savedSeconds || 0)); setTimingGeneration(value => value + 1); setExpiredTiming(false); setSubmitError(null);
+      setTimingSyncError(null);
+      setTimingNotice('Your time has been restored. Your answers are kept. You can finish the quiz.');
+    } catch (error) { setSubmitError(error instanceof Error ? error.message : 'Could not restore your time. Your answers are kept.'); }
+    finally { recoveryInFlight.current = false; setRecoveringTiming(false); }
+  };
+
   const viewLatestResult = () => {
     if (!quiz || !latestAttempt) return;
     setResult(resultFromStoredAttempt(quiz, latestAttempt));
@@ -351,9 +401,14 @@ export default function QuizTakePage() {
     // never retakes anything and nothing they typed is lost.
     lastSubmissionRef.current = { reflection, skipReflection: options.skipReflection === true };
     try {
-      const tracking = trackingSessionRef.current || await trackingPromiseRef.current;
+      let tracking = trackingSessionRef.current || await trackingPromiseRef.current;
       if (!tracking) throw new Error('Quiz timing did not start. Reopen the quiz and try again.');
-      if (tracking.rewardTracking) await flushRewardObservations(tracking,'quiz',String(quiz.id));
+      if (tracking.persistent) {
+        tracking = await checkpointTimeTracking(tracking, 'quiz', String(quiz.id), kind, id, elapsedSeconds)
+          .catch(error => { setExpiredTiming(true); throw error; });
+        trackingSessionRef.current = tracking;
+      }
+      if (tracking.rewardTracking) await flushRewardObservations(tracking,'quiz',String(quiz.id), Boolean(tracking.persistent));
       const res = await submitQuizAttempt(quiz.id, kind as 'commercial' | 'apprenticeship', id, {
         answers,
         timeTakenSeconds: elapsedSeconds,
@@ -383,6 +438,7 @@ export default function QuizTakePage() {
         setSubmitError(null);
         return;
       }
+      if (timingSessionExpired(e)) setExpiredTiming(true);
       setSubmitError(e instanceof Error ? e.message : 'Could not submit quiz');
     } finally {
       completionInFlightRef.current = false;
@@ -413,6 +469,12 @@ export default function QuizTakePage() {
       <div className={`p-3 md:p-6 ${phase === 'reflect' ? 'max-w-none' : showSidebar ? 'max-w-7xl' : 'max-w-5xl'} mx-auto`}>
         <div className={showSidebar ? 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-6 items-start' : ''}>
         <div className="min-w-0">
+        {expiredTiming && <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4">
+          <p>Your time needs to sync before you finish. Your previous time and answers are kept.</p>
+          <button type="button" disabled={recoveringTiming} onClick={restartTiming} className="mt-2 font-semibold underline">{recoveringTiming ? 'Restoring...' : 'Restore saved time'}</button>
+        </div>}
+        {timingSyncError && <p role="status">{timingSyncError}</p>}
+        {timingNotice && <p role="status">{timingNotice}</p>}
         {loading || detailLoading ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} avatar={false} /></div>
         ) : loadError || detailError || !quiz ? (
@@ -516,6 +578,8 @@ export default function QuizTakePage() {
             submitting={submitting}
             error={submitError}
             onCancel={() => setReflectionChoiceOpen(false)}
+            onRecoverTiming={expiredTiming ? restartTiming : undefined}
+            recoveringTiming={recoveringTiming}
             onAddReflection={() => { setReflectionChoiceOpen(false); setPhase('reflect'); }}
             onFinishWithoutReflection={() => void finalizeSubmit(
               { ksbs: [], feedback: '', reportedTime: '' },
@@ -1179,6 +1243,10 @@ function QuizReadingPanel({ quizId, attemptNumber, kind, learnerId, quizTimeSeco
     setFinishing(true);
     setConfirmationError(null);
     try {
+      if (tracking.persistent) {
+        trackingRef.current = await checkpointTimeTracking(tracking, 'component', `quiz-reading:${quizId}:${attemptNumber}`,
+          kind, learnerId, elapsedSeconds);
+      }
       const completed = await completeQuizReading(
         quizId, kind, learnerId, attemptNumber, tracking.trackingToken, claimedSeconds, timeEntryMode,
       );

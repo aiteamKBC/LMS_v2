@@ -62,6 +62,35 @@ describe('BulkAttendanceModeModal', () => {
     expect(rowNames()).toEqual(['Select Alex Able']);
   });
 
+  it('filters by current attendance mode once the saved modes load', async () => {
+    const user = userEvent.setup();
+    fetchAttendanceModes.mockResolvedValue({ available: true, modes: {
+      '2': { mode: 'lazy', requestedMode: null },
+      '3': { mode: 'live', requestedMode: 'lazy' },
+    } });
+    render(<BulkAttendanceModeModal rows={ROWS} onClose={() => undefined} />);
+
+    const filter = screen.getByLabelText('Attendance mode');
+    await waitFor(() => expect(filter).toBeEnabled());
+
+    await user.selectOptions(filter, 'Recorded');
+    expect(rowNames()).toEqual(['Select Blake Bond']);
+
+    // No saved entry and a pending Recorded request both count as Live Sessions.
+    await user.selectOptions(filter, 'Live Sessions');
+    expect(rowNames()).toEqual(['Select Alex Able', 'Select Casey Cole']);
+
+    await user.selectOptions(filter, '');
+    expect(rowNames()).toHaveLength(3);
+  });
+
+  it('keeps the attendance mode filter disabled when modes cannot load', async () => {
+    fetchAttendanceModes.mockResolvedValue({ available: false, modes: {} });
+    render(<BulkAttendanceModeModal rows={ROWS} onClose={() => undefined} />);
+    await waitFor(() => expect(screen.getByText('Attendance mode is not available yet.')).toBeInTheDocument());
+    expect(screen.getByLabelText('Attendance mode')).toBeDisabled();
+  });
+
   it('shows each learner’s current attendance mode and updates it after applying', async () => {
     const user = userEvent.setup();
     fetchAttendanceModes.mockResolvedValue({ available: true, modes: {

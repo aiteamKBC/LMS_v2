@@ -4,8 +4,14 @@ from coach_api import migrated_template_views
 from system_audit import activity as system_activity
 
 from . import activity, learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
+from .archive_index import curriculum_archive_index
+from .record_snapshots import curriculum_record_snapshot
+from .module_live import curriculum_live, curriculum_module_changes
 from .teams_attendee_compare import teams_meeting_attendee_comparison
 from .teams_permission_check import teams_meeting_permission_check
+from .teams_imported_participants import imported_meeting_participants
+from .teams_imported_calendar_update import imported_calendar_update
+from .teams_imported_calendar_auth import imported_calendar_connect, imported_calendar_connection
 from .teams_dial_in import teams_meeting_dial_in
 from .teams_options_retry import teams_meeting_options_retry
 from .teams_endpoint_guard import teams_staff_required
@@ -18,6 +24,7 @@ from .bulk_attendance_learners import bulk_attendance_learners
 from .bulk_attendance_kbc_history import (
     bulk_attendance_kbc_history,
     bulk_attendance_kbc_recent,
+    bulk_attendance_day_learners,
     bulk_attendance_save_attendance,
 )
 from .bulk_attendance_live_day import bulk_attendance_live_day
@@ -38,6 +45,7 @@ urlpatterns = [
     path('curriculum/bulk-attendance/learners/', bulk_attendance_learners, name='curriculum-bulk-attendance-learners'),
     path('curriculum/bulk-attendance/kbc-history/', bulk_attendance_kbc_history, name='curriculum-bulk-attendance-kbc-history'),
     path('curriculum/bulk-attendance/kbc-recent/', bulk_attendance_kbc_recent, name='curriculum-bulk-attendance-kbc-recent'),
+    path('curriculum/bulk-attendance/day-learners/', bulk_attendance_day_learners, name='curriculum-bulk-attendance-day-learners'),
     path('curriculum/bulk-attendance/attendance/', bulk_attendance_save_attendance, name='curriculum-bulk-attendance-save-attendance'),
     path('curriculum/bulk-attendance/live-day/', bulk_attendance_live_day, name='curriculum-bulk-attendance-live-day'),
     path('curriculum/bulk-attendance/live-day-records/', bulk_attendance_live_day_records, name='curriculum-bulk-attendance-live-day-records'),
@@ -79,6 +87,8 @@ urlpatterns = [
     path('curriculum/review-types/<str:review_type_id>/', review_types.curriculum_review_type_detail, name='curriculum-review-type-detail'),
     path('curriculum/reviews/<str:review_id>/', reviews.curriculum_review_detail, name='curriculum-review-detail'),
     path('curriculum/overview/', views.curriculum_overview, name='curriculum-overview'),
+    # The Archive page's one read: every archived record, a page at a time.
+    path('curriculum/archive/', curriculum_archive_index, name='curriculum-archive-index'),
     path('curriculum/home-summary/', curriculum_home_summary, name='curriculum-home-summary'),
     path('curriculum/delivery-scope/', views.curriculum_delivery_scope, name='curriculum-delivery-scope'),
     path('curriculum/stats/', views.curriculum_stats, name='curriculum-stats'),
@@ -86,6 +96,11 @@ urlpatterns = [
     # to nothing in cost: one Redis read, no database.
     path('curriculum/cache-epoch/', views.curriculum_cache_epoch, name='curriculum-cache-epoch'),
     path('curriculum/revisions/', views.curriculum_record_revisions, name='curriculum-record-revisions'),
+    # The record a drawer edits and its token, read together so they agree.
+    path('curriculum/record-snapshot/', curriculum_record_snapshot, name='curriculum-record-snapshot'),
+    # Module Builder live sync: the counters an open module watches, off unless
+    # CURRICULUM_LIVE_SYNC=true. See module_live.
+    path('curriculum/live/', curriculum_live, name='curriculum-live'),
     path('curriculum/preview/cohort-end-date/', views.curriculum_preview_cohort_end_date, name='curriculum-preview-cohort-end-date'),
     path('curriculum/preview/module-session-plan/', views.curriculum_preview_module_session_plan, name='curriculum-preview-module-session-plan'),
     path('curriculum/preview/tutor-availability/', views.curriculum_preview_tutor_availability, name='curriculum-preview-tutor-availability'),
@@ -151,6 +166,8 @@ urlpatterns = [
     path('curriculum/modules/<str:module_catalogue_id>/archived-structure/', views.curriculum_archived_module_structure, name='curriculum-module-archived-structure'),
     path('curriculum/modules/<str:identifier>/restore/', views.curriculum_module_restore, name='curriculum-module-restore'),
     path('curriculum/modules/<str:module_catalogue_id>/structure/', views.curriculum_module_structure, name='curriculum-module-structure'),
+    # What changed since the copy an open Module Builder holds (read-only POST).
+    path('curriculum/modules/<str:module_catalogue_id>/changes/', curriculum_module_changes, name='curriculum-module-changes'),
     path('curriculum/modules/<str:module_catalogue_id>/settings/', views.curriculum_module_settings, name='curriculum-module-settings'),
     path('curriculum/modules/<str:module_catalogue_id>/session-plan/', views.curriculum_module_session_plan, name='curriculum-module-session-plan'),
     path('curriculum/modules/<str:module_catalogue_id>/ai-material/', views.curriculum_module_ai_material, name='curriculum-module-ai-material'),
@@ -179,6 +196,7 @@ urlpatterns = [
     # Must precede curriculum/components/<component_id>/, or "library" would be
     # captured as a component id.
     path('curriculum/components/library/', views.curriculum_component_library, name='curriculum-component-library'),
+    path('curriculum/components/summary/', views.curriculum_component_summary, name='curriculum-component-summary'),
     path('curriculum/components/', views.curriculum_component_collection, name='curriculum-components'),
     path('curriculum/components/<str:component_id>/upload/', views.curriculum_component_upload, name='curriculum-component-upload'),
     path('curriculum/components/<str:component_id>/ksb-mappings/', views.curriculum_component_ksb_mappings, name='curriculum-component-ksb-mappings'),
@@ -195,6 +213,12 @@ urlpatterns = [
     path('curriculum/teams-meetings/<str:live_session_id>/actions/', calendar_action, name='curriculum-teams-calendar-action'),
     path('curriculum/teams-meetings/<str:live_session_id>/compare-attendees/', teams_meeting_attendee_comparison, name='curriculum-teams-compare-attendees'),
     path('curriculum/teams-meetings/<str:live_session_id>/permission-check/', teams_meeting_permission_check, name='curriculum-teams-permission-check'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-participants/', imported_meeting_participants, name='curriculum-teams-imported-participants'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-calendar/connection/', imported_calendar_connection, name='curriculum-teams-imported-calendar-connection'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-calendar/connect/', imported_calendar_connect, name='curriculum-teams-imported-calendar-connect'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-calendar/preview/', imported_calendar_update, {'stage': 'preview'}, name='curriculum-teams-imported-calendar-preview'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-calendar/confirm/', imported_calendar_update, {'stage': 'confirm'}, name='curriculum-teams-imported-calendar-confirm'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-calendar/status/', imported_calendar_update, {'stage': 'status'}, name='curriculum-teams-imported-calendar-status'),
     path('curriculum/teams-meetings/<str:live_session_id>/dial-in/', teams_staff_required(teams_meeting_dial_in), name='curriculum-teams-dial-in'),
     path('curriculum/teams-meetings/<str:live_session_id>/retry-options/', teams_meeting_options_retry, name='curriculum-teams-retry-options'),
     path('curriculum/teams-meetings/<str:live_session_id>/occurrences/<int:session_number>/schedule/', teams_staff_required(views.curriculum_teams_meeting_occurrence_schedule), name='curriculum-teams-meeting-occurrence-schedule'),

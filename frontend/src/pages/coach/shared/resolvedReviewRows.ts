@@ -1,5 +1,6 @@
 import type { CoachCalendarEvent, CoachCalendarStatus } from './calendarEvents';
 import { canJoinMeeting, eventIdentity, hasScheduledSlot } from './calendarEvents';
+import { reviewCategory } from '@/lib/reviewCategory';
 
 export type NormalizedReviewStatus =
   | 'not-scheduled'
@@ -15,6 +16,17 @@ export interface ReviewActionMatrix {
   viewForm: boolean;
   presentation: boolean;
   join: boolean;
+}
+
+export function isImportedPersonalSupportPlan(event: {
+  reviewSource?: string | null; aptemReviewId?: string | null; importedReviewType?: string | null;
+}) {
+  return Boolean((event.reviewSource === 'aptem' || event.aptemReviewId)
+    && event.importedReviewType?.trim().toLowerCase() === 'personal support plan');
+}
+
+export function canRescheduleReconciledReview(event: Pick<CoachCalendarEvent, 'reviewSource' | 'reconciledReview' | 'calendarEventKey' | 'status'> | null | undefined) {
+  return Boolean(event?.reviewSource === 'aptem' && event.reconciledReview && event.calendarEventKey && event.status === 'scheduled');
 }
 
 /** Normalize source statuses only after both adapters have produced the common event contract. */
@@ -50,8 +62,14 @@ export function reviewActionMatrix(event: CoachCalendarEvent): ReviewActionMatri
   const importedActiveReview = Boolean(
     (event.reviewSource === 'aptem' || event.aptemReviewId) && status !== 'completed',
   );
+  const imported = Boolean(event.reviewSource === 'aptem' || event.aptemReviewId);
+  const importedSchedulable = imported && (['progress-review', 'mcr'].includes(reviewCategory(event)) || isImportedPersonalSupportPlan(event))
+    && (status === 'not-scheduled' || status === 'scheduled');
   return {
-    schedule: importedActiveReview ? null : status === 'not-scheduled' ? 'Schedule' : status === 'scheduled' ? 'Reschedule' : null,
+    // Aptem source dates alone do not identify a local booking to reschedule.
+    // The dialog loads the authoritative booking permissions before saving.
+    schedule: imported ? importedSchedulable ? status === 'scheduled' && event.calendarEventKey ? 'Reschedule' : 'Schedule' : null
+      : status === 'not-scheduled' ? 'Schedule' : status === 'scheduled' ? 'Reschedule' : null,
     view: true,
     // Imported reviews remain reachable through local progress and signature
     // stages even when the Aptem source still has summary metadata only.

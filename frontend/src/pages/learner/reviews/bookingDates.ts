@@ -1,4 +1,26 @@
-import type { BookingCalendarRules } from '@/api/learnerCalendar';
+import { ukOffsetForDate, type BookingCalendarRules } from '@/api/learnerCalendar';
+
+export function bookingToday(): string {
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  return ['year', 'month', 'day'].map(type => parts.find(part => part.type === type)!.value).join('-');
+}
+
+/** Booking inputs are UK wall-clock values, regardless of the browser timezone. */
+export function bookingInstant(day: string, time: string): number {
+  const wallClock = Date.parse(`${day}T${time}:00Z`);
+  if (!Number.isFinite(wallClock)) return NaN;
+  let instant = wallClock + ukOffsetForDate(day) * 60_000;
+  // Resolve the offset at the actual instant, including midnight on a DST
+  // change day when the noon offset is different from the start of the day.
+  const formatter = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const parts = formatter.formatToParts(new Date(instant));
+    const value = (type: string) => Number(parts.find(part => part.type === type)!.value);
+    const displayed = Date.UTC(value('year'), value('month') - 1, value('day'), value('hour'), value('minute'));
+    instant += wallClock - displayed;
+  }
+  return instant;
+}
 
 export function isoDate(value: Date): string {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
@@ -16,11 +38,20 @@ export function parseBookingDay(value?: string | null): Date | null {
   return selected.getFullYear() === year && selected.getMonth() === month - 1 && selected.getDate() === day ? selected : null;
 }
 
-export function firstAvailableBookingDate(candidate?: string | null, rules?: BookingCalendarRules | null): string {
-  const today = isoDate(new Date());
+export function mcmBookingDateRestrictionMessage(value: string): string {
+  const selected = parseBookingDay(value);
+  if (!selected) return value ? 'Choose a valid booking date.' : '';
+  return selected.getDate() > 5 && selected.getDate() < 20
+    ? 'MCM appointments are available from the 20th of each month through the 5th of the following month.'
+    : '';
+}
+
+export function firstAvailableBookingDate(candidate?: string | null, rules?: BookingCalendarRules | null, monthly = false): string {
+  const today = bookingToday();
   const valid = parseBookingDay(candidate) ? candidate! : '';
   const selected = new Date(`${valid && valid >= today ? valid : today}T12:00:00`);
-  while (selected.getDay() === 0 || selected.getDay() === 6 || rules?.bankHolidays?.some(day => day.date === isoDate(selected))) {
+  while (selected.getDay() === 0 || selected.getDay() === 6 || rules?.bankHolidays?.some(day => day.date === isoDate(selected))
+    || (monthly && mcmBookingDateRestrictionMessage(isoDate(selected)))) {
     selected.setDate(selected.getDate() + 1);
   }
   return isoDate(selected);
@@ -30,7 +61,7 @@ export function bookingDateRestrictionMessage(value: string, rules: BookingCalen
   if (!value) return '';
   const selected = parseBookingDay(value);
   if (!selected) return 'Choose a valid booking date.';
-  if (value < isoDate(new Date())) return 'Sessions cannot be booked on a date that has already passed.';
+  if (value < bookingToday()) return 'Sessions cannot be booked on a date that has already passed.';
   if (selected.getDay() === 0 || selected.getDay() === 6) return 'Sessions cannot be booked on Saturdays or Sundays.';
   const holiday = rules?.bankHolidays?.find(day => day.date === value);
   if (holiday) return `Sessions cannot be booked on UK bank holidays (${holiday.title}).`;

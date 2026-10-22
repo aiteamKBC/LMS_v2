@@ -5,9 +5,10 @@ import { feedbackApi, type FeedbackFormType, type LearnerFeedbackListItem } from
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useAuth } from '@/hooks/useAuth';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
+import { LEARNER_FEEDBACK_ENABLED } from '@/lib/featureFlags';
 import { roleNavMap } from '@/mocks/navigation';
 
-type FeedbackCategory = 'lecture' | 'mcm' | 'progress-review' | 'event' | 'general';
+type FeedbackCategory = 'mid-module' | 'end-module' | 'lecture' | 'mcm' | 'progress-review' | 'event' | 'general';
 
 const CATEGORIES: Array<{
   id: FeedbackCategory;
@@ -17,6 +18,8 @@ const CATEGORIES: Array<{
   tone: string;
   wash: string;
 }> = [
+  { id: 'mid-module', title: 'Mid-module Feedback', description: 'Share your experience halfway through your module.', icon: 'ri-calendar-check-line', tone: 'bg-teal-100 text-teal-700 ring-teal-200', wash: 'from-teal-50' },
+  { id: 'end-module', title: 'End-module Feedback', description: 'Reflect on your module when its end date arrives.', icon: 'ri-flag-line', tone: 'bg-indigo-100 text-indigo-700 ring-indigo-200', wash: 'from-indigo-50' },
   { id: 'lecture', title: 'Lecture Feedback', description: 'Feedback for every lecture you attended.', icon: 'ri-presentation-line', tone: 'bg-violet-100 text-violet-700 ring-violet-200', wash: 'from-violet-50' },
   { id: 'mcm', title: 'MCM Feedback', description: 'Feedback after a completed Monthly Coaching Meeting.', icon: 'ri-user-voice-line', tone: 'bg-fuchsia-100 text-fuchsia-700 ring-fuchsia-200', wash: 'from-fuchsia-50' },
   { id: 'progress-review', title: 'Progress Review Feedback', description: 'Feedback after a completed Progress Review.', icon: 'ri-line-chart-line', tone: 'bg-amber-100 text-amber-700 ring-amber-200', wash: 'from-amber-50' },
@@ -32,10 +35,12 @@ export default function LearnerFeedbackPage() {
   const requestedKind = params.get('kind') || undefined;
   const requestedLearnerId = params.get('learnerId') || undefined;
   const requestedCategory = params.get('category');
-  const activeCategory = CATEGORIES.find(category => category.id === requestedCategory) || null;
   const resolved = useResolvedLearner(requestedKind, requestedLearnerId);
   const account = auth.account;
   const isLearner = account?.role === 'learner' && account.subjectType === 'learner';
+  const limitedFeedback = !LEARNER_FEEDBACK_ENABLED && isLearner;
+  const availableCategories = limitedFeedback ? CATEGORIES.filter(category => ['lecture', 'mid-module', 'end-module'].includes(category.id)) : CATEGORIES;
+  const activeCategory = availableCategories.find(category => category.id === requestedCategory) || null;
   const learnerId = isLearner ? String(account.subjectId) : resolved.id;
   const learnerKind = isLearner ? account.learnerType || 'apprenticeship' : resolved.kind;
   const preview = Boolean(account && !isLearner);
@@ -81,6 +86,8 @@ export default function LearnerFeedbackPage() {
 
   const formsByCategory = useMemo(() => ({
     lecture: forms.filter(form => categoryFor(form) === 'lecture'),
+    'mid-module': forms.filter(form => categoryFor(form) === 'mid-module'),
+    'end-module': forms.filter(form => categoryFor(form) === 'end-module'),
     mcm: forms.filter(form => categoryFor(form) === 'mcm'),
     'progress-review': forms.filter(form => categoryFor(form) === 'progress-review'),
     event: forms.filter(form => categoryFor(form) === 'event'),
@@ -110,7 +117,7 @@ export default function LearnerFeedbackPage() {
       {preview && learnerId && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-800">Viewing this learner’s feedback assignments. Preview is read-only; only the learner can submit a response.</div>}
       {activeCategory
         ? <CategoryView category={activeCategory} forms={selectedForms} lectureGroups={lectureGroups} loading={loading} onBack={() => navigate(`/learner/feedback${previewQuery}`)} onRefresh={loadForms} onOpen={openForm} />
-        : <CategoryCards formsByCategory={formsByCategory} loading={loading} onOpen={category => {
+        : <CategoryCards categories={availableCategories} formsByCategory={formsByCategory} loading={loading} onOpen={category => {
           const search = contextSearch(category);
           navigate(`/learner/feedback${search ? `?${search}` : ''}`);
         }} />}
@@ -118,13 +125,14 @@ export default function LearnerFeedbackPage() {
   </WorkspaceShell>;
 }
 
-function CategoryCards({ formsByCategory, loading, onOpen }: {
+function CategoryCards({ categories, formsByCategory, loading, onOpen }: {
+  categories: typeof CATEGORIES;
   formsByCategory: Record<FeedbackCategory, LearnerFeedbackListItem[]>;
   loading: boolean;
   onOpen: (category: FeedbackCategory) => void;
 }) {
   return <section aria-label="Feedback types" className="grid gap-4 md:grid-cols-3">
-    {CATEGORIES.map(category => {
+    {categories.map(category => {
       const forms = formsByCategory[category.id];
       const outstanding = forms.filter(form => form.status !== 'completed').length;
       const completed = forms.length - outstanding;
@@ -145,12 +153,12 @@ function CategoryView({ category, forms, lectureGroups, loading, onBack, onRefre
   forms: LearnerFeedbackListItem[];
   lectureGroups: Array<{ moduleName: string; forms: LearnerFeedbackListItem[] }>;
   loading: boolean;
-  onBack: () => void;
+  onBack?: () => void;
   onRefresh: () => Promise<void>;
   onOpen: (form: LearnerFeedbackListItem) => void;
 }) {
   return <div className="space-y-4">
-    <div className="flex items-center justify-between gap-3"><button type="button" onClick={onBack} className="rounded-lg border border-foreground-200 bg-white px-3 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-50"><i className="ri-arrow-left-line mr-1" />All feedback types</button><button type="button" disabled={loading} onClick={() => void onRefresh()} className="rounded-lg border border-foreground-200 bg-white px-3 py-2 text-xs font-semibold text-primary-700 disabled:opacity-50"><i className="ri-refresh-line mr-1" />Refresh</button></div>
+    <div className="flex items-center justify-between gap-3">{onBack && <button type="button" onClick={onBack} className="rounded-lg border border-foreground-200 bg-white px-3 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-50"><i className="ri-arrow-left-line mr-1" />All feedback types</button>}<button type="button" disabled={loading} onClick={() => void onRefresh()} className="rounded-lg border border-foreground-200 bg-white px-3 py-2 text-xs font-semibold text-primary-700 disabled:opacity-50"><i className="ri-refresh-line mr-1" />Refresh</button></div>
     {loading ? <div className="rounded-xl border border-foreground-200/60 bg-white p-10 text-center text-sm text-foreground-400">Loading…</div>
       : category.id === 'lecture' && lectureGroups.length
         ? <div className="space-y-5">{lectureGroups.map(group => {
@@ -179,6 +187,8 @@ function FeedbackCard({ form, category, onOpen }: { form: LearnerFeedbackListIte
 function categoryFor(form: LearnerFeedbackListItem): FeedbackCategory {
   const type: FeedbackFormType = form.formType || (form.deliveryId ? 'post_lecture' : form.eventRecipientId ? 'post_event' : 'general');
   if (type === 'post_lecture') return 'lecture';
+  if (type === 'mid_module') return 'mid-module';
+  if (type === 'end_module') return 'end-module';
   if (type === 'post_mcm_review') return 'mcm';
   if (type === 'post_progress_review') return 'progress-review';
   if (type === 'post_event') return 'event';

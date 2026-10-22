@@ -1,4 +1,5 @@
 from django.urls import path
+from .migrated_reopening_views import reopen_review, coach_revision_pdf
 
 from .ai_marking import coach_marking_ai_feedback, coach_marking_ai_prompt
 from .csrf import coach_csrf_token
@@ -6,6 +7,7 @@ from .bulk_attendance import coach_bulk_attendance
 from .attendance_loading import coach_attendance_options, coach_attendance_group, coach_attendance_session, coach_attendance_sessions, coach_attendance_context
 from . import personal_learning
 from . import monthly_logs
+from . import lms_support_tickets
 from .monthly_reports import coach_monthly_report_detail, coach_monthly_reports
 from .support_tickets import (
     coach_support_ticket_notes,
@@ -88,6 +90,8 @@ urlpatterns = [
     path('migrated-reviews/<str:review_id>/summary', migrated_review_summary, name='migrated-review-summary'),
     path('migrated-reviews/<str:review_id>/summary/from-upload', migrated_review_summary_upload, name='migrated-review-summary-upload'),
     path('migrated-reviews/<str:review_id>/submit', migrated_review_submit, name='migrated-review-submit'),
+    path('migrated-reviews/<str:review_id>/reopen', reopen_review, name='migrated-review-reopen'),
+    path('migrated-reviews/<str:review_id>/revisions/<int:number>/pdf', coach_revision_pdf, name='migrated-review-revision-pdf'),
     path('migrated-reviews/<str:review_id>/coach-sign', migrated_review_coach_sign, name='migrated-review-coach-sign'),
     path('migrated-reviews/<str:review_id>/complete', migrated_review_complete, name='migrated-review-complete'),
     path('migrated-reviews/<str:review_id>/generate-pdf', migrated_review_generate_pdf, name='migrated-review-generate-pdf'),
@@ -131,6 +135,9 @@ urlpatterns = [
     path('coach/monthly-reports/<uuid:report_id>', coach_monthly_report_detail, name='coach-monthly-report-detail'),
     path('coach/monthly-reports', coach_monthly_reports, name='coach-monthly-reports'),
     path('coach/support-tickets', coach_support_tickets, name='coach-support-tickets'),
+    path('coach/lms-support-tickets', lms_support_tickets.collection),
+    path('coach/lms-support-tickets/<uuid:ticket_id>', lms_support_tickets.detail),
+    path('coach/lms-support-tickets/<uuid:ticket_id>/attachments/<uuid:attachment_id>', lms_support_tickets.attachment),
     path('coach/support-tickets/<int:ticket_id>/status', coach_support_ticket_status, name='coach-support-ticket-status'),
     path('coach/support-tickets/<int:ticket_id>/notes', coach_support_ticket_notes, name='coach-support-ticket-notes'),
     path('coach/support-tickets/<int:ticket_id>/wellbeing-report', coach_support_ticket_wellbeing_report, name='coach-support-ticket-wellbeing-report'),

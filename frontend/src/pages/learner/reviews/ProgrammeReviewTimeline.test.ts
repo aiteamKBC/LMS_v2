@@ -42,4 +42,19 @@ describe('programme review timeline status', () => {
     expect(completedReviewTimelineStatus(event(), attendance({ missed: true }), 'awaiting-signature')).toBe('missed');
     expect(completedReviewTimelineStatus(event(), attendance({ status: 'scheduled' }), 'in-progress')).toBe('in-progress');
   });
+
+  it('separates a review waiting for signatures from one that is only booked', () => {
+    expect(reviewTimelineStatus(event({ status: 'awaiting-signature' }))).toBe('awaiting-signature');
+    expect(reviewTimelineStatus(event({ status: 'awaiting signature', scheduledDate: null }))).toBe('awaiting-signature');
+    expect(reviewTimelineStatus(event({ bookingStatus: 'awaiting-signature' }))).toBe('awaiting-signature');
+    expect(completedReviewTimelineStatus(event(), undefined, 'awaiting-signature')).toBe('awaiting-signature');
+    expect(completedReviewTimelineStatus(event({ status: 'awaiting-signature' }), attendance({ status: 'scheduled' }))).toBe('awaiting-signature');
+  });
+
+  it('keeps attendance evidence and closed bookings ahead of the signature stage', () => {
+    expect(completedReviewTimelineStatus(event(), attendance({ attendanceConfirmed: true }), 'awaiting-signature')).toBe('attended');
+    expect(completedReviewTimelineStatus(event({ status: 'awaiting-signature' }), undefined, 'completed')).toBe('attended');
+    expect(completedReviewTimelineStatus(event({ status: 'awaiting-signature' }), undefined, 'in-progress')).toBe('in-progress');
+    expect(completedReviewTimelineStatus(event({ status: 'awaiting-signature', bookingStatus: 'cancelled' }))).toBe('planned');
+  });
 });

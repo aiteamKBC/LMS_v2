@@ -45,6 +45,9 @@ import {
 import { normalizeResolvedReview, normalizeResolvedReviews, reviewActionMatrix } from '../shared/resolvedReviewRows';
 import { MeetingActionsMenu } from './components/MeetingActionsMenu';
 import styles from './monthlyCoaching.module.css';
+import { ReviewIdentityNotice } from '../shared/ReviewIdentityNotice';
+import ImportedReviewBookingDialog from '../shared/ImportedReviewBookingDialog';
+import type { CoachReviewGenerationIssue } from '../shared/calendarEvents';
 
 const coachNav = roleNavMap.coach;
 
@@ -212,6 +215,8 @@ export default function CoachMonthlyCoaching() {
   const [currentPage, setCurrentPage] = useState(() => pageFromQuery(searchParams.get('page')));
   const [sortOrder, setSortOrder] = useState<'date-asc' | 'date-desc' | 'learner-asc'>('date-desc');
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [importedBookingEvent, setImportedBookingEvent] = useState<CoachCalendarEvent | null>(null);
+  const [bookingNotice, setBookingNotice] = useState<string | null>(null);
   const [scheduleLearnerKeyValue, setScheduleLearnerKeyValue] = useState('');
   const [scheduleLearnerSearch, setScheduleLearnerSearch] = useState('');
   const [scheduleEventKey, setScheduleEventKey] = useState('');
@@ -223,8 +228,9 @@ export default function CoachMonthlyCoaching() {
   const [slidesEvent, setSlidesEvent] = useState<CoachCalendarEvent | null>(null);
   const [slidesError, setSlidesError] = useState<string | null>(null);
   const cacheKey = coachSessionKey('monthly-coaching', coach.email, 'all-months');
-  const initialCache = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string }>(cacheKey);
+  const initialCache = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string; issues?: CoachReviewGenerationIssue[] }>(cacheKey);
   const [events, setEvents] = useState<CoachCalendarEvent[]>(() => initialCache?.events || []);
+  const [issues, setIssues] = useState<CoachReviewGenerationIssue[]>(() => initialCache?.issues || []);
   const [ownerName, setOwnerName] = useState(() => initialCache?.ownerName || 'Coach');
   const [loading, setLoading] = useState(() => !initialCache);
   const [error, setError] = useState<string | null>(null);
@@ -244,13 +250,15 @@ export default function CoachMonthlyCoaching() {
     if (!coach.isInitialized) return;
     if (!coach.email) {
       setEvents([]);
+      setIssues([]);
       setOwnerName(coach.name);
       setError('Coach access is required to load coaching meetings.');
       setLoading(false);
       return;
     }
     const controller = new AbortController();
-    const cached = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string }>(cacheKey);
+    const cached = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string; issues?: CoachReviewGenerationIssue[] }>(cacheKey);
+    setIssues(cached?.issues || []);
     if (cached) {
       setEvents(cached.events);
       setOwnerName(cached.ownerName);
@@ -266,7 +274,9 @@ export default function CoachMonthlyCoaching() {
       .then((data) => {
         const nextEvents = sortEvents(normalizeResolvedReviews((data.events || []).filter(event => event.source === 'mcr')));
         const nextOwnerName = data.owner?.name || coach.name;
-        writeCoachSessionCache(cacheKey, { events: nextEvents, ownerName: nextOwnerName });
+        const nextIssues = data.reviewGenerationIssues || [];
+        writeCoachSessionCache(cacheKey, { events: nextEvents, ownerName: nextOwnerName, issues: nextIssues });
+        setIssues(nextIssues);
         setEvents(nextEvents);
         setOwnerName(nextOwnerName);
       })
@@ -492,6 +502,11 @@ export default function CoachMonthlyCoaching() {
   };
 
   const scheduleMeeting = (selectedEvent?: CoachCalendarEvent) => {
+    if (selectedEvent?.reviewSource === 'aptem' || selectedEvent?.aptemReviewId) {
+      setBookingNotice(null);
+      setImportedBookingEvent(selectedEvent);
+      return;
+    }
     const preferred = selectedEvent || schedulableEvents.find(event => needsScheduling(event)) || schedulableEvents[0];
     const learnerKey = preferred ? scheduleLearnerKey(preferred) : '';
     const learner = scheduleLearnerOptions.find(option => option.value === learnerKey);
@@ -545,6 +560,8 @@ export default function CoachMonthlyCoaching() {
           <img src={CALENDAR_IMAGE_URL} alt="" aria-hidden="true" width={312} height={312} />
         </section>
         {error ? <EmptyState variant="error" title="Unable to load coaching meetings." description={error} /> : null}
+        <ReviewIdentityNotice issues={issues} />
+        {bookingNotice ? <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{bookingNotice}</p> : null}
         <section className={styles.controlsCard} aria-label="Coaching meeting filters and summary">
           <div className={styles.toolbar}>
           <div className={styles.monthNav} aria-label="Meeting month">
@@ -611,6 +628,19 @@ export default function CoachMonthlyCoaching() {
           <ProgressReviewPptxModal kind="mcm" access="viewer" open target={slidesTargetFromEvent(slidesEvent)} onClose={() => setSlidesEvent(null)} />
         ) : null}
       </PageContainer>
+      {importedBookingEvent ? <ImportedReviewBookingDialog
+        key={`${coach.email}:${eventIdentity(importedBookingEvent)}`}
+        event={importedBookingEvent}
+        viewingAsCoach={coach.isViewingAsCoach}
+        onClose={() => setImportedBookingEvent(null)}
+        onSaved={(updated, notice) => {
+          const nextEvents = sortEvents(events.map(event => eventIdentity(event) === eventIdentity(updated) ? updated : event));
+          setEvents(nextEvents);
+          writeCoachSessionCache(cacheKey, { events: nextEvents, ownerName, issues });
+          setBookingNotice(notice);
+          setImportedBookingEvent(null);
+        }}
+      /> : null}
       {scheduleModalOpen ? (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm" onClick={() => { if (!scheduleBusy) setScheduleModalOpen(false); }}>
           <div role="dialog" aria-modal="true" aria-labelledby="schedule-meeting-title" className="w-full max-w-[620px] rounded-2xl border border-foreground-200 bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>

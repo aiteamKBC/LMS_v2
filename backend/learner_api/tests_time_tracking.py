@@ -92,11 +92,29 @@ class TimeTrackingSessionTests(SimpleTestCase):
             session = issue_tracking_session(activity_kind='video', activity_id='COMP-1',
                 learner_kind='apprenticeship', learner_id='230', counting_mode='active_playback',
                 issued_at=self.started_at)
-        with patch('django.core.signing.time.time', return_value=100 + 86401):
+        # Expired legacy signatures may only resume when a durable checkpoint
+        # exists. This unit test has no database; the storage suite tests both
+        # real missing and recovered rows.
+        with patch('django.core.signing.time.time', return_value=100 + 86401), \
+                patch('learner_api.timing_drafts.ActivityTimingDraft.objects') as drafts:
+            drafts.using.return_value.filter.return_value.first.return_value = None
             with self.assertRaises(TrackingSessionError) as raised:
                 verify_tracking_session(session['trackingToken'], activity_kind='video', activity_id='COMP-1',
                     learner_kind='apprenticeship', learner_id='230', claimed_seconds=12,
                     submitted_at=self.started_at + timedelta(seconds=20))
+        self.assertEqual(raised.exception.code, 'expired_tracking_session')
+
+    def test_reward_observation_expiry_keeps_its_recoverable_reason(self):
+        import inspect
+        import json
+        from types import SimpleNamespace
+        from . import reward_tracking, mobile
+        request = SimpleNamespace(body=json.dumps({'trackingToken': 'expired', 'activityKind': 'video', 'activityId': 'COMP-1'}).encode(),
+                                  mobile_context=(None, SimpleNamespace(pk=230), 'apprenticeship', SimpleNamespace(pk=23)))
+        with patch.object(reward_tracking, 'resolve', return_value={}), patch.object(reward_tracking, 'verify_tracking_session',
+                side_effect=TrackingSessionError('The activity timing session has expired.', code='expired_tracking_session')):
+            with self.assertRaises(mobile.MobileError) as raised:
+                inspect.unwrap(reward_tracking.observations)(request)
         self.assertEqual(raised.exception.code, 'expired_tracking_session')
 
     def test_counting_mode_must_match_activity_kind(self):

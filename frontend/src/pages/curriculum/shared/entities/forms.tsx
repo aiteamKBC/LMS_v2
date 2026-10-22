@@ -126,6 +126,7 @@ export function ProgrammeFormDrawer({
     // be stale against, so there is no token to read and nothing to guard.
     programme ? programmeIdentity(programme) : undefined,
     open,
+    programme,
   );
   // `programme` gets a new identity on every background refresh of the list
   // behind this drawer, and this effect depends on it. Without the guard the
@@ -332,7 +333,7 @@ export function CohortFormDrawer({
   // replaced, and hands the stored cohort back for the merge below to fold
   // this reader's outstanding changes into. Polling still decides how soon a
   // colleague's change appears; it no longer decides whether it survives.
-  const guard = useRecordGuard<CurriculumCohort>('cohort', cohort?.id, open);
+  const guard = useRecordGuard<CurriculumCohort>('cohort', cohort?.id, open, cohort);
   // `programmes` is in the seeding effect's dependencies and gets a new identity
   // on every background refresh; without this the list landing mid-edit reset the
   // form. See useFormSeedGuard.
@@ -1000,7 +1001,7 @@ export function GroupFormDrawer({
   // replaced, and hands the stored group back for the merge below. It matters
   // most here: the slot is what the Teams calendar is built from, so putting a
   // colleague's day change back would move real meetings.
-  const guard = useRecordGuard<CurriculumGroup>('group', group?.id, open);
+  const guard = useRecordGuard<CurriculumGroup>('group', group?.id, open, group);
   // `cohorts` is a dependency of the seeding effect and gets a new identity on
   // every background refresh; without this a reload landing mid-edit reset the
   // form. See useFormSeedGuard.

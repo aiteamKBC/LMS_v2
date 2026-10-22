@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 
 from test_session_results_no_db import ROOT, functions
 from curriculum_api import session_transfer_progress as progress
+from curriculum_api.session_sync_issues import sync_issues
 
 
 class TransferProgressTests(unittest.TestCase):
@@ -88,8 +89,9 @@ class ProgressPersistenceTests(unittest.TestCase):
                  'transfer': {'phase': 'downloading', 'bytesTransferred': 25, 'totalBytes': 100,
                               'updatedAt': '2026-09-17T12:00:00Z', 'leaseId': 'private', 'url': 'private'}},
                 {'live_session_id': 'OTHER', 'session_number': 6, 'artifact_type': 'transcript', 'status': 'ready'}]
-        ns = {'read': Mock(return_value=rows), 'summarize_transfers': progress.summarize_transfers}
-        functions(ROOT/'session_results.py', {'add_sync_progress'}, ns)
+        ns = {'read': Mock(return_value=rows), 'summarize_transfers': progress.summarize_transfers,
+              'sync_issues': sync_issues, 'instant': lambda value: value}
+        functions(ROOT/'session_results.py', {'add_sync_progress', 'add_issue_weeks'}, ns)
         jobs = [{'live_session_id': 'S', 'state': 'running'}]
         ns['add_sync_progress'](jobs)
         sql, params = ns['read'].call_args.args
@@ -103,6 +105,30 @@ class ProgressPersistenceTests(unittest.TestCase):
             jobs[0]['state'] = state
             ns['add_sync_progress'](jobs)
             self.assertIsNone(jobs[0]['progress']['transfer'])
+
+    def test_failed_issue_names_its_linked_item_and_week_only_when_unambiguous(self):
+        from collections import defaultdict
+        ns = {'read': Mock(return_value=[
+                  {'live_session_id': 'S', 'session_number': 3, 'component_id': 'C3', 'title': 'Join the LIVE session',
+                   'week_id': 'W3', 'week_number': 3, 'week_title': 'Governance'},
+                  {'live_session_id': 'S', 'session_number': 5, 'component_id': 'C5', 'title': 'Live A',
+                   'week_id': 'W5', 'week_number': 5, 'week_title': ''},
+                  {'live_session_id': 'S', 'session_number': 5, 'component_id': 'C6', 'title': 'Live B',
+                   'week_id': 'W6', 'week_number': 6, 'week_title': ''}]),
+              'defaultdict': defaultdict, 'DatabaseError': Exception, 'log': Mock()}
+        functions(ROOT/'session_results.py', {'add_issue_weeks', 'linked_session_items'}, ns)
+        jobs = [{'live_session_id': 'S', 'issues': [{'sessionNumber': 3}, {'sessionNumber': 5}, {'sessionNumber': 9}, {'sessionNumber': None}]}]
+        ns['add_issue_weeks'](jobs)
+        issues = jobs[0]['issues']
+        self.assertEqual(issues[0]['sessionTitle'], 'Join the LIVE session')
+        self.assertEqual(issues[0]['week'], {'number': 3, 'title': 'Governance'})
+        # Two items in two weeks claim session 5: neither name is guessed.
+        self.assertEqual((issues[1]['sessionTitle'], issues[1]['week']), (None, None))
+        self.assertEqual((issues[2]['sessionTitle'], issues[2]['week']), (None, None))
+        self.assertEqual(ns['read'].call_args.args[1], [['S']])
+        ns['read'].reset_mock()
+        ns['add_issue_weeks']([{'live_session_id': 'S', 'issues': []}])
+        ns['read'].assert_not_called()  # no extra query when nothing failed
 
     def test_counts_partial_success_and_ignores_bad_or_ready_telemetry(self):
         rows = [{'status': 'ready', 'transfer': {'phase': 'downloading'}},

@@ -9,6 +9,36 @@ from unittest.mock import Mock
 
 
 class CourseDisplayTests(unittest.TestCase):
+    def test_stored_section_identity_survives_different_upload_dates_and_missing_export(self):
+        for index, row in enumerate(self.definitions[:2]):
+            row.update(source_section_ref='12', source_section_title='Week 04: Delivery',
+                       source_payload={'section_order': 6 if index == 0 else None,
+                                       'component_order': index + 1, 'created_at': f'2026-09-{index + 1:02}'})
+        before = copy.deepcopy(self.definitions)
+        items = self.project([])
+        self.assertEqual([item['source_section']['id'] for item in items[:2]], ['12', '12'])
+        self.assertEqual([item['source_section']['order'] for item in items[:2]], [6, 6])
+        self.assertEqual([item['source_section']['component_order'] for item in items[:2]], [1, 2])
+        self.assertEqual(self.definitions, before)
+
+    def test_conflicting_and_foreign_section_metadata_cannot_merge_owned_content(self):
+        self.definitions[0].update(source_section_ref='1', source_section_title='Original')
+        items = self.project([self.placement(10, 'Other', 2), self.placement(20, 'Foreign', course=99)])
+        self.assertNotIn('source_section', items[0])
+        self.assertNotIn('source_section', items[2])
+        self.assertEqual(len(items), 4)
+
+    def test_section_zero_is_not_a_real_week_and_linked_pair_inherits_exact_section(self):
+        parent, quiz = self.definitions[:2]
+        parent.update(source_section_ref='0', source_payload={'quiz_id': 10}, material_available=True)
+        quiz.update(source_section_ref='7', source_section_title='Week 02: Principles',
+                    source_payload={'activity_id': 10, 'section_order': 4, 'component_order': 2})
+        items = self.project([])
+        self.assertEqual(items[0]['source_section'], items[1]['source_section'])
+        self.assertEqual(items[0]['source_section']['id'], '7')
+        quiz['source_payload']['activity_id'] = 99
+        self.assertNotIn('source_section', self.project([])[0])
+
     def setUp(self):
         self.scope = adapter(Mock())
         self.courses = [{'source_course_ref': '50', 'source_course_title': 'Course'}]
@@ -171,12 +201,13 @@ class CourseDisplayTests(unittest.TestCase):
         self.assertEqual(items[0]['month'], '2026-08')
         self.assertEqual(items[1]['month'], 'undated')  # quiz:10 has its own identity
 
-    def test_upload_does_not_override_lecture_or_resolve_conflicting_sections(self):
+    def test_upload_follows_confirmed_lecture_but_can_place_unresolved_sections(self):
         self.definitions[0]['source_payload'] = {'created_at': '2026-08-23 08:22:49'}
         item = self.project([self.placement(10, 'Lecture 12/8/26')])[0]
         self.assertEqual(item['date'], '2026-08-12')
         item = self.project([self.placement(10, 'March 2026', 1), self.placement(10, 'April 2026', 2)])[0]
-        self.assertEqual(item['month'], 'undated')
+        self.assertEqual(item['month'], '2026-08')
+        self.assertEqual(item['date_source'], 'original_created_at')
         self.assertTrue(item['date_needs_review'])
 
     def test_verified_quiz_parent_schedule_precedes_its_upload_and_report_months(self):
@@ -188,7 +219,7 @@ class CourseDisplayTests(unittest.TestCase):
         self.assertEqual(item['date'], '2026-08-12')
         self.assertTrue(item['completed'])
 
-    def test_missing_invalid_or_conflicting_source_dates_do_not_use_reporting_or_import_dates(self):
+    def test_unresolved_source_dates_use_learner_execution_but_never_import_dates(self):
         record = fixtures.CourseCatalogueTests.record(reporting_month='2026-10',
             reporting_started_at='2026-10-06T08:00:56Z')
         self.definitions[0]['first_seen_at'] = '2026-10-01T00:00:00Z'
@@ -196,13 +227,54 @@ class CourseDisplayTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.definitions[0]['source_payload'] = {'created_at': value}
                 item = self.project([], [record])[0]
-                self.assertEqual(item['month'], 'undated')
-                self.assertIsNone(item['date'])
+                self.assertEqual(item['month'], '2026-10')
+                self.assertEqual(item['date'], '2026-10-06')
+                self.assertEqual(item['date_source'], 'learner_activity_record')
                 self.assertTrue(item['completed'])
+                self.assertEqual(self.project([])[0]['month'], 'undated')
         self.definitions[0]['source_payload'] = {'created_at': '2026-08-08'}
         item = self.project([{**self.placement(10, 'Resources'), 'original_created_at': '2026-08-07T00:00:00Z'}], [record])[0]
-        self.assertEqual(item['date_source'], 'source_date_needs_review')
-        self.assertEqual(item['month'], 'undated')
+        self.assertEqual(item['date_source'], 'learner_activity_record')
+        self.assertEqual(item['month'], '2026-10')
+
+    def test_two_learners_can_place_same_undated_activity_in_different_months(self):
+        before = copy.deepcopy(self.definitions)
+        first = self.project([], [fixtures.CourseCatalogueTests.record(
+            submitted_at='2026-03-31T23:30:00Z', reporting_month='2026-09')])[0]
+        second = self.project([], [fixtures.CourseCatalogueTests.record(
+            submitted_at='2026-05-09T12:00:00Z', reporting_month='2026-09')])[0]
+        self.assertEqual((first['month'], first['date']), ('2026-04', '2026-04-01'))
+        self.assertEqual(second['month'], '2026-05')
+        self.assertEqual(self.project([])[0]['month'], 'undated')
+        self.assertEqual(self.definitions, before)
+        self.assertEqual((first['completed'], second['completed']), (True, True))
+        self.assertEqual((first['actual'], second['actual']), (1, 1))
+
+    def test_month_only_execution_does_not_invent_a_day_or_cross_course_identity(self):
+        record = fixtures.CourseCatalogueTests.record(reporting_month='2026-06')
+        item = self.project([], [record])[0]
+        self.assertEqual(item['month'], '2026-06')
+        self.assertIsNone(item['date'])
+        self.assertIsNone(item['week_start'])
+        other = fixtures.CourseCatalogueTests.record(course='99', reporting_month='2026-06')
+        self.assertEqual(self.project([], [other])[0]['month'], 'undated')
+        self.assertEqual(self.project([], [record])[1]['month'], 'undated')  # quiz:10 is distinct
+
+    def test_completed_execution_wins_over_later_failed_attempt_without_losing_hours(self):
+        done = fixtures.CourseCatalogueTests.record(submitted_at='2026-04-09T12:00:00Z')
+        failed = fixtures.CourseCatalogueTests.record(ident=2, accepted=False, actual_seconds=0,
+            activity_status='failed', submitted_at='2026-10-09T12:00:00Z')
+        for records in ([done, failed], [failed, done]):
+            item = self.project([], records)[0]
+            self.assertEqual(item['month'], '2026-04')
+            self.assertTrue(item['completed'])
+            self.assertEqual(item['actual'], 1)
+
+    def test_full_activity_title_can_supply_year_missing_from_section(self):
+        self.definitions[0]['source_section_title'] = '31 Jan Lecture'
+        self.definitions[0]['source_activity_title'] = '31 January 2025 - Lecture 2'
+        self.definitions[0]['source_payload'] = {'created_at': '2025-02-06'}
+        self.assertEqual(self.project([])[0]['date'], '2025-01-31')
 
     def test_intro_display_does_not_rewrite_historical_record(self):
         record = fixtures.CourseCatalogueTests.record(reporting_month='2026-06',

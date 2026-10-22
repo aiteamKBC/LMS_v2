@@ -446,48 +446,78 @@ def _display_quiz_title(title):
 
 
 def _resolve_week_ids(weeks):
-    """Map each week entry to its real curriculum.weeks id.
-    Structured-plan weeks already carry weekId; legacy (pre-id) weeks are
-    resolved by module+week title, mirroring _otjh_by_legacy_title."""
-    resolved = {}  # (module, week) -> week_id
+    """Resolve missing IDs without merging same-titled module deliveries.
+
+    Native identities remain authoritative. A title-only legacy row resolves
+    only when both its module and its week are unambiguous.
+    """
+    candidates = {}
+
+    def add(key, week_id):
+        if week_id:
+            candidates.setdefault(key, set()).add(week_id)
+
+    for week in weeks:
+        if week.get("weekId"):
+            add((week.get("module"), week.get("week")), week["weekId"])
+            if week.get("moduleId"):
+                add(("moduleId", _s(week["moduleId"]), week.get("week")), week["weekId"])
     legacy = [w for w in weeks if not w.get("weekId") and w.get("module") and w.get("week")]
-
-    for w in weeks:
-        if w.get("weekId"):
-            resolved[(w.get("module"), w.get("week"))] = w["weekId"]
-
     if not legacy:
-        return resolved
+        return {key: next(iter(ids)) for key, ids in candidates.items() if len(ids) == 1}
 
     module_titles = sorted({w["module"] for w in legacy})
+    explicit_module_ids = sorted({_s(w["moduleId"]) for w in legacy if w.get("moduleId")})
+    ambiguous_keys = set()
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
                 "SELECT module_catalogue_id, title FROM curriculum.modules "
-                "WHERE title = ANY(%s)",
-                [module_titles],
+                "WHERE title = ANY(%s) OR module_catalogue_id = ANY(%s)",
+                [module_titles, explicit_module_ids],
             )
-            module_ids = {title: cat_id for cat_id, title in cur.fetchall()}
-            if not module_ids:
-                return resolved
-
-            cur.execute(
-                "SELECT id, module_catalogue_id, title FROM curriculum.weeks "
-                "WHERE module_catalogue_id = ANY(%s) "
-                f"AND {visible_week_sql('weeks')}",
-                [list(module_ids.values())],
-            )
-            week_ids_by_cat = {(cat_id, title): week_id for week_id, cat_id, title in cur.fetchall()}
+            modules_by_title = {}
+            known_module_ids = set()
+            for module_id, title in cur.fetchall():
+                known_module_ids.add(_s(module_id))
+                modules_by_title.setdefault(title, set()).add(_s(module_id))
+            scope_ids = set(explicit_module_ids) & known_module_ids
+            scope_ids.update(next(iter(ids)) for ids in modules_by_title.values() if len(ids) == 1)
+            if scope_ids:
+                cur.execute(
+                    "SELECT id, module_catalogue_id, title FROM curriculum.weeks "
+                    "WHERE module_catalogue_id = ANY(%s) "
+                    f"AND {visible_week_sql('weeks')}",
+                    [sorted(scope_ids)],
+                )
+                weeks_by_module = {}
+                for week_id, module_id, title in cur.fetchall():
+                    weeks_by_module.setdefault((_s(module_id), title), set()).add(week_id)
+            else:
+                weeks_by_module = {}
     except DatabaseError as exc:
         logger.warning("Could not resolve legacy week ids: %s", exc)
-        return resolved
+        # A native row still uses its own explicit ID. Missing-ID legacy rows
+        # must not borrow a candidate whose title uniqueness was not checked.
+        legacy_keys = {("moduleId", _s(w["moduleId"]), w["week"]) if w.get("moduleId")
+                       else (w["module"], w["week"]) for w in legacy}
+        return {key: next(iter(ids)) for key, ids in candidates.items()
+                if len(ids) == 1 and key not in legacy_keys}
 
-    for w in legacy:
-        mod_id = module_ids.get(w["module"])
-        week_id = week_ids_by_cat.get((mod_id, w["week"])) if mod_id else None
-        if week_id:
-            resolved[(w["module"], w["week"])] = week_id
-    return resolved
+    for week in legacy:
+        module_id = _s(week.get("moduleId"))
+        key = ("moduleId", module_id, week["week"]) if module_id else (week["module"], week["week"])
+        ids = ({module_id} & known_module_ids) if module_id else modules_by_title.get(week["module"], set())
+        if len(ids) != 1:
+            ambiguous_keys.add(key)
+            continue
+        resolved_ids = weeks_by_module.get((next(iter(ids)), week["week"]), set())
+        if len(resolved_ids) != 1:
+            ambiguous_keys.add(key)
+            continue
+        add(key, next(iter(resolved_ids)))
+    return {key: next(iter(ids)) for key, ids in candidates.items()
+            if len(ids) == 1 and key not in ambiguous_keys}
 
 
 _MODULE_ASSESSMENTS_WEEK_LABEL = "Module assessments"
@@ -568,8 +598,23 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
     assigned module instead of silently disappearing.
     """
     week_ids_by_key = _resolve_week_ids(weeks)
-    resolved_week_ids = sorted({week_id for week_id in week_ids_by_key.values() if week_id}
-                              | {w["weekId"] for w in weeks if native_week_ids and w.get("weekId")})
+
+    def resolved_week_id(week):
+        # Never replace an explicit native ID with a title-keyed fallback.
+        # Keep native_week_ids in the call signature for older callers.
+        if week.get("weekId"):
+            return _s(week["weekId"])
+        module_id = _s(week.get("moduleId"))
+        key = ("moduleId", module_id, week.get("week")) if module_id else (week.get("module"), week.get("week"))
+        return _s(week_ids_by_key.get(key))
+
+    resolved_week_ids = sorted({resolved_week_id(w) for w in weeks if resolved_week_id(w)})
+    week_scopes_by_id = {}
+    for week in weeks:
+        week_id = resolved_week_id(week)
+        module_id = _s(week.get("moduleId")) or _s(week.get("module"))
+        if week_id and module_id:
+            week_scopes_by_id.setdefault(week_id, set()).add(module_id)
     weeks_by_module_id = {}
     module_order = list(dict.fromkeys(
         _s(entry.get("moduleId")) for entry in (assigned_modules or [])
@@ -584,7 +629,7 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
             module_order.append(module_id)
         module_titles_by_id.setdefault(module_id, _s(week.get("module")))
         weeks_by_module_id.setdefault(module_id, []).append({
-            "weekId": (_s(week.get("weekId")) if native_week_ids else "") or week_ids_by_key.get((week.get("module"), week.get("week"))) or _s(week.get("weekId")),
+            "weekId": resolved_week_id(week),
             "week": _s(week.get("week")),
             "module": _s(week.get("module")),
         })
@@ -711,7 +756,7 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
     if not quiz_rows_by_id:
         return weeks, components
 
-    week_quizzes_by_week_id = {}
+    week_quizzes_by_scope = {}
     module_level_quizzes_by_module_id = {}
     for quiz in quiz_rows_by_id.values():
         explicit_module_ids = explicit_module_ids_by_quiz.get(quiz["id"], set())
@@ -731,17 +776,19 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
             elif quiz["weekId"] and quiz["weekId"] in module_week_ids:
                 target_week_id = quiz["weekId"]
             if target_week_id:
-                week_quizzes_by_week_id.setdefault(target_week_id, []).append(quiz)
+                week_quizzes_by_scope.setdefault((module_id, target_week_id), []).append(quiz)
                 placed_module_ids.add(module_id)
         if not matched_module_ids and quiz["weekId"] and quiz["weekId"] in resolved_week_ids:
-            week_quizzes_by_week_id.setdefault(quiz["weekId"], []).append(quiz)
+            owners = week_scopes_by_id.get(quiz["weekId"], set())
+            if len(owners) == 1:
+                week_quizzes_by_scope.setdefault((next(iter(owners)), quiz["weekId"]), []).append(quiz)
             continue
         for module_id in matched_module_ids:
             if module_id in placed_module_ids:
                 continue
             module_level_quizzes_by_module_id.setdefault(module_id, []).append(quiz)
 
-    if not week_quizzes_by_week_id and not module_level_quizzes_by_module_id:
+    if not week_quizzes_by_scope and not module_level_quizzes_by_module_id:
         return weeks, components
 
     next_weeks = list(weeks)
@@ -764,8 +811,8 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
 
     for week in weeks:
         module_id = _s(week.get("moduleId")) or _s(week.get("module"))
-        week_id = (_s(week.get("weekId")) if native_week_ids else "") or week_ids_by_key.get((week.get("module"), week.get("week"))) or _s(week.get("weekId"))
-        for quiz in week_quizzes_by_week_id.get(week_id, []):
+        week_id = resolved_week_id(week)
+        for quiz in week_quizzes_by_scope.get((module_id, week_id), []):
             key = (module_id, str(quiz["id"]))
             if key in seen_quizzes:
                 continue
@@ -1035,6 +1082,13 @@ def _review_otjh_hours(learner_profile):
     # project into, so reviews contribute nothing rather than an arbitrary
     # horizon that would silently inflate the total.
     end_date = getattr(learner_profile, "end_date", None)
+    from coach_api.review_sources import resolve_review_source
+    if resolve_review_source(profile_aptem_id=getattr(learner_profile, "aptem_id", None)).kind == "aptem":
+        from coach_api.migrated_otjh import planned_meetings
+        planned = sum(row["hours"] for row in planned_meetings(learner_profile, start_date, end_date)) if start_date and end_date else 0
+        # Newly credited migrated reviews already exist in training_plan_progress
+        # and the canonical ledger. Only old Native credit is additional here.
+        return planned, review_otjh.completed_hours(learner_id)
     if not learner_id or not start_date or not end_date:
         return 0.0, review_otjh.completed_hours(learner_id) if learner_id else 0.0
 
@@ -1412,6 +1466,10 @@ def _apply_cohort_schedule(detail, source):
     detail.update(_cohort_schedule(getattr(source, "cohort", ""), getattr(source, "programme", ""), cohort_id))
 
 
+from .point_structure import POINT_SETTINGS_SQL, point_projection
+from .audio_alternative import AUDIO_ALTERNATIVE_SETTINGS_SQL, audio_alternative_projection
+
+
 def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, compact=False,
                          live_session_ids=True, expected_otjh=False, strict=False, week_ids=None, identities_only=False,
                          resolved_metadata=None, routing_only=False, compact_content=False, catalogue_facts=False):
@@ -1551,6 +1609,9 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "'componentFiles','reflectionPrompt','podcastReflectionQuestion',"
                     "'readingReflectionPrompts','learnerGuidance','legacySettings'] "
                     f"ELSE ({settings_sql}) END")
+
+            # Presentation metadata survives all compact/identity paths.
+            settings_sql = f"({settings_sql}) || {POINT_SETTINGS_SQL} || {AUDIO_ALTERNATIVE_SETTINGS_SQL}"
 
             detail_columns = (f"CASE WHEN coalesce(btrim(live_sessions_link,'{strip_chars}'),'')<>'' THEN 'content' END AS live_sessions_link, display_order, NULL AS ksb_mappings, "
                               "false AS reflection_required, NULL AS \"Reflection_Question\", false AS tutor_validation_required") if identities_only else (
@@ -1726,7 +1787,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                         continue
                     week = week_lookup[(mid, wid)]
                     out_components.append({**week, 'componentId': cid, 'isQuiz': bool(quiz),
-                                           'quizMeta': quiz, 'component': title,
+                                           'quizMeta': quiz, 'component': title, **point_projection(settings),
                                            **({'type': ctype, 'sessionDate': _s(settings.get('sessionDate')) or None,
                                                'sessionDateTimeUtc': _s(settings.get('sessionDateTimeUtc')) or None,
                                                'teamsLiveSessionId': (_s(settings.get('extraTeamsLiveSessionId'))
@@ -1961,6 +2022,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
         display_title = (normalised_type == "assignment" and learner_title(settings)) or ctitle
         comps_by_week.setdefault(week_id, []).append({
             "componentId": comp_id,
+            **point_projection(settings),
             # Only selected (14th column) when the caller asked for expected_otjh.
             "expectedOtjh": float(component_otjh[0]) if component_otjh and component_otjh[0] is not None else None,
             "display": _display_quiz_title(linked_quiz["title"]) if linked_quiz else _display_component_title(ctype, display_title),
@@ -1974,6 +2036,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             "assignmentBriefHtml": assignment_brief_html,
             "videoUrl": video_url,
             "audioUrl": audio_url,
+            **audio_alternative_projection(settings, normalised_type, audio_url),
             "contentHtml": content_html,
             **({"hasReadingContent": bool(settings.get("_readingContentAvailable"))} if compact else {}),
             "fileName": file_name,
@@ -2045,6 +2108,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "component": comp["display"],
                     "moduleId": mid, "weekId": week_id, "componentId": comp["componentId"],
                     "type": comp["type"],
+                    **point_projection(comp),
                     "description": comp["description"],
                     "assignmentTopics": comp["assignmentTopics"],
                     "monthlyAssignment": comp["monthlyAssignment"],
@@ -2052,6 +2116,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "assignmentBriefHtml": comp["assignmentBriefHtml"],
                     "videoUrl": comp["videoUrl"],
                     "audioUrl": comp["audioUrl"],
+                    **({"alternativeYouTubeUrl": comp["alternativeYouTubeUrl"]} if comp.get("alternativeYouTubeUrl") else {}),
                     "contentHtml": comp["contentHtml"],
                     **({"hasReadingContent": comp["hasReadingContent"]} if compact else {}),
                     "fileName": comp["fileName"],
@@ -2246,6 +2311,23 @@ def _reading_content(source, component_id):
     Match the module/week visibility used by _resolve_from_master; an arbitrary
     component id must never grant access to unassigned or deleted content.
     """
+    return _authored_setting(source, component_id, "readingContent", "contentHtml")
+
+
+def _lesson_content(source, component_id):
+    """A video's authored lesson content ("Component content" in the Module
+    Builder), read the same scoped way as a reading. List reads strip it; only
+    the one opened activity carries it."""
+    return _authored_setting(source, component_id, "lessonContent", "lessonContentHtml")
+
+
+# Settings keys this reader may select, so the key is never caller-supplied SQL.
+_AUTHORED_SETTING_KEYS = frozenset({"readingContent", "lessonContent"})
+
+
+def _authored_setting(source, component_id, setting_key, response_key):
+    if setting_key not in _AUTHORED_SETTING_KEYS:
+        raise ValueError(f"Unsupported authored setting: {setting_key!r}")
     module_ids = list(dict.fromkeys(
         _s(module.get("moduleId")) for module in effective_training_plan(source)
         if isinstance(module, dict) and _s(module.get("moduleId"))
@@ -2253,7 +2335,7 @@ def _reading_content(source, component_id):
     if not module_ids or not component_id:
         return None
     with connections["enrolment"].cursor() as cursor:
-        cursor.execute('''SELECT c.id, c.settings_json->>'readingContent'
+        cursor.execute(f'''SELECT c.id, c.settings_json->>'{setting_key}'
             FROM curriculum.components c
             JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
             JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=m.module_catalogue_id
@@ -2262,7 +2344,7 @@ def _reading_content(source, component_id):
               AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')
               AND ''' + visible_week_sql('w'), [component_id, module_ids])
         row = cursor.fetchone()
-    return {"componentId": row[0], "contentHtml": _s(row[1]) or None} if row else None
+    return {"componentId": row[0], response_key: _s(row[1]) or None} if row else None
 
 
 @learner_self_or_staff(kwarg="pk")
@@ -2303,6 +2385,12 @@ def learner_detail(request, kind, pk):
                 if reading is None:
                     return _error("Activity not found in this learner's plan.", 404)
                 component['contentHtml'] = reading['contentHtml']
+            if _s(component.get('type')).lower().replace('-', '_') == 'video':
+                # Shown under the player. A video the curriculum tables cannot
+                # place (legacy or replacement learning) still plays without it,
+                # so a missing row is not an error here.
+                lesson = _lesson_content(source, component_id)
+                component['lessonContentHtml'] = (lesson or {}).get('lessonContentHtml')
             response = JsonResponse(detail)
             response['Cache-Control'] = 'private, no-store'
             return response

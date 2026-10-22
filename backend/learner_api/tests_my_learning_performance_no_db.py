@@ -65,14 +65,14 @@ class CataloguePerformanceTests(SimpleTestCase):
             with patch.object(display,'read_export_placements',return_value=[]),patch.object(schedule,'module_record_index',wraps=schedule.module_record_index) as index:
                 cards,summary=learning.assemble_cards(*facts[:11])
             self.assertEqual(index.call_count,1)
-            self.assertEqual(summary['current']['subjects'],4)
-            self.assertEqual(summary['current']['total'],247)
-            self.assertEqual(summary['previous']['total'],0 if replacements else 1349)
-            self.assertEqual(summary['previous']['completed'],0 if replacements else 100)
+            self.assertEqual(summary['current']['subjects'],0 if replacements else 4)
+            self.assertEqual(summary['current']['total'],0 if replacements else 247)
+            self.assertEqual(summary['previous']['total'],1349)
+            self.assertEqual(summary['previous']['completed'],100)
             self.assertEqual(len(cards),4 if replacements else 8)
-            self.assertEqual(summary['current']['completed'],100 if replacements else 0)
+            self.assertEqual(summary['current']['completed'],0)
             self.assertAlmostEqual(sum(c['actualHours'] or 0 for c in cards),
-                sum(round(hours,4 if replacements else 6) for hours in facts[6].values()),places=6)
+                sum(round(hours,6) for hours in facts[6].values()),places=6)
 
     def test_attempt_routes_are_indexed_once_and_input_rows_remain_unchanged(self):
         *_,records,modules,credits,attempts=large_facts()

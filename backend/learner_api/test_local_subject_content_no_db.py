@@ -85,7 +85,7 @@ class LocalSubjectContentTests(unittest.TestCase):
             owned('commercial', 3, 5, 1)
 
     def test_existing_file_link_uses_archive_and_checks_attachment_ownership(self):
-        self.scope.update(_owned_material=lambda *_: (8, {'reading_url': 'https://source.example/view?attachment_id=9'}),
+        self.scope.update(_owned_material=lambda *_, **kwargs: (8, {'reading_url': 'https://source.example/view?attachment_id=9'}),
             _error=lambda message, status: status, HttpResponseRedirect=lambda url: url)
         self.proxy._legacy_attachment_upload_path.return_value = '_legacy_files/9/lesson.pdf'
         view = function('subject_file', self.scope)

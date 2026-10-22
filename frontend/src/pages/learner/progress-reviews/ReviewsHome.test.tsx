@@ -48,7 +48,74 @@ function mount(overrides: Partial<ReviewsHomeProps> = {}, search = '?kind=appren
 
 afterEach(cleanup);
 
+it.each(['card', 'list', 'timeline', 'preview', 'employer'])('offers Book beside View review for an unbooked Aptem PR in the %s view', view => {
+  const imported = session('imported-review:A-2', { status: 'not-scheduled', scheduledDate: null, scheduledTime: null,
+    date: '2027-03-11', targetDate: '2027-03-11', reviewSource: 'aptem', reviewId: '2', importedReview: {
+      id: '2', aptemReviewId: 'A-2', name: 'Progress Review 2', type: 'Progress Review', reviewerName: 'Coach',
+      plannedDate: '2027-03-11', plannedTime: null, completedDate: null, status: 'Not Scheduled',
+      extractionStatus: 'complete', detailsAvailable: false, sections: [],
+    } });
+  const props = mount({ sessions: view === 'timeline' ? [session('booked'), imported] : [imported],
+    titleOf: row => row.importedReview?.name || row.title, canAct: view !== 'preview',
+    viewerRole: view === 'employer' ? 'employer' : 'participant' }, view === 'list' ? '?view=all' : '');
+  if (view === 'timeline') fireEvent.click(screen.getByRole('button', { name: /Progress Review 2,/ }));
+  if (view === 'employer') {
+    expect(screen.queryByRole('button', { name: 'Book a time' })).not.toBeInTheDocument();
+    return;
+  }
+  expect(screen.queryByText('Archived review')).not.toBeInTheDocument();
+  const book = screen.getByRole('button', { name: 'Book a time' });
+  const read = screen.getByRole('link', { name: 'View review' });
+  expect(read).toHaveAttribute('href', expect.stringContaining('/imported-review%3AA-2?'));
+  expect(book.parentElement).toContainElement(read);
+  if (view === 'preview') expect(book).toBeDisabled();
+  fireEvent.click(book);
+  if (view === 'preview') expect(props.onSchedule).not.toHaveBeenCalled();
+  else expect(props.onSchedule).toHaveBeenCalledExactlyOnceWith(imported);
+});
+
+it.each([
+  { loading: true, error: '', message: 'Loading your reviews…' },
+  { loading: false, error: 'Request failed', message: 'Your reviews could not be loaded' },
+])('does not claim there are zero reviews before a successful read: $message', state => {
+  mount(state);
+  expect(screen.getByText(state.message)).toBeVisible();
+  expect(screen.getByRole('link', { name: 'View all reviews' })).toBeVisible();
+  expect(screen.queryByRole('link', { name: 'View all reviews (0)' })).not.toBeInTheDocument();
+  expect(screen.queryByText('No current review')).not.toBeInTheDocument();
+});
+
+it('shows a real zero count after an empty successful read', () => {
+  mount();
+  expect(screen.getByRole('link', { name: 'View all reviews (0)' })).toBeVisible();
+  expect(screen.getByText('No current review')).toBeVisible();
+});
+
 describe('review learner navigation and safe actions', () => {
+  it.each(['today', 'future'])('shows a booked Aptem PSP in upcoming reviews with its %s meeting link', timing => {
+    const date = timing === 'today' ? today : '2026-09-20';
+    const psp = session('imported-review:A-11', {
+      title: 'Personal Support Plan', scheduledDate: date, reviewSource: 'aptem', reviewId: '11',
+      calendarEventKey: 'booking:11', importedReview: {
+        id: '11', aptemReviewId: 'A-11', name: 'Personal Support Plan', type: 'Personal Support Plan',
+        reviewerName: 'Coach', plannedDate: date, plannedTime: null, completedDate: null,
+        status: 'Not Scheduled', extractionStatus: 'complete', detailsAvailable: false, sections: [],
+      },
+    });
+    const props = mount({ sessions: [psp], basePath: '/learner/reviews' }, '?view=all');
+    expect(screen.getByRole('button', { name: 'Upcoming (1)' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Past (0)' })).toBeVisible();
+    expect(screen.queryByText('Archived review')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('More options'));
+    expect(screen.getByRole('link', { name: timing === 'today' ? 'Join meeting' : 'Open meeting link' }))
+      .toHaveAttribute('href', psp.meetingLink);
+    const calendar = new URL(screen.getByRole('link', { name: 'View in calendar' }).getAttribute('href')!, 'http://localhost');
+    expect(Object.fromEntries(calendar.searchParams)).toEqual({ kind: 'apprenticeship', learner: '12', event: 'booking:11', date });
+    expect(screen.queryByRole('button', { name: /Book a time|Reschedule meeting/ })).not.toBeInTheDocument();
+    expect(props.onSchedule).not.toHaveBeenCalled();
+    expect(props.onAttend).not.toHaveBeenCalled();
+  });
+
   it('selects a future programme review in the summary card without opening its detail page', () => {
     const props = mount({ sessions: [
       session('attended', { scheduledDate: '2026-09-01', meetingOutcome: 'completed' }),
@@ -166,9 +233,10 @@ describe('review learner navigation and safe actions', () => {
     const matched = attendance('later', { date: '2026-10-01', canAttend: false, canReportAbsence: true });
     const props = mount({ sessions: [session('next'), later], attendance: [matched] }, '?view=all&filter=upcoming');
     const row = within(screen.getByRole('heading', { name: 'Progress Review later' }).closest('li')!);
-    fireEvent.click(row.getByText('More options'));
+    expect(row.getByRole('button', { name: 'Reschedule meeting' })).toBeVisible();
     fireEvent.click(row.getByRole('button', { name: 'Reschedule meeting' }));
     expect(vi.mocked(props.onSchedule).mock.calls[0][0]).toBe(later);
+    fireEvent.click(row.getByText('More options'));
     fireEvent.click(row.getByRole('button', { name: 'Report Absence' }));
     expect(vi.mocked(props.onReport).mock.calls[0][0]).toBe(matched);
   });
@@ -253,5 +321,42 @@ describe('review learner navigation and safe actions', () => {
     mount({ sessions: [session('today')], attendance: [attendance('today', { canReportAbsence: true })] });
     fireEvent.click(screen.getByText('More options'));
     expect(screen.getAllByRole('button', { name: 'Report Absence' })).toHaveLength(1);
+  });
+
+  it.each(['current', 'all', 'missed', 'preview', 'employer'])('offers the original linked Aptem booking in the %s view only when the learner can act', view => {
+    const imported = session('imported-review:11', {
+      reviewSource: 'aptem', reviewId: '11', calendarEventKey: 'booking:11', importedReview: {
+        id: '11', aptemReviewId: 'A-11', name: 'Imported review', type: 'Progress Review', reviewerName: 'Coach',
+        plannedDate: today, plannedTime: '10:00', completedDate: null, status: 'scheduled',
+        extractionStatus: 'complete', detailsAvailable: true, sections: [],
+      },
+    });
+    const props = mount({ sessions: [imported], canAct: view !== 'preview',
+      viewerRole: view === 'employer' ? 'employer' : 'participant',
+      attendance: view === 'missed' ? [attendance('local:11', { calendarEventKey: 'booking:11', missed: true })] : [],
+    }, view === 'all' ? '?view=all' : '');
+    if (view === 'employer') {
+      expect(screen.queryByText('More options')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Reschedule meeting' })).not.toBeInTheDocument();
+      expect(props.onSchedule).not.toHaveBeenCalled();
+      return;
+    }
+    const reschedule = screen.getByRole('button', { name: 'Reschedule meeting' });
+    expect(reschedule).toBeVisible();
+    expect(reschedule.closest('details')).toBeNull();
+    fireEvent.click(screen.getByText('More options'));
+    expect(screen.getAllByRole('button', { name: 'Reschedule meeting' })).toHaveLength(1);
+    expect(screen.getByRole('link', { name: 'View in calendar' })).toHaveAttribute('href', expect.stringContaining('event=booking%3A11'));
+    if (view === 'preview') {
+      expect(reschedule).toBeDisabled();
+      fireEvent.click(reschedule);
+      expect(props.onSchedule).not.toHaveBeenCalled();
+    } else {
+      fireEvent.click(reschedule);
+      expect(props.onSchedule).toHaveBeenCalledExactlyOnceWith(imported);
+      expect(vi.mocked(props.onSchedule).mock.calls[0][0]).toBe(imported);
+    }
+    expect(props.onAttend).not.toHaveBeenCalled();
+    expect(props.onReport).not.toHaveBeenCalled();
   });
 });

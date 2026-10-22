@@ -151,8 +151,10 @@ class MigratedReviewTemplate(models.Model):
     FAMILY_MCM = "MCM"
     FAMILY_PR = "PR"
     FAMILY_PR_SKILLS_RADAR = "PR_SKILLS_RADAR"
+    FAMILY_PSP = "PSP"
     FAMILY_CHOICES = [(FAMILY_MCM, "Monthly Coaching Meeting"), (FAMILY_PR, "Progress Review"),
-                      (FAMILY_PR_SKILLS_RADAR, "Progress Review + Skills Radar")]
+                      (FAMILY_PR_SKILLS_RADAR, "Progress Review + Skills Radar"),
+                      (FAMILY_PSP, "Personal Support Plan")]
     SCOPE_GLOBAL = "GLOBAL"
     SCOPE_PROGRAMME = "PROGRAMME"
 
@@ -179,7 +181,7 @@ class MigratedReviewTemplate(models.Model):
                 name="coach_migrated_global_active",
             ),
             models.CheckConstraint(
-                condition=models.Q(review_family__in=["MCM", "PR", "PR_SKILLS_RADAR"]),
+                condition=models.Q(review_family__in=["MCM", "PR", "PR_SKILLS_RADAR", "PSP"]),
                 name="coach_migrated_template_family_valid",
             ),
             models.CheckConstraint(
@@ -261,6 +263,50 @@ class ImportedReviewInstance(models.Model):
             ),
         ]
 
+class ReviewSourceReconciliation(models.Model):
+    """Explicit current authority; the calendar's Native fields remain provenance."""
+
+    learner_id = models.BigIntegerField()
+    # The Coach calendar model addresses a PostgreSQL VIEW. The migration's
+    # physical FK therefore targets Learner.coach_calendar_event, not that view.
+    calendar_event_id = models.BigIntegerField()
+    native_review_instance_id = models.CharField(max_length=128)
+    native_template_id = models.CharField(max_length=128)
+    native_event_key = models.CharField(max_length=255)
+    source_review_id = models.BigIntegerField()
+    aptem_review_id = models.CharField(max_length=128)
+    family = models.CharField(max_length=16, default="MCM")
+    overlay = models.ForeignKey(ImportedReviewInstance, on_delete=models.PROTECT)
+    status = models.CharField(max_length=16, default="APPLIED")
+    approved_by = models.BigIntegerField()
+    approved_at = models.DateTimeField()
+    reason = models.TextField()
+    reversed_by = models.BigIntegerField(null=True)
+    reversed_at = models.DateTimeField(null=True)
+    reversal_reason = models.TextField(blank=True)
+    # Hashes only: do not duplicate private meeting URLs or learner answers.
+    calendar_fingerprint = models.CharField(max_length=64)
+    overlay_fingerprint = models.CharField(max_length=64)
+    overlay_created = models.BooleanField(default=False)
+    overlay_previous_status = models.CharField(max_length=32)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = _table_name('coach_test_review_reconciliations', 'Coach"."review_source_reconciliation')
+        constraints = [
+            models.UniqueConstraint(fields=[field], condition=models.Q(status="APPLIED"), name=name)
+            for field, name in (
+                ("calendar_event_id", "review_recon_active_calendar"),
+                ("native_review_instance_id", "review_recon_active_native"),
+                ("source_review_id", "review_recon_active_source"),
+                ("overlay", "review_recon_active_overlay"),
+            )
+        ] + [
+            models.CheckConstraint(condition=models.Q(status__in=["APPLIED", "REVERSED"]), name="review_recon_valid_status"),
+            models.CheckConstraint(condition=models.Q(family="MCM"), name="review_recon_mcm_only"),
+        ]
+
+
 class MigratedReviewSignature(models.Model):
     """One immutable LMS sign-off for an imported review and participant role."""
 
@@ -289,6 +335,30 @@ class MigratedReviewDocument(models.Model):
 
     class Meta:
         db_table = _table_name('coach_test_migrated_review_documents', 'Coach"."coach_migrated_review_document')
+
+
+class MigratedReviewRevision(models.Model):
+    """Append-only application archive of the state replaced by a coach reopen."""
+
+    overlay = models.ForeignKey(
+        ImportedReviewInstance, on_delete=models.PROTECT, related_name="archived_revisions",
+    )
+    number = models.PositiveIntegerField()
+    snapshot = models.JSONField()
+    pdf_bytes = models.BinaryField(null=True)
+    pdf_sha256 = models.CharField(max_length=64, blank=True)
+    reason_code = models.CharField(max_length=32)
+    note = models.TextField(blank=True)
+    actor_account_id = models.BigIntegerField()
+    actor_email = models.EmailField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = _table_name('coach_test_migrated_review_revisions', 'Coach"."coach_migrated_review_revision')
+        constraints = [
+            models.UniqueConstraint(fields=["overlay", "number"], name="coach_migrated_revision_unique"),
+            models.CheckConstraint(condition=models.Q(number__gte=1), name="coach_migrated_revision_positive"),
+        ]
 
 
 class CoachCalendarSequence(models.Model):

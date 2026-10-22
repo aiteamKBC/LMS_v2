@@ -5,10 +5,10 @@ import { completedComponentIds, isComponentComplete, quizAttemptsFor, type Journ
 export type Schedule = Pick<StudentActivityItem, 'date' | 'month' | 'week_start' | 'week_end' | 'date_needs_review' | 'date_source'> & { due_timing?: string };
 export type SubjectEntry = { id: string; title: string; category: string; completed: boolean; position: number; schedule: Schedule; week?: string; legacy?: StudentActivityItem; native?: JourneyComponent; bestScorePercent?: number | null };
 export type SubjectCardSummary = { activityCount: number; completedActivityCount: number; progress: number; status: 'Completed' | 'In progress' | 'Upcoming'; nextTitle?: string | null; finalTestPassed: boolean };
-export type Subject = { card?: SubjectCardSummary; id: string; title: string; source: 'legacy' | 'current'; moduleId?: string | null; activities: SubjectEntry[]; recordedHistory?: boolean; catalogueProgress?: boolean; catalogueCount?: number; acceptedHours?: number; previousLearningFor?: string; importedCourseRef?: string; replacementCourseRef?: string; archivedActivities?: SubjectEntry[] };
+export type Subject = { card?: SubjectCardSummary; id: string; title: string; source: 'legacy' | 'current'; moduleId?: string | null; activities: SubjectEntry[]; recordedHistory?: boolean; catalogueProgress?: boolean; catalogueCount?: number; acceptedHours?: number; previousLearningFor?: string; importedCourseRef?: string; replacementCourseRef?: string; archivedActivities?: SubjectEntry[]; aggregateProgress?: number; transferredProgress?: number; transferPending?: boolean; demoProgress?: boolean };
 type BuilderSubject = { id: string; title: string };
 type ActivitySource = { module_id: string; group_id: number; activity_id: number };
-export type CoverMetadata = { covers: Record<string, string>; activity_dates?: Record<string, Schedule>; current_subjects?: BuilderSubject[]; builder_subjects?: Record<string, BuilderSubject>; activity_sources?: Record<string, ActivitySource>; previous_learning_groups?: Record<string, string>; imported_courses?: Record<string, string>; replacement_courses?: Record<string, string> };
+export type CoverMetadata = { covers: Record<string, string>; activity_dates?: Record<string, Schedule>; current_subjects?: BuilderSubject[]; builder_subjects?: Record<string, BuilderSubject>; activity_sources?: Record<string, ActivitySource>; previous_learning_groups?: Record<string, string>; imported_courses?: Record<string, string>; replacement_courses?: Record<string, string>; approved_transfers?: Record<string, string>; module_credits?: Record<string, { progress: number; actualHours: number; transferredProgress?: number; transferPending?: boolean; demoProgress?: boolean }> };
 export type UnifiedLearningSummary = {
   subjects: Subject[];
   subjectCount: number;
@@ -68,8 +68,11 @@ export function subjectsFrom(data: LearningSummaryActivity | null, real: Learnin
   const importedCourses = metadata?.imported_courses || {};
   // Replace only a proven import with the exact owned course returned by
   // student-activity. A shared title or curriculum link is not an identity.
-  const replaced = new Set(Object.entries(importedCourses)
-    .filter(([ref, course]) => ref.startsWith('current:') && subjects.get(course)?.source === 'legacy')
+  const links = Object.entries({ ...importedCourses, ...metadata?.replacement_courses });
+  const approved = metadata?.approved_transfers || {};
+  const replaced = new Set(links
+    .filter(([ref, course]) => ref.startsWith('current:') && subjects.get(course)?.source === 'legacy'
+      && links.filter(([, old]) => old === course).length === 1 && !approved[ref])
     .map(([ref]) => ref));
   const replacedTitles = new Set<string>();
   const completed = completedComponentIds(real);
@@ -99,7 +102,8 @@ export function subjectsFrom(data: LearningSummaryActivity | null, real: Learnin
     }
     const subject = subjects.get(key) || { id: key, title: item.module || 'Unnamed subject', source: 'current' as const, activities: [],
       ...(importedCourses[key] ? { importedCourseRef: importedCourses[key] } : {}) };
-    const component: JourneyComponent = { ...item, title: item.component,
+    const component: JourneyComponent = { ...item,
+      previousLearning: approved[key] === item.previousLearning?.courseRef ? item.previousLearning : undefined, title: item.component,
       quizAttempts: item.isQuiz && item.quizMeta ? quizAttemptsFor(item, real?.quizAttempts) : undefined };
     const id = item.componentId || `quiz:${item.quizMeta?.quizId ?? `${item.week}:${index}`}`;
     const isComplete = isComponentComplete(component, completed);
@@ -118,28 +122,23 @@ export function subjectsFrom(data: LearningSummaryActivity | null, real: Learnin
     if ([...subjects.values()].some(subject => subject.title.trim().toLowerCase() === title.trim().toLowerCase())) continue;
     subjects.set(`unlinked:${title}`, { id: `unlinked:${title}`, title, source: 'current', activities: [] });
   }
-  // A verified successor has one current catalogue and one completion verdict
-  // per component. Previous activity rows remain reviewable, outside that
-  // denominator. No title matching, percentage addition or history mutation.
-  const replacements = Object.entries(metadata?.replacement_courses || {});
-  for (const [currentRef, oldRef] of replacements) {
-    const current = subjects.get(currentRef), old = subjects.get(oldRef);
-    if (!current?.activities.length || current.source !== 'current' || old?.source !== 'legacy'
-      || replacements.filter(([, ref]) => ref === oldRef).length !== 1) continue;
-    const hours = data?.replacement_hours?.[currentRef];
-    subjects.set(currentRef, { ...current, replacementCourseRef: oldRef, archivedActivities: old.activities,
-      acceptedHours: hours?.course_ref === oldRef ? hours.accepted_hours : undefined,
-      activities: current.activities.map(entry => {
-        const lineage = entry.native?.previousLearning;
-        const original = lineage?.courseRef === oldRef
-          ? old.activities.find(item => item.id === lineage.activityId
-            && item.legacy?.catalogue_kind === lineage.catalogueKind
-            && item.legacy.source_activity_id === lineage.sourceActivityId) : undefined;
-        return original?.completed && !entry.completed ? { ...entry, completed: true } : entry;
-      }) });
-    subjects.delete(oldRef);
+  // Approval switches catalogues. The server supplies both aggregate credit and
+  // exact completed matches; those matches are already included in that credit.
+  for (const [currentRef, oldRef] of Object.entries(approved)) {
+    const current = subjects.get(currentRef);
+    if (current?.source === 'current') {
+      subjects.set(currentRef, { ...current, importedCourseRef: undefined });
+      subjects.delete(oldRef);
+    }
   }
   return [...subjects.values()].map((subject) => ({ ...subject,
+    ...(metadata?.module_credits?.[subject.id] ? {
+      aggregateProgress: metadata.module_credits[subject.id].progress,
+      transferredProgress: metadata.module_credits[subject.id].transferredProgress,
+      transferPending: metadata.module_credits[subject.id].transferPending,
+      demoProgress: metadata.module_credits[subject.id].demoProgress,
+      acceptedHours: metadata.module_credits[subject.id].actualHours,
+    } : {}),
     title: builderSubjects[subject.id]?.title || subject.title,
     previousLearningFor: subject.source === 'legacy' && subjects.get(metadata?.previous_learning_groups?.[subject.id] || '')?.source === 'current'
       ? metadata?.previous_learning_groups?.[subject.id] : undefined }))
@@ -184,7 +183,8 @@ export function buildUnifiedLearningSummary(
     subjectCount: subjects.filter(subject => !subject.previousLearningFor).length,
     activityCount,
     completedActivityCount,
-    percent: activityCount ? Math.round(completedActivityCount / activityCount * 10000) / 100 : 0,
+    percent: activityCount ? Math.round(currentSubjects.reduce((sum, subject) => sum +
+      (subject.aggregateProgress ?? (subject.activities.length ? subject.activities.filter(entry => entry.completed).length / subject.activities.length * 100 : 0)) * subject.activities.length, 0) / activityCount * 100) / 100 : 0,
   };
 }
 

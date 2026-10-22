@@ -2,12 +2,13 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { ActivitySidebar } from '../video-watch/ActivitySidebar';
 import type { JourneyComponent } from '@/utils/learnerJourney';
 import type { Subject, SubjectEntry } from './learningSummary';
-import { continuingLearningWeek, learningDate, learningHref, nativeHref, type LearningWeek } from './subjectLearning';
+import { continuingLearningWeek, currentLearningWeek, learningDate, learningHref, nativeHref, resolveSubjectWeek, type LearningWeek } from './subjectLearning';
+import { combinedActivities } from './combinedActivities';
 
 /** The same activity/week navigation as the native player, backed by the
  * original catalogue identities. Material and attempt handling stay with the
  * existing renderers; these display rows are never sent to a native API. */
-export function SubjectActivityWorkspace({ subject, weeks, requestedWeek, requestedActivity, search,
+export function SubjectActivityWorkspace({ subject, weeks: rawWeeks, requestedWeek, requestedActivity: requestedId, search,
   kind, learnerId, progress, renderActivity, renderWeekProgress,
 }: {
   subject: Subject; weeks: LearningWeek[]; requestedWeek?: string; requestedActivity?: string;
@@ -15,6 +16,13 @@ export function SubjectActivityWorkspace({ subject, weeks, requestedWeek, reques
   renderActivity: (entry: SubjectEntry) => ReactNode;
   renderWeekProgress: (week: LearningWeek) => ReactNode;
 }) {
+  const combined = combinedActivities(subject.activities);
+  const displayEntries = new Map(combined.activities.map(entry => [entry.id, entry]));
+  const weeks = rawWeeks.map(week => ({ ...week, activities: week.activities.flatMap(entry => {
+    const displayed = displayEntries.get(entry.id);
+    return displayed ? [displayed] : [];
+  }) })).filter((week, index) => week.activities.length || !rawWeeks[index].activities.length);
+  const requestedActivity = combined.aliases.get(requestedId || '') || requestedId;
   const route = `${requestedWeek || ''}:${requestedActivity || ''}`;
   const [selectedWeek, setSelectedWeek] = useState<{ route: string; id?: string }>();
   const [opened, setOpened] = useState<{ route: string; weekId: string; activities: Record<string, string> }>();
@@ -24,12 +32,14 @@ export function SubjectActivityWorkspace({ subject, weeks, requestedWeek, reques
   const matches = (entry: SubjectEntry) => !term || subject.title.toLocaleLowerCase().includes(term) || entry.title.toLocaleLowerCase().includes(term);
   const complete = subject.activities.length > 0 && subject.activities.every(entry => entry.completed);
   const recommended = complete ? undefined : continuingLearningWeek(subject);
-  const current = weeks.find(item => item.id === recommended?.id);
+  const currentId = complete ? undefined : currentLearningWeek(subject)?.id;
+  const current = weeks.find(item => item.id === currentId);
   const selected = weeks.find(item => selectedWeek?.route === route && item.id === selectedWeek.id)
-    || targetedWeek || weeks.find(item => item.id === requestedWeek)
-    || weeks.find(item => opened?.route === route && item.id === opened.weekId) || current || weeks[0];
+    || targetedWeek || resolveSubjectWeek(weeks, requestedWeek)
+    || weeks.find(item => opened?.route === route && item.id === opened.weekId)
+    || current || weeks.find(item => item.id === recommended?.id) || weeks[0];
   const week = term && !selected?.activities.some(matches) ? weeks.find(item => item.activities.some(matches)) || selected : selected;
-  const entries = new Map(subject.activities.map(entry => [entry.id, entry]));
+  const entries = displayEntries;
   const canOpen = (entry: SubjectEntry) => !!kind && !!learnerId && (entry.legacy
     ? entry.legacy.can_open_material !== false || entry.legacy.catalogue_kind === 'quiz' || !!entry.legacy.source_material_activity_id
     : !!nativeHref(entry, kind, learnerId));
@@ -51,7 +61,8 @@ export function SubjectActivityWorkspace({ subject, weeks, requestedWeek, reques
   // Completion comes from the unified catalogue, including historical quiz
   // results. Do not fabricate native quiz attempts to paint a completion tick.
   const component = (entry: SubjectEntry): JourneyComponent => ({
-    componentId: entry.id, title: entry.title, type: entry.category.split('+')[0], expectedOtjh: null,
+    componentId: entry.id, title: entry.title, type: entry.category, expectedOtjh: null,
+    pointNumber: entry.native?.pointNumber, moduleId: entry.native?.moduleId, weekId: entry.native?.weekId,
   });
   const weekTitle = (item: LearningWeek) => item.title.toLocaleLowerCase().startsWith(item.label.toLocaleLowerCase())
     ? item.title : `${item.label} · ${item.title}`;
@@ -60,6 +71,7 @@ export function SubjectActivityWorkspace({ subject, weeks, requestedWeek, reques
     count: item.activities.length, completed: item.activities.filter(entry => entry.completed).length,
     active: item.id === week?.id, components: item.activities.map(component),
   }));
+  const sidebarWeek = current || week;
   const monthFor = (item: LearningWeek) => item.id === 'introduction' ? 'Introduction'
     : item.id.startsWith('extra:') ? 'Extra activities'
       : item.start || item.month ? new Date(`${(item.month || item.start)!.slice(0, 7)}-01T12:00:00Z`)
@@ -80,7 +92,7 @@ export function SubjectActivityWorkspace({ subject, weeks, requestedWeek, reques
           <p className="text-[10px] font-semibold uppercase tracking-wider text-primary-600">{monthFor(item)}</p>
           <h3 className="mt-1 text-lg font-bold text-primary-950">{weekTitle(item)}</h3>
           {item.start && <p className="mt-1 text-xs text-foreground-500">{learningDate(item.start)}{item.end ? ` – ${learningDate(item.end)}` : ''}</p>}
-          <div className="mt-3">{renderWeekProgress(item)}</div>
+          <div className="mt-3">{renderWeekProgress(rawWeeks.find(original => original.id === item.id) || item)}</div>
         </header>
         {/* Keep opened material mounted while browsing weeks/searching so an
             unfinished quiz or reading confirmation isn't silently cleared. */}
@@ -91,9 +103,9 @@ export function SubjectActivityWorkspace({ subject, weeks, requestedWeek, reques
       {!weeks.length && <p className="rounded-xl border bg-white p-5 text-sm text-foreground-500">Activities will appear here when they are added to this subject.</p>}
     </div>
     {/* Use the catalogue's dates, rather than fetching a second plan by title. */}
-    <ActivitySidebar moduleTitle={subject.title} weekTitle={week?.label || ''}
-      weekComponents={(week?.activities || []).map(component)} weeks={sidebarWeeks}
-      completedIds={new Set(subject.activities.filter(entry => entry.completed).map(entry => entry.id))}
+    <ActivitySidebar moduleTitle={subject.title} weekTitle={sidebarWeek ? weekTitle(sidebarWeek) : ''}
+      weekComponents={(sidebarWeek?.activities || []).map(component)} weeks={sidebarWeeks}
+      completedIds={new Set(combined.activities.filter(entry => entry.completed).map(entry => entry.id))}
       currentComponentId={activity?.id} currentWeekKey={current?.id ?? null}
       onSelectWeek={item => setSelectedWeek({ route, id: item.key })}
       monthHeadingFor={(_, index) => index === 0 || monthFor(weeks[index]) !== monthFor(weeks[index - 1]) ? monthFor(weeks[index]) : null}

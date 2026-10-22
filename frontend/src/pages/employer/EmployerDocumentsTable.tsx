@@ -94,7 +94,7 @@ function DocumentStatus({ item }: { item: EmployerOwnedItem }) {
   const content = {
     'to-sign': { label: 'Awaiting your signature', Icon: Clock3 },
     waiting: { label: 'Waiting on others', Icon: Clock3 },
-    'waiting-learner': { label: 'Waiting on learner', Icon: UserRound },
+    'waiting-learner': { label: 'Awaiting completion', Icon: Clock3 },
     signed: { label: 'Signed', Icon: CheckCircle2 },
   }[state];
   const Icon = content.Icon;
@@ -118,29 +118,23 @@ function DocumentAction({
   onSign: () => void;
   onShow: () => void;
 }) {
-  if (item.kind === 'review' && item.migratedForm && item.signed && !item.completed) {
-    return <span className={styles.actionNote}>Signed · awaiting final completion</span>;
-  }
-
-  if (item.signed) {
-    return (
+  return (
+    <div className={styles.documentActions}>
       <button type="button" onClick={onShow} disabled={opening} className={styles.showButton}>
         {opening ? <LoaderCircle className={styles.buttonSpinner} aria-hidden /> : <FileText aria-hidden />}
-        {opening ? 'Opening…' : 'Show document'}
+        {opening ? 'Opening…' : 'Preview'}
       </button>
-    );
-  }
-
-  if (item.signable) {
-    return (
-      <button type="button" onClick={onSign} className={styles.signButton}>
-        <FileSignature aria-hidden />
-        Sign
-      </button>
-    );
-  }
-
-  return <span className={styles.actionNote}>Awaiting completion by the learner</span>;
+      {!item.signed && item.signable && (
+        <button type="button" onClick={onSign} className={styles.signButton}>
+          <FileSignature aria-hidden />
+          Sign
+        </button>
+      )}
+      {item.kind === 'review' && item.migratedForm && item.signed && !item.completed && (
+        <span className={styles.actionNote}>Signed · awaiting final completion</span>
+      )}
+    </div>
+  );
 }
 
 function DocumentListRow({
@@ -165,7 +159,7 @@ function DocumentListRow({
           {item.kind === 'review' ? <FileCheck2 /> : <FileText />}
         </span>
         <span className={styles.documentCopy}>
-          <span className={styles.documentName} title={item.label}>{item.label}</span>
+          <button type="button" onClick={onShow} className={styles.documentName} title={`Preview ${item.label}`}>{item.label}</button>
           <span className={styles.documentMeta}>
             <Link to={learnerHref}>{item.learner.name || 'Learner'}</Link>
             <span aria-hidden>·</span>

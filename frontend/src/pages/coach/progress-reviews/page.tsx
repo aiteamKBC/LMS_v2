@@ -25,6 +25,9 @@ import { ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTim
 import ProgressReviewCompletionModal from '../shared/ProgressReviewCompletionModal';
 import { reviewInstancePath, reviewInstanceRouteState } from '../shared/reviewInstanceNavigation';
 import { ReviewAge } from '../shared/ReviewAge';
+import { ReviewIdentityNotice } from '../shared/ReviewIdentityNotice';
+import ImportedReviewBookingDialog from '../shared/ImportedReviewBookingDialog';
+import type { CoachReviewGenerationIssue } from '../shared/calendarEvents';
 import {
   type CoachCalendarEvent,
   type ScheduleFormState,
@@ -51,7 +54,7 @@ import {
   sortEvents,
   statusLabel,
 } from '../shared/calendarEvents';
-import { normalizeResolvedReview, normalizeResolvedReviews, reviewActionMatrix } from '../shared/resolvedReviewRows';
+import { isImportedPersonalSupportPlan, normalizeResolvedReview, normalizeResolvedReviews, reviewActionMatrix } from '../shared/resolvedReviewRows';
 import {
   type ProgressReviewSlide,
   type ProgressReviewSlideListItem,
@@ -995,13 +998,15 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
   const [selectedMonth, setSelectedMonth] = useState(() => monthFromQuery(searchParams.get('month')));
   const [allMonths, setAllMonths] = useState(() => searchParams.get('months') === 'all');
   const cacheKey = coachSessionKey(category, coach.email, 'all-months');
-  const initialCache = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string }>(cacheKey);
+  const initialCache = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string; issues?: CoachReviewGenerationIssue[] }>(cacheKey);
   const [events, setEvents] = useState<CoachCalendarEvent[]>(() => initialCache?.events || []);
+  const [issues, setIssues] = useState<CoachReviewGenerationIssue[]>(() => initialCache?.issues || []);
   const [ownerName, setOwnerName] = useState(() => initialCache?.ownerName || 'Coach');
   const [loading, setLoading] = useState(() => !initialCache);
   const [error, setError] = useState<string | null>(null);
   const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>(EMPTY_SCHEDULE_FORM);
   const [scheduleModalEvent, setScheduleModalEvent] = useState<CoachCalendarEvent | null>(null);
+  const [importedBookingEvent, setImportedBookingEvent] = useState<CoachCalendarEvent | null>(null);
   const [schedulePickerOpen, setSchedulePickerOpen] = useState(false);
   const [busyEventId, setBusyEventId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -1032,13 +1037,15 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
     if (!coach.isInitialized) return;
     if (!coach.email) {
       setEvents([]);
+      setIssues([]);
       setOwnerName(coach.name);
       setError(`Coach access is required to load ${reviewLabel}.`);
       setLoading(false);
       return;
     }
     const controller = new AbortController();
-    const cached = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string }>(cacheKey);
+    const cached = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string; issues?: CoachReviewGenerationIssue[] }>(cacheKey);
+    setIssues(cached?.issues || []);
 
     const loadReviews = async () => {
       if (cached) {
@@ -1055,7 +1062,9 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
           includeSchedulerQueues: false,
         });
         const reviews = sortEvents(normalizeResolvedReviews((data.events || []).filter(event => reviewCategory(event) === category)));
-        writeCoachSessionCache(cacheKey, { events: reviews, ownerName: data.owner?.name || coach.name });
+        const nextIssues = data.reviewGenerationIssues || [];
+        writeCoachSessionCache(cacheKey, { events: reviews, ownerName: data.owner?.name || coach.name, issues: nextIssues });
+        setIssues(nextIssues);
         setEvents(reviews);
         setOwnerName(data.owner?.name || coach.name);
       } catch (err) {
@@ -1187,6 +1196,11 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
   };
 
   const openScheduleModal = (event: CoachCalendarEvent) => {
+    if (event.reviewSource === 'aptem' || event.aptemReviewId) {
+      setActionNotice(null);
+      setImportedBookingEvent(event);
+      return;
+    }
     setScheduleForm(scheduleDefaults(event));
     setActionError(null);
     setActionNotice(event.syncWarning || null);
@@ -1194,7 +1208,9 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
     setScheduleModalEvent(event);
   };
 
-  const schedulableReviews = selectedMonthEvents.filter(event => event.reviewSource !== 'aptem' && !event.aptemReviewId && !['in-progress', 'completed', 'awaiting-signature'].includes(event.status));
+  const schedulableReviews = selectedMonthEvents.filter(event => isImportedPersonalSupportPlan(event)
+    ? Boolean(reviewActionMatrix(event).schedule)
+    : event.reviewSource !== 'aptem' && !event.aptemReviewId && !['in-progress', 'completed', 'awaiting-signature'].includes(event.status));
 
   const openSchedulePicker = () => {
     const preferred = schedulableReviews.find(needsScheduling) || schedulableReviews[0];
@@ -1231,6 +1247,11 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
   };
 
   const handleSchedule = async (event: CoachCalendarEvent) => {
+    if (isImportedPersonalSupportPlan(event)) {
+      setScheduleModalEvent(null);
+      setImportedBookingEvent(event);
+      return;
+    }
     setBusyEventId(eventIdentity(event));
     setActionError(null);
     setActionNotice(null);
@@ -1366,6 +1387,8 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
           <img src="/coach-meetings-calendar.webp" alt="" aria-hidden="true" width={312} height={312} />
         </section>
         {error ? <EmptyState variant="error" title={`Unable to load ${reviewLabel}.`} description={error} /> : null}
+        <ReviewIdentityNotice issues={issues} />
+        {actionNotice && !scheduleModalEvent ? <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{actionNotice}</p> : null}
         <section className={styles.controlsCard} aria-label={otherReviews ? 'Review filters and summary' : 'Progress review filters and summary'}>
           <div className={styles.toolbar}>
             <div className={styles.monthNav} aria-label="Review month"><button type="button" onClick={() => changeMonth(addMonths(selectedMonth, -1))} aria-label="Previous month"><AppIcon className="ri-arrow-left-s-line text-xl" /></button><span>{selectedMonthLabel}</span><button type="button" onClick={() => changeMonth(addMonths(selectedMonth, 1))} aria-label="Next month"><AppIcon className="ri-arrow-right-s-line text-xl" /></button></div>
@@ -1417,6 +1440,19 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
           {!loading && filteredData.length > 0 ? <div className={styles.footer}><span>Showing {Math.min(filteredData.length, paginatedReviews.length)} of {filteredData.length} reviews</span>{pageCount > 1 ? <Pagination page={activePage} totalPages={pageCount} total={filteredData.length} pageSize={REVIEWS_PER_PAGE} onPageChange={setCurrentPage} noun="reviews" /> : null}</div> : null}
         </div>
 
+        {importedBookingEvent ? <ImportedReviewBookingDialog
+          key={`${coach.email}:${eventIdentity(importedBookingEvent)}`}
+          event={importedBookingEvent}
+          viewingAsCoach={coach.isViewingAsCoach}
+          onClose={() => setImportedBookingEvent(null)}
+          onSaved={(updated, notice) => {
+            const nextEvents = sortEvents(events.map(event => eventIdentity(event) === eventIdentity(updated) ? updated : event));
+            setEvents(nextEvents);
+            writeCoachSessionCache(cacheKey, { events: nextEvents, ownerName, issues });
+            setActionNotice(notice);
+            setImportedBookingEvent(null);
+          }}
+        /> : null}
         {scheduleModalEvent ? (
           <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm" onClick={() => { if (!busyEventId) setScheduleModalEvent(null); }}>
             <div role="dialog" aria-modal="true" aria-labelledby="schedule-review-title" className="w-full max-w-[620px] rounded-2xl border border-foreground-200 bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
@@ -1427,16 +1463,17 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
               <div className="space-y-4 px-5 py-5">
                 {schedulePickerOpen ? <label className="block text-[12px] font-semibold text-foreground-700">Learner<select value={eventIdentity(scheduleModalEvent)} onChange={(event) => selectScheduleReview(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-foreground-200 bg-white px-3 text-[13px] font-medium text-foreground-800 outline-none focus:border-primary-400">{schedulableReviews.map(review => <option key={eventIdentity(review)} value={eventIdentity(review)}>{review.learner || 'Unknown learner'}{review.programme ? ` · ${review.programme}` : ''}</option>)}</select></label> : null}
                 <div className="rounded-lg border border-primary-100 bg-primary-50/60 px-3 py-2 text-[12px] text-primary-900"><span className="font-semibold">Learner:</span> {scheduleModalEvent.learner || 'Unknown learner'}<span className="mx-2 text-primary-300">•</span><span>{scheduleModalEvent.programme || (otherReviews ? 'Review' : 'Progress review')}</span></div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {!isImportedPersonalSupportPlan(scheduleModalEvent) && <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <div><ScheduleFieldLabel>Date</ScheduleFieldLabel><ModernDatePicker value={scheduleForm.date} onChange={(value) => setScheduleForm(prev => ({ ...prev, date: value }))} /></div>
                   <div><ScheduleFieldLabel>Time</ScheduleFieldLabel><ScheduleTimeInput value={scheduleForm.time} onChange={(value) => setScheduleForm(prev => ({ ...prev, time: value }))} /></div>
                   <div><ScheduleFieldLabel>Duration</ScheduleFieldLabel><ModernDurationPicker value={scheduleForm.durationMinutes} onChange={(durationMinutes) => setScheduleForm(prev => ({ ...prev, durationMinutes }))} /></div>
-                </div>
+                </div>}
+                {isImportedPersonalSupportPlan(scheduleModalEvent) && <p className="text-sm text-foreground-600">Continue to check the current booking and choose its date and time.</p>}
                 {(actionError || actionNotice) ? <div className={cn('rounded-lg border px-3 py-2 text-[12px]', actionError ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-800')}>{actionError || actionNotice}</div> : null}
               </div>
               <div className="flex items-center justify-end gap-2 border-t border-foreground-100 px-5 py-4">
                 <button type="button" disabled={Boolean(busyEventId)} onClick={() => setScheduleModalEvent(null)} className="h-10 rounded-lg border border-foreground-200 px-4 text-[12px] font-semibold text-foreground-700 hover:bg-foreground-50">Cancel</button>
-                <button type="button" disabled={Boolean(busyEventId) || !scheduleForm.date || !scheduleForm.time} onClick={() => { void handleSchedule(scheduleModalEvent); }} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary-700 px-4 text-[12px] font-bold text-white hover:bg-primary-800 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className={busyEventId ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'} />{busyEventId ? 'Saving...' : scheduleModalEvent.status === 'scheduled' ? 'Save new time' : 'Schedule review'}</button>
+                <button type="button" disabled={Boolean(busyEventId) || (!isImportedPersonalSupportPlan(scheduleModalEvent) && (!scheduleForm.date || !scheduleForm.time))} onClick={() => { void handleSchedule(scheduleModalEvent); }} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary-700 px-4 text-[12px] font-bold text-white hover:bg-primary-800 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className={busyEventId ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'} />{busyEventId ? 'Saving...' : isImportedPersonalSupportPlan(scheduleModalEvent) ? 'Continue to booking' : scheduleModalEvent.status === 'scheduled' ? 'Save new time' : 'Schedule review'}</button>
               </div>
             </div>
           </div>

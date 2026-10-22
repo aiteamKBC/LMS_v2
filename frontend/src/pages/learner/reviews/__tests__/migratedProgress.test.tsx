@@ -29,6 +29,62 @@ const definition: LearnerReviewDefinition = {
 };
 
 describe('migrated progress for review participants', () => {
+  function editable(viewerRole: 'participant' | 'employer'): LearnerReviewDefinition {
+    return { ...definition, readOnly: false, answerVersion: 'version-1', instance: { ...definition.instance!, status: 'scheduled' },
+      sections: [{ ...definition.sections[0], fields: [definition.sections[0].fields[0],
+        { id: 'own', title: 'Your reflection', fieldType: 'text_multiline', required: true, displayOrder: 1,
+          configuration: { respondentRoles: [viewerRole] }, answer: 'Earlier draft' },
+      ] }] };
+  }
+
+  it.each(['participant', 'employer'] as const)('lets %s save draft answers twice with the latest version, without editing coach fields', async viewerRole => {
+    const source = editable(viewerRole);
+    const save = vi.fn().mockImplementation(async (answers: Record<string, unknown>) => ({ ...source, answerVersion: 'version-2',
+      sections: [{ ...source.sections[0], fields: source.sections[0].fields.map(field => field.id === 'own' ? { ...field, answer: answers.own } : field) }] }));
+    render(<LearnerReviewInstanceForm definition={source} viewerRole={viewerRole} onSaveAnswers={save} />);
+    const own = screen.getByDisplayValue('Earlier draft');
+    if (viewerRole === 'employer') expect(screen.getByDisplayValue('Saved coach summary')).toBeDisabled();
+    else expect(screen.getByText('Saved coach summary')).toBeVisible();
+    expect(own).toBeEnabled();
+    fireEvent.change(own, { target: { value: 'My draft' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save my answers' }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith({ own: 'My draft' }, 'version-1'));
+    await waitFor(() => expect(screen.getByDisplayValue('My draft')).toBeEnabled());
+    fireEvent.change(screen.getByDisplayValue('My draft'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save my answers' }));
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith({ own: '' }, 'version-2'));
+  });
+
+  it('keeps unsaved text visible when a newer server version rejects the save', async () => {
+    const save = vi.fn().mockRejectedValue(new Error('This review changed. Reopen it before saving.'));
+    render(<LearnerReviewInstanceForm definition={editable('participant')} onSaveAnswers={save} />);
+    const own = screen.getByDisplayValue('Earlier draft');
+    fireEvent.change(own, { target: { value: 'Keep this unsaved draft' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save my answers' }));
+    expect(await screen.findByText('This review changed. Reopen it before saving.')).toBeVisible();
+    expect(screen.getByDisplayValue('Keep this unsaved draft')).toBeEnabled();
+  });
+
+  it.each(['awaiting-signature', 'completed', 'read-only'])('disables respondent editing when %s', status => {
+    const source = editable('participant');
+    render(<LearnerReviewInstanceForm definition={{ ...source, readOnly: status === 'read-only',
+      instance: { ...source.instance!, status: status === 'read-only' ? 'scheduled' : status } }} onSaveAnswers={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Save my answers' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    expect(screen.getByText('Earlier draft')).toBeVisible();
+  });
+
+  it('sends only visible respondent questions and preserves hidden drafts locally', async () => {
+    const source = editable('participant');
+    source.sections[0].fields.push({ id: 'gate', title: 'Any concerns?', fieldType: 'boolean_case_block', required: false,
+      displayOrder: 2, configuration: {}, answer: 'no', yesFields: [{ id: 'hidden', title: 'Concern detail', fieldType: 'text', required: true,
+        displayOrder: 0, configuration: { respondentRoles: ['participant'] }, answer: 'Earlier hidden answer' }] });
+    const save = vi.fn().mockResolvedValue(source);
+    render(<LearnerReviewInstanceForm definition={source} onSaveAnswers={save} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Save my answers' }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith({ own: 'Earlier draft' }, 'version-1'));
+  });
+
   it.each(['participant', 'employer'] as const)('shows the stored snapshot to %s without calculation controls', (viewerRole) => {
     render(<LearnerReviewInstanceForm definition={definition} viewerRole={viewerRole} />);
     expect(screen.getByRole('region', { name: 'Learning progress' })).toBeVisible();

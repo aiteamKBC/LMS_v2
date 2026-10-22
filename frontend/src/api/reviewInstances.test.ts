@@ -20,6 +20,17 @@ afterEach(() => {
 });
 
 describe('migrated summary transcript upload', () => {
+  it('sends the reopen reason and observed answer version with CSRF', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ csrfToken: 'token' }))
+      .mockResolvedValueOnce(jsonResponse({ localStatus: 'in-progress', reviewRevision: 1 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { reopenMigratedReview } = await import('./reviewInstances');
+    await reopenMigratedReview('imported-review:42', { reasonCode: 'other', note: 'Correct action', answerVersion: 'observed' });
+    const [url, request] = fetchMock.mock.calls[1];
+    expect(url).toBe('/coach_api/migrated-reviews/imported-review%3A42/reopen');
+    expect(JSON.parse(request.body)).toEqual({ reasonCode: 'other', note: 'Correct action', answerVersion: 'observed' });
+    expect(new Headers(request.headers).get('X-CSRFToken')).toBe('token');
+  });
   it('uses the migrated multipart route and CSRF without a Native endpoint or JSON content type', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ csrfToken: 'server-token' }))
       .mockResolvedValueOnce(jsonResponse({ artifacts: [], answerVersion: 'v2', reviewAnswers: { recap: 'Generated' } }));
@@ -33,6 +44,30 @@ describe('migrated summary transcript upload', () => {
     expect((request.body as FormData).get('transcript')).toBe(transcript);
     expect(new Headers(request.headers).get('X-CSRFToken')).toBe('server-token');
     expect(new Headers(request.headers).has('Content-Type')).toBe(false);
+  });
+});
+
+describe('migrated review rescheduling', () => {
+  it.each([200, 409, 502])('uses PATCH with CSRF and the exact previous booking, handling HTTP %s', async status => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ csrfToken: 'server-token' }))
+      .mockResolvedValueOnce(jsonResponse(status === 200 ? { localStatus: 'scheduled' } : { message: 'Reload or retry the booking.' }, status));
+    vi.stubGlobal('fetch', fetchMock);
+    const { rescheduleMigratedReview } = await import('./reviewInstances');
+    const previous = { booked: true, conflict: false, canBook: false, canReschedule: true,
+      eventKey: 'legacy-key', scheduledDate: '2026-11-02', scheduledTime: '10:00', durationMinutes: 60,
+      meetingLink: 'https://example.invalid/meeting', syncState: 'synced' };
+    const slot = { scheduledDate: '2026-11-03', scheduledTime: '11:00', durationMinutes: 45, timezoneOffsetMinutes: 0 };
+    const promise = rescheduleMigratedReview('imported-review:42', slot, previous);
+    if (status === 200) await expect(promise).resolves.toEqual({ localStatus: 'scheduled' });
+    else await expect(promise).rejects.toThrow('Reload or retry');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][0]).toBe('/coach_api/coach/reviews/imported-review%3A42/book');
+    const request = fetchMock.mock.calls[1][1] as RequestInit;
+    expect(request.method).toBe('PATCH');
+    expect(new Headers(request.headers).get('X-CSRFToken')).toBe('server-token');
+    expect(JSON.parse(request.body as string)).toEqual({ ...slot, expectedBooking: {
+      scheduledDate: previous.scheduledDate, scheduledTime: previous.scheduledTime, durationMinutes: previous.durationMinutes,
+    } });
   });
 });
 

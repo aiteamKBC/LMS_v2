@@ -31,12 +31,13 @@ const CHOICES = [
   { scope: 'additional' as const, label: 'Additional meeting', icon: 'ri-calendar-2-line' },
 ];
 
-export function MeetingScopePanel({ rows, busy, disabled, onChoose }: {
+export function MeetingScopePanel({ rows, busy, disabled, onChoose, externalCalendar = false }: {
   rows: LiveSessionScopeRow[];
   /** The workspace's busy key; a choice in flight reads `<module>:scope:<component>:<scope>`. */
   busy: string;
   disabled: boolean;
   onChoose: (componentId: string, scope: 'main' | 'additional') => void;
+  externalCalendar?: boolean;
 }) {
   const open = rows.filter(row => row.open);
   const pending = open.filter(row => row.scope === 'pending');
@@ -78,7 +79,7 @@ export function MeetingScopePanel({ rows, busy, disabled, onChoose }: {
           ) : (
             <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
               <AppIcon className="ri-check-line text-[11px]"></AppIcon>
-              Every week has a calendar
+              Every week has a calendar choice
             </span>
           )}
           <span className={`ml-auto inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider ${asking ? 'text-amber-700' : 'text-foreground-400'}`}>
@@ -100,7 +101,11 @@ export function MeetingScopePanel({ rows, busy, disabled, onChoose }: {
       <p className={`mt-2 text-[11px] font-semibold leading-relaxed ${asking ? 'text-amber-900/80' : 'text-foreground-500'}`}>
         Each week&rsquo;s live session runs on one calendar only. A week on the module calendar cannot take an
         additional meeting, and a week given to an additional meeting is left out of the dates sent to Teams.
-        Choosing saves the choice only &mdash; nothing is sent to Microsoft.
+        Choosing the module calendar inherits its meeting link and matches existing imported sessions by date.
+        {externalCalendar
+          ? ' Dates without a match must be added to the original series by its organiser in Teams. No new main meeting is created here.'
+          : ' Dates without a matching session still need a calendar update.'}
+        {' '}Nothing is sent to Microsoft here.
       </p>
       <ul className={`mt-3 ${asking ? 'space-y-1.5' : 'divide-y divide-background-200'}`}>
         {open.map(row => {

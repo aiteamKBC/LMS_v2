@@ -7,9 +7,6 @@ created by this projection.
 import json
 from collections import Counter
 
-from .subject_origins import read_replacement_courses
-
-
 def _object(value):
     if isinstance(value, str):
         try:
@@ -64,28 +61,58 @@ def project_replacement_learning(components, settings_by_id, courses, activities
 
 
 def annotate_replacement_learning(components, enrolment_id):
-    """Resolve scope from the server's effective plan and owned source courses."""
+    """Expose only the server-owned, approved and frozen component matches."""
     from django.db import connections
-    from . import canonical_learning
+    from .progress_transfer_store import read_state
+    if not components:
+        return []
+    items = read_state(enrolment_id)['items']
+    modules = {item['moduleId'] for item in items if item['status'] == 'approved' and item.get('matchedComponents')}
+    ids = [c['componentId'] for c in components if c.get('componentId') and c.get('moduleId') in modules]
+    settings = {}
+    if ids:
+        with connections['enrolment'].cursor() as cursor:
+            cursor.execute('''SELECT id,jsonb_build_object('legacySettings',settings_json->'legacySettings')
+                FROM curriculum.components WHERE id=ANY(%s) AND module_catalogue_id=ANY(%s)''',
+                [ids, sorted(modules)])
+            settings = dict(cursor.fetchall())
+    return project_approved_learning(components, settings, items)
 
-    assigned = sorted({str(c['moduleId']) for c in components if c.get('moduleId') and c.get('componentId')})
-    if not assigned:
-        return components
-    with connections['enrolment'].cursor() as cursor:
-        courses = read_replacement_courses(cursor, [{'id': ident} for ident in assigned], enrolment_id)
-        if not courses:
-            return components
-        component_ids = [c['componentId'] for c in components
-                         if c.get('componentId') and f"current:{c.get('moduleId')}" in courses]
-        cursor.execute('''SELECT id,settings_json FROM curriculum.components
-            WHERE id=ANY(%s) AND module_catalogue_id=ANY(%s)''',
-            [component_ids, [key.removeprefix('current:') for key in courses]])
-        settings = dict(cursor.fetchall())
-    # Use the same catalogue exclusions and completion rules as student-activity.
-    # Its own membership check remains in force; no route identity from the
-    # browser is used to select another learner or course.
-    source = canonical_learning.source_subjects(
-        enrolment_id, lambda items: {'activities': items}, include_totals=False,
-        course_ids=[ref.removeprefix('legacy:') for ref in courses.values()],
-    )
-    return project_replacement_learning(components, settings, courses, source['activities'])
+
+def project_approved_learning(components, settings_by_id, items):
+    """Revalidate lineage without reading mutable old results or awarding hours."""
+    clean = [{key: value for key, value in c.items() if key != 'previousLearning'} for c in components]
+    approved = [item for item in items if item.get('status') == 'approved']
+    courses = {f"current:{item['moduleId']}": item['courseRef'] for item in approved}
+    activities, matches = {}, {}
+    for item in approved:
+        for ident, match in item.get('matchedComponents', {}).items():
+            if match.get('completed') is not True or match.get('courseRef') != item['courseRef']:
+                continue
+            matches[(item['moduleId'], ident)] = match
+            activities[match['activityId']] = {
+                'group_id': int(item['courseRef'][7:]), 'catalogue_kind': match['catalogueKind'],
+                'source_activity_id': match['sourceActivityId'], 'activity_id': match['activityId'], 'completed': True}
+    projected = project_replacement_learning(clean, settings_by_id, courses, list(activities.values()))
+    result = [c if c.get('previousLearning') == matches.get((c.get('moduleId'), c.get('componentId')))
+              else {key: value for key, value in c.items() if key != 'previousLearning'} for c in projected]
+    # Manual equivalence is an explicit admin decision saved on this learner's
+    # approved request. It does not rewrite shared catalogue provenance.
+    from .progress_transfer_matching import target_fingerprint
+    manual = {}
+    for item in approved:
+        source_uses = Counter(match.get('activityId') for match in item.get('matchedComponents', {}).values())
+        for ident, match in item.get('matchedComponents', {}).items():
+            ref = f"{match.get('catalogueKind')}:{match.get('sourceActivityId')}"
+            if (match.get('manualMatch') is True and match.get('completed') is True
+                    and match.get('courseRef') == item['courseRef']
+                    and ref in item.get('completedSourceActivities', [])
+                    and match.get('activityId') == f"catalogue:{item['courseRef'][7:]}:{ref}"
+                    and source_uses[match['activityId']] == 1):
+                manual[(item['moduleId'], ident)] = match
+    for component in result:
+        match = manual.get((component.get('moduleId'), component.get('componentId')))
+        if (match and not component.get('retired') and match.get('targetFingerprint') ==
+                target_fingerprint(component, settings_by_id.get(component.get('componentId')))):
+            component['previousLearning'] = match
+    return result

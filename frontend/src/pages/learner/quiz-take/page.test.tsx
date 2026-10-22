@@ -5,7 +5,7 @@ import QuizTakePage from './page';
 import { CompletionValidationError } from '@/lib/completionValidation';
 
 const mocks = vi.hoisted(() => ({
-  detail: vi.fn(), quiz: vi.fn(), start: vi.fn(), submit: vi.fn(),
+  detail: vi.fn(), quiz: vi.fn(), start: vi.fn(), submit: vi.fn(), checkpoint: vi.fn(),
   generateReading: vi.fn(), completeReading: vi.fn(),
 }));
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: mocks.detail }));
@@ -15,7 +15,7 @@ vi.mock('@/api/quizzes', () => ({
   generateQuizReading: mocks.generateReading,
   completeQuizReading: mocks.completeReading,
 }));
-vi.mock('@/api/timeTracking', () => ({ startTimeTracking: mocks.start }));
+vi.mock('@/api/timeTracking', () => ({ startTimeTracking: mocks.start, checkpointTimeTracking: mocks.checkpoint }));
 vi.mock('@/hooks/useMyLearner', () => ({ rememberLearner: vi.fn() }));
 vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => ({ canProgress: true }) }));
 vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true }) }));
@@ -74,6 +74,26 @@ describe('quiz requirements loading', () => {
     await act(async () => {});
     expect(mocks.submit).toHaveBeenCalledOnce();
     expect(screen.queryByText('Reflection form')).not.toBeInTheDocument();
+  });
+
+  it('keeps quiz answers and the original session when restoring an expired timer', async () => {
+    mocks.detail.mockResolvedValue(detail);
+    mocks.start.mockResolvedValueOnce({ sessionId: 'old-quiz', trackingToken: 'old', startedAt: '2026-01-01T00:00:00Z', countingMode: 'active_quiz' });
+    mocks.checkpoint.mockImplementation(async session => ({ ...session, persistent: true, savedSeconds: 300 }));
+    mocks.submit.mockRejectedValueOnce(new Error('The activity timing session has expired. Your answers and timing draft are kept.'));
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Finish/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore saved time' }));
+    await screen.findByText(/Your time has been restored/);
+    const archive = JSON.parse(localStorage.getItem('learner_quiz_timer:v1:commercial:501:1:expired:old-quiz')!);
+    expect(archive.session.trackingToken).toBe('old');
+    expect(archive.answers.answers).toEqual({ '1': 1 });
+    fireEvent.click(screen.getByRole('button', { name: /Finish/ }));
+    await act(async () => {});
+    expect(mocks.submit).toHaveBeenLastCalledWith(1, 'commercial', '501', expect.objectContaining({ trackingToken: 'old', answers: { '1': 1 }, timeTakenSeconds: 300 }));
+    expect(mocks.start).toHaveBeenCalledTimes(1);
   });
 
   it('retains verified previous completion and links the original result without creating an attempt', async () => {

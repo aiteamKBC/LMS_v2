@@ -11,6 +11,7 @@ import { CreateProgressPanel } from './CreateProgressPanel';
 import { LeftoverSlotsPanel } from './LeftoverSlotsPanel';
 import { AttendeeComparisonPanel } from './AttendeeComparisonPanel';
 import { MeetingScopePanel } from './MeetingScopePanel';
+import { ExternalCalendarPanel } from './ExternalCalendarPanel';
 import { pendingInvitations } from './attendeeComparison';
 import { emailList } from '../module-builder/EmailChipsInput';
 import { forwardScheduleEmail } from './forwardScheduleEmail';
@@ -390,7 +391,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
     detailOccurrenceFor, now, setPreview, setTranscriptPreview, invitedPrefilling, prefillNotice, prefillInvitees, preview,
     transcriptPreview, settingsDrawer, drawerTarget, saveSettings, blockedReason,
     teamsLoaded, teamsError, createProgress, updateProgress, saveInvitations, addedInvitees, updateDrawer, pushDates, resendSchedule,
-    selectedScopeRows, chooseMeetingScope,
+    selectedScopeRows, chooseMeetingScope, reattach, externalCalendar, calendarLinksLoading, calendarLinksError,
     comparison, comparing, comparisonError, compareAttendees, publishedInvitees,
   } = workspace;
   // Who the author has typed in but not saved. Named under the comparison so a
@@ -450,7 +451,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
             /* The footer drives the module's own calendar. The second tab has
                its own button inside it, so this is hidden rather than left
                there acting on a calendar the reader is not looking at. */
-            footer={!teamsLoaded || onSecondTab ? undefined : (
+            footer={!teamsLoaded || calendarLinksLoading || calendarLinksError || onSecondTab ? undefined : (
               <div className="flex w-full flex-wrap items-center justify-end gap-2">
                 {/* Only the actions this module can actually take: a footer of
                     greyed-out buttons reads as broken rather than as guidance.
@@ -483,7 +484,9 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     )}
                   </p>
                 )}
-            {selected.summary ? (
+            {externalCalendar ? (
+              <p className="text-[12px] font-semibold text-primary-800">Existing Teams links are protected. Manage the original meeting in Teams.</p>
+            ) : selected.summary ? (
                   <div className="flex w-full flex-wrap items-center justify-end gap-2">
                     <button type="button" onClick={() => openCalendarAction('reschedule')}
                       disabled={Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason) || detailLoading || detail?.series.id !== selected.summary.liveSessionId || !graphConfigured}
@@ -604,24 +607,24 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                 ))}
               </div>
             )}
-            {onSecondTab ? secondTab?.render() : !teamsLoaded ? (
-              teamsError ? (
+            {onSecondTab ? secondTab?.render() : !teamsLoaded || calendarLinksLoading || calendarLinksError ? (
+              calendarLinksError || teamsError ? (
                 <div className="space-y-3">
-                  <p role="alert" className="text-sm text-red-700">{teamsError}</p>
-                  <button type="button" onClick={() => void loadTeamsState()}
+                  <p role="alert" className="text-sm text-red-700">{calendarLinksError || teamsError}</p>
+                  <button type="button" onClick={() => { refreshScopes(); void loadTeamsState(); }}
                     className="rounded-lg border px-3 py-2 text-[12px] font-bold">Try again</button>
                 </div>
               ) : (
                 <p role="status" className="flex items-center gap-1.5 rounded-xl border border-background-200 bg-background-100/60 p-3 text-[11px] font-semibold text-foreground-500">
                   <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
-                  Loading this module&rsquo;s session dates and Teams calendar…
+                  Loading this module&rsquo;s session dates and Teams calendar, and checking its existing Teams links…
                 </p>
               )
             ) : (<>
             {/* Where this module stands, in the same chips the table uses. */}
             <div className="mb-4 flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wide">
               <span className={`inline-flex items-center rounded-full border px-2.5 py-1 ${STATE_TONES[selected.state]}`}>
-                {STATE_LABELS[selected.state]}
+                {externalCalendar && !selected.summary ? 'Existing link · dates unconfirmed' : STATE_LABELS[selected.state]}
               </span>
               <span className="inline-flex items-center rounded-full border border-background-200 bg-background-100 px-2.5 py-1 text-foreground-600">
                 {(selectedForDisplay || selected).sessions.length} module session{(selectedForDisplay || selected).sessions.length === 1 ? '' : 's'}
@@ -662,9 +665,18 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
               busy={busy}
               disabled={Boolean(blockedReason) || Boolean(updateProgress) || createDrawer.saving || updateDrawer.saving}
               onChoose={(componentId, scope) => void chooseMeetingScope(componentId, scope)}
+              externalCalendar={Boolean(externalCalendar)}
             />
 
-            {selected.summary ? updateProgress ? (
+            {externalCalendar ? (
+              <ExternalCalendarPanel
+                calendar={externalCalendar}
+                row={selectedForDisplay || selected}
+                onReattach={() => void reattach(selected)}
+                busy={Boolean(busy)}
+                disabled={Boolean(blockedReason)}
+              />
+            ) : selected.summary ? updateProgress ? (
               <CreateProgressPanel
                 moduleName={selected.name}
                 sessionCount={(selectedForDisplay || selected).sessions.length}

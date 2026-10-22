@@ -14,6 +14,7 @@ export interface CoachAttendanceRecord {
 export interface CoachAttendanceLearner {
   id: string;
   learner: string;
+  attendanceMode?: 'live' | 'lazy';
   learnerType?: string | null;
   enrolmentId?: string | null;
   email?: string | null;
@@ -92,6 +93,8 @@ export interface AttendancePagination {
 }
 
 export interface CoachAttendanceDetailsPayload {
+  attendanceMode?: 'live' | 'lazy';
+  awaitingRecording?: number;
   learner?: {
     id: string;
     name: string;

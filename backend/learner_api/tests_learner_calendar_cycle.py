@@ -223,6 +223,54 @@ class GeneratedCycleTests(CurriculumCycleFixture, SimpleTestCase):
         self.assertEqual(self.occurrences.call_args.kwargs['learner_scope']['group_id'], 'G-1')
         self.assertEqual(self.occurrences.call_args.kwargs['learner_start_date'], START)
 
+    def test_month_limits_native_window_without_changing_recurrence_anchor(self):
+        _generated_cycle_events(_learner(), _mirror(), set(), month='2026-09')
+        self.assertEqual(self.occurrences.call_args.kwargs['window_start'], date(2026, 9, 1))
+        self.assertEqual(self.occurrences.call_args.kwargs['window_end'], date(2026, 9, 30))
+        self.assertEqual(self.occurrences.call_args.kwargs['learner_start_date'], START)
+
+    def test_month_outside_native_window_does_not_generate_reviews(self):
+        self.assertEqual(_generated_cycle_events(_learner(), _mirror(), set(), month='2025-09'), [])
+        self.occurrences.assert_not_called()
+
+    def test_native_month_and_header_reads_preserve_booking_identity_and_compact_links(self):
+        from coach_api.models import CoachCalendarEvent
+        learner, mirror = _learner(), _mirror()
+        key = review_calendar_event_key(mirror.id, 'REV-MCM', 1)
+        booking = CoachCalendarEvent(
+            learner_id=mirror.id, learner_email=learner.email, event_key=key,
+            event_type='mcr', review_template_id='REV-MCM', occurrence_number=1,
+            sequence=1, target_date=date(2026, 9, 14), scheduled_date=date(2026, 10, 5),
+            status='scheduled', meeting_link='https://example.invalid/meeting',
+            notes='Keep private booking notes', review_responses={'answer': 'saved'},
+        )
+        original = (booking.event_key, booking.scheduled_date, booking.notes, dict(booking.review_responses))
+        for options in ({'month': '2026-09'}, {'header_only': True}):
+            with self.subTest(options=options), \
+                 patch('learner_api.calendar.CoachCalendarEvent.objects.filter') as stored, \
+                 patch.object(booking, 'save') as save:
+                query = stored.return_value
+                query.filter.return_value = query
+                query.defer.return_value = query
+                query.order_by.return_value = [booking]
+                events = coaching_events_for_learner(learner, mirror, **options)
+                matched = [e for e in events if e['eventKey'] == key]
+                self.assertEqual(len(matched), 1)
+                event = matched[0]
+                self.assertEqual(event['status'], 'scheduled')
+                self.assertEqual(event['date'], '2026-10-05')
+                self.assertEqual(event['reviewTemplateId'], 'REV-MCM')
+                self.assertEqual(event['occurrenceNumber'], 1)
+                self.assertNotIn('reviewResponses', event)
+                self.assertNotIn('notes', event)
+                if options.get('header_only'):
+                    self.assertEqual(event['meetingLink'], booking.meeting_link)
+                else:
+                    self.assertNotIn('meetingLink', event)
+                    self.assertEqual(self.occurrences.call_args.kwargs['window_start'], date(2026, 9, 1))
+                save.assert_not_called()
+        self.assertEqual((booking.event_key, booking.scheduled_date, booking.notes, booking.review_responses), original)
+
 
 class StoredRowOwnershipTests(SimpleTestCase):
     """Which stored rows are this learner's cycle.

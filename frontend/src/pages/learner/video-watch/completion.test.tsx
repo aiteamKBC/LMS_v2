@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
 import { submitComponentProgress, type ComponentProgressResponse } from '@/api/components';
-import { startTimeTracking, resumeTimeTracking } from '@/api/timeTracking';
+import { startTimeTracking, resumeTimeTracking, checkpointTimeTracking } from '@/api/timeTracking';
 import { submitVideoProgress, type VideoProgressResponse } from '@/api/videos';
 import { fetchEvidence } from '@/api/evidence';
 import { loadLearningReflectionSubmission } from '@/api/reflectionSubmission';
@@ -33,7 +33,7 @@ vi.mock('./readingDownloads', async () => ({
 
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn() }));
 vi.mock('@/api/components', () => ({ submitComponentProgress: vi.fn() }));
-vi.mock('@/api/timeTracking', () => ({ startTimeTracking: vi.fn(), resumeTimeTracking: vi.fn() }));
+vi.mock('@/api/timeTracking', () => ({ startTimeTracking: vi.fn(), resumeTimeTracking: vi.fn(), checkpointTimeTracking: vi.fn() }));
 vi.mock('@/api/videos', () => ({ submitVideoProgress: vi.fn() }));
 vi.mock('@/api/reflectionSubmission', () => ({ loadLearningReflectionSubmission: vi.fn(), saveLearningReflectionSubmission: vi.fn() }));
 vi.mock('@/api/evidence', () => ({
@@ -708,6 +708,99 @@ it('revalidates a reward draft with the server instead of discarding it for devi
   await waitFor(() => expect(resumeTimeTracking).toHaveBeenCalledWith(savedSession, 'component', 'C1'));
   expect(startTimeTracking).not.toHaveBeenCalled();
   expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ elapsedSeconds: 300, session: savedSession });
+});
+
+it('keeps an expired reward draft after a failed recovery and restores its original time on retry', async () => {
+  const key = 'learner_activity_timer:v1:apprenticeship:1:C1';
+  const old = { sessionId: 'EXPIRED', trackingToken: 'old-token', startedAt: '2026-01-01T00:00:00Z', countingMode: 'visible_page' as const, rewardTracking: true };
+  localStorage.setItem(key, JSON.stringify({ elapsedSeconds: 300, session: old }));
+  vi.mocked(resumeTimeTracking).mockRejectedValue(Object.assign(new Error('The activity timing session has expired.'), { code: 'expired_tracking_session' }));
+  vi.mocked(checkpointTimeTracking).mockRejectedValueOnce(new Error('offline')).mockResolvedValue({ ...old, persistent: true, savedSeconds: 300 });
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [{ ...first, type: 'podcast', component: 'Podcast', audioUrl: 'https://example.test/lesson.mp3' }] } as unknown as LearnerDetail);
+  mount();
+  const restart = await screen.findByRole('button', { name: 'Restore saved time' });
+  expect(startTimeTracking).not.toHaveBeenCalled();
+  fireEvent.click(restart);
+  await waitFor(() => expect(JSON.parse(localStorage.getItem(key)!).session.persistent).toBe(true));
+  expect(JSON.parse(localStorage.getItem(`${key}:expired:EXPIRED`)!)).toMatchObject({ session: old, elapsedSeconds: 300 });
+  expect(JSON.parse(localStorage.getItem(key)!).elapsedSeconds).toBe(300);
+  expect(JSON.parse(localStorage.getItem(key)!).session.sessionId).toBe('EXPIRED');
+  expect(startTimeTracking).not.toHaveBeenCalled();
+});
+
+it.each(['commercial', 'apprenticeship'])('restores a multi-day %s reading draft and confirms the same accumulated time', async kind => {
+  const key = `learner_activity_timer:v1:${kind}:1:C1`;
+  const old = { sessionId: 'DURABLE', trackingToken: 'same-signed-token', startedAt: '2026-01-01T00:00:00Z',
+    countingMode: 'visible_page' as const, persistent: true };
+  localStorage.setItem(key, JSON.stringify({ elapsedSeconds: 300, session: old }));
+  vi.mocked(checkpointTimeTracking).mockResolvedValue({ ...old, savedSeconds: 360 });
+  vi.spyOn(performance, 'now').mockReturnValue(0);
+  const reading = { ...first, type: 'reading', component: 'Reading', contentHtml: '<p>Synthetic reading</p>' };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
+  mount('C1', kind);
+  await screen.findByRole('timer', { name: 'Time on this activity: 00 hours, 06 minutes, 00 seconds' });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({
+    trackingToken: old.trackingToken, timeTakenSeconds: 360,
+  })));
+  expect(startTimeTracking).not.toHaveBeenCalled();
+});
+
+it('offers recovery inside the reflection popup and preserves the entered duration after an offline save', async () => {
+  session.outsideWorkingHours = false;
+  const persistent = { sessionId: 'OFFLINE', trackingToken: 'original-token', startedAt: new Date().toISOString(),
+    countingMode: 'visible_page' as const, persistent: true };
+  vi.mocked(startTimeTracking).mockResolvedValue(persistent);
+  vi.mocked(checkpointTimeTracking).mockRejectedValueOnce(new Error('Connection lost. Your draft is kept.'))
+    .mockImplementation(async value => ({ ...value, persistent: true, savedSeconds: 300 }));
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [{ ...first, reflectionRequired: true }] } as unknown as LearnerDetail);
+  mount();
+  fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '20' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Do you want to complete a reflection?' });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'No, finish without reflection' }));
+  fireEvent.click(await within(dialog).findByRole('button', { name: 'Restore saved time' }));
+  await screen.findByText(/Your time has been restored/);
+  fireEvent.click(within(dialog).getByRole('button', { name: 'No, finish without reflection' }));
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({
+    trackingToken: 'original-token', timeTakenSeconds: 1200, timeEntrySource: 'input', skipReflection: true,
+  })));
+  expect(startTimeTracking).toHaveBeenCalledTimes(1);
+});
+
+it('keeps a review-required timing error visible without offering a misleading restore', async () => {
+  const message = 'Some time needs review. Your draft is kept. Please contact support before finishing.';
+  vi.mocked(submitComponentProgress).mockRejectedValueOnce(Object.assign(new Error(message), { code: 'observation_outside_timing_lease' }));
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [
+    { ...first, type: 'reading', reflectionRequired: true, contentHtml: '<p>Synthetic reading</p>' },
+  ] } as unknown as LearnerDetail);
+  mount();
+  fireEvent.click(await screen.findByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'No, finish without reflection' }));
+  expect(await screen.findByText(message)).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Restore saved time' })).not.toBeInTheDocument();
+  expect(localStorage.getItem('learner_activity_timer:v1:apprenticeship:1:C1')).not.toBeNull();
+});
+
+it('retries a persistent reading checkpoint on reconnect without erasing the draft', async () => {
+  const persistent = { sessionId: 'PERIODIC', trackingToken: 'signed', startedAt: new Date().toISOString(),
+    countingMode: 'visible_page' as const, persistent: true };
+  vi.mocked(startTimeTracking).mockResolvedValue(persistent);
+  vi.mocked(checkpointTimeTracking).mockRejectedValueOnce(new Error('offline'))
+    .mockImplementation(async (value, _activity, _id, _kind, _learner, seconds) => ({ ...value, savedSeconds: seconds }));
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [
+    { ...first, type: 'reading', contentHtml: '<p>Synthetic reading</p>' },
+  ] } as unknown as LearnerDetail);
+  mount();
+  await screen.findByText('Synthetic reading');
+  // Trigger the same sync path as the interval without changing the activity clock.
+  act(() => window.dispatchEvent(new Event('online')));
+  await screen.findByText(/Your draft is kept on this device.*offline/);
+  expect(JSON.parse(localStorage.getItem('learner_activity_timer:v1:apprenticeship:1:C1')!).session.sessionId).toBe('PERIODIC');
+  act(() => window.dispatchEvent(new Event('online')));
+  await waitFor(() => expect(screen.queryByText(/Your draft is kept on this device.*offline/)).not.toBeInTheDocument());
+  expect(checkpointTimeTracking).toHaveBeenCalledTimes(2);
 });
 
 

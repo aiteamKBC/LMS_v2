@@ -90,6 +90,7 @@ export interface CoachCalendarEvent {
   effectiveLmsStatus?: string;
   calendarEventId?: string;
   calendarEventKey?: string | null;
+  reconciledReview?: boolean;
   formEventKey?: string;
   reviewerName?: string | null;
   hasReviewForm?: boolean;
@@ -255,6 +256,12 @@ export interface CoachMeetingSummary {
   error?: string;
 }
 
+export interface MigratedSummaryGenerationError {
+  code: string;
+  message: string;
+  requestId: string;
+}
+
 export interface MigratedSummaryBinding {
   fieldKey?: string;
   state?: 'NEVER_POPULATED' | 'AI_POPULATED_UNEDITED' | 'COACH_EDITED' | 'COACH_CLEARED';
@@ -266,6 +273,8 @@ export interface MigratedSummaryBinding {
   suggestionSource?: 'teams' | 'uploaded_transcript';
   generatedAt?: string;
   generationStatus?: 'ready' | 'failed' | 'unavailable';
+  generationAttemptedAt?: string | null;
+  generationError?: MigratedSummaryGenerationError;
   replacementAvailable?: boolean;
   transcriptTruncated?: boolean;
   summaryTooLong?: boolean;
@@ -282,6 +291,7 @@ export interface CoachMeetingArtifactsResponse {
     recordingStatus: string;
     transcriptStatus: string;
     summaryStatus: string;
+    generationError?: MigratedSummaryGenerationError | null;
     transcriptArtifactId?: string | null;
     errorCodes: string[];
   };

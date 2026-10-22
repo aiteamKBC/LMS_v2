@@ -2280,6 +2280,16 @@ table tbody td:last-child {
   font-size: 17px;
 }
 
+.rich-text-surface h4,
+.rich-text-surface h5,
+.rich-text-surface h6 {
+  color: #111827;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.3;
+  margin: 0 0 8px;
+}
+
 .rich-text-surface p {
   margin: 0 0 12px;
 }
@@ -2348,6 +2358,130 @@ table tbody td:last-child {
 .rich-text-surface th {
   background: #f8fafc;
   font-weight: 800;
+}
+
+/* Authored curriculum HTML shown to a learner (readings, video lesson
+   content, descriptions). Sizes are relative and colours inherit, so the
+   reading toolbar's font size, line height and colour themes (including
+   dark) still apply. Tailwind's base reset strips list markers, heading sizes
+   and table borders; these rules give them back. */
+.curriculum-html {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  overflow-x: auto;
+}
+
+.curriculum-html * {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.curriculum-html > :first-child {
+  margin-top: 0;
+}
+
+.curriculum-html h1,
+.curriculum-html h2,
+.curriculum-html h3,
+.curriculum-html h4,
+.curriculum-html h5,
+.curriculum-html h6 {
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 1em 0 0.5em;
+}
+
+.curriculum-html h1 { font-size: 1.6em; font-weight: 800; }
+.curriculum-html h2 { font-size: 1.35em; }
+.curriculum-html h3 { font-size: 1.15em; }
+.curriculum-html h4 { font-size: 1.05em; }
+.curriculum-html h5 { font-size: 1em; }
+.curriculum-html h6 { font-size: 0.9em; text-transform: uppercase; letter-spacing: 0.02em; }
+
+.curriculum-html p {
+  margin: 0 0 0.75em;
+}
+
+.curriculum-html ul,
+.curriculum-html ol {
+  margin: 0 0 0.75em;
+  padding-left: 1.5em;
+}
+
+.curriculum-html ul { list-style: disc; }
+.curriculum-html ol { list-style: decimal; }
+.curriculum-html ul ul { list-style: circle; }
+.curriculum-html li { margin: 0.25em 0; }
+.curriculum-html li > ul,
+.curriculum-html li > ol { margin: 0.25em 0 0; }
+
+.curriculum-html strong,
+.curriculum-html b { font-weight: 700; }
+.curriculum-html em,
+.curriculum-html i { font-style: italic; }
+.curriculum-html u { text-decoration: underline; }
+.curriculum-html s,
+.curriculum-html strike,
+.curriculum-html del { text-decoration: line-through; }
+
+.curriculum-html a {
+  color: #2563eb;
+  text-decoration: underline;
+}
+
+.curriculum-html blockquote {
+  margin: 0.75em 0;
+  border-left: 4px solid #a78bfa;
+  padding: 0.25em 0 0.25em 1em;
+  font-style: italic;
+}
+
+.curriculum-html code,
+.curriculum-html pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  background: rgba(127, 127, 127, 0.12);
+  border-radius: 4px;
+}
+
+.curriculum-html code { padding: 0.1em 0.3em; }
+.curriculum-html pre { padding: 0.75em 1em; white-space: pre-wrap; margin: 0 0 0.75em; }
+.curriculum-html pre code { background: none; padding: 0; }
+
+.curriculum-html hr {
+  margin: 1em 0;
+  border: 0;
+  border-top: 1px solid rgba(127, 127, 127, 0.35);
+}
+
+.curriculum-html img,
+.curriculum-html video {
+  height: auto;
+  border-radius: 8px;
+}
+
+.curriculum-html iframe {
+  border: 0;
+  border-radius: 8px;
+}
+
+.curriculum-html table {
+  width: 100%;
+  margin: 0.75em 0;
+  border-collapse: collapse;
+}
+
+.curriculum-html th,
+.curriculum-html td {
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  padding: 0.4em 0.6em;
+  text-align: left;
+  vertical-align: top;
+}
+
+.curriculum-html th {
+  background: rgba(127, 127, 127, 0.08);
+  font-weight: 700;
 }
 
 /* ========================================================================== *
@@ -4729,6 +4863,8 @@ table tbody td:last-child {
 /* The workspace top bar now continues the same gradient language as the
    sidebar, making the two pieces read as one navigation frame. */
 .kbc-workspace-topbar {
+  /* Keep header menus above page heroes and their positioned metric cards. */
+  z-index: 40;
   border-bottom: 0 !important;
   background: var(--kbc-chrome-color) !important;
   box-shadow: 0 10px 22px -20px rgb(76 29 149 / 0.72);
@@ -4736,7 +4872,8 @@ table tbody td:last-child {
 
 @media (max-width: 1023px) {
   .workspace-content > .kbc-workspace-topbar {
-    z-index: 10;
+    /* Stay above page content, but below the mobile sidebar backdrop (40). */
+    z-index: 39;
   }
 }
 

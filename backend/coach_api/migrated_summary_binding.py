@@ -79,24 +79,31 @@ def populate_answer(overlay, state, summary_text):
     return result
 
 
-def record_answer_edit(overlay, answers, *, actor, edited_fields=()):
+def record_answer_edit(overlay, answers, *, actor, edited_fields=(), role="advisor", account_id=None):
+    if not isinstance(answers, dict):
+        raise ValueError("answers must be an object keyed by field id.")
+    state = deepcopy(overlay.meeting_intelligence or {})
+    audit = state.setdefault("answerEdits", {})
+    previous = overlay.answers or {}
+    for key, value in answers.items():
+        if key not in previous or previous[key] != value:
+            audit[key] = {"actor": actor, "role": role, "accountId": account_id,
+                          "at": timezone.now().isoformat()}
+    overlay.meeting_intelligence = state
     field = meeting_summary_field(overlay.template_snapshot)
     if not field:
         return
-    if not isinstance(answers, dict):
-        raise ValueError("answers must be an object keyed by field id.")
     key = field["key"]
-    previous = overlay.answers or {}
     changed = ((key in previous) != (key in answers) or previous.get(key) != answers.get(key)
                or key in edited_fields)
     if not changed:
         return
-    state = deepcopy(overlay.meeting_intelligence or {})
     preserve_original(state)
     state["summaryBinding"] = {
         **{k: v for k, v in binding_state(overlay, state).items() if k not in {"answer", "answerPresent"}},
         "fieldKey": key,
         "state": "COACH_CLEARED" if answers.get(key) in (None, "") else "COACH_EDITED",
         "status": "answer-preserved", "editedAt": timezone.now().isoformat(), "editedBy": actor,
+        "editedRole": role,
     }
     overlay.meeting_intelligence = state

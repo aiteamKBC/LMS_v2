@@ -4,10 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CoachCalendarEvent } from '../shared/calendarEvents';
 import CoachProgressReviews from './page';
+import { importedBookingDefinition, installDialogTestSupport, personalSupportBooking, scheduledImportedBooking } from '../shared/__tests__/importedBookingFixtures';
 
-const { fetchEvents, openReview, coach } = vi.hoisted(() => ({
+const { fetchEvents, openReview, scheduleEvent, fetchForm, book, reschedule, coach } = vi.hoisted(() => ({
+  fetchForm: vi.fn(), book: vi.fn(), reschedule: vi.fn(),
   fetchEvents: vi.fn(),
   openReview: vi.fn(),
+  scheduleEvent: vi.fn(),
   coach: { email: 'coach@example.com', name: 'Coach Example', isInitialized: true, isViewingAsCoach: false },
 }));
 
@@ -18,12 +21,15 @@ vi.mock('../shared/ProgressReviewCompletionModal', () => ({ default: () => null 
 vi.mock('../shared/calendarEvents', async importOriginal => ({
   ...(await importOriginal<typeof import('../shared/calendarEvents')>()),
   fetchCoachCalendarEvents: fetchEvents,
+  scheduleCoachCalendarEvent: scheduleEvent,
 }));
 vi.mock('@/api/progressReviews', () => ({
   fetchLatestRun: vi.fn().mockResolvedValue({ exists: false }),
   bulkGenerateProgressReviews: vi.fn(),
 }));
-vi.mock('@/api/reviewInstances', () => ({ openReviewInstanceForEvent: openReview }));
+vi.mock('@/api/reviewInstances', () => ({ openReviewInstanceForEvent: openReview,
+  fetchReviewInstanceForm: fetchForm, bookMigratedReview: book, rescheduleMigratedReview: reschedule, initializeMigratedReview: vi.fn(),
+}));
 
 function review(index: number, overrides: Partial<CoachCalendarEvent> = {}): CoachCalendarEvent {
   return {
@@ -47,6 +53,36 @@ function LocationOutput() {
   return <output data-testid="route">{location.pathname}{location.search}</output>;
 }
 
+it.each([false, true])('offers PSP booking from its Review row (scheduled=%s)', async scheduled => {
+  fetchEvents.mockResolvedValue({ owner: { name: 'Coach' }, events: [review(31, {
+    id: 'imported-review:31', eventKey: 'imported-review:31', reviewSource: 'aptem', aptemReviewId: '31',
+    importedReviewType: 'Personal Support Plan', reviewTemplateId: null, hasReviewForm: false,
+    status: scheduled ? 'scheduled' : 'not-scheduled', calendarEventKey: scheduled ? 'imported-review:31' : null,
+  })] });
+  fetchForm.mockResolvedValue(personalSupportBooking(scheduled));
+  (scheduled ? reschedule : book).mockResolvedValue(personalSupportBooking(true));
+  mount('/coach/reviews');
+  fireEvent.click(await screen.findByRole('button', { name: 'More actions for Learner 31' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: scheduled ? 'Reschedule' : 'Schedule' }));
+  fireEvent.click(await screen.findByRole('button', { name: scheduled ? 'Save new time' : 'Confirm booking' }));
+  expect(await screen.findByText(scheduled ? 'Review rescheduled.' : 'Review scheduled.')).toBeVisible();
+  expect(scheduleEvent).not.toHaveBeenCalled();
+});
+
+it('includes an Aptem PSP summary in the page schedule picker', async () => {
+  fetchEvents.mockResolvedValue({ owner: { name: 'Coach' }, events: [review(31, {
+    id: 'imported-review:31', eventKey: 'imported-review:31', reviewSource: 'aptem', aptemReviewId: '31',
+    importedReviewType: 'Personal Support Plan', reviewTemplateId: null, hasReviewForm: false,
+  })] });
+  fetchForm.mockResolvedValue(personalSupportBooking());
+  mount('/coach/reviews');
+  await screen.findByText('Learner 31');
+  fireEvent.click(screen.getByRole('button', { name: 'Schedule review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Continue to booking' }));
+  expect(await screen.findByRole('button', { name: 'Confirm booking' })).toBeEnabled();
+  expect(scheduleEvent).not.toHaveBeenCalled();
+});
+
 function mount(initialPath = '/coach/progress-reviews') {
   return render(<MemoryRouter initialEntries={[initialPath]}>
     <Routes>
@@ -60,6 +96,11 @@ function mount(initialPath = '/coach/progress-reviews') {
 }
 
 beforeEach(() => {
+  installDialogTestSupport();
+  fetchForm.mockReset().mockResolvedValue(scheduledImportedBooking());
+  book.mockReset().mockResolvedValue(scheduledImportedBooking());
+  reschedule.mockReset().mockResolvedValue(scheduledImportedBooking());
+  scheduleEvent.mockReset();
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date('2026-09-14T10:00:00'));
   fetchEvents.mockReset();
@@ -70,6 +111,26 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('progress review list navigation and filters', () => {
+  it.each([
+    ['/coach/progress-reviews', 'progress-review'],
+    ['/coach/reviews', 'review'],
+  ] as const)('shows incomplete identity coverage alongside available reviews on %s', async (path, source) => {
+    fetchEvents.mockResolvedValue({ events: [review(2, { source, reviewTypeCode: source === 'review' ? 'career_review' : 'progress_review', learner: 'Available Learner' })],
+      reviewGenerationIssues: [
+        { learnerId: '40', code: 'review_identity_unavailable' },
+        { learnerId: '41', code: 'review_identity_unavailable' },
+      ] });
+    const first = mount(path);
+    await screen.findByText('Some reviews are unavailable');
+    expect(screen.getByText(/2 learners need an enrolment record check/)).toBeVisible();
+    expect(screen.getByText('Available Learner')).toBeVisible();
+    first.unmount();
+    fetchEvents.mockImplementation(() => new Promise(() => {}));
+    mount(path);
+    expect(screen.getByText('Some reviews are unavailable')).toBeVisible();
+    expect(screen.getByText('Available Learner')).toBeVisible();
+  });
+
   const mixedReviews = () => [
     review(60, { learner: 'PR Learner', importedReviewType: 'Progress Review', reviewSource: 'aptem' }),
     review(61, { learner: 'Radar Learner', importedReviewType: 'Progress Review (+ Skills Radar)', reviewSource: 'aptem' }),
@@ -277,6 +338,42 @@ describe('progress review list navigation and filters', () => {
     fireEvent.click(scheduledRow.getByRole('button', { name: 'View form' }));
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A21');
     expect(openReview).not.toHaveBeenCalled();
+  });
+
+  it('opens a Scheduled imported booking in a direct reschedule dialog', async () => {
+    fetchEvents.mockResolvedValue({ events: [review(31, { eventKey: 'imported-review:31',
+      learner: 'Imported booking', status: 'scheduled', scheduledDate: '2026-09-22',
+      reviewSource: 'aptem', calendarEventKey: 'imported-review:31', reviewTemplateId: undefined })] });
+    mount();
+    await screen.findByText('Imported booking');
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for Imported booking' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Reschedule' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save new time' }));
+    expect(await screen.findByText('Review rescheduled.')).toBeVisible();
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/progress-reviews');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(reschedule).toHaveBeenCalledWith('imported-review:31', expect.any(Object), scheduledImportedBooking().booking);
+    expect(scheduleEvent).not.toHaveBeenCalled();
+  });
+
+  it.each(['Progress Review', 'Progress Review (+ Skills Radar)'])('books an Aptem %s from the row and keeps the updated row in cache', async importedReviewType => {
+    fetchForm.mockResolvedValue(importedBookingDefinition());
+    fetchEvents.mockResolvedValue({ events: [review(31, { eventKey: 'imported-review:31', learner: 'Imported learner',
+      reviewSource: 'aptem', aptemReviewId: '31', importedReviewType }), review(32, { learner: 'Unaffected learner' })] });
+    const view = mount();
+    await screen.findByText('Imported learner');
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for Imported learner' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Schedule' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm booking' }));
+    await screen.findByText('Review scheduled.');
+    expect(within(screen.getByText('Imported learner').closest('tr')!).getByText('Scheduled')).toBeVisible();
+    expect(within(screen.getByText('Unaffected learner').closest('tr')!).getByText('Not Scheduled')).toBeVisible();
+    expect(book).toHaveBeenCalledWith('imported-review:31', expect.any(Object));
+    expect(scheduleEvent).not.toHaveBeenCalled();
+    view.unmount();
+    fetchEvents.mockImplementation(() => new Promise(() => {}));
+    mount();
+    expect(within(screen.getByText('Imported learner').closest('tr')!).getByText('Scheduled')).toBeVisible();
   });
 
   it('opens an imported Aptem View Form directly instead of the learner profile', async () => {

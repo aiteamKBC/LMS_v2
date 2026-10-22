@@ -1,36 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { LEARNER_PROFILE } from '@/mocks/learner-profile';
+import { useAuth } from '@/hooks/useAuth';
+import { createSupportTicket, loadSupportTickets, updateSupportTicket, ticketDate, type SupportTicket, type TicketReply } from '@/api/supportTickets';
+import TicketFilePicker from '@/components/support/TicketFilePicker';
+import TicketAttachments from '@/components/support/TicketAttachments';
 
 const learnerNav = roleNavMap.learner;
 
 type TabKey = 'tickets' | 'faq' | 'knowledge' | 'contact';
-
-interface SupportTicket {
-  id: string;
-  title: string;
-  category: string;
-  priority: 'low' | 'medium' | 'high' | 'urgent';
-  status: 'open' | 'in-progress' | 'resolved' | 'closed';
-  submitted: string;
-  lastUpdate: string;
-  assignedTo: string;
-  assignedTeam: string;
-  messages: number;
-  description: string;
-  timeline: { event: string; timestamp: string; detail?: string }[];
-  replies?: { id: string; sender: string; senderRole: string; body: string; timestamp: string }[];
-}
-
-interface TicketReply {
-  id: string;
-  sender: string;
-  senderRole: string;
-  body: string;
-  timestamp: string;
-}
 
 interface KnowledgeArticle {
   id: string;
@@ -39,73 +18,6 @@ interface KnowledgeArticle {
   excerpt: string;
   content: string;
 }
-
-const TICKETS: SupportTicket[] = [
-  {
-    id: 'tkt-001', title: 'Unable to upload evidence file — keeps timing out', category: 'Technical', priority: 'high', status: 'in-progress',
-    submitted: '8 Jun 2026', lastUpdate: '9 Jun 2026', assignedTo: 'IT Support', assignedTeam: 'Technical Support',
-    messages: 4,
-    description: 'When attempting to upload PDF evidence files for Module 4, the upload spinner appears briefly then disappears with no file attached. I have tried Chrome and Firefox on both my work laptop and personal device. The file size is under 10MB. Browser console shows a timeout error after approximately 30 seconds.',
-    timeline: [
-      { event: 'Opened', timestamp: '8 Jun 2026, 14:22', detail: 'Ticket created by Sophie Williams' },
-      { event: 'Assigned', timestamp: '8 Jun 2026, 14:45', detail: 'Assigned to IT Support team' },
-      { event: 'In Progress', timestamp: '9 Jun 2026, 09:10', detail: 'IT Support investigating upload endpoint' },
-    ],
-    replies: [
-      { id: 'r-1', sender: 'Sophie Williams', senderRole: 'Learner', body: 'I have tried multiple times and the issue persists. The file is 4MB, not large. I have cleared my cache and tried incognito mode.', timestamp: '8 Jun 2026, 14:25' },
-      { id: 'r-2', sender: 'IT Support', senderRole: 'Support', body: 'Thank you for the details. We are investigating the upload endpoint. We suspect it is a timeout configuration on the server side. We will update you shortly.', timestamp: '8 Jun 2026, 15:00' },
-      { id: 'r-3', sender: 'IT Support', senderRole: 'Support', body: 'We have identified the issue — a firewall rule was blocking uploads from certain IP ranges. We have whitelisted your network. Please try again and let us know.', timestamp: '9 Jun 2026, 09:15' },
-      { id: 'r-4', sender: 'Sophie Williams', senderRole: 'Learner', body: 'Upload works now! Thank you for the quick fix. I was able to upload my evidence files successfully.', timestamp: '9 Jun 2026, 10:00' },
-    ],
-  },
-  {
-    id: 'tkt-002', title: 'OTJH hours not showing in monthly summary', category: 'Data', priority: 'medium', status: 'open',
-    submitted: '6 Jun 2026', lastUpdate: '6 Jun 2026', assignedTo: 'MIS Team', assignedTeam: 'MIS Operations',
-    messages: 1,
-    description: 'I have logged 14 hours of OTJH this week across 4 entries, but the monthly summary dashboard shows only 6 hours. Individual entries are visible in the list but the total is not summing correctly. I also noticed that one entry from last Friday is missing entirely.',
-    timeline: [
-      { event: 'Opened', timestamp: '6 Jun 2026, 09:30', detail: 'Ticket created by Sophie Williams' },
-    ],
-    replies: [
-      { id: 'r-1', sender: 'Sophie Williams', senderRole: 'Learner', body: 'I have checked again this morning and the total is still wrong. The missing entry is from 5 June, 2 hours of workplace project time.', timestamp: '6 Jun 2026, 09:35' },
-    ],
-  },
-  {
-    id: 'tkt-003', title: 'Question about evidence linking to multiple KSBs', category: 'Learning Support', priority: 'low', status: 'resolved',
-    submitted: '30 May 2026', lastUpdate: '2 Jun 2026', assignedTo: 'Crispin Jones', assignedTeam: 'Tutor Team',
-    messages: 3,
-    description: 'I have a workplace observation evidence that I believe maps to K5, K6, and S8 simultaneously. Can I link one piece of evidence to multiple KSBs, or do I need separate evidence for each? Also, is there a limit to how many KSBs one evidence item can cover?',
-    timeline: [
-      { event: 'Opened', timestamp: '30 May 2026, 11:00', detail: 'Ticket created by Sophie Williams' },
-      { event: 'Assigned', timestamp: '30 May 2026, 11:30', detail: 'Assigned to Crispin Jones (Tutor)' },
-      { event: 'In Progress', timestamp: '30 May 2026, 14:00', detail: 'Tutor reviewing evidence mapping guidelines' },
-      { event: 'Learner Reply', timestamp: '1 Jun 2026, 10:15', detail: 'Sophie confirmed understanding' },
-      { event: 'Resolved', timestamp: '2 Jun 2026, 16:00', detail: 'Guidance provided — evidence can map to multiple KSBs' },
-    ],
-    replies: [
-      { id: 'r-1', sender: 'Crispin Jones', senderRole: 'Tutor', body: 'Yes, absolutely! One piece of evidence can map to multiple KSBs. There is no hard limit, but we recommend 2-4 KSBs per evidence item for clarity. When you upload evidence, click "Map to KSBs" and select the relevant ones. Add a brief justification note for each.', timestamp: '30 May 2026, 11:45' },
-      { id: 'r-2', sender: 'Sophie Williams', senderRole: 'Learner', body: 'Thanks Crispin! That is very helpful. So I can map my observation to K5, K6, and S8 in one go? I will add a justification note for each one.', timestamp: '1 Jun 2026, 10:15' },
-      { id: 'r-3', sender: 'Crispin Jones', senderRole: 'Tutor', body: 'Exactly, that sounds like a good plan. Let me know if you need any help with the mapping — I am happy to review once you have submitted it.', timestamp: '2 Jun 2026, 09:30' },
-    ],
-  },
-  {
-    id: 'tkt-004', title: 'Teams session recording not available for Week 2', category: 'Technical', priority: 'medium', status: 'resolved',
-    submitted: '24 May 2026', lastUpdate: '26 May 2026', assignedTo: 'IT Support', assignedTeam: 'Technical Support',
-    messages: 2,
-    description: 'The Week 2 Marketing Environment session recording is not appearing in the Module 1 resources tab. Other learners in my cohort have confirmed they also cannot see it. The live session was held on 20 May and usually recordings appear within 24 hours.',
-    timeline: [
-      { event: 'Opened', timestamp: '24 May 2026, 09:00', detail: 'Ticket created by Sophie Williams' },
-      { event: 'Assigned', timestamp: '24 May 2026, 09:45', detail: 'Assigned to IT Support' },
-      { event: 'In Progress', timestamp: '24 May 2026, 10:30', detail: 'IT checking recording upload status' },
-      { event: 'Resolved', timestamp: '26 May 2026, 14:00', detail: 'Recording re-uploaded and verified' },
-      { event: 'Closed', timestamp: '26 May 2026, 16:00', detail: 'Ticket closed after learner confirmation' },
-    ],
-    replies: [
-      { id: 'r-1', sender: 'IT Support', senderRole: 'Support', body: 'Thank you for reporting this. We have checked the recording server and found that the upload was interrupted due to a storage issue. We are re-uploading the recording now. It should be available within 2 hours.', timestamp: '24 May 2026, 11:00' },
-      { id: 'r-2', sender: 'Sophie Williams', senderRole: 'Learner', body: 'I can see the recording now. Thank you for the quick turnaround! The audio is clear and the video quality is good.', timestamp: '26 May 2026, 14:30' },
-    ],
-  },
-];
 
 const FAQ_ITEMS = [
   { id: 'faq-01', question: 'How do I log my off-the-job training hours?', answer: 'Go to My OTJH page, click "Add OTJH Entry", fill in the date, activity type, description, hours claimed, and link it to a module and relevant KSBs. Your employer and coach will then validate your entry.' },
@@ -183,7 +95,52 @@ function getSLAColor(priority: string): string {
 }
 
 export default function SupportPage() {
-  const p = LEARNER_PROFILE;
+  const { auth } = useAuth();
+  const fullName = auth.account?.displayName?.trim() || '';
+  const firstName = fullName.split(/\s+/)[0];
+  const accountRef = useRef(auth.account?.id);
+  accountRef.current = auth.account?.id;
+  const [tickets, setTickets] = useState<SupportTicket[]>([]);
+  const [ticketsLoading, setTicketsLoading] = useState(true);
+  const [ticketsError, setTicketsError] = useState('');
+  const [reload, setReload] = useState(0);
+  const [savingTicket, setSavingTicket] = useState(false);
+  const [ticketError, setTicketError] = useState('');
+  const [ticketSuccess, setTicketSuccess] = useState('');
+  const requestId = useRef<string | null>(null);
+  const replyRequest = useRef<{ body: string; id: string; ticket: string } | null>(null);
+  const saving = useRef(false);
+  useEffect(() => {
+    let cancelled = false;
+    setTickets([]); setSelectedTicket(null); setTicketReplies({}); setTicketsLoading(true); setTicketsError('');
+    loadSupportTickets().then(items => {
+      if (cancelled) return;
+      setTickets(items);
+      setTicketReplies(Object.fromEntries(items.map(item => [item.id, item.replies])));
+    }).catch(error => { if (!cancelled) setTicketsError(error.message); })
+      .finally(() => { if (!cancelled) setTicketsLoading(false); });
+    return () => { cancelled = true; };
+  }, [auth.account?.id, reload]);
+  const saveTicketResult = (ticket: SupportTicket) => {
+    if (accountRef.current !== auth.account?.id) return;
+    setTickets(items => [ticket, ...items.filter(item => item.id !== ticket.id)]);
+    setSelectedTicket(ticket);
+    setTicketReplies(items => ({ ...items, [ticket.id]: ticket.replies }));
+  };
+  const submitTicket = async () => {
+    if (saving.current || !newTicketSubject.trim() || !newTicketDescription.trim()) return;
+    const submittingAccount = auth.account?.id;
+    saving.current = true; setSavingTicket(true); setTicketError('');
+    requestId.current ||= crypto.randomUUID();
+    try {
+      const ticket = await createSupportTicket({ requestId: requestId.current, title: newTicketSubject.trim(), description: newTicketDescription.trim(), category: newTicketCategory, priority: newTicketPriority.split(' ')[0].toLowerCase() }, newTicketFiles);
+      if (accountRef.current !== submittingAccount) return;
+      saveTicketResult(ticket); setTicketModalOpen(false); setNewTicketSubject(''); setNewTicketDescription('');
+      setNewTicketFiles([]);
+      requestId.current = null; setTicketSuccess('Your support ticket has been saved.');
+    } catch (error) { setTicketError(error instanceof Error ? error.message : 'Could not submit ticket. Your message is kept.'); }
+    finally { saving.current = false; setSavingTicket(false); }
+  };
   const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<TabKey>('tickets');
   const [expandedFaq, setExpandedFaq] = useState<string | null>(null);
@@ -195,10 +152,17 @@ export default function SupportPage() {
   const [newTicketCategory, setNewTicketCategory] = useState<string>('Technical Issue');
   const [newTicketSubject, setNewTicketSubject] = useState('');
   const [newTicketDescription, setNewTicketDescription] = useState('');
+  const [newTicketFiles, setNewTicketFiles] = useState<File[]>([]);
   const [newTicketPriority, setNewTicketPriority] = useState('Medium — Needs attention this week');
   const [aiQuery, setAiQuery] = useState('');
   const [aiAnswer, setAiAnswer] = useState<string | null>(null);
   const [aiAnswering, setAiAnswering] = useState(false);
+
+  useEffect(() => {
+    setNewTicketSubject(''); setNewTicketDescription(''); setReplyBody('');
+    setNewTicketFiles([]); setReplyFiles([]);
+    setTicketSuccess(''); setTicketError(''); requestId.current = null; replyRequest.current = null;
+  }, [auth.account?.id]);
 
   // Auto-open ticket modal from URL params
   useEffect(() => {
@@ -233,11 +197,15 @@ export default function SupportPage() {
 
   // Ticket Replies
   const [ticketReplies, setTicketReplies] = useState<Record<string, TicketReply[]>>(
-    TICKETS.reduce((acc, t) => ({ ...acc, [t.id]: t.replies || [] }), {})
+    {}
   );
   const [replyModalOpen, setReplyModalOpen] = useState(false);
   const [replyBody, setReplyBody] = useState('');
+  const [replyFiles, setReplyFiles] = useState<File[]>([]);
   const [replySending, setReplySending] = useState(false);
+  useEffect(() => {
+    setReplyBody(''); setReplyFiles([]); replyRequest.current = null; setReplyModalOpen(false);
+  }, [selectedTicket?.id]);
 
   // Contact Modals
   const [emailModalOpen, setEmailModalOpen] = useState(false);
@@ -258,7 +226,7 @@ export default function SupportPage() {
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [reportSubmitted, setReportSubmitted] = useState(false);
 
-  const openTickets = TICKETS.filter(t => t.status === 'open' || t.status === 'in-progress').length;
+  const openTickets = tickets.filter(t => t.status === 'open' || t.status === 'in-progress').length;
 
   const handleAiAsk = (question: string) => {
     setAiQuery(question);
@@ -276,25 +244,20 @@ export default function SupportPage() {
     handleAiAsk(aiQuery.trim());
   };
 
-  const handleSendReply = () => {
-    if (!selectedTicket || !replyBody.trim()) return;
-    setReplySending(true);
-    setTimeout(() => {
-      const newReply: TicketReply = {
-        id: `r-${Date.now()}`,
-        sender: 'Sophie Williams',
-        senderRole: 'Learner',
-        body: replyBody.trim(),
-        timestamp: new Date().toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-      };
-      setTicketReplies(prev => ({
-        ...prev,
-        [selectedTicket.id]: [...(prev[selectedTicket.id] || []), newReply],
-      }));
-      setReplyBody('');
-      setReplySending(false);
-      setReplyModalOpen(false);
-    }, 1200);
+  const handleSendReply = async () => {
+    if (!selectedTicket || !replyBody.trim() || saving.current) return;
+    const submittingAccount = auth.account?.id;
+    saving.current = true; setReplySending(true); setTicketError('');
+    if (replyRequest.current?.body !== replyBody.trim() || replyRequest.current.ticket !== selectedTicket.id) {
+      replyRequest.current = { body: replyBody.trim(), ticket: selectedTicket.id, id: crypto.randomUUID() };
+    }
+    try {
+      const ticket = await updateSupportTicket(selectedTicket.id, { action: 'reply', requestId: replyRequest.current.id, body: replyBody.trim() }, false, replyFiles);
+      if (accountRef.current !== submittingAccount) return;
+      saveTicketResult(ticket);
+      setReplyBody(''); setReplyFiles([]); setReplyModalOpen(false); replyRequest.current = null;
+    } catch (error) { setTicketError(error instanceof Error ? error.message : 'Could not send your reply.'); }
+    finally { saving.current = false; setReplySending(false); }
   };
 
   const handleOpenEmail = (name: string, email: string) => {
@@ -354,12 +317,15 @@ export default function SupportPage() {
     }, 1500);
   };
 
-  const handleFeedbackSubmit = (ticketId: string) => {
+  const handleFeedbackSubmit = async (ticketId: string) => {
+    if (saving.current) return;
+    saving.current = true; setTicketError('');
     setFeedbackSubmitting(prev => ({ ...prev, [ticketId]: true }));
-    setTimeout(() => {
-      setFeedbackSubmitting(prev => ({ ...prev, [ticketId]: false }));
+    try {
+      saveTicketResult(await updateSupportTicket(ticketId, { action: 'feedback', rating: feedbackRating[ticketId], comment: feedbackComment[ticketId] || '' }));
       setFeedbackSubmitted(prev => ({ ...prev, [ticketId]: true }));
-    }, 1200);
+    } catch (error) { setTicketError(error instanceof Error ? error.message : 'Could not save feedback.'); }
+    finally { saving.current = false; setFeedbackSubmitting(prev => ({ ...prev, [ticketId]: false })); }
   };
 
   const filteredKB = KB_ARTICLES.filter(a => {
@@ -378,9 +344,14 @@ export default function SupportPage() {
     <WorkspaceShell
       role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel}
       pageTitle="Support Hub" pageSubtitle="AI-assisted support, knowledge base, tickets, and contact"
-      userName={p.fullName} userRole={`${p.programme} ${p.programmeLevel} Apprentice`}
+      userName={fullName || 'Learner'} userRole={auth.account?.programme || 'Learner'}
     >
       <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
+        {ticketsLoading && <p role="status">Loading your tickets...</p>}
+        {ticketsError && <div role="alert">{ticketsError} <button onClick={() => setReload(value => value + 1)}>Retry</button></div>}
+        {ticketSuccess && <p role="status">{ticketSuccess}</p>}
+        {ticketError && !ticketModalOpen && !replyModalOpen && <p role="alert">{ticketError}</p>}
+        {!ticketsLoading && !ticketsError && tickets.length === 0 && <p>You have no support tickets yet.</p>}
         {/* Hero Banner */}
         <div className="learner-super-admin-hero relative rounded-2xl overflow-hidden workspace-page-hero" >
           <div className="absolute inset-0 pointer-events-none overflow-hidden hidden">
@@ -392,9 +363,9 @@ export default function SupportPage() {
               <AppIcon className="ri-customer-service-2-line text-primary-800 text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
-              <h2 className="text-lg font-heading font-bold text-primary-800 mb-1">How can we help, {p.firstName}?</h2>
+              <h2 className="text-lg font-heading font-bold text-primary-800 mb-1">How can we help{firstName ? `, ${firstName}` : ''}?</h2>
               <p className="text-sm text-foreground-500 leading-relaxed max-w-2xl">
-                Our support team is here to help with any questions about your apprenticeship. You have <strong>{openTickets} open ticket{openTickets !== 1 ? 's' : ''}</strong>.
+                Our support team is here to help with any questions about your learning. You have <strong>{openTickets} open ticket{openTickets !== 1 ? 's' : ''}</strong>.
                 For urgent matters, call KBC Learner Support on 01227 811 200.
               </p>
             </div>
@@ -445,10 +416,10 @@ export default function SupportPage() {
             {/* Ticket Stats */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
-                { label: 'Open', value: TICKETS.filter(t => t.status === 'open').length, color: 'bg-amber-50 text-amber-700 border-amber-200' },
-                { label: 'In Progress', value: TICKETS.filter(t => t.status === 'in-progress').length, color: 'bg-primary-50 text-primary-700 border-primary-200' },
-                { label: 'Resolved', value: TICKETS.filter(t => t.status === 'resolved').length, color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-                { label: 'Total', value: TICKETS.length, color: 'bg-background-100 text-foreground-500 border-background-200' },
+                { label: 'Open', value: tickets.filter(t => t.status === 'open').length, color: 'bg-amber-50 text-amber-700 border-amber-200' },
+                { label: 'In Progress', value: tickets.filter(t => t.status === 'in-progress').length, color: 'bg-primary-50 text-primary-700 border-primary-200' },
+                { label: 'Resolved', value: tickets.filter(t => t.status === 'resolved').length, color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+                { label: 'Total', value: tickets.length, color: 'bg-background-100 text-foreground-500 border-background-200' },
               ].map(stat => (
                 <div key={stat.label} className={`rounded-xl border p-3.5 ${stat.color}`}>
                   <p className="text-xs opacity-80 mb-0.5">{stat.label}</p>
@@ -461,7 +432,7 @@ export default function SupportPage() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
               {/* Tickets List */}
               <div className="lg:col-span-2 space-y-2">
-                {TICKETS.map(ticket => (
+                {tickets.map(ticket => (
                   <div
                     key={ticket.id}
                     onClick={() => setSelectedTicket(selectedTicket?.id === ticket.id ? null : ticket)}
@@ -484,7 +455,7 @@ export default function SupportPage() {
                           <span className="text-[10px] text-foreground-400">#{ticket.id}</span>
                           <span className="text-[10px] text-foreground-300">·</span>
                           <span className="text-xs px-1.5 py-0.5 rounded-full bg-background-100 text-foreground-500">{ticket.category}</span>
-                          <span className="text-[10px] text-foreground-300 ml-auto">{ticket.submitted}</span>
+                          <span className="text-[10px] text-foreground-300 ml-auto">{ticketDate(ticket.submitted)}</span>
                         </div>
                         <div className="flex items-center gap-3 mt-2 flex-wrap">
                           <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${
@@ -526,7 +497,7 @@ export default function SupportPage() {
                       <div><span className="text-foreground-400">Team:</span> <span className="text-foreground-700 font-medium">{selectedTicket.assignedTeam}</span></div>
                       <div><span className="text-foreground-400">Priority:</span> <span className="font-semibold text-foreground-700">{selectedTicket.priority}</span></div>
                       <div><span className="text-foreground-400">Assigned:</span> <span className="text-foreground-700">{selectedTicket.assignedTo}</span></div>
-                      <div><span className="text-foreground-400">Created:</span> <span className="text-foreground-700">{selectedTicket.submitted}</span></div>
+                      <div><span className="text-foreground-400">Created:</span> <span className="text-foreground-700">{ticketDate(selectedTicket.submitted)}</span></div>
                       <div><span className="text-foreground-400">Expected:</span> <span className="text-foreground-700">{getSLA(selectedTicket.priority)}</span></div>
                     </div>
 
@@ -544,6 +515,7 @@ export default function SupportPage() {
                     {/* Description */}
                     <div className="bg-background-100/70 rounded-lg p-3">
                       <p className="text-[12px] text-foreground-600 leading-relaxed">{selectedTicket.description}</p>
+                      <TicketAttachments ticketId={selectedTicket.id} attachments={selectedTicket.attachments} />
                     </div>
 
                     {/* Timeline */}
@@ -564,7 +536,7 @@ export default function SupportPage() {
                             </div>
                             <div className={`pb-3 ${i === selectedTicket.timeline.length - 1 ? '' : ''}`}>
                               <p className="text-[11px] font-semibold text-foreground-700">{step.event}</p>
-                              <p className="text-[10px] text-foreground-400">{step.timestamp}</p>
+                              <p className="text-[10px] text-foreground-400">{ticketDate(step.timestamp)}</p>
                               {step.detail && <p className="text-[10px] text-foreground-500 mt-0.5">{step.detail}</p>}
                             </div>
                           </div>
@@ -642,9 +614,10 @@ export default function SupportPage() {
                             }`}>
                               <div className="flex items-center justify-between mb-1">
                                 <span className="font-semibold text-foreground-700">{reply.sender}</span>
-                                <span className="text-[9px] text-foreground-400">{reply.timestamp}</span>
+                                <span className="text-[9px] text-foreground-400">{ticketDate(reply.timestamp)}</span>
                               </div>
                               <p className="text-foreground-600 leading-relaxed">{reply.body}</p>
+                              <TicketAttachments ticketId={selectedTicket.id} attachments={reply.attachments} />
                             </div>
                           ))}
                         </div>
@@ -968,21 +941,22 @@ export default function SupportPage() {
         {/* New Ticket Modal */}
         {ticketModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <div className="absolute inset-0 bg-foreground-950/50 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setTicketModalOpen(false)}></div>
-            <div className="relative bg-background-50 rounded-2xl w-full max-w-lg mx-4 shadow-2xl border border-background-200 overflow-hidden animate-in fade-in zoom-in-95 duration-300">
+            <div className="absolute inset-0 bg-foreground-950/50 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => { if (!savingTicket) setTicketModalOpen(false); }}></div>
+            <div className="relative bg-background-50 rounded-2xl w-full max-w-lg mx-4 shadow-2xl border border-background-200 max-h-[90dvh] overflow-y-auto animate-in fade-in zoom-in-95 duration-300">
               <div className="flex items-center justify-between px-6 py-4 border-b border-background-200/50">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Submit a New Support Ticket</h3>
-                <button onClick={() => setTicketModalOpen(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
+                <button disabled={savingTicket} onClick={() => { if (!savingTicket) setTicketModalOpen(false); }} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
                   <AppIcon className="ri-close-line text-sm"></AppIcon>
                 </button>
               </div>
               <div className="p-6 space-y-4">
+                {ticketError && <p role="alert">{ticketError}</p>}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="text-xs font-medium text-foreground-500 mb-1 block">Category</label>
                     <select
-                      value={newTicketCategory}
-                      onChange={e => setNewTicketCategory(e.target.value)}
+                      aria-label="Category" disabled={savingTicket} value={newTicketCategory}
+                      onChange={e => { requestId.current = null; setNewTicketCategory(e.target.value); }}
                       className="w-full px-3 py-2.5 rounded-lg border border-background-200 bg-background-50 text-sm text-foreground-700 outline-none focus:border-primary-300 transition-smooth cursor-pointer"
                     >
                       <option>Technical Issue</option>
@@ -996,8 +970,8 @@ export default function SupportPage() {
                   <div>
                     <label className="text-xs font-medium text-foreground-500 mb-1 block">Priority</label>
                     <select
-                      value={newTicketPriority}
-                      onChange={e => setNewTicketPriority(e.target.value)}
+                      aria-label="Priority" disabled={savingTicket} value={newTicketPriority}
+                      onChange={e => { requestId.current = null; setNewTicketPriority(e.target.value); }}
                       className="w-full px-3 py-2.5 rounded-lg border border-background-200 bg-background-50 text-sm text-foreground-700 outline-none focus:border-primary-300 transition-smooth cursor-pointer"
                     >
                       <option>Low — Not urgent</option>
@@ -1011,8 +985,8 @@ export default function SupportPage() {
                   <label className="text-xs font-medium text-foreground-500 mb-1 block">Subject</label>
                   <input
                     type="text"
-                    value={newTicketSubject}
-                    onChange={e => setNewTicketSubject(e.target.value)}
+                    aria-label="Subject" disabled={savingTicket} value={newTicketSubject}
+                    onChange={e => { requestId.current = null; setNewTicketSubject(e.target.value); }}
                     placeholder="Brief description of your issue..."
                     className="w-full px-3 py-2.5 rounded-lg border border-background-200 bg-background-50 text-sm text-foreground-700 outline-none focus:border-primary-300 transition-smooth"
                   />
@@ -1021,18 +995,20 @@ export default function SupportPage() {
                   <label className="text-xs font-medium text-foreground-500 mb-1 block">Description</label>
                   <textarea
                     rows={4}
-                    value={newTicketDescription}
-                    onChange={e => setNewTicketDescription(e.target.value)}
+                    aria-label="Description" disabled={savingTicket} value={newTicketDescription}
+                    onChange={e => { requestId.current = null; setNewTicketDescription(e.target.value); }}
                     placeholder="Please describe your issue in detail..."
                     className="w-full px-3 py-2.5 rounded-lg border border-background-200 bg-background-50 text-sm text-foreground-700 outline-none focus:border-primary-300 transition-smooth resize-none"
                   ></textarea>
                 </div>
+                <TicketFilePicker files={newTicketFiles} disabled={savingTicket}
+                  onChange={files => { requestId.current = null; setNewTicketFiles(files); }} />
                 <div className="flex items-center gap-2 pt-2">
-                  <button onClick={() => setTicketModalOpen(false)} className="flex-1 px-4 py-2.5 bg-background-50 border border-background-200 rounded-xl text-sm font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
+                  <button disabled={savingTicket} onClick={() => { if (!savingTicket) setTicketModalOpen(false); }} className="flex-1 px-4 py-2.5 bg-background-50 border border-background-200 rounded-xl text-sm font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
                     Cancel
                   </button>
-                  <button className="flex-1 px-4 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                    <AppIcon className="ri-send-plane-line mr-1"></AppIcon> Submit Ticket
+                  <button disabled={savingTicket || !newTicketSubject.trim() || !newTicketDescription.trim()} onClick={submitTicket} className="flex-1 px-4 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50">
+                    <AppIcon className="ri-send-plane-line mr-1"></AppIcon> {savingTicket ? 'Submitting...' : 'Submit Ticket'}
                   </button>
                 </div>
               </div>
@@ -1043,15 +1019,16 @@ export default function SupportPage() {
         {/* Reply Modal */}
         {replyModalOpen && selectedTicket && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <div className="absolute inset-0 bg-foreground-950/50 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setReplyModalOpen(false)}></div>
-            <div className="relative bg-background-50 rounded-2xl w-full max-w-lg mx-4 shadow-2xl border border-background-200 overflow-hidden animate-in fade-in zoom-in-95 duration-300">
+            <div className="absolute inset-0 bg-foreground-950/50 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => { if (!replySending) setReplyModalOpen(false); }}></div>
+            <div className="relative bg-background-50 rounded-2xl w-full max-w-lg mx-4 shadow-2xl border border-background-200 max-h-[90dvh] overflow-y-auto animate-in fade-in zoom-in-95 duration-300">
               <div className="flex items-center justify-between px-6 py-4 border-b border-background-200/50">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Reply to #{selectedTicket.id}</h3>
-                <button onClick={() => setReplyModalOpen(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
+                <button disabled={replySending} onClick={() => setReplyModalOpen(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
                   <AppIcon className="ri-close-line text-sm"></AppIcon>
                 </button>
               </div>
               <div className="p-6 space-y-4">
+                {ticketError && <p role="alert">{ticketError}</p>}
                 <div className="bg-background-100/70 rounded-lg p-3">
                   <p className="text-[12px] text-foreground-500 font-medium mb-1">Re: {selectedTicket.title}</p>
                   <p className="text-[11px] text-foreground-400">{selectedTicket.description}</p>
@@ -1060,14 +1037,16 @@ export default function SupportPage() {
                   <label className="text-xs font-medium text-foreground-500 mb-1 block">Your reply</label>
                   <textarea
                     rows={4}
-                    value={replyBody}
+                    aria-label="Your reply" disabled={replySending} value={replyBody}
                     onChange={e => setReplyBody(e.target.value)}
                     placeholder="Type your reply here..."
                     className="w-full px-3 py-2.5 rounded-lg border border-background-200 bg-background-50 text-sm text-foreground-700 outline-none focus:border-primary-300 transition-smooth resize-none"
                   />
                 </div>
+                <TicketFilePicker files={replyFiles} disabled={replySending}
+                  onChange={files => { replyRequest.current = null; setReplyFiles(files); }} />
                 <div className="flex items-center gap-2 pt-2">
-                  <button onClick={() => setReplyModalOpen(false)} className="flex-1 px-4 py-2.5 bg-background-50 border border-background-200 rounded-xl text-sm font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
+                  <button disabled={replySending} onClick={() => setReplyModalOpen(false)} className="flex-1 px-4 py-2.5 bg-background-50 border border-background-200 rounded-xl text-sm font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
                     Cancel
                   </button>
                   <button
