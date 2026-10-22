@@ -203,9 +203,16 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    throw new Error(res.ok
+      ? 'The employer portal returned an unexpected response. Please try again.'
+      : `Could not load employer portal data (${res.status}). Please try again.`);
+  }
   if (!res.ok) {
-    throw new Error((data && data.error) || `Request failed (${res.status})`);
+    throw new Error((data && (data.error || data.detail)) || `Request failed (${res.status})`);
   }
   return data as T;
 }

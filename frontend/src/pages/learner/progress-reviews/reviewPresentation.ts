@@ -20,6 +20,17 @@ export interface ReviewPresentation {
   canReschedule: boolean;
 }
 
+/**
+ * The vocabulary the review detail header already shows for every review
+ * (``statusLabel`` in progress-reviews/page.tsx). An imported row stays read-only,
+ * but naming where its data came from instead of what state it is in contradicted
+ * both that header and the programme timeline.
+ */
+const importedStatusLabels: Readonly<Record<string, string>> = {
+  'not-scheduled': 'Not scheduled', planned: 'Not scheduled', scheduled: 'Scheduled', 'in-progress': 'In progress',
+  'awaiting-signature': 'Awaiting signatures', completed: 'Completed', cancelled: 'Cancelled',
+};
+
 /** Display state only. Keep the original event for all existing action handlers. */
 export function presentReview(session: LearnerCalendarEvent, attendance: MeetingAttendance | undefined, today: string, definition?: LearnerReviewDefinition | null, viewerRole: 'participant' | 'employer' = 'participant'): ReviewPresentation {
   const storedStatus = meetingStatus(session);
@@ -64,13 +75,13 @@ export function presentReview(session: LearnerCalendarEvent, attendance: Meeting
       return result('Your signature is needed', 'Read the review and agreed next steps, then sign as employer.', 'sign', true, true);
     }
     if (signed) return result('Your signature is saved', 'Your employer signature is saved. You can read the review and check the other signatures.', 'view', true);
-    if (session.importedReview && !session.migratedForm && !booked) return result(status === 'completed' ? 'Completed' : 'Archived review', 'Read this saved review and its attachments.', 'view', true);
+    if (session.importedReview && !session.migratedForm && !booked) return result(importedStatusLabels[status] || 'Review record', 'Read this saved review and its attachments.', 'view', true);
     if (['awaiting-signature', 'completed'].includes(status)) return result(status === 'completed' ? 'Completed' : 'Waiting for signatures', 'Read the review and check its signature status.', 'view', true);
     if (booked) return result(isToday ? 'Today' : status === 'in-progress' ? 'In progress' : 'Scheduled', 'Review the learner’s progress and agreed next steps.', isToday && joinUrl ? 'join' : 'view', Boolean(date && date < today));
     return result(['not-scheduled', 'planned'].includes(status) ? 'Not scheduled' : 'In preparation', 'The coach is preparing this review. You can read the available details and answer any employer questions.', 'view');
   }
   if (canBookImported) return result('Not scheduled', 'Choose a date and time with your coach. The target date is not a confirmed appointment.', 'schedule', false, Boolean(date && date < today));
-  if (session.importedReview && !booked) return result(status === 'completed' ? 'Completed' : 'Archived review', 'You can read this saved review and its attachments.', 'view', true);
+  if (session.importedReview && !booked) return result(importedStatusLabels[status] || 'Review record', 'You can read this saved review and its attachments.', 'view', true);
   if (['awaiting-signature', 'completed'].includes(status)) {
     // Match the existing detail form's signature eligibility. A calendar status
     // alone cannot establish whose signature is required by a Curriculum form.

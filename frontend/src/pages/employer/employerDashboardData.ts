@@ -47,6 +47,12 @@ export function progressReviews(events: LearnerCalendarEvent[]) {
     .sort((a, b) => (reviewDate(a) || '9999').localeCompare(reviewDate(b) || '9999') || a.sequence - b.sequence);
 }
 
+/** Match the learner's programme order; appointment order still drives Next review. */
+export function orderReviewJourney(events: readonly LearnerCalendarEvent[]) {
+  return [...events].sort((a, b) => (a.targetDate || '9999-12-31').localeCompare(b.targetDate || '9999-12-31')
+    || (a.occurrenceNumber ?? a.sequence) - (b.occurrenceNumber ?? b.sequence));
+}
+
 export function nextReview(events: LearnerCalendarEvent[] = []) {
   return events.find(isOpenReview);
 }

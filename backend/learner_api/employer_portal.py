@@ -593,6 +593,17 @@ def employer_portal(request, employer_id):
     })
 
 
+def _dashboard_otjh_risk(value):
+    """Project the saved learner status into the employer dashboard's labels."""
+    label = ' '.join(str(value or '').casefold().replace('-', ' ').replace('_', ' ').split())
+    return {
+        'on track': 'on-track',
+        'need attention': 'need-attention',
+        'needs attention': 'need-attention',
+        'at risk': 'at-risk',
+    }.get(label, 'unavailable')
+
+
 @employer_or_staff()
 def employer_dashboard_metrics(request, employer_id):
     """Compact, read-only dashboard facts for this employer's own learners."""
@@ -602,28 +613,43 @@ def employer_dashboard_metrics(request, employer_id):
     if err is not None:
         return err
     from zoneinfo import ZoneInfo
-    from coach_api.views import apply_otjh_to_date_metrics
     from old_otjh.service import ServiceError
     from . import canonical_learning
+    from .module_progress import canonical_module_progress
 
     try:
-        learner_ids = list(SOURCE_MODELS["apprenticeship"].all_learners
-                           .filter(employer_id=employer.pk).values_list("pk", flat=True))
-        metrics = canonical_learning.metrics_bulk(learner_ids)
-        hours = canonical_learning.otjh_summary_bulk(learner_ids)
+        learners = list(SOURCE_MODELS["apprenticeship"].all_learners
+                        .filter(employer_id=employer.pk).only(
+                            "id", "aptem_id", "programme", "cohort", "group",
+                            "training_plan", "learning_plan", "modules", "weeks", "components"))
+        learner_ids = [learner.pk for learner in learners]
+        # Read only the employer's learner statuses; use a row only after its
+        # profile identity is validated below. Missing monthly targets do not
+        # invalidate a saved OTJ status.
+        statuses = {
+            (profile_id, enrolment_id): _dashboard_otjh_risk(status)
+            for profile_id, enrolment_id, status in LearnerProfile.objects.filter(
+                enrolment_id__in=learner_ids,
+            ).values_list('pk', 'enrolment_id', 'otjh_status')
+        } if learner_ids else {}
         today = timezone.localdate(timezone=ZoneInfo("Europe/London"))
         rows = {}
-        for learner_id in learner_ids:
-            programme = (metrics.get(learner_id) or {}).get("programme")
-            otjh = hours.get(learner_id) or {}
-            verdict = apply_otjh_to_date_metrics({
-                "otjhPlanned": otjh.get("planned"),
-                "otjhCompleted": otjh.get("completed_actual", otjh.get("actual")),
-                "startDate": otjh.get("start_date"), "plannedEndDate": otjh.get("end_date"),
-            }, today=today)
+        for learner in learners:
+            learner_id = learner.pk
+            owner = canonical_learning.profile(learner_id)
+            programme = None
+            if owner is not None:
+                # Student Home counts the assigned catalogue, including work
+                # not started yet, rather than only saved progress records.
+                profile = LearnerProfile(id=owner['id'], enrolment_id=learner_id)
+                modules = canonical_module_progress(learner, profile)
+                programme = canonical_learning.point_ratio(
+                    sum(module['completed'] for module in modules),
+                    sum(module['total'] for module in modules),
+                )
             rows[str(learner_id)] = {
                 "programme": {key: programme.get(key) for key in ("completed", "total", "percent", "status")} if programme else None,
-                "risk": verdict["otjhRagStatus"],
+                "risk": statuses.get((owner['id'], learner_id), 'unavailable') if owner is not None else 'unavailable',
             }
     except (DatabaseError, ServiceError):
         logger.exception("employer_dashboard_metrics: metrics unavailable for employer %s", employer.pk)

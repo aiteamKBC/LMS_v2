@@ -323,6 +323,179 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
   .page[data-view='reviews'] .searchBox, .page[data-view='reviews'] .clearButton { grid-column: 1 / -1; }
   .page[data-view='reviews'] .clearButton { grid-row: auto; }
 }
+/* Give the learner directory readable type without changing the other dashboard views. */
+.page[data-view='learners'] { font-size: 15px; line-height: 1.5; }
+.page[data-view='learners'] .sectionEyebrow { font-size: 13px; }
+.page[data-view='learners'] .sectionLead { font-size: 15px; }
+.page[data-view='learners'] .sectionBack { min-height: 44px; font-size: 14px; }
+.page[data-view='learners'] .filterLabel { gap: 6px; font-size: 14px; }
+.page[data-view='learners'] .filterLabel select { height: 44px; font-size: 14px; }
+.page[data-view='learners'] .searchBox input { font-size: 15px; }
+.page[data-view='learners'] :is(.searchBox, .clearButton) { height: 44px; min-height: 44px; }
+.page[data-view='learners'] .panelHeader { min-height: 58px; padding: 16px 18px; }
+:global(#employer-dashboard)[data-view='learners'] .panelHeader h2 { font-size: 18px; }
+.page[data-view='learners'] .learnerTable { min-width: 1120px; }
+.page[data-view='learners'] .learnerTable td:first-child { min-width: 250px; max-width: 300px; }
+:global(#employer-dashboard)[data-view='learners'] .learnerTable thead th { padding: 14px; font-size: 14px; }
+:global(#employer-dashboard)[data-view='learners'] .learnerTable tbody td { padding: 22px 14px; font-size: 15px; }
+.page[data-view='learners'] .learnerName { font-size: 16px; }
+.page[data-view='learners'] .identity small { font-size: 13px; }
+.page[data-view='learners'] .avatar { font-size: 14px; }
+.page[data-view='learners'] .progressCell strong { font-size: 15px; }
+.page[data-view='learners'] :is(.progressCell small, .reviewCell small, .statusHelp, .unavailable, .caption) { font-size: 13px; }
+.page[data-view='learners'] :is(.reviewCell a, .statusBadge, .viewButton) { font-size: 14px; }
+.page[data-view='learners'] .statusBadge { padding: 6px 10px; }
+.page[data-view='learners'] .viewButton { min-height: 40px; padding: 9px 12px; }
+.page[data-view='learners'] .pagination button { width: 36px; height: 36px; }
+.page[data-view='learners'] .emptyState h3 { font-size: 18px; }
+@container (max-width: 1300px) {
+  .page[data-view='learners'] .filters { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .page[data-view='learners'] .searchBox { grid-column: span 3; grid-row: 1; }
+  .page[data-view='learners'] .clearButton { grid-column: 4; grid-row: 1; }
+}
+@container (max-width: 560px) {
+  .page[data-view='learners'] .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .page[data-view='learners'] .searchBox, .page[data-view='learners'] .clearButton { grid-column: 1 / -1; }
+  .page[data-view='learners'] .clearButton { grid-row: auto; }
+}
+/* Home fills the available workspace, while longer lists can still scroll.
+   Keep this treatment local: the learner directory and reviews have their own density. */
+.page[data-view='home'] {
+  --card-shadow: 0 3px 7px #32136d05, 0 12px 30px -12px #32136d24;
+  min-height: 100%;
+  gap: 20px;
+  padding: 24px;
+  font-size: 15px;
+}
+.page[data-view='home'] > * { flex-shrink: 0; }
+.page[data-view='home'] :is(.hero, .statCard, .panel, .filters) { box-shadow: var(--card-shadow); }
+.page[data-view='home'] .hero { min-height: 150px; padding: 26px 30px; border-radius: 18px; }
+.page[data-view='home'] .hero h1 { font-size: clamp(28px, 2vw, 36px); }
+.page[data-view='home'] .hero .greeting { font-size: 17px; }
+.page[data-view='home'] .hero .organisation { font-size: 15px; }
+.page[data-view='home'] .heroIntro { max-width: 760px; font-size: 15px; }
+.page[data-view='home'] .heroMessage p { font-size: 15px; }
+.page[data-view='home'] .statsGrid { gap: 18px; }
+.page[data-view='home'] .statCard { min-height: 120px; padding: 22px; gap: 16px; border-radius: 16px; }
+.page[data-view='home'] .statCopy { gap: 6px; }
+.page[data-view='home'] .statLabel { font-size: 15px; }
+.page[data-view='home'] .statCopy small { font-size: 14px; }
+.page[data-view='home'] .statCopy strong { font-size: clamp(26px, 2vw, 34px); letter-spacing: -.7px; }
+.page[data-view='home'] button.statCard:hover { box-shadow: 0 8px 26px -8px color-mix(in srgb, var(--tone) 25%, transparent); }
+.page[data-view='home'] .filters { margin: 0; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.page[data-view='home'] .filterLabel { gap: 7px; font-size: 14px; font-weight: 600; }
+.page[data-view='home'] .filterLabel select { height: 44px; font-size: 14px; border-radius: 9px; }
+.page[data-view='home'] .searchBox input { font-size: 15px; }
+.page[data-view='home'] :is(.searchBox, .clearButton) { min-height: 44px; height: 44px; }
+.page[data-view='home'] .dashboardGrid { flex: 1 0 auto; align-items: stretch; gap: 20px; }
+.page[data-view='home'] .mainColumn { gap: 20px; }
+.page[data-view='home'] .mainColumn > .panel { flex: 1 0 auto; }
+.page[data-view='home'] .sideColumn { gap: 20px; }
+.page[data-view='home'] .panel { display: flex; flex-direction: column; border-radius: 16px; }
+.page[data-view='home'] .panelHeader { min-height: 58px; padding: 17px 20px; border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, transparent); background: color-mix(in srgb, var(--purple) 2%, var(--surface)); }
+:global(#employer-dashboard)[data-view='home'] .panelHeader h2 { font-size: 18px; letter-spacing: -.2px; }
+.page[data-view='home'] .textButton { font-size: 14px !important; }
+.page[data-view='home'] .tableScroll { flex: 1; margin: 0 16px 12px; }
+.page[data-view='home'] .learnerTable { height: 100%; min-width: 1080px; }
+:global(#employer-dashboard)[data-view='home'] .learnerTable thead th { padding: 14px 12px; font-size: 13px; }
+:global(#employer-dashboard)[data-view='home'] .learnerTable tbody td { padding: 22px 12px; font-size: 14px; }
+.page[data-view='home'] .learnerName { font-size: 15px; }
+.page[data-view='home'] .identity small { font-size: 13px; }
+.page[data-view='home'] .progressCell strong { font-size: 14px; }
+.page[data-view='home'] :is(.reviewCell a, .reviewCell small, .statusBadge, .statusHelp, .viewButton, .unavailable, .caption) { font-size: 13px; }
+.page[data-view='home'] .viewButton { min-height: 38px; padding: 9px 12px; border-radius: 9px; }
+.page[data-view='home'] .chartsGrid { flex: 1 0 auto; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.1fr) minmax(0, .85fr); gap: 16px; }
+.page[data-view='home'] .chartsGrid > :last-child { grid-column: auto; }
+:global(#employer-dashboard)[data-view='home'] .chartsGrid .panelHeader h2 { font-size: 16px; }
+.page[data-view='home'] .chartsGrid .panelHeader { padding: 16px; }
+.page[data-view='home'] .chartCaption { padding: 12px 18px 0; font-size: 13px; }
+.page[data-view='home'] :is(.donutContent, .programmes, .engagementEmpty) { flex: 1; }
+.page[data-view='home'] .donutContent { gap: 20px; padding: 24px 18px; }
+.page[data-view='home'] .donut { width: 142px; height: 142px; flex-basis: 142px; }
+.page[data-view='home'] .donut > div { width: 106px; height: 106px; }
+.page[data-view='home'] .donut span { font-size: 13px; }
+.page[data-view='home'] .legend { flex-basis: 150px; gap: 16px; font-size: 13px; }
+.page[data-view='home'] .programmes { justify-content: center; gap: 28px; padding: 24px 20px; max-height: none; }
+.page[data-view='home'] .programmeHeading { font-size: 14px; line-height: 1.5; }
+.page[data-view='home'] .programmes .progressTrack { height: 12px; }
+.page[data-view='home'] .engagementEmpty { flex-direction: column; text-align: center; gap: 12px; padding: 24px 18px; }
+.page[data-view='home'] .engagementEmpty strong { font-size: 15px; }
+.page[data-view='home'] .engagementEmpty p { font-size: 14px; max-width: 240px; }
+.page[data-view='home'] .actionList { padding: 14px; }
+.page[data-view='home'] .noActions { padding: 12px; border-radius: 10px; background: color-mix(in srgb, #009b71 7%, var(--surface)); font-size: 14px; }
+.page[data-view='home'] .actionItem { padding: 15px 12px; }
+.page[data-view='home'] .actionItem > span:nth-child(2) { font-size: 14px; }
+.page[data-view='home'] .actionItem strong { font-size: 15px; }
+.page[data-view='home'] .actionItem small { font-size: 13px; }
+.page[data-view='home'] .sideColumn > .panel:last-child { flex: 1; }
+.page[data-view='home'] .journeys { display: grid; flex: 1; grid-auto-rows: minmax(min-content, 1fr); padding: 0 18px; }
+.page[data-view='home'] .journey { display: flex; flex-direction: column; justify-content: center; padding: 20px 0; }
+.page[data-view='home'] .journey + .journey { padding-top: 20px; }
+.page[data-view='home'] .journeyIdentity { gap: 12px; }
+.page[data-view='home'] .journeyIdentity .avatar { width: 40px; height: 40px; flex-basis: 40px; }
+.page[data-view='home'] .journeyIdentity small { font-size: 13px; }
+.page[data-view='home'] .journeySteps { margin: 22px 0 14px; }
+.page[data-view='home'] .journeySteps a { font-size: 12px; gap: 6px; }
+.page[data-view='home'] .journeySteps small { font-size: 12px; }
+.page[data-view='home'] .journeyMarker { width: 26px; height: 26px; box-shadow: 0 0 0 4px var(--surface); }
+.page[data-view='home'] .journeySteps li::before { top: 13px; }
+.page[data-view='home'] .journeyLink { font-size: 13px; }
+.page[data-view='home'] .journeyEmpty { font-size: 14px; }
+.page[data-view='home'] .emptyState { flex: 1; }
+.page[data-view='home'] .emptyState h3 { font-size: 18px; }
+
+@media (min-width: 1251px) and (max-height: 1100px) {
+  .page[data-view='home'] { gap: 14px; padding: 16px; }
+  .page[data-view='home'] .hero { min-height: 120px; padding: 14px 26px; }
+  .page[data-view='home'] .statCard { min-height: 100px; padding-block: 14px; }
+  .page[data-view='home'] .statCopy { gap: 4px; }
+  .page[data-view='home'] .statCopy strong { font-size: 28px; }
+  .page[data-view='home'] .filters { padding: 10px 16px; }
+  .page[data-view='home'] .filterLabel { gap: 5px; }
+  .page[data-view='home'] .filterLabel select, .page[data-view='home'] :is(.searchBox, .clearButton) { height: 40px; min-height: 40px; }
+  .page[data-view='home'] :is(.dashboardGrid, .mainColumn, .sideColumn) { gap: 16px; }
+  .page[data-view='home'] .panelHeader { min-height: 46px; padding-block: 11px; }
+  .page[data-view='home'] .journey, .page[data-view='home'] .journey + .journey { padding-block: 10px; }
+  .page[data-view='home'] .journeySteps { margin: 12px 0 8px; }
+  .page[data-view='home'] .journeySteps a { gap: 4px; }
+  .page[data-view='home'] .journeyMarker { width: 22px; height: 22px; }
+  .page[data-view='home'] .journeySteps li::before { top: 11px; }
+  .page[data-view='home'] .actionList, .page[data-view='home'] .actionItem { padding: 10px; }
+}
+@container (max-width: 1400px) {
+  .page[data-view='home'] .statCard { padding: 18px 14px; gap: 12px; }
+  .page[data-view='home'] .statIcon { width: 42px; height: 42px; }
+  .page[data-view='home'] .statLabel { font-size: 14px; }
+  .page[data-view='home'] .statCopy strong { font-size: 27px; }
+}
+@container (max-width: 1100px) {
+  .page[data-view='home'] .learnerTable { height: auto; }
+  .page[data-view='home'] .sideColumn { align-items: stretch; }
+  .page[data-view='home'] .hero { min-height: 138px; padding: 24px; }
+  .page[data-view='home'] .chartsGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .page[data-view='home'] .chartsGrid > :last-child { grid-column: 1 / -1; }
+  .page[data-view='home'] .engagementEmpty { min-height: 90px; flex-direction: row; text-align: left; padding: 16px 20px; }
+  .page[data-view='home'] .engagementEmpty p { max-width: none; }
+}
+@media (max-width: 850px) {
+  .page[data-view='home'] { padding: 16px; gap: 16px; }
+  .page[data-view='home'] .statsGrid { gap: 12px; }
+}
+@container (max-width: 560px) {
+  .page[data-view='home'] .hero { padding: 20px 16px; }
+  .page[data-view='home'] .heroIntro { font-size: 14px; }
+  .page[data-view='home'] .statCard { flex-direction: column; align-items: flex-start; padding: 16px 12px; gap: 10px; }
+  .page[data-view='home'] .statIcon { width: 32px; height: 32px; }
+  .page[data-view='home'] .statCopy strong { font-size: 23px; }
+  .page[data-view='home'] .statCopy small { font-size: 13px; }
+  .page[data-view='home'] .filters { padding: 12px; }
+  .page[data-view='home'] .chartsGrid { grid-template-columns: minmax(0, 1fr); }
+  .page[data-view='home'] .chartsGrid > :last-child { grid-column: auto; }
+  .page[data-view='home'] .engagementEmpty { flex-direction: column; text-align: center; }
+  .page[data-view='home'] .panelHeader { padding: 16px; }
+  :global(#employer-dashboard)[data-view='home'] .panelHeader h2 { font-size: 16px; }
+}
+:global([data-theme='dark']) .page[data-view='home'] { --card-shadow: 0 4px 8px #00000014, 0 14px 28px -12px #00000059; }
 @media (prefers-reduced-motion: reduce) {
   .page * { scroll-behavior: auto !important; transition: none !important; }
 }

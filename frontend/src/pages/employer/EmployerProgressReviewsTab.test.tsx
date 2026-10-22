@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -53,6 +53,31 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('employer progress reviews', () => {
+  it('shows the saved review status in the current card and past list without offering signatures or booking', async () => {
+    event = { ...event, reviewTemplateId: null, reviewInstanceId: null, importedReview: {
+      id: '88', aptemReviewId: 'A-88', name: 'Progress review', type: 'Progress Review', reviewerName: 'Coach',
+      plannedDate: event.targetDate, plannedTime: null, completedDate: null, status: 'awaiting-signature',
+      extractionStatus: 'complete', detailsAvailable: false, sections: [],
+    } };
+    vi.mocked(fetchEmployerProgressReviews).mockImplementation(async () => ({ events: [event], definitions: {} }));
+    vi.mocked(fetchEmployerProgressReview).mockImplementation(async () => ({ event, definition: null }));
+    mount();
+    const current = within(await screen.findByRole('article', { name: 'Current review' }));
+    expect(current.getByText('Awaiting signatures')).toBeVisible();
+    expect(current.getByRole('button', { name: 'View review' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'View all reviews (1)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Past (1)' }));
+    expect(within(screen.getByRole('region', { name: 'All reviews' })).getByText('Awaiting signatures')).toBeVisible();
+    expect(screen.queryByText('Archived review')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Read & sign|Book a time|Reschedule meeting|Record attendance/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'View review' }));
+    expect(await screen.findByRole('heading', { name: event.title })).toBeVisible();
+    expect(saveEmployerReviewAnswers).not.toHaveBeenCalled();
+    expect(signReviewAsEmployer).not.toHaveBeenCalled();
+    expect(saveMigratedReviewPartyAnswers).not.toHaveBeenCalled();
+    expect(signMigratedReviewAsParty).not.toHaveBeenCalled();
+  });
+
   it.each(['native', 'Progress Review', 'Progress Review (+ Skills Radar)'])('joins a scheduled %s from the list and details while keeping form access', async type => {
     const day = '2099-10-26';
     event = { ...event, status: 'scheduled', scheduledDate: day, targetDate: day, date: day,
