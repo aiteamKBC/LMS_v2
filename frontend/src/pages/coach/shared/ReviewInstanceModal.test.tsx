@@ -661,7 +661,7 @@ describe('review reopen flow', () => {
     const initialized: ReviewInstanceFormDefinition = {
       ...migratedDefinition('scheduled'), instance: pending.instance,
     };
-    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(pending).mockResolvedValueOnce(initialized);
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(pending);
     vi.mocked(initializeMigratedReview).mockResolvedValue(initialized);
     const { rerender } = mount(pending.instance.id);
     expect(fetchReviewInstanceForm).not.toHaveBeenCalled();
@@ -691,13 +691,13 @@ describe('review reopen flow', () => {
           configuration: { options: ['Good', 'Needs work'] } }],
       }],
     };
-    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(pending).mockResolvedValueOnce(initialized);
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(pending);
     vi.mocked(initializeMigratedReview).mockResolvedValue(initialized);
     const { rerender } = mount('imported-review:future');
     expect(await screen.findByText('Migrated questions')).toBeVisible();
     expect(initializeMigratedReview).toHaveBeenCalledTimes(1);
     expect(initializeMigratedReview).toHaveBeenCalledWith('imported-review:future');
-    expect(fetchReviewInstanceForm).toHaveBeenCalledTimes(2);
+    expect(fetchReviewInstanceForm).toHaveBeenCalledTimes(1);
     expect(fetchReviewInstanceForm).toHaveBeenLastCalledWith('imported-review:future', expect.any(AbortSignal));
     expect(screen.queryByRole('region', { name: 'Review information' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Initialize approved migrated form' })).not.toBeInTheDocument();
@@ -716,7 +716,7 @@ describe('review reopen flow', () => {
     expect(completeMigratedReview).not.toHaveBeenCalled();
     rerender();
     expect(initializeMigratedReview).toHaveBeenCalledTimes(1);
-    expect(fetchReviewInstanceForm).toHaveBeenCalledTimes(2);
+    expect(fetchReviewInstanceForm).toHaveBeenCalledTimes(1);
   });
 
   it('shows an initialization failure once and retries only when selected', async () => {
@@ -731,7 +731,7 @@ describe('review reopen flow', () => {
       migratedForm: true, formAvailable: true, localStatus: 'scheduled',
       sections: [{ id: 'migrated-section', title: 'Recovered form', displayOrder: 0, enabled: true, estimatedMinutes: 0, fields: [] }],
     };
-    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(pending).mockResolvedValueOnce(pending).mockResolvedValueOnce(initialized);
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(pending).mockResolvedValueOnce(pending);
     vi.mocked(initializeMigratedReview).mockRejectedValueOnce(new Error('Template unavailable')).mockResolvedValueOnce(initialized);
     const { rerender } = mount('imported-review:retry');
     expect(await screen.findByRole('alert')).toHaveTextContent('Unable to initialize this migrated review: Template unavailable');
@@ -741,11 +741,11 @@ describe('review reopen flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry loading form' }));
     expect(await screen.findByText('Recovered form')).toBeVisible();
     expect(initializeMigratedReview).toHaveBeenCalledTimes(2);
-    expect(fetchReviewInstanceForm).toHaveBeenCalledTimes(3);
+    expect(fetchReviewInstanceForm).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole('button', { name: 'Retry loading form' })).not.toBeInTheDocument();
   });
 
-  it('refetches on retry without repeating a successful initialization POST', async () => {
+  it('recovers an unavailable initialization response without recreating a prepared form', async () => {
     const pending: ReviewInstanceFormDefinition = {
       ...definition('scheduled'), source: 'aptem', readOnly: true, summaryOnly: true,
       canInitialize: true, formAvailable: false, sourceStatus: 'Scheduled',
@@ -757,17 +757,54 @@ describe('review reopen flow', () => {
       migratedForm: true, formAvailable: true, localStatus: 'scheduled',
       sections: [{ id: 'migrated-section', title: 'Recovered after refetch', displayOrder: 0, enabled: true, estimatedMinutes: 0, fields: [] }],
     };
-    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(pending)
-      .mockRejectedValueOnce(new Error('Temporary read failure'))
-      .mockResolvedValueOnce(initialized);
-    vi.mocked(initializeMigratedReview).mockResolvedValue(initialized);
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(pending).mockResolvedValueOnce(initialized);
+    vi.mocked(initializeMigratedReview).mockResolvedValue(pending);
     mount('imported-review:partial');
-    expect(await screen.findByRole('alert')).toHaveTextContent('Temporary read failure');
+    expect(await screen.findByRole('alert')).toHaveTextContent('The migrated form was not available after initialization.');
     expect(initializeMigratedReview).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button', { name: 'Retry loading form' }));
     expect(await screen.findByText('Recovered after refetch')).toBeVisible();
     expect(initializeMigratedReview).toHaveBeenCalledTimes(1);
-    expect(fetchReviewInstanceForm).toHaveBeenCalledTimes(3);
+    expect(fetchReviewInstanceForm).toHaveBeenCalledTimes(2);
+  });
+
+  it.each((['MCM', 'PR', 'PR_SKILLS_RADAR', 'PSP'] as const).flatMap(family =>
+    (['not-scheduled', 'scheduled'] as const).flatMap(status =>
+      (['page', 'modal'] as const).map(presentation => ({ family, status, presentation }))),
+  ))('opens the $status $family form directly in $presentation mode without another action or read', async ({ family, status, presentation }) => {
+    const initialized = family === 'PR' || family === 'PR_SKILLS_RADAR'
+      ? migratedPrDefinition(status, family) : migratedDefinition(status);
+    initialized.template.reviewTypeCode = family === 'PSP' ? 'aptem_psp'
+      : family === 'MCM' ? 'aptem_mcm' : 'aptem_progress_review';
+    initialized.template.name = family === 'PSP' ? 'Personal Support Plan' : initialized.template.name;
+    initialized.sections[0].fields[0].answer = 'Saved answer from the prepared form';
+    initialized.answerVersion = 'prepared-version';
+    initialized.booking = { booked: status === 'scheduled', canBook: status === 'not-scheduled', conflict: false,
+      eventKey: status === 'scheduled' ? initialized.instance.id : null,
+      scheduledDate: null, scheduledTime: null, durationMinutes: null, meetingLink: null, syncState: null };
+    const pending: ReviewInstanceFormDefinition = {
+      ...initialized, migratedForm: false, readOnly: true, canInitialize: true,
+      // PSP can already have captured Aptem sections when its local form opens.
+      formAvailable: family === 'PSP', summaryOnly: family !== 'PSP', localStatus: null,
+      sourceStatus: status === 'scheduled' ? 'Scheduled' : 'Not Scheduled', sections: [],
+    };
+    vi.mocked(fetchReviewInstanceForm).mockReset()
+      .mockResolvedValueOnce(pending).mockRejectedValue(new Error('A second read must not hide the prepared form'));
+    vi.mocked(initializeMigratedReview).mockResolvedValue(initialized);
+    const onStatusChanged = vi.fn();
+    render(<MemoryRouter><ReviewInstanceModal instanceId={pending.instance.id} presentation={presentation}
+      onClose={vi.fn()} onStatusChanged={onStatusChanged} /></MemoryRouter>);
+
+    expect(await screen.findByRole('textbox')).toHaveValue('Saved answer from the prepared form');
+    expect(screen.getByRole('textbox')).toBeEnabled();
+    expect(screen.queryByRole('button', { name: /Initialize|Retry loading form/ })).not.toBeInTheDocument();
+    expect(fetchReviewInstanceForm).toHaveBeenCalledTimes(1);
+    expect(initializeMigratedReview).toHaveBeenCalledExactlyOnceWith(pending.instance.id);
+    expect(screen.getByText(/Review status:/)).toHaveTextContent(status.replace('-', ' '));
+    for (const action of [startMigratedReview, bookMigratedReview, saveReviewInstanceAnswers,
+      submitMigratedReview, signMigratedReviewAsCoach, completeMigratedReview, onStatusChanged]) {
+      expect(action).not.toHaveBeenCalled();
+    }
   });
 
   it('initializes only once under StrictMode effect replay', async () => {
@@ -782,7 +819,7 @@ describe('review reopen flow', () => {
       migratedForm: true, formAvailable: true, localStatus: 'scheduled',
       sections: [{ id: 'strict-section', title: 'StrictMode form', displayOrder: 0, enabled: true, estimatedMinutes: 0, fields: [] }],
     };
-    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(pending).mockResolvedValueOnce(pending).mockResolvedValueOnce(initialized);
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(pending).mockResolvedValueOnce(pending);
     vi.mocked(initializeMigratedReview).mockResolvedValue(initialized);
     render(<StrictMode><ReviewInstanceModal event={{ learner: 'Test learner', programme: 'Test programme' }} instanceId="imported-review:strict" onClose={vi.fn()} /></StrictMode>);
     expect(await screen.findByText('StrictMode form')).toBeVisible();
