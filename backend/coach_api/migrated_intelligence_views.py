@@ -12,6 +12,7 @@ from django.conf import settings
 from django.db import transaction
 from django.http import JsonResponse
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_GET, require_POST
 
 from coach_api.auth import coach_access_required
@@ -54,6 +55,26 @@ def _meeting_end(record):
         return None
     start = datetime.combine(record.scheduled_date, record.scheduled_time, ZoneInfo(settings.TIME_ZONE))
     return start + timedelta(minutes=record.duration_minutes or 60)
+
+
+def _has_ended_session(record, snapshot, now):
+    """A Graph attendance report proves a session ended, not a stopped recording.
+
+    Only accept a report overlapping this booking. The same Teams URL can retain
+    reports from earlier occurrences or from before a reschedule.
+    """
+    start = datetime.combine(record.scheduled_date, record.scheduled_time, ZoneInfo(settings.TIME_ZONE))
+    for report in snapshot.get("attendanceReports") or []:
+        try:
+            actual_start = parse_datetime(report.get("meetingStartDateTime") or "")
+            actual_end = parse_datetime(report.get("meetingEndDateTime") or "")
+        except (TypeError, ValueError):
+            continue
+        if (actual_start and actual_end
+                and timezone.is_aware(actual_start) and timezone.is_aware(actual_end)
+                and actual_start <= actual_end <= now and actual_end >= start):
+            return True
+    return False
 
 
 def _summary(state):
@@ -143,13 +164,20 @@ def migrated_review_check_session(request, review_id):
     if overlay.status not in {ImportedReviewInstance.STATUS_SCHEDULED, ImportedReviewInstance.STATUS_IN_PROGRESS}:
         return JsonResponse({"detail": "Meeting intelligence is read-only at this review stage."}, status=409)
     meeting_end = _meeting_end(record)
-    if not meeting_end or timezone.now() < meeting_end:
-        return JsonResponse({"detail": "Check Session is available after the scheduled meeting ends."}, status=409)
+    if not meeting_end:
+        return JsonResponse({"detail": "The meeting needs a scheduled date and time before checking the session."}, status=409)
 
     snapshot, error, status_code = fetch_coach_meeting_graph_snapshot(record)
     if error:
         code = "GRAPH_PERMISSION_ERROR" if status_code == 403 or error.get("code") == "coach_online_meeting_unresolved" else "MEETING_NOT_FOUND" if status_code == 409 else "GRAPH_FETCH_FAILED"
         return JsonResponse({**error, "code": code}, status=status_code)
+
+    now = timezone.now()
+    if now < meeting_end and not _has_ended_session(record, snapshot, now):
+        return JsonResponse({
+            "detail": "Teams has not confirmed that this session has ended yet. If the call has ended, wait for Teams to prepare its attendance report and check again. You can also check after the scheduled end time.",
+            "code": "MEETING_END_NOT_CONFIRMED",
+        }, status=409)
 
     # A failed transcript-content fetch must never blank a previously stored
     # transcript during the shared upsert. Keep all successful partial results.

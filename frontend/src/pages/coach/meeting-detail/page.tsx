@@ -18,6 +18,7 @@ import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm'
 import { bookMigratedReview, rescheduleMigratedReview, markReviewInstanceInProgressManually, openReviewInstanceForEvent, type ReviewInstanceFormDefinition } from '@/api/reviewInstances';
 import { MonthlyCoachingCompletionModal } from '../meetings/MonthlyCoachingCompletionModal';
 import { CoachMeetingArtifactsPanel } from '../shared/CoachMeetingArtifactsPanel';
+import { MigratedMeetingIntelligence } from '../shared/MigratedMeetingIntelligence';
 import ProgressReviewCompletionModal from '../shared/ProgressReviewCompletionModal';
 import { ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '../shared/ScheduleControls';
 import { loadImportedReviewForBooking } from '../shared/importedReviewBooking';
@@ -185,6 +186,7 @@ export default function CoachMeetingDetail() {
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [completionEvent, setCompletionEvent] = useState<CoachCalendarEvent | null>(null);
   const [importedReview, setImportedReview] = useState<ReviewInstanceFormDefinition | null>(null);
+  const [importedReviewError, setImportedReviewError] = useState<string | null>(null);
   const bookingInFlightRef = useRef(false);
 
   useEffect(() => {
@@ -232,8 +234,9 @@ export default function CoachMeetingDetail() {
   // below do not depend on which screen the coach happened to open first.
   const importedReviewId = event?.reviewSource === 'aptem' ? eventIdentity(event) : '';
   useEffect(() => {
+    setImportedReview(null);
+    setImportedReviewError(null);
     if (!importedReviewId) {
-      setImportedReview(null);
       return;
     }
     const controller = new AbortController();
@@ -253,7 +256,9 @@ export default function CoachMeetingDetail() {
           });
         }
       })
-      .catch(() => { if (active) setImportedReview(null); });
+      .catch(err => {
+        if (active) setImportedReviewError(err instanceof Error ? err.message : 'Unable to load this review. Reopen the details to try again.');
+      });
     return () => { active = false; controller.abort(); };
   }, [importedReviewId, coach.isViewingAsCoach]);
 
@@ -468,6 +473,13 @@ export default function CoachMeetingDetail() {
   // Aptem bookings are authorized by the imported review itself, not by the
   // calendar row, and an admin reading another workspace never books.
   const importedBooking = event?.reviewSource === 'aptem' ? importedReview?.booking : undefined;
+  const usesMigratedIntelligence = event?.reviewSource === 'aptem'
+    && ['mcr', 'progress-review'].includes(event.source || '')
+    && event.importedReviewType?.trim().toLowerCase() !== 'personal support plan';
+  const migratedIntelligenceReady = importedReview?.instance.id === importedReviewId
+    && importedReview.migratedForm
+    && ['aptem_mcm', 'aptem_progress_review'].includes(importedReview.template.reviewTypeCode || '')
+    && importedBooking?.eventKey && importedBooking.syncState === 'synced';
   const canBookImported = Boolean(!coach.isViewingAsCoach && importedBooking?.canBook);
   const canRescheduleImported = Boolean(!coach.isViewingAsCoach && importedBooking?.canReschedule);
   const canAttachImported = Boolean(!coach.isViewingAsCoach && importedBooking?.canAttach);
@@ -594,7 +606,29 @@ export default function CoachMeetingDetail() {
             </div>
 
             {url ? (
-              <CoachMeetingArtifactsPanel event={event} onEventStatusChange={handleArtifactsStatusChange} />
+              usesMigratedIntelligence ? migratedIntelligenceReady && importedReview ? (
+                <MigratedMeetingIntelligence
+                  key={importedReview.instance.id}
+                  instanceId={importedReview.instance.id}
+                  family={importedReview.template.reviewTypeCode || ''}
+                  status={importedReview.localStatus || importedReview.instance.status}
+                  viewAs={coach.isViewingAsCoach}
+                  readOnly={importedReview.readOnly || importedReview.templateSync?.status === 'conflict'}
+                  meetingLink={importedBooking?.meetingLink}
+                  bound={Boolean(importedReview.summaryBinding?.fieldKey)}
+                  savedBinding={importedReview.summaryBinding}
+                  showBoundSummary
+                  checkBlocked={busy}
+                />
+              ) : (
+                <Panel className="bg-white">
+                  <p role={importedReviewError ? 'alert' : 'status'} className="text-sm text-foreground-600">
+                    {importedReviewError || (importedReview
+                      ? 'Session checks require an available review form and a synced Teams booking. Open the review form to check its availability.'
+                      : 'Loading review meeting resources…')}
+                  </p>
+                </Panel>
+              ) : <CoachMeetingArtifactsPanel event={event} onEventStatusChange={handleArtifactsStatusChange} />
             ) : (
               <Panel className="bg-white">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
