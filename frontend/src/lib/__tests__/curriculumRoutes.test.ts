@@ -46,7 +46,7 @@ describe('curriculum route lazy imports', { timeout: 15000 }, () => {
   it('lazily-loaded curriculum hubs resolve', async () => {
     const hubs = await import('@/pages/curriculum/hubs/page');
     expect(hubs.CurriculumLibraryHub).toBeTypeOf('function');
-    expect(hubs.CurriculumDeliveryHub).toBeTypeOf('function');
+    expect(hubs).not.toHaveProperty('CurriculumDeliveryHub');
     expect(hubs.CurriculumQualityHub).toBeTypeOf('function');
   });
 });

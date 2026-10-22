@@ -375,12 +375,16 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     const { default: ProgrammeDetailPage } = await import('../page');
     vi.clearAllMocks();
     const onReloaded = vi.fn(async () => undefined);
-    const view = render(<MemoryRouter><ProgrammeDetailPage programmeId="PROG-DATA" programmeSnapshot={programme} onReloaded={onReloaded} embedded /></MemoryRouter>);
+    const view = render(<MemoryRouter><ProgrammeDetailPage programmeId="PROG-DATA" programmeSnapshot={programme} onReloaded={onReloaded} summaryActions={<button type="button">Add structure</button>} embedded /></MemoryRouter>);
     await screen.findByRole('heading', { name: 'Data Analyst' });
-    const updated = { ...programme, name: 'Updated Data Analyst' };
+    const actions = within(screen.getByRole('group', { name: 'Programme actions' }));
+    expect(actions.getByRole('button', { name: 'Edit programme' })).toBeInTheDocument();
+    expect(actions.getByRole('button', { name: 'Add structure' })).toBeInTheDocument();
+    const updated = { ...programme, name: 'Updated Data Analyst', color: '#0f766e' };
     vi.mocked(api.fetchCurriculumProgrammeDetailShell).mockResolvedValueOnce({ schema: 'test', programme: updated, flat: { cohorts, groups, groupIds: ['GROUP-1'], weekTemplates: [] } });
     view.rerender(<MemoryRouter><ProgrammeDetailPage programmeId="PROG-DATA" programmeSnapshot={updated} onReloaded={onReloaded} embedded /></MemoryRouter>);
     await screen.findByRole('heading', { name: 'Updated Data Analyst' });
+    expect(screen.getByRole('region', { name: 'Programme summary' })).toHaveStyle({ '--programme-color': '#0f766e' });
     expect(onReloaded).not.toHaveBeenCalled();
     expect(api.fetchCurriculumProgrammeDetailShell).toHaveBeenCalledTimes(2);
     vi.mocked(api.fetchCurriculumProgrammeDetailShell).mockResolvedValueOnce({ schema: 'test', programme: updated, flat: { cohorts, groups, groupIds: ['GROUP-1'], weekTemplates: [] } });

@@ -3509,7 +3509,11 @@ export function fetchCurriculumScopeLearnerRoster(
 export function fetchCurriculumScopeLearnerKsbImpact(
   scope: CurriculumLearnerScope,
   identifier: string,
-  params: { sourceType?: string; sourceId?: string; learnerStatus?: string; moduleProgress?: boolean } = {},
+  params: {
+    sourceType?: string; sourceId?: string; learnerStatus?: string; moduleProgress?: boolean;
+    /** Narrow the read to one learner by profile id (never an enrolment id). */
+    learnerId?: string;
+  } = {},
   signal?: AbortSignal,
 ): Promise<CurriculumScopeLearnerKsbImpactResponse> {
   const query = new URLSearchParams();
@@ -3517,6 +3521,7 @@ export function fetchCurriculumScopeLearnerKsbImpact(
   if (params.sourceId) query.set('source_id', params.sourceId);
   if (params.learnerStatus) query.set('learnerStatus', params.learnerStatus);
   if (params.moduleProgress) query.set('moduleProgress', '1');
+  if (params.learnerId) query.set('learnerId', params.learnerId);
   return fetchJson<CurriculumScopeLearnerKsbImpactResponse>(
     scopePath(SCOPE_IMPACT_PATHS, '/curriculum/learner-ksb-impact/', scope, identifier, query),
     { signal },

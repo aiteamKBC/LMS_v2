@@ -21,7 +21,6 @@ import { fetchCurriculumDeliveryScope, fetchCurriculumOverview } from '@/lib/cur
  */
 
 const updateCurriculumModule = vi.fn(async () => ({ updated: true }));
-const updateCurriculumModuleCover = vi.fn(async () => ({ updated: true }));
 const reload = vi.fn(async () => null);
 const fetchLearnerAssignments = vi.fn();
 const fetchCurriculumScopeLearnerKsbImpact = vi.fn();
@@ -47,15 +46,12 @@ vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
 }));
 
 vi.mock('@/pages/curriculum/shared/entities/moduleForm', () => ({
-  ModuleFormDrawer: ({ open, defaults, onSavingChange }: {
+  ModuleFormDrawer: ({ open, defaults }: {
     open: boolean;
     defaults?: { programmeId?: string; cohortId?: string; groupId?: string };
-    onSavingChange?: (saving: boolean) => void;
   }) => open ? (
     <div data-testid="module-form-defaults">
       {defaults?.programmeId}|{defaults?.cohortId}|{defaults?.groupId}
-      <button type="button" onClick={() => onSavingChange?.(true)}>Start module creation</button>
-      <button type="button" onClick={() => onSavingChange?.(false)}>Finish module creation</button>
     </div>
   ) : null,
 }));
@@ -187,7 +183,6 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   fetchCurriculumHolidays: vi.fn(async () => []),
   fetchCurriculumScopeLearnerKsbImpact: (...args: unknown[]) => fetchCurriculumScopeLearnerKsbImpact(...args),
   updateCurriculumModule: (...args: unknown[]) => updateCurriculumModule(...(args as [])),
-  updateCurriculumModuleCover: (...args: unknown[]) => updateCurriculumModuleCover(...(args as [])),
 }));
 
 async function renderCatalogue(search = '') {
@@ -238,7 +233,6 @@ function HistoryProbe() {
 describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
   beforeEach(() => {
     updateCurriculumModule.mockClear();
-    updateCurriculumModuleCover.mockReset().mockResolvedValue({ updated: true });
     reload.mockClear();
     vi.mocked(fetchCurriculumDeliveryScope).mockClear();
     vi.mocked(fetchCurriculumOverview).mockClear();
@@ -292,28 +286,17 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     expect(screen.getByText('Data Foundations')).toBeInTheDocument();
   });
 
-  it('uploads a module image without opening or saving the delivery form', async () => {
-    await renderCatalogue();
-    const card = screen.getByRole('heading', { name: 'Data Foundations' }).closest('article')!;
-    await userEvent.click(within(card).getByRole('button', { name: 'Upload image' }));
-    expect(await screen.findByText('Module image')).toBeInTheDocument();
-    expect(screen.queryByTestId('module-form-defaults')).not.toBeInTheDocument();
-    const file = new File(['cover'], 'cover.png', { type: 'image/png' });
-    await userEvent.upload(document.querySelector<HTMLInputElement>('input[type="file"]')!, file);
-    const image = await screen.findByAltText('Data Foundations cover');
-    await userEvent.click(screen.getByRole('button', { name: 'Save image' }));
-    await waitFor(() => expect(updateCurriculumModuleCover).toHaveBeenCalledWith('MOD-1', image.getAttribute('src')));
-    expect(updateCurriculumModule).not.toHaveBeenCalled();
-    expect(reload).toHaveBeenCalledWith({ silent: true });
-  });
-
-  it('opens the assignment drawer when the module has no assigned learners', async () => {
+  it('opens the learners dialog when the module has no assigned learners, and adds from there', async () => {
     await renderCatalogue();
     await userEvent.click(cardFor('Data Foundations').getByRole('button', { name: 'Learners' }));
 
-    expect(await screen.findByText('Selected learners will receive this module only. Their programme, cohort and other module assignments stay as they are.')).toBeInTheDocument();
-    expect(fetchLearnerAssignments).toHaveBeenCalledWith(expect.objectContaining({ scope: 'module', id: 'MOD-1' }), expect.any(AbortSignal));
+    const dialog = await screen.findByRole('dialog', { name: 'Data Foundations learner progress' });
+    expect(within(dialog).getByText('No learners are assigned to this module yet.')).toBeInTheDocument();
+    expect(fetchLearnerAssignments).toHaveBeenCalledWith(expect.objectContaining({ scope: 'module', id: 'MOD-1' }));
     expect(fetchCurriculumScopeLearnerKsbImpact).not.toHaveBeenCalled();
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add learners' }));
+    expect(await screen.findByText(/Learners you add receive this module only/)).toBeInTheDocument();
   });
 
   it('opens assigned learner progress when the module already has learners', async () => {
@@ -325,23 +308,13 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     await renderCatalogue();
     await userEvent.click(cardFor('Data Foundations').getByRole('button', { name: 'Learners' }));
 
-    expect(await screen.findByRole('dialog', { name: 'Data Foundations learner progress' })).toBeInTheDocument();
-    expect(screen.getByText('A Learner')).toBeInTheDocument();
-    expect(screen.getByText('KSB weights achieved')).toBeInTheDocument();
-    expect(fetchCurriculumScopeLearnerKsbImpact).toHaveBeenCalledWith('module', 'MOD-1', { learnerStatus: 'all' });
+    const dialog = await screen.findByRole('dialog', { name: 'Data Foundations learner progress' });
+    expect(within(dialog).getByRole('list', { name: 'Learners' })).toHaveTextContent('A Learner');
+    expect(within(dialog).getByRole('heading', { name: 'A Learner' })).toBeInTheDocument();
+    expect(fetchCurriculumScopeLearnerKsbImpact).toHaveBeenCalledWith('module', 'MOD-1', { learnerStatus: 'all', moduleProgress: true });
 
-    await userEvent.click(screen.getByRole('button', { name: 'Assign more learners' }));
-    expect(await screen.findByText('Selected learners will receive this module only. Their programme, cohort and other module assignments stay as they are.')).toBeInTheDocument();
-  });
-
-  it('keeps the image editor open when saving fails', async () => {
-    updateCurriculumModuleCover.mockRejectedValueOnce(new Error('Could not save the module image.'));
-    await renderCatalogue();
-    await userEvent.click(cardFor('Data Foundations').getByRole('button', { name: 'Upload image' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Save image' }));
-    expect(await screen.findByText('Could not save the module image.')).toBeInTheDocument();
-    expect(screen.getByText('Module image')).toBeInTheDocument();
-    expect(reload).not.toHaveBeenCalled();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add learner manually' }));
+    expect(await screen.findByText(/Learners you add receive this module only/)).toBeInTheDocument();
   });
 
   it('shows each module with the delivery it runs in', async () => {
@@ -349,7 +322,7 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
 
     const delivery = deliveryRowFor('Data Foundations', 'Sept 2026 / Group A');
     expect(delivery.getByText('02 Sept 2026 – 07 Oct 2026')).toBeInTheDocument();
-    expect(delivery.getByText('Teams not created')).toBeInTheDocument();
+    expect(delivery.getByTitle('Teams: Not created')).toHaveTextContent('Not created');
     // The card states the authored weeks; the delivery states its session count
     // only when it disagrees with the module's. Here they agree, so the delivery
     // stays quiet rather than repeating the same fact.
@@ -357,7 +330,8 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     expect(cardFor('Data Foundations').getByText('6 weeks')).toBeInTheDocument();
     expect(cardFor('Data Foundations').getByText('3 components')).toBeInTheDocument();
     expect(cardFor('Data Foundations').getByText('7h 30m OTJH')).toBeInTheDocument();
-    expect(cardFor('Data Foundations').getByText('5 KSBs')).toBeInTheDocument();
+    // KSBs are not counted on the card; they are reviewed through its own action.
+    expect(cardFor('Data Foundations').getByRole('button', { name: 'Review module KSBs' })).toBeInTheDocument();
   });
 
   // A reader who spots the wrong cohort or group here wants to correct it, and
@@ -378,7 +352,7 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     const card = cardFor('Data Foundations');
 
     expect(card.getByRole('link', { name: /Open delivery/ }))
-      .toHaveAttribute('href', '/curriculum/modules/MOD-1?moduleName=Data+Foundations');
+      .toHaveAttribute('href', '/curriculum/modules/MOD-1');
     expect(card.getByRole('button', { name: /Review module KSBs/ })).toBeInTheDocument();
     expect(card.getByRole('button', { name: /Edit components/ })).toBeInTheDocument();
     expect(card.getByRole('button', { name: /Edit module/ })).toBeInTheDocument();
@@ -396,8 +370,10 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     await user.click(screen.getByText('PowerPoint', { selector: 'span' }));
     await user.click(screen.getByRole('button', { name: /Add 1 component/ }));
 
+    // The new component is selected at once: its toolbar and editor open under
+    // the week it was added to, with the full drawer one press away.
     expect(await screen.findByTitle('Back to week overview')).toBeInTheDocument();
-    expect(screen.queryByText('Select a part on the rail to edit it.')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit component' })).toBeInTheDocument();
   });
 
   it('returns to the module catalogue when the browser goes back from the builder', async () => {
@@ -433,20 +409,6 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
 
     expect(await screen.findByTitle('Back to week overview')).toBeInTheDocument();
     expect(screen.getAllByText('Rail PowerPoint')).not.toHaveLength(0);
-  });
-
-  it('shows the programme name from the route while the programme collection is still resolving', async () => {
-    window.history.replaceState({}, '', '/curriculum/module-builder?programme=PROG-PENDING&programmeName=Rewan+2');
-    const { default: ModuleBuilder } = await import('../page');
-    render(
-      <MemoryRouter initialEntries={['/curriculum/module-builder?programme=PROG-PENDING&programmeName=Rewan+2']}>
-        <ModuleBuilder />
-      </MemoryRouter>,
-    );
-
-    const hierarchy = await screen.findByRole('navigation', { name: 'Curriculum hierarchy' });
-    expect(within(hierarchy).getByText('Rewan 2')).toBeInTheDocument();
-    expect(within(hierarchy).queryByText('PROG-PENDING')).not.toBeInTheDocument();
   });
 
   it('leaves off what the reader cannot act on from the card', async () => {
@@ -501,25 +463,6 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     await renderCatalogue('?programme=PROG-DATA&cohort=COHORT-1&group=GROUP-1&create=1');
 
     expect(await screen.findByTestId('module-form-defaults')).toHaveTextContent('program-data|COHORT-1|GROUP-1');
-    const hierarchy = screen.getByRole('navigation', { name: 'Curriculum hierarchy' });
-    expect(within(hierarchy).getByText('Data Analyst')).toBeInTheDocument();
-    expect(await within(hierarchy).findByText('Sept 2026')).toBeInTheDocument();
-    expect(within(hierarchy).getByText('Group A')).toBeInTheDocument();
-    expect(within(hierarchy).getByText('Modules')).toBeInTheDocument();
-  });
-
-  it('shows the catalogue progress line for the full module creation lifecycle', async () => {
-    const user = userEvent.setup();
-    await renderCatalogue('?programme=PROG-DATA&cohort=COHORT-1&group=GROUP-1&create=1');
-
-    await user.click(screen.getByRole('button', { name: 'Start module creation' }));
-
-    const status = screen.getByRole('status');
-    expect(status).toHaveTextContent('Creating module and refreshing the catalogue');
-    expect(status.previousElementSibling?.querySelector('.animate-entity-refresh')).toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: 'Finish module creation' }));
-    expect(status).toBeEmptyDOMElement();
   });
 
   it('opens components with the programme name, programme KSB source and one week per session', async () => {

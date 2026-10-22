@@ -2,7 +2,7 @@ import type { LibraryRecording } from '@/api/sessionResults';
 
 export type RecordingStatus = "ready" | "review" | "pending" | "missing" | "unsynced" | "archiveFailed" | "upcoming" | "inProgress" | "cancelled" | "planned" | "unavailable";
 
-export type RecordingFilter = "all" | "ready" | "attention";
+export type RecordingFilter = "all" | "ready" | "attention" | "pending" | "missing" | "unsynced" | "archiveFailed" | "review";
 
 export interface Recording {
   id: string;

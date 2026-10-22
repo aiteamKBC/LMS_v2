@@ -14,20 +14,20 @@ const request: api.AdminTransfer = { requestId: 'R1', learnerId: '7', learnerKin
 afterEach(() => { vi.resetAllMocks(); auth.role = 'admin'; });
 
 describe('admin progress transfers', () => {
-  it('requires review then Confirm, and reloads only after success', async () => {
+  it('requires review then approval, and reloads only after success', async () => {
     vi.mocked(api.getTransferRequests).mockResolvedValueOnce({ requests: [request], nextOffset: null, csrfToken: 'csrf' })
       .mockResolvedValue({ requests: [{ ...request, status: 'approved', approvedAt: '2026-10-19T10:00:00Z' }], nextOffset: null, csrfToken: 'csrf' });
     vi.mocked(api.approveTransferRequest).mockResolvedValue({ ...request, status: 'approved' });
     render(<MemoryRouter><TransferRequests /></MemoryRouter>);
-    expect(await screen.findByText('40%')).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Review transfer' }));
+    expect(await screen.findByText('40% saved')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Review details' }));
     expect(api.approveTransferRequest).not.toHaveBeenCalled();
     const dialog = within(screen.getByRole('dialog'));
     expect(dialog.getByText('Original module')).toBeVisible();
     expect(dialog.getByText('New module')).toBeVisible();
-    fireEvent.click(dialog.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Approve transfer' }));
     expect(await screen.findByText(/Transfer approved. The learner/)).toBeVisible();
-    expect(await screen.findByText('Approved')).toBeVisible();
+    expect(await within(screen.getByRole('table')).findByText('Approved')).toBeVisible();
     expect(api.approveTransferRequest).toHaveBeenCalledExactlyOnceWith('R1', 'csrf');
   });
 
@@ -35,10 +35,10 @@ describe('admin progress transfers', () => {
     vi.mocked(api.getTransferRequests).mockResolvedValue({ requests: [request], nextOffset: null, csrfToken: 'csrf' });
     vi.mocked(api.approveTransferRequest).mockRejectedValue(new Error('Mapping changed.'));
     render(<MemoryRouter><TransferRequests /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole('button', { name: 'Review transfer' }));
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Review details' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Approve transfer' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Mapping changed.');
-    expect(screen.getByText('Pending approval')).toBeVisible();
+    expect(within(screen.getByRole('dialog')).getByText('Awaiting decision')).toBeVisible();
     expect(screen.queryByText(/Transfer approved/)).not.toBeInTheDocument();
   });
 

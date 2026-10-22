@@ -46,6 +46,7 @@ describe('enter and leave the shared learner pages', () => {
       <Route path="/learner/my-learning" element={<PersonalLearningBanner context={readPersonalLearning()!} />} />
       <Route path="*" element={<Destination />} />
     </Routes></MemoryRouter>);
+    expect(screen.queryByRole('link', { name: 'My Courses' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Return to admin' }));
     expect(await screen.findByTestId('route')).toHaveTextContent('/curriculum/module-builder');
     expect(readPersonalLearning()).toBeNull();

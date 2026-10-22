@@ -1,4 +1,4 @@
-import { type ReactNode, type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, type ComponentProps, type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { LearnerAssignmentDrawer } from '@/pages/curriculum/shared/entities/LearnerAssignmentDrawer';
@@ -7,6 +7,7 @@ import { useRefreshOnRemoteWrite, useRefreshOnReturn } from '@/hooks/useRefreshO
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import styles from '../programmes/programmes.module.css';
 import { ProgrammeDeliveryTimeline } from '../programmes/ProgrammeDeliveryTimeline';
+import { programmeColor, programmeColorText } from '../shared/programmeColors';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
 import { findByIdentifierThenName, findModule, formatProgrammeLevel, namedCurriculumWorkspacePath, programmeIdentity, visibleNotes } from '@/pages/curriculum/shared/entities/model';
 // Editing the programme, or adding a cohort or group from this page,
@@ -2436,9 +2437,10 @@ interface ProgrammeDetailPresentationProps {
   refreshVersion?: number;
   onReloaded?: () => void | Promise<unknown>;
   summaryContent?: ReactNode;
+  summaryActions?: ReactNode;
 }
 
-export default function ProgrammeDetailPage({ programmeId, embedded = false, programmeSnapshot, refreshVersion = 0, onReloaded, summaryContent }: ProgrammeDetailPresentationProps = {}) {
+export default function ProgrammeDetailPage({ programmeId, embedded = false, programmeSnapshot, refreshVersion = 0, onReloaded, summaryContent, summaryActions }: ProgrammeDetailPresentationProps = {}) {
   const { id: routeId } = useParams();
   const id = programmeId ?? routeId;
   const navigate = useNavigate();
@@ -2471,6 +2473,7 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
     componentSummary: detailComponents ? null : componentSummary,
   } : data, [data, detailComponents, componentSummary]);
   const { programme: liveProgramme, found } = useMemo(() => buildLiveProgramme(hydratedData, id || ''), [hydratedData, id]);
+  const displayColor = programmeColor(findProgramme(data, id || '') || programmeSnapshot || liveProgramme);
   const [backendCoverage, setBackendCoverage] = useState<CurriculumKsbCoverageResponse | CurriculumKsbCoverageSummaryResponse | null>(null);
   const [backendCoverageLoading, setBackendCoverageLoading] = useState(false);
   const [backendCoverageError, setBackendCoverageError] = useState<string | null>(null);
@@ -4054,7 +4057,7 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
         {error && <InlineError message={error} onRetry={() => void reload()} />}
         {assignmentNotice && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[12px] font-semibold text-emerald-800">{assignmentNotice}</p>}
 
-        {embedded ? <section className={styles.selectedBanner} aria-label="Programme summary">
+        {embedded ? <section className={styles.selectedBanner} style={{ '--programme-color': displayColor, '--programme-ink': programmeColorText(displayColor) } as CSSProperties} aria-label="Programme summary">
           <div className={styles.bannerHeading}>
             <div><div className={styles.badges}>
               <span>{formatProgrammeLevel(PROGRAMME.level)}</span>
@@ -4069,9 +4072,10 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
             <div><dt>Delivery window</dt><dd>{PROGRAMME.duration || 'Not set'}</dd></div>
             <div><dt>Programme planned end date</dt><dd>Not provided</dd></div>
           </dl>}
-          <div className={styles.bannerActions}>
+          <div className={styles.bannerActions} role="group" aria-label="Programme actions">
             <button type="button" onClick={() => setProgrammeDrawerOpen(true)}>Edit programme</button>
             <button type="button" onClick={() => liveCohortCount ? setTab('cohorts') : setCohortDrawerOpen(true)}>{liveCohortCount ? 'Manage Cohorts & Groups' : 'Add First Cohort'}</button>
+            {summaryActions}
           </div>
         </section> : (
         <WorkspaceHeader
@@ -4083,7 +4087,7 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
           eyebrow="Programme"
           title={PROGRAMME.name}
           subtitle={[formatProgrammeLevel(PROGRAMME.level, ''), PROGRAMME.standard, PROGRAMME.duration].map(value => clean(value)).filter(Boolean).join(' · ')}
-          accentColor={PROGRAMME.color}
+          accentColor={displayColor}
           dense
           stats={[
             { icon: 'ri-group-line', label: 'Cohorts', value: liveCohortCount, detail: archivedCohortCount ? `${archivedCohortCount} archived` : undefined },
@@ -4182,7 +4186,7 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
                   {[{ label: 'Cohorts', value: liveCohortCount, tab: 'cohorts' }, { label: 'Groups', value: totalGroups, tab: 'groups' }, { label: 'Modules', value: modulesLoading ? '...' : activeModules.length, tab: 'modules' }, { label: 'Weeks', value: modulesLoading ? '...' : totalWeeks, tab: 'modules' }, { label: 'Learners', value: totalLearners, tab: 'learners' }].map(metric => <button key={metric.label} type="button" onClick={() => setTab(metric.tab as Tab)}><span>{metric.label}</span><strong>{metric.value}</strong></button>)}
                 </div>
               </section>
-              {modulesLoading ? <ModulesLoadingPanel /> : <ProgrammeDeliveryTimeline runs={timelineRuns} programmeName={PROGRAMME.name} deliveryHref="/curriculum/delivery" />}
+              {modulesLoading ? <ModulesLoadingPanel /> : <ProgrammeDeliveryTimeline runs={timelineRuns} programmeName={PROGRAMME.name} programmeColor={displayColor} />}
               <details className={styles.overviewDetails}><summary>Programme information, readiness and related records</summary>{programmeInformation}{recordHomes}</details>
             </>}
             {!embedded && programmeInformation}
@@ -4554,6 +4558,7 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
                       href={mod.archived ? undefined : builderUrl}
                       primary={(
                         <span className="flex items-center gap-2">
+                          <span aria-hidden="true" className="h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: displayColor }} />
                           {mod.name}
                           {mod.archived && <StatusBadge status="archived" />}
                         </span>

@@ -5,11 +5,22 @@ import { describe, expect, it, vi } from 'vitest';
 import { ProgrammeDeliveryTimeline, type ProgrammeTimelineRun } from '../ProgrammeDeliveryTimeline';
 
 const run: ProgrammeTimelineRun = { id: 'M/1', name: 'Planning', groupId: 'G1', group: 'Same group name', cohortId: 'C1', cohort: 'Autumn', startDate: '2026-09-07', endDate: '2026-09-28', href: '/curriculum/module-builder?module=M%2F1' };
-const show = (runs: ProgrammeTimelineRun[]) => render(<MemoryRouter><ProgrammeDeliveryTimeline runs={runs} deliveryHref="/curriculum/delivery?programme=P1" /></MemoryRouter>);
+const show = (runs: ProgrammeTimelineRun[]) => render(<MemoryRouter><ProgrammeDeliveryTimeline runs={runs} /></MemoryRouter>);
 
 describe('Programme delivery timeline', () => {
+  it('uses the programme colour for every module bar and its hover card', async () => {
+    render(<MemoryRouter><ProgrammeDeliveryTimeline runs={[run, { ...run, id: 'M2', name: 'Second module' }]} programmeColor="#0f766e" /></MemoryRouter>);
+    await userEvent.click(screen.getByRole('button', { name: 'Autumn 1 group' }));
+    const links = [screen.getByRole('link', { name: /Planning/ }), screen.getByRole('link', { name: /Second module/ })];
+    links.forEach(link => expect(link).toHaveStyle({ backgroundColor: '#0f766e', borderColor: '#0f766e', color: '#ffffff' }));
+    await userEvent.hover(links[0]);
+    const dialog = screen.getByRole('dialog', { name: 'Planning details' });
+    expect(dialog.querySelector('header')).toHaveStyle({ backgroundColor: '#0f766e', color: '#ffffff' });
+    await userEvent.keyboard('{Escape}');
+  });
   it('plots only complete recorded ranges and keeps the original module link', async () => {
     show([run, { ...run, id: 'M2', startDate: undefined }, { ...run, id: 'M3', startDate: '2026-02-30' }, { ...run, id: 'M4', endDate: '2026-09-01' }, { ...run, id: 'M5', startDate: '2026-09-07invalid' }]);
+    expect(screen.queryByRole('link', { name: /Delivery workspace/ })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Autumn 1 group' }));
     const link = screen.getByRole('link', { name: /Planning/ });
     expect(link).toHaveAttribute('href', run.href);

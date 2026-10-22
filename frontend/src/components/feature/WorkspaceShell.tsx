@@ -17,6 +17,7 @@ import './CurriculumControls.module.css';
 import './CoachResponsive.css';
 import { activePersonalLearning } from '@/lib/personalLearning';
 import { PersonalLearningBanner } from './PersonalLearningBanner';
+import { CurriculumBackToTop } from './CurriculumBackToTop';
 import { bareLearnerPath, learnerHref, learnerIdentityFromPath, type LearnerRoutePage } from '@/lib/learnerRoutes';
 
 interface WorkspaceShellProps {
@@ -277,9 +278,7 @@ export function WorkspaceShell({
         ? homeDashboardPath : learnerHref(page, routeLearner.kind, routeLearner.id), children } : children ? { ...item, children } : item;
     })
     : navItems;
-  const workspaceNavItems = auth.account?.role === 'admin' && !navItems.some(item => item.id === 'personal-courses')
-    ? [...stableNavItems, { id: 'personal-courses', label: 'My Courses', icon: 'ri-graduation-cap-line', href: '/my-courses' }]
-    : stableNavItems;
+  const workspaceNavItems = stableNavItems;
   const navigate = useNavigate();
   const displayBackButton = showBackButton ?? ['coach', 'learner', 'curriculum'].includes(role);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -293,6 +292,7 @@ export function WorkspaceShell({
   const mobileBodyOverflowRef = useRef<string | null>(null);
   const mobileFocusTimerRef = useRef<number | null>(null);
   const accountButtonRef = useRef<HTMLButtonElement>(null);
+  const mainScrollRef = useRef<HTMLElement>(null);
   const [sidebarPinned, setSidebarPinned] = useState(readPinnedPreference);
   const [coachSidebarCollapsed, setCoachSidebarCollapsed] = useState(readCoachSidebarCollapsed);
   const [learnerSidebarCollapsed, setLearnerSidebarCollapsed] = useState(readLearnerSidebarCollapsed);
@@ -600,13 +600,14 @@ export function WorkspaceShell({
             change (router/index.ts keys the boundary by pathname), so a
             transition owned by this component could never run. It used to hold
             an opacity-0 state behind a 120ms timer that nothing ever set. */}
-        <main className="workspace-main min-h-0 flex-1 overflow-y-auto !bg-none">
+        <main ref={mainScrollRef} tabIndex={role === 'curriculum' ? -1 : undefined} className="workspace-main min-h-0 flex-1 overflow-y-auto !bg-none">
           {/* An administrator reading a coach's workspace: shown on every coach
               page, since the sidebar reaches most of them without passing the
               dashboard that chose the coach. */}
           {role === 'coach' && <CoachViewAsBar />}
           {children}
         </main>
+        {role === 'curriculum' && <CurriculumBackToTop scrollRef={mainScrollRef} />}
       </div>
 
       {/* Global Search Modal */}

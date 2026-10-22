@@ -7,7 +7,6 @@ import styles from './curriculumSidebarNavigation.module.css';
 export function curriculumNavigation(permittedItems: SidebarNavItem[]): SidebarNavItem[] {
   const find = (id: string) => permittedItems.find(item => item.id === id);
   const delivery = find('curriculum-delivery');
-  const builderPaths = ['/curriculum/module-builder', '/curriculum/modules', '/curriculum/recordings', '/curriculum/england-holidays'];
   const builder: SidebarNavItem | undefined = delivery && {
     id: 'curriculum-module-builder', label: 'Module Builder', icon: 'ri-layout-4-line',
     children: [
@@ -19,9 +18,8 @@ export function curriculumNavigation(permittedItems: SidebarNavItem[]): SidebarN
   const ordered = [find('curriculum-home'), find('curriculum-programmes'), builder, find('curriculum-library'), find('curriculum-quality'), find('curriculum-bulk-attendance'), find('curriculum-archive')]
     .filter((item): item is SidebarNavItem => Boolean(item));
   const usedIds = new Set(ordered.map(item => item.id));
-  const additional = permittedItems.filter(item => !usedIds.has(item.id)).map(item => item.id === 'curriculum-delivery'
-    ? { ...item, matchPaths: item.matchPaths?.filter(path => !builderPaths.includes(path)) }
-    : item);
+  usedIds.add('curriculum-delivery');
+  const additional = permittedItems.filter(item => !usedIds.has(item.id));
   return additional.length ? [...ordered, { id: 'curriculum-home-additional-tools', label: 'Additional tools', icon: 'ri-folder-open-line', children: additional }] : ordered;
 }
 
@@ -39,17 +37,20 @@ const icons: Record<string, typeof Home> = {
   'curriculum-home-additional-tools': FolderOpen,
   'curriculumNavItems-coach-directory': Users,
   'curriculum-progress-transfers': ArrowLeftRight,
-  'curriculum-delivery': CalendarDays,
 };
 
 export const curriculumSidebar: SidebarNavigationPresentation = {
   className: styles.navigation,
   expandedStorageKey: 'kbc_curriculum_home_sidebar_expanded',
   mapItems: curriculumNavigation,
-  header: <div className={styles.workspaceCard}>
-    <LayoutGrid size={15} aria-hidden="true" />
-    <span><span className={styles.workspaceEyebrow}>Workspace</span><span className={styles.workspaceName}>{roleNavMap.curriculum.workspaceLabel}</span></span>
-  </div>,
+  // A getter, so the label is read when the sidebar renders rather than when
+  // this module is imported.
+  get header() {
+    return <div className={styles.workspaceCard}>
+      <LayoutGrid size={15} aria-hidden="true" />
+      <span><span className={styles.workspaceEyebrow}>Workspace</span><span className={styles.workspaceName}>{roleNavMap.curriculum.workspaceLabel}</span></span>
+    </div>;
+  },
   renderIcon: item => {
     const Icon = icons[item.id] ?? BookOpen;
     return <Icon size={17} strokeWidth={1.8} aria-hidden="true" />;

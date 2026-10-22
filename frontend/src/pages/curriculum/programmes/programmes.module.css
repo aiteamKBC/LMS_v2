@@ -47,111 +47,21 @@
 .resultCount { margin: 0; padding: 0 10px 9px; color: #817787; font-size: 10px; }
 .browser:not(.arranging) .cards { display: flex; flex-direction: column; gap: 0; max-height: min(60vh, 640px); overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; }
 .browser:not(.arranging) .browserCard { flex-shrink: 0; }
-.browserCard { min-width: 0; border-top: 1px solid #e4e2e8; border-left: 2px solid transparent; }
-.browserCard[data-selected="true"] { background: #f0ecf5; border-left-color: #7942a0; }
+.browserCard { min-width: 0; border-top: 1px solid #e4e2e8; border-left: 3px solid var(--programme-color, #7942a0); }
+.browserCard[data-selected="true"] { background: color-mix(in srgb, var(--programme-color, #7942a0) 9%, #fff); }
 .page:global(#curriculum-programmes) .browserSelect { display: flex; align-items: flex-start; gap: 8px; width: 100%; min-height: 66px; padding: 10px; border-radius: 0; background: transparent !important; color: #332b3d !important; text-align: left; }
 .browserSelect > span:nth-child(2) { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 3px; }
 .browserSelect strong { font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
 .browserSelect small { color: #7e7585; font-size: 10px; }
-.programmeIcon { display: grid; place-items: center; width: 27px; height: 27px; flex-shrink: 0; border-radius: 6px; background: #eee4fa; color: #8352a5; }
-.programmeTools > summary { cursor: pointer; padding: 2px 10px 9px 45px; color: #76518c; font-size: 10px; }
-.page:global(#curriculum-programmes) .programmeTools :global(.programmes-card) {
-  --curriculum-control-height: 32px;
-  --curriculum-action-font-size: 11px;
-  --curriculum-action-weight: 500;
-  margin: 0 7px 8px;
-  padding: 10px;
-  height: auto;
-  border: 1px solid #e4dfea !important;
-  border-radius: 8px;
-  color: #51435e !important;
-  background: #fff !important;
-  box-shadow: none !important;
-  transform: none !important;
-
-  & :is(p, span) { color: #796d83 !important; }
-  & :global(.programme-card-icon) + div > p:first-child {
-    white-space: normal;
-    font-size: 13px;
-    font-weight: 600;
-    line-height: 1.4;
-    color: #463750 !important;
-  }
-  & :global(.programme-card-accent) { height: 2px; opacity: .35; }
-  & :global(.programme-card-icon),
-  & :global(.programme-source-icon.programme-source-applied) {
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
-    background: #f0ebf6 !important;
-    color: #78608d !important;
-    box-shadow: none !important;
-  }
-  & :global(.programme-source-icon) { width: 24px; height: 24px; }
-  & :global(.programme-source-button) {
-    padding: 8px;
-    border-radius: 8px;
-    box-shadow: none !important;
-  }
-  & :global(.programme-source-button.programme-source-applied) { background: #f8f7fb !important; border-color: #e4deec !important; }
-  & :global(.programme-source-button.programme-source-applied):hover { background: #f2eef7 !important; }
-  & :global(.programme-source-button.programme-source-missing) { background: #fffbf2 !important; border-color: #ead8af !important; }
-  & :global(.programme-source-button) p { font-weight: 500; line-height: 1.5; white-space: normal; }
-  & :global(.programme-source-button) p:nth-child(2) { font-weight: 600; color: #51435e !important; }
-  & :global(.programme-source-label) { font-size: 9px; text-transform: none; letter-spacing: .02em; }
-  & :global(.programme-source-applied) :global(.programme-source-label) { color: #81718f !important; }
-  & :global(.programme-source-missing) :is(p, span),
-  & :global(.programme-warning-badge) { color: #91631f !important; }
-  & :global(.programme-source-cta) { background: #f0ebf6 !important; color: #78608d !important; box-shadow: none !important; }
-  & :global(.programme-source-missing) :global(.programme-source-cta) { background: #f5e6c4 !important; color: #91631f !important; }
-  & span[class~="rounded-full"] {
-    max-width: 100%;
-    border-radius: 6px;
-    padding: 3px 6px;
-    white-space: normal;
-    font-size: 10px;
-    font-weight: 500;
-    text-transform: none;
-    letter-spacing: 0;
-    box-shadow: none !important;
-  }
-  & span[class~="rounded-full"]:not(:global(.programme-warning-badge)):not([class*="bg-amber"]) {
-    border: 1px solid #e4deec !important;
-    background: #f8f7fb !important;
-    color: #796d83 !important;
-  }
-  & span[class~="rounded-full"]:is(:global(.programme-warning-badge), [class*="bg-amber"]) { border: 1px solid #ead8af !important; background: #fff8e9 !important; color: #91631f !important; }
-  & :global(.programmes-metrics) { gap: 6px; padding: 7px; border-color: #e7e1ee !important; border-radius: 8px; background: #faf9fc !important; }
-  & :global(.programmes-metric) { padding: 7px 8px; border: 1px solid #ece7f0; border-radius: 6px; background: #fff !important; box-shadow: none !important; }
-  & :global(.programmes-metric):hover { border-color: #d5c9e2; background: #f5f1fa !important; }
-  & :global(.programmes-metric) p:first-child { font-size: 10px; font-weight: 500; text-transform: none; letter-spacing: 0; }
-  & :global(.programmes-metric) p:last-child { font-size: 14px; font-weight: 600; color: #51435e !important; }
-  & :global(.programmes-metric):nth-child(5) { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; }
-  & :global(.programmes-metrics) > button:last-child { grid-column: 1 / -1; padding: 6px 2px 2px; }
-  & :global(.programmes-metrics) > button:last-child > div:first-child { flex-wrap: wrap; gap: 3px 8px; }
-  & :global(.programmes-metrics) > button:last-child p { white-space: normal; text-transform: none; font-weight: 500; }
-  & > p { font-size: 11px; line-height: 1.5; }
-  & > div:last-child > div:first-child { flex-direction: column; align-items: stretch; }
-  & :global(.programme-action-button) { min-width: 0; white-space: normal; border-radius: 8px; line-height: 1.4; }
-  & :global(.programme-action-button):not(:global(.programme-action-open)):not(:global(.programme-action-delete)) { background: #f8f7fb !important; border-color: #e1dce9 !important; color: #786787 !important; }
-  & :global(.programme-action-button):not(:global(.programme-action-open)):not(:global(.programme-action-delete)):hover { background: #f2eef7 !important; }
-  & :global(.programme-action-button) :is(svg, i, span) { color: inherit !important; }
-  & :global(.programme-action-open) :is(svg, i, span) { color: #fff !important; }
-  & :global(.programme-action-delete) { background: #fff7f7 !important; border-color: #efd7dc !important; color: #b04d5b !important; }
-}
-.page:global(#curriculum-programmes) .programmeTools :global(.programmes-card) h3 { color: #33293c !important; }
-.page:global(#curriculum-programmes) .programmeTools :global(.programmes-metrics) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.page:global(#curriculum-programmes) .programmeTools :global(.programmes-metrics) > * { grid-column: auto; }
-.page:global(#curriculum-programmes) .programmeTools :global(.programmes-card) :is(button, p, span) { overflow-wrap: anywhere; }
+.programmeIcon { display: grid; place-items: center; width: 27px; height: 27px; flex-shrink: 0; border-radius: 6px; background: color-mix(in srgb, var(--programme-color, #7942a0) 12%, #fff); color: var(--programme-color, #7942a0); }
 .arranging { grid-column: 1 / -1; }
-.arranging .browserSelect { display: none !important; }
-.arranging .programmeTools > summary { padding: 10px; }
+.page:global(#curriculum-programmes) .arranging .browserSelect { min-height: 210px; }
 .pageNotice { margin-bottom: 12px; }
 .pageNotice > summary { cursor: pointer; padding: 9px 12px; border: 1px solid #edd7a6; border-radius: 7px; color: #825711; background: #fffaf0; }
 .selected { min-width: 0; }
 .detail:global(#curriculum-programme-selected) { min-width: 0; color: #342b3c; }
 .detail:global(#curriculum-programme-selected) > div { padding: 0; background: transparent; }
-.selectedBanner { margin-bottom: 10px; border-radius: 8px; padding: 17px 18px; background: #4f2d7f; color: #fff; }
+.selectedBanner { margin-bottom: 10px; border-radius: 8px; padding: 17px 18px; background: var(--programme-color, #4f2d7f); color: var(--programme-ink, #fff); }
 .bannerHeading { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px; }
 .bannerHeading h2 { color: #fff; margin: 7px 0 0; font-size: 21px; font-weight: 650; line-height: 1.3; }
 .page:global(#curriculum-programmes) .bannerHeading h2 { font-size: 21px !important; font-weight: 650 !important; line-height: 1.3 !important; color: #fff !important; }
@@ -162,7 +72,8 @@
 .bannerMetadata dt { color: #c8acd9; font-size: 9px; letter-spacing: .6px; text-transform: uppercase; }
 .bannerMetadata dd { margin: 4px 0 0; color: #f1e7f8; font-size: 11px; }
 .bannerActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 13px; }
-.page:global(#curriculum-programmes) .bannerActions :is(button, a) { min-height: 29px; border: 1px solid #ffffff50; border-radius: 6px; padding: 5px 9px; background: #ffffff13 !important; color: #fff !important; font-size: 10px; }
+.page:global(#curriculum-programmes) .bannerActions :is(button, a) { display: inline-flex; align-items: center; gap: 6px; min-height: 29px; border: 1px solid #ffffff50; border-radius: 6px; padding: 5px 9px; background: #ffffff13 !important; color: #fff !important; font-size: 10px; }
+.page:global(#curriculum-programmes) .selectedBanner :is(h2, small, dt, dd, p, span, strong, button, a) { color: var(--programme-ink, #fff) !important; }
 .tabBar { display: flex; flex-wrap: wrap; gap: 4px; padding: 7px; border: 1px solid #e1e1e7; border-radius: 8px; margin-bottom: 10px; background: #f7f8fa; }
 .page:global(#curriculum-programmes) .tabBar { border-radius: 8px !important; background: #f7f8fa !important; }
 .page:global(#curriculum-programmes) .detail button { box-shadow: none !important; border-radius: 6px !important; }
@@ -228,5 +139,4 @@
   .tabBar { flex-wrap: nowrap; overflow-x: auto; }
   .tabBar button { flex-shrink: 0; white-space: nowrap; }
   .detail:global(#curriculum-programme-selected) { overflow-wrap: anywhere; }
-  .page:global(#curriculum-programmes) .programmeTools :global(.programmes-card) { min-width: 0; }
 }

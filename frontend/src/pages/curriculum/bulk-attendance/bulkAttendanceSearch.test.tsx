@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import type { CurriculumOverview } from '@/lib/curriculumApi';
 import type { BulkAttendanceDirectoryLearner } from '@/api/bulkAttendanceLearners';
 
@@ -39,7 +40,7 @@ vi.mock('@/api/bulkAttendanceLearners', () => ({
   },
 }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({
-  WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</>,
+  WorkspaceShell: ({ children }: { children: ReactNode }) => <MemoryRouter>{children}</MemoryRouter>,
 }));
 
 import AttendancePage from './page';
@@ -90,7 +91,7 @@ it('archives only Completed, EnteredEpa and Withdrawn learners and shows every s
   expect(screen.getByText('Delivery')).toBeVisible();
   expect(screen.getByText('Onboarding')).toBeVisible();
   const header = screen.getByText('Last 4 lectures').parentElement as HTMLElement;
-  expect(within(header).getByText('Status')).toBeInTheDocument();
+  expect(within(header).getByText('Learner / Status')).toBeInTheDocument();
   expect(within(header).queryByText('Attendance')).not.toBeInTheDocument();
   expect(within(header).queryByText('Lecture')).not.toBeInTheDocument();
   expect(screen.queryByText('Select session')).not.toBeInTheDocument();
@@ -192,6 +193,7 @@ it('cascades programme, cohort, group, module and lecture choices', async () => 
   await screen.findByRole('button', { name: 'Alex Example' });
 
   choose(/^Programme\s*All Programmes$/, 'Engineering');
+  fireEvent.change(screen.getByLabelText('Jump to date'), { target: { value: '2026-10-18' } });
   await waitFor(() => expect(mocks.roster).toHaveBeenCalledWith(
     'programme', 'P1', { learnerStatus: 'all' }, expect.any(AbortSignal), { timeoutMs: 60000, compact: true },
   ));
@@ -224,9 +226,11 @@ it('cascades programme, cohort, group, module and lecture choices', async () => 
     'module', 'MC1', { learnerStatus: 'all' }, expect.any(AbortSignal), { timeoutMs: 60000, compact: true },
   ));
   expect(await screen.findByRole('button', { name: 'Morgan Sample' })).toBeVisible();
+  expect(screen.getByRole('button', { name: /^Open register for Lecture A/ })).toBeVisible();
+  expect(screen.queryByRole('button', { name: /^Open register for Lecture B/ })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: /^Lecture\s*All Lectures$/ }));
-  expect(screen.getByRole('button', { name: /Lecture A/ })).toBeVisible();
-  expect(screen.queryByRole('button', { name: /Lecture B/ })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /^Lecture A/ })).toBeVisible();
+  expect(screen.queryByRole('button', { name: /^Lecture B/ })).not.toBeInTheDocument();
 });
 
 it('adds attendance through the live-session register only after a lecture is selected', async () => {
@@ -258,7 +262,7 @@ it('adds attendance through the live-session register only after a lecture is se
     'module', 'MC1', { learnerStatus: 'all' }, expect.any(AbortSignal), { timeoutMs: 60000, compact: true },
   ));
   fireEvent.click(screen.getByRole('button', { name: /^Lecture\s*All Lectures$/ }));
-  fireEvent.click(screen.getByRole('button', { name: /Lecture A/ }));
+  fireEvent.click(screen.getByRole('button', { name: /^Lecture A/ }));
 
   fireEvent.click(screen.getByRole('button', { name: 'Add attendance day' }));
   const dialog = await screen.findByRole('dialog', { name: 'Add attendance day' });
@@ -293,7 +297,7 @@ it('persists weekly register changes to the live-session attendance register', a
     'module', 'MC1', { learnerStatus: 'all' }, expect.any(AbortSignal), { timeoutMs: 60000, compact: true },
   ));
 
-  fireEvent.click(screen.getByRole('button', { name: 'Weekly' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Week' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Alex Example 2026-10-17 unmarked' }));
   await act(async () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
@@ -611,4 +615,113 @@ it('loads every KBC attendance record only after View details is pressed', async
   expect(within(dialog).getByText('Source: Live register')).toBeVisible();
   // Every record can be corrected, KBC history included.
   expect(within(dialog).getByRole('button', { name: 'Change present to absent for Lecture 1: Kickoff' })).toBeVisible();
+});
+function prepareSameDayRegisters(sameCatalogue = false) {
+  mocks.overview.mockResolvedValue({ ...overview, modules: [
+    { id: 'M1', moduleCatalogueId: 'MC1', name: 'Module A', programmeId: 'P1', cohortId: 'C1' },
+    { id: 'M2', moduleCatalogueId: sameCatalogue ? 'MC1' : 'MC2', name: 'Module B', programmeId: 'P1', cohortId: 'C1' },
+  ] });
+  mocks.sessions.mockResolvedValue([
+    { id: 'S1', title: 'Session A', moduleId: 'M1', moduleCatalogueId: 'MC1', date: '2026-10-20' },
+    { id: 'S2', title: 'Session B', moduleId: 'M2', moduleCatalogueId: sameCatalogue ? 'MC1' : 'MC2', date: '2026-10-20' },
+  ]);
+  mocks.roster.mockResolvedValue({ assignedLearners: [
+    { id: 8, email: 'alex@example.invalid', cohort: 'Autumn', cohortId: 'C1' },
+    { id: 9, email: 'morgan@example.invalid', cohort: 'Autumn', cohortId: 'C1' },
+  ] });
+  mocks.liveDayRecords.mockImplementation(async (_date: string, moduleId: string) => [{
+    recordKey: moduleId === 'MC1' ? 'live:11' : 'live:22', learnerId: '301', moduleCatalogueId: moduleId,
+    occurrenceId: moduleId === 'MC1' ? 'O1' : 'O2', attendance: moduleId === 'MC1' ? 'present' : 'absent',
+  }]);
+}
+
+async function openSessionA() {
+  fireEvent.click(await screen.findByRole('button', { name: /^Open register for Session A/ }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Mark Alex Example present' })).toBeEnabled());
+}
+
+it('selects same-day sessions by ID and distinguishes completion from attendance without writing on navigation', async () => {
+  prepareSameDayRegisters();
+  render(<AttendancePage />);
+  await openSessionA();
+  expect(screen.getByRole('button', { name: 'Mark Alex Example present' })).toHaveAttribute('aria-pressed', 'true');
+  const summary = within(screen.getByLabelText('Current register summary'));
+  expect(summary.getByText('50% marked')).toBeVisible();
+  expect(screen.getByRole('progressbar', { name: 'Register completion' })).toHaveAttribute('value', '50');
+  fireEvent.click(screen.getByRole('button', { name: /^Open register for Session B/ }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Mark Alex Example absent' })).toHaveAttribute('aria-pressed', 'true'));
+  expect(mocks.liveDayRecords).toHaveBeenCalledWith('2026-10-20', 'MC2', expect.any(AbortSignal));
+  expect(mocks.addLiveDay).not.toHaveBeenCalled();
+  expect(mocks.save).not.toHaveBeenCalled();
+  expect(mocks.kbcHistory).not.toHaveBeenCalled();
+});
+
+it('saves an individual mark with the original stable KBC and module keys, retains the old mark on failure, and allows retry', async () => {
+  prepareSameDayRegisters();
+  mocks.addLiveDay.mockRejectedValueOnce(new Error('Save refused')).mockResolvedValueOnce({ created: 0, updated: 1 });
+  render(<AttendancePage />);
+  await openSessionA();
+  fireEvent.click(screen.getByRole('button', { name: 'Mark Alex Example absent' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Save refused');
+  expect(screen.getByRole('button', { name: 'Mark Alex Example present' })).toHaveAttribute('aria-pressed', 'true');
+  fireEvent.click(screen.getByRole('button', { name: 'Mark Alex Example absent' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Mark Alex Example absent' })).toHaveAttribute('aria-pressed', 'true'));
+  expect(mocks.addLiveDay).toHaveBeenLastCalledWith({ learnerIds: ['301'], moduleCatalogueId: 'MC1', date: '2026-10-20', attendance: 'absent' });
+  expect(mocks.addLiveDay).toHaveBeenCalledTimes(2);
+});
+
+it('prevents duplicate submissions and ignores a completed save after another same-day register is selected', async () => {
+  prepareSameDayRegisters();
+  let complete!: (value: { created: number; updated: number }) => void;
+  mocks.addLiveDay.mockReturnValue(new Promise(resolve => { complete = resolve; }));
+  render(<AttendancePage />);
+  await openSessionA();
+  fireEvent.click(screen.getByRole('button', { name: 'Mark Alex Example present' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Mark Alex Example present' }));
+  await waitFor(() => expect(mocks.addLiveDay).toHaveBeenCalledTimes(1));
+  expect(screen.getByRole('button', { name: 'Mark Morgan Sample absent' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: /^Open register for Session B/ }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Mark Alex Example absent' })).toHaveAttribute('aria-pressed', 'true'));
+  await act(async () => complete({ created: 0, updated: 1 }));
+  expect(screen.getByRole('button', { name: 'Mark Alex Example absent' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByRole('button', { name: 'Mark Alex Example present' })).toHaveAttribute('aria-pressed', 'false');
+});
+
+it('preserves selected bulk scope including hidden learners while keeping unselected learners untouched', async () => {
+  prepareSameDayRegisters();
+  render(<AttendancePage />);
+  await openSessionA();
+  fireEvent.click(screen.getByRole('button', { name: 'Select Alex Example' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Search learners by name or email' }), { target: { value: 'Morgan' } });
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Alex Example' })).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole('button', { name: 'Mark selected absent' }));
+  await waitFor(() => expect(mocks.addLiveDay).toHaveBeenCalledTimes(1));
+  expect(mocks.addLiveDay).toHaveBeenCalledWith({ learnerIds: ['301'], moduleCatalogueId: 'MC1', date: '2026-10-20', attendance: 'absent' });
+});
+
+it('disables new individual controls when the existing module/date contract cannot distinguish two sessions', async () => {
+  prepareSameDayRegisters(true);
+  render(<AttendancePage />);
+  fireEvent.click(await screen.findByRole('button', { name: /^Open register for Session A/ }));
+  await screen.findByText(/More than one session shares this module and date/);
+  expect(await screen.findByRole('button', { name: 'Mark Alex Example present' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Mark Alex Example absent' })).toBeDisabled();
+  expect(mocks.addLiveDay).not.toHaveBeenCalled();
+});
+
+it('retains date navigation in Week, Report and the archive without creating attendance', async () => {
+  render(<AttendancePage />);
+  await screen.findByRole('button', { name: 'Alex Example' });
+  fireEvent.click(screen.getByRole('tab', { name: /^Week$/ }));
+  fireEvent.change(screen.getByLabelText('Jump to date'), { target: { value: '2026-10-13' } });
+  expect(screen.getByText(/Oct 12.*Oct 18/)).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: /^Report$/ }));
+  expect(screen.getByLabelText('Jump to date')).toHaveValue('2026-10-13');
+  expect(screen.getByLabelText('From')).toHaveValue('2026-10-12');
+  expect(screen.getByLabelText('To')).toHaveValue('2026-10-18');
+  fireEvent.click(screen.getByRole('button', { name: 'Archived (3)' }));
+  fireEvent.change(screen.getByLabelText('Jump to date'), { target: { value: '2026-10-20' } });
+  expect(screen.getByRole('button', { name: 'Casey Done' })).toBeVisible();
+  expect(mocks.addLiveDay).not.toHaveBeenCalled();
+  expect(mocks.save).not.toHaveBeenCalled();
 });

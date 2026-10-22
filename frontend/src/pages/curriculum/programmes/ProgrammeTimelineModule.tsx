@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { CalendarEventDialog } from '@/components/feature/CalendarEventDialog';
 import { AppIcon } from '@/components/feature/AppIcon';
 import type { ProgrammeTimelineRun } from './ProgrammeDeliveryTimeline';
+import { programmeColorText } from '../shared/programmeColors';
 import styles from './ProgrammeTimelineModule.module.css';
 
 export interface ProgrammeTimelineDetails {
@@ -25,11 +26,12 @@ const dateLabel = (value?: string) => {
     : 'Not recorded';
 };
 
-export function ProgrammeTimelineModule({ run, className, style, dateDescription }: {
+export function ProgrammeTimelineModule({ run, className, style, dateDescription, color }: {
   run: ProgrammeTimelineRun;
   className: string;
   style: CSSProperties;
   dateDescription: string;
+  color?: string;
 }) {
   const [preview, setPreview] = useState<CSSProperties | null>(null);
   const [choosing, setChoosing] = useState(false);
@@ -86,7 +88,7 @@ export function ProgrammeTimelineModule({ run, className, style, dateDescription
 
   const closeChoices = () => { suppressFocus.current = true; setChoosing(false); setPreview(null); };
   return <>
-    <Link ref={trigger} to={run.href} className={className} style={style}
+    <Link ref={trigger} to={run.href} className={className} style={{ ...style, ...(color ? { backgroundColor: color, borderColor: color, color: programmeColorText(color) } : {}) }}
       aria-haspopup="dialog" aria-expanded={choosing || Boolean(preview)} aria-describedby={preview ? previewId : undefined}
       onMouseEnter={showPreview} onMouseLeave={closeSoon}
       onFocus={() => { if (suppressFocus.current) suppressFocus.current = false; else showPreview(); }}
@@ -101,7 +103,7 @@ export function ProgrammeTimelineModule({ run, className, style, dateDescription
     {preview && !choosing && createPortal(<div ref={panel} id={previewId} role="dialog" aria-label={`${run.name} details`}
       className={styles.preview} style={preview} onMouseEnter={cancelClose} onMouseLeave={closeSoon}
       onFocusCapture={cancelClose} onBlurCapture={closeSoon}>
-      <header><strong>{run.name}</strong><button type="button" aria-label="Close module details" onClick={() => setPreview(null)}>×</button></header>
+      <header style={color ? { backgroundColor: color, color: programmeColorText(color) } : undefined}><strong>{run.name}</strong><button type="button" aria-label="Close module details" onClick={() => setPreview(null)}>×</button></header>
       <div className={styles.body}>
         <p className={styles.context}>{[run.group, run.cohort].filter(Boolean).join(' · ') || 'No group or cohort recorded'}</p>
         <dl>

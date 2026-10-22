@@ -124,7 +124,7 @@ export default function CurriculumStudio() {
       { key: 'module-mapping', title: 'Modules have no KSB mappings', detail: 'Open coverage and map each gap to the right component.', count: counts?.['module-mapping'] ?? 0, href: '/curriculum/ksb-mapping', action: 'Open coverage', icon: 'ri-link-unlink', tone: 'amber' },
       { key: 'draft-content', title: 'Modules are still in draft', detail: 'Continue authoring the content that is not yet published.', count: counts?.['draft-content'] ?? 0, href: '/curriculum/module-builder', action: 'Continue authoring', icon: 'ri-draft-line', tone: 'sky' },
       { key: 'group-coach', title: 'Groups have no coach', detail: 'Assign a coach before the delivery setup is complete.', count: counts?.['group-coach'] ?? 0, href: '/curriculum/groups', action: 'Assign coaches', icon: 'ri-user-search-line', tone: 'amber' },
-      { key: 'module-tutor', title: 'Modules have no tutor', detail: 'A scheduled module needs an owner for its live sessions.', count: counts?.['module-tutor'] ?? 0, href: '/curriculum/delivery', action: 'Review delivery', icon: 'ri-user-settings-line', tone: 'amber' },
+      { key: 'module-tutor', title: 'Modules have no tutor', detail: 'A scheduled module needs an owner for its live sessions.', count: counts?.['module-tutor'] ?? 0, href: '/curriculum/module-builder', action: 'Review modules', icon: 'ri-user-settings-line', tone: 'amber' },
     ];
     return issues.filter(issue => issue.count > 0).sort((left, right) => right.count - left.count);
   }, [counts]);
@@ -191,7 +191,7 @@ export default function CurriculumStudio() {
           <section className={styles.workflowPanel} aria-labelledby="curriculum-workflow-title">
             <h2 id="curriculum-workflow-title" className={styles.workflowTitle}>How to build a programme</h2>
             <div className={styles.workflowGrid}>
-              <WorkflowCard step="1" title="Set up cohorts" detail="Create the programme cohorts and groups, then confirm dates and staff." href="/curriculum/delivery" icon="ri-calendar-schedule-line" />
+              <WorkflowCard step="1" title="Set up cohorts" detail="Create the programme cohorts and groups, then confirm dates and staff." href="/curriculum/cohorts" icon="ri-calendar-schedule-line" />
               <WorkflowCard step="2" title="Design learning" detail="Build the modules, weeks and components those delivery groups will use." href="/curriculum/library" icon="ri-layout-4-line" />
               <WorkflowCard step="3" title="Check quality" detail="Resolve KSB and readiness gaps before learners depend on the content." href="/curriculum/quality" icon="ri-shield-check-line" />
             </div>

@@ -40,6 +40,8 @@ describe('Curriculum Home summary', () => {
     expect(screen.getByRole('link', { name: /Synthetic programme.*26 mapping gaps/ })).toHaveAttribute('href', '/curriculum/programmes/P%2F1');
     expect(screen.getByRole('link', { name: /Modules have no KSB mappings/ })).toHaveAttribute('href', '/curriculum/ksb-mapping');
     expect(screen.getByRole('link', { name: /Groups have no coach/ })).toHaveAttribute('href', '/curriculum/groups');
+    expect(screen.getByRole('link', { name: /Modules have no tutor/ })).toHaveAttribute('href', '/curriculum/module-builder');
+    expect(screen.getByRole('link', { name: /Set up cohorts/ })).toHaveAttribute('href', '/curriculum/cohorts');
     expect(screen.queryByText('Modules are still in draft')).not.toBeInTheDocument();
     expect(mocks.fetch).toHaveBeenCalledTimes(1);
     expect(mocks.fetch).toHaveBeenCalledWith('/curriculum/home-summary/', {

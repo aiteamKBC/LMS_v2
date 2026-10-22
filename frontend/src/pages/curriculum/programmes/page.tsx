@@ -59,6 +59,7 @@ import {
 
 import styles from './programmes.module.css';
 import { ProgrammeSummaryFacts } from './ProgrammeSummaryFacts';
+import { programmeColor } from '../shared/programmeColors';
 
 const ProgrammeDetailPage = lazy(() => import('../programme-detail/page'));
 
@@ -642,15 +643,6 @@ export default function CurriculumProgrammes() {
     navigate(`/curriculum/programmes/${encodeURIComponent(programmeId)}${query ? `?${query}` : ''}`);
   };
 
-  // Editing programme-level details is a focused form. Structure edits live on
-  // the Cohorts / Groups / Module Builder pages and in the programme workspace,
-  // each through the one form that record type has.
-  const openEdit = (programme: CurriculumProgramme) => {
-    setActionError(null);
-    setProgrammeDrawerTarget(programme);
-    setProgrammeDrawerOpen(true);
-  };
-
   // Archiving is as far as this page goes. It is reversible and removes nothing,
   // so it belongs on the card next to the programme it acts on. Restoring one
   // and deleting one for good are the archive's own two actions and live on the
@@ -1131,11 +1123,9 @@ export default function CurriculumProgrammes() {
           <>
           <div className={`${styles.cards} grid grid-cols-1 items-stretch gap-5 md:grid-cols-2 xl:grid-cols-3`} role="region" aria-label="Programme list" tabIndex={0}>
             {filtered.map((prog, cardIndex) => {
-              const cardColor = normaliseHex(prog.color || '#6941c6');
-              const openCard = () => openProgramme(prog);
-              const openWizardForCard = () => setWizardRun({ from: 'cohort', programmeId: prog.sourceId || prog.id });
+              const cardColor = programmeColor(prog);
               return (
-              <div key={programmeKey(prog)} className={`${styles.browserCard} relative h-full`} data-selected={programmeKey(prog) === (selectedProgramme && programmeKey(selectedProgramme))}>
+              <div key={programmeKey(prog)} className={`${styles.browserCard} relative h-full`} style={{ '--programme-color': cardColor } as CSSProperties} data-selected={programmeKey(prog) === (selectedProgramme && programmeKey(selectedProgramme))}>
               {/* While the grid is being arranged the card is a thing to move,
                   not a thing to open, so the arrows sit over it and its own
                   buttons are taken out of the way behind them. */}
@@ -1149,82 +1139,11 @@ export default function CurriculumProgrammes() {
                   onMove={moveProgramme}
                 />
               )}
-              <button type="button" className={styles.browserSelect} aria-pressed={programmeKey(prog) === (selectedProgramme && programmeKey(selectedProgramme))} onClick={() => setSelectedProgrammeId(programmeKey(prog))}>
+              <button type="button" className={styles.browserSelect} inert={reordering || undefined} disabled={reordering} aria-pressed={programmeKey(prog) === (selectedProgramme && programmeKey(selectedProgramme))} onClick={() => setSelectedProgrammeId(programmeKey(prog))}>
                 <span className={styles.programmeIcon}><AppIcon className="ri-stack-line" aria-hidden="true" /></span>
                 <span><small>{programmeStatus(prog)}</small><strong>{prog.name}</strong><small>{prog.learners} learners &middot; {prog.modules} modules</small></span>
                 <span aria-hidden="true">&rsaquo;</span>
               </button>
-              <details className={styles.programmeTools} open={reordering || undefined} inert={reordering || undefined}>
-                <summary>Programme tools</summary>
-              <article
-                // inert, not aria-hidden: the card keeps buttons of its own, and
-                // they have to leave the tab order with it rather than stay
-                // reachable inside a subtree screen readers are told to skip.
-                inert={reordering}
-                className="programmes-card programme-color-card group relative flex h-full cursor-pointer flex-col overflow-hidden rounded-2xl border border-primary-100/70 bg-background-50 p-4 text-white shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-300/80 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
-                style={{ '--programme-card-color': cardColor } as CSSProperties}
-                onClick={reordering ? undefined : openCard}
-                onKeyDown={event => {
-                  if (reordering) return;
-                  if (event.target !== event.currentTarget) return;
-                  if (event.key !== 'Enter' && event.key !== ' ') return;
-                  event.preventDefault();
-                  openCard();
-                }}
-                tabIndex={reordering ? -1 : 0}
-                aria-label={`Open ${prog.name}`}
-                title={`Open ${prog.name} — its cohorts, groups, modules, sessions and KSB coverage`}
-              >
-                {/* Two tiers, because six equal chips gave the reader nothing to
-                    aim at. The top row is what a curriculum designer came to the
-                    card to do - open the programme, or build the next piece of
-                    it. The bottom row is upkeep on the record itself. */}
-                <div className="mt-auto space-y-1.5 border-t border-primary-100/70 pt-2.5">
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={e => { e.stopPropagation(); openCard(); }}
-                      title={`Open ${prog.name} — cohorts, groups, modules, sessions, KSB coverage and achievement`}
-                      className="programme-action-button programme-action-open primary-action inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-2 py-1.5 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
-                    >
-                      <AppIcon className="ri-folder-open-line text-sm"></AppIcon>
-                      Open programme
-                    </button>
-                    <button
-                      type="button"
-                      onClick={e => { e.stopPropagation(); openWizardForCard(); }}
-                      title={`Guided setup for ${prog.name} — its next cohort, group and module in one run`}
-                      className="programme-action-button programme-action-structure inline-flex items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2 py-1.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
-                    >
-                      <AppIcon className="ri-route-line text-sm"></AppIcon>
-                      Add structure
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-1">
-                    <button className="programme-action-button programme-action-source inline-flex items-center justify-center gap-1 rounded-lg border border-primary-200 bg-primary-50 px-1.5 py-1 text-[10px] font-bold text-primary-700 transition-smooth hover:bg-primary-100" onClick={e => { e.stopPropagation(); setApplyProgramme(prog); }}>
-                      <AppIcon className="ri-node-tree text-sm"></AppIcon>KSB Source
-                    </button>
-                    <button className="programme-action-button programme-action-learners inline-flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-1.5 py-1 text-[10px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100" onClick={e => { e.stopPropagation(); void openProgrammeLearnerImpact(prog); }}>
-                      <AppIcon className="ri-user-follow-line text-sm"></AppIcon>Learners
-                    </button>
-                    <button className="programme-action-button programme-action-edit inline-flex items-center justify-center gap-1 rounded-lg border border-background-200 bg-background-50 px-1.5 py-1 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-100" onClick={e => { e.stopPropagation(); openEdit(prog); }}>
-                      <AppIcon className="ri-pencil-line text-sm"></AppIcon>Edit
-                    </button>
-                    <button
-                      className="programme-action-button programme-action-delete inline-flex items-center justify-center gap-1 rounded-lg border border-red-200 bg-red-50 px-1.5 py-1 text-[10px] font-bold text-red-600 transition-smooth hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={deletingProgrammeId === (prog.sourceId || prog.id)}
-                      onClick={e => { e.stopPropagation(); void archiveProgramme(prog); }}
-                      title="Archive this programme; it can be restored or deleted permanently from Curriculum > Archive"
-                    >
-                      <AppIcon className={deletingProgrammeId === (prog.sourceId || prog.id)
-                        ? 'ri-loader-4-line animate-spin text-sm'
-                        : 'ri-archive-line text-sm'}></AppIcon>
-                      Archive
-                    </button>
-                  </div>
-                </div>
-              </article>
-              </details>
               </div>
             );
             })}
@@ -1248,6 +1167,21 @@ export default function CurriculumProgrammes() {
                 programmeSnapshot={{ ...selectedProgramme, ksbProfileSourceId: programmeSourceOverrides.get(programmeKey(selectedProgramme)) ?? selectedProgramme.ksbProfileSourceId }}
                 refreshVersion={detailRefreshVersion}
                 onReloaded={() => reload({ silent: true, revalidate: true })}
+                summaryActions={<>
+                  <button type="button" onClick={() => setWizardRun({ from: 'cohort', programmeId: selectedProgramme.sourceId || selectedProgramme.id })}>
+                    <AppIcon className="ri-route-line" aria-hidden="true" />Add structure
+                  </button>
+                  <button type="button" onClick={() => setApplyProgramme(selectedProgramme)} title="Change the KSB source for this programme">
+                    <AppIcon className="ri-node-tree" aria-hidden="true" />KSB Source
+                  </button>
+                  <button type="button" onClick={() => void openProgrammeLearnerImpact(selectedProgramme)}>
+                    <AppIcon className="ri-user-follow-line" aria-hidden="true" />Learners
+                  </button>
+                  <button type="button" disabled={deletingProgrammeId === (selectedProgramme.sourceId || selectedProgramme.id)}
+                    onClick={() => void archiveProgramme(selectedProgramme)} title="Archive this programme; it can be restored from Curriculum > Archive">
+                    <AppIcon className={deletingProgrammeId === (selectedProgramme.sourceId || selectedProgramme.id) ? 'ri-loader-4-line animate-spin' : 'ri-archive-line'} aria-hidden="true" />Archive
+                  </button>
+                </>}
                 summaryContent={<ProgrammeSummaryFacts
                   programme={selectedProgramme}
                   source={programmeKsbSources.get(programmeKey(selectedProgramme)) || resolveProgrammeAppliedKsbSource(selectedProgramme, ksbSets, standards)}

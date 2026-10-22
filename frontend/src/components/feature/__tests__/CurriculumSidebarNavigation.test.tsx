@@ -43,7 +43,8 @@ describe('Curriculum workspace sidebar presentation', () => {
     expect(items[2].children?.map(item => [item.label, item.href])).toEqual([
       ['Modules', '/curriculum/module-builder'], ['Session recordings', '/curriculum/recordings'], ['Bank holidays', '/curriculum/england-holidays'],
     ]);
-    expect(items[7].children?.map(item => item.href)).toEqual(['/curriculum/coach-directory', '/curriculum/progress-transfers', '/curriculum/delivery']);
+    expect(items[7].children?.map(item => item.href)).toEqual(['/curriculum/coach-directory', '/curriculum/progress-transfers']);
+    expect(curriculumNavItems.some(item => item.href === '/curriculum/delivery')).toBe(false);
     expect(JSON.stringify(curriculumNavItems)).toBe(before);
     show();
     expect(menu().getByText('Curriculum Studio')).toBeInTheDocument();
@@ -79,7 +80,7 @@ describe('Curriculum workspace sidebar presentation', () => {
     show(path);
     expect(menu().getByRole('link', { name: label })).toHaveAttribute('aria-current', 'page');
     expect(menu().getByRole('button', { name: 'Module Builder' })).toHaveAttribute('aria-current', 'true');
-    expect(menu().getByRole('link', { name: 'Delivery' })).not.toHaveAttribute('aria-current');
+    expect(menu().queryByRole('link', { name: 'Delivery' })).not.toBeInTheDocument();
   });
 
   it.each([
@@ -88,7 +89,6 @@ describe('Curriculum workspace sidebar presentation', () => {
     ['/curriculum/quality', 'Quality'],
     ['/curriculum/bulk-attendance', 'Bulk Attendance'],
     ['/curriculum/archive', 'Archive'],
-    ['/curriculum/delivery', 'Delivery'],
     ['/curriculum/coach-directory', 'Coach directory'],
   ])('keeps the same Curriculum menu on a direct visit to %s', (path, label) => {
     show(path);
@@ -201,15 +201,53 @@ describe('Curriculum workspace sidebar presentation', () => {
     expect(within(navigation).queryByText('Workspace', { exact: true })).not.toBeInTheDocument();
     expect(within(navigation).queryByRole('button', { name: 'Module Builder' })).not.toBeInTheDocument();
     expect(localStorage.getItem(curriculumSidebar.expandedStorageKey)).toBeNull();
+    const main = screen.getByRole('main');
+    main.scrollTop = 700;
+    fireEvent.scroll(main);
+    expect(screen.queryByRole('button', { name: 'Back to top' })).not.toBeInTheDocument();
     if (role === 'learner' || role === 'advanced-admin') {
       expect(sidebar.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
       expect(sidebar.queryByRole('button', { name: 'Collapse sidebar' })).not.toBeInTheDocument();
     }
   });
 
-  it('retains server-authorized extra destinations supplied by the shell', () => {
+  it('does not add the retired My Courses destination for an administrator', () => {
     viewer.admin = true;
     show();
-    expect(menu().getByRole('link', { name: 'My Courses' })).toHaveAttribute('href', '/my-courses');
+    expect(menu().queryByRole('link', { name: 'My Courses' })).not.toBeInTheDocument();
+  });
+
+  it('shows Back to top after scrolling Curriculum content and returns focus to that content', () => {
+    show('/curriculum/archive');
+    const main = screen.getByRole('main');
+    const scrollTo = vi.fn();
+    main.scrollTo = scrollTo;
+    expect(screen.queryByRole('button', { name: 'Back to top' })).not.toBeInTheDocument();
+    main.scrollTop = 700;
+    fireEvent.scroll(main);
+    expect(screen.getByRole('button', { name: 'Back to top' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Back to top' }));
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
+    expect(main).toHaveFocus();
+    main.scrollTop = 0;
+    fireEvent.scroll(main);
+    expect(screen.queryByRole('button', { name: 'Back to top' })).not.toBeInTheDocument();
+  });
+
+  it('returns immediately when reduced motion is requested', () => {
+    const original = window.matchMedia.bind(window);
+    const media = vi.spyOn(window, 'matchMedia').mockImplementation(query => query === '(prefers-reduced-motion: reduce)'
+      ? { ...original(query), matches: true } : original(query));
+    try {
+      show('/curriculum/programmes');
+      const main = screen.getByRole('main');
+      main.scrollTo = vi.fn();
+      main.scrollTop = 700;
+      fireEvent.scroll(main);
+      fireEvent.click(screen.getByRole('button', { name: 'Back to top' }));
+      expect(main.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' });
+    } finally {
+      media.mockRestore();
+    }
   });
 });

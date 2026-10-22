@@ -153,7 +153,7 @@ describe('Course structure months', () => {
 
   it('heads each stretch of weeks with the month it runs in', async () => {
     await openBuilder();
-    await waitFor(() => expect(loadModuleStructure).toHaveBeenCalledWith('MOD-WEEKS'));
+    await waitFor(() => expect(loadModuleStructure).toHaveBeenCalledWith('MOD-WEEKS', { revalidate: true }));
 
     expect(await screen.findByText('December 2026')).toBeInTheDocument();
     expect(await screen.findByText('January 2027')).toBeInTheDocument();

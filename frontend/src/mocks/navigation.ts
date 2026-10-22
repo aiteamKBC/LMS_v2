@@ -235,9 +235,10 @@ export const curriculumNavItems: SidebarNavItem[] = [
   },
   {
     id: 'curriculum-delivery',
-    label: 'Delivery',
-    icon: 'ri-calendar-schedule-line',
-    href: '/curriculum/delivery',
+    // Retain the existing permission ID for the module authoring destinations.
+    label: 'Module Builder',
+    icon: 'ri-layout-4-line',
+    href: '/curriculum/module-builder',
     matchPaths: [
       '/curriculum/module-builder',
       '/curriculum/cohorts',

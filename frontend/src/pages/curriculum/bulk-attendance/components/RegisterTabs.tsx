@@ -1,3 +1,6 @@
+import { AppIcon } from '@/components/feature/AppIcon';
+import styles from '../bulkAttendance.module.css';
+
 export type RegisterTab = "daily" | "weekly" | "report";
 
 interface RegisterTabsProps {
@@ -6,20 +9,22 @@ interface RegisterTabsProps {
 }
 
 const TABS: { key: RegisterTab; label: string; icon: string }[] = [
-  { key: "daily", label: "Daily", icon: "ri-list-check-2" },
-  { key: "weekly", label: "Weekly", icon: "ri-calendar-2-line" },
+  { key: "daily", label: "Daily register", icon: "ri-list-check-2" },
+  { key: "weekly", label: "Week", icon: "ri-calendar-2-line" },
   { key: "report", label: "Report", icon: "ri-bar-chart-2-line" },
 ];
 
 export default function RegisterTabs({ active, onChange }: RegisterTabsProps) {
   return (
-    <div className="inline-flex items-center gap-1 rounded-full border border-background-300 bg-background-100 px-1 py-1">
+    <div className={styles.tabs} role="tablist" aria-label="Attendance views">
       {TABS.map((tab) => {
         const isActive = tab.key === active;
         return (
           <button
             key={tab.key}
             type="button"
+            role="tab"
+            aria-selected={isActive}
             onClick={() => onChange(tab.key)}
             className={`flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
               isActive
@@ -27,7 +32,7 @@ export default function RegisterTabs({ active, onChange }: RegisterTabsProps) {
                 : "text-foreground-600 hover:text-foreground-900"
             }`}
           >
-            <i className={`${tab.icon} text-base`} />
+            <AppIcon className={tab.icon} />
             {tab.label}
           </button>
         );

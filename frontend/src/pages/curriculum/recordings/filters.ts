@@ -28,9 +28,12 @@ export function matchesLectureQuery(lecture: Lecture, query: string) {
   return fields.includes(query.trim().toLocaleLowerCase().replace(/\s+/g, ' '));
 }
 
-export type AgendaFilter = 'all' | 'ready' | 'attention' | 'ended' | 'notEnded';
+export type AgendaFilter = 'all' | 'ready' | 'attention' | 'ended' | 'notEnded' | 'pending' | 'missing' | 'unsynced' | 'archiveFailed' | 'review';
 export function agendaMatches(lecture: Lecture, filter: AgendaFilter, now: number) {
   if (filter === 'ready') return lectureReadyCount(lecture) > 0;
   if (filter === 'attention') return lectureNeedsAttention(lecture);
+  if (filter === 'pending' || filter === 'missing' || filter === 'unsynced' || filter === 'archiveFailed' || filter === 'review') {
+    return lecture.status === filter || lecture.recordings.some(recording => recording.status === filter);
+  }
   return sessionMatches(lecture, filter, now);
 }

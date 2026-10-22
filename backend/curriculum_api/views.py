@@ -30348,6 +30348,18 @@ def scope_ksb_achievement(coverage_items, learner_consumption, learners, plan, l
     }
 
 
+def learners_matching_profile(learners, learner_id):
+    """Narrow a scope roster to one learner by profile id; no id keeps them all.
+
+    Profile ids and enrolment ids are separate sequences that can collide, so
+    only the profile ``id`` is matched, never ``enrolmentId``.
+    """
+    learner_id = clean_str(learner_id)
+    if not learner_id:
+        return learners
+    return [row for row in learners if clean_str(row.get('id')) == learner_id]
+
+
 def scope_learner_ksb_impact_payload(request, scope, identifier):
     """The one read behind every scope's achievement view.
 
@@ -30394,6 +30406,10 @@ def _scope_learner_ksb_impact_payload(request, scope, identifier):
         '' if learner_status.lower() in {'', 'all'} else learner_status,
         lineage=lineage,
     )
+    # The module learners dialog reads one learner's programme-wide progress.
+    # Narrowing before any progress read keeps every learner-shaped read below
+    # to that learner instead of the programme's whole roster.
+    learners = learners_matching_profile(learners, request.GET.get('learnerId'))
     learner_ids = [
         int(row.get('sourceId') if row.get('sourceKind') == 'learner' else row.get('id'))
         for row in learners

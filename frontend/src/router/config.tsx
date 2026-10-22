@@ -87,7 +87,6 @@ const CommunicationPage = lazyRoute(() => import("../pages/communication/page"))
 const CurriculumDashboard = lazyRoute(() => import("../pages/workspace/curriculum/page"));
 const CurriculumLibraryHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumLibraryHub })));
 const MigratedReviewTemplates = lazyRoute(() => import("../pages/curriculum/review-templates/page"));
-const CurriculumDeliveryHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumDeliveryHub })));
 const CurriculumBulkAttendance = lazyRoute(() => import("../pages/curriculum/bulk-attendance/page"));
 const CurriculumQualityHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumQualityHub })));
 const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/free-courses/page"));
@@ -224,7 +223,6 @@ const ExtraActivityPage = lazyRoute(() => import("../pages/learner/monthly-submi
 const MonthlySubmissionPage = lazyRoute(() => import("../pages/learner/monthly-submission/page"));
 const HistoricalAssignmentPage = lazyRoute(() => import("../pages/learner/monthly-submission/HistoricalAssignmentPage"));
 const MyLearningPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
-const PersonalCoursesPage = lazyRoute(() => import("../pages/personal-learning/page"));
 const MySchedulePage = lazyRoute(() => import("../pages/learner/clubs/events/schedule/page"));
 const NotFound = lazyRoute(() => import("../pages/NotFound"));
 const PaymentsPage = lazyRoute(() => import("../pages/finance/payments/page"));
@@ -560,7 +558,7 @@ const routes: RouteObject[] = [
   },
   {
     path: "/my-courses",
-    element: <PersonalCoursesPage />,
+    element: <Navigate to="/workspace/admin" replace />,
   },
   {
     // Canonical URL for the merged Overview/Modules/Quizzes page. The three
@@ -1106,7 +1104,7 @@ const routes: RouteObject[] = [
   },
   {
     path: "/curriculum/delivery",
-    element: <CurriculumDeliveryHub />,
+    element: <Navigate to="/curriculum/programmes" replace />,
   },
   {
     path: "/curriculum/bulk-attendance",

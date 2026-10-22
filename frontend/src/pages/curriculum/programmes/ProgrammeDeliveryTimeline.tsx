@@ -1,5 +1,4 @@
 import { Fragment, useId, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import styles from './programmes.module.css';
 import { ProgrammeTimelineModule, type ProgrammeTimelineDetails } from './ProgrammeTimelineModule';
 
@@ -27,7 +26,7 @@ function day(value?: string): number | null {
 const DAY = 86_400_000;
 const label = (value: number) => new Date(value).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 
-export function ProgrammeDeliveryTimeline({ runs, deliveryHref }: { runs: ProgrammeTimelineRun[]; deliveryHref: string; programmeName?: string }) {
+export function ProgrammeDeliveryTimeline({ runs, programmeColor }: { runs: ProgrammeTimelineRun[]; programmeName?: string; programmeColor?: string }) {
   const [scale, setScale] = useState<'year' | 'month' | 'week' | 'day'>('year');
   const [expandedCohorts, setExpandedCohorts] = useState<Set<string>>(() => new Set());
   const treeId = useId();
@@ -63,7 +62,6 @@ export function ProgrammeDeliveryTimeline({ runs, deliveryHref }: { runs: Progra
       <div><h3 id="programme-delivery-timeline">Delivery timeline</h3><p>Recorded module placement dates · {dated.length} dated module runs</p></div>
       <div className={styles.timelineControls}>
         <div role="group" aria-label="Timeline scale">{(['year', 'month', 'week', 'day'] as const).map(value => <button key={value} type="button" aria-pressed={scale === value} onClick={() => setScale(value)}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div>
-        <Link to={deliveryHref}>Delivery workspace →</Link>
       </div>
     </div>
     {runs.length > 0 && <div className={styles.timelineScroll} tabIndex={0} role="region" aria-label="Programme module placement timeline">
@@ -91,7 +89,7 @@ export function ProgrammeDeliveryTimeline({ runs, deliveryHref }: { runs: Progra
                 <div className={`${styles.timelineGroup} ${styles.timelineChildGroup}`}><strong>{row.label}</strong><small>{row.total} module {row.total === 1 ? 'run' : 'runs'}</small></div>
                 <div className={styles.timelineTrack} style={{ height: Math.max(44, row.runs.length * 30 + 10) }}>
                   {row.runs.length === 0 && <p className={styles.timelineNoDates}>No complete module placement dates for this group.</p>}
-                  {row.runs.map((run, index) => <ProgrammeTimelineModule key={run.id} run={run} className={styles.timelineRun} style={{ left: `${(run.start - start) / span * 100}%`, width: `${(run.end + DAY - run.start) / span * 100}%`, top: index * 30 + 7 }} dateDescription={`${label(run.start)} to ${label(run.end)}`} />)}
+                  {row.runs.map((run, index) => <ProgrammeTimelineModule key={run.id} run={run} color={programmeColor} className={styles.timelineRun} style={{ left: `${(run.start - start) / span * 100}%`, width: `${(run.end + DAY - run.start) / span * 100}%`, top: index * 30 + 7 }} dateDescription={`${label(run.start)} to ${label(run.end)}`} />)}
                 </div>
               </div>)}
             </div>
