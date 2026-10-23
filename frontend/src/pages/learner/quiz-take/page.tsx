@@ -185,7 +185,7 @@ export default function QuizTakePage() {
   const [correction, setCorrection] = useState<{ reason: WorkingRuleReason | ''; holidayName: string } | null>(null);
   const [correctionError, setCorrectionError] = useState('');
   const lastSubmissionRef = useRef<{
-    reflection: { ksbs: string[]; feedback: string; reportedTime: string };
+    reflection: { ksbs: string[]; feedback: string; reportedTime: string; timeTakenSeconds?: number };
     skipReflection: boolean;
   } | null>(null);
   const [result, setResult] = useState<QuizAttemptResult | null>(null);
@@ -388,7 +388,7 @@ export default function QuizTakePage() {
     : undefined;
 
   const finalizeSubmit = async (
-    reflection: { ksbs: string[]; feedback: string; reportedTime: string },
+    reflection: { ksbs: string[]; feedback: string; reportedTime: string; timeTakenSeconds?: number },
     options: { skipReflection?: boolean; declaredCompletedAt?: string } = {},
   ) => {
     if (!quiz || !kind || !id || completionInFlightRef.current || !canUseComponent) return;
@@ -411,7 +411,7 @@ export default function QuizTakePage() {
       if (tracking.rewardTracking) await flushRewardObservations(tracking,'quiz',String(quiz.id), Boolean(tracking.persistent));
       const res = await submitQuizAttempt(quiz.id, kind as 'commercial' | 'apprenticeship', id, {
         answers,
-        timeTakenSeconds: elapsedSeconds,
+        timeTakenSeconds: reflection.timeTakenSeconds ?? elapsedSeconds,
         startedAt: tracking.startedAt,
         trackingToken: tracking.trackingToken,
         module: moduleTitle,
@@ -516,6 +516,9 @@ export default function QuizTakePage() {
             plannedHours={quizPlannedHours}
             actualTimeUnit="minutes"
             learnerKsbs={learnerKsbs}
+            autoKsbs={detail?.components?.find(component => String(component.quizMeta?.quizId ?? '') === String(quizId)
+              && (!moduleTitle || component.module === moduleTitle)
+              && (!weekTitle || component.week === weekTitle))?.ksbMappings ?? []}
             elapsedSeconds={elapsedSeconds}
             submitting={submitting}
             submitError={submitError}

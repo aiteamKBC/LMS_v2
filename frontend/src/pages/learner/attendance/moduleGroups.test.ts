@@ -42,8 +42,27 @@ describe('confirmed attendance course aliases', () => {
     expect(attendanceModuleGroups([])).toEqual([]);
   });
 
-  it('does not infer aliases for unrelated courses from a tutor prefix', () => {
+  it('groups any course whose only difference is the Dr title, as requested', () => {
     const options = [{ id: 'one', title: 'Dr. Alex - Leadership' }, { id: 'two', title: 'Alex - Leadership' }];
+    expect(attendanceModuleGroups(options)).toEqual([{ id: 'one', title: 'Alex - Leadership', moduleIds: ['one', 'two'] }]);
+  });
+
+  it.each(['Dr.Samira', 'Dr. Samira', 'DR Samira', 'Ｄｒ．Samira'])('groups %s across historical and native records while preserving group and intake', tutor => {
+    const course = 'G3 - Samira - Leadership - Feb 27';
+    const historical = { id: 'legacy:other', title: course.replace('Samira', tutor) };
+    const current = { id: 'native:other', title: course };
+    const otherIntake = { id: 'native:later', title: course.replace('Feb', 'Mar') };
+    for (const pair of [[historical, current], [current, historical]]) {
+      expect(attendanceModuleGroups([...pair, otherIntake])).toEqual([
+        { ...current, moduleIds: pair.map(option => option.id) }, { ...otherIntake, moduleIds: [otherIntake.id] },
+      ]);
+    }
+  });
+
+  it('does not remove Dr inside words or combine identical titles without a Dr variant', () => {
+    const titles = ['Drake - Leadership', 'ake - Leadership', 'HDR Planning', 'H Planning',
+      'Drama - Design', 'ama - Design', 'Alex - Leadership', 'Alex - Leadership'];
+    const options = titles.map((title, i) => ({ id: `module:${i}`, title }));
     expect(attendanceModuleGroups(options)).toEqual(options.map(option => ({ ...option, moduleIds: [option.id] })));
   });
 

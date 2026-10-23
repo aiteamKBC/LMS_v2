@@ -6,7 +6,7 @@ import { CompletionValidationError } from '@/lib/completionValidation';
 
 const mocks = vi.hoisted(() => ({
   detail: vi.fn(), quiz: vi.fn(), start: vi.fn(), submit: vi.fn(), checkpoint: vi.fn(),
-  generateReading: vi.fn(), completeReading: vi.fn(),
+  generateReading: vi.fn(), completeReading: vi.fn(), reflectionTimeSeconds: undefined as number | undefined,
 }));
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: mocks.detail }));
 vi.mock('@/api/quizzes', () => ({
@@ -21,7 +21,7 @@ vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess:
 vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock('@/components/feature/ReflectionWindow', () => ({
-  ReflectionWindow: ({ onSubmit, onClose }: { onSubmit: (value: { ksbs: string[]; feedback: string; reportedTime: string }) => void; onClose?: () => void }) => <div>My Learning Evidence and Reflection<button onClick={onClose}>Close reflection</button><button onClick={() => onSubmit({ ksbs: ['K1'], feedback: 'Reflection', reportedTime: '1' })}>Submit reflection</button></div>,
+  ReflectionWindow: ({ onSubmit, onClose }: { onSubmit: (value: { ksbs: string[]; feedback: string; reportedTime: string; timeTakenSeconds?: number }) => void; onClose?: () => void }) => <div>My Learning Evidence and Reflection<button onClick={onClose}>Close reflection</button><button onClick={() => onSubmit({ ksbs: ['K1'], feedback: 'Reflection', reportedTime: '1', ...(mocks.reflectionTimeSeconds == null ? {} : { timeTakenSeconds: mocks.reflectionTimeSeconds }) })}>Submit reflection</button></div>,
   formatClock: (seconds: number) => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`,
 }));
 const detail = { modules: [], week: [], ksbs: [], componentProgress: [], videoProgress: [], quizAttempts: [], components: [{ quizMeta: { quizId: 1 }, reflectionRequired: false }] };
@@ -31,6 +31,7 @@ const renderPage = () => render(<MemoryRouter initialEntries={['/quiz/commercial
 describe('quiz requirements loading', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.reflectionTimeSeconds = undefined;
     mocks.quiz.mockResolvedValue({ id: 1, title: 'Campaign quiz', questions: [{ id: 1, text: 'Choose an outcome', points: 1, type: 'single_choice', answers: [{ id: 1, text: 'Measured outcome' }] }] });
     mocks.start.mockResolvedValue({ trackingToken: 'test', startedAt: '2026-09-13T00:00:00Z' });
     mocks.submit.mockImplementation(() => new Promise(() => {}));
@@ -270,6 +271,18 @@ describe('quiz requirements loading', () => {
       feedback: '', ksbs: [], reportedTime: '', skipReflection: true,
     }));
     expect(await screen.findByText(/Quiz Passed/)).toBeVisible();
+  });
+
+  it('passes corrected reflection time to quiz completion', async () => {
+    mocks.detail.mockResolvedValue({ ...detail, components: [{ quizMeta: { quizId: 1 }, reflectionRequired: true }] });
+    mocks.reflectionTimeSeconds = 120;
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Yes, add reflection' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit reflection' }));
+    expect(mocks.submit).toHaveBeenCalledWith(1, 'commercial', '501', expect.objectContaining({ timeTakenSeconds: 120 }));
   });
 
   it('keeps reflection optional for tutor-validated quizzes', async () => {
