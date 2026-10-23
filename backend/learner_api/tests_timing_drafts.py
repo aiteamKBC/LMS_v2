@@ -3,10 +3,12 @@ import json
 import unittest
 import importlib
 from datetime import datetime, timedelta, timezone as dt_timezone
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 from django.test import RequestFactory
+from django.http import JsonResponse
 from django.db import connections
 from django.db.migrations.state import ProjectState
 from . import time_tracking as timing
@@ -200,7 +202,8 @@ class TimingDraftTests(unittest.TestCase):
                    'payload_sha256': shared_rewards.digest([session['sessionId'], 1, offsets]), 'observed_ms': 2000}
         conn = MagicMock()
         cursor = conn.cursor.return_value.__enter__.return_value
-        cursor.fetchone.return_value = [2000]
+        # PostgreSQL SUM(bigint) returns numeric, adapted as Decimal.
+        cursor.fetchone.return_value = [Decimal('2000')]
         with patch.object(shared_rewards, '_active'), patch.object(shared_rewards, '_wallet_lock'), \
                 patch('engagement_api.learning_policy.ensure_module'), patch.object(shared_rewards, 'policy', return_value={'starts_at': original_start}), \
                 patch.object(shared_rewards, 'connections', {'default': conn}), patch.object(shared_rewards, '_one', return_value=stored), \
@@ -211,6 +214,13 @@ class TimingDraftTests(unittest.TestCase):
         self.assertTrue(result['duplicate'])
         self.assertEqual(result['observedMilliseconds'], 2000)
         self.assertEqual(result['cumulativeObservedMilliseconds'], 2000)
+        payload = json.loads(JsonResponse(result).content)
+        self.assertIs(type(payload['cumulativeObservedMilliseconds']), int)
+        self.assertEqual(payload, {
+            'source': 'lms', 'eventId': 'event-1', 'sessionId': session['sessionId'],
+            'sequence': 1, 'status': 'pending', 'observedMilliseconds': 2000,
+            'cumulativeObservedMilliseconds': 2000, 'duplicate': True,
+        })
         self.assertFalse(any('INSERT INTO "Engagement".shared_reward_observations' in call.args[0] for call in cursor.execute.call_args_list))
         cursor.execute.assert_any_call('UPDATE "Engagement".shared_reward_sessions SET expires_at=%s WHERE session_id=%s',
                                        [tracking['trackingExpiresAt'], session['sessionId']])
