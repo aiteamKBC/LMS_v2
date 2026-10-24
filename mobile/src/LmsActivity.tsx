@@ -3,6 +3,7 @@ import {AppState,Image,Linking,Platform,Pressable,Text,View} from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useSpeechRecognitionEvent} from 'expo-speech-recognition';
 import {ActivityTimer} from './ActivityTimer';
+import {audioAlternativeUrl,openAudioAlternative} from './audio-alternative.mjs';
 import {StandaloneMedia,PlaybackSignal} from './StandaloneMedia';
 import {Back,Btn,Busy,Card,Field,H,Notice,Txt} from './StandaloneUI';
 import {s} from './styles';
@@ -142,6 +143,13 @@ function LmsActivityBody({client,session,activity,onBack,onSaved,onOpenLms,owner
   finally{saving.current=false;if(alive.current)setBusy(false);}
  };
  const loadTranscript=async()=>{if(transcriptBusy)return;setTranscriptBusy(true);try{const data=await client.transcript(activity.id);if(alive.current){if(data?.source!=='lms'||data.componentId!==activity.id||typeof data.transcript!=='string'||!data.transcript.trim())throw new Error('The LMS did not confirm a transcript for this activity.');setTranscript(data.transcript);}}catch(e:any){if(alive.current)setError(e.message);}finally{if(alive.current)setTranscriptBusy(false);}};
+ const alternativeUrl=activity.mode==='audio'&&activity.url?audioAlternativeUrl(activity.alternativeYouTubeUrl):null;
+ const openAlternative=async()=>{
+  try{await openAudioAlternative(alternativeUrl,{
+   pause:()=>{interact();setPaused(true);status.current.paused=true;observe();signal.current=emptySignal;},
+   persist:()=>persist(true),open,
+  });}catch{setError('The YouTube alternative could not open. Your audiobook remains available here.');}
+ };
  const active=!!timing&&!loading&&!busy&&!expired&&!changedQuiz&&!paused&&!result;
  const toggleTimer=()=>{interact();setPaused(decision.reason==='idle'?false:!paused);status.current.paused=decision.reason==='idle'?false:!paused;observe();void persist();};
  const back=()=>{void stopVoice();void persist();onBack();};
@@ -172,7 +180,8 @@ function LmsActivityBody({client,session,activity,onBack,onSaved,onOpenLms,owner
     <View style={s.rowWrap}><Btn title="Previous question" secondary disabled={busy||!index} onPress={()=>move(index-1)}/><Btn title="Next question" secondary disabled={busy||index>=quiz.questions.length-1||!questionImageReady||!hasAnswer(question,answers[question.id])} onPress={()=>move(index+1)}/></View>
    </>:activity.mode!=='quiz'&&activity.url?<>
     <StandaloneMedia resource={{id:activity.id,url:activity.url,mime:activity.mode==='audio'?'audio/mpeg':'video/mp4',title:activity.title}} active={active} allowBackgroundAudio={activity.mode==='audio'} transcript={transcript} onSignal={value=>{signal.current=value;observe();if(!value.playing)void persist();}} onInteraction={interact} onError={setError}/>
-    {activity.transcriptAvailable&&typeof client.transcript==='function'&&!transcript&&<Btn title={transcriptBusy?'Loading transcript…':'Transcript / learning support'} secondary disabled={transcriptBusy} onPress={loadTranscript}/>}
+    {alternativeUrl&&<><Btn title="Listen to this recording on YouTube" secondary disabled={busy} onPress={openAlternative}/><Txt small>Opens separately. Your LMS timer pauses; return here to continue and save your activity.</Txt></>}
+    {activity.transcriptAvailable&&typeof client.transcript==='function' &&!transcript&&<Btn title={transcriptBusy?'Loading transcript…':'Transcript / learning support'} secondary disabled={transcriptBusy} onPress={loadTranscript}/>}
    </>:<Notice>The LMS has not supplied playable media for this activity.</Notice>}
    <Field label={activity.reflectionPrompt||(activity.reflectionRequired?'What have you learned? (required)':'Your reflection (optional)')} value={feedback} multiline maxLength={12000} editable={!busy} onChangeText={(value:string)=>{interact();setFeedback(value);draft.current.feedback=value;void persist();}}/>
    <Txt small>{activity.ksbs?.length?'Related KSBs: '+activity.ksbs.join(' · '):'KSB mapping is managed by the LMS.'}</Txt>

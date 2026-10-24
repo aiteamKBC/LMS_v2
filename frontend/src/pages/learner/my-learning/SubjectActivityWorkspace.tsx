@@ -62,6 +62,7 @@ export function SubjectActivityWorkspace({ subject, weeks: rawWeeks, requestedWe
   // results. Do not fabricate native quiz attempts to paint a completion tick.
   const component = (entry: SubjectEntry): JourneyComponent => ({
     componentId: entry.id, title: entry.title, type: entry.category, expectedOtjh: null,
+    pointNumber: entry.native?.pointNumber, moduleId: entry.native?.moduleId, weekId: entry.native?.weekId,
   });
   const weekTitle = (item: LearningWeek) => item.title.toLocaleLowerCase().startsWith(item.label.toLocaleLowerCase())
     ? item.title : `${item.label} · ${item.title}`;
