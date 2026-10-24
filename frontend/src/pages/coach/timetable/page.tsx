@@ -3658,7 +3658,7 @@ export default function CoachTimetablePage() {
         event={supportBookingEvent as CoachCalendarEvent}
         viewingAsCoach={coach.isViewingAsCoach}
         onClose={() => setSupportBookingEvent(null)}
-        onSaved={(saved, notice) => {
+        onSaved={(saved, notice, options) => {
           const day = new Date(`${saved.scheduledDate}T00:00:00`);
           const [hour, minute] = (saved.scheduledTime || '09:00').split(':').map(Number);
           const startHour = hour + minute / 60;
@@ -3671,7 +3671,7 @@ export default function CoachTimetablePage() {
           updateSingleEvent(updated);
           focusEventOnCalendar(updated);
           setEventActionNotice(notice);
-          setSupportBookingEvent(null);
+          if (!options?.keepOpen) setSupportBookingEvent(null);
         }}
       />}
     </WorkspaceShell>

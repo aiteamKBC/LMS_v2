@@ -7,8 +7,8 @@ import CoachMonthlyCoaching from './page';
 import { importedBookingDefinition, installDialogTestSupport, scheduledImportedBooking } from '../shared/__tests__/importedBookingFixtures';
 import CoachMeetingDetail from '../meeting-detail/page';
 
-const { fetchEvents, scheduleEvent, savePptx, openReview, fetchForm, book, reschedule, coach } = vi.hoisted(() => ({
-  fetchForm: vi.fn(), book: vi.fn(), reschedule: vi.fn(),
+const { fetchEvents, scheduleEvent, savePptx, openReview, fetchForm, book, reschedule, adopt, coach } = vi.hoisted(() => ({
+  fetchForm: vi.fn(), book: vi.fn(), reschedule: vi.fn(), adopt: vi.fn(),
   fetchEvents: vi.fn(),
   scheduleEvent: vi.fn(),
   savePptx: vi.fn(),
@@ -35,6 +35,7 @@ vi.mock('../progress-reviews/components/ProgressReviewPptxModal', () => ({
   },
 }));
 vi.mock('@/api/reviewInstances', () => ({ openReviewInstanceForEvent: openReview,
+  adoptMigratedReviewBooking: adopt,
   fetchReviewInstanceForm: fetchForm, bookMigratedReview: book, rescheduleMigratedReview: reschedule, initializeMigratedReview: vi.fn(),
 }));
 
@@ -84,6 +85,7 @@ const visibleLearners = () => Array.from(document.querySelectorAll('.ui-action-r
   .map(row => row.textContent);
 
 beforeEach(() => {
+  adopt.mockReset();
   installDialogTestSupport();
   fetchForm.mockReset().mockResolvedValue(scheduledImportedBooking());
   book.mockReset().mockResolvedValue(scheduledImportedBooking());
@@ -103,6 +105,28 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('restored monthly coaching list', () => {
+  it('keeps Reschedule open when the existing MCM booking is adopted on entry', async () => {
+    const scheduled = scheduledImportedBooking();
+    scheduled.template.reviewTypeCode = 'aptem_mcm';
+    fetchForm.mockResolvedValue({ ...scheduled, localStatus: 'not-scheduled',
+      booking: { ...scheduled.booking!, canAttach: true, canReschedule: false } });
+    adopt.mockResolvedValue(scheduled);
+    fetchEvents.mockResolvedValue({ events: [meeting(31, { eventKey: 'imported-review:31',
+      reviewSource: 'aptem', aptemReviewId: '31', status: 'scheduled',
+      calendarEventKey: scheduled.booking!.eventKey, scheduledDate: '2026-09-22', scheduledTime: '10:00', reviewTemplateId: null })] });
+    mount();
+    await screen.findByText('Learner 31');
+    fireEvent.click(rowMenu('Learner 31').getByRole('menuitem', { name: 'Reschedule' }));
+    const save = await screen.findByRole('button', { name: 'Save new time' });
+    expect(screen.getByRole('dialog')).toBeVisible();
+    expect(adopt).toHaveBeenCalledOnce();
+    fireEvent.change(screen.getByLabelText('Time'), { target: { value: '14:30' } });
+    fireEvent.click(save);
+    await screen.findByText('Review rescheduled.');
+    expect(reschedule).toHaveBeenCalledWith('imported-review:31', expect.objectContaining({ scheduledTime: '14:30' }), scheduled.booking);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(book).not.toHaveBeenCalled();
+  });
   it('keeps valid meetings and an identity warning together through cached navigation', async () => {
     fetchEvents.mockResolvedValue({ events: meetings, reviewGenerationIssues: [
       { learnerId: '41', code: 'review_identity_unavailable' },

@@ -9,6 +9,7 @@ from django.test import RequestFactory, TestCase
 
 from learner_api.review_history import _serialize_review
 from . import migrated_previous as previous, views
+from .views import stored_coach_meeting_transcript_for_summary as scoped_transcript_reader
 from .models import ImportedReviewInstance
 from .test_migrated_summary_binding import DEFINITION
 
@@ -107,6 +108,36 @@ class MigratedPreviousTests(TestCase):
         self.assertEqual(data["transcriptText"], "abcde")
         self.assertTrue(data["transcriptTruncated"])
         self.transcript.assert_called_once_with(self.booking.return_value)
+
+    def test_previous_transcript_excludes_other_calls_and_preserves_form_answer(self):
+        from datetime import date, time
+        from .models import CoachCalendarEvent
+        from django.test import override_settings
+        record = CoachCalendarEvent(id=7, owner_email=OWNER, event_key=self.overlay.event_key,
+            learner_id=42, event_type='mcr', graph_event_id='graph-current',
+            scheduled_date=date(2026, 9, 20), scheduled_time=time(10), duration_minutes=60)
+        self.booking.return_value = record
+        self.transcript.side_effect = scoped_transcript_reader
+        artifacts = [dict(artifact_type='transcript', graph_artifact_id=key, call_id=call,
+            created_datetime=at, metadata={'_lms_graph_event_id': 'graph-current'}) for key, call, at in
+            [('current', 'one', '2026-09-20T10:05:00Z'), ('old', 'two', '2026-08-20T10:05:00Z')]]
+        with override_settings(TIME_ZONE='UTC'), patch.object(views, 'stored_coach_meeting_snapshot', return_value={'artifacts': artifacts}), \
+                patch.object(views, 'coach_meeting_snapshot_tables_ready', return_value=True), \
+                patch.object(views, 'coach_meeting_artifact_transcript_columns_ready', return_value=True), \
+                patch.object(views, 'connections') as connections:
+            cursor = connections.__getitem__.return_value.cursor.return_value.__enter__.return_value
+            cursor.fetchall.return_value = [('current', 'Only the previous booked call')]
+            _, data = self.load()
+            self.assertEqual(data['transcriptText'], 'Only the previous booked call')
+            self.assertNotIn('old', cursor.execute.call_args.args[1])
+            artifacts[1]['created_datetime'] = '2026-09-20T10:10:00Z'
+            cursor.execute.reset_mock()
+            _, ambiguous = self.load()
+            self.assertFalse(ambiguous['transcriptAvailable'])
+            self.assertEqual(ambiguous['summaryText'], 'Final coach-edited summary.')
+            cursor.execute.assert_not_called()
+        self.overlay.refresh_from_db()
+        self.assertEqual(self.overlay.answers['recap'], 'Final coach-edited summary.')
 
     def test_historical_source_wins_over_local_answers(self):
         self.prior[1].update(status="completed", sections=[{

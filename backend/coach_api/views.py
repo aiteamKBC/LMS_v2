@@ -32,7 +32,7 @@ from django.db.models import Max, Q
 from django.db.models.functions import Lower, Trim
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse, StreamingHttpResponse
 from django.utils import timezone
-from django.views.decorators.http import require_GET, require_http_methods
+from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
 from coach_api.auth import (
     attributed_write_view,
@@ -7304,26 +7304,9 @@ def serialize_coach_meeting_attendance_report(report: dict, detail: dict) -> dic
 
 
 def coach_meeting_record_learner(record: CoachCalendarEvent) -> LearnerProfile | None:
-    learner_id = getattr(record, "learner_id", None)
-    if learner_id in (None, ""):
-        return None
+    from .review_sources import meeting_profile
     try:
-        learner_id = int(learner_id)
-    except (TypeError, ValueError):
-        return None
-    try:
-        return (
-            LearnerProfile.objects.filter(id=learner_id)
-            .only(
-                "id",
-                "full_name",
-                "email",
-                "programme",
-                "learner_type",
-                "lifecycle_status",
-            )
-            .first()
-        )
+        return meeting_profile(record)
     except DatabaseError:
         return None
 
@@ -7811,12 +7794,14 @@ def stored_coach_meeting_summary(record: CoachCalendarEvent) -> dict | None:
         with connections[database].cursor() as cursor:
             cursor.execute(
                 f"""
-                SELECT current_summary, status, generated_at, edited_at, edited_by, model, error
+                SELECT current_summary, status, generated_at, edited_at, edited_by, model, error,
+                       graph_event_id, transcript_artifact_id, transcript_hash
                 FROM {COACH_MEETING_SUMMARIES_RELATION}
-                WHERE event_key = %s
+                WHERE event_key = %s AND calendar_event_id = %s AND owner_email = %s
+                  AND learner_id IS NOT DISTINCT FROM %s
                 LIMIT 1
                 """,
-                [record.event_key],
+                [record.event_key, record.pk, clean_email(record.owner_email), record.learner_id],
             )
             row = cursor.fetchone()
     except Exception:
@@ -7825,6 +7810,15 @@ def stored_coach_meeting_summary(record: CoachCalendarEvent) -> dict | None:
     if not row:
         return None
     summary = parse_jsonish(row[0], {})
+    from .migrated_session_scope import session_provenance
+    if clean_text(row[7]) != clean_text(record.graph_event_id):
+        return None
+    if summary.get('_lmsSession') and summary['_lmsSession'] != session_provenance(record):
+        return None
+    transcript = stored_coach_meeting_transcript_for_summary(record)
+    if (not transcript or clean_text(row[8]) != transcript['artifactId']
+            or clean_text(row[9]) != hashlib.sha256(transcript['text'].encode('utf-8')).hexdigest()):
+        return None
     return {
         "summary": normalize_meeting_summary_payload(summary, record.event_type),
         "status": clean_text(row[1]) or "ready",
@@ -7880,7 +7874,8 @@ def stored_coach_meeting_snapshot(record: CoachCalendarEvent) -> dict:
                     created_datetime,
                     end_datetime,
                     metadata,
-                    last_seen_at
+                    last_seen_at,
+                    graph_event_id
                 FROM {COACH_MEETING_ARTIFACTS_RELATION}
                 WHERE event_key = %s
                 ORDER BY COALESCE(end_datetime, created_datetime) DESC NULLS LAST, updated_at DESC
@@ -7901,10 +7896,10 @@ def stored_coach_meeting_snapshot(record: CoachCalendarEvent) -> dict:
                     metadata,
                     last_seen_at
                 FROM {COACH_MEETING_ATTENDANCE_REPORTS_RELATION}
-                WHERE event_key = %s
+                WHERE event_key = %s AND graph_event_id = %s
                 ORDER BY COALESCE(meeting_end_datetime, meeting_start_datetime) DESC NULLS LAST, updated_at DESC
                 """,
-                [record.event_key],
+                [record.event_key, record.graph_event_id],
             )
             report_rows = cursor.fetchall()
 
@@ -7955,7 +7950,7 @@ def stored_coach_meeting_snapshot(record: CoachCalendarEvent) -> dict:
                 "content_correlation_id": clean_text(row[3]),
                 "created_datetime": row[4].isoformat() if row[4] else "",
                 "end_datetime": row[5].isoformat() if row[5] else "",
-                "metadata": parse_jsonish(row[6], {}),
+                "metadata": {**parse_jsonish(row[6], {}), '_lms_graph_event_id': clean_text(row[8])},
             }
         )
 
@@ -8120,7 +8115,17 @@ def combine_coach_meeting_transcript_rows(rows: list[tuple[str, str]]) -> dict |
     }
 
 
-def stored_coach_meeting_transcript_for_summary(record: CoachCalendarEvent) -> dict | None:
+def coach_meeting_transcript_selection(record: CoachCalendarEvent) -> dict:
+    from .migrated_session_scope import stored_transcript_selection
+    return stored_transcript_selection(record, stored_coach_meeting_snapshot(record))
+
+
+def stored_coach_meeting_transcript_for_summary(record: CoachCalendarEvent, *, artifact_ids=None) -> dict | None:
+    if artifact_ids is None:
+        artifact_ids = coach_meeting_transcript_selection(record)['artifactIds']
+    if not artifact_ids:
+        return None
+    artifact_filter = (" AND graph_artifact_id IN (" + ",".join(["%s"] * len(artifact_ids)) + ")") if artifact_ids is not None else ""
     database = router.db_for_read(CoachCalendarEvent) or "default"
     if (
         not coach_meeting_snapshot_tables_ready(database)
@@ -8136,10 +8141,12 @@ def stored_coach_meeting_transcript_for_summary(record: CoachCalendarEvent) -> d
                 WHERE event_key = %s
                   AND artifact_type = 'transcript'
                   AND transcript_text <> ''
+                  AND graph_event_id = %s
+                  {artifact_filter}
                 ORDER BY COALESCE(created_datetime, end_datetime) ASC NULLS LAST,
                          graph_artifact_id ASC
                 """,
-                [record.event_key],
+                [record.event_key, record.graph_event_id, *(artifact_ids or [])],
             )
             rows = cursor.fetchall()
     except Exception:
@@ -8293,12 +8300,17 @@ def ensure_coach_meeting_summary(
         logger.exception("Unable to inspect coach meeting summary for event_key=%s", record.event_key)
         return None
 
-    if should_reuse_coach_meeting_summary(
+    cached = stored_coach_meeting_summary(record) if existing else None
+    if existing and clean_text(existing[1]) == 'edited':
+        # Retain a historical edited cache unchanged even when its source no
+        # longer matches. It cannot be relabelled as the current session.
+        return cached
+    if cached and should_reuse_coach_meeting_summary(
         existing,
         transcript_hash,
         retry_failed=retry_failed,
     ):
-        return stored_coach_meeting_summary(record)
+        return cached
 
     now = timezone.now()
     try:
@@ -8307,12 +8319,14 @@ def ensure_coach_meeting_summary(
         error = ""
     except Exception as exc:  # noqa: BLE001 - stored as a user-visible sync state
         logger.exception("Unable to generate coach meeting summary for event_key=%s", record.event_key)
-        fallback = existing[2] if existing else {}
+        fallback = cached['summary'] if cached else {}
         summary = normalize_meeting_summary_payload(fallback, record.event_type)
         model = COACH_MEETING_SUMMARY_MODEL
         status = "failed"
         error = clean_text(exc)
 
+    from .migrated_session_scope import session_provenance
+    summary = {**summary, '_lmsSession': session_provenance(record)}
     try:
         with transaction.atomic(using=database), connections[database].cursor() as cursor:
             cursor.execute(
@@ -8370,6 +8384,7 @@ def ensure_coach_meeting_summary(
                     generated_at = EXCLUDED.generated_at,
                     error = EXCLUDED.error,
                     updated_at = EXCLUDED.updated_at
+                WHERE summary_target.status <> 'edited'
                 """,
                 [
                     getattr(record, "id", None),
@@ -8706,7 +8721,8 @@ def persist_coach_meeting_snapshots(
     return {"stored": True, "syncedAt": synced_at.isoformat()}
 
 
-def fetch_coach_meeting_graph_snapshot(record: CoachCalendarEvent) -> tuple[dict | None, dict | None, int]:
+def fetch_coach_meeting_graph_snapshot(record: CoachCalendarEvent, *, target_error_handler=None,
+                                     transcript_collection_fetcher=None) -> tuple[dict | None, dict | None, int]:
     """Fetch Teams artifacts and attendance for a coach calendar event.
 
     The returned snapshot is the single source used by the UI endpoint and by
@@ -8719,7 +8735,11 @@ def fetch_coach_meeting_graph_snapshot(record: CoachCalendarEvent) -> tuple[dict
 
     try:
         base, error_payload = coach_meeting_graph_target(record)
-    except RuntimeError:
+    except (RuntimeError, TimeoutError) as exc:
+        if target_error_handler is not None:
+            return target_error_handler(exc)
+        if isinstance(exc, TimeoutError):
+            raise
         logger.exception("Unable to resolve coach meeting artifact target.")
         return (
             None,
@@ -8735,6 +8755,11 @@ def fetch_coach_meeting_graph_snapshot(record: CoachCalendarEvent) -> tuple[dict
     artifacts = []
     attendance_reports = []
     errors = []
+    resource_errors = {}
+    def fetch_failure(resource, exc):
+        status = getattr(getattr(exc, '__cause__', None), 'code', None)
+        if resource_errors.get(resource) != 'permission':
+            resource_errors[resource] = 'permission' if status in {401, 403} else 'fetch'
     event_key = clean_text(record.event_key)
 
     try:
@@ -8751,7 +8776,8 @@ def fetch_coach_meeting_graph_snapshot(record: CoachCalendarEvent) -> tuple[dict
                     "GET",
                     f"{base}/attendanceReports/{report_key}?$expand=attendanceRecords",
                 )
-            except RuntimeError:
+            except RuntimeError as exc:
+                fetch_failure('attendance', exc)
                 logger.exception(
                     "Unable to load coach Teams attendance report detail for event_key=%s",
                     event_key,
@@ -8759,7 +8785,8 @@ def fetch_coach_meeting_graph_snapshot(record: CoachCalendarEvent) -> tuple[dict
                 errors.append("Microsoft Graph could not return attendance details for this meeting.")
                 continue
             attendance_reports.append(serialize_coach_meeting_attendance_report(report, detail))
-    except RuntimeError:
+    except RuntimeError as exc:
+        fetch_failure('attendance', exc)
         logger.exception(
             "Unable to load coach Teams attendance reports for event_key=%s",
             event_key,
@@ -8768,8 +8795,12 @@ def fetch_coach_meeting_graph_snapshot(record: CoachCalendarEvent) -> tuple[dict
 
     for artifact_type, endpoint in COACH_MEETING_ARTIFACT_ENDPOINTS.items():
         try:
-            response = microsoft_graph_request("GET", f"{base}/{endpoint}")
-        except RuntimeError:
+            if artifact_type == 'transcript' and transcript_collection_fetcher is not None:
+                response = transcript_collection_fetcher(f"{base}/{endpoint}")
+            else:
+                response = microsoft_graph_request("GET", f"{base}/{endpoint}")
+        except RuntimeError as exc:
+            fetch_failure(endpoint, exc)
             logger.exception(
                 "Unable to load coach Teams %s for event_key=%s",
                 endpoint,
@@ -8818,20 +8849,54 @@ def fetch_coach_meeting_graph_snapshot(record: CoachCalendarEvent) -> tuple[dict
         "attendanceTracker": attendance_tracker,
         "errors": errors,
         "partial": bool(errors),
+        "resourceErrors": resource_errors,
     }
     return snapshot, None, 207 if errors else 200
 
 
+def coach_meeting_write_error(request, record):
+    """Generic writes must not bypass the owned Review's lifecycle/adapter."""
+    legacy = clean_text(record.idempotency_key).split(":")
+    imported = record.event_key.startswith("imported-review:")
+    psp_meeting = False
+    if imported:
+        from .personal_support_booking import can_refresh_meeting
+        psp_meeting = can_refresh_meeting(authenticated_coach_email(request), record)
+    if ((imported and not psp_meeting)
+            or (len(legacy) in {5, 6} and legacy[:1] == ["learner-book"]
+                and legacy[1] in {"mcm", "progress-review"})):
+        return JsonResponse({"detail": "Use Check Session in the imported Review.",
+                             "code": "IMPORTED_REVIEW_ACTION_REQUIRED"}, status=409)
+    if record.status not in {"scheduled", "in-progress"}:
+        return JsonResponse({"detail": "This meeting is read-only at its current stage."}, status=409)
+    if record.review_instance_id:
+        instance, error = _authorized_review_instance(request, record.review_instance_id)
+        if error is not None:
+            return error
+        if (instance.get("calendar_event_id") != record.pk
+                or instance.get("learner_id") != record.learner_id
+                or instance.get("review_template_id") != record.review_template_id
+                or instance.get("status") not in {"scheduled", "in-progress"}):
+            return JsonResponse({"detail": "The Review is read-only or its meeting association changed."}, status=409)
+    elif record.review_template_id:
+        return JsonResponse({"detail": "The Review meeting association is incomplete."}, status=409)
+    return None
+
+
 @coach_access_required
-@require_GET
+@require_http_methods(["GET", "POST"])
 def coach_timetable_event_artifacts(request, event_key):
     owner_email = authenticated_coach_email(request)
     record = coach_meeting_artifact_record(owner_email, event_key)
     if not record:
         return JsonResponse({"detail": "Calendar event not found for this coach."}, status=404)
 
-    refresh_requested = clean_text(request.GET.get("refresh")).lower() in {"1", "true", "yes"}
-    if refresh_requested:
+    # Legacy refresh query parameters are deliberately inert. Only an explicit
+    # CSRF-protected POST may contact providers or persist business state.
+    if request.method == "POST":
+        error = coach_meeting_write_error(request, record)
+        if error is not None:
+            return error
         snapshot, error_payload, status_code = fetch_coach_meeting_graph_snapshot(record)
         if error_payload:
             return JsonResponse(error_payload, status=status_code)
@@ -8892,8 +8957,15 @@ def coach_meeting_artifact_content_response(request, record, event_key, artifact
     disposition = "attachment" if as_attachment else "inline"
 
     if artifact_type == "transcript":
+        selection = coach_meeting_transcript_selection(record)
+        if selection['code'] == 'TRANSCRIPT_SESSION_AMBIGUOUS':
+            return JsonResponse({'detail': 'The transcript cannot be matched to one booked session.',
+                                 'code': selection['code']}, status=409)
+        if clean_text(artifact_id).lower() != 'combined' and artifact_id not in selection['artifactIds']:
+            return JsonResponse({'detail': 'The transcript is not available for this session.',
+                                 'code': 'TRANSCRIPT_UNAVAILABLE'}, status=404)
         if clean_text(artifact_id).lower() == "combined":
-            combined_transcript = stored_coach_meeting_transcript_for_summary(record)
+            combined_transcript = stored_coach_meeting_transcript_for_summary(record, artifact_ids=selection['artifactIds'])
             if not combined_transcript:
                 return JsonResponse({"detail": "The combined meeting transcript is not available."}, status=404)
             response = HttpResponse(
@@ -9025,7 +9097,11 @@ def coach_timetable_event_summary(request, event_key):
     if not record:
         return JsonResponse({"detail": "Calendar event not found for this coach."}, status=404)
     if request.method == "GET":
-        return JsonResponse({"meetingSummary": ensure_coach_meeting_summary(record)})
+        return JsonResponse({"meetingSummary": stored_coach_meeting_summary(record)})
+
+    error = coach_meeting_write_error(request, record)
+    if error is not None:
+        return error
 
     database = router.db_for_write(CoachCalendarEvent) or "default"
     if not coach_meeting_summaries_table_ready(database):
@@ -9034,7 +9110,13 @@ def coach_timetable_event_summary(request, event_key):
         payload = parse_json_object(request)
     except ValidationError as exc:
         return validation_error_response(exc)
-    summary = normalize_meeting_summary_payload(payload.get("summary"), record.event_type)
+    # Never retag a historical edited cache as the current session.
+    if not stored_coach_meeting_summary(record):
+        return JsonResponse({'detail': 'No verified summary is available for this session.',
+                             'code': 'SUMMARY_SESSION_MISMATCH'}, status=409)
+    from .migrated_session_scope import session_provenance
+    summary = {**normalize_meeting_summary_payload(payload.get("summary"), record.event_type),
+               '_lmsSession': session_provenance(record)}
     now = timezone.now()
     editor = clean_text(getattr(request, "coach_email", "")) or clean_text(owner_email)
     try:
@@ -15310,6 +15392,7 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         from coach_api.migrated_template_sync import snapshot_state
         definition["templateSync"] = snapshot_state(saved_instance)
         definition["answerVersion"] = answer_version(saved_instance)
+        definition["bookingAdoptionVersion"] = _migrated_booking_adoption_version(saved_instance)
         from .migrated_reopening import revision_number, history as migrated_revision_history
         definition["reviewRevision"] = revision_number(saved_instance)
         definition["reopenHistory"] = migrated_revision_history(saved_instance)
@@ -15476,6 +15559,98 @@ def coach_review_instance_local_status(request, instance_id):
         calendar.status = CoachCalendarEvent.STATUS_IN_PROGRESS
         calendar.save(update_fields=["status", "updated_at"])
     return JsonResponse(_imported_review_definition(owner_email, instance_id))
+
+
+def _migrated_booking_adoption_version(overlay):
+    """Draft basis that survives a status-only adoption (including a lost reply).
+
+    Keep the ordinary answerVersion unchanged. A retry may advance that version
+    only if answers, questions and other saved review work still match.
+    """
+    state = {name: getattr(overlay, name, None) for name in (
+        "answers", "template_snapshot", "migrated_template_id", "progress_snapshot",
+        "meeting_intelligence", "signature_requirements",
+    )}
+    return hashlib.sha256(json.dumps(state, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
+
+
+@coach_access_required
+@require_POST
+def coach_review_instance_adopt_booking(request, instance_id):
+    """Advance an imported form using its verified booking, without Graph I/O.
+
+    Called automatically by the coach workspace. Reads remain read-only, and
+    adopting a past/existing appointment never goes through new-booking rules.
+    """
+    from .review_sources import booking_for_overlay, ReviewIdentityConflict
+
+    owner_email = authenticated_coach_email(request).strip().casefold()
+    if not instance_id.startswith("imported-review:"):
+        return JsonResponse({"detail": "This action is for imported reviews only."}, status=409)
+    definition = _imported_review_definition(owner_email, instance_id)
+    if not definition:
+        return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
+    try:
+        payload = parse_json_body(request) if request.body else {}
+    except ValidationError as exc:
+        return validation_error_response(exc)
+    expected_version = payload.get("bookingAdoptionVersion")
+    if "bookingAdoptionVersion" in payload and (not isinstance(expected_version, str) or not expected_version):
+        return JsonResponse({"detail": "A valid bookingAdoptionVersion is required."}, status=400)
+    family = migrated_review_family((definition.get("historicalReview") or {}).get("type"))
+    if (family not in {"MCM", "PR", "PR_SKILLS_RADAR"}
+            or not definition.get("migratedForm") or definition.get("readOnly")
+            or definition.get("previewOnly")
+            or (definition.get("templateSync") or {}).get("status") == "conflict"
+            or not initial_local_status(definition.get("sourceStatus"))):
+        return JsonResponse({"detail": "This review cannot adopt an existing meeting."}, status=409)
+    try:
+        with transaction.atomic():
+            # Same learner -> calendar -> overlay lock order as start/submit.
+            overlay = _owned_migrated_overlay(owner_email, definition, lock=True, lock_calendar=True)
+            # Recheck the full source/booking resolver under the learner lock;
+            # a second legacy appointment must not be hidden by a canonical key.
+            current = _imported_review_definition(owner_email, instance_id)
+            if (not current or current.get("readOnly") or not current.get("migratedForm")
+                    or current.get("previewOnly") or (current.get("booking") or {}).get("conflict")
+                    or (current.get("templateSync") or {}).get("status") == "conflict"
+                    or migrated_review_family((current.get("historicalReview") or {}).get("type")) != family
+                    or not initial_local_status(current.get("sourceStatus"))):
+                return JsonResponse({"detail": "The review or meeting association changed. Reload the review.",
+                                     "code": "BOOKING_CONFLICT"}, status=409)
+            if (not overlay or overlay.completed_at
+                    or overlay.learner_id != current["instance"]["learnerId"]
+                    or overlay.source_review_id != int(current["historicalReview"]["id"])
+                    or not snapshot_assignment_valid(overlay, family, current.get("migratedProgrammeKey"))
+                    or overlay.status not in {ImportedReviewInstance.STATUS_NOT_SCHEDULED,
+                                              ImportedReviewInstance.STATUS_SCHEDULED,
+                                              ImportedReviewInstance.STATUS_IN_PROGRESS}):
+                return JsonResponse({"detail": "The review changed. Reload it before linking the meeting."}, status=409)
+            if expected_version is not None and expected_version != _migrated_booking_adoption_version(overlay):
+                return JsonResponse({
+                    "detail": "This review changed in another session. Reopen it and review the latest answers before saving. Your unsaved text has been kept on screen.",
+                    "code": "ANSWER_CONFLICT",
+                }, status=409)
+            calendar = booking_for_overlay(overlay, lock=True)
+            if (not calendar or calendar.owner_email.casefold() != owner_email
+                    or calendar.event_key != (current.get("booking") or {}).get("eventKey")
+                    or calendar.event_type != migrated_booking_event_type(family)
+                    or calendar.status not in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_IN_PROGRESS}
+                    or calendar.sync_state != CoachCalendarEvent.SYNC_SYNCED
+                    or not calendar.graph_event_id or not calendar_record_has_launch_url(calendar)
+                    or calendar.scheduled_date is None or calendar.scheduled_time is None):
+                return JsonResponse({"detail": "A verified, synced meeting with a date and time is required.",
+                                     "code": "BOOKING_CONFLICT"}, status=409)
+            # Retries never regress an already scheduled/started review or
+            # alter answers, signatures, the source record or calendar identity.
+            if overlay.status == ImportedReviewInstance.STATUS_NOT_SCHEDULED:
+                overlay.status = ImportedReviewInstance.STATUS_SCHEDULED
+                overlay.save(update_fields=["status", "updated_at"])
+            # Return the checked content and its new answerVersion while the
+            # overlay is still locked, so a retry cannot accept a later edit.
+            return JsonResponse(_imported_review_definition(owner_email, instance_id))
+    except ReviewIdentityConflict as exc:
+        return JsonResponse({"detail": str(exc), "code": "BOOKING_CONFLICT"}, status=409)
 
 
 @coach_access_required
@@ -16098,6 +16273,10 @@ def coach_review_instance_meeting_summary(request, instance_id):
         attendance_tracker=snapshot["attendanceTracker"],
     )
     if not stored_coach_meeting_transcript_for_summary(record):
+        selection = coach_meeting_transcript_selection(record)
+        if selection['code'] == 'TRANSCRIPT_SESSION_AMBIGUOUS':
+            return summary_error(code=selection['code'],
+                detail='The transcript cannot be matched to one booked session. Your current Review answer has not been changed.', status=409)
         # This is the moment the .vtt upload exists for, so it says so: Teams
         # holds no transcript for a meeting that was moved, not recorded, or
         # still processing, and the coach usually has the file already.

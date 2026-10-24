@@ -275,6 +275,18 @@ class MigratedProgressCalculatorTests(SimpleTestCase):
             calculator.assert_not_called()
 
 
+def saved_progress_overlay(template, *, status="in-progress", **changes):
+    """Persisted-overlay shape for no-DB readers, including association/version data."""
+    values = dict(pk=7, learner_id=21, source_review_id=407,
+        owner_email="coach@example.invalid", event_key="imported-review:A-7",
+        template_snapshot=deepcopy(template), migrated_template=None, migrated_template_id=None,
+        answers={}, meeting_intelligence={}, progress_snapshot=None, status=status,
+        completed_at=timezone.now() if status == "completed" else None, updated_at=timezone.now(),
+        migrated_signatures=SimpleNamespace(all=lambda: []), signature_requirements={"employer": True})
+    values.update(changes)
+    return SimpleNamespace(**values)
+
+
 class MigratedProgressReadTests(SimpleTestCase):
     setUp = reader_fixtures.MigratedPreviewTests.setUp
     _patch = reader_fixtures.MigratedPreviewTests._patch
@@ -283,22 +295,23 @@ class MigratedProgressReadTests(SimpleTestCase):
 
     def test_initialized_get_is_null_or_exact_snapshot_without_calculation(self):
         self.view_as.return_value = False
-        row = list(self.cursor.fetchall.return_value[0])
-        row[3] = row[4] = "Progress Review"
-        self.cursor.fetchall.return_value = [tuple(row)]
-        saved = SimpleNamespace(learner_id=21, source_review_id=407, template_snapshot=self.definition_json,
-            migrated_template_id=None, answers={}, status="in-progress", completed_at=None, updated_at=timezone.now(),
-            migrated_signatures=SimpleNamespace(all=lambda: []), signature_requirements={"employer": True})
+        saved = saved_progress_overlay(self.definition_json)
         self.overlays.return_value.first.return_value = saved
         self._patch("coach_api.views.curriculum_review_instances.progress_review_rag_history", return_value=[])
         with patch.object(views, "build_progress_snapshot", side_effect=AssertionError("GET calculated")), \
              patch.object(service, "build_progress_snapshot", side_effect=AssertionError("GET calculated")), \
              patch.object(views, "_imported_review_progress_snapshot", side_effect=AssertionError("Initialized fallback")):
-            for snapshot in (None, SNAPSHOT):
-                saved.progress_snapshot = deepcopy(snapshot)
-                self.assertEqual(self._get()["progressSnapshot"], snapshot)
-                self.profile.completed_hours = 99999
-                self.assertEqual(self._get()["progressSnapshot"], snapshot)
+            for family in ("Progress Review", "Progress Review (+ Skills Radar)"):
+                row = list(self.cursor.fetchall.return_value[0])
+                row[3] = row[4] = family
+                self.cursor.fetchall.return_value = [tuple(row)]
+                for snapshot in (None, SNAPSHOT):
+                    with self.subTest(family=family, snapshot=bool(snapshot)):
+                        saved.progress_snapshot = deepcopy(snapshot)
+                        self.profile.completed_hours = 0
+                        self.assertEqual(self._get()["progressSnapshot"], snapshot)
+                        self.profile.completed_hours = 99999
+                        self.assertEqual(self._get()["progressSnapshot"], snapshot)
 
     def test_historical_progress_parser_remains_independent(self):
         expected = {"imported": "source text"}
@@ -308,10 +321,7 @@ class MigratedProgressReadTests(SimpleTestCase):
             parser.assert_called_once_with({"source": "untouched"})
 
     def test_completed_migrated_definition_offers_download_without_document_lookup(self):
-        saved = SimpleNamespace(learner_id=21, source_review_id=407, template_snapshot=self.definition_json,
-            migrated_template_id=None, answers={}, status="completed", completed_at=timezone.now(),
-            updated_at=timezone.now(), progress_snapshot=None,
-            migrated_signatures=SimpleNamespace(all=lambda: []), signature_requirements={"employer": False})
+        saved = saved_progress_overlay(self.definition_json, status="completed", signature_requirements={"employer": False})
         self.overlays.return_value.first.return_value = saved
         with patch("coach_api.models.MigratedReviewDocument.objects.filter", side_effect=AssertionError("Availability depends on stored document")), \
              patch.object(views, "_imported_review_progress_snapshot", side_effect=AssertionError("Live progress")):
@@ -350,16 +360,24 @@ class MigratedProgressPdfPartyTests(SimpleTestCase):
             self.assertIs(ensure_document(pdf_overlay("PR", "completed")), document)
 
     def test_party_detail_preserves_snapshot_and_removes_calculation_controls(self):
-        for role in ("learner", "employer"):
-            with self.subTest(role=role), \
-                 patch("coach_api.migrated_completion_views.authenticate_request", return_value=SimpleNamespace(role=role)), \
-                 patch("coach_api.migrated_completion_views._party_overlay", return_value=SimpleNamespace(owner_email=OWNER)), \
-                 patch.object(views, "_imported_review_definition", return_value={"migratedForm": True,
-                     "progressSnapshot": deepcopy(SNAPSHOT), "canCalculateProgress": True, "progressVersion": "v1"}), \
-                 patch.object(service, "build_progress_snapshot", side_effect=AssertionError("Party GET calculated")):
-                response = migrated_review_party_detail(RequestFactory().get("/"), "imported-review:test")
-                payload = json.loads(response.content)
-                self.assertEqual(payload["progressSnapshot"], SNAPSHOT)
-                self.assertTrue(payload["readOnly"])
-                self.assertFalse(payload["canCalculateProgress"])
-                self.assertNotIn("progressVersion", payload)
+        for family in ("PR", "PR_SKILLS_RADAR"):
+            template = {**FORM, "templateSource": {"family": family}}
+            overlay = saved_progress_overlay(template, status="completed", owner_email=OWNER)
+            for snapshot in (None, SNAPSHOT):
+                for role in ("learner", "employer"):
+                    with self.subTest(role=role, family=family, snapshot=bool(snapshot)), \
+                         patch("coach_api.migrated_completion_views.authenticate_request", return_value=SimpleNamespace(role=role)), \
+                         patch("coach_api.migrated_completion_views._party_overlay", return_value=overlay), \
+                         patch.object(views, "_imported_review_definition", return_value={"migratedForm": True,
+                             "progressSnapshot": deepcopy(snapshot), "canCalculateProgress": True, "progressVersion": "v1",
+                             "summaryBinding": {"suggestionText": "Coach suggestion"}, "answerVersion": "v1"}) as definition, \
+                         patch.object(service, "build_progress_snapshot", side_effect=AssertionError("Party GET calculated")):
+                        response = migrated_review_party_detail(RequestFactory().get("/"), overlay.event_key)
+                        self.assertEqual(response.status_code, 200)
+                        definition.assert_called_once_with(OWNER, overlay.event_key)
+                        payload = json.loads(response.content)
+                        self.assertEqual(payload["progressSnapshot"], snapshot)
+                        self.assertTrue(payload["readOnly"])
+                        self.assertFalse(payload["canCalculateProgress"])
+                        for key in ("progressVersion", "summaryBinding", "answerVersion"):
+                            self.assertNotIn(key, payload)
