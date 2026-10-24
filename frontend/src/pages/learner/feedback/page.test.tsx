@@ -100,6 +100,18 @@ describe('learner feedback categories', () => {
     expect(screen.getByText('/learner/feedback/delivery/21?category=lecture')).toBeVisible();
   });
 
+  it('explains the learner feedback details and limits response visibility to the Engagement Team', async () => {
+    vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [lecture] });
+    render(<MemoryRouter initialEntries={['/learner/feedback']}><LearnerFeedbackPage /></MemoryRouter>);
+
+    expect(await screen.findByRole('heading', { name: 'Helpful details before you submit' })).toBeVisible();
+    for (const detail of ['Related session/module name', 'Event date', 'Deadline to submit', 'Estimated time to complete', 'Who can view it', 'Why this feedback matters', 'Can you resubmit?', 'Can you ignore it?']) {
+      expect(screen.getByText(detail)).toBeVisible();
+    }
+    expect(screen.getAllByText(/Engagement Team/).length).toBeGreaterThan(0);
+    expect(screen.queryByText('Anonymous or named')).not.toBeInTheDocument();
+  });
+
   it('preserves learner preview and selected category when staff opens a lecture', async () => {
     Object.assign(state.account, { role: 'staff', subjectType: 'staff', subjectId: 8, displayName: 'Reviewer' });
     Object.assign(state.resolved, { kind: 'commercial', id: '125' });

@@ -162,12 +162,16 @@ function ActionRow({ form, onOpen }: { form: LearnerFeedbackListItem; onOpen: (f
 
 function HelpfulDetails() {
   const details = [
-    ['ri-book-open-line', 'Related learning', 'The session, module or review connected to each request.'],
-    ['ri-calendar-line', 'Relevant dates', 'See when the activity took place and any submission deadline.'],
-    ['ri-time-line', 'Progress is saved', 'Continue an in-progress response from where you left off.'],
-    ['ri-star-line', 'Why it matters', 'Your feedback helps improve teaching, support and learning.'],
+    ['ri-book-open-line', 'Related session/module name', 'Shows which module, lecture or event the feedback is about.'],
+    ['ri-calendar-line', 'Event date', 'The date the session, module activity or event took place.'],
+    ['ri-time-line', 'Deadline to submit', 'Feedback may be available for a limited time, so check the due date.'],
+    ['ri-timer-line', 'Estimated time to complete', 'Most feedback forms take 1–2 minutes to complete.'],
+    ['ri-team-line', 'Who can view it', 'Your response can be viewed by the Engagement Team.'],
+    ['ri-star-line', 'Why this feedback matters', 'Your feedback helps improve teaching, support and your learning experience.'],
+    ['ri-refresh-line', 'Can you resubmit?', 'Some feedback forms can be updated after submission when editing is enabled.'],
+    ['ri-forbid-line', 'Can you ignore it?', 'If a request is not relevant to you, contact the Engagement Team for help.'],
   ];
-  return <aside aria-labelledby="helpful-details-title" className="rounded-2xl border border-primary-100 bg-gradient-to-b from-primary-50/70 to-white p-5 shadow-sm xl:sticky xl:top-4"><div className="flex items-center gap-2 text-primary-800"><i className="ri-information-line text-xl" /><h2 id="helpful-details-title" className="font-heading text-sm font-bold">Helpful details before you submit</h2></div><div className="mt-4 space-y-4">{details.map(([icon, title, copy]) => <div key={title} className="flex gap-3"><i className={`${icon} mt-0.5 text-lg text-primary-600`} /><div><p className="text-xs font-bold text-foreground-800">{title}</p><p className="mt-0.5 text-[11px] leading-4 text-foreground-500">{copy}</p></div></div>)}</div></aside>;
+  return <aside aria-labelledby="helpful-details-title" className="rounded-2xl border border-primary-100 bg-gradient-to-b from-primary-50/70 to-white p-5 shadow-sm xl:sticky xl:top-4"><div className="flex items-center gap-2 text-primary-800"><i className="ri-information-line text-xl" /><h2 id="helpful-details-title" className="font-heading text-sm font-bold">Helpful details before you submit</h2></div><p className="mt-2 text-[11px] leading-4 text-foreground-500">Here’s what to look for when deciding whether to complete feedback.</p><div className="mt-4 space-y-4">{details.map(([icon, title, copy]) => <div key={title} className="flex gap-3"><i className={`${icon} mt-0.5 text-lg text-primary-600`} /><div><p className="text-xs font-bold text-foreground-800">{title}</p><p className="mt-0.5 text-[11px] leading-4 text-foreground-500">{copy}</p></div></div>)}</div></aside>;
 }
 
 function AllFeedback({ categories, activeCategory, forms, loading, search, statusFilter, totalForms, onCategoryChange, onOpen, onRefresh, onSearchChange, onStatusChange }: {
