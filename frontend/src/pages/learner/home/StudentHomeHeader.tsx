@@ -28,9 +28,9 @@ function AccountSettings() {
   </div>;
 }
 
-export function StudentHomeHeader({ name, homeHref, identity, events, loading, error, onRetry, supportHref = '/learner/monthly-coaching' }: {
+export function StudentHomeHeader({ name, homeHref, identity, events, loading, error, onRetry, feedbackEnabled = false, feedbackHref = '/learner/feedback', feedbackPendingCount = 0, supportHref = '/learner/monthly-coaching' }: {
   name: string; homeHref: string; identity: string; events: HomeEvent[];
-  loading: boolean; error: boolean; onRetry: () => void; supportHref?: string;
+  loading: boolean; error: boolean; onRetry: () => void; feedbackEnabled?: boolean; feedbackHref?: string; feedbackPendingCount?: number; supportHref?: string;
 }) {
   const { logout } = useAuth();
   const [profileOpen, setProfileOpen] = useState(false);
@@ -115,9 +115,14 @@ export function StudentHomeHeader({ name, homeHref, identity, events, loading, e
         <a className={`${styles.headerAction} ${styles.headerResource}`} href="https://kentbusinesscollege.com/learners/career-planner/">
           <Compass aria-hidden="true"/><span>Career Planner</span>
         </a>
-        <button type="button" className={`${styles.headerAction} ${styles.headerResource}`} aria-label="Feedback — coming soon" disabled>
+        {feedbackEnabled ? <Link to={feedbackHref} className={`${styles.headerAction} ${styles.headerResource}`}
+          aria-label={feedbackPendingCount ? `Feedback, ${feedbackPendingCount} pending` : 'Feedback'}>
+          <MessageSquare aria-hidden="true"/><span className={styles.headerResourceLabel}>Feedback
+            {feedbackPendingCount > 0 && <span className={styles.feedbackPending} aria-hidden="true">{feedbackPendingCount > 99 ? '99+' : feedbackPendingCount} pending</span>}
+          </span>
+        </Link> : <button type="button" className={`${styles.headerAction} ${styles.headerResource}`} aria-label="Feedback — coming soon" disabled>
           <MessageSquare aria-hidden="true"/><span className={styles.headerResourceLabel}>Feedback<span className={styles.comingSoon}>Coming soon</span></span>
-        </button>
+        </button>}
         <button type="button" className={styles.headerAction} aria-label="Help & Support" aria-haspopup="dialog"
           aria-expanded={panel === 'help'} onClick={event => openPanel('help', event.currentTarget)}>
           <CircleHelp aria-hidden="true"/><span className={styles.headerControlLabel}>Help &amp; Support</span>
