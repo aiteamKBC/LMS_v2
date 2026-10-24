@@ -92,6 +92,30 @@ it('shows a real zero count after an empty successful read', () => {
 });
 
 describe('review learner navigation and safe actions', () => {
+  it.each(['today', 'future'])('shows a booked Aptem PSP in upcoming reviews with its %s meeting link', timing => {
+    const date = timing === 'today' ? today : '2026-09-20';
+    const psp = session('imported-review:A-11', {
+      title: 'Personal Support Plan', scheduledDate: date, reviewSource: 'aptem', reviewId: '11',
+      calendarEventKey: 'booking:11', importedReview: {
+        id: '11', aptemReviewId: 'A-11', name: 'Personal Support Plan', type: 'Personal Support Plan',
+        reviewerName: 'Coach', plannedDate: date, plannedTime: null, completedDate: null,
+        status: 'Not Scheduled', extractionStatus: 'complete', detailsAvailable: false, sections: [],
+      },
+    });
+    const props = mount({ sessions: [psp], basePath: '/learner/reviews' }, '?view=all');
+    expect(screen.getByRole('button', { name: 'Upcoming (1)' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Past (0)' })).toBeVisible();
+    expect(screen.queryByText('Archived review')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('More options'));
+    expect(screen.getByRole('link', { name: timing === 'today' ? 'Join meeting' : 'Open meeting link' }))
+      .toHaveAttribute('href', psp.meetingLink);
+    const calendar = new URL(screen.getByRole('link', { name: 'View in calendar' }).getAttribute('href')!, 'http://localhost');
+    expect(Object.fromEntries(calendar.searchParams)).toEqual({ kind: 'apprenticeship', learner: '12', event: 'booking:11', date });
+    expect(screen.queryByRole('button', { name: /Book a time|Reschedule meeting/ })).not.toBeInTheDocument();
+    expect(props.onSchedule).not.toHaveBeenCalled();
+    expect(props.onAttend).not.toHaveBeenCalled();
+  });
+
   it('selects a future programme review in the summary card without opening its detail page', () => {
     const props = mount({ sessions: [
       session('attended', { scheduledDate: '2026-09-01', meetingOutcome: 'completed' }),

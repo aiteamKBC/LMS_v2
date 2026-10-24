@@ -34,15 +34,31 @@ describe('learner feedback categories', () => {
     Object.assign(state.resolved, { kind: 'apprenticeship', id: '61' });
   });
 
-  it('shows only the lecture queue to a production learner even if another category is requested', async () => {
+  it.each([['mid_module', 'mid-module', 'Mid-module Feedback'], ['end_module', 'end-module', 'End-module Feedback']] as const)(
+    'opens %s through its owned delivery and preserves its category', async (formType, category, title) => {
+      flags.fullFeedbackEnabled = false;
+      vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [{ ...lecture, formType, title, sessionTitle: title }] });
+      const user = userEvent.setup();
+      render(<MemoryRouter initialEntries={['/learner/feedback']}><LearnerFeedbackPage /><Location /></MemoryRouter>);
+      const types = await screen.findByRole('region', { name: 'Feedback types' });
+      await user.click(within(types).getByRole('button', { name: new RegExp(title) }));
+      await user.click(screen.getByRole('button', { name: new RegExp(title) }));
+      expect(screen.getByText(`/learner/feedback/delivery/21?category=${category}`)).toBeVisible();
+    },
+  );
+
+  it('exposes lecture and module categories in production while keeping other categories closed', async () => {
     flags.fullFeedbackEnabled = false;
     vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [
       lecture,
       { ...lecture, id: 6, deliveryId: null, eventRecipientId: 40, formType: 'post_event', title: 'Event feedback' },
     ] });
     render(<MemoryRouter initialEntries={['/learner/feedback?category=event']}><LearnerFeedbackPage /><Location /></MemoryRouter>);
-    expect(await screen.findByRole('region', { name: 'Martech - Thur' })).toBeVisible();
-    expect(screen.queryByRole('region', { name: 'Feedback types' })).not.toBeInTheDocument();
+    const types = await screen.findByRole('region', { name: 'Feedback types' });
+    expect(within(types).getByRole('button', { name: /Lecture Feedback/ })).toBeVisible();
+    expect(within(types).getByRole('button', { name: /Mid-module Feedback/ })).toBeVisible();
+    expect(within(types).getByRole('button', { name: /End-module Feedback/ })).toBeVisible();
+    expect(within(types).queryByRole('button', { name: /Event Feedback/ })).not.toBeInTheDocument();
     expect(screen.queryByText('Event feedback')).not.toBeInTheDocument();
   });
 

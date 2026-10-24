@@ -95,3 +95,41 @@ it.each(['csrf','invalid_interval','service_unavailable'])('does not retry or by
  expect(fetch).toHaveBeenCalledTimes(1);
  expect(JSON.parse(localStorage.getItem('kbc-reward-intervals:v1:'+session.sessionId)!).inFlight).not.toBeNull();
 });
+
+it('keeps newly measured intervals while a periodic upload is in flight and serializes Finish',async()=>{
+ const session=timing();observeRewardInterval(session,0,2000);
+ let release!:()=>void;
+ const bodies:any[]=[];let cumulative=0;
+ vi.stubGlobal('fetch',vi.fn(async(_url,init)=>{
+  const body=JSON.parse(init.body);bodies.push(body);
+  if(bodies.length===1)await new Promise<void>(resolve=>{release=resolve;});
+  const amount=body.intervals.reduce((sum:number,item:any)=>sum+item.endOffsetMs-item.startOffsetMs,0);
+  cumulative+=amount;
+  return {ok:true,json:async()=>({source:'lms',eventId:body.eventId,sessionId:session.sessionId,
+   sequence:body.sequence,status:'pending',observedMilliseconds:amount,cumulativeObservedMilliseconds:cumulative,duplicate:false})};
+ }));
+ const heartbeat=flushRewardObservations(session,'component','reading');
+ observeRewardInterval(session,2000,5000);
+ const finish=flushRewardObservations(session,'component','reading');
+ release();await Promise.all([heartbeat,finish]);
+ expect(cumulative).toBe(5000);
+ expect(bodies.map(x=>x.sequence)).toEqual([1,2]);
+ expect(JSON.parse(localStorage.getItem('kbc-reward-intervals:v1:'+session.sessionId)!).pending).toEqual([]);
+});
+
+it('preserves multi-day offsets for a renewed session and can confirm an empty final batch',async()=>{
+ const session={...timing(),persistent:true};synchronizeTrackingClock(session,172800000);
+ observeRewardInterval(session,0,2000);
+ let total=0;const bodies:any[]=[];
+ vi.stubGlobal('fetch',vi.fn(async(_url,init)=>{
+  const body=JSON.parse(init.body);bodies.push(body);
+  const amount=body.intervals.reduce((sum:number,item:any)=>sum+item.endOffsetMs-item.startOffsetMs,0);total+=amount;
+  return {ok:true,json:async()=>({source:'lms',eventId:body.eventId,sessionId:session.sessionId,
+   sequence:body.sequence,status:'pending',observedMilliseconds:amount,cumulativeObservedMilliseconds:total,duplicate:false})};
+ }));
+ await flushRewardObservations(session,'component','reading');
+ await flushRewardObservations(session,'component','reading',true);
+ expect(bodies[0].intervals).toEqual([{startOffsetMs:172800000,endOffsetMs:172802000}]);
+ expect(bodies[1].intervals).toEqual([]);
+ expect(total).toBe(2000);
+});

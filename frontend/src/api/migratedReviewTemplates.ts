@@ -1,9 +1,9 @@
 import type { ReviewSectionDefinition } from './reviewInstances';
 import { CurriculumApiError, fetchCurriculumJson } from '@/lib/curriculumApi';
 
-export const MIGRATED_FAMILIES = ['MCM', 'PR', 'PR_SKILLS_RADAR'] as const;
+export const MIGRATED_FAMILIES = ['MCM', 'PR', 'PR_SKILLS_RADAR', 'PSP'] as const;
 export type MigratedFamily = typeof MIGRATED_FAMILIES[number];
-export const FAMILY_LABELS: Record<MigratedFamily, string> = { MCM: 'MCM', PR: 'PR', PR_SKILLS_RADAR: 'PR + Skills Radar' };
+export const FAMILY_LABELS: Record<MigratedFamily, string> = { MCM: 'MCM', PR: 'PR', PR_SKILLS_RADAR: 'PR + Skills Radar', PSP: 'PSP' };
 export interface MigratedField {
   key: string; name?: string; title: string; aptemType: number; order: number;
   mandatory?: boolean; description?: string; options?: string[];
@@ -13,6 +13,7 @@ export interface MigratedField {
 }
 export interface MigratedDefinition {
   otjh?: { expectedHours: number; countsTowardsOtjh: boolean };
+  signatures?: Record<'advisor' | 'participant' | 'employer', boolean>;
   sections: { key: string; title: string; order: number; fields: MigratedField[] }[];
 }
 export interface MigratedTemplate {

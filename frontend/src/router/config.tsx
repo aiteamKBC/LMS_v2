@@ -524,6 +524,17 @@ const routes: RouteObject[] = [
     element: <EmployerPortalPage />,
   },
   {
+    // The two sidebar sections. Same page component, which reads the section
+    // from the path; the static segments outrank the :kind/:learnerId and
+    // documents patterns below, so those keep matching their own pages.
+    path: "/employers/:employerId/learners",
+    element: <EmployerPortalPage />,
+  },
+  {
+    path: "/employers/:employerId/reviews",
+    element: <EmployerPortalPage />,
+  },
+  {
     // Every document across the employer's learners.
     path: "/employers/:employerId/documents",
     element: <EmployerDocumentsPage />,
@@ -1114,6 +1125,10 @@ const routes: RouteObject[] = [
   },
   {
     path: "/curriculum/progress-transfers",
+    element: <Navigate to="/users/progress-transfers" replace />,
+  },
+  {
+    path: "/users/progress-transfers",
     element: <ProgressTransfersPage />,
   },
   {

@@ -110,8 +110,8 @@ def occurrence_order(row):
     return start.timestamp(), identity
 
 
-def detail_records(source, learner_profile_id, params):
-    page, size = pagination_params(params)
+def counted_history(source, learner_profile_id):
+    """All visible history, before pagination or display/report enrichment."""
     now = timezone.now()
     # Counts require all historical canonical evidence (including corrections,
     # confirmations and recovery). Future schedules and full-history DTOs are
@@ -151,6 +151,15 @@ def detail_records(source, learner_profile_id, params):
             awaiting_total += bool(awaiting_recording)
             history.append((row, status))
     history.sort(key=lambda item: occurrence_order(item[0]), reverse=True)
+    return history, {
+        'present': present, 'absent': counted_total - present, 'sessions': counted_total,
+        'attendanceRate': round(100 * present / counted_total) if counted_total else None,
+    }, awaiting_total
+
+
+def detail_records(source, learner_profile_id, params):
+    page, size = pagination_params(params)
+    history, summary, awaiting_total = counted_history(source, learner_profile_id)
     total = len(history)
     start = (page - 1) * size
     selected = history[start:start + size]
@@ -177,7 +186,6 @@ def detail_records(source, learner_profile_id, params):
         records.append(record)
     return {'attendanceMode': recorded_attendance.saved_delivery_mode(source.id),
             'awaitingRecording': awaiting_total,
-            'summary': {'present': present, 'absent': counted_total - present, 'sessions': counted_total,
-                        'attendanceRate': round(100 * present / counted_total) if counted_total else None},
+            'summary': summary,
             'records': records,
             'pagination': {'page': page, 'pageSize': size, 'total': total, 'hasMore': start + size < total}}

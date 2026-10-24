@@ -512,6 +512,8 @@ class FeedbackForm(models.Model):
         ('post_event', 'Post-event'), ('event_rsvp', 'Event RSVP'),
         ('post_mcm_review', 'MCM Feedback'),
         ('post_progress_review', 'Progress Review Feedback'),
+        ('mid_module', 'Mid-module Feedback'),
+        ('end_module', 'End-module Feedback'),
     ]
     DELIVERY_SCOPE_CHOICES = [('manual', 'Manual'), ('all_modules', 'All modules'), ('module', 'One module')]
 
@@ -596,7 +598,7 @@ class FeedbackAssignment(models.Model):
 
 
 class FeedbackDelivery(models.Model):
-    """One published post-lecture template delivered for one lecture occurrence."""
+    """A versioned template delivered for a lecture or module checkpoint."""
 
     STATUS_CHOICES = [('open', 'Open'), ('closed', 'Closed'), ('cancelled', 'Cancelled')]
 
@@ -641,7 +643,7 @@ class FeedbackDeliveryQuestion(models.Model):
 
 
 class FeedbackDeliveryRecipient(models.Model):
-    """A learner made eligible by finalized attendance for one delivery."""
+    """A learner eligible by lecture attendance or module assignment."""
 
     delivery = models.ForeignKey(FeedbackDelivery, on_delete=models.CASCADE, related_name='recipients', db_column='delivery_id')
     learner_id = models.CharField(max_length=100)
@@ -649,6 +651,9 @@ class FeedbackDeliveryRecipient(models.Model):
     programme = models.CharField(max_length=255, blank=True, default='')
     attendance_reference = models.CharField(max_length=255, blank=True, default='')
     assigned_at = models.DateTimeField(auto_now_add=True)
+    # Module checkpoints may move independently for learners who have not
+    # started a response. Lecture recipients continue using the delivery date.
+    available_at = models.DateTimeField(null=True, blank=True)
     due_date = models.DateTimeField(null=True, blank=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
 

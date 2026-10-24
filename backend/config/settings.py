@@ -469,13 +469,13 @@ PERFORMANCE_DIAGNOSTIC_ACCOUNT_IDS = frozenset(
 )
 PERFORMANCE_SAMPLE_RETENTION_DAYS = int(os.environ.get('PERFORMANCE_SAMPLE_RETENTION_DAYS', '14'))
 
-# Learner-facing feedback is controlled independently from Django's global DEBUG
-# mode. Staff authoring/reporting and token-scoped public event flows are separate.
+# Legacy feedback switches retained for deployment compatibility. Learner
+# feedback is currently local-only (DEBUG) in engagement_api.feedback;
+# these switches cannot enable it in production. Staff reporting is separate.
 LEARNER_FEEDBACK_ENABLED = (
     os.environ.get("LEARNER_FEEDBACK_ENABLED", "false").lower() == "true"
 )
-# Keep non-lecture learner feedback closed in production even when an existing
-# deployment already has the older, broad learner-feedback switch enabled.
+# Retained alongside the older broad switch; no production learner exception.
 LEARNER_NON_LECTURE_FEEDBACK_ENABLED = (
     os.environ.get("LEARNER_NON_LECTURE_FEEDBACK_ENABLED", "false").lower() == "true"
 )

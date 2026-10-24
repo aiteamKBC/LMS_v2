@@ -52,6 +52,21 @@ beforeEach(() => {
 afterEach(() => { clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('compact My Learning route', () => {
+  it('retries a failed initial catalogue read and replaces the error with real subjects', async () => {
+    let failed = true;
+    vi.mocked(fetch).mockImplementation(async input => String(input).includes('/certificates/')
+      ? reply({ template: null, csrfToken: '' })
+      : failed ? new Response(JSON.stringify({ error: 'Could not load your learning. Please try again.' }), { status: 400 })
+        : reply(makeCatalogue()));
+    route();
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText('Could not load your learning. Please try again.')).toBeVisible();
+    failed = false;
+    fireEvent.click(within(alert).getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByRole('heading', { name: 'One' })).toBeVisible();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it.each(['commercial', 'apprenticeship'])('uses one catalogue read for %s and preserves the visible module UI', async kind => {
     route(`/learner/my-learning/${kind}/7`);
     await screen.findByRole('heading', { name: 'One' });

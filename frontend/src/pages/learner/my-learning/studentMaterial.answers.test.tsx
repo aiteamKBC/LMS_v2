@@ -4,6 +4,8 @@ import { subjectRequest, type SubjectMaterial } from '@/api/studentActivity';
 import { StudentMaterial } from './StudentMaterial';
 
 vi.mock('@/api/studentActivity', () => ({ subjectRequest: vi.fn() }));
+vi.mock('@/components/feature/CompletionTimeDialog', () => ({ CompletionTimeDialog: ({ onSubmit }: { onSubmit: (at: string) => void }) =>
+  <button onClick={() => onSubmit('2026-10-21T10:00:00Z')}>Confirm completion time</button> }));
 
 function material(): SubjectMaterial {
   return {
@@ -27,7 +29,7 @@ async function open(data: SubjectMaterial) {
 }
 
 describe('previous quiz answers in the main quiz', () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => { vi.resetAllMocks(); localStorage.clear(); });
 
   it.each(['commercial', 'apprenticeship'])('saves an unfinished standalone quiz with its typed identity and reloads completion (%s)', async kind => {
     const data = { ...material(), completed: false, csrf_token: 'synthetic-csrf',
@@ -36,7 +38,7 @@ describe('previous quiz answers in the main quiz', () => {
     vi.mocked(subjectRequest).mockResolvedValueOnce(data);
     const onProgress = vi.fn();
     render(<StudentMaterial kind={kind} learnerId="123" groupId={50} activityId={60} catalogueQuiz onProgress={onProgress} />);
-    vi.mocked(subjectRequest).mockResolvedValueOnce({ attempt_id: 'new', definition: {} });
+    vi.mocked(subjectRequest).mockResolvedValueOnce({ attempt_id: 'new', definition: {}, timing: { trackingToken: 'synthetic-token', startedAt: new Date().toISOString(), countingMode: 'active_quiz' } });
     fireEvent.click(await screen.findByRole('button', { name: 'Start quiz' }));
     await screen.findByRole('button', { name: 'Submit answers' });
     fireEvent.click(screen.getByRole('checkbox', { name: 'First answer' }));
@@ -48,7 +50,7 @@ describe('previous quiz answers in the main quiz', () => {
     expect(subjectRequest).toHaveBeenCalledWith(`${base}/50/60/attempts/?catalogue_kind=quiz`, expect.objectContaining({ method: 'POST' }));
     expect(subjectRequest).toHaveBeenCalledWith(`${base}/50/60/attempts/new/?catalogue_kind=quiz`, expect.objectContaining({
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': 'synthetic-csrf' },
-      body: JSON.stringify({ answers: { '12': ['2'] }, reading_confirmed: false }),
+      body: JSON.stringify({ answers: { '12': ['2'] }, reading_confirmed: false, trackingToken: 'synthetic-token', timeTakenSeconds: 0 }),
     }));
     expect(screen.queryByRole('button', { name: /Start quiz|Try quiz again|Submit/ })).not.toBeInTheDocument();
   });
@@ -57,11 +59,34 @@ describe('previous quiz answers in the main quiz', () => {
     const quiz = await open(material());
     expect(quiz.getByRole('checkbox', { name: 'First answer' })).toBeChecked();
     expect(quiz.getByRole('checkbox', { name: 'First answer' })).toBeDisabled();
-    vi.mocked(subjectRequest).mockResolvedValueOnce({ attempt_id: 'new', definition: {} });
+    vi.mocked(subjectRequest).mockResolvedValueOnce({ attempt_id: 'new', definition: {}, timing: { trackingToken: 'synthetic-token', startedAt: new Date().toISOString(), countingMode: 'active_quiz' } });
     fireEvent.click(screen.getByRole('button', { name: 'Try quiz again' }));
     await screen.findByRole('button', { name: 'Submit answers' });
     expect(quiz.getByRole('checkbox', { name: 'First answer' })).not.toBeChecked();
     expect(quiz.getByRole('checkbox', { name: 'First answer' })).toBeEnabled();
+  });
+
+  it('keeps the timed attempt and answers when completion needs a corrected date', async () => {
+    await open({ ...material(), has_reading: true });
+    vi.mocked(subjectRequest).mockResolvedValueOnce({ attempt_id: 'new', definition: {},
+      timing: { trackingToken: 'synthetic-token', startedAt: new Date().toISOString(), countingMode: 'active_quiz' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Try quiz again' }));
+    await screen.findByRole('button', { name: 'Submit answers' });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'First answer' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'I have completed the reading material.' }));
+    vi.mocked(subjectRequest).mockRejectedValueOnce(Object.assign(new Error('Choose a completion time'),
+      { validation: { reason: 'outside_working_hours', holidayName: '' } }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit answers' }));
+    const confirm = await screen.findByRole('button', { name: 'Confirm completion time' });
+    expect(screen.getByRole('checkbox', { name: 'First answer' })).toBeChecked();
+    vi.mocked(subjectRequest).mockResolvedValueOnce({ completed: true, passed: true, score_percent: 100 })
+      .mockResolvedValueOnce({ ...material(), completed: true });
+    fireEvent.click(confirm);
+    await screen.findByText('Complete');
+    const submissions = vi.mocked(subjectRequest).mock.calls.filter(([url]) => url.includes('/attempts/new/'));
+    expect(submissions).toHaveLength(2);
+    expect(JSON.parse(submissions[1][1]!.body as string)).toMatchObject({ answers: { '12': ['2'] },
+      reading_confirmed: true, trackingToken: 'synthetic-token', declaredCompletedAt: '2026-10-21T10:00:00Z' });
   });
 
   it('prefers the latest submitted review and matches text despite reordered option IDs', async () => {

@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LearnerCalendarContent } from './page';
 import { bookLearnerCalendarSession, cancelLearnerCalendarSession, fetchLearnerCalendarEvents, fetchCalendarConnections, fetchPersonalCalendarAvailability, rescheduleLearnerCalendarSession, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { fetchReviewHistory } from '@/api/reviewHistory';
+import { fetchMeetingAttendance } from '@/api/meetingAttendance';
+import { meetingCalendarHref } from '../reviews/meetingBooking';
 
 vi.mock('@/hooks/useMyLearner', () => ({ useLinkedLearner: () => ({ kind: 'commercial', id: '125' }) }));
 vi.mock('@/pages/coach/shared/CoachMeetingArtifactsPanel', () => ({ CoachMeetingArtifactsPanel: () => <div>Meeting recordings</div> }));
@@ -23,6 +25,7 @@ vi.mock('@/api/learnerCalendar', async importOriginal => ({
   startCalendarOAuth: vi.fn(), connectCredentialCalendar: vi.fn(), disconnectPersonalCalendar: vi.fn(),
 }));
 vi.mock('@/api/reviewHistory', () => ({ fetchReviewHistory: vi.fn(async () => ({ reviews: [] })) }));
+vi.mock('@/api/meetingAttendance', () => ({ fetchMeetingAttendance: vi.fn(async () => ({ sessions: [] })) }));
 
 const now = new Date(2026, 8, 23, 9, 0, 0);
 const isoDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -51,6 +54,30 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('calendar event previews', () => {
+  it.each(['Personal Support Plan', 'Monthly Coaching Meeting', 'Progress Review', 'Progress Review (+ Skills Radar)'])(
+    'opens the saved %s from View in calendar without resolving a new booking', async type => {
+      const booked = event({
+        id: 'imported-review:A-41', eventKey: 'imported-review:A-41', calendarEventKey: 'booking:41',
+        reviewId: '41', reviewSource: 'aptem', source: type === 'Monthly Coaching Meeting' ? 'mcr' : 'progress-review',
+        title: type, reviewTypeName: type, sequence: 1, importedReview: {
+          id: '41', aptemReviewId: 'A-41', name: type, type, reviewerName: 'Assigned coach',
+          plannedDate: isoDate, plannedTime: null, completedDate: null, status: 'Not Scheduled',
+          extractionStatus: 'complete', detailsAvailable: false, sections: [],
+        },
+      });
+      const href = meetingCalendarHref(booked, { kind: 'commercial', id: '125' });
+      setup([booked], new URL(href, 'http://localhost').search);
+      const dialog = await screen.findByRole('dialog', { name: `${type} #1` });
+      expect(within(dialog).getByRole('link', { name: 'Join Meeting' })).toHaveAttribute('href', booked.meetingLink);
+      expect(screen.queryByText(/no longer available/)).not.toBeInTheDocument();
+      expect(fetchReviewHistory).not.toHaveBeenCalled();
+      expect(fetchMeetingAttendance).not.toHaveBeenCalled();
+      expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+      expect(rescheduleLearnerCalendarSession).not.toHaveBeenCalled();
+      expect(cancelLearnerCalendarSession).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(['progress-review', 'mcr'])('preserves the original Aptem %s slot and raw notes when rescheduling from the calendar', async source => {
     vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(-180);
     const booked = event({

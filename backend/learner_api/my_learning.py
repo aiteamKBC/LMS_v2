@@ -102,7 +102,7 @@ def course_facts(owner, records, courses):
     membership exclusions. One canonical row contributes hours once per course.
     """
     from .course_catalogue_display import retain_learner_schedule
-    definitions = canonical.query('''SELECT a.source_activity_id,a.source_activity_title,
+    definitions = canonical.query('''SELECT a.source_activity_id,a.source_activity_title,a.source_activity_type,
         a.source_section_ref,a.source_section_title,a.source_position AS position,
         c.source_course_ref,
         jsonb_build_object('quiz_id',a.source_payload->'quiz_id','activity_id',a.source_payload->'activity_id',
@@ -413,6 +413,14 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
         else:
             from .progress_demo import courses_for
             courses = courses_for(owner)
+    from .progress_transfer_store import read_state
+    transfers = read_state(source.pk)['items'] if owner.get('progress_transfer_active') else []
+    # Percentage-only approvals have no component lineage to revalidate. Keep
+    # every identity for modules with matches so duplicate provenance still
+    # prevents ambiguous completion, and retain pending/unapproved reads.
+    approved_modules = {item['moduleId'] for item in transfers if item.get('status') == 'approved'}
+    matched_modules = {item['moduleId'] for item in transfers
+        if item.get('status') == 'approved' and item.get('matchedComponents')}
     with connections['enrolment'].cursor() as cur:
         if resolved is not None:
             covers = resolved['covers']
@@ -431,7 +439,18 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
             replacements = read_replacement_courses(cur, current, source.pk)
             groups = read_previous_learning_groups(cur, source.pk, current) if purpose != 'search' else {}
         settings = {}
-        if replacements and purpose != 'search':
+        # Both imported modules and verified successors can receive a transfer.
+        # Approved lineage belongs to its saved destination even if the current
+        # source-course mapping is later removed; keep checking that component's
+        # identity against the same settings used by the activity reader.
+        settings_modules = sorted((
+            {key[8:] for key in {**imports, **replacements} if key[8:] not in approved_modules}
+            | matched_modules
+        ) & set(ids))
+        settings_ids = list(dict.fromkeys(c['componentId']
+            for c in [*native['components'], *native.get('retiredQuizComponents', [])]
+            if c.get('componentId') and c.get('moduleId') in settings_modules))
+        if settings_ids and purpose != 'search':
             with projection_stage('replacement_settings'):
                 cur.execute('''SELECT id,jsonb_build_object('legacySettings',
                     CASE WHEN jsonb_typeof(settings_json->'legacySettings')='object' THEN
@@ -439,8 +458,7 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
                                            'sourceMaterialKey',settings_json->'legacySettings'->'sourceMaterialKey')
                     ELSE settings_json->'legacySettings' END)
                     FROM curriculum.components WHERE module_catalogue_id=ANY(%s) AND id=ANY(%s)''',
-                    [[key[8:] for key in replacements],list(dict.fromkeys(c['componentId']
-                        for c in [*native['components'],*native.get('retiredQuizComponents',[])] if c.get('componentId')))])
+                    [settings_modules, settings_ids])
                 settings = dict(cur.fetchall())
         with projection_stage('activity_dates'):
             dates = read_builder_activity_dates(cur, ids, **({'resolved_metadata': resolved} if resolved is not None else {})) if subject_id is None and purpose != 'search' else {}
@@ -450,8 +468,7 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
     metadata = dict(covers=covers, builder_subjects=builder, current_subjects=current, activity_dates=dates,
         imported_courses=imports, replacement_courses=replacements, previous_learning_groups=groups,
         replacement_settings=settings, record_ids=record_ids, modules=modules)
-    from .progress_transfer_store import read_state
-    metadata['progress_transfers'] = read_state(source.pk)['items'] if owner.get('progress_transfer_active') else []
+    metadata['progress_transfers'] = transfers
     return assigned, ids, records, native, courses, definitions, done, started, hours, metadata, credits
 
 
@@ -695,6 +712,9 @@ def read_module(source, kind, owner, subject_id):
     if activity:
         activity['verification_status']='verified'
         activity['replacement_hours']={}
+    # native_done caches sets while calculating transferred progress. They are
+    # request-local lookup indexes, not part of the learner detail JSON contract.
+    detail.pop('_completion', None)
     return dict(subjectId=subject_id,detail=detail,activity=activity,metadata=clean_metadata,
         schedule=dict(modules=list(modules.values()),moduleLinks=clean_metadata['builder_subjects'],generatedAt=datetime.now(timezone.utc).isoformat()),sessions=sessions)
 
