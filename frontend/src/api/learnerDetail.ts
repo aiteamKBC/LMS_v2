@@ -63,6 +63,8 @@ export interface LearnerComponentEntry {
   ksbMappingCount?: number | null;      // 0 => component is not gated by the completion criteria
   ksbMappings?: ComponentKsbMapping[];  // the KSBs auto-credited when this component is completed
   componentId?: string | null;
+  /** Display-only grouping within the authored week; child IDs remain canonical. */
+  pointNumber?: number | null;
   type?: string | null;                 // master component type, e.g. 'video', 'live_session'
   description?: string | null;
   assignmentTopics?: import('@/lib/assignmentTopics').AssignmentTopic[];
@@ -71,6 +73,7 @@ export interface LearnerComponentEntry {
   assignmentBrief?: string | null;      // assignment brief authored as plain text (Module Builder)
   assignmentBriefHtml?: string | null;  // assignment brief authored as rich text (Week Builder)
   videoUrl?: string | null;             // present on video components authored with a URL
+  alternativeYouTubeUrl?: string | null;
   audioUrl?: string | null;             // podcast / reading voice-over
   contentHtml?: string | null;          // reading rich-text content
   lessonContentHtml?: string | null;    // video lesson content; activity read only

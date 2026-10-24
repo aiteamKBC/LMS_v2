@@ -12,7 +12,7 @@ export interface TimelineReview {
 }
 
 const statusLabels: Record<TimelineStatus, string> = {
-  planned: 'Planned', scheduled: 'Scheduled', 'in-progress': 'In Progress', 'awaiting-signature': 'Awaiting signature', attended: 'Attended', missed: 'Missed',
+  planned: 'Planned', scheduled: 'Scheduled', 'in-progress': 'In Progress', 'awaiting-signature': 'Awaiting signatures', attended: 'Attended', missed: 'Missed',
 };
 
 const icons = { planned: Circle, scheduled: CalendarDays, 'in-progress': Clock3, 'awaiting-signature': Signature, attended: Check, missed: X };

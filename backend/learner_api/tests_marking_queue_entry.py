@@ -49,10 +49,15 @@ class RequiresTutorValidationTests(SimpleTestCase):
 
 
 class QueueForMarkingTests(SimpleTestCase):
-    def _conn(self, *, existing=None, evidence=(), inserted=("sub-1",)):
+    def setUp(self):
+        self.atomic = patch.object(entry.transaction, "atomic").start()
+        self.audit = patch.object(entry, "record_submission_row").start()
+        self.addCleanup(patch.stopall)
+
+    def _conn(self, *, existing=None, evidence=(), inserted=("sub-1",), topic=None, assignment=True):
         cursor = MagicMock()
-        # select existing -> select evidence -> insert returning
-        cursor.fetchone.side_effect = [existing, inserted]
+        # Assignment topic lookup -> existing legacy -> evidence -> insert.
+        cursor.fetchone.side_effect = ([topic] if assignment else []) + [existing, inserted]
         cursor.fetchall.return_value = [(name,) for name in evidence]
         conn = MagicMock()
         conn.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
@@ -111,8 +116,9 @@ class QueueForMarkingTests(SimpleTestCase):
         )
 
         self.assertEqual(result, "sub-existing")
-        # Only the lookup ran; nothing was written.
-        self.assertEqual(cursor.execute.call_count, 1)
+        # Assignment lock and two lookups; no submission/audit write.
+        self.assertEqual(cursor.execute.call_count, 3)
+        self.audit.assert_not_called()
 
     def test_a_pending_submission_is_refreshed_rather_than_duplicated(self):
         # Same upsert key as the reflection flow, so re-finishing updates the
@@ -138,3 +144,35 @@ class QueueForMarkingTests(SimpleTestCase):
             component_id="COMP-1", kind="commercial", learner_id="101",
             context=self._context(),
         ))
+
+    def test_topic_submission_prevents_empty_queue_entries_on_completion_and_reward_retries(self):
+        for kind in ("commercial", "apprenticeship"):
+            for status in ("submitted_for_tutor_review", "accepted", "draft", "needs_revision", "rejected"):
+                for reward_retry in (False, True):
+                    with self.subTest(kind=kind, status=status, reward_retry=reward_retry):
+                        cursor = self._conn(topic=("topic-original", status))
+                        context = self._context()
+                        if reward_retry:
+                            context.update(sharedRewardProgressId=123, progressEntryId=123)
+                        result = entry.queue_for_marking(
+                            component_id="COMP-1", kind=kind, learner_id="101", context=context,
+                        )
+                        self.assertEqual(result, "topic-original" if status in ("accepted", "submitted_for_tutor_review") else None)
+                        self.atomic.assert_called_with(using="enrolment")
+                        self.assertIn("pg_advisory_xact_lock", cursor.execute.call_args_list[0].args[0])
+                        self.assertEqual(cursor.execute.call_args_list[0].args[1],
+                                         [f'["assignment-daily-hours", "{kind}", "101"]'])
+                        self.assertEqual(cursor.execute.call_count, 2)
+                        self.assertEqual(cursor.execute.call_args.args[1], [kind, "101", "COMP-1"])
+                        self.assertIn("assignment_topic_id <> ''", cursor.execute.call_args.args[0])
+                        self.assertIn("activity_type='assignment'", cursor.execute.call_args.args[0])
+                        self.audit.assert_not_called()
+
+    def test_non_assignment_evidence_completion_keeps_its_queue_path(self):
+        cursor = self._conn(evidence=["evidence.pdf"], assignment=False)
+        result = entry.queue_for_marking(component_id="COMP-1", kind="commercial", learner_id="101",
+                                         context={**self._context(), "activityType": "reading"})
+        self.assertEqual(result, "sub-1")
+        self.atomic.assert_not_called()
+        self.assertIn('["evidence.pdf"]', cursor.execute.call_args.args[1])
+        self.audit.assert_called_once_with(("sub-1",))

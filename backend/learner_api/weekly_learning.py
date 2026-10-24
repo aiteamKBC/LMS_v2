@@ -7,6 +7,7 @@ import re
 
 
 
+from .point_structure import point_projection
 from .identity import learner_profile_for_source
 from .selectors.assignments import effective_training_plan, request_preset_cache
 from .mappers import _s, flatten_training_plan, get_training_plan
@@ -97,6 +98,7 @@ def _weekly_component(c):
         "component": c.get("component"),
         "expectedOtjh": c.get("expectedOtjh"),
         "componentId": c.get("componentId"),
+        **point_projection(c),
         "moduleId": c.get("moduleId"),
         "weekId": c.get("weekId"),
         "type": c.get("type"),

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
-import { greeting, progressReviews, relativeReviewDate, reviewMatches, reviewState } from './employerDashboardData';
+import { greeting, orderReviewJourney, progressReviews, relativeReviewDate, reviewMatches, reviewState } from './employerDashboardData';
 
 const review = (values: Partial<LearnerCalendarEvent> = {}) => ({
   id: 'pr', eventKey: 'pr', source: 'progress-review', status: 'scheduled', sequence: 1,
@@ -19,6 +19,21 @@ describe('employer dashboard review facts', () => {
     expect(reviewMatches(events, 'month', '2026-10-21')).toBe(false);
     expect(reviewMatches(events, '30', '2026-10-21')).toBe(true);
     expect(reviewMatches(events, 'overdue', '2026-10-21')).toBe(false);
+  });
+  it('keeps the source plan order after rescheduling or completion, leaving undated reviews last', () => {
+    const later = Object.freeze(review({ eventKey: 'later', targetDate: '2026-11-01', scheduledDate: '2026-09-01', date: '2026-08-01', status: 'completed' }));
+    const first = Object.freeze(review({ eventKey: 'first', targetDate: '2026-10-01', scheduledDate: '2026-12-01' }));
+    const undated = Object.freeze(review({ eventKey: 'undated', targetDate: null, scheduledDate: '2026-01-01' }));
+    const events = Object.freeze([later, undated, first]);
+    expect(orderReviewJourney(events)).toEqual([first, later, undated]);
+    expect(events).toEqual([later, undated, first]);
+  });
+  it('uses occurrence or sequence to break planned-date ties and otherwise preserves source order', () => {
+    const tiedZ = review({ eventKey: 'z', sequence: 3 });
+    const tiedA = review({ eventKey: 'a', sequence: 3 });
+    const second = review({ eventKey: 'second', occurrenceNumber: 2, sequence: 1 });
+    const first = review({ eventKey: 'first', occurrenceNumber: 1, sequence: 20 });
+    expect(orderReviewJourney([tiedZ, second, tiedA, first])).toEqual([first, second, tiedZ, tiedA]);
   });
   it('distinguishes a signature task from an upcoming or completed review', () => {
     const event = review({ status: 'completed', employerSignatureRequired: true, employerSigned: false });
