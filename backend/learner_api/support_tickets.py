@@ -12,6 +12,7 @@ from django.views.decorators.csrf import csrf_protect
 
 from login.permissions import authenticate_request, _unauthenticated, _accesses_of
 from . import support_ticket_files as files
+from . import assistant_conversations
 
 TABLE = '"Learner".support_tickets'
 CATEGORIES = {'Technical Issue', 'Learning Support', 'Data / MIS', 'Coaching Query', 'Safeguarding Concern', 'Other'}
@@ -149,6 +150,13 @@ def collection(request, account, body, *, staff):
             raise TicketError('This request ID belongs to different attachments. Reload the ticket list before retrying.', 409)
         if inserted:
             files.save(prepared, staged)
+    # The LMS table is authoritative.  The secondary write is deliberately
+    # outside that transaction so a failure never rolls back a learner's ticket;
+    # the request remains retry-safe because the copy is keyed by ticket UUID.
+    try:
+        assistant_conversations.record_ticket(account=account, ticket=saved)
+    except assistant_conversations.AssistantConversationSyncError as exc:
+        raise TicketError(str(exc), 503) from exc
     return {'ticket': saved}
 
 
