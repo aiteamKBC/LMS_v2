@@ -161,6 +161,8 @@ export interface CoachMeetingArtifact {
   created_datetime?: string;
   end_datetime?: string;
   metadata?: Record<string, unknown>;
+  /** False when only metadata is saved and the portal cannot serve the content. */
+  content_available?: boolean;
 }
 
 export interface CoachMeetingAttendanceRecord {
@@ -313,6 +315,8 @@ export interface CoachMeetingArtifactsResponse {
     reason?: string;
     syncedAt?: string;
   };
+  /** Imported party portals read saved evidence; only a Coach can refresh Teams. */
+  resourceMode?: 'stored';
 }
 
 async function readJsonResponse<T>(response: Response): Promise<T> {
@@ -431,10 +435,9 @@ export async function fetchCoachMeetingArtifacts(
   signal?: AbortSignal,
   options: { refresh?: boolean } = {},
 ): Promise<CoachMeetingArtifactsResponse> {
-  const query = options.refresh ? '?refresh=1' : '';
   const response = await coachFetch(
-    `/coach_api/coach/timetable/events/${encodeURIComponent(eventKey)}/artifacts${query}`,
-    { signal },
+    `/coach_api/coach/timetable/events/${encodeURIComponent(eventKey)}/artifacts`,
+    { signal, ...(options.refresh ? { method: 'POST' } : {}) },
   );
   return readJsonResponse<CoachMeetingArtifactsResponse>(response);
 }

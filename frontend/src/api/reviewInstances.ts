@@ -173,6 +173,7 @@ export interface ReviewInstanceFormDefinition {
   summaryOnly?: boolean;
   migratedForm?: boolean;
   answerVersion?: string;
+  bookingAdoptionVersion?: string;
   reviewRevision?: number;
   reopenHistory?: Array<{
     number: number; reopenedAt: string; reasonCode: string; note: string;
@@ -395,6 +396,15 @@ export async function startMigratedReview(instanceId: string) {
     body: JSON.stringify({ status: 'in-progress' }),
   });
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
+}
+
+export async function adoptMigratedReviewBooking(instanceId: string, signal?: AbortSignal, bookingAdoptionVersion?: string) {
+  return readJsonResponse<ReviewInstanceFormDefinition>(await coachFetch(`${instanceUrl(instanceId)}/adopt-booking`, {
+    method: 'POST', signal,
+    ...(bookingAdoptionVersion !== undefined ? {
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookingAdoptionVersion }),
+    } : {}),
+  }));
 }
 
 export async function bookMigratedReview(instanceId: string, slot: {

@@ -7,6 +7,7 @@
  * booking or offer one the server refuses.
  */
 import {
+  adoptMigratedReviewBooking,
   fetchReviewInstanceForm,
   initializeMigratedReview,
   type ReviewInstanceFormDefinition,
@@ -24,6 +25,21 @@ export function canInitializeMigratedReview(data: ReviewInstanceFormDefinition):
     && !data.instance.completedAt;
 }
 
+/** Adopt only the existing booking approved by the server, never create one. */
+export async function adoptExistingMigratedMeeting(
+  data: ReviewInstanceFormDefinition,
+  options: { viewingAsCoach: boolean; signal?: AbortSignal },
+): Promise<ReviewInstanceFormDefinition> {
+  if (options.viewingAsCoach || options.signal?.aborted || data.source !== 'aptem'
+    || !data.migratedForm || data.readOnly || data.previewOnly || data.instance.completedAt
+    || data.templateSync?.status === 'conflict'
+    || !['aptem_mcm', 'aptem_progress_review'].includes(data.template.reviewTypeCode || '')
+    || data.localStatus !== 'not-scheduled'
+    || !data.booking?.canAttach || !data.booking.booked || data.booking.conflict
+    || data.booking.syncState !== 'synced') return data;
+  return adoptMigratedReviewBooking(data.instance.id, options.signal);
+}
+
 /** Read one imported review, preparing its form for the assigned coach.
  *
  * Mirrors the Review workspace: opening an eligible import initializes it, so
@@ -34,14 +50,30 @@ export function canInitializeMigratedReview(data: ReviewInstanceFormDefinition):
  */
 export async function loadImportedReviewForBooking(
   instanceId: string,
-  options: { viewingAsCoach: boolean; signal?: AbortSignal },
+  options: {
+    viewingAsCoach: boolean; signal?: AbortSignal;
+    onAdopted?: (data: ReviewInstanceFormDefinition) => void;
+    onAdoptionError?: (error: unknown) => void;
+  },
 ): Promise<ReviewInstanceFormDefinition> {
-  const data = await fetchReviewInstanceForm(instanceId, options.signal);
-  if (options.viewingAsCoach || !canInitializeMigratedReview(data)) return data;
+  let data = await fetchReviewInstanceForm(instanceId, options.signal);
+  if (options.viewingAsCoach) return data;
+  if (canInitializeMigratedReview(data)) {
+    try {
+      await initializeMigratedReview(data.instance.id);
+    } catch {
+      return data;
+    }
+    data = await fetchReviewInstanceForm(instanceId, options.signal);
+  }
+  let updated: ReviewInstanceFormDefinition;
   try {
-    await initializeMigratedReview(data.instance.id);
-  } catch {
+    updated = await adoptExistingMigratedMeeting(data, options);
+  } catch (error) {
+    if (options.signal?.aborted || !options.onAdoptionError) throw error;
+    options.onAdoptionError(error);
     return data;
   }
-  return fetchReviewInstanceForm(instanceId, options.signal);
+  if (updated !== data && !options.signal?.aborted) options.onAdopted?.(updated);
+  return updated;
 }

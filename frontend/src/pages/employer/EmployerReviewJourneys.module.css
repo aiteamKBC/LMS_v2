@@ -45,6 +45,9 @@
 .timeline [data-status='scheduled'] .status { color: #385ba5; background: #edf2ff; }
 .timeline [data-status='in-progress'] .status,
 .timeline [data-status='signatures'] .status { color: #8b5a0e; background: #fff2d8; }
+/* The review that is due next carries the outline so the employer can spot whose turn it is. */
+.timeline .review[aria-current] .reviewBody { border-color: var(--purple); box-shadow: 0 0 0 1px var(--purple), 0 4px 14px #7937ef1a; }
+.timeline .review[aria-current] .marker { border-color: var(--purple); color: var(--purple); }
 .notice, .error { display: flex; align-items: center; gap: 10px; padding: 26px 24px; color: var(--muted); font-size: 13px; line-height: 1.6; }
 .error { flex-wrap: wrap; color: #a22a50; }
 .error p { flex: 1 1 200px; }
@@ -91,3 +94,5 @@
 :global([data-theme='dark']) .timeline [data-status='in-progress'] .status,
 :global([data-theme='dark']) .timeline [data-status='signatures'] .status { color: #f8d68c; background: #4b3d26; }
 :global([data-theme='dark']) .error { color: #ffb1ce; }
+:global([data-theme='dark']) .timeline .review[aria-current] .reviewBody { border-color: #a97dff; box-shadow: 0 0 0 1px #a97dff; }
+:global([data-theme='dark']) .timeline .review[aria-current] .marker { border-color: #a97dff; color: #c6a8ff; }

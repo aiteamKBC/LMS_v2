@@ -7,8 +7,8 @@ import * as api from '@/api/reviewInstances';
 import type { CoachMeetingArtifactsResponse, MigratedSummaryBinding } from './calendarEvents';
 
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { user: { fullName: 'Synthetic coach' } } }) }));
-const identity = vi.hoisted(() => ({ viewAs: false }));
-vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => ({ email: 'coach@example.invalid', isInitialized: true, isViewingAsCoach: identity.viewAs }) }));
+const identity = vi.hoisted(() => ({ viewAs: false, email: 'coach@example.invalid' }));
+vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => ({ email: identity.email, isInitialized: true, isViewingAsCoach: identity.viewAs }) }));
 vi.mock('@/api/reviewInstances', async original => ({
   ...await original<typeof import('@/api/reviewInstances')>(),
   fetchReviewInstanceForm: vi.fn(), fetchMigratedReviewIntelligence: vi.fn(), saveReviewInstanceAnswers: vi.fn(),
@@ -43,6 +43,7 @@ function mount() { return render(<ReviewInstanceModal instanceId={id} onClose={v
 beforeEach(() => {
   vi.clearAllMocks();
   identity.viewAs = false;
+  identity.email = 'coach@example.invalid';
   vi.mocked(api.fetchReviewInstanceForm).mockResolvedValue(definition());
   vi.mocked(api.fetchMigratedReviewIntelligence).mockResolvedValue(result());
   vi.mocked(api.saveReviewInstanceAnswers).mockResolvedValue({ ...definition(), answerVersion: 'v3' });
@@ -439,5 +440,109 @@ describe('bound migrated review answers', () => {
     expect(screen.queryByRole('button', { name: 'Generate from Teams' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Upload Transcript' })).not.toBeInTheDocument();
     expect(document.querySelector('input[type="file"]')).not.toBeInTheDocument();
+  });
+});
+
+
+describe('summary request ownership', () => {
+  it('finishes a pending generation while navigating steps within the same review', async () => {
+    const saved = definition();
+    saved.sections.push({ id: 'next', title: 'Next discussion', enabled: true, displayOrder: 1, estimatedMinutes: 0,
+      fields: [{ id: 'next-note', title: 'Next note', fieldType: 'text', required: false, displayOrder: 0, configuration: {} }] });
+    vi.mocked(api.fetchReviewInstanceForm).mockResolvedValue(saved);
+    let resolveGeneration!: (value: CoachMeetingArtifactsResponse) => void;
+    const pending = new Promise<CoachMeetingArtifactsResponse>(resolve => { resolveGeneration = resolve; });
+    vi.mocked(api.fetchMigratedReviewIntelligence).mockImplementation(async (_key, _signal, options) => options?.refresh ? pending : result());
+    render(<ReviewInstanceModal instanceId={id} onClose={vi.fn()} presentation="page" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate from Teams' }));
+    await waitFor(() => expect(api.fetchMigratedReviewIntelligence).toHaveBeenCalledWith(id, undefined, { refresh: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next step' }));
+    expect(screen.queryByRole('button', { name: 'Generate from Teams' })).not.toBeInTheDocument();
+    await act(async () => { resolveGeneration({ ...result({ fieldKey: 'recap', state: 'AI_POPULATED_UNEDITED', generationStatus: 'ready' }),
+      answerVersion: 'generated-version', reviewAnswers: { recap: 'Current review summary', other: 'Existing other answer' } }); });
+    expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
+    expect(screen.getByRole('textbox', { name: 'Discussion record' })).toHaveValue('Current review summary');
+  });
+
+  it.each(['aptem_mcm', 'aptem_progress_review'])('allows Generate for a verified legacy %s booking with a different calendar key', async family => {
+    const saved = definition();
+    saved.template.reviewTypeCode = family;
+    saved.booking = { ...saved.booking!, eventKey: 'legacy-calendar:42' };
+    vi.mocked(api.fetchReviewInstanceForm).mockResolvedValue(saved);
+    mount();
+    const generate = await screen.findByRole('button', { name: 'Generate from Teams' });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Check Session' })).toBeEnabled());
+    expect(generate).toBeEnabled();
+  });
+
+  it.each(['teams', 'upload', 'check'].flatMap(source => ['review', 'coach', 'view-as'].flatMap(target =>
+    ['success', 'failure'].map(outcome => ({ source, target, outcome })),
+  )))('ignores a late $source $outcome after switching $target', async ({ source, target, outcome }) => {
+    let resolveGeneration!: (value: CoachMeetingArtifactsResponse) => void;
+    let rejectGeneration!: (reason: Error) => void;
+    const pending = new Promise<CoachMeetingArtifactsResponse>((resolve, reject) => {
+      resolveGeneration = resolve;
+      rejectGeneration = reject;
+    });
+    vi.mocked(api.fetchMigratedReviewIntelligence).mockImplementation(async (_key, _signal, options) => options?.refresh ? pending : result());
+    vi.mocked(api.uploadMigratedSummaryTranscript).mockReturnValue(pending);
+    const view = mount();
+    await screen.findByRole('textbox', { name: 'Discussion record' });
+    if (source !== 'upload') {
+      const action = await screen.findByRole('button', { name: source === 'check' ? 'Check Session' : 'Generate from Teams' });
+      await waitFor(() => expect(action).toBeEnabled());
+      fireEvent.click(action);
+      await waitFor(() => expect(api.fetchMigratedReviewIntelligence).toHaveBeenCalledWith(id, undefined, { refresh: true }));
+    } else {
+      fireEvent.change(screen.getByLabelText('Select migrated review transcript'), {
+        target: { files: [new File(['Synthetic transcript'], 'meeting.txt', { type: 'text/plain' })] },
+      });
+      await waitFor(() => expect(api.uploadMigratedSummaryTranscript).toHaveBeenCalledOnce());
+    }
+    const next = definition();
+    if (target === 'review') next.instance = { ...next.instance, id: 'imported-review:another' };
+    if (target === 'coach') identity.email = 'another-coach@example.invalid';
+    if (target === 'view-as') {
+      identity.viewAs = true;
+      next.readOnly = true;
+    }
+    next.answerVersion = 'another-version';
+    next.sections[0].fields[0].answer = 'Second review summary';
+    next.sections[0].fields[1].answer = 'Second review other answer';
+    vi.mocked(api.fetchReviewInstanceForm).mockResolvedValue(next);
+    view.rerender(<ReviewInstanceModal instanceId={next.instance.id} onClose={vi.fn()} />);
+    await screen.findByDisplayValue('Second review summary');
+    await act(async () => {
+      if (outcome === 'failure') rejectGeneration(new Error('Old request failed'));
+      else resolveGeneration({ ...result({ fieldKey: 'recap', state: 'AI_POPULATED_UNEDITED', generationStatus: 'ready' }),
+        answerVersion: 'first-review-generated-version', reviewAnswers: { recap: 'First review generated summary', other: 'First review other answer' } });
+    });
+    expect(screen.getByRole('textbox', { name: 'Discussion record' })).toHaveValue('Second review summary');
+    expect(screen.queryByText(/Old request failed/)).not.toBeInTheDocument();
+    if (target === 'view-as') {
+      expect(screen.getByRole('textbox', { name: 'Discussion record' })).toBeDisabled();
+      expect(api.saveReviewInstanceAnswers).not.toHaveBeenCalled();
+      return;
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(api.saveReviewInstanceAnswers).toHaveBeenCalled());
+    expect(api.saveReviewInstanceAnswers).toHaveBeenCalledWith(next.instance.id,
+      expect.objectContaining({ recap: 'Second review summary', other: 'Second review other answer' }),
+      expect.objectContaining({ answerVersion: 'another-version' }));
+  });
+
+  it('distinguishes a transcript fetch failure from a missing transcript', async () => {
+    vi.mocked(api.fetchMigratedReviewIntelligence).mockImplementation(async (_key, _signal, options) => options?.refresh
+      ? { ...result({ fieldKey: 'recap', state: 'NEVER_POPULATED', generationStatus: 'unavailable' }),
+        answerVersion: 'fetch-failed-version', reviewAnswers: { other: 'Existing other answer' },
+        intelligence: { ...result().intelligence!, errorCodes: ['TRANSCRIPT_FETCH_FAILED'] } }
+      : result());
+    mount();
+    const action = await screen.findByRole('button', { name: 'Generate from Teams' });
+    await act(async () => { fireEvent.click(action); });
+    expect(await screen.findByRole('alert')).toHaveTextContent('The Teams transcript could not be fetched.');
+    expect(screen.queryByText(/No transcript was found/)).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Discussion record' })).toBeEnabled();
   });
 });

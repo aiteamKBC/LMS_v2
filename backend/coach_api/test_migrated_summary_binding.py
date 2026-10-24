@@ -1,6 +1,8 @@
 """Synthetic binding/persistence and ordered race tests; Graph and AI are mocked."""
 from copy import deepcopy
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
+from django.conf import settings
 from inspect import unwrap
 from io import BytesIO
 import json
@@ -106,17 +108,32 @@ class MigratedBindingFlowTests(TestCase):
         self.snapshot = {"artifacts": [], "attendanceReports": [], "attendanceTracker": {"tracker": []},
             "attendance": {"reports": [], "records": []}, "errors": [], "partial": False}
 
-    def check(self, *, summary=None, transcript="Synthetic transcript", ai_error=None, during_fetch=None, snapshot=None):
-        def fetch(_record):
+    def check(self, *, summary=None, transcript="Synthetic transcript", ai_error=None, during_fetch=None, during_generation=None, snapshot=None):
+        def fetch(_record, *, target_error_handler, transcript_collection_fetcher):
+            self.assertIs(target_error_handler, intelligence._graph_target_failure)
+            self.assertIs(transcript_collection_fetcher, intelligence._transcript_collection)
             if during_fetch:
                 during_fetch()
-            return deepcopy(snapshot or self.snapshot), None, 200
+            current = deepcopy(snapshot or self.snapshot)
+            if transcript and not current['artifacts']:
+                # The transcript double must include the evidence used to select its session.
+                start = datetime.combine(self.calendar.scheduled_date, self.calendar.scheduled_time, ZoneInfo(settings.TIME_ZONE))
+                current['artifacts'] = [{'artifact_type': 'transcript', 'graph_artifact_id': 'artifact-one',
+                    'created_datetime': start.isoformat(), 'end_datetime': (start + timedelta(minutes=20)).isoformat(),
+                    'call_id': 'synthetic-call'}]
+            return current, None, 200
+        def generate(*_):
+            if during_generation:
+                during_generation()
+            if ai_error:
+                raise ai_error
+            return summary or {"overview": "Original AI facts"}, "test-model"
         with patch.object(intelligence, "_coach_review", return_value=(OWNER, self.definition)), \
              patch.object(views, "fetch_coach_meeting_graph_snapshot", side_effect=fetch), \
              patch.object(views, "persist_coach_meeting_snapshots", return_value={"stored": True}), \
              patch.object(views, "stored_coach_meeting_snapshot", return_value=self.snapshot), \
              patch.object(views, "stored_coach_meeting_transcript_for_summary", return_value={"artifactId": "artifact-one", "text": transcript} if transcript else None), \
-             patch.object(views, "openai_meeting_summary", side_effect=ai_error, return_value=(summary or {"overview": "Original AI facts"}, "test-model")) as ai:
+             patch.object(views, "openai_meeting_summary", side_effect=generate) as ai:
             response = unwrap(intelligence.migrated_review_check_session)(self.factory.post("/"), self.overlay.event_key)
         self.overlay.refresh_from_db()
         return response, ai
@@ -148,6 +165,23 @@ class MigratedBindingFlowTests(TestCase):
         self.assertEqual(self.overlay.template_snapshot, before)
         self.assertEqual(self.overlay.status, "in-progress")
         ai.assert_called_once()
+
+    def test_changed_graph_target_cannot_reuse_suggestion_or_overwrite_saved_answer(self):
+        self.check()
+        saved = deepcopy(self.overlay.answers)
+        original = deepcopy(self.overlay.meeting_intelligence['summary'])
+        self.calendar.graph_event_id = 'replacement-event'
+        self.calendar.save(update_fields=['graph_event_id'])
+        response, ai = self.check()
+        data = json.loads(response.content)
+        self.assertEqual(response.status_code, 207)
+        self.assertIn('SUMMARY_SESSION_MISMATCH', data['intelligence']['errorCodes'])
+        self.assertIsNone(data['meetingSummary'])
+        self.assertNotIn('suggestionText', data['summaryBinding'])
+        self.assertFalse(data['summaryBinding'].get('replacementAvailable', False))
+        self.assertEqual(self.overlay.answers, saved)
+        self.assertEqual(self.overlay.meeting_intelligence['summary'], original)
+        ai.assert_not_called()
 
     def test_zero_binding_old_snapshot_is_not_retrofitted(self):
         self.overlay.template_snapshot["sections"][0]["fields"][0].pop("semanticKey")
@@ -249,8 +283,10 @@ class MigratedBindingFlowTests(TestCase):
 
     def test_transcript_error_preserves_existing_answer(self):
         self.save({"recap": "Coach answer"})
+        start = datetime.combine(self.calendar.scheduled_date, self.calendar.scheduled_time, ZoneInfo(settings.TIME_ZONE))
         snapshot = {**self.snapshot, "errors": ["Failed to get transcripts"], "artifacts": [
-            {"artifact_type": "transcript", "transcript_fetch_error": "unavailable"}]}
+            {"artifact_type": "transcript", "graph_artifact_id": "artifact-one", "created_datetime": start.isoformat(),
+             "end_datetime": (start + timedelta(minutes=20)).isoformat(), "transcript_fetch_error": "unavailable"}]}
         response, ai = self.check(snapshot=snapshot, transcript=None)
         self.assertEqual(response.status_code, 207)
         ai.assert_not_called()

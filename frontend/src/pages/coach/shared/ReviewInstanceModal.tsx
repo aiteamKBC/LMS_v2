@@ -10,6 +10,7 @@ import { renderImportedSection } from '@/pages/learner/reviews/imported/renderIm
 import { hasImportedProgress } from '@/pages/learner/reviews/imported/presentation';
 import { ImportedValue } from '@/pages/learner/reviews/imported/ImportedReviewSection';
 import {
+  adoptMigratedReviewBooking,
   bookMigratedReview,
   rescheduleMigratedReview,
   calculateReviewInstanceProgress,
@@ -42,7 +43,7 @@ import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { MigratedMeetingIntelligence } from './MigratedMeetingIntelligence';
 import { MigratedSummaryActions } from './MigratedSummaryActions';
 import type { CoachMeetingArtifactsResponse } from './calendarEvents';
-import { canInitializeMigratedReview } from './importedReviewBooking';
+import { adoptExistingMigratedMeeting, canInitializeMigratedReview } from './importedReviewBooking';
 
 const isAbortError = (err: unknown): boolean => err instanceof DOMException && err.name === 'AbortError';
 
@@ -217,12 +218,20 @@ function reviewTypeLabel(definition: ReviewInstanceFormDefinition) {
  * only reads/writes the Review's own answers via the review instance API;
  * the calendar event it was opened from is untouched here.
  */
-export function ReviewInstanceModal({
+export function ReviewInstanceModal(props: Omit<Parameters<typeof ReviewInstanceContent>[0], 'coachIdentity'>) {
+  const coachIdentity = useCoachIdentity();
+  // Async form callbacks belong to this review and coach, even across step changes.
+  return <ReviewInstanceContent key={`${props.instanceId}:${coachIdentity.email}:${coachIdentity.isViewingAsCoach}`}
+    {...props} coachIdentity={coachIdentity} />;
+}
+
+function ReviewInstanceContent({
   event,
   instanceId,
   onClose,
   onStatusChanged,
   presentation = 'modal',
+  coachIdentity,
 }: {
   /** Only what the header shows -- deliberately structural so the timetable,
    *  meetings and progress-review pages can each pass their own event type. */
@@ -241,9 +250,9 @@ export function ReviewInstanceModal({
   onStatusChanged?: (status: string) => void;
   /** Page mode reuses the same form lifecycle without modal chrome. */
   presentation?: 'modal' | 'page';
+  coachIdentity: ReturnType<typeof useCoachIdentity>;
 }) {
   const { auth } = useAuth();
-  const coachIdentity = useCoachIdentity();
   const isViewingAsCoach = coachIdentity.isViewingAsCoach;
   const [definition, setDefinition] = useState<ReviewInstanceFormDefinition | null>(null);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
@@ -253,7 +262,13 @@ export function ReviewInstanceModal({
   const progressRequestRef = useRef(false);
   const [checkingSession, setCheckingSession] = useState(false);
   const [migratedIntelligenceRevision, setMigratedIntelligenceRevision] = useState(0);
+  const reviewActive = useRef(true);
+  useEffect(() => {
+    reviewActive.current = true;
+    return () => { reviewActive.current = false; };
+  }, []);
   const onMigratedCheckComplete = useCallback((result: CoachMeetingArtifactsResponse) => {
+    if (!reviewActive.current) return;
     if (result.progressVersion) {
       setDefinition((current) => current ? { ...current, progressVersion: result.progressVersion } : current);
     }
@@ -276,6 +291,7 @@ export function ReviewInstanceModal({
     setDefinition(current => current ? { ...current, answerVersion: result.answerVersion, summaryBinding: result.summaryBinding } : current);
   }, []);
   const onMigratedSummaryComplete = useCallback((result: CoachMeetingArtifactsResponse) => {
+    if (!reviewActive.current) return;
     onMigratedCheckComplete(result);
     // A field-level Teams check also refreshes attendance/artifacts. Reload the
     // panel's local snapshot without another Graph or AI request.
@@ -366,6 +382,13 @@ export function ReviewInstanceModal({
             setError(err instanceof Error ? `Unable to initialize this migrated review: ${err.message}` : 'Unable to initialize this migrated review.');
           }
         }
+        try {
+          data = await adoptExistingMigratedMeeting(data, { viewingAsCoach: isViewingAsCoach, signal: controller.signal });
+        } catch (err) {
+          if (!active || isAbortError(err)) return;
+          setError(err instanceof Error ? err.message : 'Unable to link the existing meeting. Retry below.');
+        }
+        if (!active) return;
         setDefinition(data);
         const initialAnswers: Record<string, unknown> = {};
         for (const field of flattenReviewFields(data.sections)) {
@@ -650,17 +673,23 @@ export function ReviewInstanceModal({
     setSaving(true);
     setError(null);
     try {
+      if (definition.booking.canAttach && !definition.bookingAdoptionVersion) {
+        throw new Error('Reopen this review before linking the meeting. Your unsaved text has been kept on screen.');
+      }
       const slot = {
         scheduledDate: definition.booking.canAttach ? definition.booking.scheduledDate || '' : bookingDate,
         scheduledTime: definition.booking.canAttach ? definition.booking.scheduledTime || '' : bookingTime,
         durationMinutes: definition.booking.canAttach ? definition.booking.durationMinutes || 60 : bookingDuration,
         timezoneOffsetMinutes: new Date().getTimezoneOffset(),
       };
-      const updated = definition.booking.canReschedule
+      const updated = definition.booking.canAttach
+        ? await adoptMigratedReviewBooking(definition.instance.id, undefined, definition.bookingAdoptionVersion)
+        : definition.booking.canReschedule
         ? await rescheduleMigratedReview(definition.instance.id, slot, definition.booking)
         : await bookMigratedReview(definition.instance.id, slot);
-      // Keep draft answers and their original version: rescheduling must not
-      // accept a concurrent answer change on behalf of this editor.
+      // Adoption checks the saved content under lock, so its returned version
+      // is safe for the existing draft. Rescheduling does not make that check.
+      // Local answers and savedAnswersRef remain untouched in both cases.
       setDefinition(current => definition.booking?.canReschedule && current ? {
         ...current, booking: updated.booking, localStatus: updated.localStatus,
         readOnly: updated.readOnly, instance: { ...current.instance, status: updated.instance.status },
@@ -996,7 +1025,7 @@ export function ReviewInstanceModal({
               />
             ) : null}
             {definition.migratedForm && definition.booking?.canAttach && !formReadOnly ? (
-              <button type="button" onClick={() => { void bookMigrated(); }} disabled={busy} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">Use existing meeting</button>
+              <button type="button" onClick={() => { void bookMigrated(); }} disabled={busy} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">Retry linking meeting</button>
             ) : null}
             {hasImportedBooking && definition.booking?.conflict ? (
               <p role="alert" className="text-sm text-red-700">This review has a conflicting calendar association. Ask an administrator to resolve it before booking.</p>
@@ -1268,7 +1297,7 @@ export function ReviewInstanceModal({
                   editable={!isMigratedTemplatePreview && !formReadOnly && ['scheduled', 'in-progress'].includes(definition.instance.status)}
                   showActions={showMigratedSummaryActions ? true : undefined}
                   teamsAvailable={Boolean(definition.booking?.booked && definition.booking.syncState === 'synced'
-                    && !definition.booking.conflict && definition.booking.eventKey === definition.instance.id)}
+                    && !definition.booking.conflict && definition.booking.eventKey)}
                   busy={busy} unsaved={hasUnsavedMigratedAnswers} onResult={onMigratedSummaryComplete} onBusyChange={setCheckingSession}
                 /> : null) :
                 <div className="mb-3 space-y-3">
@@ -1386,7 +1415,7 @@ export function ReviewInstanceModal({
             />
             {advisorSignaturePending && !isViewingAsCoach ? (
               <section aria-label="Review signature step" tabIndex={-1} className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
-                <h3 className="mb-3 text-sm font-bold text-violet-950">Your coach signature is required</h3>
+                <h3 className="mb-3 text-sm font-bold text-violet-950">Coach signature required</h3>
                 {auth.user?.fullName ? (
                   <fieldset disabled={saving} className="min-w-0 border-0 p-0">
                     <SignaturePad
@@ -1424,7 +1453,7 @@ export function ReviewInstanceModal({
             ) : null}
             {advisorSignatureSaved ? (
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">
-                Your coach signature has been saved.
+                Coach signature saved.
               </div>
             ) : null}
             {waitingForOtherSignatures ? (

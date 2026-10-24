@@ -633,12 +633,12 @@ export default function CoachMonthlyCoaching() {
         event={importedBookingEvent}
         viewingAsCoach={coach.isViewingAsCoach}
         onClose={() => setImportedBookingEvent(null)}
-        onSaved={(updated, notice) => {
+        onSaved={(updated, notice, options) => {
           const nextEvents = sortEvents(events.map(event => eventIdentity(event) === eventIdentity(updated) ? updated : event));
           setEvents(nextEvents);
           writeCoachSessionCache(cacheKey, { events: nextEvents, ownerName, issues });
           setBookingNotice(notice);
-          setImportedBookingEvent(null);
+          if (!options?.keepOpen) setImportedBookingEvent(null);
         }}
       /> : null}
       {scheduleModalOpen ? (

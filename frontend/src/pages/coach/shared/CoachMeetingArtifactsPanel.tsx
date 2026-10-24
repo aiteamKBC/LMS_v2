@@ -26,7 +26,7 @@ interface CoachMeetingArtifactEvent {
 type ArtifactState =
   | { status: 'idle' }
   | { status: 'loading' }
-  | { status: 'ready'; artifacts: CoachMeetingArtifact[]; attendance: CoachMeetingAttendanceSummary | null; meetingSummary: CoachMeetingSummary | null; errors: string[] }
+  | { status: 'ready'; artifacts: CoachMeetingArtifact[]; attendance: CoachMeetingAttendanceSummary | null; meetingSummary: CoachMeetingSummary | null; errors: string[]; storedOnly?: boolean; syncedAt?: string }
   | { status: 'error'; message: string };
 
 type PreviewSelection = {
@@ -249,7 +249,10 @@ function MeetingSummaryCard({
   canEdit: boolean;
   onSave?: (summary: CoachMeetingSummaryPayload) => Promise<CoachMeetingSummary | null>;
 }) {
-  const summary = normalizeSummaryPayload(meetingSummary?.summary, event.source);
+  const summary = useMemo(
+    () => normalizeSummaryPayload(meetingSummary?.summary, event.source),
+    [meetingSummary?.summary, event.source],
+  );
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<CoachMeetingSummaryPayload>(summary);
   const [saving, setSaving] = useState(false);
@@ -259,7 +262,7 @@ function MeetingSummaryCard({
     setDraft(summary);
     setEditing(false);
     setError('');
-  }, [meetingSummary?.generatedAt, meetingSummary?.editedAt, meetingSummary?.status, summary.title, summary.overview]);
+  }, [meetingSummary?.generatedAt, meetingSummary?.editedAt, meetingSummary?.status, summary]);
 
   if (!meetingSummary && !canEdit) return null;
   if (!meetingSummary) {
@@ -638,6 +641,7 @@ export function CoachMeetingArtifactsPanel({
   hasTeamsMeeting = false,
   allowContentAccess = true,
   onArtifactsLoaded,
+  storedOnly = false,
 }: {
   event: CoachMeetingArtifactEvent;
   className?: string;
@@ -656,6 +660,7 @@ export function CoachMeetingArtifactsPanel({
   hasTeamsMeeting?: boolean;
   allowContentAccess?: boolean;
   onArtifactsLoaded?: (result: Awaited<ReturnType<typeof fetchCoachMeetingArtifacts>>) => void;
+  storedOnly?: boolean;
 }) {
   const eventKey = event.eventKey || '';
   const hasTeamsLink = hasTeamsMeeting || Boolean(event.meetingLink || event.graphWebLink);
@@ -666,7 +671,7 @@ export function CoachMeetingArtifactsPanel({
 
   const loadArtifacts = useCallback((signal?: AbortSignal, refresh = false) => {
     setState({ status: 'loading' });
-    return fetchArtifacts(eventKey, signal, { refresh })
+    return fetchArtifacts(eventKey, signal, { refresh: storedOnly ? false : refresh })
       .then(result => {
         onArtifactsLoaded?.(result);
         if (result.event?.status) onEventStatusChange?.(result.event.status);
@@ -676,6 +681,8 @@ export function CoachMeetingArtifactsPanel({
           attendance: result.attendance || null,
           meetingSummary: result.meetingSummary || null,
           errors: result.errors || [],
+          storedOnly: result.resourceMode === 'stored',
+          syncedAt: result.storage?.syncedAt,
         });
       })
       .catch(error => {
@@ -685,7 +692,7 @@ export function CoachMeetingArtifactsPanel({
           message: error instanceof Error ? error.message : 'Unable to load Teams artifacts.',
         });
       });
-  }, [eventKey, fetchArtifacts, onArtifactsLoaded, onEventStatusChange]);
+  }, [eventKey, fetchArtifacts, onArtifactsLoaded, onEventStatusChange, storedOnly]);
 
   useEffect(() => {
     setPreview(null);
@@ -749,6 +756,7 @@ export function CoachMeetingArtifactsPanel({
   const visibleArtifacts = artifacts.filter(artifact => visibleArtifactTypes.includes(artifact.artifact_type));
   const hasArtifacts = visibleArtifacts.length > 0;
   const isLoading = state.status === 'loading';
+  const savedResources = storedOnly || (state.status === 'ready' && state.storedOnly);
 
   return (
     <div className={cn('rounded-lg border border-background-200 bg-white p-3', className)}>
@@ -759,10 +767,15 @@ export function CoachMeetingArtifactsPanel({
             {showAttendance ? 'Recording, Transcript & Attendance' : visibleArtifactTypes.length === 1 && visibleArtifactTypes[0] === 'recording' ? 'Meeting Recording' : 'Meeting Artifacts'}
           </p>
           <p className="mt-1 text-[12px] leading-5 text-foreground-500">
-            {sourceLabel(event.source)} artifacts from Microsoft Teams.
+            {savedResources
+              ? 'Saved meeting resources. Your coach can check Teams for updates.'
+              : `${sourceLabel(event.source)} artifacts from Microsoft Teams.`}
           </p>
+          {savedResources && state.status === 'ready' && state.syncedAt ? (
+            <p className="mt-1 text-[12px] leading-5 text-foreground-500">Last saved: {artifactDate(state.syncedAt)}. Newer resources may not be included.</p>
+          ) : null}
         </div>
-        {showCheckAction ? <button
+        {showCheckAction && !savedResources ? <button
           type="button"
           onClick={() => {
             if (!canCheck || isLoading) return;
@@ -785,7 +798,7 @@ export function CoachMeetingArtifactsPanel({
 
       {state.status === 'ready' && showAttendance ? <AttendanceTracker attendance={attendance} /> : null}
 
-      {state.status === 'ready' && supportsMeetingSummary && showMeetingSummary ? (
+      {state.status === 'ready' && supportsMeetingSummary && showMeetingSummary && !savedResources ? (
         <MeetingSummaryCard
           event={event}
           meetingSummary={meetingSummary}
@@ -802,7 +815,9 @@ export function CoachMeetingArtifactsPanel({
 
       {state.status === 'ready' && !hasArtifacts ? (
         <div className="mt-3 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[12px] leading-5 text-foreground-500">
-          No meeting recording has been returned by Teams yet. It usually appears after the meeting ends and Teams finishes processing.
+          {savedResources
+            ? 'No saved meeting recording is available. Your coach can check Teams for updates.'
+            : 'No meeting recording has been returned by Teams yet. It usually appears after the meeting ends and Teams finishes processing.'}
         </div>
       ) : null}
 
@@ -814,6 +829,7 @@ export function CoachMeetingArtifactsPanel({
             const previewUrl = contentUrl(eventKey, type, artifactId, { preview: true });
             const downloadUrl = contentUrl(eventKey, type, artifactId);
             const selected = preview?.type === type && preview.artifactId === artifactId;
+            const contentAvailable = allowContentAccess && artifact.content_available !== false;
             return (
               <div key={artifactKey(artifact)} className="rounded-lg border border-background-200 bg-background-50 px-3 py-2.5">
                 <div className="flex items-start gap-2">
@@ -826,7 +842,7 @@ export function CoachMeetingArtifactsPanel({
                       {artifactDate(artifact.end_datetime || artifact.created_datetime)}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      {allowContentAccess ? <button
+                      {contentAvailable ? <button
                         type="button"
                         onClick={() => setPreview({ artifact, artifactId, type, url: previewUrl })}
                         className={cn(
@@ -839,7 +855,7 @@ export function CoachMeetingArtifactsPanel({
                         <AppIcon className={type === 'recording' ? 'ri-play-circle-line' : 'ri-eye-line'}></AppIcon>
                         {type === 'recording' ? 'Play' : 'Preview'}
                       </button> : null}
-                      {allowContentAccess ? <a
+                      {contentAvailable ? <a
                         href={downloadUrl}
                         className="inline-flex items-center gap-1 rounded-md border border-background-300 bg-white px-2 py-1 text-[12px] font-semibold text-foreground-700 transition hover:border-background-400 hover:bg-background-100"
                       >
@@ -847,6 +863,9 @@ export function CoachMeetingArtifactsPanel({
                         Download
                       </a> : null}
                     </div>
+                    {artifact.content_available === false ? (
+                      <p className="mt-2 text-[12px] text-foreground-500">A saved copy of this recording is not available yet.</p>
+                    ) : null}
                   </div>
                 </div>
               </div>

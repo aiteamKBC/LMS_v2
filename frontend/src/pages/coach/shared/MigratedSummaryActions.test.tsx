@@ -62,3 +62,29 @@ it('gives the latest binding priority over an older intelligence failure', async
   expect(screen.getByRole('button', { name: 'Generate from Teams' })).toBeEnabled();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 });
+
+it('shows incomplete transcript retrieval as an unavailable suggestion and keeps the saved answer', async () => {
+  const result = {
+    artifacts: [], answerVersion: 'next-version', reviewAnswers: { recap: 'Coach-edited answer' },
+    summaryBinding: { fieldKey: 'recap', generationStatus: 'unavailable' as const, status: 'answer-preserved' },
+    intelligence: { attendanceStatus: 'available', recordingStatus: 'not-available', transcriptStatus: 'fetch-failed',
+      summaryStatus: 'unavailable', errorCodes: ['TRANSCRIPT_INCOMPLETE', 'TRANSCRIPT_FETCH_FAILED'] },
+  };
+  vi.mocked(fetchMigratedReviewIntelligence).mockResolvedValue(result);
+  render(<MigratedSummaryActions {...props} binding={{ fieldKey: 'recap', answer: 'Coach-edited answer' }} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Generate from Teams' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Your saved answer is unchanged');
+  expect(props.onResult).toHaveBeenCalledExactlyOnceWith(result);
+  expect(fetchMigratedReviewIntelligence).toHaveBeenCalledExactlyOnceWith(props.instanceId, undefined, { refresh: true });
+  expect(screen.getByRole('button', { name: 'Generate from Teams' })).toBeEnabled();
+});
+
+it('shows a target throttling error without retrying automatically', async () => {
+  vi.mocked(fetchMigratedReviewIntelligence).mockRejectedValue(new Error('Wait before checking again. (Code: GRAPH_THROTTLED)'));
+  render(<MigratedSummaryActions {...props} binding={{ fieldKey: 'recap' }} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Generate from Teams' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('GRAPH_THROTTLED');
+  expect(fetchMigratedReviewIntelligence).toHaveBeenCalledOnce();
+  expect(props.onResult).not.toHaveBeenCalled();
+  expect(props.onBusyChange).toHaveBeenLastCalledWith(false);
+});
