@@ -22,9 +22,21 @@ from . import identity, selectors
 from .security import hash_token
 
 
-_RELATIONS = ('Login_accounts', 'Login_sessions', 'Invitations', 'Password_resets',
-              'Login_audit', 'auth_subjects', 'actor_grants', 'learner_identity_evidence',
-              'cohort_access_facts', 'account_learner_links', 'learners', 'progress_transfer_requests')
+# Whole-relation SELECT is granted only on the auth/support projections. The two
+# learner-data tables are column-granted (integration-readiness/20-grant-auth-
+# projections.sql); require exactly the columns the reader paths use, never more.
+_TABLE_RELATIONS = ('Login_accounts', 'Login_sessions', 'Invitations', 'Password_resets',
+                    'Login_audit', 'auth_subjects', 'actor_grants', 'learner_identity_evidence',
+                    'cohort_access_facts', 'account_learner_links')
+_COLUMN_RELATIONS = {
+    'learners': ('id', 'enrolment_id', 'aptem_id', 'programme_id', 'full_name', 'programme',
+                 'coach_name', 'coach_email', 'email', 'start_date', 'end_date', 'learner_type',
+                 'cohort_id'),  # learner_auth_runtime.programme_source
+    'progress_transfer_requests': ('enrolment_id',),
+}
+_RELATIONS = _TABLE_RELATIONS + tuple(_COLUMN_RELATIONS)
+_REQUIRED_COLUMNS = tuple((relation, column) for relation, columns in _COLUMN_RELATIONS.items()
+                          for column in columns)
 
 
 class LearnerAuthDisabled(ImproperlyConfigured):
@@ -50,13 +62,27 @@ def _read_query():
                 FROM pg_catalog.pg_roles WHERE rolname=current_user''')
             if cursor.fetchone() != (False,):
                 raise ImproperlyConfigured('Learner-auth requires a nonprivileged reader role')
-            cursor.execute('''SELECT count(*), bool_and(has_table_privilege(current_user,c.oid,'SELECT')),
+            cursor.execute('''SELECT count(*),
+                bool_and(c.relname <> ALL(%s) OR has_table_privilege(current_user,c.oid,'SELECT')),
                 bool_or(pg_has_role(current_user,c.relowner,'MEMBER') OR
-                    has_table_privilege(current_user,c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES'))
+                    has_table_privilege(current_user,c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES') OR
+                    has_any_column_privilege(current_user,c.oid,'INSERT,UPDATE,REFERENCES'))
                 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
-                WHERE n.nspname='Learner' AND c.relname=ANY(%s)''', [list(_RELATIONS)])
+                WHERE n.nspname='Learner' AND c.relname=ANY(%s)''', [list(_TABLE_RELATIONS), list(_RELATIONS)])
             if cursor.fetchone() != (len(_RELATIONS), True, False):
                 raise ImproperlyConfigured('Learner-auth relation privileges require review')
+            # Every required column must exist and be readable; a missing column
+            # lowers the count. has_any_column_privilege would prove only one.
+            cursor.execute('''SELECT count(a.attnum),
+                coalesce(bool_and(has_column_privilege(current_user,a.attrelid,a.attnum,'SELECT')), false)
+                FROM ROWS FROM (pg_catalog.unnest(%s::text[]), pg_catalog.unnest(%s::text[])) AS r(relname, attname)
+                JOIN pg_catalog.pg_namespace n ON n.nspname='Learner'
+                JOIN pg_catalog.pg_class c ON c.relnamespace=n.oid AND c.relname=r.relname
+                JOIN pg_catalog.pg_attribute a ON a.attrelid=c.oid AND a.attname=r.attname
+                    AND a.attnum>0 AND NOT a.attisdropped''',
+                [[r for r, _ in _REQUIRED_COLUMNS], [c for _, c in _REQUIRED_COLUMNS]])
+            if cursor.fetchone() != (len(_REQUIRED_COLUMNS), True):
+                raise ImproperlyConfigured('Learner-auth column privileges require review')
 
             def query(sql, params):
                 cursor.execute(sql, params)

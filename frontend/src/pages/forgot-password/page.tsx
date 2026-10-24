@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AuthError, apiForgotPassword } from '@/api/auth';
 import loginStyles from '../login/page.module.css';
-import styles from './page.module.css';
 
 // The sign-in page's artwork, so reset and sign-in read as one screen.
 const BOOK_IMAGE_URL = '/login-open-book.png';
+// Each step is a row of icon + text in the confirmation list.
+const STEP_CLASS = 'flex items-start gap-2.5 text-xs text-auth-step';
 const SIDEBAR_LOGO_URL = 'https://jokdxsdbxorzciulkdyl.supabase.co/storage/v1/object/public/images/16480272afc94729b2911a62d1bbf85d.webp';
 
 export default function ForgotPasswordPage() {
@@ -72,21 +73,21 @@ export default function ForgotPasswordPage() {
               </header>
 
               {submitted ? (
-                <div className={styles.successContent}>
-                  <div className={styles.successMessage} role="status" aria-live="polite">
+                <div className="grid gap-[18px]">
+                  <div className="flex items-start gap-2.5 rounded-[13px] border border-auth-success-border bg-auth-success-bg p-3.5 text-xs text-auth-success-text" role="status" aria-live="polite">
                     <AppIcon className="ri-mail-check-line" aria-hidden="true" />
                     <span>{message || 'If that address is registered, we have emailed it a link to reset or set your password.'}</span>
                   </div>
-                  <ul className={styles.steps}>
-                    <li>
+                  <ul className="m-0 grid list-none gap-2.5 p-0">
+                    <li className={STEP_CLASS}>
                       <AppIcon className="ri-key-2-line" aria-hidden="true" />
                       <span>Already have a password? The reset link works once and expires in an hour.</span>
                     </li>
-                    <li>
+                    <li className={STEP_CLASS}>
                       <AppIcon className="ri-user-add-line" aria-hidden="true" />
                       <span>New learner? The set-password link opens your account and expires in 7 days.</span>
                     </li>
-                    <li>
+                    <li className={STEP_CLASS}>
                       <AppIcon className="ri-spam-2-line" aria-hidden="true" />
                       <span>Nothing after a few minutes? Check your junk or spam folder.</span>
                     </li>
@@ -96,7 +97,9 @@ export default function ForgotPasswordPage() {
                   </button>
                   <button
                     type="button"
-                    className={styles.textButton}
+                    // One padding utility on purpose: index.css gives any button
+                    // with both px-* and py-* classes an anchor shadow.
+                    className="justify-self-center rounded-md border-0 bg-transparent p-[2px_6px] text-xs font-bold text-auth-link hover:text-auth-link-hover hover:underline focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-auth-focus"
                     onClick={() => { setSubmitted(false); setMessage(''); }}
                   >
                     Use a different email address
@@ -142,10 +145,14 @@ export default function ForgotPasswordPage() {
                 </form>
               )}
 
-              <footer className={`${loginStyles.secureFooter} ${styles.returnFooter}`}>
-                <p>
+              <footer className={loginStyles.secureFooter}>
+                <p className="m-0">
                   Remember your password?{' '}
-                  <button type="button" onClick={() => navigate('/login')}>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/login')}
+                    className="rounded-[5px] border-0 bg-transparent p-0 font-bold text-auth-link hover:text-auth-link-hover focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-auth-focus"
+                  >
                     Sign in
                   </button>
                 </p>

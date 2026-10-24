@@ -255,15 +255,21 @@ if __name__ == '__main__':
                    '-o', f'-h 127.0.0.1 -p {pg.PORT}', '-w', 'start')
         started = True
         pg.sql(file=pg.HERE / 'fixture.sql')
-        pg.sql('''ALTER TABLE "Learner".learners ADD COLUMN programme_id bigint,
+        pg.sql('''ALTER TABLE "Learner".learners ADD COLUMN programme_id varchar(64),
             ADD COLUMN full_name text, ADD COLUMN programme text, ADD COLUMN coach_name text,
-            ADD COLUMN start_date date, ADD COLUMN end_date date, ADD COLUMN learner_type text;''')
+            ADD COLUMN start_date date, ADD COLUMN end_date date, ADD COLUMN learner_type text,
+            ADD COLUMN phone_number text;  -- unapproved column; must stay denied''')
         pg.sql(file=pg.BUNDLE / '10-install.sql')
         pg.sql('CREATE ROLE synthetic_auth_reader LOGIN;')
         pg.command('psql', '-X', '-h', '127.0.0.1', '-p', str(pg.PORT), '-U', 'phase1_test_owner',
             '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-v', 'auth_reader=synthetic_auth_reader',
             '-f', pg.BUNDLE / '15-auth-reader-grants.sql')
-        pg.sql('GRANT SELECT ON "Learner".learners,"Learner".progress_transfer_requests TO synthetic_auth_reader;')
+        # Exact minimum projection from integration-readiness/20-grant-auth-projections.sql;
+        # no whole-table SELECT on these two relations.
+        pg.sql('''GRANT SELECT(id,enrolment_id,aptem_id,programme_id,full_name,programme,
+            coach_name,coach_email,email,start_date,end_date,learner_type,cohort_id)
+            ON "Learner".learners TO synthetic_auth_reader;
+            GRANT SELECT(enrolment_id) ON "Learner".progress_transfer_requests TO synthetic_auth_reader;''')
         # Fixture used explicit IDs; prepare source-owned allocation for ORM tests.
         for table in ('Login_accounts', 'Login_sessions', 'Invitations', 'Password_resets', 'Login_audit'):
             pg.sql(f'''SELECT setval(pg_get_serial_sequence('login."{table}"','id'),

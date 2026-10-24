@@ -1853,8 +1853,10 @@ table tbody td:last-child {
 
 /* Keep every icon-labelled action on one horizontal line. A number of older
    buttons use an inline SVG without the `inline-flex` utility, which lets the
-   icon wrap or sit out of alignment with its label. */
-:is(button, a):has(> :is(svg.app-icon, svg.lucide)) {
+   icon wrap or sit out of alignment with its label.
+   Opt-out: a component that sets its own layout adds `ui-own-layout`. The
+   :not(:where()) form adds no specificity, so every other element is unchanged. */
+:is(button, a):not(:where(.ui-own-layout)):has(> :is(svg.app-icon, svg.lucide)) {
   display: inline-flex;
   flex-direction: row;
   align-items: center;
@@ -1862,7 +1864,7 @@ table tbody td:last-child {
   gap: 0.45rem;
 }
 
-:is(button, a):has(> :is(svg.app-icon, svg.lucide)) > :is(svg.app-icon, svg.lucide) {
+:is(button, a):not(:where(.ui-own-layout)):has(> :is(svg.app-icon, svg.lucide)) > :is(svg.app-icon, svg.lucide) {
   flex: 0 0 auto;
   margin-inline: 0 !important;
   line-height: 1;
@@ -3906,13 +3908,13 @@ table tbody td:last-child {
 
 /* Give padded text actions a clear visual anchor without changing their role,
    colour, size or placement. Compact navigation and state controls are kept
-   out of this treatment. */
-:is(button, a)[class*="px-"][class*="py-"]:not([class*="rounded-full"]):not([class*="w-8"]):not([class*="w-9"]):not([class*="w-10"]):not([role="tab"]):not([aria-current]):not([aria-selected]):not([aria-pressed]):not(:disabled):not([aria-disabled="true"]) {
+   out of this treatment. Opt-out: `ui-own-shadow` (adds no specificity). */
+:is(button, a)[class*="px-"][class*="py-"]:not(:where(.ui-own-shadow)):not([class*="rounded-full"]):not([class*="w-8"]):not([class*="w-9"]):not([class*="w-10"]):not([role="tab"]):not([aria-current]):not([aria-selected]):not([aria-pressed]):not(:disabled):not([aria-disabled="true"]) {
   box-shadow: 0 3px 10px -8px rgb(31 24 58 / 0.45);
   transition: box-shadow 180ms ease, border-color 180ms ease, background-color 180ms ease, color 180ms ease;
 }
 
-:is(button, a)[class*="px-"][class*="py-"]:not([class*="rounded-full"]):not([class*="w-8"]):not([class*="w-9"]):not([class*="w-10"]):not([role="tab"]):not([aria-current]):not([aria-selected]):not([aria-pressed]):not(:disabled):not([aria-disabled="true"]):hover {
+:is(button, a)[class*="px-"][class*="py-"]:not(:where(.ui-own-shadow)):not([class*="rounded-full"]):not([class*="w-8"]):not([class*="w-9"]):not([class*="w-10"]):not([role="tab"]):not([aria-current]):not([aria-selected]):not([aria-pressed]):not(:disabled):not([aria-disabled="true"]):hover {
   box-shadow: 0 8px 16px -10px rgb(31 24 58 / 0.58);
 }
 
@@ -6127,7 +6129,8 @@ html[data-theme="light"][data-accessibility="monochrome"] {
   color: #A39AAC;
 }
 
-.dashboard-theme .workspace-main :is(button, a):has(> :is(svg.app-icon, svg.lucide)) {
+/* Same `ui-own-layout` opt-out as the global icon-button rule. */
+.dashboard-theme .workspace-main :is(button, a):not(:where(.ui-own-layout)):has(> :is(svg.app-icon, svg.lucide)) {
   align-items: center;
   gap: 0.45rem;
   white-space: nowrap;

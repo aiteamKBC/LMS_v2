@@ -83,14 +83,36 @@ test('First Login keeps personal values when moving to signature and back', asyn
 
 test('learner catalogue retains canonical module progress and retries 503', async ({ page, api }) => {
   session(api);
+  // Same learner-entry and telemetry contracts as the First Login case.
+  api.on('GET', '/login_api/learner-entry/', () => ({ body: { classification: 'new', required: false, canAccess: true } }));
+  api.on('POST', '/curriculum_api/activity/record/', route => {
+    const body = route.request().postDataJSON();
+    for (const event of body.events) expect(event.kind).toBe('page_view');
+    return { body: { available: true, recorded: body.events.length } };
+  });
+  api.on('GET', '/learner_api/calendar/commercial/701/first-session/', () => ({ body: {
+    caseOwner: null, booked: true, event: null, startsOn: null, access: 'open', canBook: false,
+  } }));
+  api.on('GET', '/learner_api/learner-summary/commercial/701/', () => ({ body: {
+    id: '701', name: learner.displayName, email: learner.email, phone: '',
+    programme: learner.programme, programmeStatus: 'Active',
+    onboardingStatus: 'Completed', firstSessionUnlocked: true, studentActivityAvailable: false,
+    cohort: '', group: '', employer: '', employerId: null, organization: '',
+    learnerType: 'commercial', isActive: true,
+  } }));
+  // Same empty certificate template the My Learning Vitest suites model.
+  api.on('GET', '/learner_api/certificates/commercial/701/template/', () => ({ body: { template: null, csrfToken: '' } }));
+  // Learner reads retry one transient failure automatically (learnerRead.ts), so
+  // two 503s are needed before the learner sees the error and retries by hand.
   let calls = 0;
-  api.on('GET', '/learner_api/my-learning/commercial/701/', () => ++calls === 1
+  api.on('GET', '/learner_api/my-learning/commercial/701/', () => ++calls <= 2
     ? { status: 503, body: { error: 'Synthetic catalogue outage' } } : { body: catalogue });
   await page.goto('/learner/my-learning/commercial/701');
   await page.getByRole('button', { name: /retry|try again/i }).click();
-  await expect(page.getByText('Synthetic module', { exact: true })).toBeVisible();
+  // The module card's heading (the title also appears under Learning shortcuts).
+  await expect(page.getByRole('heading', { name: 'Synthetic module', exact: true })).toBeVisible();
   await expect(page.getByText('50%', { exact: true }).first()).toBeVisible();
-  expect(calls).toBe(2);
+  expect(calls).toBe(3);
   expect(api.requests.filter(r => r.path.endsWith('/logout/'))).toHaveLength(0);
 });
 

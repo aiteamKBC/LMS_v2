@@ -57,7 +57,8 @@ export const test = base.extend<{ api: MockApi }>({
       const staticAsset = method === 'GET' && (
         request.resourceType() === 'document' ||
         /^\/(assets\/|favicon\.|login-open-book\.)/.test(url.pathname)
-        || ['/kbc-logo.png', '/login-mobile-background.png', '/fonts/DancingScript.ttf'].includes(url.pathname));
+        || ['/kbc-logo.png', '/login-mobile-background.png', '/fonts/DancingScript.ttf',
+          '/my-learning-hero-pattern.png', '/learner-learning-journey.webp'].includes(url.pathname));
       // A same-origin API navigation is never a permitted static document.
       if (staticAsset && !/^\/(login_api|learner_api|curriculum_api|enrolment_api|coach_api|api)\//.test(url.pathname)) {
         await route.continue();

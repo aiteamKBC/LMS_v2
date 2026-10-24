@@ -111,6 +111,40 @@ export default {
             wash: 'var(--kbc-purple-wash)',
             gold: 'var(--kbc-brand-gold)',
           },
+          // Public pre-sign-in screens (reset password, LMS introduction):
+          // fixed light designs in every theme, so literal colours, not theme vars.
+          auth: {
+            link: '#5b24e8',
+            'link-hover': '#4b176d',
+            focus: '#9861d0',
+            step: '#5f5870',
+            // Literal white: the .bg-white utility is repainted by the dark theme.
+            surface: '#ffffff',
+            ink: '#3a2059',
+            hint: '#766382',
+            'success-border': '#bbefd2',
+            'success-bg': '#f1fcf6',
+            'success-text': '#18794e',
+            'error-border': '#f1c4c4',
+            'error-bg': '#fdf2f2',
+            'error-text': '#8a1f1f',
+            'input-border': '#d8cbe8',
+            'input-text': '#241638',
+            action: '#6025a6',
+            'action-hover': '#471882',
+            'secondary-border': '#d8c7eb',
+            'secondary-text': '#4b2a78',
+          },
+          // Inclusion & Safeguarding hand-off screen.
+          inclusion: {
+            bg: '#f8f5f1',
+            ink: '#362044',
+            muted: '#807586',
+            'gold-border': '#ddc58d',
+            'gold-bg': '#f0e7d8',
+            gold: '#95722e',
+            dot: '#b69957',
+          },
           surface: 'oklch(var(--llp-surface) / <alpha-value>)',
           card: 'oklch(var(--llp-card) / <alpha-value>)',
           popover: {
@@ -138,6 +172,8 @@ export default {
           heading: ['"DM Sans"', 'system-ui', 'sans-serif'],
           body: ['"DM Sans"', 'system-ui', 'sans-serif'],
           label: ['"DM Sans"', 'system-ui', 'sans-serif'],
+          georgia: ['Georgia', 'serif'],
+          arial: ['Arial', 'sans-serif'],
         },
         boxShadow: {
           panel: '0 1px 2px oklch(0.25 0.04 230 / 0.06), 0 12px 32px -18px oklch(0.25 0.04 230 / 0.22)',
@@ -169,6 +205,17 @@ export default {
             '100%': { transform: 'translateX(400%)' },
           },
           // The row a save just wrote, so the eye finds it in a long list.
+          // Progress rings draw in from their start (see AnimatedProgressCircle).
+          'progress-ring-offset': {
+            from: { strokeDashoffset: 'var(--ring-start-offset)' },
+          },
+          'progress-ring-dash': {
+            from: { strokeDasharray: '0 9999' },
+          },
+          'inclusion-breathe': {
+            '0%, 100%': { opacity: '.3' },
+            '50%': { opacity: '1' },
+          },
           'row-flash': {
             '0%, 55%': { backgroundColor: 'oklch(var(--primary-100) / 0.9)' },
             '100%': { backgroundColor: 'oklch(var(--primary-100) / 0)' },
@@ -179,6 +226,12 @@ export default {
           'bar-grow': 'bar-grow 0.8s ease-out forwards',
           'entity-refresh': 'entity-refresh 1.1s ease-in-out infinite',
           'row-flash': 'row-flash 2.6s ease-out forwards',
+          'progress-ring-offset': 'progress-ring-offset 900ms cubic-bezier(.22, 1, .36, 1) both',
+          'progress-ring-dash': 'progress-ring-dash 900ms cubic-bezier(.22, 1, .36, 1) both',
+          // Three staggered loading dots.
+          'inclusion-breathe': 'inclusion-breathe 1.8s ease-in-out infinite',
+          'inclusion-breathe-2': 'inclusion-breathe 1.8s ease-in-out .2s infinite',
+          'inclusion-breathe-3': 'inclusion-breathe 1.8s ease-in-out .4s infinite',
         },
       },
     },

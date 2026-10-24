@@ -107,6 +107,54 @@ class AdapterTests(unittest.TestCase):
         finally:
             self.sql('REVOKE phase1_test_owner FROM synthetic_auth_reader')
 
+    def test_minimum_column_grants_are_sufficient_and_not_broader(self):
+        from login.learner_auth_reader import _COLUMN_RELATIONS
+        with connections['enrolment'].cursor() as cursor:
+            for relation, columns in _COLUMN_RELATIONS.items():
+                cursor.execute('''SELECT has_table_privilege('synthetic_auth_reader',%s,'SELECT')''',
+                               [f'"Learner".{relation}'])
+                self.assertEqual(cursor.fetchone(), (False,), relation)
+                cursor.execute('''SELECT a.attname, has_column_privilege('synthetic_auth_reader',a.attrelid,a.attnum,'SELECT')
+                    FROM pg_attribute a WHERE a.attrelid=%s::regclass AND a.attnum>0 AND NOT a.attisdropped''',
+                               [f'"Learner".{relation}'])
+                readable = {name for name, allowed in cursor.fetchall() if allowed}
+                self.assertEqual(readable, set(columns), relation)
+        self.assertIsNotNone(self.reader.me(self.tokens[18]))
+        # Unapproved columns stay denied even through the reader connection.
+        with self.assertRaises(DatabaseError):
+            with _read_query() as query:
+                query('SELECT phone_number FROM "Learner".learners LIMIT 1', [])
+
+    def test_each_missing_required_column_fails_closed(self):
+        from login.learner_auth_reader import _REQUIRED_COLUMNS
+        for relation, column in _REQUIRED_COLUMNS:
+            with self.subTest(relation=relation, column=column):
+                self.sql(f'REVOKE SELECT({column}) ON "Learner".{relation} FROM synthetic_auth_reader')
+                try:
+                    with self.assertRaisesRegex(ImproperlyConfigured, 'column privileges'):
+                        self.reader.me(self.tokens[17])
+                finally:
+                    self.sql(f'GRANT SELECT({column}) ON "Learner".{relation} TO synthetic_auth_reader')
+        self.assertIsNotNone(self.reader.me(self.tokens[17]))
+
+    def test_missing_table_and_column_write_privileges_fail_closed(self):
+        self.sql('REVOKE SELECT ON "Learner".actor_grants FROM synthetic_auth_reader')
+        try:
+            with self.assertRaisesRegex(ImproperlyConfigured, 'relation privileges'):
+                self.reader.me(self.tokens[17])
+        finally:
+            self.sql('GRANT SELECT ON "Learner".actor_grants TO synthetic_auth_reader')
+        for grant in ('UPDATE(email) ON "Learner".learners', 'INSERT(enrolment_id) ON "Learner".progress_transfer_requests',
+                      'REFERENCES(id) ON "Learner".learners', 'UPDATE("Email") ON "Learner"."Login_accounts"'):
+            with self.subTest(grant=grant):
+                self.sql(f'GRANT {grant} TO synthetic_auth_reader')
+                try:
+                    with self.assertRaisesRegex(ImproperlyConfigured, 'relation privileges'):
+                        self.reader.me(self.tokens[17])
+                finally:
+                    self.sql(f'REVOKE {grant} FROM synthetic_auth_reader')
+        self.assertIsNotNone(self.reader.me(self.tokens[17]))
+
     def test_me_matches_existing_payload_for_all_roles_and_queries_only_reader(self):
         sources = {
             17: SimpleNamespace(position='Tutor', access='coach', access_extra='enrolment'),
@@ -132,7 +180,7 @@ class AdapterTests(unittest.TestCase):
             self.assertTrue(all('login."' not in sql and 'enrolment."' not in sql for sql in queries))
             self.assertNotIn('password_hash', actual['user'])
         self.assertEqual(counts, {'staff': 4, 'learner': 2, 'employer': 2})
-        print('Measured /me data SELECTs on reader only: staff=4, learner=2, employer=2 (plus 2 catalog checks).')
+        print('Measured /me data SELECTs on reader only: staff=4, learner=2, employer=2 (plus 3 catalog checks).')
 
     def test_staff_grant_removal_demotion_and_ownership_are_fresh(self):
         token = self.tokens[17]
