@@ -68,6 +68,7 @@ class LearnerPayloadTests(SimpleTestCase):
             [('C-1', 'W-1', 'MOD-1', 'assignment', 'Imported legacy title', '', settings,
               '', 0, [{'code': 'K1', 'weight': 1}], False, None, True)],
             [],
+            [],  # current KSB-description projection for the selected component
         ]
         with patch('learner_api.learner_detail.connections', {'enrolment': connection}):
             return _resolve_from_master([], [], [], assigned_modules=[MODULE])[2][0]

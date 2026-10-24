@@ -19,6 +19,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable, type DataColumn } from '@/components/ui/DataTable';
 import { EmptyState, EmptyStateAction } from '@/components/ui/EmptyState';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { Pagination } from '@/components/ui/Pagination';
 import { LearnerIdentity } from '@/pages/coach/shared/LearnerIdentity';
 import {
   fetchCoachMonthlyReport,
@@ -31,6 +32,18 @@ import { canOpenAttachment, openMonthlyReportAttachment } from '@/lib/monthlyRep
 import { downloadMonthlyReportPdf } from '@/lib/monthlyReportPdf';
 
 const coachNav = roleNavMap.coach;
+const REPORTS_PAGE_SIZE = 25;
+
+const EMPTY_RESPONSE: CoachMonthlyReportsResponse = {
+  items: [],
+  months: [],
+  learners: [],
+  pagination: {
+    page: 1, pageSize: REPORTS_PAGE_SIZE, total: 0, totalPages: 1,
+    hasNext: false, hasPrevious: false,
+  },
+  summary: { reports: 0, learners: 0, attachments: 0, unsigned: 0 },
+};
 
 function formatDate(value: string | null) {
   if (!value) return '—';
@@ -48,12 +61,13 @@ function formatBytes(bytes?: number | null) {
 
 export default function CoachMonthlyReportsPage() {
   const coach = useCoachIdentity();
-  const [data, setData] = useState<CoachMonthlyReportsResponse>({ items: [], months: [], learners: [] });
+  const [data, setData] = useState<CoachMonthlyReportsResponse>(EMPTY_RESPONSE);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [month, setMonth] = useState('');
   const [learner, setLearner] = useState('');
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
 
   const [openReport, setOpenReport] = useState<MonthlyReport | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
@@ -61,27 +75,35 @@ export default function CoachMonthlyReportsPage() {
   const [buildingPdfId, setBuildingPdfId] = useState<string | null>(null);
   const [openingAttachmentId, setOpeningAttachmentId] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     if (!coach.isInitialized) return;
     setLoading(true);
     setError('');
     if (!coach.hasCoachAccess) {
-      setData({ items: [], months: [], learners: [] });
+      setData(EMPTY_RESPONSE);
       setError('Coach access is required to read monthly reports.');
       setLoading(false);
       return;
     }
     try {
-      setData(await fetchCoachMonthlyReports({ month, learner, search }));
+      const response = await fetchCoachMonthlyReports({
+        month, learner, search, page, pageSize: REPORTS_PAGE_SIZE,
+      }, signal);
+      if (signal?.aborted) return;
+      setData(response);
+      if (response.pagination.page !== page) setPage(response.pagination.page);
     } catch (loadError) {
+      if (signal?.aborted) return;
       setError(loadError instanceof Error ? loadError.message : 'Could not load the monthly reports.');
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
-  }, [coach.isInitialized, coach.hasCoachAccess, month, learner, search]);
+  }, [coach.isInitialized, coach.hasCoachAccess, month, learner, page, search]);
 
   useEffect(() => {
-    void load();
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
   }, [load]);
 
   /** Fetch the full report — the table row does not carry the signature or the
@@ -137,16 +159,13 @@ export default function CoachMonthlyReportsPage() {
   };
 
   const metrics = useMemo(() => {
-    const learners = new Set(data.items.map((item) => item.learnerId));
-    const documents = data.items.reduce((total, item) => total + item.attachments.length, 0);
-    const unsigned = data.items.filter((item) => !item.signed).length;
     return [
-      { label: 'Reports submitted', value: data.items.length, icon: 'ri-file-list-3-line', tone: 'brand' as const },
-      { label: 'Learners reporting', value: learners.size, icon: 'ri-team-line', tone: 'positive' as const },
-      { label: 'Documents attached', value: documents, icon: 'ri-attachment-2', tone: 'neutral' as const },
-      { label: 'Unsigned', value: unsigned, icon: 'ri-error-warning-line', tone: unsigned ? ('critical' as const) : ('neutral' as const) },
+      { label: 'Reports submitted', value: data.summary.reports, icon: 'ri-file-list-3-line', tone: 'brand' as const },
+      { label: 'Learners reporting', value: data.summary.learners, icon: 'ri-team-line', tone: 'positive' as const },
+      { label: 'Documents attached', value: data.summary.attachments, icon: 'ri-attachment-2', tone: 'neutral' as const },
+      { label: 'Unsigned', value: data.summary.unsigned, icon: 'ri-error-warning-line', tone: data.summary.unsigned ? ('critical' as const) : ('neutral' as const) },
     ];
-  }, [data.items]);
+  }, [data.summary]);
 
   const columns: DataColumn<CoachMonthlyReportSummary>[] = [
     {
@@ -278,14 +297,14 @@ export default function CoachMonthlyReportsPage() {
             <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"></AppIcon>
             <input
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) => { setSearch(event.target.value); setPage(1); }}
               placeholder="Search a learner or what they wrote…"
               className="h-10 w-full rounded-lg border border-foreground-200 bg-background-50 pl-9 pr-3 text-sm outline-none transition focus:border-primary-400 focus:ring-4 focus:ring-primary-100"
             />
           </label>
           <select
             value={learner}
-            onChange={(event) => setLearner(event.target.value)}
+            onChange={(event) => { setLearner(event.target.value); setPage(1); }}
             aria-label="Filter by learner"
             className="h-10 rounded-lg border border-foreground-200 bg-background-50 px-3 text-sm outline-none focus:border-primary-400 lg:w-56"
           >
@@ -298,7 +317,7 @@ export default function CoachMonthlyReportsPage() {
           </select>
           <select
             value={month}
-            onChange={(event) => setMonth(event.target.value)}
+            onChange={(event) => { setMonth(event.target.value); setPage(1); }}
             aria-label="Filter by month"
             className="h-10 rounded-lg border border-foreground-200 bg-background-50 px-3 text-sm outline-none focus:border-primary-400 lg:w-48"
           >
@@ -348,6 +367,17 @@ export default function CoachMonthlyReportsPage() {
                 />
               }
             />
+            {data.pagination.totalPages > 1 && (
+              <Pagination
+                page={data.pagination.page}
+                totalPages={data.pagination.totalPages}
+                total={data.pagination.total}
+                pageSize={data.pagination.pageSize}
+                onPageChange={setPage}
+                noun="reports"
+                className="mt-3 rounded-xl border border-foreground-200/70 bg-background-50"
+              />
+            )}
           </div>
         )}
       </PageContainer>

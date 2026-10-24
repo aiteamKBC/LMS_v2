@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useCallback, useId } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
-import { getEvidenceDownloadUrl, uploadEvidence, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
+import { evidenceScanDisplayState, getEvidenceDownloadUrl, uploadEvidence, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import { formatHoursMinutes } from '@/lib/format';
 import type { HistoricalEvidenceItem } from '@/api/historicalEvidence';
@@ -13,7 +13,7 @@ import styles from './EvidenceGroups.module.css';
 /* ═══════════════════════════════════════════════════════════════
    TYPES
    ═══════════════════════════════════════════════════════════════ */
-type EvidenceStatus = 'Validated' | 'Pending tutor' | 'Needs work' | 'Draft' | 'Submitted' | 'Recorded';
+type EvidenceStatus = 'Validated' | 'Pending tutor' | 'Needs work' | 'Draft' | 'Submitted' | 'Recorded' | 'Processing file' | 'Retry scheduled' | 'Scan failed';
 type EvidenceType = 'Assignment' | 'Document' | 'Presentation' | 'Spreadsheet' | 'Reflection' | 'Quiz' | 'Meeting notes' | 'Workplace evidence' | 'Audio' | 'Image';
 
 interface EvidenceDocument {
@@ -91,7 +91,12 @@ function recordType(record: EvidenceRecord): EvidenceType {
  *
  * A file the scanner rejected is still "Needs work" — it never reaches a coach.
  */
-function recordStatus(scanStatus: string, markingStatus?: string): EvidenceStatus {
+function recordStatus(record: EvidenceRecord): EvidenceStatus {
+  const scannerState = evidenceScanDisplayState(record.lifecycleState, record.retryable);
+  if (scannerState === 'processing') return 'Processing file';
+  if (scannerState === 'retry_scheduled') return 'Retry scheduled';
+  if (scannerState === 'failed') return 'Scan failed';
+  const { status: scanStatus, markingStatus } = record;
   if (scanStatus === 'rejected') return 'Needs work';
   switch (markingStatus) {
     case 'accepted':
@@ -114,7 +119,7 @@ function evidenceRecordToItem(record: EvidenceRecord): EvidenceItem {
   const weekLabel = details.weekTitle || 'General evidence';
   const weekMatch = weekLabel.match(/\d+/);
   const week = weekMatch ? Number(weekMatch[0]) : 0;
-  const status = recordStatus(record.status, record.markingStatus);
+  const status = recordStatus(record);
   const docStatus: EvidenceDocument['status'] = status === 'Validated' ? 'Accepted' : status === 'Needs work' ? 'Referred' : 'Pending';
   return {
     id: record.id,
@@ -170,6 +175,9 @@ const STATUS_CONFIG: Record<EvidenceStatus, { bg: string; text: string; dot: str
   Validated: { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500', label: 'Validated' },
   'Pending tutor': { bg: 'bg-amber-50', text: 'text-amber-700', dot: 'bg-amber-500', label: 'Pending Tutor' },
   'Needs work': { bg: 'bg-red-50', text: 'text-red-700', dot: 'bg-red-500', label: 'Needs Work' },
+  'Processing file': { bg: 'bg-blue-50', text: 'text-blue-700', dot: 'bg-blue-500', label: 'Processing File' },
+  'Retry scheduled': { bg: 'bg-amber-50', text: 'text-amber-700', dot: 'bg-amber-500', label: 'Retry Scheduled' },
+  'Scan failed': { bg: 'bg-red-50', text: 'text-red-700', dot: 'bg-red-500', label: 'Scan Failed' },
   Draft: { bg: 'bg-background-100', text: 'text-foreground-400', dot: 'bg-foreground-300', label: 'Draft' },
   Submitted: { bg: 'bg-primary-50', text: 'text-primary-700', dot: 'bg-primary-500', label: 'Submitted' },
 };
@@ -402,9 +410,9 @@ export function EvidenceBody({
   const counts = useMemo(() => ({
     total: allEvidence.length,
     validated: allEvidence.filter(e => e.status === 'Validated').length,
-    pending: allEvidence.filter(e => e.status === 'Pending tutor' || e.status === 'Submitted').length,
+    pending: allEvidence.filter(e => ['Pending tutor', 'Submitted', 'Processing file', 'Retry scheduled'].includes(e.status)).length,
     draft: allEvidence.filter(e => e.status === 'Draft').length,
-    needsWork: allEvidence.filter(e => e.status === 'Needs work').length,
+    needsWork: allEvidence.filter(e => e.status === 'Needs work' || e.status === 'Scan failed').length,
     recorded: allEvidence.filter(e => e.status === 'Recorded').length,
   }), [allEvidence]);
 

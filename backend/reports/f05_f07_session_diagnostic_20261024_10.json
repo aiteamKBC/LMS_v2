@@ -1,0 +1,55 @@
+{
+  "authorization_id": "F05-F07-PG-CLOSURE-20261024-01",
+  "finished_at": "2026-10-24T12:37:23.050480+00:00",
+  "preflight": {
+    "branch_id": "br-damp-river-abvy0gv6",
+    "database": "neondb",
+    "ledger_sha256": "db539ffd7a63b7ae29ee104c94fd9b024e989fd0bf458319895325e88b5beec8",
+    "role": "neondb_owner",
+    "server_ssl_setting": "off",
+    "session_guard": {
+      "blocking_sessions": 0,
+      "endpoint_connection_type": "direct",
+      "lock_waiters": 0,
+      "observer": {
+        "application_name": "f05-f07-closure-runner",
+        "backend_age_seconds": 0,
+        "backend_type": "client backend",
+        "pid": 3454,
+        "state": "active",
+        "wait_event": "",
+        "wait_event_type": "",
+        "xact_age_seconds": 0
+      },
+      "other_client_sessions": 1,
+      "other_sessions": [
+        {
+          "application_name": "pgbouncer",
+          "backend_age_seconds": 329,
+          "backend_type": "client backend",
+          "pid": 2243,
+          "state": "idle",
+          "wait_event": "ClientRead",
+          "wait_event_type": "Client",
+          "xact_age_seconds": null
+        }
+      ],
+      "other_sessions_by_application": {
+        "pgbouncer": 1
+      },
+      "other_sessions_by_state": {
+        "idle": 1
+      },
+      "waiting_locks": 0
+    },
+    "tls": {
+      "channel_binding": "require",
+      "enabled": true,
+      "verification": "verify-full"
+    },
+    "transaction_read_only": "on"
+  },
+  "run_id": "f05f07_27d706f8e1984ca594e948faab65c66d",
+  "started_at": "2026-10-24T12:37:21.643232+00:00",
+  "status": "blocked"
+}

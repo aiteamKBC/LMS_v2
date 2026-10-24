@@ -28,6 +28,7 @@ import {
   type MonthlyReportAttachment,
   type MonthlyReportKsb,
   type MonthlyReportMetrics,
+  type MonthlyReportSummary,
 } from '@/api/monthlyReports';
 import { canOpenAttachment, openMonthlyReportAttachment } from '@/lib/monthlyReportAttachments';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
@@ -121,7 +122,7 @@ export function MonthlyReportWizard({
   metrics: MonthlyReportMetrics;
   /** The report already on file for this month, when there is one — the wizard
    *  then opens pre-filled and a submit updates it rather than adding a second. */
-  existing: MonthlyReport | null;
+  existing: MonthlyReport | MonthlyReportSummary | null;
   /** Every KSB on the learner's programme, with its progress, so they can pick
    *  the ones they worked on this month. */
   programmeKsbs: KsbProgress[];
@@ -356,6 +357,7 @@ export function MonthlyReportWizard({
         // A saved signature is already on the record; only re-save when the
         // learner produced a new one and asked to keep it.
         saveSignature: !isAdmin && saveSignature && signatureMode !== 'saved',
+        expectedUpdatedAt: existing?.updatedAt || null,
       });
       setPending([]);
       onSubmitted(report, !isAdmin && saveSignature && signatureMode !== 'saved');

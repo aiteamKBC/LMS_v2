@@ -59,6 +59,8 @@ class QuizStudentsQueryShapeTests(SimpleTestCase):
         payload = json.loads(response.content)
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(set(payload), {"quiz", "summary", "students"})
+        self.assertEqual(payload["quiz"]["id"], 17)
         self.assertEqual(payload["summary"], {
             "students": 1, "attempts": 1, "passed": 1, "averageBest": 80.0,
         })

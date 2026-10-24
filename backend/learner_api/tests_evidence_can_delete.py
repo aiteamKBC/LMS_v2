@@ -74,6 +74,9 @@ class EvidenceUploadDeleteTests(SimpleTestCase):
         connection = self.enterContext(patch.object(evidence, "_conn"))
         connection.return_value.cursor.return_value.__enter__.return_value = cursor
         self.enterContext(patch.object(evidence, "azure_configured", return_value=True))
+        self.enterContext(patch.object(evidence, "_ensure_scanner_ready"))
+        self.enterContext(patch.object(evidence, "_scan"))
+        self.enterContext(patch.object(evidence, "_verified_scan_verdict", return_value="clean"))
         self.enterContext(patch.object(evidence, "upload_to_quarantine"))
         self.enterContext(patch.object(evidence, "move_blob"))
         self.enterContext(patch.object(evidence, "blob_url", return_value="https://files.example.test/evidence"))

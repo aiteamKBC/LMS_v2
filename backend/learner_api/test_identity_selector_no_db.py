@@ -200,12 +200,23 @@ class IdentitySelectorTests(unittest.TestCase):
         # Execute the actual module again with runtime I/O explicitly forbidden.
         source = Path(selector.__file__).read_text(encoding='utf-8')
         tree = ast.parse(source)
-        self.assertFalse(any(isinstance(n, (ast.Import, ast.ImportFrom)) for n in ast.walk(tree)))
+        imports = {
+            alias.name.split('.')[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        } | {
+            node.module.split('.')[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module
+        }
+        self.assertEqual(imports, {'dataclasses', 'enum', 'typing'})
         with patch('builtins.open', side_effect=AssertionError('file I/O forbidden')), \
              patch('socket.socket', side_effect=AssertionError('network forbidden')):
-            namespace = {}
+            namespace = {'__name__': selector.__name__}
             exec(compile(tree, selector.__file__, 'exec'), namespace)
         self.assertTrue(callable(namespace['profile_for_enrolment']))
+        self.assertTrue(callable(namespace['resolve_many_for_enrolments']))
         self.assertTrue(callable(namespace['validate_profile']))
 
 

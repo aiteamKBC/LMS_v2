@@ -44,6 +44,9 @@ class CvDocumentTests(SimpleTestCase):
             patch.object(view.uploads, "upload_to_quarantine"),
             patch.object(view.uploads, "move_blob"),
             patch.object(view.uploads, "delete_blob"),
+            patch.object(view.uploads, "_ensure_scanner_ready"),
+            patch.object(view.uploads, "_scan"),
+            patch.object(view.uploads, "_verified_scan_verdict", return_value="clean"),
         ]
         mocks = [p.start() for p in patches]
         for p in patches:

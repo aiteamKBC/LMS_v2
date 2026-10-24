@@ -1,8 +1,8 @@
 """Learner evidence upload/list/download API (Azure Blob Storage backed).
 
 Lifecycle (see EVIDENCE_CLOUD.md):
-    upload -> QUARANTINE container + evidence_files row (status 'pending')
-           -> scan (see _scan; no scanner infra yet -> TODO)
+    upload -> scanner readiness gate -> QUARANTINE + pending metadata
+           -> authoritative scan
            -> promote to APPROVED (status 'approved') and record the approved
               blob in "Learner"."Evidence"  ── OR ── move to REJECTED.
     download -> short-lived SAS URL, ONLY from the approved container, ONLY for
@@ -31,6 +31,14 @@ from django.views.decorators.csrf import csrf_exempt
 from .evidence_storage import (
     azure_configured, upload_to_quarantine, move_blob, blob_url, get_download_sas,
     delete_blob,
+)
+from .malware_scanning import (
+    MalwareDetected,
+    ScanError,
+    ScannerUnavailable,
+    ensure_scanner_ready as _ensure_scanner_ready,
+    scan_uploaded_blob,
+    verified_verdict,
 )
 from login.permissions import learner_self_or_admin, learner_self_or_staff
 
@@ -167,16 +175,22 @@ def _conn():
     return connections["enrolment"]
 
 
-def _scan(_data_container, _blob_name) -> str:
-    """Return a scan verdict: 'clean' | 'infected'.
+def _scan(data_container, blob_name):
+    """Return a provider-correlated result or raise; never fabricate ``clean``."""
+    return scan_uploaded_blob(data_container, blob_name)
 
-    TODO: no malware scanner is wired up yet (no ClamAV daemon / Defender event
-    subscription in this environment). Until one exists we optimistically treat
-    uploads as clean so the quarantine->approved promotion works end-to-end.
-    When a scanner is available, download the blob and inspect it here (see
-    EVIDENCE_CLOUD.md §6) and return 'infected' on a hit.
-    """
-    return "clean"
+
+def _verified_scan_verdict(result, container, blob_name):
+    return verified_verdict(
+        result,
+        expected_container=container,
+        expected_blob_name=blob_name,
+    )
+
+
+SCANNER_UNAVAILABLE_MESSAGE = (
+    "Malware scanning is temporarily unavailable. Upload has not been saved."
+)
 
 
 def _record_approved_evidence(cur, blob_name, original_filename, approved_path):
@@ -276,6 +290,16 @@ def upload_evidence(request, kind, pk):
             training_plan_details = json.loads(raw_details)
         except ValueError:
             return _error("training_plan_details must be valid JSON.", 400)
+
+    # This deployment has no authoritative scanner. Reject before opening a
+    # database cursor or sending bytes to Azure; request fields can never
+    # substitute for a trusted provider result.
+    try:
+        _ensure_scanner_ready()
+    except ScannerUnavailable:
+        logger.error("Evidence upload blocked because malware scanning is unavailable.")
+        return _error(SCANNER_UNAVAILABLE_MESSAGE, 503)
+
     lineage = _evidence_lineage(kind, pk, section_ref)
 
     ext = f.name.rsplit(".", 1)[-1].lower() if "." in f.name else "bin"
@@ -286,7 +310,7 @@ def upload_evidence(request, kind, pk):
     try:
         upload_to_quarantine(f, blob_name, f.content_type)
     except Exception as exc:  # SDK / network / duplicate-blob errors
-        logger.warning("Evidence upload to quarantine failed: %s", exc)
+        logger.warning("Evidence upload to quarantine failed (%s).", exc.__class__.__name__)
         return _error("Upload to storage failed.", 502)
 
     # Record the pending row.
@@ -312,8 +336,18 @@ def upload_evidence(request, kind, pk):
             fallback="Could not record evidence metadata.",
         )
 
-    # Scan + route. (No async worker infra yet -> inline; move to Celery/RQ later.)
-    verdict = _scan(quarantine, blob_name)
+    # Scan + route. Only a structured provider-correlated CLEAN result may be
+    # promoted. Infrastructure/timeout/invalid outcomes remain in quarantine.
+    try:
+        verdict = _verified_scan_verdict(_scan(quarantine, blob_name), quarantine, blob_name)
+    except MalwareDetected:
+        verdict = "infected"
+    except ScanError as exc:
+        logger.error(
+            "Evidence upload remains quarantined because scanning failed (%s).",
+            exc.__class__.__name__,
+        )
+        return _error("Malware scanning could not be completed. The file is not available.", 503)
     approved = settings.AZURE_APPROVED_CONTAINER
     rejected = settings.AZURE_REJECTED_CONTAINER
     dest = approved if verdict == "clean" else rejected
@@ -322,7 +356,7 @@ def upload_evidence(request, kind, pk):
     try:
         move_blob(quarantine, dest, blob_name)
     except Exception as exc:
-        logger.warning("Evidence promotion (%s -> %s) failed: %s", quarantine, dest, exc)
+        logger.warning("Evidence blob routing failed (%s).", exc.__class__.__name__)
         return _error("Could not finalise upload.", 502)
 
     try:

@@ -12,6 +12,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from login.permissions import learner_self_or_admin, learner_self_or_staff
 from .assignment_attempts import HISTORY_KEY, preserve_attempts, submission_attempts
+from .selectors.lineage_identity import resolve_lineage_for_enrolment
 from .submission_audit import SUBMISSION_AUDIT_SQL, record_submission_row
 
 logger = logging.getLogger(__name__)
@@ -76,38 +77,7 @@ def _component_ksb_weights(component_ref):
 
 
 def _learner_profile_ids_for_source(cur, learner_id):
-    learner_id = _text(learner_id)
-    if not learner_id:
-        return []
-
-    cur.execute('select id::text from "Learner".learners where enrolment_id::text = %s', [learner_id])
-    linked = [_text(row[0]) for row in cur.fetchall() if row and _text(row[0])]
-    if linked:
-        return sorted(set(linked))
-    email = ""
-    cur.execute('select "Email" from enrolment."Created_users" where id::text = %s limit 1', [learner_id])
-    row = cur.fetchone()
-    if row:
-        email = _text(row[0])
-
-    if email:
-        cur.execute(
-            """
-            select id::text
-              from "Learner".learners
-             where enrolment_id is null
-               and lower(email) = lower(%s)
-               and not exists (
-                   select 1 from enrolment."Created_users" other
-                    where other.id::text <> %s and lower(other."Email") = lower(%s)
-               )
-            """,
-            [email, learner_id, email],
-        )
-    else:
-        cur.execute('select id::text from "Learner".learners where id::text = %s and enrolment_id is null', [learner_id])
-    ids = {_text(row[0]) for row in cur.fetchall() if row and _text(row[0])}
-    return sorted(ids) if len(ids) == 1 else []
+    return list(resolve_lineage_for_enrolment(cur, learner_id).profile_ids)
 
 
 def _reflection_lineage(learner_id, activity_id):

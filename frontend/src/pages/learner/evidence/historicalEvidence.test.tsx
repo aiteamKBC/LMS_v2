@@ -122,6 +122,15 @@ describe('Previous evidence in the learner library', () => {
     expect(within(screen.getByRole('button', { name: 'Open evidence: Progress review' })).getByText('Recorded')).toBeVisible();
     expect(within(screen.getByRole('button', { name: `Open evidence: ${historical.name}` })).getByText('Accepted')).toBeVisible();
   });
+  it('renders additive scanner pending, retry and terminal failure states', () => {
+    const processing: EvidenceRecord = { ...native, id: 'processing', filename: 'Processing.pdf', status: 'pending', lifecycleState: 'scanning' };
+    const retrying: EvidenceRecord = { ...native, id: 'retrying', filename: 'Retrying.pdf', status: 'pending', lifecycleState: 'scan_failed', retryable: true };
+    const failed: EvidenceRecord = { ...native, id: 'failed', filename: 'Failed.pdf', status: 'pending', lifecycleState: 'expired', retryable: false };
+    show({ evidenceRecords: [processing, retrying, failed], historicalRecords: [] });
+    expect(within(screen.getByRole('button', { name: 'Open evidence: Processing.pdf' })).getByText('Processing file')).toBeVisible();
+    expect(within(screen.getByRole('button', { name: 'Open evidence: Retrying.pdf' })).getByText('Retry scheduled')).toBeVisible();
+    expect(within(screen.getByRole('button', { name: 'Open evidence: Failed.pdf' })).getByText('Scan failed')).toBeVisible();
+  });
   it('retries document preparation without losing the evidence details', async () => {
     const normal = vi.mocked(fetch).getMockImplementation()!;
     let failedAttempts = 0;

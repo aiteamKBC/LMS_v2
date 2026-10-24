@@ -3199,6 +3199,7 @@ class MonthlyActivityTests(SimpleTestCase):
             id=42,
             coach_name="Med Maher",
             programme="TEST USER FLOW",
+            programme_status="active",
             start_date=None,
             training_plan=[],
             training_plan_progress=[],
@@ -3238,6 +3239,11 @@ class MonthlyActivityTests(SimpleTestCase):
         payload = json.loads(response.content)
         hydrate_plan.assert_called_with(source.learning_plan)
         expected_lookup.assert_called_once_with(["component-1"])
+        serialize_learner.assert_called_once_with(
+            row,
+            refresh_live_snapshots=False,
+            expected_otjh_by_component_id={"component-1": 2.5},
+        )
         self.assertEqual(payload["learners"][0]["otjh"]["monthlyTarget"], 2.5)
 
     def test_build_monthly_activity_learner_dedupes_duplicate_feed_items(self):
@@ -3373,19 +3379,28 @@ class MonthlyActivityTests(SimpleTestCase):
     @patch("coach_api.views.fetch_verified_teams_attendance_rows", return_value=[])
     @patch("coach_api.views.build_monthly_activity_learner")
     @patch("coach_api.views.serialize_caseload_learner")
+    @patch("coach_api.views.curriculum_expected_otjh_by_component_id", return_value={"component-1": 1.5})
     @patch("coach_api.views.collect_generated_timetable", return_value={"events": [], "owner_name": "Med Maher"})
     @patch("coach_api.views.fetch_caseload_learner_profiles")
     def test_coach_monthly_activity_uses_cached_snapshots_by_default(
         self,
         fetch_rows,
         collect_generated_timetable,
+        expected_lookup,
         serialize_learner,
         build_monthly_activity_learner,
         fetch_attendance,
     ):
-        row = SimpleNamespace(id=2, coach_name="Med Maher")
-        fetch_rows.return_value = [row]
-        serialize_learner.return_value = {"enrollmentStatus": "active"}
+        plan = [{"weeks": [{"components": [{"componentId": "component-1"}]}]}]
+        rows = [
+            SimpleNamespace(id=2, coach_name="Med Maher", programme_status="active", training_plan=plan),
+            SimpleNamespace(id=3, coach_name="Med Maher", programme_status="active", training_plan=plan),
+        ]
+        fetch_rows.return_value = rows
+        serialize_learner.side_effect = [
+            {"id": "2", "enrollmentStatus": "active"},
+            {"id": "3", "enrollmentStatus": "active"},
+        ]
         build_monthly_activity_learner.return_value = {
             "status": "on-track",
             "learning": {"total": 0, "quizzes": 0, "videos": 0, "components": 0},
@@ -3405,9 +3420,16 @@ class MonthlyActivityTests(SimpleTestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        serialize_learner.assert_called_once_with(row, refresh_live_snapshots=False)
+        expected_lookup.assert_called_once_with(["component-1"])
+        self.assertEqual(serialize_learner.call_count, 2)
+        for call_args, row in zip(serialize_learner.call_args_list, rows):
+            self.assertEqual(call_args.args, (row,))
+            self.assertEqual(call_args.kwargs, {
+                "refresh_live_snapshots": False,
+                "expected_otjh_by_component_id": {"component-1": 1.5},
+            })
         fetch_attendance.assert_called_once_with(
-            [2],
+            [2, 3],
             start_date=date(2026, 8, 1),
             end_date=date(2026, 8, 31),
         )
@@ -3430,7 +3452,7 @@ class MonthlyActivityTests(SimpleTestCase):
         build_monthly_activity_learner,
         fetch_attendance,
     ):
-        row = SimpleNamespace(id=2, coach_name="Med Maher")
+        row = SimpleNamespace(id=2, coach_name="Med Maher", programme_status="active")
         fetch_rows.return_value = [row]
         serialize_learner.return_value = {"enrollmentStatus": "active"}
         build_monthly_activity_learner.return_value = {
@@ -3452,7 +3474,11 @@ class MonthlyActivityTests(SimpleTestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        serialize_learner.assert_called_once_with(row, refresh_live_snapshots=True)
+        serialize_learner.assert_called_once_with(
+            row,
+            refresh_live_snapshots=True,
+            expected_otjh_by_component_id={},
+        )
         fetch_attendance.assert_called_once()
 
 

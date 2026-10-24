@@ -32,15 +32,15 @@ class SlugifyTests(SimpleTestCase):
 
 
 class ProgrammeWindowTests(SimpleTestCase):
-    @patch("learner_api.identity.learner_profile_for_source")
+    @patch("progress_reviews_api.identity.review_profile_for_source")
     @patch("learner_api.models.EnrolmentUser")
     def test_missing_learner_returns_all_none(self, mock_model, mock_profile_lookup):
         mock_model.DoesNotExist = Exception
         mock_model.all_learners.get.side_effect = mock_model.DoesNotExist
-        start, end, kind, source = _programme_window(999)
-        self.assertEqual((start, end, kind, source), (None, None, None, None))
+        start, end, kind, source, profile = _programme_window(999)
+        self.assertEqual((start, end, kind, source, profile), (None, None, None, None, None))
 
-    @patch("learner_api.identity.learner_profile_for_source")
+    @patch("progress_reviews_api.identity.review_profile_for_source")
     @patch("learner_api.models.EnrolmentUser")
     def test_the_learners_own_start_date_beats_the_cohort_stamped_profile(self, mock_model, mock_profile_lookup):
         """enrolment."Created_users"."Start_date" is the learner's OWN date;
@@ -54,7 +54,7 @@ class ProgrammeWindowTests(SimpleTestCase):
         mock_model.all_learners.get.return_value = source
         mock_profile_lookup.return_value = MagicMock(start_date=date(2025, 1, 1), end_date=date(2026, 6, 30))
 
-        start, end, kind, resolved_source = _programme_window(1)
+        start, end, kind, resolved_source, resolved_profile = _programme_window(1)
 
         self.assertEqual(start, date(2020, 1, 1))
         # End date keeps its existing preference: the profile's real DateField
@@ -62,8 +62,9 @@ class ProgrammeWindowTests(SimpleTestCase):
         self.assertEqual(end, date(2026, 6, 30))
         self.assertEqual(kind, "apprenticeship")
         self.assertIs(resolved_source, source)
+        self.assertIs(resolved_profile, mock_profile_lookup.return_value)
 
-    @patch("learner_api.identity.learner_profile_for_source")
+    @patch("progress_reviews_api.identity.review_profile_for_source")
     @patch("learner_api.models.EnrolmentUser")
     def test_the_profile_still_fills_in_when_the_learner_has_no_date(self, mock_model, mock_profile_lookup):
         source = MagicMock(start_date="", end_date="", learner_type="commercial")
@@ -71,7 +72,7 @@ class ProgrammeWindowTests(SimpleTestCase):
         mock_model.all_learners.get.return_value = source
         mock_profile_lookup.return_value = MagicMock(start_date=date(2025, 1, 1), end_date=date(2026, 6, 30))
 
-        start, _end, _kind, _source = _programme_window(1)
+        start, _end, _kind, _source, _profile = _programme_window(1)
 
         self.assertEqual(start, date(2025, 1, 1))
 
@@ -81,7 +82,15 @@ class GenerateForLearnerTests(SimpleTestCase):
         patcher = patch("progress_reviews_api.views._programme_window")
         self.mock_window = patcher.start()
         self.addCleanup(patcher.stop)
-        self.mock_window.return_value = (date(2025, 1, 1), date(2026, 6, 30), "apprenticeship", MagicMock())
+        self.source = MagicMock()
+        self.profile = MagicMock()
+        self.mock_window.return_value = (
+            date(2025, 1, 1),
+            date(2026, 6, 30),
+            "apprenticeship",
+            self.source,
+            self.profile,
+        )
 
         for name in ("create_run", "insert_snapshot", "save_warnings", "mark_run_completed", "mark_run_draft", "mark_run_failed", "insert_pptx_file"):
             patcher = patch(f"progress_reviews_api.views.runs.{name}")
@@ -99,12 +108,14 @@ class GenerateForLearnerTests(SimpleTestCase):
         self.assertEqual(result["generationStatus"], "completed")
         self.assertEqual(result["learnerId"], 42)
         self.assertIn("downloadUrl", result)
+        self.assertIs(mock_build_pack.call_args.kwargs["source"], self.source)
+        self.assertIs(mock_build_pack.call_args.kwargs["profile"], self.profile)
         self.mock_insert_pptx_file.assert_called_once()
         self.mock_mark_run_completed.assert_called_once()
         self.mock_mark_run_failed.assert_not_called()
 
     def test_no_programme_start_date_raises_422(self):
-        self.mock_window.return_value = (None, None, "apprenticeship", MagicMock())
+        self.mock_window.return_value = (None, None, "apprenticeship", MagicMock(), MagicMock())
         with self.assertRaises(GenerationError) as ctx:
             _generate_for_learner(42)
         self.assertEqual(ctx.exception.status, 422)
@@ -122,7 +133,7 @@ class GenerateForLearnerTests(SimpleTestCase):
         self.mock_mark_run_completed.assert_not_called()
 
     def test_unresolvable_learner_raises_404(self):
-        self.mock_window.return_value = (None, None, None, None)
+        self.mock_window.return_value = (None, None, None, None, None)
         with self.assertRaises(GenerationError) as ctx:
             _generate_for_learner(999)
         self.assertEqual(ctx.exception.status, 404)

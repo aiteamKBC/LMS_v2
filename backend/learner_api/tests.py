@@ -220,7 +220,8 @@ class AssignmentFormReadinessTests(SimpleTestCase):
             "businessImpact": "",
         })
 
-        with patch("learner_api.components.connections", {"enrolment": connection}):
+        with patch("learner_api.components.connections", {"enrolment": connection}), \
+                patch("learner_api.monthly_assignment.booked_coaching", return_value=False):
             self.assertFalse(_assignment_form_ready("COMP-1", "commercial", "19"))
 
     def test_accepts_complete_json_assignment_payload(self):
@@ -1044,9 +1045,11 @@ class LearnerSoftDeletedCurriculumVisibilityTests(SimpleTestCase):
 
         self.assertEqual(resolved, ([], [], []))
         module_query, week_query, component_query = [" ".join(query.lower().split()) for query in cursor.queries[:3]]
-        self.assertIn("m.deleted_at is null or m.deleted_via_parent is not null", module_query)
-        self.assertIn("deleted_at is null or deleted_via_parent is not null", week_query)
-        self.assertIn("deleted_at is null or deleted_via_parent is not null", component_query)
+        self.assertIn("m.deleted_at is null or coalesce(m.deleted_via_parent, '') <> ''", module_query)
+        for child_query in (week_query, component_query):
+            self.assertIn("deleted_at is null or exists", child_query)
+            self.assertIn("deleted_via_parent", child_query)
+            self.assertIn("archived_module.deleted_at is not null", child_query)
 
 
 class LearnerWeekQuizVisibilityTests(SimpleTestCase):

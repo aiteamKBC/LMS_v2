@@ -18,8 +18,15 @@ Assignment or reflection is decided by the component's authored type, matching
 ``frontend/src/lib/markingKind.ts`` -- keep the three in step.
 """
 import logging
+from collections.abc import Mapping
 
 from django.db import DatabaseError, connections
+
+from learner_api.selectors.identity import (
+    EnrolmentId,
+    ResolutionStatus,
+    resolve_many_for_enrolments,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,8 +91,8 @@ def compute_tally(profile_id):
                 [learner_ids],
             )
             rows = cur.fetchall()
-    except DatabaseError as exc:
-        logger.warning("Could not compute the marking tally for %s: %s", profile_id, exc)
+    except DatabaseError:
+        logger.warning("marking_tally_refresh_skipped reason=aggregate_unavailable")
         return None
 
     tally = {column: 0 for column in TALLY_COLUMNS}
@@ -121,31 +128,78 @@ def refresh_tally(profile_id):
                 + " where id = %s",
                 [*(tally[column] for column in TALLY_COLUMNS), profile_id],
             )
-    except DatabaseError as exc:
-        logger.warning("Could not store the marking tally for %s: %s", profile_id, exc)
+    except DatabaseError:
+        logger.warning("marking_tally_refresh_skipped reason=counter_write_unavailable")
         return None
     return tally
+
+
+def _read_identity_rows(cursor, sql, params):
+    """Execute the typed selector through the existing enrolment connection."""
+    cursor.execute(sql, params)
+    rows = list(cursor.fetchall())
+    if not rows:
+        return []
+    if isinstance(rows[0], Mapping):
+        return [dict(row) for row in rows]
+    columns = [
+        getattr(column, "name", None) or column[0]
+        for column in (cursor.description or ())
+    ]
+    if not columns:
+        return []
+    return [dict(zip(columns, row)) for row in rows]
+
+
+def _canonical_enrolment_id(value):
+    """Return a typed positive decimal ID without widening legacy inputs."""
+    supplied = str(value or "")
+    raw = supplied.strip()
+    try:
+        normalized = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if normalized <= 0 or supplied != raw or raw != str(normalized):
+        return None
+    return EnrolmentId(normalized)
+
+
+def _resolve_tally_profile(learner_kind, learner_id):
+    """Resolve a submission's verified enrolment ID to one canonical profile."""
+    enrolment_id = _canonical_enrolment_id(learner_id)
+    expected_kind = str(learner_kind or "").strip().casefold()
+    if enrolment_id is None or expected_kind not in {"commercial", "apprenticeship"}:
+        return None, "invalid_submission_identity"
+
+    try:
+        with connections["enrolment"].cursor() as cur:
+            def query(sql, params):
+                return _read_identity_rows(cur, sql, params)
+
+            resolution = resolve_many_for_enrolments(
+                [enrolment_id],
+                query=query,
+            )[enrolment_id]
+    except DatabaseError:
+        return None, "identity_lookup_unavailable"
+
+    if resolution.status is not ResolutionStatus.RESOLVED:
+        return None, f"identity_{resolution.status.value}"
+    if resolution.identity.learner_kind.strip().casefold() != expected_kind:
+        return None, "identity_kind_mismatch"
+    return resolution.identity.profile_id, None
 
 
 def refresh_tally_for_submission(learner_kind, learner_id):
     """Recompute for whichever profile a submission's learner_id refers to.
 
-    The marking queue holds the id the submission was filed under, which may be
-    an enrolment id; the counters live on the profile, so it is resolved here
-    rather than at each call site.
+    Coach and Advanced Admin decision paths both scope submissions by the
+    explicit enrolment id. The counters live on the profile, so the typed B4B
+    bridge resolves that namespace here. Equal numeric profile ids never count
+    as identity; ambiguity or mismatch skips only this derived refresh.
     """
-    try:
-        with connections["enrolment"].cursor() as cur:
-            cur.execute(
-                'select id from "Learner".learners '
-                "where id::text = %s or enrolment_id::text = %s "
-                "order by id limit 1",
-                [str(learner_id), str(learner_id)],
-            )
-            row = cur.fetchone()
-    except DatabaseError as exc:
-        logger.warning("Could not resolve learner %s for the tally: %s", learner_id, exc)
+    profile_id, reason = _resolve_tally_profile(learner_kind, learner_id)
+    if profile_id is None:
+        logger.warning("marking_tally_refresh_skipped reason=%s", reason)
         return None
-    if not row:
-        return None
-    return refresh_tally(row[0])
+    return refresh_tally(profile_id)

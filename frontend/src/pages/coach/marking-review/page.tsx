@@ -286,7 +286,12 @@ export default function CoachMarkingReviewPage() {
       const response = await coachFetch(`${apiEndpoint}/${selected.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision, feedback: feedback.trim(), reviewedBy: coach.name, ...(personal ? { version: selected.version } : {}) }),
+        body: JSON.stringify({
+          decision,
+          feedback: feedback.trim(),
+          reviewedBy: coach.name,
+          ...(personal ? { version: selected.version } : { expectedReviewedAt: selected.reviewedAt }),
+        }),
       });
       const text = await response.text();
       let data: { detail?: string; error?: string; fields?: Record<string, string[] | string> } = {};

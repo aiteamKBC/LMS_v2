@@ -30,12 +30,15 @@ from learner_api.monthly_reports import (
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_REPORT_PAGE_SIZE = 25
+MAX_REPORT_PAGE_SIZE = 100
+
 
 LIST_SELECT_COLUMNS = """
     id, learner_kind, learner_id, learner_name, programme_name,
     month_key, month_label, status, summary_metrics, attachments,
     learned_summary, submitted_at, updated_at, selected_ksbs,
-    (coalesce(signature, '') <> '') as signed, signed_name, signed_at,
+    (coalesce(signature, '') <> '' and signed_at is not null) as signed, signed_name, signed_at,
     jsonb_array_length(
         case when jsonb_typeof(activity_snapshot) = 'array'
              then activity_snapshot else '[]'::jsonb end
@@ -45,6 +48,55 @@ LIST_SELECT_COLUMNS = """
 
 def _normalize_email(value):
     return str(value or "").strip().lower()
+
+
+def _pagination_request(request):
+    """Validate opt-in pagination without truncating legacy callers."""
+    raw_page = request.GET.get("page")
+    raw_page_size = request.GET.get("pageSize", request.GET.get("page_size"))
+    if raw_page is None and raw_page_size is None:
+        return None, None
+    try:
+        page = int(raw_page or 1)
+        page_size = int(raw_page_size or DEFAULT_REPORT_PAGE_SIZE)
+    except (TypeError, ValueError):
+        return None, ("page and pageSize must be whole numbers.", "invalid_pagination")
+    if page < 1:
+        return None, ("page must be at least 1.", "invalid_pagination")
+    if not 1 <= page_size <= MAX_REPORT_PAGE_SIZE:
+        return None, (
+            f"pageSize must be between 1 and {MAX_REPORT_PAGE_SIZE}.",
+            "invalid_pagination",
+        )
+    return {"page": page, "pageSize": page_size}, None
+
+
+def _pagination_payload(pagination, total):
+    total_pages = max(1, (total + pagination["pageSize"] - 1) // pagination["pageSize"])
+    page = min(pagination["page"], total_pages)
+    return {
+        "page": page,
+        "pageSize": pagination["pageSize"],
+        "total": total,
+        "totalPages": total_pages,
+        "hasNext": page < total_pages,
+        "hasPrevious": page > 1,
+    }
+
+
+def _empty_paginated_response(pagination):
+    payload = {"items": [], "months": [], "learners": []}
+    if pagination is not None:
+        payload.update({
+            "pagination": _pagination_payload(pagination, 0),
+            "summary": {
+                "reports": 0,
+                "learners": 0,
+                "attachments": 0,
+                "unsigned": 0,
+            },
+        })
+    return payload
 
 
 def _allowed_learner_ids(owner_email):
@@ -122,8 +174,12 @@ def coach_monthly_reports(request):
     """Every monthly report the coach's learners have submitted."""
     owner_email = authenticated_coach_email(request)
     allowed = _allowed_learner_ids(owner_email)
+    pagination, pagination_error = _pagination_request(request)
+    if pagination_error is not None:
+        message, code = pagination_error
+        return coach_error(request, code=code, message=message, status=400)
     if not allowed:
-        return JsonResponse({"items": [], "months": [], "learners": []})
+        return JsonResponse(_empty_paginated_response(pagination))
 
     month = str(request.GET.get("month") or "").strip()
     if month and not MONTH_KEY_RE.match(month):
@@ -151,14 +207,50 @@ def coach_monthly_reports(request):
     where = " and ".join(clauses)
     try:
         with connections["enrolment"].cursor() as cur:
+            response_pagination = None
+            summary = None
+            page_clause = ""
+            page_params = []
+            if pagination is not None:
+                cur.execute(
+                    f"""
+                    select
+                        count(*),
+                        count(distinct learner_id),
+                        coalesce(sum(jsonb_array_length(
+                            case when jsonb_typeof(attachments) = 'array'
+                                 then attachments else '[]'::jsonb end
+                        )), 0),
+                        count(*) filter (
+                            where coalesce(signature, '') = '' or signed_at is null
+                        )
+                      from "Learner".learner_monthly_reports
+                     where {where}
+                    """,
+                    params,
+                )
+                aggregate = cur.fetchone()
+                response_pagination = _pagination_payload(pagination, aggregate[0])
+                summary = {
+                    "reports": aggregate[0],
+                    "learners": aggregate[1],
+                    "attachments": aggregate[2],
+                    "unsigned": aggregate[3],
+                }
+                page_clause = "limit %s offset %s"
+                page_params = [
+                    response_pagination["pageSize"],
+                    (response_pagination["page"] - 1) * response_pagination["pageSize"],
+                ]
             cur.execute(
                 f"""
                 select {LIST_SELECT_COLUMNS}
                   from "Learner".learner_monthly_reports
                  where {where}
-                 order by learner_name asc nulls last, month_key desc
+                 order by learner_name asc nulls last, month_key desc, id desc
+                 {page_clause}
                 """,
-                params,
+                [*params, *page_params],
             )
             rows = cur.fetchall()
             # The filter options describe the whole caseload, not the filtered
@@ -192,13 +284,14 @@ def coach_monthly_reports(request):
             status=502,
         )
 
-    return JsonResponse(
-        {
-            "items": [_list_row_to_summary(row) for row in rows],
-            "months": months,
-            "learners": learners,
-        }
-    )
+    payload = {
+        "items": [_list_row_to_summary(row) for row in rows],
+        "months": months,
+        "learners": learners,
+    }
+    if response_pagination is not None:
+        payload.update({"pagination": response_pagination, "summary": summary})
+    return JsonResponse(payload)
 
 
 @require_GET

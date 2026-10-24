@@ -145,6 +145,9 @@ class EvidenceRequestDDLTests(SimpleTestCase):
     def test_upload_does_not_invoke_ddl_and_preserves_success_contract(self):
         cursor = self._cursor()
         self.enterContext(patch.object(evidence, "azure_configured", return_value=True))
+        self.enterContext(patch.object(evidence, "_ensure_scanner_ready"))
+        self.enterContext(patch.object(evidence, "_scan"))
+        self.enterContext(patch.object(evidence, "_verified_scan_verdict", return_value="clean"))
         upload = self.enterContext(patch.object(evidence, "upload_to_quarantine"))
         move = self.enterContext(patch.object(evidence, "move_blob"))
         self.enterContext(patch.object(evidence, "blob_url", return_value="https://files.test/blob"))
@@ -281,6 +284,9 @@ class EvidenceRequestDDLTests(SimpleTestCase):
 
         upload_cursor = self._cursor()
         upload_cursor.execute.side_effect = _schema_error()
+        self.enterContext(patch.object(evidence, "_ensure_scanner_ready"))
+        self.enterContext(patch.object(evidence, "_scan"))
+        self.enterContext(patch.object(evidence, "_verified_scan_verdict", return_value="clean"))
         self.enterContext(
             patch.object(
                 evidence,

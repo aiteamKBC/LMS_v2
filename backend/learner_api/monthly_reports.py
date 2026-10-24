@@ -18,6 +18,8 @@ import uuid
 from django.conf import settings
 from django.db import DatabaseError, connections, transaction
 from django.http import HttpResponse, JsonResponse
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 
 from .evidence_storage import azure_configured, download_blob_bytes
@@ -37,6 +39,8 @@ MAX_SELECTED_KSBS = 500
 # Same cap as every other signature column in the schema (see
 # apprenticeship_agreement.MAX_SIGNATURE_CHARS): a data URL, not a file.
 MAX_SIGNATURE_CHARS = 400_000
+DEFAULT_REPORT_PAGE_SIZE = 24
+MAX_REPORT_PAGE_SIZE = 100
 
 #: The learner's reusable signature on their own user record. Distinct from the
 #: per-report signature: this one is a convenience for signing the next thing,
@@ -50,6 +54,18 @@ SELECT_COLUMNS = """
     month_key, month_label, status, activity_snapshot, summary_metrics,
     attachments, learned_summary, submitted_at, updated_at,
     selected_ksbs, signature, signed_name, signed_at
+"""
+
+LIST_SELECT_COLUMNS = """
+    id, learner_kind, learner_id, learner_name, programme_name,
+    month_key, month_label, status, summary_metrics, attachments,
+    learned_summary, submitted_at, updated_at, selected_ksbs,
+    (coalesce(signature, '') <> '' and signed_at is not null) as signed,
+    signed_name, signed_at,
+    jsonb_array_length(
+        case when jsonb_typeof(activity_snapshot) = 'array'
+             then activity_snapshot else '[]'::jsonb end
+    ) as activity_count
 """
 
 
@@ -138,6 +154,63 @@ def _row_to_report(row):
     }
 
 
+def _row_to_summary(row):
+    """Shape the bounded list row without snapshot or signature bytes."""
+    return {
+        "id": str(row[0]),
+        "learnerKind": row[1],
+        "learnerId": row[2],
+        "learnerName": row[3],
+        "programmeName": row[4],
+        "monthKey": row[5],
+        "monthLabel": row[6],
+        "status": row[7],
+        "summaryMetrics": _dict(_json_column(row[8], {})),
+        "attachments": _list(_json_column(row[9], [])),
+        "learnedSummary": row[10],
+        "submittedAt": row[11].isoformat() if row[11] else None,
+        "updatedAt": row[12].isoformat() if row[12] else None,
+        "selectedKsbs": _list(_json_column(row[13], [])),
+        "signed": bool(row[14]),
+        "signedName": row[15] or "",
+        "signedAt": row[16].isoformat() if row[16] else None,
+        "activityCount": row[17] or 0,
+    }
+
+
+def _pagination_request(request):
+    """Validate opt-in list pagination while retaining legacy callers."""
+    raw_page = request.GET.get("page")
+    raw_page_size = request.GET.get("pageSize", request.GET.get("page_size"))
+    if raw_page is None and raw_page_size is None:
+        return None, None
+    try:
+        page = int(raw_page or 1)
+        page_size = int(raw_page_size or DEFAULT_REPORT_PAGE_SIZE)
+    except (TypeError, ValueError):
+        return None, _error("page and pageSize must be whole numbers.")
+    if page < 1:
+        return None, _error("page must be at least 1.")
+    if not 1 <= page_size <= MAX_REPORT_PAGE_SIZE:
+        return None, _error(
+            f"pageSize must be between 1 and {MAX_REPORT_PAGE_SIZE}."
+        )
+    return {"page": page, "pageSize": page_size}, None
+
+
+def _pagination_payload(pagination, total):
+    total_pages = max(1, (total + pagination["pageSize"] - 1) // pagination["pageSize"])
+    page = min(pagination["page"], total_pages)
+    return {
+        "page": page,
+        "pageSize": pagination["pageSize"],
+        "total": total,
+        "totalPages": total_pages,
+        "hasNext": page < total_pages,
+        "hasPrevious": page > 1,
+    }
+
+
 def _saved_signature(cur, learner_id):
     """The learner's reusable signature, when they have saved one.
 
@@ -195,6 +268,9 @@ def _list_monthly_reports(request, kind, pk):
     month_key = _text(request.GET.get("month"))
     if month_key and not MONTH_KEY_RE.match(month_key):
         return _error("month must use YYYY-MM format.")
+    pagination, pagination_error = _pagination_request(request)
+    if pagination_error is not None:
+        return pagination_error
 
     try:
         with connections["enrolment"].cursor() as cur:
@@ -208,17 +284,51 @@ def _list_monthly_reports(request, kind, pk):
                     """,
                     [kind, str(pk), month_key],
                 )
+                rows = cur.fetchall()
+                response_pagination = None
+            elif pagination is not None:
+                cur.execute(
+                    """
+                    select count(*)
+                      from "Learner".learner_monthly_reports
+                     where learner_kind = %s and learner_id = %s
+                    """,
+                    [kind, str(pk)],
+                )
+                total = cur.fetchone()[0]
+                response_pagination = _pagination_payload(pagination, total)
+                offset = (
+                    (response_pagination["page"] - 1)
+                    * response_pagination["pageSize"]
+                )
+                cur.execute(
+                    f"""
+                    select {LIST_SELECT_COLUMNS}
+                      from "Learner".learner_monthly_reports
+                     where learner_kind = %s and learner_id = %s
+                     order by month_key desc, id desc
+                     limit %s offset %s
+                    """,
+                    [
+                        kind,
+                        str(pk),
+                        response_pagination["pageSize"],
+                        offset,
+                    ],
+                )
+                rows = cur.fetchall()
             else:
                 cur.execute(
                     f"""
                     select {SELECT_COLUMNS}
                       from "Learner".learner_monthly_reports
                      where learner_kind = %s and learner_id = %s
-                     order by month_key desc
+                     order by month_key desc, id desc
                     """,
                     [kind, str(pk)],
                 )
-            rows = cur.fetchall()
+                rows = cur.fetchall()
+                response_pagination = None
             # Offered so the wizard can pre-fill "use my saved signature"
             # instead of making the learner produce one every month.
             saved = _saved_signature(cur, pk)
@@ -226,7 +336,10 @@ def _list_monthly_reports(request, kind, pk):
         logger.exception("Could not load learner monthly reports.")
         return _error("Could not load the monthly reports.", 502)
 
-    reports = [_row_to_report(row) for row in rows]
+    reports = [
+        _row_to_summary(row) if response_pagination is not None else _row_to_report(row)
+        for row in rows
+    ]
     if month_key:
         return JsonResponse(
             {
@@ -235,13 +348,14 @@ def _list_monthly_reports(request, kind, pk):
                 "savedSignatureName": saved["name"],
             }
         )
-    return JsonResponse(
-        {
-            "reports": reports,
-            "savedSignature": saved["signature"],
-            "savedSignatureName": saved["name"],
-        }
-    )
+    payload = {
+        "reports": reports,
+        "savedSignature": saved["signature"],
+        "savedSignatureName": saved["name"],
+    }
+    if response_pagination is not None:
+        payload["pagination"] = response_pagination
+    return JsonResponse(payload)
 
 
 @learner_self_or_admin(kwarg="pk")
@@ -283,6 +397,16 @@ def _submit_monthly_report(request, kind, pk):
     if len(signature) > MAX_SIGNATURE_CHARS:
         return _error("That signature image is too large.")
 
+    expected_updated_at_supplied = "expectedUpdatedAt" in payload
+    expected_updated_at_raw = payload.get("expectedUpdatedAt")
+    expected_updated_at = None
+    if expected_updated_at_raw not in (None, ""):
+        if not isinstance(expected_updated_at_raw, str):
+            return _error("expectedUpdatedAt must be an ISO-8601 date-time or null.")
+        expected_updated_at = parse_datetime(expected_updated_at_raw)
+        if expected_updated_at is None or not timezone.is_aware(expected_updated_at):
+            return _error("expectedUpdatedAt must be an ISO-8601 date-time with a timezone.")
+
     snapshot = _list(payload.get("activitySnapshot"))[:MAX_SNAPSHOT_ITEMS]
     attachments = [_dict(item) for item in _list(payload.get("attachments"))[:MAX_ATTACHMENTS]]
     selected_ksbs = [
@@ -301,7 +425,7 @@ def _submit_monthly_report(request, kind, pk):
             with connections["enrolment"].cursor() as cur:
                 cur.execute(
                     f"""
-                    insert into "Learner".learner_monthly_reports (
+                    insert into "Learner".learner_monthly_reports as existing_report (
                         id, learner_kind, learner_id, learner_name, programme_name,
                         month_key, month_label, status, learned_summary,
                         activity_snapshot, summary_metrics, attachments,
@@ -329,6 +453,8 @@ def _submit_monthly_report(request, kind, pk):
                         signed_name = excluded.signed_name,
                         signed_at = now(),
                         updated_at = now()
+                    where not %s
+                       or existing_report.updated_at is not distinct from %s
                     returning {SELECT_COLUMNS}
                     """,
                     [
@@ -346,9 +472,16 @@ def _submit_monthly_report(request, kind, pk):
                         json.dumps(selected_ksbs),
                         signature,
                         signed_name,
+                        expected_updated_at_supplied,
+                        expected_updated_at,
                     ],
                 )
                 row = cur.fetchone()
+                if row is None:
+                    return _error(
+                        "This monthly report was updated elsewhere. Reload it before submitting again.",
+                        409,
+                    )
                 _record_monthly_report(row)
 
                 # Keep the signature on the learner's own record when they ask,

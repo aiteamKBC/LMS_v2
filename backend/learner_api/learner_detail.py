@@ -195,7 +195,13 @@ SOURCE_MODELS = {
 IFRAME_SRC_RE = re.compile(r"<iframe[^>]+src=[\"']([^\"']+)[\"']", re.IGNORECASE)
 
 
-def _active_profile_for_source(source, source_pk, *, heal=True):
+def _active_profile_for_source(
+    source,
+    source_pk,
+    *,
+    heal=True,
+    resolved_profile=...,
+):
     """Resolve the saved profile, including learners awaiting an invitation.
 
     ``Created_users`` and ``Learner.learners`` have independent primary-key
@@ -204,7 +210,17 @@ def _active_profile_for_source(source, source_pk, *, heal=True):
     fallback for older records that do not have an email.
     """
     # Saved progress/KSBs remain visible to authorised viewers before activation.
-    profile = learner_profile_for_source(source, source_pk, **({'heal': False} if not heal else {}))
+    if resolved_profile is Ellipsis:
+        profile = learner_profile_for_source(
+            source,
+            source_pk,
+            **({'heal': False} if not heal else {}),
+        )
+    else:
+        # Some request owners (currently Progress Review) have already applied
+        # their domain's stricter canonical/legacy identity policy. Reusing the
+        # model keeps this serializer from resolving or healing identity again.
+        profile = resolved_profile
     if profile is None:
         return None
 
@@ -2136,8 +2152,16 @@ def _activity_module_components(components, component_id):
             not c.get('moduleId') and c.get('module') == selected.get('module'))]
 
 
-def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_view=False,
-                         activity_component_id=None):
+def build_learner_detail(
+    source,
+    pk,
+    *,
+    compact=False,
+    read_only=False,
+    quiz_view=False,
+    activity_component_id=None,
+    resolved_profile=...,
+):
     """The learner's full workspace payload for one already-loaded source row.
 
     Split out of the view so other callers can serve the same shape behind their
@@ -2155,14 +2179,33 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     if not read_only:
         hydrate_source_training_plan(source)
     assigned_modules = effective_training_plan(source)
-    learner_profile = _active_profile_for_source(source, pk, **({'heal': False} if activity_component_id else {}))
+    profile_options = {}
+    if resolved_profile is not Ellipsis:
+        profile_options["resolved_profile"] = resolved_profile
+    learner_profile = _active_profile_for_source(
+        source,
+        pk,
+        **profile_options,
+        **({'heal': False} if activity_component_id else {}),
+    )
 
     if learner_profile and not learner_profile.ksbs and not read_only:
         try:
             from .active_users import refresh_learner_ksb_snapshot
 
             if refresh_learner_ksb_snapshot(learner_profile, source):
-                learner_profile = _active_profile_for_source(source, pk)
+                if resolved_profile is Ellipsis:
+                    learner_profile = _active_profile_for_source(source, pk)
+                else:
+                    # Keep the established fresh-after-write projection without
+                    # re-entering an identity resolver. refresh_from_db is a
+                    # bounded read of the already-authorized profile primary key.
+                    learner_profile.refresh_from_db()
+                    learner_profile = _active_profile_for_source(
+                        source,
+                        pk,
+                        resolved_profile=learner_profile,
+                    )
         except DatabaseError as exc:
             logger.warning("Could not refresh learner KSB snapshot for %s: %s", pk, exc)
 

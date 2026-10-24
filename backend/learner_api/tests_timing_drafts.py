@@ -47,6 +47,27 @@ class TimingMigrationTargetTests(unittest.TestCase):
                         self.migration.install(MagicMock(), editor)
                 editor.create_model.assert_not_called()
 
+    def test_migration_and_runtime_model_pin_the_public_schema(self):
+        operation = self.migration.Migration.operations[0]
+        self.assertEqual(
+            operation.options['db_table'],
+            'public"."learner_activity_timing_drafts',
+        )
+        self.assertEqual(ActivityTimingDraft._meta.db_table, operation.options['db_table'])
+        self.assertEqual(
+            connections['default'].ops.quote_name(operation.options['db_table']),
+            '"public"."learner_activity_timing_drafts"',
+        )
+
+    def test_migration_rejects_a_noncanonical_primary_alias(self):
+        primary = SimpleNamespace(alias='enrolment', vendor='postgresql', settings_dict=self.config)
+        learner = SimpleNamespace(vendor='postgresql', settings_dict=self.config)
+        editor = SimpleNamespace(connection=primary, create_model=MagicMock())
+        with patch.object(self.migration, 'connections', {'enrolment': learner}):
+            with self.assertRaisesRegex(RuntimeError, 'canonical default'):
+                self.migration.install(MagicMock(), editor)
+        editor.create_model.assert_not_called()
+
 
 class TimingDraftTests(unittest.TestCase):
     def setUp(self):

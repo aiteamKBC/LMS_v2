@@ -20,6 +20,21 @@ export interface EvidenceTrainingPlanDetails {
   otjhHours?: number | null;
 }
 
+export type EvidenceLifecycleState =
+  | 'pending_upload'
+  | 'quarantined'
+  | 'scan_pending'
+  | 'scanning'
+  | 'clean_verified'
+  | 'infected'
+  | 'scan_failed'
+  | 'expired';
+
+export interface EvidenceRetryState {
+  state: 'scheduled' | 'exhausted' | string;
+  nextRetryAt: string | null;
+}
+
 export interface EvidenceRecord {
   id: string;
   filename: string;
@@ -27,6 +42,10 @@ export interface EvidenceRecord {
   sizeBytes: number;
   status: 'pending' | 'approved' | 'rejected' | string;
   scanResult: string | null;
+  /** Additive I3C fields. They remain absent while I3B containment is active. */
+  lifecycleState?: EvidenceLifecycleState;
+  retryable?: boolean;
+  retry?: EvidenceRetryState;
   sectionRef: string;
   uploadedAt: string | null;
   trainingPlanDetails: EvidenceTrainingPlanDetails | null;
@@ -47,9 +66,27 @@ export interface EvidenceRecord {
 export interface UploadEvidenceResult {
   id: string;
   status: string;
-  scanResult: string;
+  scanResult: string | null;
   filename: string;
   sectionRef: string;
+  lifecycleState?: EvidenceLifecycleState;
+  retryable?: boolean;
+  retry?: EvidenceRetryState;
+  statusUrl?: string;
+}
+
+export type EvidenceScanDisplayState = 'processing' | 'retry_scheduled' | 'failed' | null;
+
+/** Map only server lifecycle facts to UI state; never infer clean from legacy text. */
+export function evidenceScanDisplayState(
+  lifecycleState?: EvidenceLifecycleState,
+  retryable = false,
+): EvidenceScanDisplayState {
+  if (!lifecycleState || lifecycleState === 'infected') return null;
+  if (lifecycleState === 'scan_failed') return retryable ? 'retry_scheduled' : 'failed';
+  if (lifecycleState === 'expired') return 'failed';
+  if (lifecycleState === 'clean_verified') return 'processing';
+  return 'processing';
 }
 
 async function parse<T>(res: Response): Promise<T> {

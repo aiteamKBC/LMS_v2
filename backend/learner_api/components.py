@@ -61,6 +61,21 @@ def _error(message, status):
     return JsonResponse({"error": message}, status=status)
 
 
+def _database_error(operation, component_id, *, status=502):
+    """Return a stable error without exposing SQL, schema, or learner data."""
+    import sys
+
+    error_type = sys.exc_info()[0]
+    logger.error(
+        "Component progress database operation failed during %s "
+        "(component_id=%s, error_type=%s).",
+        operation,
+        component_id,
+        error_type.__name__ if error_type else "DatabaseError",
+    )
+    return _error("Learner progress is temporarily unavailable. Please try again.", status)
+
+
 def _format_clock(seconds):
     """Seconds -> "MM:SS"."""
     try:
@@ -321,8 +336,8 @@ def submit_component_progress(request, component_id):
         source = model.objects.get(pk=learner_id)
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
-    except (DatabaseError, ValueError) as exc:
-        return _error(f"Database error: {exc}", 502)
+    except (DatabaseError, ValueError):
+        return _database_error("learner lookup", component_id)
 
     # Only the monthly assignment goes through the eight-step submission. Once
     # an author flags one, the plan's other assignments complete like any other
@@ -358,8 +373,8 @@ def submit_component_progress(request, component_id):
         active = learner_profile_for_source(source, learner_id, active_only=True)
         if active is None:
             active = sync_active_user(source)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DatabaseError:
+        return _database_error("profile lookup", component_id)
     if active is None:
         return _error(
             "This learner does not have an active learner profile, so progress cannot be saved.",
@@ -384,7 +399,11 @@ def submit_component_progress(request, component_id):
         )
     except TrackingSessionError as exc:
         return _error(str(exc), 400)
-    if tracking_session_already_used(tracking["sessionId"]):
+    try:
+        tracking_session_used = tracking_session_already_used(tracking["sessionId"])
+    except DatabaseError:
+        return _database_error("tracking session lookup", component_id)
+    if tracking_session_used:
         return _error("This activity timing session has already been submitted.", 409)
     started_at = tracking["startedAt"].isoformat()
     submitted_at = submitted_at_dt.isoformat()
@@ -447,9 +466,9 @@ def submit_component_progress(request, component_id):
     except IntegrityError as exc:
         if "learner_progress_tracking_session_uq" in str(exc):
             return _error("This activity timing session has already been submitted.", 409)
-        return _error(f"Database error saving progress: {exc}", 502)
-    except DatabaseError as exc:
-        return _error(f"Database error saving progress: {exc}", 502)
+        return _database_error("progress persistence", component_id)
+    except DatabaseError:
+        return _database_error("progress persistence", component_id)
 
     # An activity the author marked for tutor validation is handed in here, not
     # finished here: the marking queue reads

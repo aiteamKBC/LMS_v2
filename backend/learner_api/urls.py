@@ -39,11 +39,13 @@ from . import module_progress, extra_activities, absence_reports, apprenticeship
 from .my_learning import my_learning
 from . import progress_transfer
 from . import support_tickets
+from .malware_webhooks import defender_event_grid
 
 from curriculum_api import session_results
 from .session_recovery import link_catchup
 
 urlpatterns = [
+    path('scanner/events/defender/', defender_event_grid, name='defender-event-grid'),
     path('support/tickets/', support_tickets.learner_tickets),
     path('support/tickets/<uuid:ticket_id>/', support_tickets.learner_ticket),
     path('support/tickets/<uuid:ticket_id>/attachments/<uuid:attachment_id>/', support_tickets.learner_attachment),

@@ -4785,6 +4785,7 @@ def build_monthly_activity_learner(
     end_date: date,
     attendance_rows: list[dict] | None = None,
     expected_otjh_by_component_id: dict[str, float] | None = None,
+    target_training_plan=None,
 ) -> dict:
     progress_entries = [entry for entry in list_or_empty(row.training_plan_progress) if isinstance(entry, dict)]
     activity_entries = learner_activity_feed_entries(row)
@@ -4834,7 +4835,10 @@ def build_monthly_activity_learner(
 
     for index, event in enumerate(learner_events):
         event_status = clean_text(event.get("status")).lower()
-        if event_status == CoachCalendarEvent.STATUS_CANCELLED:
+        if (
+            event_status == CoachCalendarEvent.STATUS_CANCELLED
+            or monthly_event_is_unscheduled(event_status)
+        ):
             continue
         event_date = monthly_event_display_date(event)
         if not event_date:
@@ -4947,7 +4951,8 @@ def build_monthly_activity_learner(
         monthly_status = "on-track"
 
     last_activity = activities[0] if activities else None
-    target_training_plan = monthly_target_training_plan(row)
+    if target_training_plan is None:
+        target_training_plan = monthly_target_training_plan(row)
     monthly_target_hours = curriculum_monthly_target_hours(
         target_training_plan,
         monthly_target_start_date(row),
@@ -13256,11 +13261,35 @@ def coach_monthly_activity(request):
             if monthly_event_is_between(event, start_date, end_date)
         ]
         event_index = index_monthly_events(events)
+        active_rows = [
+            row for row in rows
+            if normalize_program_status(get_lms_row_program_status(row)) == "active"
+        ]
+        target_plans_by_learner_id = {
+            int(row.id): monthly_target_training_plan(row)
+            for row in active_rows
+        }
+        expected_otjh_by_component_id = curriculum_expected_otjh_by_component_id(
+            sorted({
+                component_id
+                for plan in target_plans_by_learner_id.values()
+                for component_ids in curriculum_monthly_target_hours_weeks(plan)
+                for component_id in component_ids
+            })
+        )
+        # The normal caseload serializer also projects completed OTJH entries.
+        # Pass the request's one bulk component lookup into every learner so it
+        # never repeats that database read per row.
         active_pairs = [
-            (row, learner)
-            for row in rows
-            for learner in [serialize_caseload_learner(row, refresh_live_snapshots=refresh_live_snapshots)]
-            if learner.get("enrollmentStatus") == "active"
+            (
+                row,
+                serialize_caseload_learner(
+                    row,
+                    refresh_live_snapshots=refresh_live_snapshots,
+                    expected_otjh_by_component_id=expected_otjh_by_component_id,
+                ),
+            )
+            for row in active_rows
         ]
         # Curriculum is the attendance source of truth: live-session
         # occurrences and their imported Microsoft Teams attendance reports.
@@ -13274,14 +13303,6 @@ def coach_monthly_activity(request):
             learner_id = to_int(attendance_row.get("learner_id"))
             if learner_id:
                 attendance_by_learner_id[learner_id].append(attendance_row)
-        expected_otjh_by_component_id = curriculum_expected_otjh_by_component_id(
-            [
-                component_id
-                for row, _learner in active_pairs
-                for component_ids in curriculum_monthly_target_hours_weeks(monthly_target_training_plan(row))
-                for component_id in component_ids
-            ]
-        )
         learners = [
             build_monthly_activity_learner(
                 row,
@@ -13291,6 +13312,7 @@ def coach_monthly_activity(request):
                 end_date,
                 attendance_rows=attendance_by_learner_id.get(to_int(learner.get("id")), []),
                 expected_otjh_by_component_id=expected_otjh_by_component_id,
+                target_training_plan=target_plans_by_learner_id.get(int(row.id)),
             )
             for row, learner in active_pairs
         ]
@@ -14255,6 +14277,21 @@ def coach_marking_queue(request, submission_id=None):
             # posted, so it is raised to clear a full draft with room to edit.
             feedback = validator.text("feedback", max_length=MARKING_FEEDBACK_MAX_LENGTH)
             reviewed_by = validator.text("reviewedBy", max_length=255, default="Progress Coach") or "Progress Coach"
+            expected_reviewed_at_raw = payload.get("expectedReviewedAt")
+            expected_reviewed_at = None
+            if expected_reviewed_at_raw not in (None, ""):
+                if not isinstance(expected_reviewed_at_raw, str):
+                    validator.error("expectedReviewedAt", "Must be an ISO-8601 date-time or null.")
+                else:
+                    try:
+                        expected_reviewed_at = datetime.fromisoformat(
+                            expected_reviewed_at_raw.replace("Z", "+00:00")
+                        )
+                        if expected_reviewed_at.tzinfo is None:
+                            raise ValueError
+                    except ValueError:
+                        expected_reviewed_at = None
+                        validator.error("expectedReviewedAt", "Must be an ISO-8601 date-time with a timezone.")
             # A super-admin marking from inside a coach's workspace is recorded
             # as themselves, not as the coach: "Demo Admin (for Test Coach)".
             # The client sends the coach's name because that is whose workspace
@@ -14275,17 +14312,40 @@ def coach_marking_queue(request, submission_id=None):
 
         try:
             with connections["enrolment"].cursor() as cur:
+                version_sql = (
+                    "and reviewed_at = %s"
+                    if expected_reviewed_at is not None
+                    else "and reviewed_at is null"
+                )
+                update_parameters = [
+                    decision, feedback, reviewed_by, timezone.now(),
+                    str(submission_id), allowed_learner_ids,
+                ]
+                if expected_reviewed_at is not None:
+                    update_parameters.append(expected_reviewed_at)
                 cur.execute(
                     """
                     update "Learner"."learning_reflection_submissions"
                     set status = %s, coach_feedback = %s, reviewed_by = %s, reviewed_at = %s
                     where id = %s and learner_id = any(%s)
                       and """ + MARKING_QUEUE_EXCLUDE_DRAFTS_SQL + """
+                      """ + version_sql + """
                     returning """ + SUBMISSION_AUDIT_SQL + """
                     """,
-                    [decision, feedback, reviewed_by, timezone.now(), str(submission_id), allowed_learner_ids],
+                    update_parameters,
                 )
                 updated = cur.fetchone()
+                marking_conflict = False
+                if not updated:
+                    cur.execute(
+                        """
+                        select 1
+                          from "Learner".learning_reflection_submissions
+                         where id = %s and learner_id = any(%s)
+                           and """ + MARKING_QUEUE_EXCLUDE_DRAFTS_SQL,
+                        [str(submission_id), allowed_learner_ids],
+                    )
+                    marking_conflict = bool(cur.fetchone())
         except DatabaseError:
             logger.exception("Could not update Coach marking submission.")
             return coach_error(
@@ -14294,6 +14354,11 @@ def coach_marking_queue(request, submission_id=None):
                 message="Could not update the marking submission.",
                 status=502,
             )
+        if marking_conflict:
+            return JsonResponse({
+                "detail": "This submission was reviewed by someone else. Reload it before saving your decision.",
+                "code": "marking_conflict",
+            }, status=409)
         if not updated:
             return JsonResponse({"detail": "Submission not found."}, status=404)
 

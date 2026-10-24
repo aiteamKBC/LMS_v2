@@ -16,7 +16,9 @@ class AssignmentHistoryTests(SimpleTestCase):
             response = unwrap(get_reflection_submission)(request)
         self.assertEqual(json.loads(response.content)['assignments'][0]['submissionOrigin'], 'classified_legacy')
         read.assert_called_once_with('commercial', '125', '')
-        marks.assert_called_once_with(92, [20128])
+        # The compact list does not render review history; that bounded detail
+        # read happens only after one assignment is opened.
+        marks.assert_not_called()
         stored.__getitem__.assert_not_called()
 
     def test_detail_reads_classification_without_import(self):

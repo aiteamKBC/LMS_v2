@@ -289,6 +289,11 @@ class BuildReviewPackTests(SimpleTestCase):
         self.assertEqual(pack["review"]["review_id"], "run-1")
         self.assertEqual(pack["review"]["generated_by"], "coach@kbc.example")
         self.assertEqual(pack["otj"]["completed_otj_hours"], 120.0)
+        mock_build_detail.assert_called_once_with(
+            mock_resolve_learner.return_value[1],
+            42,
+            resolved_profile=mock_resolve_profile.return_value,
+        )
 
     @patch("progress_reviews_api.review_pack._build_evidence_sections", return_value=([], [], []))
     @patch("progress_reviews_api.review_pack._build_attendance_section")

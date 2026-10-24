@@ -123,7 +123,15 @@ def evidence_request(request, context, detail, path, query):
         if context['mode'] != 'study':
             raise PermissionError('Preview does not save files. Join this course to upload evidence.')
         if request.method == 'POST' and suffix == 'upload/':
-            from .evidence import _evidence_type_allowed, _scan, MAX_BYTES
+            from .evidence import (
+                MAX_BYTES,
+                SCANNER_UNAVAILABLE_MESSAGE,
+                _ensure_scanner_ready,
+                _evidence_type_allowed,
+                _scan,
+                _verified_scan_verdict,
+            )
+            from .malware_scanning import MalwareDetected, ScannerUnavailable
             file = request.FILES.get('file')
             if file is None or file.size > MAX_BYTES or not _evidence_type_allowed(file):
                 raise ValueError('Choose a supported evidence file of 50 MB or less.')
@@ -132,6 +140,11 @@ def evidence_request(request, context, detail, path, query):
             component = component_for(detail, activity_id)
             if not storage.azure_configured():
                 return JsonResponse({'error': 'Evidence storage is unavailable.'}, status=503)
+            try:
+                _ensure_scanner_ready()
+            except ScannerUnavailable:
+                log.error('Personal evidence upload blocked because malware scanning is unavailable.')
+                return JsonResponse({'error': SCANNER_UNAVAILABLE_MESSAGE}, status=503)
             file_id = str(uuid.uuid4())
             name = PurePath(file.name.replace('\\', '/')).name
             blob = f"personal-learning/{context['account_id']}/{context['module_id']}/{file_id}/{name}"
@@ -145,7 +158,10 @@ def evidence_request(request, context, detail, path, query):
                     if file_status(state, record):
                         raise PermissionError('This activity has already been submitted. Its evidence is locked.')
                     storage.upload_to_quarantine(file, blob, file.content_type)
-                    verdict = _scan(container, blob)
+                    try:
+                        verdict = _verified_scan_verdict(_scan(container, blob), container, blob)
+                    except MalwareDetected:
+                        verdict = 'infected'
                     destination = settings.AZURE_APPROVED_CONTAINER if verdict == 'clean' else settings.AZURE_REJECTED_CONTAINER
                     storage.move_blob(container, destination, blob)
                     container = destination

@@ -91,17 +91,31 @@ def save(prepared, staged):
         return
     if not storage.azure_configured():
         raise AttachmentError('Attachment storage is unavailable. Your ticket has not been saved; please retry.', 503)
-    # This is the same scan hook used by learner evidence. It currently has no
-    # malware scanner configured; do not describe its verdict as a real scan.
-    from .evidence import _scan
+    from .evidence import _ensure_scanner_ready, _scan, _verified_scan_verdict
+    from .malware_scanning import MalwareDetected, ScanError, ScannerUnavailable
+    try:
+        _ensure_scanner_ready()
+    except ScannerUnavailable:
+        raise AttachmentError(
+            'Malware scanning is temporarily unavailable. Your attachment has not been saved; please retry later.',
+            503,
+        ) from None
     try:
         for item, content in prepared:
             key = item['blobName']
             quarantine = settings.AZURE_QUARANTINE_CONTAINER
             staged.append((quarantine, key))
             storage.upload_to_quarantine(BytesIO(content), key, item['contentType'])
-            if _scan(quarantine, key) != 'clean':
-                raise AttachmentError('An attachment was rejected. Remove it and try again.')
+            try:
+                _verified_scan_verdict(_scan(quarantine, key), quarantine, key)
+            except MalwareDetected:
+                raise AttachmentError('An attachment was rejected. Remove it and try again.') from None
+            except ScanError as exc:
+                logger.warning('Support attachment scan failed (%s).', exc.__class__.__name__)
+                raise AttachmentError(
+                    'Attachment scanning could not be completed. Your message has not been saved; please retry later.',
+                    503,
+                ) from None
             staged.append((item['container'], key))
             storage.move_blob(quarantine, item['container'], key)
     except AttachmentError:

@@ -18,10 +18,17 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET
 
 from learner_api.constants import ACCESS_ADVANCED_ADMIN
-from learner_api.evidence import MAX_BYTES, _evidence_type_allowed, _scan
+from learner_api.evidence import (
+    MAX_BYTES,
+    _ensure_scanner_ready,
+    _evidence_type_allowed,
+    _scan,
+    _verified_scan_verdict,
+)
 from learner_api.evidence_storage import (
     azure_configured, delete_blob, get_download_sas, move_blob, upload_to_quarantine,
 )
+from learner_api.malware_scanning import MalwareDetected, ScanError, ScannerUnavailable
 from login.permissions import require_access
 
 
@@ -77,6 +84,11 @@ def save_record(profile, month, hours, file, actor):
             raise ValueError('This file is already recorded for the month with different hours.')
         return previous[0], False
 
+    try:
+        _ensure_scanner_ready()
+    except ScannerUnavailable:
+        raise RuntimeError('Assignment malware scanning is unavailable.') from None
+
     record_id = uuid4()
     blob_name = f'advanced-admin/assignments/{profile.aptem_id}/{month}/{record_id}{Path(file.name).suffix.lower()}'
     quarantine = settings.AZURE_QUARANTINE_CONTAINER
@@ -85,8 +97,12 @@ def save_record(profile, month, hours, file, actor):
     try:
         upload_to_quarantine(file, blob_name, file.content_type)
         container = quarantine
-        if _scan(quarantine, blob_name) != 'clean':
+        try:
+            _verified_scan_verdict(_scan(quarantine, blob_name), quarantine, blob_name)
+        except MalwareDetected:
             raise ValueError('The assignment file could not be accepted.')
+        except ScanError:
+            raise RuntimeError('Assignment malware scanning could not be completed.') from None
         move_blob(quarantine, approved, blob_name)
         container = approved
         with transaction.atomic(using='enrolment'):

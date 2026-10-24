@@ -33,7 +33,8 @@ class ResubmissionBookingTests(unittest.TestCase):
         sql, params = self.cursor.execute.call_args.args
         self.assertTrue(sql.startswith('SELECT '))
         self.assertIn("activity_type = 'assignment'", sql)
-        self.assertEqual(params, ['commercial', '101', 'COMP-1'])
+        self.assertIn('assignment_topic_id = %s', sql)
+        self.assertEqual(params, ['commercial', '101', 'COMP-1', ''])
 
     def test_revision_draft_keeps_exemption_from_server_history(self):
         self.assertTrue(self.check('draft', json.dumps({'assignmentAttemptHistory': [

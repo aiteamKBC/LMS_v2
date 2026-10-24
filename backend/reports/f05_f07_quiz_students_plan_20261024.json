@@ -1,0 +1,293 @@
+{
+  "authorization_id": "F05-F07-PG-CLOSURE-20261024-01",
+  "finished_at": "2026-10-24T12:27:25.396943+00:00",
+  "preflight": {
+    "branch_id": "br-damp-river-abvy0gv6",
+    "database": "neondb",
+    "ledger_sha256": "db539ffd7a63b7ae29ee104c94fd9b024e989fd0bf458319895325e88b5beec8",
+    "role": "neondb_owner",
+    "server_ssl_setting": "off",
+    "session_guard": {
+      "blocking_sessions": 0,
+      "endpoint_connection_type": "direct",
+      "lock_waiters": 0,
+      "observer": {
+        "application_name": "f05-f07-closure-runner",
+        "backend_age_seconds": 0,
+        "backend_type": "client backend",
+        "pid": 1237,
+        "state": "active",
+        "wait_event": "",
+        "wait_event_type": "",
+        "xact_age_seconds": 0
+      },
+      "other_client_sessions": 0,
+      "other_sessions": [],
+      "other_sessions_by_application": {},
+      "other_sessions_by_state": {},
+      "waiting_locks": 0
+    },
+    "tls": {
+      "channel_binding": "require",
+      "enabled": true,
+      "verification": "verify-full"
+    },
+    "transaction_read_only": "on"
+  },
+  "quiz_students_index_probe": {
+    "indexes": [
+      {
+        "definition": "CREATE INDEX idx_learner_progress_feed_time ON \"Learner\".learner_progress_entries USING btree (learner_id, feed_occurred_at DESC) WHERE ((feed_kind)::text <> ''::text)",
+        "name": "idx_learner_progress_feed_time"
+      },
+      {
+        "definition": "CREATE INDEX learner_progress_accepted_hours_idx ON \"Learner\".learner_progress_entries USING btree (learner_id, accepted, reporting_started_at) WHERE ((deleted_at IS NULL) AND (actual_seconds IS NOT NULL))",
+        "name": "learner_progress_accepted_hours_idx"
+      },
+      {
+        "definition": "CREATE INDEX learner_progress_attendance_source_ref_idx ON \"Learner\".learner_progress_entries USING btree (learner_id, ((source_payload ->> 'original_source_ref'::text))) WHERE ((source_payload ->> 'original_source_ref'::text) ~~ 'att:%'::text)",
+        "name": "learner_progress_attendance_source_ref_idx"
+      },
+      {
+        "definition": "CREATE INDEX learner_progress_canonical_activity_idx ON \"Learner\".learner_progress_entries USING btree (learner_id, canonical_activity_key) WHERE ((deleted_at IS NULL) AND (canonical_activity_key <> ''::text))",
+        "name": "learner_progress_canonical_activity_idx"
+      },
+      {
+        "definition": "CREATE INDEX learner_progress_component_idx ON \"Learner\".learner_progress_entries USING btree (learner_id, component_ref)",
+        "name": "learner_progress_component_idx"
+      },
+      {
+        "definition": "CREATE INDEX learner_progress_component_link_status_idx ON \"Learner\".learner_progress_entries USING btree (component_link_status)",
+        "name": "learner_progress_component_link_status_idx"
+      },
+      {
+        "definition": "CREATE INDEX learner_progress_component_ref_idx ON \"Learner\".learner_progress_entries USING btree (component_ref) WHERE (component_ref IS NOT NULL)",
+        "name": "learner_progress_component_ref_idx"
+      },
+      {
+        "definition": "CREATE INDEX learner_progress_curriculum_component_ref_idx ON \"Learner\".learner_progress_entries USING btree (curriculum_component_ref) WHERE ((deleted_at IS NULL) AND (curriculum_component_ref IS NOT NULL))",
+        "name": "learner_progress_curriculum_component_ref_idx"
+      },
+      {
+        "definition": "CREATE INDEX learner_progress_curriculum_scope_idx ON \"Learner\".learner_progress_entries USING btree (programme_ref, cohort_ref, group_ref, module_ref, week_ref, component_ref)",
+        "name": "learner_progress_curriculum_scope_idx"
+      },
+      {
+        "definition": "CREATE UNIQUE INDEX learner_progress_entries_learner_id_entry_order_key ON \"Learner\".learner_progress_entries USING btree (learner_id, entry_order)",
+        "name": "learner_progress_entries_learner_id_entry_order_key"
+      },
+      {
+        "definition": "CREATE UNIQUE INDEX learner_progress_entries_pkey ON \"Learner\".learner_progress_entries USING btree (id)",
+        "name": "learner_progress_entries_pkey"
+      },
+      {
+        "definition": "CREATE INDEX learner_progress_entries_plan_component_idx ON \"Learner\".learner_progress_entries USING btree (plan_component_id)",
+        "name": "learner_progress_entries_plan_component_idx"
+      },
+      {
+        "definition": "CREATE INDEX learner_progress_kbc_attendance_idx ON \"Learner\".learner_progress_entries USING btree (kbc_attendance_key) WHERE (kbc_attendance_key IS NOT NULL)",
+        "name": "learner_progress_kbc_attendance_idx"
+      },
+      {
+        "definition": "CREATE INDEX learner_progress_learner_kind_idx ON \"Learner\".learner_progress_entries USING btree (learner_id, kind)",
+        "name": "learner_progress_learner_kind_idx"
+      },
+      {
+        "definition": "CREATE UNIQUE INDEX learner_progress_live_kbc_attendance_uniq ON \"Learner\".learner_progress_entries USING btree (learner_id, kbc_attendance_key) WHERE ((kbc_attendance_key IS NOT NULL) AND (deleted_at IS NULL))",
+        "name": "learner_progress_live_kbc_attendance_uniq"
+      },
+      {
+        "definition": "CREATE INDEX learner_progress_quiz_idx ON \"Learner\".learner_progress_entries USING btree (learner_id, quiz_ref)",
+        "name": "learner_progress_quiz_idx"
+      },
+      {
+        "definition": "CREATE INDEX learner_progress_reporting_month_idx ON \"Learner\".learner_progress_entries USING btree (learner_id, reporting_month) WHERE ((deleted_at IS NULL) AND ((reporting_month)::text <> ''::text))",
+        "name": "learner_progress_reporting_month_idx"
+      },
+      {
+        "definition": "CREATE UNIQUE INDEX learner_progress_tracking_session_uq ON \"Learner\".learner_progress_entries USING btree (time_tracking_session_ref) WHERE (time_tracking_session_ref <> ''::text)",
+        "name": "learner_progress_tracking_session_uq"
+      },
+      {
+        "definition": "CREATE INDEX perf_progress_feed_learner_date_idx ON \"Learner\".learner_progress_entries USING btree (learner_id, feed_occurred_at DESC)",
+        "name": "perf_progress_feed_learner_date_idx"
+      },
+      {
+        "definition": "CREATE INDEX perf_progress_learner_order_idx ON \"Learner\".learner_progress_entries USING btree (learner_id, entry_order, id)",
+        "name": "perf_progress_learner_order_idx"
+      }
+    ],
+    "plans": {
+      "learner_page": {
+        "execution_time_ms": 1.31,
+        "nodes": [
+          {
+            "actual_rows": 25.0,
+            "index_name": null,
+            "loops": 1,
+            "node_type": "Limit",
+            "shared_hit_blocks": 1326,
+            "shared_read_blocks": 0
+          },
+          {
+            "actual_rows": 25.0,
+            "index_name": null,
+            "loops": 1,
+            "node_type": "Sort",
+            "shared_hit_blocks": 1326,
+            "shared_read_blocks": 0
+          },
+          {
+            "actual_rows": 39.0,
+            "index_name": null,
+            "loops": 1,
+            "node_type": "Nested Loop",
+            "shared_hit_blocks": 1326,
+            "shared_read_blocks": 0
+          },
+          {
+            "actual_rows": 70.0,
+            "index_name": null,
+            "loops": 1,
+            "node_type": "Aggregate",
+            "shared_hit_blocks": 960,
+            "shared_read_blocks": 0
+          },
+          {
+            "actual_rows": 70.0,
+            "index_name": null,
+            "loops": 1,
+            "node_type": "Bitmap Heap Scan",
+            "shared_hit_blocks": 960,
+            "shared_read_blocks": 0
+          },
+          {
+            "actual_rows": 90.0,
+            "index_name": "learner_progress_quiz_idx",
+            "loops": 1,
+            "node_type": "Bitmap Index Scan",
+            "shared_hit_blocks": 873,
+            "shared_read_blocks": 0
+          },
+          {
+            "actual_rows": 0.56,
+            "index_name": "learners_pkey",
+            "loops": 70,
+            "node_type": "Index Scan",
+            "shared_hit_blocks": 210,
+            "shared_read_blocks": 0
+          },
+          {
+            "actual_rows": 1.0,
+            "index_name": null,
+            "loops": 39,
+            "node_type": "Limit",
+            "shared_hit_blocks": 156,
+            "shared_read_blocks": 0
+          },
+          {
+            "actual_rows": 1.0,
+            "index_name": null,
+            "loops": 39,
+            "node_type": "Sort",
+            "shared_hit_blocks": 156,
+            "shared_read_blocks": 0
+          },
+          {
+            "actual_rows": 1.0,
+            "index_name": "learner_progress_quiz_idx",
+            "loops": 39,
+            "node_type": "Index Scan",
+            "shared_hit_blocks": 156,
+            "shared_read_blocks": 0
+          }
+        ],
+        "planning_time_ms": 5.977,
+        "root_total_cost": 1603.42
+      },
+      "summary": {
+        "execution_time_ms": 42.196,
+        "nodes": [
+          {
+            "actual_rows": 39.0,
+            "index_name": null,
+            "loops": 1,
+            "node_type": "Aggregate",
+            "shared_hit_blocks": 1286,
+            "shared_read_blocks": 43
+          },
+          {
+            "actual_rows": 39.0,
+            "index_name": null,
+            "loops": 1,
+            "node_type": "Sort",
+            "shared_hit_blocks": 1127,
+            "shared_read_blocks": 43
+          },
+          {
+            "actual_rows": 39.0,
+            "index_name": null,
+            "loops": 1,
+            "node_type": "Nested Loop",
+            "shared_hit_blocks": 1127,
+            "shared_read_blocks": 43
+          },
+          {
+            "actual_rows": 70.0,
+            "index_name": null,
+            "loops": 1,
+            "node_type": "Bitmap Heap Scan",
+            "shared_hit_blocks": 959,
+            "shared_read_blocks": 1
+          },
+          {
+            "actual_rows": 90.0,
+            "index_name": "learner_progress_quiz_idx",
+            "loops": 1,
+            "node_type": "Bitmap Index Scan",
+            "shared_hit_blocks": 873,
+            "shared_read_blocks": 0
+          },
+          {
+            "actual_rows": 0.56,
+            "index_name": "learners_pkey",
+            "loops": 70,
+            "node_type": "Index Scan",
+            "shared_hit_blocks": 168,
+            "shared_read_blocks": 42
+          },
+          {
+            "actual_rows": 1.0,
+            "index_name": null,
+            "loops": 39,
+            "node_type": "Limit",
+            "shared_hit_blocks": 159,
+            "shared_read_blocks": 0
+          },
+          {
+            "actual_rows": 1.0,
+            "index_name": null,
+            "loops": 39,
+            "node_type": "Sort",
+            "shared_hit_blocks": 159,
+            "shared_read_blocks": 0
+          },
+          {
+            "actual_rows": 1.0,
+            "index_name": "learner_progress_quiz_idx",
+            "loops": 39,
+            "node_type": "Index Scan",
+            "shared_hit_blocks": 156,
+            "shared_read_blocks": 0
+          }
+        ],
+        "planning_time_ms": 59.816,
+        "root_total_cost": 1603.11
+      }
+    },
+    "representative_quiz_ref_redacted": true
+  },
+  "run_id": "f05f07_27d706f8e1984ca594e948faab65c66d",
+  "started_at": "2026-10-24T12:27:20.954520+00:00",
+  "status": "passed"
+}

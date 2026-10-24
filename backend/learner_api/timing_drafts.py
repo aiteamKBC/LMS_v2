@@ -24,7 +24,10 @@ class ActivityTimingDraft(models.Model):
 
     class Meta:
         app_label = 'learner_api'
-        db_table = 'learner_activity_timing_drafts'
+        # Match migration 0024 explicitly.  Runtime access uses the enrolment
+        # alias while installation uses default, so schema resolution must not
+        # vary with either connection's search_path.
+        db_table = 'public"."learner_activity_timing_drafts'
         managed = False
 
 

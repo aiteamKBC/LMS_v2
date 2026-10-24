@@ -109,19 +109,19 @@ def _curriculum_programme_id(source):
 
 
 def _programme_window(learner_id):
-    """(start, end, kind, source) for one learner_id, resolved the same way
+    """(start, end, kind, source, profile) for one learner_id, resolved the same way
     review_pack does — LearnerProfile's real DateFields first, falling back to
-    EnrolmentUser's text-typed dates. Returns (None, None, None, None) if the
+    EnrolmentUser's text-typed dates. Returns five None values if the
     id does not resolve to any learner."""
-    from learner_api.identity import learner_profile_for_source
     from learner_api.models import EnrolmentUser
+    from .identity import review_profile_for_source
 
     try:
         source = EnrolmentUser.all_learners.get(pk=learner_id)
     except EnrolmentUser.DoesNotExist:
-        return None, None, None, None
+        return None, None, None, None, None
 
-    profile = learner_profile_for_source(source, source_pk=learner_id)
+    profile = review_profile_for_source(source, source_pk=learner_id)
     # The learner's OWN date wins. LearnerProfile.start_date is the profile
     # mirror, which active_users.mirror_learner_placement stamps with the
     # COHORT delivery window on every placement edit -- reading it first made
@@ -136,7 +136,7 @@ def _programme_window(learner_id):
         or _parse_date(getattr(source, "practical_period_end_date", None))
     )
     kind = "commercial" if str(getattr(source, "learner_type", "")).strip().lower() == "commercial" else "apprenticeship"
-    return start, end, kind, source
+    return start, end, kind, source, profile
 
 
 # --------------------------------------------------------------------------- #
@@ -230,7 +230,7 @@ def _generate_for_learner(
     template, or — with `uploaded_pptx` — the owner's own presentation, kept
     alongside the same real-data pack so it can still be edited later."""
     is_mcm = review_kind == mcm.REVIEW_KIND
-    start, end, kind, source = _programme_window(learner_id)
+    start, end, kind, source, profile = _programme_window(learner_id)
     if source is None:
         raise GenerationError(f"No learner found with id {learner_id}.", 404)
     if start is None:
@@ -246,7 +246,14 @@ def _generate_for_learner(
     run_id = runs.new_run_id()
 
     try:
-        pack = build_review_pack(learner_id, period, review_id=run_id, generated_by=generated_by)
+        pack = build_review_pack(
+            learner_id,
+            period,
+            review_id=run_id,
+            generated_by=generated_by,
+            source=source,
+            profile=profile,
+        )
     except LearnerLookupError as exc:
         raise GenerationError(str(exc), 404) from exc
 
@@ -304,7 +311,7 @@ def active_learners(request):
 def periods(request, learner_id):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
-    start, end, _kind, source = _programme_window(learner_id)
+    start, end, _kind, source, _profile = _programme_window(learner_id)
     if source is None:
         return _error(f"No learner found with id {learner_id}.", 404)
     if start is None:
@@ -322,7 +329,7 @@ def periods(request, learner_id):
 def pack(request, learner_id):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
-    start, end, _kind, source = _programme_window(learner_id)
+    start, end, _kind, source, profile = _programme_window(learner_id)
     if source is None:
         return _error(f"No learner found with id {learner_id}.", 404)
     if start is None:
@@ -334,7 +341,13 @@ def pack(request, learner_id):
         programme_id=_curriculum_programme_id(source),
     )
     try:
-        pack_data = build_review_pack(learner_id, period, generated_by=_current_email(request))
+        pack_data = build_review_pack(
+            learner_id,
+            period,
+            generated_by=_current_email(request),
+            source=source,
+            profile=profile,
+        )
     except LearnerLookupError:
         return _error(f"No learner found with id {learner_id}.", 404)
     return JsonResponse(pack_data)
@@ -538,12 +551,18 @@ def mcm_pack(request, learner_id):
     meeting_date = _meeting_date(request)
     if meeting_date is None:
         return _error("meeting_date is required (YYYY-MM-DD).", 400)
-    start, _end, _kind, source = _programme_window(learner_id)
+    start, _end, _kind, source, profile = _programme_window(learner_id)
     if source is None:
         return _error(f"No learner found with id {learner_id}.", 404)
     period = mcm.build_mcm_period(meeting_date, programme_id=_curriculum_programme_id(source))
     try:
-        pack_data = build_review_pack(learner_id, period, generated_by=_current_email(request))
+        pack_data = build_review_pack(
+            learner_id,
+            period,
+            generated_by=_current_email(request),
+            source=source,
+            profile=profile,
+        )
     except LearnerLookupError:
         return _error(f"No learner found with id {learner_id}.", 404)
     return JsonResponse(mcm.label_pack(pack_data))

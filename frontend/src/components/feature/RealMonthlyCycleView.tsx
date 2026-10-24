@@ -20,10 +20,11 @@ import {
 import { otjhContributionHours } from '@/utils/otjhContribution';
 import { MonthlyReportWizard } from '@/components/feature/MonthlyReportWizard';
 import {
+  fetchMonthlyReport,
   fetchMonthlyReports,
-  type MonthlyReport,
   type MonthlyReportActivity,
   type MonthlyReportAttachment,
+  type MonthlyReportSummary,
 } from '@/api/monthlyReports';
 import { downloadMonthlyReportPdf } from '@/lib/monthlyReportPdf';
 import { canOpenAttachment, openMonthlyReportAttachment } from '@/lib/monthlyReportAttachments';
@@ -366,7 +367,7 @@ export function RealMonthlyCycleView({
   const [filter, setFilter] = useState<'all' | ActivityType>('all');
   const [query, setQuery] = useState('');
   const [monthMenuOpen, setMonthMenuOpen] = useState(false);
-  const [reports, setReports] = useState<MonthlyReport[]>([]);
+  const [reports, setReports] = useState<MonthlyReportSummary[]>([]);
   const [savedSignature, setSavedSignature] = useState('');
   const [savedSignatureName, setSavedSignatureName] = useState('');
   const [reportsError, setReportsError] = useState('');
@@ -378,12 +379,13 @@ export function RealMonthlyCycleView({
 
   /** Build and save the month's report. Async because any attached documents
    *  are fetched and converted into it, which takes a moment. */
-  const downloadReport = async (report: MonthlyReport) => {
+  const downloadReport = async (report: MonthlyReportSummary) => {
     if (buildingPdf) return;
     setBuildingPdf(true);
     setAttachmentError('');
     try {
-      await downloadMonthlyReportPdf(report, { learnerKind, learnerId });
+      const fullReport = await fetchMonthlyReport(learnerKind, learnerId, report.monthKey);
+      await downloadMonthlyReportPdf(fullReport, { learnerKind, learnerId });
     } catch (error) {
       setAttachmentError(error instanceof Error ? error.message : 'The report could not be built.');
     } finally {
@@ -792,8 +794,14 @@ export function RealMonthlyCycleView({
           onSubmitted={(report, signatureWasSaved) => {
             // Replace the month's row in place so the hero switches to
             // "Download report" without a refetch.
+            const { activitySnapshot, signature, ...summaryFields } = report;
+            const summary: MonthlyReportSummary = {
+              ...summaryFields,
+              signed: Boolean(signature && report.signedAt),
+              activityCount: activitySnapshot.length,
+            };
             setReports((current) => [
-              report,
+              summary,
               ...current.filter((item) => item.monthKey !== report.monthKey),
             ]);
             // Only a signature the learner asked to keep becomes the saved one,
