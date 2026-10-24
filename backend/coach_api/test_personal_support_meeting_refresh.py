@@ -6,6 +6,7 @@ from django.test import SimpleTestCase
 
 from . import views
 from . import test_meeting_read_security as security_fixtures
+from .migrated_session_scope import validate_attendance_response
 
 
 class PersonalSupportMeetingRefreshTests(SimpleTestCase):
@@ -41,7 +42,7 @@ class PersonalSupportMeetingRefreshTests(SimpleTestCase):
         before = deepcopy(self.definition)
         response = self.call(views.coach_timetable_event_artifacts, 'post')
         self.assertEqual(response.status_code, 200)
-        self.graph.assert_called_once_with(self.record)
+        self.graph.assert_called_once_with(self.record, attendance_response_validator=validate_attendance_response)
         self.persist.assert_called_once()
         self.generate.assert_called_once_with(self.record, retry_failed=True)
         self.assertEqual(self.definition, before)

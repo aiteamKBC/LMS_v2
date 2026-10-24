@@ -3,6 +3,68 @@ import type { LearnerCalendarEvent, LearnerReviewDefinition } from '@/api/learne
 import type { MeetingAttendance } from '@/api/meetingAttendance';
 import { presentReview, reviewOverview, reviewsListHref } from './reviewPresentation';
 
+describe('APTEM next review uses lifecycle eligibility, not imported-record presence', () => {
+  const dates = ['2026-10-26', '2027-03-30', '2027-06-29', '2027-09-29'];
+  const row = (number: number, status = 'not-scheduled', overrides: Partial<LearnerCalendarEvent> = {}) => session(`aptem:${number}`, {
+    sequence: number, title: `Progress Review ${number}`, reviewSource: 'aptem', migratedForm: false,
+    status, effectiveLmsStatus: status, sourceStatus: status, targetDate: dates[number - 1], date: dates[number - 1],
+    scheduledDate: null, scheduledTime: null, meetingLink: '', importedReview: {
+      id: String(number), aptemReviewId: `A-${number}`, name: `Progress Review ${number}`, type: 'Progress Review', reviewerName: 'Synthetic Coach',
+      plannedDate: dates[number - 1], plannedTime: null, completedDate: status === 'completed' ? dates[number - 1] : null,
+      status, extractionStatus: 'complete', detailsAvailable: false, sections: [],
+    }, ...overrides,
+  });
+
+  it.each(['participant', 'employer'] as const)('selects Review 2 after completed Review 1 for %s, regardless of API order', viewer => {
+    const rows = [row(4), row(1, 'completed'), row(3), row(2)];
+    const before = structuredClone(rows);
+    const result = reviewOverview(rows, [], '2026-10-24', {}, viewer);
+    expect(result.all.map(item => item.session.sequence)).toEqual([1, 2, 3, 4]);
+    expect(result.current?.session.id).toBe('aptem:2');
+    expect(result.upcoming.map(item => item.session.sequence)).toEqual([2, 3, 4]);
+    expect(rows).toEqual(before);
+  });
+
+  it('selects Review 1 when all four are pending, without deriving completion from dates', () => {
+    expect(reviewOverview([row(4), row(2), row(1), row(3)], [], '2026-10-24', {}, 'employer').current?.session.id).toBe('aptem:1');
+  });
+
+  it.each(['completed', 'cancelled', 'unknown'])('has no next action when all imported reviews are %s', status => {
+    expect(reviewOverview([row(1, status), row(2, status)], [], '2026-10-24', {}, 'employer').current).toBeNull();
+  });
+
+  it('keeps the existing Native historical fallback and empty-state contract', () => {
+    const native = session('native-history', { status: 'completed' });
+    expect(reviewOverview([native], [], today, {}, 'employer').current?.session).toBe(native);
+    expect(reviewOverview([], [], today, {}, 'employer').current).toBeNull();
+  });
+
+  it('retains confirmed-booking priority over unbooked plans and signature reminders', () => {
+    const booked = row(3, 'scheduled', { calendarEventKey: 'booking:3', scheduledDate: dates[2], bookingStatus: 'scheduled' });
+    const sign = row(1, 'awaiting-signature', { migratedForm: true, employerSignatureRequired: true, employerSigned: false });
+    const result = reviewOverview([row(2), sign, booked, row(4)], [], '2026-10-24', {}, 'employer');
+    expect(result.current?.session).toBe(booked);
+    expect(result.attention.map(item => item.session.id)).toEqual(['aptem:1']);
+  });
+
+  it.each(['in-progress', 'awaiting-signature', 'completed', 'not-scheduled'])('preserves resolved local %s over stale scheduled booking status', status => {
+    const local = row(2, status, { migratedForm: true, sourceStatus: 'not-scheduled', bookingStatus: 'scheduled' });
+    const result = presentReview(local, undefined, today, undefined, 'employer');
+    expect(result.status).toBe(status);
+  });
+
+  it('keeps source-completed history completed despite a stale cancelled calendar copy', () => {
+    const history = row(1, 'completed', { bookingStatus: 'cancelled' });
+    expect(presentReview(history, undefined, today, undefined, 'employer')).toMatchObject({ status: 'completed', past: true, action: 'view' });
+    expect(reviewOverview([history, row(2)], [], today, {}, 'employer').current?.session.id).toBe('aptem:2');
+  });
+
+  it.each(['attended', 'missed'] as const)('does not convert %s evidence into formal Review completion', outcome => {
+    const local = row(2, 'in-progress', { migratedForm: true, calendarEventKey: 'booking:2', scheduledDate: today, bookingStatus: 'scheduled' });
+    expect(presentReview(local, attendance(local.id, { attendanceConfirmed: outcome === 'attended', missed: outcome === 'missed' }), today, undefined, 'employer').status).toBe('in-progress');
+  });
+});
+
 const today = '2026-09-14';
 const session = (id: string, overrides: Partial<LearnerCalendarEvent> = {}): LearnerCalendarEvent => ({
   id, eventKey: id, title: `Progress Review ${id}`, source: 'progress-review', type: 'review', sequence: 1,

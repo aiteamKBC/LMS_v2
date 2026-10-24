@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import CoachMeetingDetail from './page';
 
 const api = vi.hoisted(() => ({
-  events: vi.fn(), form: vi.fn(), intelligence: vi.fn(), generic: vi.fn(),
+  events: vi.fn(), form: vi.fn(), intelligence: vi.fn(), generic: vi.fn(), start: vi.fn(),
   coach: { email: 'coach@example.invalid', name: 'Coach Example', isInitialized: true, isViewingAsCoach: false },
 }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div> }));
@@ -16,6 +16,7 @@ vi.mock('../shared/calendarEvents', async importOriginal => ({
   fetchCoachMeetingArtifacts: api.generic,
 }));
 vi.mock('@/api/reviewInstances', () => ({
+  startMigratedReview: api.start,
   fetchReviewInstanceForm: api.form,
   fetchMigratedReviewIntelligence: api.intelligence,
   saveMigratedMeetingSummary: vi.fn(),
@@ -69,6 +70,18 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('one migrated session check from review details and form', () => {
+  it.each([0, 1])('starts the imported review from Join entry %s while opening Teams immediately', async index => {
+    arrange();
+    api.start.mockResolvedValue({ instance: { id, status: 'in-progress' }, localStatus: 'in-progress' });
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    mount();
+    const buttons = await screen.findAllByRole('button', { name: 'Join Meeting' });
+    expect(api.start).not.toHaveBeenCalled();
+    fireEvent.click(buttons[index]);
+    expect(open).toHaveBeenCalledWith('https://example.invalid/meeting', '_blank', 'noopener,noreferrer');
+    await waitFor(() => expect(api.start).toHaveBeenCalledWith(id, expect.objectContaining({ calendarEventKey: id })));
+    open.mockRestore();
+  });
   it.each([true, false])('uses the authoritative stored form key even when it differs from the event key (hint=%s)', async hasHint => {
     arrange();
     const events = await api.events();

@@ -101,6 +101,7 @@ class MeetingReadSecurityTests(SimpleTestCase):
             post = self.factory.post('/?viewAsCoach=coach%40example.invalid')
             post.login_account = account
             self.assertEqual(views.coach_timetable_event_artifacts(post, self.record.event_key).status_code, 403)
+            self.assertEqual(views.coach_review_instance_local_status(post, 'imported-review:synthetic').status_code, 403)
         self.assert_no_effects()
 
     def test_refresh_post_retains_csrf(self):
@@ -112,6 +113,13 @@ class MeetingReadSecurityTests(SimpleTestCase):
         request.META['HTTP_X_CSRFTOKEN'] = get_token(request)
         request.COOKIES[settings.CSRF_COOKIE_NAME] = request.META['CSRF_COOKIE']
         self.assertIsNone(middleware.process_view(request, view, (), {}))
+        self.assert_no_effects()
+
+    def test_imported_join_start_retains_csrf_and_has_no_get_transition(self):
+        view = views.coach_review_instance_local_status
+        middleware = CsrfViewMiddleware(lambda request: None)
+        self.assertEqual(middleware.process_view(self.factory.post('/'), view, (), {}).status_code, 403)
+        self.assertEqual(inspect.unwrap(view)(self.factory.get('/'), 'imported-review:synthetic').status_code, 405)
         self.assert_no_effects()
 
     def test_legacy_imported_refresh_requires_the_source_aware_route(self):

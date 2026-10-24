@@ -1,7 +1,7 @@
 """Opt-in Teams intelligence for an owned Aptem review overlay.
 
-GET reads local state only. POST is the sole Graph/AI entry point; neither it
-nor summary editing changes the Aptem source, booking, or review lifecycle.
+GET reads local state only. POST can start an eligible scheduled local review
+from verified meeting evidence; it never changes the Aptem source.
 """
 import hashlib
 import json
@@ -263,8 +263,12 @@ def migrated_review_check_session(request, review_id):
     meeting_end = _meeting_end(record)
     if not meeting_end:
         return JsonResponse({'detail': 'The meeting needs a scheduled date and time before checking the session.'}, status=409)
+    from .migrated_session_scope import attendance_reports_for_refresh, snapshot_version, validate_attendance_response
+    previous = stored_coach_meeting_snapshot(record)
+    expected_version = snapshot_version(previous)
     snapshot, error, status_code = fetch_coach_meeting_graph_snapshot(
-        record, target_error_handler=_graph_target_failure, transcript_collection_fetcher=_transcript_collection)
+        record, target_error_handler=_graph_target_failure, transcript_collection_fetcher=_transcript_collection,
+        attendance_response_validator=validate_attendance_response)
     if error:
         code = error.get('code')
         if code == 'coach_online_meeting_unresolved':
@@ -276,8 +280,24 @@ def migrated_review_check_session(request, review_id):
         if error.get('retryAfterSeconds') is not None:
             response['Retry-After'] = str(error['retryAfterSeconds'])
         return response
-    previous = stored_coach_meeting_snapshot(record)
     now = timezone.now()
+    from .imported_review_start import has_start_evidence, start_locked
+    if has_start_evidence(record, snapshot):
+        # Starting the Review is distinct from confirming the end for AI. A
+        # valid early transcript may start it while the existing end gate still
+        # rejects summary generation. Revalidate under the same writer locks.
+        with transaction.atomic():
+            locked, current_record, error = _checked_lock(request, review_id, basis)
+            if error is not None:
+                return error
+            current_snapshot = stored_coach_meeting_snapshot(current_record)
+            if snapshot_version(current_snapshot) != expected_version:
+                return JsonResponse({'detail': 'Meeting evidence changed during Check Session. Retry the check.',
+                                     'code': 'BOOKING_CONFLICT'}, status=409)
+            family = 'MCM' if current_record.event_type == 'mcr' else 'PR'
+            if start_locked(locked, current_record, family):
+                basis = _check_basis(locked, current_record)
+                record.status = current_record.status
     errors = list(snapshot.get('errors') or [])
     attendance_failed = any('attendance' in message.lower() for message in errors)
     if now < meeting_end and not (_has_ended_session(record, snapshot, now) or _has_ended_session(record, previous, now)):
@@ -303,7 +323,7 @@ def migrated_review_check_session(request, review_id):
     cached = [row for row in previous.get('artifacts', [])
               if (row.get('metadata') or {}).get('_lms_graph_event_id') == record.graph_event_id
               and (row.get('artifact_type'), row.get('graph_artifact_id')) not in fresh]
-    reports = current_reports(record, snapshot) or current_reports(record, previous)
+    reports = attendance_reports_for_refresh(record, snapshot, previous)
     selected = scope_snapshot(record, {**snapshot, 'artifacts': [*cached, *snapshot['artifacts']], 'attendanceReports': reports})
     if reports and not current_reports(record, snapshot) and reports == previous.get('attendanceReports'):
         selected['attendanceTracker'] = previous.get('attendanceTracker') or selected['attendanceTracker']
@@ -322,9 +342,19 @@ def migrated_review_check_session(request, review_id):
             if error is not None:
                 return error
             storage = persist_coach_meeting_snapshots(current_record, artifacts=persistable,
-                attendance_reports=selected['attendanceReports'], attendance_tracker=selected['attendanceTracker'])
+                attendance_reports=selected['attendanceReports'], attendance_tracker=selected['attendanceTracker'],
+                imported_refresh={'snapshot': selected, 'expected_version': expected_version,
+                    'start_review': (locked, 'MCM' if current_record.event_type == 'mcr' else 'PR', False)})
             if not storage.get('stored'):
+                if storage.get('reason') in {'snapshot_superseded', 'snapshot_context_changed'}:
+                    return JsonResponse({'detail': 'Meeting evidence changed during Check Session. Retry the check.',
+                                         'code': 'BOOKING_CONFLICT'}, status=409)
                 return JsonResponse({'detail': 'Teams snapshot storage is unavailable.', 'code': 'SNAPSHOT_STORAGE_UNAVAILABLE'}, status=503)
+            if storage.get('reviewStarted'):
+                # Our own status-only transition is now the basis. All other
+                # booking/template changes still invalidate the provider wait.
+                basis = _check_basis(locked, current_record)
+                record.status = current_record.status
             transcript = stored_coach_meeting_transcript_for_summary(current_record, artifact_ids=transcript_ids)
             # A successful segment does not establish that the whole selected
             # call is available. A complete, same-event stored copy may recover

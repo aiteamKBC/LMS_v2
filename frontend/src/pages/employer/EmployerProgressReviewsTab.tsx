@@ -43,10 +43,13 @@ export function EmployerProgressReviewsTab({ employerId, kind, learnerId, employ
   const definition = detail.data?.definition;
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
   const meeting = review ? presentReview(review, undefined, today, definition, 'employer') : null;
-  // The join link is withheld once the meeting has passed, so the recording
-  // panel keys off the booked Teams meeting itself instead.
-  const recordingKey = review && review.invited && review.scheduledDate && review.scheduledDate <= today
-    ? (review.reviewSource === 'aptem' ? review.eventKey : review.calendarEventKey || review.eventKey || review.id) : '';
+  // APTEM archives belong to the source-qualified Review's linked booking,
+  // independently of its current invitation/schedule. The resource API checks
+  // ownership and association again and reports whether a saved copy exists.
+  const recordingKey = review?.reviewSource === 'aptem'
+    ? (review.calendarEventKey ? review.eventKey : '')
+    : review && review.invited && review.scheduledDate && review.scheduledDate <= today
+      ? review.calendarEventKey || review.eventKey || review.id : '';
   const loadArtifacts = useCallback((key: string, signal?: AbortSignal) =>
     fetchEmployerMeetingArtifacts(employerId, kind, learnerId, key, signal), [employerId, kind, learnerId]);
   const artifactContentUrl = useCallback((key: string, artifactType: string, artifactId: string, options: { preview?: boolean } = {}) =>

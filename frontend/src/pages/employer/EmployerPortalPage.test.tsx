@@ -70,6 +70,49 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('employer home dashboard', () => {
+  it.each(['/employers/8', '/employers/8/reviews'])('uses APTEM marker-only current steps independently per learner on %s', async path => {
+    const dates = ['2026-10-26', '2027-03-30', '2027-06-29', '2027-09-29'];
+    api.reviews.mockImplementation(async (_employer, _kind, id) => ({ events: dates.map((date, index) =>
+      makeReview(`shared-review-${index + 1}`, { title: `Review ${index + 1}`, reviewSource: 'aptem',
+        sequence: index + 1, status: index < (id === '12' ? 2 : 1) ? 'completed' : 'not-scheduled',
+        targetDate: date, date, scheduledDate: null })), definitions: {} }));
+    showPage(path);
+    const journey = within(await screen.findByRole('region', { name: 'Progress review journey' }));
+    const alex = await journey.findByRole('link', { name: /^Alex Learner: Review 2,/ });
+    const morgan = await journey.findByRole('link', { name: /^Morgan Learner: Review 3,/ });
+    expect(alex).toHaveAttribute('aria-current', 'step');
+    expect(morgan).toHaveAttribute('aria-current', 'step');
+    for (const link of journey.getAllByRole('link', { name: /Learner: Review/ })) {
+      expect(link).toHaveAttribute('data-selection', 'marker');
+    }
+    expect(journey.getByRole('link', { name: /^Alex Learner: Review 4,/ })).not.toHaveAttribute('aria-current');
+    expect(journey.getByRole('link', { name: /^Morgan Learner: Review 2,/ })).not.toHaveAttribute('aria-current');
+    expect(journey.getByRole('link', { name: /^Alex Learner: Review 1,/ }).closest('li')).toHaveAttribute('data-status', 'completed');
+    alex.focus();
+    await userEvent.tab();
+    const third = journey.getByRole('link', { name: /^Alex Learner: Review 3,/ });
+    expect(third).toHaveFocus();
+    // These surfaces navigate to the existing learner review page; they do not
+    // turn a clicked later record into the dashboard's next-action calculation.
+    expect(third).toHaveAttribute('href', '/employers/8/learner/apprenticeship/11?tab=reviews');
+    await userEvent.keyboard('{Enter}');
+    expect(screen.getByTestId('path')).toHaveTextContent('/employers/8/learner/apprenticeship/11?tab=reviews');
+  });
+
+  it.each(['/employers/8', '/employers/8/reviews'])('keeps Native current-step styling and completed APTEM history unselected on %s', async path => {
+    api.reviews.mockImplementation(async (_employer, _kind, id) => ({ events: [makeReview('same-key', {
+      reviewSource: id === '11' ? 'curriculum' : 'aptem', status: id === '11' ? 'scheduled' : 'completed',
+    })], definitions: {} }));
+    showPage(path);
+    const journey = within(await screen.findByRole('region', { name: 'Progress review journey' }));
+    const native = await journey.findByRole('link', { name: /^Alex Learner: Progress review,/ });
+    const history = await journey.findByRole('link', { name: /^Morgan Learner: Progress review,/ });
+    expect(native).toHaveAttribute('aria-current', 'step');
+    expect(native).not.toHaveAttribute('data-selection', 'marker');
+    expect(history).toHaveAttribute('data-selection', 'marker');
+    expect(history).not.toHaveAttribute('aria-current');
+  });
+
   it('keeps a loading state while learners are being prepared', () => {
     api.portal.mockReturnValueOnce(new Promise(() => undefined));
     showPage();

@@ -15,6 +15,7 @@ import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
 import { Pagination } from '@/components/ui/Pagination';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { useImportedMeetingJoin } from '../shared/useImportedMeetingJoin';
 import { cn } from '@/lib/cn';
 import { statusTone } from '@/lib/statusTone';
 import { roleNavMap } from '@/mocks/navigation';
@@ -45,7 +46,6 @@ import {
   isScheduledEvent,
   isCompletedEvent,
   latestCompletedReviewDate,
-  meetingUrl,
   needsScheduling,
   parseLocalDate,
   runCoachCalendarAction,
@@ -1267,10 +1267,11 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
     }
   };
 
-  const handleJoin = (event: CoachCalendarEvent) => {
-    const url = meetingUrl(event);
-    if (url) window.open(url, '_blank', 'noopener,noreferrer');
-  };
+  const handleJoin = useImportedMeetingJoin({
+    contextKey: `${coach.email}:${coach.isViewingAsCoach}`, readOnly: coach.isViewingAsCoach,
+    onError: setActionError,
+    onStarted: joined => setEvents(current => current.map(row => row.eventKey === joined.eventKey ? { ...row, status: 'in-progress' } : row)),
+  });
 
   const openCompletionForm = async (event: CoachCalendarEvent) => {
     setActionError(null);

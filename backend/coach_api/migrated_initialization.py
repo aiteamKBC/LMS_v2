@@ -14,6 +14,16 @@ def initialize_imported_review(owner_email, definition):
     family = review_family((definition.get("historicalReview") or {}).get("type"))
     source_id = int(definition["historicalReview"]["id"])
     with transaction.atomic():
+        from .views import lock_learner_calendar
+        from learner_api.models import LearnerProfile
+        learner_id = definition['instance']['learnerId']
+        lock_learner_calendar(learner_id)
+        current_owner = LearnerProfile.objects.filter(pk=learner_id).values_list('coach_email', flat=True).first()
+        if str(current_owner or '').strip().casefold() != owner_email.strip().casefold():
+            raise ValueError('The learner assignment changed. Reload before initializing this review.')
+        if ImportedReviewInstance.objects.filter(learner_id=learner_id, source_review_id=source_id).exclude(
+                owner_email__iexact=owner_email.strip().casefold()).exists():
+            raise ValueError('This review is still owned by a different Coach and requires handover.')
         lock_template_family(family)
         template = resolve_template(definition["migratedProgrammeKey"], family, lock=True)
         if template is None:

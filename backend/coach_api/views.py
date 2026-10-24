@@ -7687,7 +7687,7 @@ def uploaded_coach_meeting_transcript_text(upload) -> str:
     return transcript_text
 
 
-def fetch_coach_meeting_transcript_content(base: str, artifact_id: str) -> dict:
+def fetch_coach_meeting_transcript_content(base: str, artifact_id: str, *, safe_diagnostics=False) -> dict:
     graph_settings = get_graph_settings()
     path = (
         f"{base}/transcripts/"
@@ -7705,8 +7705,11 @@ def fetch_coach_meeting_transcript_content(base: str, artifact_id: str) -> dict:
         content = graph_response.read()
         graph_response.close()
     except urllib_error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="ignore")
-        logger.warning("Unable to fetch coach Teams transcript content: %s %s", exc.code, detail)
+        if safe_diagnostics:
+            logger.warning("APTEM resource refresh: transcript content unavailable (HTTP %s).", exc.code)
+        else:
+            detail = exc.read().decode("utf-8", errors="ignore")
+            logger.warning("Unable to fetch coach Teams transcript content: %s %s", exc.code, detail)
         return {
             "transcript_vtt": "",
             "transcript_text": "",
@@ -7714,7 +7717,10 @@ def fetch_coach_meeting_transcript_content(base: str, artifact_id: str) -> dict:
             "transcript_fetch_error": f"Microsoft Graph returned {exc.code} for transcript content.",
         }
     except urllib_error.URLError as exc:
-        logger.warning("Unable to fetch coach Teams transcript content: %s", exc)
+        if safe_diagnostics:
+            logger.warning("APTEM resource refresh: transcript content unavailable (network).")
+        else:
+            logger.warning("Unable to fetch coach Teams transcript content: %s", exc)
         return {
             "transcript_vtt": "",
             "transcript_text": "",
@@ -7830,10 +7836,10 @@ def stored_coach_meeting_summary(record: CoachCalendarEvent) -> dict | None:
     }
 
 
-def stored_coach_meeting_snapshot(record: CoachCalendarEvent) -> dict:
+def stored_coach_meeting_snapshot(record: CoachCalendarEvent, *, database=None, safe_diagnostics=False) -> dict:
     """Return the latest persisted Teams snapshot without contacting Graph."""
 
-    database = router.db_for_read(CoachCalendarEvent) or "default"
+    database = database or router.db_for_read(CoachCalendarEvent) or "default"
     expected_attendees = coach_meeting_expected_attendees(record)
     empty_tracker = build_coach_meeting_attendance_tracker(
         expected_attendees,
@@ -7929,7 +7935,10 @@ def stored_coach_meeting_snapshot(record: CoachCalendarEvent) -> dict:
             )
             attendance_rows = cursor.fetchall()
     except Exception:
-        logger.exception("Unable to read stored coach Teams snapshot for event_key=%s", record.event_key)
+        if safe_diagnostics:
+            logger.warning("APTEM resource refresh: stored snapshot unavailable.")
+        else:
+            logger.exception("Unable to read stored coach Teams snapshot for event_key=%s", record.event_key)
         snapshot = dict(empty_snapshot)
         snapshot["errors"] = ["Stored Teams artifacts could not be loaded."]
         snapshot["partial"] = True
@@ -8443,8 +8452,19 @@ def persist_coach_meeting_snapshots(
     artifacts: list[dict],
     attendance_reports: list[dict],
     attendance_tracker: dict,
+    imported_refresh: dict | None = None,
+    safe_diagnostics=False,
 ) -> dict:
     """Persist a latest-known Teams snapshot when the manual SQL tables exist."""
+
+    if imported_refresh is not None:
+        from .migrated_session_scope import persist_imported_snapshot
+        snapshot = {**imported_refresh['snapshot'], 'artifacts': artifacts,
+                    'attendanceReports': attendance_reports, 'attendanceTracker': attendance_tracker}
+        return persist_imported_snapshot(record, snapshot,
+            expected_version=imported_refresh['expected_version'], revalidate=imported_refresh.get('revalidate'),
+            preserve_existing=imported_refresh.get('preserve_existing', False),
+            context=imported_refresh.get('context'))
 
     database = router.db_for_write(CoachCalendarEvent) or "default"
     if not coach_meeting_snapshot_tables_ready(database):
@@ -8715,14 +8735,19 @@ def persist_coach_meeting_snapshots(
                     ],
                 )
     except Exception:
-        logger.exception("Unable to persist coach Teams meeting snapshots for event_key=%s", record.event_key)
+        if safe_diagnostics:
+            logger.warning("APTEM resource refresh: snapshot persistence failed.")
+        else:
+            logger.exception("Unable to persist coach Teams meeting snapshots for event_key=%s", record.event_key)
         return {"stored": False, "reason": "snapshot_persist_failed"}
 
     return {"stored": True, "syncedAt": synced_at.isoformat()}
 
 
 def fetch_coach_meeting_graph_snapshot(record: CoachCalendarEvent, *, target_error_handler=None,
-                                     transcript_collection_fetcher=None) -> tuple[dict | None, dict | None, int]:
+                                     transcript_collection_fetcher=None,
+                                     attendance_response_validator=None,
+                                     safe_diagnostics=False) -> tuple[dict | None, dict | None, int]:
     """Fetch Teams artifacts and attendance for a coach calendar event.
 
     The returned snapshot is the single source used by the UI endpoint and by
@@ -8756,41 +8781,50 @@ def fetch_coach_meeting_graph_snapshot(record: CoachCalendarEvent, *, target_err
     attendance_reports = []
     errors = []
     resource_errors = {}
+    transcript_collection_complete = False
     def fetch_failure(resource, exc):
         status = getattr(getattr(exc, '__cause__', None), 'code', None)
         if resource_errors.get(resource) != 'permission':
             resource_errors[resource] = 'permission' if status in {401, 403} else 'fetch'
     event_key = clean_text(record.event_key)
+    def log_failure(resource):
+        if safe_diagnostics:
+            logger.warning("APTEM resource refresh: %s unavailable.", resource)
+        else:
+            logger.exception("Unable to load coach Teams %s for event_key=%s", resource, event_key)
 
     try:
         response = microsoft_graph_request("GET", f"{base}/attendanceReports")
+        if attendance_response_validator is not None:
+            attendance_response_validator(response)
+        fetched_report_ids = set()
         for report in response.get("value") or []:
             if not isinstance(report, dict):
                 continue
             report_id = clean_text(report.get("id"))
             if not report_id:
                 continue
+            if attendance_response_validator is not None:
+                if report_id in fetched_report_ids:
+                    continue
+                fetched_report_ids.add(report_id)
             try:
                 report_key = urllib_parse.quote(report_id, safe="")
                 detail = microsoft_graph_request(
                     "GET",
                     f"{base}/attendanceReports/{report_key}?$expand=attendanceRecords",
                 )
+                if attendance_response_validator is not None:
+                    attendance_response_validator(detail, report=report)
             except RuntimeError as exc:
                 fetch_failure('attendance', exc)
-                logger.exception(
-                    "Unable to load coach Teams attendance report detail for event_key=%s",
-                    event_key,
-                )
+                log_failure('attendance report detail')
                 errors.append("Microsoft Graph could not return attendance details for this meeting.")
                 continue
             attendance_reports.append(serialize_coach_meeting_attendance_report(report, detail))
     except RuntimeError as exc:
         fetch_failure('attendance', exc)
-        logger.exception(
-            "Unable to load coach Teams attendance reports for event_key=%s",
-            event_key,
-        )
+        log_failure('attendance reports')
         errors.append("Microsoft Graph could not return attendance reports for this meeting.")
 
     for artifact_type, endpoint in COACH_MEETING_ARTIFACT_ENDPOINTS.items():
@@ -8801,13 +8835,14 @@ def fetch_coach_meeting_graph_snapshot(record: CoachCalendarEvent, *, target_err
                 response = microsoft_graph_request("GET", f"{base}/{endpoint}")
         except RuntimeError as exc:
             fetch_failure(endpoint, exc)
-            logger.exception(
-                "Unable to load coach Teams %s for event_key=%s",
-                endpoint,
-                event_key,
-            )
+            log_failure(endpoint)
             errors.append(f"Microsoft Graph could not return {endpoint} for this meeting.")
             continue
+        if artifact_type == 'transcript' and attendance_response_validator is not None:
+            rows = response.get('value')
+            transcript_collection_complete = bool(isinstance(rows, list) and not response.get('@odata.nextLink')
+                and all(isinstance(row, dict) and isinstance(row.get('id'), str) and row['id'].strip() for row in rows)
+                and len({row['id'] for row in rows}) == len(rows))
         for artifact in response.get("value") or []:
             if isinstance(artifact, dict) and clean_text(artifact.get("id")):
                 serialized_artifact = serialize_coach_meeting_artifact(artifact_type, artifact)
@@ -8815,6 +8850,7 @@ def fetch_coach_meeting_graph_snapshot(record: CoachCalendarEvent, *, target_err
                     transcript_content = fetch_coach_meeting_transcript_content(
                         base,
                         serialized_artifact["graph_artifact_id"],
+                        **({'safe_diagnostics': True} if safe_diagnostics else {}),
                     )
                     serialized_artifact.update(transcript_content)
                     if transcript_content.get("transcript_fetch_error"):
@@ -8851,6 +8887,8 @@ def fetch_coach_meeting_graph_snapshot(record: CoachCalendarEvent, *, target_err
         "partial": bool(errors),
         "resourceErrors": resource_errors,
     }
+    if attendance_response_validator is not None:
+        snapshot['transcriptCollectionComplete'] = transcript_collection_complete
     return snapshot, None, 207 if errors else 200
 
 
@@ -8897,9 +8935,25 @@ def coach_timetable_event_artifacts(request, event_key):
         error = coach_meeting_write_error(request, record)
         if error is not None:
             return error
-        snapshot, error_payload, status_code = fetch_coach_meeting_graph_snapshot(record)
+        # The guard above admits imported keys only for the verified PSP
+        # exception. Native and all other generic callers keep their defaults.
+        imported_psp = record.event_key.startswith("imported-review:")
+        snapshot_options = {}
+        if imported_psp:
+            from .migrated_session_scope import (
+                attendance_reports_for_refresh, scope_snapshot, snapshot_version, validate_attendance_response,
+            )
+            snapshot_options['attendance_response_validator'] = validate_attendance_response
+            previous = stored_coach_meeting_snapshot(record)
+        snapshot, error_payload, status_code = fetch_coach_meeting_graph_snapshot(record, **snapshot_options)
         if error_payload:
             return JsonResponse(error_payload, status=status_code)
+        if imported_psp:
+            reports = attendance_reports_for_refresh(record, snapshot, previous)
+            scoped = scope_snapshot(record, {**snapshot, 'attendanceReports': reports})
+            snapshot = {**snapshot, **{key: scoped[key] for key in (
+                'attendance', 'attendanceReports', 'attendanceTracker',
+            )}}
 
         # A manual Teams refresh is the explicit place where we reconcile
         # attendance evidence into review status. Plainly opening details only
@@ -8915,7 +8969,16 @@ def coach_timetable_event_artifacts(request, event_key):
             artifacts=snapshot["artifacts"],
             attendance_reports=snapshot["attendanceReports"],
             attendance_tracker=snapshot["attendanceTracker"],
+            **({'imported_refresh': {'snapshot': snapshot, 'expected_version': snapshot_version(previous),
+                'revalidate': lambda current: coach_meeting_write_error(request, current) is None}}
+               if imported_psp else {}),
         )
+        if imported_psp and not storage_status.get('stored'):
+            reason = storage_status.get('reason')
+            stale = reason in {'snapshot_superseded', 'snapshot_context_changed'}
+            return JsonResponse({'detail': 'Meeting evidence changed or could not be saved. Retry Check Teams.',
+                                 'code': 'BOOKING_CONFLICT' if stale else 'SNAPSHOT_STORAGE_UNAVAILABLE'},
+                                status=409 if stale else 503)
         meeting_summary = ensure_coach_meeting_summary(record, retry_failed=True)
     else:
         snapshot = stored_coach_meeting_snapshot(record)
@@ -15146,6 +15209,11 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         saved_instance = ImportedReviewInstance.objects.filter(
             owner_email__iexact=canonical_owner, learner_id=profile_id, source_review_id=row["id"],
         ).first()
+        if not saved_instance and ImportedReviewInstance.objects.filter(
+                learner_id=profile_id, source_review_id=row["id"]).first() is not None:
+            # A blocked handover must not look like a fresh form that the new
+            # Coach can initialize over another owner's continuation/history.
+            return None
     source_review_id = getattr(saved_instance, "source_review_id", None)
     overlay_learner_id = getattr(saved_instance, "learner_id", None)
     if saved_instance and isinstance(source_review_id, int):
@@ -15521,43 +15589,60 @@ def coach_review_instance_local_status(request, instance_id):
     """Start an imported review only after its LMS meeting is verified."""
     if request.method != "POST":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
+    owner_email = authenticated_coach_email(request).strip().casefold()
+    try:
+        payload = parse_json_body(request)
+    except ValidationError as exc:
+        return validation_error_response(exc)
+    calendar_key = payload.get('calendarEventKey')
+    if calendar_key is not None and (not isinstance(calendar_key, str) or not calendar_key):
+        return JsonResponse({'detail': 'A valid calendar event key is required.'}, status=400)
+    if any(payload.get(key) is not None and (not isinstance(payload[key], str) or not payload[key])
+           for key in ('meetingLink', 'scheduledDate', 'scheduledTime')):
+        return JsonResponse({'detail': 'Meeting link and schedule must be valid text values.'}, status=400)
     if not instance_id.startswith("imported-review:"):
-        return JsonResponse({"detail": "This action is for imported reviews only."}, status=409)
-    owner_email = authenticated_coach_email(request)
+        # Calendar keys (including legacy/reconciled bookings) are candidates,
+        # never imported source IDs. Resolve through the existing authority.
+        from .background_meeting_sync import imported_context
+        from .review_sources import ReviewIdentityConflict
+        if not calendar_key or calendar_key != instance_id:
+            return JsonResponse({"detail": "This action is for imported reviews only."}, status=409)
+        record = CoachCalendarEvent.objects.filter(event_key=calendar_key, owner_email__iexact=owner_email).first()
+        try:
+            context = imported_context(record) if record else None
+        except ReviewIdentityConflict:
+            context = None
+        if not context or not context.get('overlayId'):
+            return JsonResponse({'detail': 'No initialized imported review is associated with this booking.'}, status=409)
+        instance_id = context['reviewKey']
     definition = _imported_review_definition(owner_email, instance_id)
     if not definition:
         return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
     if not definition.get("migratedForm") or definition.get("readOnly"):
         return JsonResponse({"detail": "This imported review is read-only."}, status=409)
-    try:
-        payload = parse_json_body(request)
-    except ValidationError as exc:
-        return validation_error_response(exc)
     if payload.get("status") != ImportedReviewInstance.STATUS_IN_PROGRESS:
         return JsonResponse({"detail": "Only the in-progress transition is available in Phase B."}, status=400)
     with transaction.atomic():
         overlay = _owned_migrated_overlay(owner_email, definition, lock=True, lock_calendar=True)
         if not overlay:
             return JsonResponse({"detail": "Imported review association mismatch."}, status=409)
-        if overlay.status != ImportedReviewInstance.STATUS_SCHEDULED:
-            return JsonResponse({"detail": "Only a scheduled review can be started."}, status=409)
-        from coach_api.migrated_template_sync import TemplateSyncConflict, synchronize_definition_locked
-        try:
-            synchronize_definition_locked(overlay, definition)
-        except TemplateSyncConflict as exc:
-            return JsonResponse({"detail": str(exc), "templateSync": exc.response()}, status=409)
         from .review_sources import booking_for_overlay, ReviewIdentityConflict
         try:
             calendar = booking_for_overlay(overlay, lock=True)
         except ReviewIdentityConflict as exc:
             return coach_error(request, code="BOOKING_CONFLICT", message=str(exc), status=409)
         family = migrated_review_family((definition.get("historicalReview") or {}).get("type"))
-        if not calendar or calendar.owner_email.casefold() != owner_email or calendar.event_type != migrated_booking_event_type(family) or calendar.sync_state != CoachCalendarEvent.SYNC_SYNCED or not calendar.graph_event_id or not calendar_record_has_launch_url(calendar):
+        if not calendar or (calendar_key is not None and calendar.event_key != calendar_key):
             return coach_error(request, code="BOOKING_CONFLICT", message="Book and confirm the Teams meeting before starting this review.", status=409)
-        overlay.status = ImportedReviewInstance.STATUS_IN_PROGRESS
-        overlay.save(update_fields=["status", "updated_at"])
-        calendar.status = CoachCalendarEvent.STATUS_IN_PROGRESS
-        calendar.save(update_fields=["status", "updated_at"])
+        if (('meetingLink' in payload and payload['meetingLink'] not in {calendar.meeting_link, calendar.graph_web_link})
+                or (payload.get('scheduledDate') and payload['scheduledDate'] != str(calendar.scheduled_date))
+                or (payload.get('scheduledTime') and parse_time_value(payload['scheduledTime']) != calendar.scheduled_time)):
+            return coach_error(request, code='BOOKING_CONFLICT', message='The meeting booking changed. Refresh the review before starting it.', status=409)
+        from .imported_review_start import start_locked
+        from .migrated_reviews import source_is_completed
+        if not start_locked(overlay, calendar, family,
+                            source_completed=source_is_completed(definition.get('historicalReview') or {})):
+            return JsonResponse({'detail': 'Only an initialized, scheduled review with a confirmed booking can be started.'}, status=409)
     return JsonResponse(_imported_review_definition(owner_email, instance_id))
 
 
