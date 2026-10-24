@@ -237,12 +237,14 @@ class MigratedMeetingIntelligenceTests(SimpleTestCase):
 
     def test_unresolved_graph_identity_does_not_claim_permission_denial_or_persist(self):
         with patch("coach_api.migrated_intelligence_views._association", return_value=(self.overlay, self.record, {})), \
+             patch("coach_api.views.stored_coach_meeting_snapshot", return_value={"storage": {"stored": True}}) as stored, \
              patch("coach_api.views.fetch_coach_meeting_graph_snapshot", return_value=(None, {"code": "coach_online_meeting_unresolved", "detail": "Online meeting unavailable"}, 409)), \
              patch("coach_api.views.persist_coach_meeting_snapshots") as persist:
             result = inspect.unwrap(migrated_review_check_session)(self.factory.post("/"), ID)
         self.assertEqual(result.status_code, 409)
         self.assertEqual(json.loads(result.content)["code"], "GRAPH_MEETING_UNRESOLVED")
         persist.assert_not_called()
+        stored.assert_called_once_with(self.record)
 
     def test_summary_edit_allows_scheduled_without_starting_and_retains_provenance(self):
         request = self.factory.patch("/", data=json.dumps({"summary": {"title": "Edited", "overview": "Coach edit"}}), content_type="application/json")

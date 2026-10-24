@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
@@ -7,7 +7,8 @@ import CoachMonthlyCoaching from './page';
 import { importedBookingDefinition, installDialogTestSupport, scheduledImportedBooking } from '../shared/__tests__/importedBookingFixtures';
 import CoachMeetingDetail from '../meeting-detail/page';
 
-const { fetchEvents, scheduleEvent, savePptx, openReview, fetchForm, book, reschedule, adopt, coach } = vi.hoisted(() => ({
+const { fetchEvents, scheduleEvent, savePptx, openReview, fetchForm, book, reschedule, adopt, coach, start } = vi.hoisted(() => ({
+  start: vi.fn(),
   fetchForm: vi.fn(), book: vi.fn(), reschedule: vi.fn(), adopt: vi.fn(),
   fetchEvents: vi.fn(),
   scheduleEvent: vi.fn(),
@@ -35,6 +36,7 @@ vi.mock('../progress-reviews/components/ProgressReviewPptxModal', () => ({
   },
 }));
 vi.mock('@/api/reviewInstances', () => ({ openReviewInstanceForEvent: openReview,
+  startMigratedReview: start,
   adoptMigratedReviewBooking: adopt,
   fetchReviewInstanceForm: fetchForm, bookMigratedReview: book, rescheduleMigratedReview: reschedule, initializeMigratedReview: vi.fn(),
 }));
@@ -85,6 +87,7 @@ const visibleLearners = () => Array.from(document.querySelectorAll('.ui-action-r
   .map(row => row.textContent);
 
 beforeEach(() => {
+  start.mockReset();
   adopt.mockReset();
   installDialogTestSupport();
   fetchForm.mockReset().mockResolvedValue(scheduledImportedBooking());
@@ -105,6 +108,20 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('restored monthly coaching list', () => {
+  it('starts an imported MCM from the row Join action', async () => {
+    fetchEvents.mockResolvedValue({ events: [meeting(31, { eventKey: 'imported-review:31', reviewSource: 'aptem',
+      reviewTemplateId: null, status: 'scheduled', scheduledDate: '2026-09-14', scheduledTime: '10:00',
+      calendarEventKey: 'legacy-calendar:91', meetingLink: 'https://example.invalid/teams' })] });
+    start.mockResolvedValue({ ...scheduledImportedBooking(), localStatus: 'in-progress' });
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    mount();
+    await screen.findByText('Learner 31');
+    expect(start).not.toHaveBeenCalled();
+    fireEvent.click(rowMenu('Learner 31').getByRole('menuitem', { name: 'Join' }));
+    expect(open).toHaveBeenCalledWith('https://example.invalid/teams', '_blank', 'noopener,noreferrer');
+    await waitFor(() => expect(start).toHaveBeenCalledWith('imported-review:31', expect.objectContaining({ calendarEventKey: 'legacy-calendar:91' })));
+    open.mockRestore();
+  });
   it('keeps Reschedule open when the existing MCM booking is adopted on entry', async () => {
     const scheduled = scheduledImportedBooking();
     scheduled.template.reviewTypeCode = 'aptem_mcm';

@@ -16,6 +16,7 @@ from pypdf import PdfReader
 from . import migrated_completion_views as lifecycle, migrated_intelligence_views as intelligence, views
 from .migrated_completion import build_pdf, ensure_document
 from .migrated_reviews import meeting_summary_field, render_sections
+from .migrated_session_scope import validate_attendance_response
 from .migrated_summary_binding import answer_version, binding_state, populate_answer, preserve_original
 from .migrated_templates import serialize_template, snapshot_for, validate_managed_definition
 from .models import CoachCalendarEvent, ImportedReviewInstance, MigratedReviewTemplate
@@ -109,9 +110,10 @@ class MigratedBindingFlowTests(TestCase):
             "attendance": {"reports": [], "records": []}, "errors": [], "partial": False}
 
     def check(self, *, summary=None, transcript="Synthetic transcript", ai_error=None, during_fetch=None, during_generation=None, snapshot=None):
-        def fetch(_record, *, target_error_handler, transcript_collection_fetcher):
+        def fetch(_record, *, target_error_handler, transcript_collection_fetcher, attendance_response_validator):
             self.assertIs(target_error_handler, intelligence._graph_target_failure)
             self.assertIs(transcript_collection_fetcher, intelligence._transcript_collection)
+            self.assertIs(attendance_response_validator, validate_attendance_response)
             if during_fetch:
                 during_fetch()
             current = deepcopy(snapshot or self.snapshot)
@@ -410,8 +412,11 @@ class MigratedBindingFlowTests(TestCase):
                   "historicalReview": {"id": "7002", "type": "Monthly Coaching Meeting"}, "instance": {"id": "imported-review:new", "learnerId": 42}}
         request = self.factory.post("/")
         request.coach_email = OWNER
-        with patch.object(views, "_imported_review_definition", return_value=source):
+        with patch.object(views, "_imported_review_definition", return_value=source), \
+                patch.object(views.LearnerProfile.objects, 'filter') as profiles:
+            profiles.return_value.values_list.return_value.first.return_value = OWNER
             self.assertEqual(unwrap(views.coach_review_instance_initialize)(request, source["instance"]["id"]).status_code, 200)
+        profiles.assert_called_once_with(pk=42)
         initialized = ImportedReviewInstance.objects.get(source_review_id=7002)
         frozen = deepcopy(initialized.template_snapshot)
         self.template.definition_json["sections"][0]["fields"][0].pop("semanticKey")
@@ -448,8 +453,12 @@ class MigratedBindingFlowTests(TestCase):
             definition = {**self.definition, "sections": sections, "summaryBinding": {"state": "COACH_EDITED", "editedBy": OWNER}, "answerVersion": "private"}
             with patch.object(lifecycle, "authenticate_request", return_value=SimpleNamespace(role=role)), \
                  patch.object(lifecycle, "_party_overlay", return_value=self.overlay), \
-                 patch.object(views, "_imported_review_definition", return_value=definition):
+                 patch.object(views, "_imported_review_definition", return_value=definition) as reader, \
+                 patch.object(lifecycle.LearnerProfile.objects, 'filter') as profiles:
+                profile = SimpleNamespace(pk=self.overlay.learner_id)
+                profiles.return_value.first.return_value = profile
                 response = lifecycle.migrated_review_party_detail(self.factory.get("/"), self.overlay.event_key)
+            reader.assert_called_once_with(OWNER, self.overlay.event_key, learners=[profile])
             data = json.loads(response.content)
             self.assertTrue(data["readOnly"])
             self.assertEqual(data["sections"][0]["fields"][0]["answer"], "Saved final summary")

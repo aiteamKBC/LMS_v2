@@ -95,11 +95,13 @@ class ImportedGraphTargetFailureTests(SimpleTestCase):
             patch('coach_api.migrated_intelligence_views._association', return_value=(self.overlay, self.record, {})),
             patch('coach_api.views.has_graph_credentials', return_value=True),
             patch('coach_api.views.coach_meeting_graph_target', side_effect=error),
+            patch('coach_api.views.stored_coach_meeting_snapshot', return_value={'storage': {'stored': True}}) as stored,
             patch('coach_api.views.persist_coach_meeting_snapshots') as persist,
             patch('coach_api.views.openai_meeting_summary') as ai,
         ):
             response = inspect.unwrap(migrated_review_check_session)(self.factory.post('/'), fixtures.ID)
         persist.assert_not_called()
+        stored.assert_called_once_with(self.record)
         ai.assert_not_called()
         self.overlay.save.assert_not_called()
         self.assertNotIn('private-provider-detail', response.content.decode())
@@ -136,6 +138,7 @@ class ImportedGraphTargetFailureTests(SimpleTestCase):
 
     def test_empty_lookup_does_not_assert_permission_denial(self):
         with patch('coach_api.migrated_intelligence_views._association', return_value=(self.overlay, self.record, {})), \
+             patch('coach_api.views.stored_coach_meeting_snapshot', return_value={'storage': {'stored': True}}), \
              patch('coach_api.views.has_graph_credentials', return_value=True), \
              patch('coach_api.views.coach_meeting_graph_target', return_value=('', {'code': 'coach_online_meeting_unresolved'})):
             response = inspect.unwrap(migrated_review_check_session)(self.factory.post('/'), fixtures.ID)

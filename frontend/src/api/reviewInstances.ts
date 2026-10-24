@@ -390,10 +390,12 @@ export async function initializeMigratedReview(instanceId: string) {
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
 }
 
-export async function startMigratedReview(instanceId: string) {
+export async function startMigratedReview(instanceId: string, booking?: {
+  calendarEventKey: string; meetingLink?: string; scheduledDate?: string | null; scheduledTime?: string | null;
+}) {
   const response = await coachFetch(`${instanceUrl(instanceId)}/local-status`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status: 'in-progress' }),
+    body: JSON.stringify({ status: 'in-progress', ...booking }),
   });
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
 }

@@ -6,6 +6,8 @@ import { formatReviewDate, greeting, isOpenReview, learnerHref, learnerKey, lond
 import styles from './EmployerPortalPage.module.css';
 import { EmployerReviewJourneys } from './EmployerReviewJourneys';
 import { EmployerMeetings } from './EmployerMeetings';
+import { isAptemReview } from '@/pages/learner/progress-reviews/reviewPresentation';
+import selection from '@/pages/learner/reviews/reviewMarkerSelection.module.css';
 
 /**
  * `home` is the whole overview. The other two are the sidebar's own sections,
@@ -175,7 +177,7 @@ export function EmployerDashboard({ data, metrics, programmeMetrics, attendance:
     const displayed = view === 'reviews' ? events : events.slice(start, start + 4);
     return <article className={styles.journey} key={learnerKey(learner)}><div className={styles.journeyIdentity}><Avatar learner={learner} /><div><Link to={learnerHref(employerId, learner, 'reviews')} className={styles.learnerName}>{learner.name}</Link><small>{learner.programme || 'Programme not assigned'}{learner.cohort ? ` | ${learner.cohort}` : ''}</small></div></div>{resource?.status === 'ready' ? events.length ? <><ol className={styles.journeySteps}>{displayed.map(event => {
       const state = reviewState(event);
-      return <li key={event.eventKey} data-status={state}><Link to={learnerHref(employerId, learner, 'reviews')} aria-current={event.eventKey === upcomingKey ? 'step' : undefined} aria-label={`${learner.name}: ${event.title}, ${reviewLabels[state]}, ${formatReviewDate(reviewDate(event))}`}><span className={styles.journeyMarker}>{state === 'completed' ? <Check size={12} /> : state === 'signature' ? '!' : <CalendarDays size={11} />}</span><strong>{event.title}{event.occurrenceNumber ? ` #${event.occurrenceNumber}` : ''}</strong><span>{formatReviewDate(reviewDate(event))}</span><small>{reviewLabels[state]}</small></Link></li>;
+      return <li key={event.eventKey} data-status={state}><Link to={learnerHref(employerId, learner, 'reviews')} className={selection.control} data-selection={isAptemReview(event) ? 'marker' : undefined} aria-current={event.eventKey === upcomingKey ? 'step' : undefined} aria-label={`${learner.name}: ${event.title}, ${reviewLabels[state]}, ${formatReviewDate(reviewDate(event))}`}><span className={`${styles.journeyMarker} ${selection.marker}`}>{state === 'completed' ? <Check size={12} /> : state === 'signature' ? '!' : <CalendarDays size={11} />}</span><strong>{event.title}{event.occurrenceNumber ? ` #${event.occurrenceNumber}` : ''}</strong><span>{formatReviewDate(reviewDate(event))}</span><small>{reviewLabels[state]}</small></Link></li>;
     })}</ol><Link className={styles.journeyLink} to={learnerHref(employerId, learner, 'reviews')}>View reviews ({events.length})<ArrowRight size={13} /></Link></> : <p className={styles.journeyEmpty}>No progress reviews planned yet.</p> : <p className={styles.journeyEmpty}>{resource?.status === 'error' ? 'Reviews unavailable. Use Try again above.' : 'Loading progress reviews…'}</p>}</article>;
   })}{!journeyLearners.length && <p className={styles.journeyEmpty}>No learners to show.</p>}</div></section>;
 

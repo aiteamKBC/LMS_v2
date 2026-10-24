@@ -1,6 +1,7 @@
 """Select one booked call without deleting historical Teams evidence."""
 from datetime import datetime, timedelta, timezone as utc_timezone
 import hashlib
+import json
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
@@ -35,6 +36,122 @@ def current_reports(record, snapshot):
     return [report for report in snapshot.get('attendanceReports', [])
             if (bounds := report_window(report))[0] and bounds[1]
             and bounds[0] < bounds[1] and bounds[0] < end and bounds[1] > start]
+
+
+def validate_attendance_response(response, *, report=None):
+    """Imported refresh must not turn missing/partial records into absence.
+
+    Keep the generic/Native serializer unchanged. Unsupported continuation is
+    an explicit resource failure, so a previously verified report can survive.
+    """
+    if report is None:
+        if (not isinstance(response, dict) or not isinstance(response.get('value'), list)
+                or response.get('@odata.nextLink')
+                or any(not isinstance(row, dict) or not isinstance(row.get('id'), str)
+                       or not row['id'].strip() for row in response['value'])):
+            raise RuntimeError('Teams returned an incomplete attendance report collection.')
+        return
+    if (not isinstance(response, dict) or response.get('id') != report.get('id')
+            or not isinstance(response.get('attendanceRecords'), list)
+            or any(not isinstance(row, dict) for row in response['attendanceRecords'])
+            or response.get('attendanceRecords@odata.nextLink') or response.get('@odata.nextLink')):
+        raise RuntimeError('Teams returned incomplete or mismatched attendance report details.')
+
+
+def attendance_reports_for_refresh(record, snapshot, previous, *, preserve_existing=False):
+    """Preserve current-target stored evidence on an incomplete imported fetch.
+
+    The stored snapshot reader already qualifies reports by Graph event. Both
+    inputs still need booking-window qualification. Fresh complete copies win
+    by report ID; one report must never contribute its duration twice.
+    """
+    fresh = current_reports(record, snapshot)
+    failed = ((snapshot.get('resourceErrors') or {}).get('attendance')
+              or any('attendance' in message.lower() for message in snapshot.get('errors', [])))
+    cached = current_reports(record, previous) if preserve_existing or failed or not fresh else []
+    return list({row['id']: row for row in [*cached, *fresh] if row.get('id')}.values())
+
+
+def snapshot_version(snapshot):
+    """Optimistic resource version, without relying on clocks across workers."""
+    from django.core.serializers.json import DjangoJSONEncoder
+    state = {key: snapshot.get(key) for key in ('artifacts', 'attendanceReports', 'attendanceTracker', 'storage')}
+    return hashlib.sha256(json.dumps(state, cls=DjangoJSONEncoder, sort_keys=True).encode()).hexdigest()
+
+
+def persist_imported_snapshot(record, snapshot, *, expected_version, revalidate=None, preserve_existing=False, context=None, start_review=None):
+    """Serialize imported writers; reject responses overtaken during Graph I/O.
+
+    Providers run before this function. The current calendar, stored evidence,
+    and unchanged snapshot SQL use the same write connection/transaction.
+    Native callers retain their original persistence path.
+    """
+    from django.db import router, transaction
+    from .models import CoachCalendarEvent, ImportedReviewInstance
+    from .views import persist_coach_meeting_snapshots, stored_coach_meeting_snapshot
+
+    database = router.db_for_write(CoachCalendarEvent) or 'default'
+    with transaction.atomic(using=database):
+        current = CoachCalendarEvent.objects.using(database).select_for_update().get(pk=record.pk)
+        # Same calendar -> overlay order as imported manual/reopen writers.
+        # No ensure/get_or_create helper: background writes resources only.
+        overlay = None
+        if context and context.get('overlayId'):
+            overlay = ImportedReviewInstance.objects.using(database).select_for_update().get(pk=context['overlayId'])
+        if (refresh_basis(current) != refresh_basis(record)
+                or (revalidate is not None and not revalidate(current))):
+            return {'stored': False, 'reason': 'snapshot_context_changed'}
+        previous = stored_coach_meeting_snapshot(current, database=database, safe_diagnostics=True)
+        storage = previous.get('storage') or {}
+        if not storage.get('stored') or previous.get('partial'):
+            return {'stored': False, 'reason': 'snapshot_read_unavailable'}
+        if snapshot_version(previous) != expected_version:
+            return {'stored': False, 'reason': 'snapshot_superseded'}
+        from .imported_review_start import has_start_evidence, start_locked
+        # Evaluate the unfiltered fresh collection: discarding a failed segment
+        # before this check would make an incomplete transcript appear complete.
+        start_evidence = has_start_evidence(current, snapshot)
+        fresh_reports = current_reports(current, snapshot)
+        reports = attendance_reports_for_refresh(current, snapshot, previous, preserve_existing=preserve_existing)
+        scoped = scope_snapshot(current, {**snapshot, 'attendanceReports': reports})
+        for key in ('attendance', 'attendanceReports', 'attendanceTracker'):
+            snapshot[key] = scoped[key]
+        if context is not None:
+            # Background resource writes must not erase a stored transcript
+            # after a failed download, or attach a different call's content.
+            snapshot['artifacts'] = ([] if scoped['selectionError'] else
+                [row for row in scoped['artifacts'] if not row.get('transcript_fetch_error')])
+        result = persist_coach_meeting_snapshots(current, artifacts=snapshot['artifacts'],
+            attendance_reports=snapshot['attendanceReports'], attendance_tracker=snapshot['attendanceTracker'],
+            safe_diagnostics=True)
+        if result.get('stored') and start_evidence:
+            if start_review is not None:
+                owned, family, completed = start_review
+            else:
+                from .background_meeting_sync import imported_context
+                qualified = context if context is not None else imported_context(current)
+                owned = overlay
+                if qualified and qualified.get('overlayId') and owned is None:
+                    owned = ImportedReviewInstance.objects.using(database).select_for_update().get(pk=qualified['overlayId'])
+                    # Revalidate after acquiring the overlay lock (e.g. reopen).
+                    if imported_context(current) != qualified:
+                        return {**result, 'reviewStarted': False}
+                family = qualified.get('family') if qualified else None
+                completed = qualified.get('completed', False) if qualified else False
+            if owned and start_locked(owned, current, family, source_completed=completed):
+                record.status = current.status
+                result['reviewStarted'] = True
+        if context is not None:
+            result['resourceRefresh'] = ('partial' if snapshot.get('partial') or scoped['selectionError']
+                or any(row.get('transcript_fetch_error') for row in scoped['artifacts']) else
+                'updated' if fresh_reports or snapshot['artifacts'] else 'pending')
+        return result
+
+
+def refresh_basis(record):
+    return session_provenance(record) | {key: getattr(record, key, None) for key in (
+        'event_type', 'sync_state', 'status', 'graph_web_link', 'idempotency_key',
+    )}
 
 
 def select_artifacts(record, snapshot):

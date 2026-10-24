@@ -197,7 +197,12 @@ def migrated_review_party_detail(request, review_id):
 
 def _party_definition(overlay, account):
     from coach_api.views import _imported_review_definition
-    definition = _imported_review_definition(overlay.owner_email, overlay.event_key)
+    # _party_overlay already established learner/employer/source authority.
+    # Historical ownership is not membership of the former Coach's caseload.
+    profile = LearnerProfile.objects.filter(pk=overlay.learner_id).first()
+    if profile is None:
+        return None
+    definition = _imported_review_definition(overlay.owner_email, overlay.event_key, learners=[profile])
     if not definition or not definition.get("migratedForm"):
         return None
     role = "participant" if account.role == "learner" else "employer"

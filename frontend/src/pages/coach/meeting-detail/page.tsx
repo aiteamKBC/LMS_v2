@@ -22,6 +22,7 @@ import { MigratedMeetingIntelligence } from '../shared/MigratedMeetingIntelligen
 import ProgressReviewCompletionModal from '../shared/ProgressReviewCompletionModal';
 import { ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '../shared/ScheduleControls';
 import { loadImportedReviewForBooking } from '../shared/importedReviewBooking';
+import { useImportedMeetingJoin } from '../shared/useImportedMeetingJoin';
 import { reviewInstancePath, reviewInstanceRouteState } from '../shared/reviewInstanceNavigation';
 import {
   type CoachCalendarEvent,
@@ -387,15 +388,15 @@ export default function CoachMeetingDetail() {
     }
   };
 
+  const joinMeeting = useImportedMeetingJoin({
+    contextKey: `${coach.email}:${coach.isViewingAsCoach}:${eventKey}`, readOnly: coach.isViewingAsCoach,
+    onError: setActionError,
+    onStarted: () => setEvent(current => current ? { ...current, status: 'in-progress' } : current),
+  });
   const handleJoin = () => {
     if (!event) return;
-    const url = meetingUrl(event);
-    if (!url) {
-      setActionError('This meeting does not have a Teams link yet.');
-      return;
-    }
     setActionError(null);
-    window.open(url, '_blank', 'noopener,noreferrer');
+    joinMeeting(event);
   };
 
   const handleCompleteMeeting = async (responses: ProgressReviewResponses) => {
@@ -666,6 +667,13 @@ export default function CoachMeetingDetail() {
                   savedBinding={importedReview.summaryBinding}
                   showBoundSummary
                   checkBlocked={busy}
+                  onCheckComplete={result => {
+                    if (result.event?.status === 'in-progress') {
+                      handleArtifactsStatusChange('in-progress');
+                      setImportedReview(current => current ? { ...current, localStatus: 'in-progress',
+                        instance: { ...current.instance, status: 'in-progress' } } : current);
+                    }
+                  }}
                 />
               ) : (
                 <Panel className="bg-white">

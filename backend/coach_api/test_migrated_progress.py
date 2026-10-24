@@ -368,13 +368,16 @@ class MigratedProgressPdfPartyTests(SimpleTestCase):
                     with self.subTest(role=role, family=family, snapshot=bool(snapshot)), \
                          patch("coach_api.migrated_completion_views.authenticate_request", return_value=SimpleNamespace(role=role)), \
                          patch("coach_api.migrated_completion_views._party_overlay", return_value=overlay), \
+                          patch.object(views.LearnerProfile.objects, 'filter') as profiles, \
                          patch.object(views, "_imported_review_definition", return_value={"migratedForm": True,
                              "progressSnapshot": deepcopy(snapshot), "canCalculateProgress": True, "progressVersion": "v1",
                              "summaryBinding": {"suggestionText": "Coach suggestion"}, "answerVersion": "v1"}) as definition, \
                          patch.object(service, "build_progress_snapshot", side_effect=AssertionError("Party GET calculated")):
+                        profile = SimpleNamespace(pk=overlay.learner_id)
+                        profiles.return_value.first.return_value = profile
                         response = migrated_review_party_detail(RequestFactory().get("/"), overlay.event_key)
                         self.assertEqual(response.status_code, 200)
-                        definition.assert_called_once_with(OWNER, overlay.event_key)
+                        definition.assert_called_once_with(OWNER, overlay.event_key, learners=[profile])
                         payload = json.loads(response.content)
                         self.assertEqual(payload["progressSnapshot"], snapshot)
                         self.assertTrue(payload["readOnly"])

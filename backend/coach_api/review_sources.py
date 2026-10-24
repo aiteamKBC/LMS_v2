@@ -421,6 +421,19 @@ def apply_imported_state(event, record=None, overlay=None, *, compact=False):
     if migrated:
         event["hasReviewForm"] = True
         event["formEventKey"] = overlay.event_key
+    if not historical:
+        # An unbooked source occurrence follows the current assignment. An
+        # initialized form follows its stored owner, including blocked handovers.
+        current_owner = str(event.get('ownerEmail') or '').strip().casefold()
+        responsible = str(overlay.owner_email if overlay else
+                          record.owner_email if record else current_owner).strip().casefold()
+        if responsible and responsible == current_owner:
+            event['coachName'] = event.get('ownerName') or ''
+            event['coachEmail'] = responsible
+        elif overlay and (not record or record.owner_email.strip().casefold() != responsible):
+            # A source reviewer is not proof of the current overlay's owner.
+            event['coachName'] = responsible
+            event['coachEmail'] = responsible
     # A legacy booking may carry old native linkage, which is not the form for
     # this occurrence. Keep the stored row intact; expose the imported form.
     event["reviewInstanceId"] = None

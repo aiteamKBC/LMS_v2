@@ -40,6 +40,7 @@ import { formatDateLabel } from './calendarEvents';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
 import { useAuth } from '@/hooks/useAuth';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { useImportedMeetingJoin } from './useImportedMeetingJoin';
 import { MigratedMeetingIntelligence } from './MigratedMeetingIntelligence';
 import { MigratedSummaryActions } from './MigratedSummaryActions';
 import type { CoachMeetingArtifactsResponse } from './calendarEvents';
@@ -269,6 +270,11 @@ function ReviewInstanceContent({
   }, []);
   const onMigratedCheckComplete = useCallback((result: CoachMeetingArtifactsResponse) => {
     if (!reviewActive.current) return;
+    if (result.event?.status === 'in-progress') {
+      setDefinition(current => current ? { ...current, localStatus: 'in-progress',
+        instance: { ...current.instance, status: 'in-progress' } } : current);
+      onStatusChanged?.('in-progress');
+    }
     if (result.progressVersion) {
       setDefinition((current) => current ? { ...current, progressVersion: result.progressVersion } : current);
     }
@@ -289,7 +295,7 @@ function ReviewInstanceContent({
     answersRef.current = merged;
     setAnswers(merged);
     setDefinition(current => current ? { ...current, answerVersion: result.answerVersion, summaryBinding: result.summaryBinding } : current);
-  }, []);
+  }, [onStatusChanged]);
   const onMigratedSummaryComplete = useCallback((result: CoachMeetingArtifactsResponse) => {
     if (!reviewActive.current) return;
     onMigratedCheckComplete(result);
@@ -313,6 +319,27 @@ function ReviewInstanceContent({
   const [reopenNote, setReopenNote] = useState('');
   const signatureSaveInFlightRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
+  const joinMeeting = useImportedMeetingJoin({
+    contextKey: `${coachIdentity.email}:${isViewingAsCoach}:${instanceId}`, readOnly: isViewingAsCoach,
+    onError: setError,
+    onStarted: (_event, updated) => {
+      setDefinition(current => current ? {
+        ...current, localStatus: 'in-progress', instance: { ...current.instance, status: 'in-progress' },
+        // Advance the answer version only when the server proves the same
+        // saved work. Keep unsaved editor values and concurrent-edit conflicts.
+        ...(current.bookingAdoptionVersion && current.bookingAdoptionVersion === updated.bookingAdoptionVersion
+          ? { answerVersion: updated.answerVersion } : {}),
+      } : current);
+      onStatusChanged?.('in-progress');
+    },
+  });
+  const joinImportedBooking = () => {
+    if (!definition?.booking) return;
+    joinMeeting({ eventKey: definition.instance.id, calendarEventKey: definition.booking.eventKey,
+      reviewSource: 'aptem', status: definition.localStatus || definition.instance.status,
+      scheduledDate: definition.booking.scheduledDate, scheduledTime: definition.booking.scheduledTime,
+      meetingLink: definition.booking.meetingLink }, false);
+  };
   const [openSectionId, setOpenSectionId] = useState('');
   const [showErrors, setShowErrors] = useState(false);
   const [calculating, setCalculating] = useState(false);
@@ -1005,7 +1032,7 @@ function ReviewInstanceContent({
               <section aria-label="Migrated review meeting" className="rounded-xl border border-primary-200 bg-primary-50 p-4 text-sm">
                 <p className="font-semibold text-primary-900">Meeting booked in LMS</p>
                 <p className="mt-1 text-primary-800">{definition.booking.scheduledDate} at {definition.booking.scheduledTime} · {definition.booking.durationMinutes} minutes</p>
-                {definition.booking.meetingLink ? <a href={definition.booking.meetingLink} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block font-semibold text-primary-700 underline">Join Teams</a> : null}
+                {definition.booking.meetingLink ? <a href={definition.booking.meetingLink} onClick={joinImportedBooking} onAuxClick={e => { if (e.button === 1) joinImportedBooking(); }} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block font-semibold text-primary-700 underline">Join Teams</a> : null}
               </section>
             ) : null}
             {definition.migratedForm && !personalSupportForm && definition.booking?.eventKey && definition.booking.syncState === 'synced' ? (

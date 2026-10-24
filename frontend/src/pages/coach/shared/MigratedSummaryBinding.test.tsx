@@ -14,6 +14,7 @@ vi.mock('@/api/reviewInstances', async original => ({
   fetchReviewInstanceForm: vi.fn(), fetchMigratedReviewIntelligence: vi.fn(), saveReviewInstanceAnswers: vi.fn(),
   generateReviewMeetingSummary: vi.fn(), submitMigratedReview: vi.fn(),
   uploadMigratedSummaryTranscript: vi.fn(), initializeMigratedReview: vi.fn(),
+  startMigratedReview: vi.fn(),
 }));
 afterEach(cleanup);
 const id = 'imported-review:binding-ui';
@@ -50,6 +51,23 @@ beforeEach(() => {
 });
 
 describe('bound migrated review answers', () => {
+  it('starts from the form Join Teams link and preserves typed answers and their save version', async () => {
+    const saved = { ...definition('scheduled'), readOnly: false, bookingAdoptionVersion: 'same-saved-work' };
+    vi.mocked(api.fetchReviewInstanceForm).mockResolvedValue(saved);
+    vi.mocked(api.startMigratedReview).mockResolvedValue({ ...saved, localStatus: 'in-progress', answerVersion: 'v2' });
+    mount();
+    const input = await screen.findByRole('textbox', { name: 'Discussion record' });
+    fireEvent.change(input, { target: { value: 'Keep my unsaved text' } });
+    const link = screen.getByRole('link', { name: 'Join Teams' });
+    expect(api.startMigratedReview).not.toHaveBeenCalled();
+    fireEvent.click(link);
+    expect(link).toHaveAttribute('href', 'https://example.invalid/meeting');
+    await waitFor(() => expect(api.startMigratedReview).toHaveBeenCalledWith(id, expect.objectContaining({ calendarEventKey: id })));
+    expect(input).toHaveValue('Keep my unsaved text');
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(api.saveReviewInstanceAnswers).toHaveBeenCalledWith(id,
+      expect.objectContaining({ recap: 'Keep my unsaved text' }), expect.objectContaining({ answerVersion: 'v2' })));
+  });
   it.each(['aptem_mcm', 'aptem_progress_review'])('expands %s summary editing and saves the same answer explicitly', async reviewTypeCode => {
     const saved = definition();
     saved.template.reviewTypeCode = reviewTypeCode;
