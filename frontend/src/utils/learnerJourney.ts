@@ -12,6 +12,8 @@ export interface JourneyComponent {
   ksbMappingCount?: number | null;
   ksbMappings?: ComponentKsbMapping[];
   componentId?: string | null;
+  /** Display-only grouping within the authored week; child IDs remain canonical. */
+  pointNumber?: number | null;
   type?: string | null;
   description?: string | null;
   assignmentTopics?: import('@/lib/assignmentTopics').AssignmentTopic[];
@@ -20,6 +22,7 @@ export interface JourneyComponent {
   assignmentBrief?: string | null;
   assignmentBriefHtml?: string | null;
   videoUrl?: string | null;
+  alternativeYouTubeUrl?: string | null;
   audioUrl?: string | null;
   contentHtml?: string | null;
   /** A video's authored lesson content (HTML or plain text), shown under the player. */
@@ -685,14 +688,14 @@ export function buildLearnerJourney(real: LearnerJourneySource | null): JourneyM
             && (w.weekId ? c.weekId === w.weekId : c.week === w.week))
           .map((c) => ({
             title: c.component, expectedOtjh: c.expectedOtjh, isQuiz: c.isQuiz, quizMeta: c.quizMeta,
-            moduleId: c.moduleId, weekId: c.weekId,
+            moduleId: c.moduleId, weekId: c.weekId, pointNumber: c.pointNumber,
             ksbWeightTotal: c.ksbWeightTotal, ksbMappingCount: c.ksbMappingCount,
             ksbMappings: c.ksbMappings,
             componentId: c.componentId, type: c.type, description: c.description,
             assignmentBrief: c.assignmentBrief, assignmentBriefHtml: c.assignmentBriefHtml, assignmentTopics: c.assignmentTopics,
             monthlyAssignment: c.monthlyAssignment,
             videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
-            audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName, files: c.files,
+            audioUrl: c.audioUrl, alternativeYouTubeUrl: c.alternativeYouTubeUrl, contentHtml: c.contentHtml, fileName: c.fileName, files: c.files,
             hasReadingContent: c.hasReadingContent, lessonContentHtml: c.lessonContentHtml,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt,
             attendanceCompleted: c.attendanceCompleted, attendanceCompletedAt: c.attendanceCompletedAt,

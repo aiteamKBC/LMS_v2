@@ -107,6 +107,31 @@ describe('review presentation preserves review and booking rules', () => {
     expect(result).toMatchObject({ action: 'view', past: true, needsAttention: false, canReschedule: false, joinUrl: null });
   });
 
+  it.each([
+    ['scheduled', 'Scheduled'], ['not-scheduled', 'Not scheduled'], ['planned', 'Not scheduled'], ['in-progress', 'In progress'],
+    ['awaiting-signature', 'Awaiting signatures'], ['completed', 'Completed'], ['cancelled', 'Cancelled'],
+  ])('names an imported %s review by its state, as the detail header does', (status, label) => {
+    const imported = session('imported-review:12', { status, importedReview: {
+      id: '12', aptemReviewId: '12', name: 'Imported review', type: 'Progress Review', reviewerName: 'Previous coach',
+      plannedDate: '2025-01-01', plannedTime: null, completedDate: '2025-01-01', status,
+      extractionStatus: 'complete', detailsAvailable: true, sections: [],
+    } });
+    expect(presentReview(imported, undefined, today)).toMatchObject({ label, action: 'view', past: true });
+    expect(presentReview(imported, undefined, today, undefined, 'employer')).toMatchObject({
+      label, action: 'view', past: true, needsAttention: false, booked: false, canReschedule: false, joinUrl: null,
+    });
+  });
+
+  it('falls back to a neutral record label when an imported row carries no recognised state', () => {
+    const imported = session('imported-review:13', { status: 'unknown', importedReview: {
+      id: '13', aptemReviewId: '13', name: 'Imported review', type: 'Progress Review', reviewerName: 'Previous coach',
+      plannedDate: '2025-01-01', plannedTime: null, completedDate: '2025-01-01', status: 'unknown',
+      extractionStatus: 'complete', detailsAvailable: true, sections: [],
+    } });
+    expect(presentReview(imported, undefined, today)).toMatchObject({ label: 'Review record', action: 'view' });
+    expect(presentReview(imported, undefined, today, undefined, 'employer')).toMatchObject({ label: 'Review record', action: 'view', past: true });
+  });
+
   it.each(['cancelled', 'deleted', 'superseded', 'completed'])('does not offer booking or joining when attendance status is %s', status => {
     const result = presentReview(session('closed', { learnerSigned: true }), attendance('closed', { status }), today);
     expect(result).toMatchObject({ action: 'view', booked: false, canReschedule: false, joinUrl: null, past: true });

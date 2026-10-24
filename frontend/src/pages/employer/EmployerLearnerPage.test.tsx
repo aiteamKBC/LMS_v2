@@ -108,6 +108,7 @@ function renderPage(search = '') {
     <MemoryRouter initialEntries={[`/employers/7/learner/commercial/499${search}`]}>
       <Routes>
         <Route path="/employers/:employerId/learner/:kind/:learnerId" element={<EmployerLearnerPage />} />
+        <Route path="/employers/:employerId/learners" element={<h1>All employer learners</h1>} />
       </Routes>
     </MemoryRouter>
     </QueryClientProvider>,
@@ -232,6 +233,13 @@ describe('EmployerLearnerPage content and review signing', () => {
     renderPage(`?tab=${tabName}`);
     const label = tabName === 'reviews' ? /^Progress reviews$/ : /^Documents/;
     expect(await screen.findByRole('button', { name: label })).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('returns from a learner review to My learners using All learners', async () => {
+    mocks.fetchEmployerLearner.mockResolvedValue(detail([]));
+    renderPage('?tab=reviews');
+    await userEvent.click(await screen.findByRole('button', { name: 'All learners' }));
+    expect(screen.getByRole('heading', { name: 'All employer learners' })).toBeVisible();
   });
 
   it('adds the timeline above the existing learning plan while keeping progress in Overview', async () => {
@@ -413,7 +421,7 @@ describe('EmployerLearnerPage content and review signing', () => {
       eventKey: 'imported-review:synthetic', migratedForm: true, signed: true, completed: false,
     }]));
     await openDocuments();
-    expect(await screen.findByText('Signed · awaiting final completion')).toBeVisible();
+    expect(await screen.findByText('Awaiting final completion')).toBeVisible();
     expect(screen.getByRole('button', { name: /^Preview$/ })).toBeVisible();
     expect(mocks.downloadMigratedReviewForParty).not.toHaveBeenCalled();
   });

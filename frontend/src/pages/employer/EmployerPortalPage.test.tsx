@@ -102,6 +102,19 @@ describe('employer home dashboard', () => {
     expect(screen.getByRole('combobox', { name: 'Programme' })).toHaveValue('');
   });
 
+  it('shows small catalogue percentages and activity counts without rounding them to zero', async () => {
+    metrics.learners['11'].programme = { completed: 1, total: 900, percent: 0.11, status: 'ready' };
+    showPage();
+    const progress = await screen.findByRole('progressbar', { name: 'Alex Learner programme progress' });
+    expect(progress).toHaveAttribute('aria-valuenow', '0.11');
+    expect(table().getByText('0.11%')).toBeVisible();
+    expect(table().getByText('1 / 900 activities')).toBeVisible();
+    const programmes = within(screen.getByRole('region', { name: 'Progress by programme' }));
+    expect(programmes.getByText('0.11%')).toBeVisible();
+    expect(programmes.getByRole('progressbar', { name: 'Data Analysis average progress' })).toHaveAttribute('aria-valuenow', '0.11');
+    expect(table().getByText('32%')).toBeVisible();
+  });
+
   it('counts only progress reviews and filters this month without displaying Gateway or support plans', async () => {
     showPage();
     const due = await screen.findByRole('button', { name: /Reviews due this month: 1\. Open progress reviews/ });
@@ -164,6 +177,30 @@ describe('employer home dashboard', () => {
     expect(screen.getByText('2 of 2 learners')).toBeVisible();
   });
 
+  it.each(['/employers/8', '/employers/8/reviews'])('orders the journey by the source plan after appointments move on %s', async path => {
+    const planned = ['2026-09-01', '2026-10-01', '2026-11-01', '2026-12-01', '2027-01-01'];
+    const booked = ['2026-12-10', '2026-09-10', '2026-10-20', '2026-11-20', '2026-08-01'];
+    api.reviews.mockImplementation(async (_employer, _kind, id) => ({ events: [1, 4, 3, 0, 2].map(index =>
+      makeReview(`${id}-${index}`, { title: `Review ${index + 1}`, reviewSource: 'aptem',
+        targetDate: planned[index], scheduledDate: booked[index], date: booked[index], sequence: index + 1,
+        status: index === 0 ? 'awaiting-signature' : index === 1 ? 'completed' : 'scheduled' })), definitions: {} }));
+    showPage(path);
+    await screen.findByRole('link', { name: /Alex Learner: Review 1,/ });
+    const journey = within(screen.getByRole('region', { name: 'Progress review journey' }));
+    for (const name of ['Alex Learner', 'Morgan Learner']) {
+      const links = journey.getAllByRole('link', { name: new RegExp(`^${name}: Review`) });
+      expect(links.map(link => link.querySelector('strong')?.textContent)).toEqual(
+        path.endsWith('/reviews') ? ['Review 1', 'Review 2', 'Review 3', 'Review 4', 'Review 5']
+          : ['Review 1', 'Review 2', 'Review 3', 'Review 4']);
+      expect(links[0]).toHaveAccessibleName(`${name}: Review 1, Waiting for signatures, 10 Dec 2026`);
+      expect(links[1]).toHaveAccessibleName(`${name}: Review 2, Completed, 10 Sept 2026`);
+    }
+    if (!path.endsWith('/reviews')) {
+      // The appointment due first is still the next review, irrespective of plan order.
+      expect(table().getAllByRole('link', { name: '1 Aug 2026' })).toHaveLength(2);
+    }
+  });
+
   it('filters the review journeys and can recover from an empty search', async () => {
     showPage('/employers/8/reviews');
     await screen.findByRole('article', { name: 'Alex Learner reviews' });
@@ -207,12 +244,25 @@ describe('employer home dashboard', () => {
     expect(within(actions).getByRole('link', { name: 'View all' })).toHaveAttribute('href', '/employers/8/documents');
   });
 
-  it('includes both amber and red learners when opening Needs attention', async () => {
+  it('uses the same OTJ statuses for the overview, table, filters and Needs attention', async () => {
     portal.learners[1].isActive = true;
     metrics.learners['11'].risk = 'need-attention';
     metrics.learners['12'].risk = 'at-risk';
     showPage();
-    await userEvent.click(await screen.findByRole('button', { name: /Needs attention: 2\. Behind/ }));
+    const attention = await screen.findByRole('button', { name: /Needs attention: 2\. Behind/ });
+    const overview = within(screen.getByRole('region', { name: 'Learner progress overview' }));
+    expect(overview.getByRole('img')).toHaveAccessibleName('On track: 0, Needs attention: 1, At risk: 1, Not available: 0');
+    expect(table().getByText('Needs attention')).toBeVisible();
+    expect(table().getByText('At risk')).toBeVisible();
+    expect(table().queryByText('OTJ status unavailable')).not.toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Status' }), 'at-risk');
+    expect(table().getByRole('link', { name: 'View Morgan Learner' })).toBeVisible();
+    expect(table().queryByRole('link', { name: 'View Alex Learner' })).not.toBeInTheDocument();
+    expect(overview.getByRole('img')).toHaveAccessibleName('On track: 0, Needs attention: 0, At risk: 1, Not available: 0');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Status' }), 'need-attention');
+    expect(table().getByRole('link', { name: 'View Alex Learner' })).toBeVisible();
+    expect(table().queryByRole('link', { name: 'View Morgan Learner' })).not.toBeInTheDocument();
+    await userEvent.click(attention);
     expect(screen.getByRole('heading', { name: 'Your learners (2)' })).toBeVisible();
     expect(screen.getByRole('combobox', { name: 'Status' })).toHaveValue('attention');
   });

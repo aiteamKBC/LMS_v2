@@ -3,6 +3,7 @@ import json
 import re
 
 from .assignment_settings import learner_title
+from .submission_visibility import VISIBLE_SUBMISSION_SQL
 
 _RESOURCE_PREFIXES = ('https://', 'http://', '/curriculum_api/curriculum/uploads/')
 _TAGS = re.compile(r'<[^>]*>')
@@ -97,8 +98,9 @@ def prepare_topic_save(cur, payload):
     available = bool(topic and topic_has_content(topic))
     cur.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))',
                 [json.dumps([payload['learnerKind'], str(payload['learnerId']), payload['activityId']])])
-    cur.execute('''SELECT assignment_topic_id, status, full_submission FROM "Learner".learning_reflection_submissions
-        WHERE learner_kind=%s AND learner_id=%s AND activity_type='assignment' AND activity_id=%s ORDER BY assignment_topic_id''',
+    cur.execute(f'''SELECT assignment_topic_id, status, full_submission FROM "Learner".learning_reflection_submissions AS submission
+        WHERE learner_kind=%s AND learner_id=%s AND activity_type='assignment' AND activity_id=%s
+          AND {VISIBLE_SUBMISSION_SQL} ORDER BY assignment_topic_id''',
         [payload['learnerKind'], str(payload['learnerId']), payload['activityId']])
     existing = cur.fetchall()
     # Work already saved against a topic the author has since emptied stays
@@ -129,8 +131,7 @@ def prepare_topic_save(cur, payload):
 
 def inherit_coaching_booking(payload, rows):
     """Reuse this component's owned MCM without modifying submitted topics."""
-    from .calendar import _learner_calendar_record
-    from .monthly_assignment import month_bounds
+    from .monthly_assignment import coaching_meeting_booked, month_bounds
     monthly = payload.get('monthlyAssignment')
     if not isinstance(monthly, dict) or not month_bounds(monthly.get('month'))[0]:
         return
@@ -142,9 +143,7 @@ def inherit_coaching_booking(payload, rows):
         key = saved.get('meetingKey')
         if not key or saved.get('month') != monthly.get('month'):
             continue
-        record = _learner_calendar_record(payload['learnerKind'], int(payload['learnerId']), key)
-        if (record and record.event_type == 'mcr' and record.scheduled_date
-                and record.status in ('scheduled', 'in-progress', 'completed', 'awaiting-signature')):
+        if coaching_meeting_booked(payload['learnerKind'], int(payload['learnerId']), key):
             payload['monthlyAssignment'] = {**monthly, 'meetingKey': key}
             return
 

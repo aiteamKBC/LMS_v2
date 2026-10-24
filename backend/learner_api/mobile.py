@@ -28,6 +28,7 @@ from .models import EnrolmentUser, LearnerProfile
 from .learner_detail import build_learner_detail
 from .selectors.assignments import effective_training_plan
 from .mobile_progress import measured_time, project_progress
+from .presentation_json import presentation_object
 from .android_download import installer_response
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
@@ -49,7 +50,7 @@ CAPABILITIES = {
 }
 COMPONENT_FIELDS = {
     "componentId", "moduleId", "weekId", "module", "week", "component", "type",
-    "description", "audioUrl", "videoUrl", "durationMinutes", "expectedOtjh",
+    "description", "audioUrl", "videoUrl", "alternativeYouTubeUrl", "durationMinutes", "expectedOtjh",
     "reflectionPrompt", "reflectionRequired", "reflectionQuestion",
     "tutorValidationRequired", "ksbMappings", "ksbMappingCount", "ksbWeightTotal",
     "isQuiz", "quizMeta",
@@ -345,7 +346,10 @@ def _presentation_metadata(components):
             (jsonb_typeof(c.settings_json->'transcript') = 'string'
              AND length(btrim(c.settings_json->>'transcript')) > 0),
             c.settings_json->'legacySettings', c.settings_json->>'requirement',
-            jsonb_build_object('required', c.settings_json->'required',
+            jsonb_build_object('teachingWeek', c.settings_json->'teachingWeek',
+                'pointNumber', c.settings_json->'pointNumber',
+                'sourceReadingComponentIds', c.settings_json->'sourceReadingComponentIds',
+                'required', c.settings_json->'required',
                 'optional', c.settings_json->'optional',
                 'countsTowardsRequiredCompletion', c.settings_json->'countsTowardsRequiredCompletion',
                 'required_route_minutes', c.settings_json->'required_route_minutes',
@@ -370,19 +374,16 @@ def _presentation_metadata(components):
         if component is None or component.get("weekId") != week_id or component["moduleId"] != module_id:
             continue
         item = {"displayOrder": order}
-        if isinstance(legacy, str):
-            try:
-                legacy = json.loads(legacy)
-            except (ValueError, TypeError):
-                legacy = {}
-        legacy = legacy if isinstance(legacy, dict) else {}
-        # Raw PostgreSQL JSONB expressions can use the driver's text loader.
-        if isinstance(direct, str):
-            try:
-                direct = json.loads(direct)
-            except (ValueError, TypeError):
-                direct = {}
-        direct = direct if isinstance(direct, dict) else {}
+        # Native saves store legacySettings as a JSON string. The raw JSONB
+        # text loader can add one transport layer around that string.
+        legacy = presentation_object(legacy, max_layers=2)
+        direct = presentation_object(direct)
+        # Decode scalar fields inside a JSON object: raw JSONB text '1' is
+        # otherwise indistinguishable from an already-decoded authored "1".
+        # A numeric JSON value stays numeric; an authored string stays a string.
+        teaching_week = direct.get("teachingWeek", teaching_week)
+        point_number = direct.get("pointNumber", point_number)
+        reading_ids = direct.get("sourceReadingComponentIds", reading_ids)
         authored = {**legacy, **{key: value for key, value in direct.items() if value is not None}}
         route = {}
         for key in ("required", "optional", "countsTowardsRequiredCompletion"):
@@ -411,7 +412,10 @@ def _presentation_metadata(components):
             point_number = legacy.get("pointNumber")
         for key, value in (("teachingWeek", teaching_week), ("pointNumber", point_number),
                            ("weekNumber", week_number), ("weekDisplayOrder", week_order)):
-            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            valid = type(value) is int and value >= 0
+            if key == "pointNumber":
+                valid = valid and 0 < value <= 9007199254740991
+            if valid:
                 item[key] = value
         if isinstance(asset_id, str) and asset_id:
             item["bookNarrationAssetId"] = asset_id
@@ -559,6 +563,8 @@ def catalogue(request):
         for field, mode in (("audioUrl", "audio"), ("videoUrl", "video")):
             if item["mobileMode"] != mode:
                 item.pop(field, None)
+        if item["mobileMode"] != "audio":
+            item.pop("alternativeYouTubeUrl", None)
         item["mechanicalNarrationAllowed"] = False
         item["rewardObservationsSupported"] = reward_modules[row['moduleId']]
         components.append(item)
