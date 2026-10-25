@@ -455,6 +455,27 @@ it('uses the learner-style collapsible navigation for Curriculum and keeps Quali
   expect(localStorage.getItem('kbc_learner_sidebar_collapsed')).toBeNull();
 });
 
+it.each([
+  '/engagement/reports/feedback',
+  '/engagement/reports/feedback/create',
+  '/engagement/reports/feedback/forms/42/edit',
+])('uses the most specific Feedback breadcrumb on %s', path => {
+  const config = roleNavMap.engagement;
+  render(
+    <MemoryRouter initialEntries={[path]}>
+      <WorkspaceShell role="engagement" roleLabel={config.label} navItems={config.items} workspaceLabel={config.workspaceLabel} pageTitle="Feedback">
+        <CurrentRoute />
+      </WorkspaceShell>
+    </MemoryRouter>,
+  );
+  const breadcrumb = screen.getByRole('navigation', { name: 'Breadcrumb' });
+
+  expect(within(breadcrumb).getByRole('link', { name: 'Engagement Command Centre' })).toBeVisible();
+  expect(within(breadcrumb).getByRole('link', { name: 'Reports' })).toBeVisible();
+  expect(within(breadcrumb).getByText('Feedback')).toBeVisible();
+  expect(within(breadcrumb).getAllByText('Reports')).toHaveLength(1);
+});
+
 it('closes the subsidebar when clicking the standalone page that is already active', () => {
   const { sidebar, rail, panel } = showWorkspace('admin', '/admin/platform-report');
   fireEvent.click(within(sidebar).getByRole('button', { name: 'Expand navigation' }));

@@ -6,12 +6,15 @@ import StudentHome from './page';
 import { useLearnerSummaryParam } from '@/hooks/useLearnerSummaryParam';
 import { studentWorkspaceRoutes } from '@/router/studentWorkspaceRoutes';
 import { homeSummary, upcomingSchedule, type OverviewWeek, type UpcomingEvent } from '@/api/learnerOverview';
+import { feedbackApi, type LearnerFeedbackListItem } from '@/api/feedback';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { rememberSignedInLearner } from '@/hooks/useMyLearner';
 import { resetFirstLoginDetailsRedirect } from '@/hooks/useFirstLoginDetailsRedirect';
 
 const state = vi.hoisted(() => ({ profileError: '', name: 'Alex Morgan', role: 'learner', learnerType: 'apprenticeship', firstLoginRequired: false, programmeStatus: 'Active', events: [] as UpcomingEvent[], scheduleError: '', refresh: vi.fn(), modules: [] as OverviewWeek['modules'] }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { id: 3, subjectId: 71, learnerType: state.learnerType, role: state.role, displayName: state.name } }, logout: vi.fn(), retryInitialization: vi.fn() }) }));
+vi.mock('@/components/SupportChatWidget', () => ({ SupportChatWidget: () => null }));
+vi.mock('@/api/feedback', () => ({ feedbackApi: { myForms: vi.fn() } }));
 vi.mock('@/api/firstLoginDetails', () => ({ fetchFirstLoginDetails: vi.fn(async () => ({ required: state.firstLoginRequired })) }));
 vi.mock('@/hooks/useLearnerSummaryParam', () => ({ useLearnerSummaryParam: vi.fn(() => ({ real: { id: 71, name: state.name, programmeStatus: state.programmeStatus }, loadError: state.profileError, loading: false, refresh: state.refresh })) }));
 vi.mock('@/hooks/useLiveLearnerRead', () => ({ useLiveLearnerRead: vi.fn((_kind, _id, _enabled, read) => ({ data: { weekStart: '2026-09-07', weekEnd: '2026-09-13', modules: state.modules,
@@ -29,7 +32,7 @@ function Location() { const location = useLocation(); return <output data-testid
 function page() { return render(<MemoryRouter initialEntries={['/learner/home?kind=commercial&id=999']}><StudentHome/><Location/></MemoryRouter>); }
 function WorkspaceRoutes() { return useRoutes(studentWorkspaceRoutes); }
 function workspace(path: string) { return render(<MemoryRouter initialEntries={[path]}><Suspense fallback={<p>Loading</p>}><WorkspaceRoutes/></Suspense><Location/></MemoryRouter>); }
-beforeEach(() => { resetFirstLoginDetailsRedirect(); state.learnerType = 'apprenticeship'; state.firstLoginRequired = false; state.profileError = ''; state.role = 'learner'; state.programmeStatus = 'Active'; state.events = []; state.scheduleError = ''; state.modules = []; rememberSignedInLearner(undefined, undefined); localStorage.clear(); });
+beforeEach(() => { resetFirstLoginDetailsRedirect(); state.learnerType = 'apprenticeship'; state.firstLoginRequired = false; state.profileError = ''; state.role = 'learner'; state.programmeStatus = 'Active'; state.events = []; state.scheduleError = ''; state.modules = []; vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [] }); rememberSignedInLearner(undefined, undefined); localStorage.clear(); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks(); localStorage.clear(); });
 describe('connected student home', () => {
   it('uses only the authenticated identity, with real progress and empty events', () => {
@@ -106,6 +109,7 @@ describe('connected student home', () => {
     ['Monthly Submission', '/learner/monthly-submission'],
     ['Dashboard', '/workspace/learner/dashboard'], ['Attend or Report Absence', '/learner/attendance'],
     ['Book for Monthly Coaching Session', '/learner/monthly-coaching'],
+    ['Feedback', '/learner/feedback'],
   ])('connects %s to its existing LMS route', (label, href) => {
     page();
     const link = screen.getByRole('link', { name: new RegExp(`^${label}`) });
@@ -125,6 +129,14 @@ describe('connected student home', () => {
     expect(screen.queryByRole('search')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('link', { name: 'Dashboard' }));
     expect(screen.getByTestId('destination')).toHaveTextContent('/workspace/learner/dashboard');
+  });
+  it('shows the real pending feedback count on the Feedback link', async () => {
+    const pending = { id: 4, title: 'Lecture feedback', description: '', assignedAt: '2026-10-24T09:00:00Z', dueDate: null,
+      status: 'not_started', responseId: null, deliveryId: 21, sessionTitle: 'Leadership session', sessionStartsAt: '2026-10-24T08:00:00Z',
+      formType: 'post_lecture', moduleName: 'Leadership' } satisfies LearnerFeedbackListItem;
+    vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [pending, { ...pending, id: 5, deliveryId: 22, status: 'completed' }] });
+    page();
+    expect(await screen.findByRole('link', { name: 'Feedback, 1 pending' })).toHaveAttribute('href', '/learner/feedback');
   });
   it('continues the signed-in learner’s current module, ignoring an identity supplied in the URL', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -191,6 +203,7 @@ describe('connected student home', () => {
     expect(useLearnerSummaryParam).toHaveBeenCalledWith('commercial', '502');
     expect(screen.getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', '/workspace/learner/dashboard/commercial/502');
     expect(screen.getByRole('link', { name: 'View all progress' })).toHaveAttribute('href', '/workspace/learner/dashboard/commercial/502');
+    expect(screen.getByRole('link', { name: 'Feedback' })).toHaveAttribute('href', '/learner/feedback?learnerId=502&kind=commercial');
     // A staff preview keeps the learner in every link, so the sidebar routes to them.
     expect(screen.getByRole('link', { name: /^Attend or Report Absence/ })).toHaveAttribute('href', '/learner/attendance/commercial/502');
     fireEvent.click(screen.getByRole('link', { name: 'Dashboard' }));
