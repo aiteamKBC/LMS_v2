@@ -36,6 +36,8 @@ const form: FeedbackForm = {
 
 describe('feedback form version history', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal('AppIcon', () => null);
     vi.mocked(feedbackApi.listForms).mockResolvedValue({ forms: [form], summary: { totalForms: 1, publishedForms: 1, draftForms: 0, totalResponses: 3 } });
     vi.mocked(feedbackApi.responses).mockResolvedValue({ responses: [] });
     vi.mocked(feedbackApi.analytics).mockResolvedValue({ analytics: { totalAssigned: 22, notStarted: 19, inProgress: 0, completed: 3, completionRate: 14, ratingAverages: [] } });
@@ -109,5 +111,35 @@ describe('feedback form version history', () => {
     expect(screen.getByText('Event attendance')).toBeInTheDocument();
     expect(screen.getByText('Guest')).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Event' })).toBeInTheDocument();
+  });
+
+  it('shows completion analytics and reloads metrics for a feedback type', async () => {
+    const user = userEvent.setup();
+    vi.mocked(feedbackApi.responses).mockResolvedValue({ responses: [{
+      id: 91, formId: 20, formTitle: 'Lecture feedback', learnerId: '61', learnerName: 'Test Learner',
+      programme: 'Business', status: 'completed', startedAt: '2026-10-20T09:00:00Z',
+      updatedAt: '2026-10-20T09:10:00Z', submittedAt: '2026-10-20T09:10:00Z',
+    }] });
+    vi.mocked(feedbackApi.analytics).mockReset()
+      .mockResolvedValueOnce({ analytics: { totalAssigned: 22, notStarted: 19, inProgress: 0, completed: 3, completionRate: 14, ratingAverages: [] } })
+      .mockResolvedValueOnce({ analytics: { totalAssigned: 22, notStarted: 17, inProgress: 1, completed: 4, completionRate: 18.2, ratingAverages: [
+        { questionId: 4, question: 'How useful was this session?', average: 4.5, responses: 4, min: 1, max: 5 },
+      ] } });
+
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+    await user.click(await screen.findByRole('button', { name: 'Analytics' }));
+
+    expect(await screen.findByRole('heading', { name: 'Feedback Analytics' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Feedback completion metrics' })).toBeVisible();
+    expect(screen.getByText('Completion split')).toBeVisible();
+    expect(screen.getByText('Response rate by form')).toBeVisible();
+    expect(screen.getByText('Test Learner')).toBeVisible();
+
+    await user.click(screen.getByRole('button', { name: 'All feedback types' }));
+    await user.click(screen.getByRole('option', { name: 'Lecture Feedback' }));
+
+    await waitFor(() => expect(feedbackApi.analytics).toHaveBeenCalledWith({ formType: 'post_lecture' }));
+    expect((await screen.findAllByText('How useful was this session?')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('4.5/5').length).toBeGreaterThan(0);
   });
 });
