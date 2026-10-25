@@ -13,7 +13,7 @@ import { isLectureJoinable, lectureJoinUrl, useLectureClock } from '../liveLectu
 export type AttendanceFilter = 'all' | 'attended' | 'absent' | 'covered' | 'upcoming';
 const STATUS: Record<AttendanceLecture['status'], { label: string; tone: StatusTone }> = {
   completed: { label: 'Attended', tone: 'positive' }, late: { label: 'Late', tone: 'caution' },
-  absent: { label: 'Missed', tone: 'critical' }, cancelled: { label: 'Canceled', tone: 'neutral' }, upcoming: { label: 'Upcoming', tone: 'info' },
+  absent: { label: 'Missed', tone: 'critical' }, cancelled: { label: 'Cancelled', tone: 'neutral' }, upcoming: { label: 'Upcoming', tone: 'info' },
   unmarked: { label: 'Unmarked', tone: 'neutral' },
   awaiting_recording: { label: 'Awaiting recording', tone: 'neutral' },
   in_progress: { label: 'In progress', tone: 'info' }, pending: { label: 'Awaiting attendance', tone: 'neutral' },

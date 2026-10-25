@@ -288,7 +288,7 @@ describe('Attendance lecture workspace', () => {
     payload.totals = { total: 0, attended: 0, absent: 0, covered: 0, upcoming: 0, attendanceRate: null };
     mount();
     const row = await screen.findByRole('article', { name: 'Cancelled lecture' });
-    expect(within(row).getByText('Canceled')).toBeInTheDocument();
+    expect(within(row).getByText('Cancelled')).toBeInTheDocument();
     expect(within(row).queryByText(/Missed|Make-up needed/)).not.toBeInTheDocument();
     expect(within(row).queryByRole('button', { name: /Catchup|Report Absence|Open Activities/ })).not.toBeInTheDocument();
   });
