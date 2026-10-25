@@ -1,5 +1,6 @@
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
 import { useAuth } from '@/hooks/useAuth';
+import { useLocation } from 'react-router-dom';
 
 /**
  * One destination per menu item, so the sidebar's highlight and the content
@@ -25,6 +26,17 @@ export function employerPortalNav(employerId: string): SidebarNavItem[] {
  */
 export function useEmployerPortalChrome(employerId: string, employerName?: string) {
   const { auth } = useAuth();
+  const { pathname, search } = useLocation();
+  const root = `/employers/${employerId}`;
+  const path = pathname.replace(/\/+$/, '');
+  const learnerTab = new URLSearchParams(search).get('tab');
+  // A learner's tabs share one pathname. Keep the global menu destinations
+  // fixed while selecting the section represented by the current tab.
+  const section = path.startsWith(`${root}/learner/`)
+    ? learnerTab === 'reviews' || learnerTab === 'documents' ? learnerTab : 'learners'
+    : path === `${root}/reviews` ? 'reviews'
+    : path === `${root}/documents` ? 'documents'
+    : path === `${root}/learners` ? 'learners' : 'home';
   const isEmployerViewer = auth.account?.role === 'employer';
   return {
     isEmployerViewer,
@@ -33,7 +45,7 @@ export function useEmployerPortalChrome(employerId: string, employerName?: strin
       appearance: 'learner',
       roleLabel: 'Employer',
       workspaceLabel: 'Employer Workspace',
-      navItems: employerPortalNav(employerId),
+      navItems: employerPortalNav(employerId).map(item => ({ ...item, active: item.id === `employer-portal-${section}` })),
       userName: isEmployerViewer ? auth.account?.displayName || employerName || 'Employer' : 'Enrolment Officer',
       userRole: isEmployerViewer ? 'Employer' : 'Enrolment Officer',
     },

@@ -216,10 +216,21 @@ describe('Curriculum workspace sidebar presentation', () => {
     }
   });
 
-  it('does not add the retired My Courses destination for an administrator', () => {
+  it('keeps My Courses out of the Curriculum workspace for an administrator', () => {
     viewer.admin = true;
     show();
     expect(menu().queryByRole('link', { name: 'My Courses' })).not.toBeInTheDocument();
+  });
+
+  it('retains main personal course navigation in the admin workspace', () => {
+    viewer.admin = true;
+    const role = 'admin';
+    const config = roleNavMap[role];
+    render(<MemoryRouter initialEntries={['/workspace/' + role]}>
+      <Harness role={role} navItems={config.items} />
+    </MemoryRouter>);
+    const sidebar = within(screen.getByRole('complementary', { name: `${config.label} sidebar` }));
+    expect(sidebar.getByRole('link', { name: 'My Courses' })).toHaveAttribute('href', '/my-courses');
   });
 
   it('shows Back to top after scrolling Curriculum content and returns focus to that content', () => {

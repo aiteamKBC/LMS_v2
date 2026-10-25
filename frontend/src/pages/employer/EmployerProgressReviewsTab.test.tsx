@@ -1,17 +1,17 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppIcon } from '@/components/feature/AppIcon';
 import type { LearnerCalendarEvent, LearnerReviewDefinition } from '@/api/learnerCalendar';
-import { fetchEmployerProgressReview, fetchEmployerProgressReviews, saveEmployerReviewAnswers, signReviewAsEmployer } from '@/api/employerPortal';
+import { fetchEmployerMeetingArtifacts, fetchEmployerProgressReview, fetchEmployerProgressReviews, saveEmployerReviewAnswers, signReviewAsEmployer } from '@/api/employerPortal';
 import { fetchMigratedReviewForParty, signMigratedReviewAsParty, saveMigratedReviewPartyAnswers } from '@/api/learnerCalendar';
 import { EmployerProgressReviewsTab } from './EmployerProgressReviewsTab';
 
 vi.mock('@/api/employerPortal', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/employerPortal')>(),
   fetchEmployerProgressReview: vi.fn(), fetchEmployerProgressReviews: vi.fn(),
-  saveEmployerReviewAnswers: vi.fn(), signReviewAsEmployer: vi.fn(),
+  saveEmployerReviewAnswers: vi.fn(), signReviewAsEmployer: vi.fn(), fetchEmployerMeetingArtifacts: vi.fn(),
 }));
 vi.mock('@/api/learnerCalendar', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/learnerCalendar')>(),
@@ -53,6 +53,216 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('employer progress reviews', () => {
+  async function openImportedRecordingReview(overrides: Partial<LearnerCalendarEvent> = {}) {
+    event = { ...event, reviewSource: 'aptem', eventKey: 'imported-review:archive', id: 'imported-review:archive',
+      calendarEventKey: 'learner-book:verified-legacy', invited: false, migratedForm: true,
+      scheduledDate: '2020-01-01', ...overrides };
+    definition = { ...definition, migratedForm: true, readOnly: true,
+      instance: { ...definition.instance!, status: event.status },
+      signatures: { ...definition.signatures, employer: { required: true, signed: true } } };
+    vi.mocked(fetchMigratedReviewForParty).mockResolvedValue(definition);
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'View all reviews (1)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View review' }));
+    await screen.findByRole('heading', { name: 'Progress review #1' });
+  }
+
+  it.each([
+    { status: 'completed', invited: false, scheduledDate: '2020-01-01' },
+    { status: 'awaiting-signature', invited: false, scheduledDate: '2020-01-01' },
+    { status: 'completed', invited: true, scheduledDate: null },
+    { status: 'completed', invited: true, scheduledDate: '2099-10-26' },
+  ])('keeps linked APTEM archive access independent of current invitation/date: %j', async overrides => {
+    vi.mocked(fetchEmployerMeetingArtifacts).mockResolvedValue({ resourceMode: 'stored', artifacts: [
+      { id: 'saved-video', graph_artifact_id: 'saved-video', artifact_type: 'recording', content_available: true },
+    ] });
+    await openImportedRecordingReview(overrides);
+    expect(await screen.findByText('Meeting Recording')).toBeVisible();
+    fireEvent.click(await screen.findByRole('button', { name: 'Play' }));
+    expect(document.querySelector('video')).toHaveAttribute('src',
+      '/learner_api/employer-portal/7/learner/commercial/499/progress-reviews/imported-review%3Aarchive/artifacts/recording/saved-video/content/?preview=1');
+    expect(fetchEmployerMeetingArtifacts).toHaveBeenCalledExactlyOnceWith('7', 'commercial', '499', 'imported-review:archive', expect.any(AbortSignal));
+    expect(screen.queryByRole('button', { name: 'Check Teams' })).not.toBeInTheDocument();
+    expect(saveMigratedReviewPartyAnswers).not.toHaveBeenCalled();
+    expect(signMigratedReviewAsParty).not.toHaveBeenCalled();
+  });
+
+  it('shows linked APTEM recording metadata as unavailable when there is no saved archive', async () => {
+    vi.mocked(fetchEmployerMeetingArtifacts).mockResolvedValue({ resourceMode: 'stored', artifacts: [
+      { id: 'metadata-only', graph_artifact_id: 'metadata-only', artifact_type: 'recording', content_available: false },
+    ] });
+    await openImportedRecordingReview({ status: 'completed' });
+    expect(await screen.findByText('A saved copy of this recording is not available yet.')).toBeVisible();
+    expect(screen.getByText('Meeting Recording')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Play' })).not.toBeInTheDocument();
+    expect(document.querySelector('video')).not.toBeInTheDocument();
+  });
+
+  it('keeps the linked APTEM recording section visible when the saved collection is empty', async () => {
+    vi.mocked(fetchEmployerMeetingArtifacts).mockResolvedValue({ resourceMode: 'stored', artifacts: [] });
+    await openImportedRecordingReview({ status: 'completed' });
+    expect(await screen.findByText(/No saved meeting recording is available/)).toBeVisible();
+    expect(screen.getByText('Meeting Recording')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Play' })).not.toBeInTheDocument();
+  });
+
+  it.each(['Recording access denied.', 'This review has no meeting of its own.', 'Stored resources could not be loaded.'])(
+    'shows a linked APTEM resource error without hiding the signed form: %s', async message => {
+      vi.mocked(fetchEmployerMeetingArtifacts).mockRejectedValue(new Error(message));
+      await openImportedRecordingReview({ status: 'completed' });
+      expect(await screen.findByText(message)).toBeVisible();
+      expect(screen.getByText('Meeting Recording')).toBeVisible();
+      expect(screen.getByRole('heading', { name: 'Progress review #1' })).toBeVisible();
+      expect(screen.queryByRole('button', { name: 'Play' })).not.toBeInTheDocument();
+      expect(document.querySelector('video')).not.toBeInTheDocument();
+    });
+
+  it('does not request APTEM recordings without a linked calendar even if an invitation flag remains', async () => {
+    await openImportedRecordingReview({ status: 'completed', calendarEventKey: null, invited: true });
+    expect(fetchEmployerMeetingArtifacts).not.toHaveBeenCalled();
+    expect(screen.queryByText('Meeting Recording')).not.toBeInTheDocument();
+  });
+
+  it('shows the linked recording section while its stored resource request is pending', async () => {
+    let finish!: (value: Awaited<ReturnType<typeof fetchEmployerMeetingArtifacts>>) => void;
+    vi.mocked(fetchEmployerMeetingArtifacts).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    await openImportedRecordingReview({ status: 'completed' });
+    expect(screen.getByText('Meeting Recording')).toBeVisible();
+    expect(screen.queryByText(/No saved meeting recording is available/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Play' })).not.toBeInTheDocument();
+    finish({ resourceMode: 'stored', artifacts: [] });
+    expect(await screen.findByText(/No saved meeting recording is available/)).toBeVisible();
+  });
+
+  it('keeps source-completed APTEM history and its recording readable without a migrated form', async () => {
+    event = { ...event, reviewSource: 'aptem', id: 'imported-review:historical', eventKey: 'imported-review:historical',
+      calendarEventKey: 'calendar:historical', invited: false, scheduledDate: null, status: 'completed',
+      sourceStatus: 'completed', migratedForm: false, reviewInstanceId: null, reviewTemplateId: null,
+      importedReview: { id: '901', aptemReviewId: 'historical', name: 'Progress review', type: 'Progress Review',
+        reviewerName: 'Historical Coach', plannedDate: '2020-01-01', plannedTime: null, completedDate: '2020-01-01',
+        status: 'completed', extractionStatus: 'complete', detailsAvailable: true, sections: [] } };
+    vi.mocked(fetchEmployerProgressReviews).mockResolvedValue({ events: [event], definitions: {} });
+    vi.mocked(fetchEmployerProgressReview).mockResolvedValue({ event, definition: null });
+    vi.mocked(fetchEmployerMeetingArtifacts).mockResolvedValue({ resourceMode: 'stored', artifacts: [
+      { id: 'historical-video', graph_artifact_id: 'historical-video', artifact_type: 'recording', content_available: true },
+    ] });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'View all reviews (1)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View review' }));
+    expect(await screen.findByRole('button', { name: 'Play' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Progress review' })).toBeVisible();
+    expect(fetchEmployerMeetingArtifacts).toHaveBeenCalledExactlyOnceWith('7', 'commercial', '499', 'imported-review:historical', expect.any(AbortSignal));
+    expect(fetchMigratedReviewForParty).not.toHaveBeenCalled();
+  });
+
+  it('defaults to the earliest pending APTEM review and keeps manual selection separate', async () => {
+    const dates = ['2026-10-26', '2027-03-30', '2027-06-29', '2027-09-29'];
+    const events = dates.map((date, index): LearnerCalendarEvent => ({
+      ...event, id: `aptem:${index + 1}`, eventKey: `aptem:${index + 1}`, title: `Progress Review ${index + 1}`, sequence: index + 1,
+      reviewTemplateId: null, reviewInstanceId: null, reviewSource: 'aptem', migratedForm: false,
+      status: index === 0 ? 'completed' : 'not-scheduled', effectiveLmsStatus: index === 0 ? 'completed' : 'not-scheduled',
+      sourceStatus: index === 0 ? 'completed' : 'not-scheduled', scheduledDate: null, scheduledTime: null, targetDate: date, date,
+      importedReview: { id: String(index + 1), aptemReviewId: `A-${index + 1}`, name: `Progress Review ${index + 1}`, type: 'Progress Review',
+        reviewerName: 'Synthetic Coach', plannedDate: date, plannedTime: null, completedDate: index === 0 ? date : null,
+        status: index === 0 ? 'completed' : 'not-scheduled', extractionStatus: 'complete', detailsAvailable: false, sections: [] },
+    }));
+    vi.mocked(fetchEmployerProgressReviews).mockResolvedValue({ events: [events[3], events[0], events[2], events[1]], definitions: {} });
+    mount();
+    const card = within(await screen.findByRole('article', { name: 'Current review' }));
+    expect(await card.findByRole('heading', { name: 'Progress Review 2' })).toBeVisible();
+    expect(card.getByText('Your next review')).toBeVisible();
+    const timeline = within(screen.getByRole('region', { name: 'Progress review programme timeline' }));
+    expect(timeline.getAllByRole('button').map(button => button.getAttribute('aria-label'))).toEqual([
+      'Progress Review 1, 26 Oct 2026, Attended', 'Progress Review 2, 30 Mar 2027, Planned',
+      'Progress Review 3, 29 Jun 2027, Planned', 'Progress Review 4, 29 Sept 2027, Planned',
+    ]);
+    fireEvent.click(timeline.getByRole('button', { name: /Progress Review 4,/ }));
+    const selected = within(screen.getByRole('article', { name: 'Selected review' }));
+    expect(selected.getByRole('heading', { name: 'Progress Review 4' })).toBeVisible();
+    expect(selected.queryByText(/Your next (step|review)/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'View all reviews (4)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back to current review' }));
+    expect(within(screen.getByRole('article', { name: 'Current review' })).getByRole('heading', { name: 'Progress Review 2' })).toBeVisible();
+    expect(fetchEmployerProgressReview).not.toHaveBeenCalled();
+    expect(saveEmployerReviewAnswers).not.toHaveBeenCalled();
+    expect(signReviewAsEmployer).not.toHaveBeenCalled();
+  });
+
+  it('labels stored unfinished APTEM ownership as responsible Coach', async () => {
+    event = { ...event, reviewSource: 'aptem', coachName: 'New responsible Coach' };
+    mount();
+    const card = within(await screen.findByRole('article', { name: 'Current review' }));
+    expect(card.getByText('Responsible Coach')).toBeVisible();
+    expect(card.getByText('New responsible Coach')).toBeVisible();
+  });
+
+  it('keeps completed APTEM reviewer identity in the historical list', async () => {
+    event = { ...event, reviewSource: 'aptem', status: 'completed', coachName: 'Historical Coach' };
+    definition = { ...definition, instance: { ...definition.instance!, status: 'completed' } };
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'View all reviews (1)' }));
+    expect(await screen.findByText('Historical Coach')).toBeVisible();
+    expect(screen.getByText('Historical Reviewer / Coach:')).toBeVisible();
+    expect(screen.queryByText('New responsible Coach')).not.toBeInTheDocument();
+  });
+
+  it('plays the retained archive when an authorized transferred party form loads', async () => {
+    event = { ...event, reviewSource: 'aptem', eventKey: 'imported-review:handover', migratedForm: true,
+      coachName: 'New responsible Coach', invited: true, calendarEventKey: 'calendar:original', scheduledDate: '2020-01-01' };
+    vi.mocked(fetchMigratedReviewForParty).mockResolvedValue(definition);
+    vi.mocked(fetchEmployerMeetingArtifacts).mockResolvedValue({ artifacts: [{ id: 'saved-video', graph_artifact_id: 'saved-video',
+      artifact_type: 'recording', content_available: true, created_datetime: '', end_datetime: '' }], meetingSummary: null, errors: [], partial: false });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Read & sign' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Play' }));
+    const video = document.querySelector('video');
+    expect(video?.getAttribute('src')).toContain('imported-review%3Ahandover/artifacts/recording/saved-video/content/');
+    expect(fetchMigratedReviewForParty).toHaveBeenCalledWith('imported-review:handover', expect.any(AbortSignal));
+  });
+
+  it('reads saved APTEM recordings without a Teams refresh action', async () => {
+    event = { ...event, reviewSource: 'aptem', eventKey: 'imported-review:901', calendarEventKey: 'cal:901', invited: true };
+    vi.mocked(fetchEmployerMeetingArtifacts).mockResolvedValue({ resourceMode: 'stored', artifacts: [],
+      storage: { stored: true, syncedAt: '2026-09-14T10:00:00Z' } });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'View all reviews (1)' }));
+    fireEvent.click(screen.getByRole('button', { name: /View review|Read & sign/ }));
+    expect(await screen.findByText(/No saved meeting recording is available/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Check Teams' })).not.toBeInTheDocument();
+    expect(fetchEmployerMeetingArtifacts).toHaveBeenCalledExactlyOnceWith('7', 'commercial', '499', 'imported-review:901', expect.any(AbortSignal));
+  });
+
+  it('shows the saved review status in a selected card and past list without inventing an employer action', async () => {
+    event = { ...event, reviewTemplateId: null, reviewInstanceId: null, importedReview: {
+      id: '88', aptemReviewId: 'A-88', name: 'Progress review', type: 'Progress Review', reviewerName: 'Coach',
+      plannedDate: event.targetDate, plannedTime: null, completedDate: null, status: 'awaiting-signature',
+      extractionStatus: 'complete', detailsAvailable: false, sections: [],
+    } };
+    vi.mocked(fetchEmployerProgressReviews).mockImplementation(async () => ({ events: [event], definitions: {} }));
+    vi.mocked(fetchEmployerProgressReview).mockImplementation(async () => ({ event, definition: null }));
+    mount();
+    // No employer signature is required: history remains readable by selection,
+    // but must not become "Your next step" through the former last-row fallback.
+    const marker = await screen.findByRole('button', { name: /Progress review,.*Awaiting signatures/ });
+    expect(screen.getByRole('heading', { name: 'No current review' })).toBeVisible();
+    fireEvent.click(marker);
+    const current = within(screen.getByRole('article', { name: 'Selected review' }));
+    expect(current.queryByText('Your next step')).not.toBeInTheDocument();
+    expect(current.getByText('Awaiting signatures')).toBeVisible();
+    expect(current.getByRole('button', { name: 'View review' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'View all reviews (1)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Past (1)' }));
+    expect(within(screen.getByRole('region', { name: 'All reviews' })).getByText('Awaiting signatures')).toBeVisible();
+    expect(screen.queryByText('Archived review')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Read & sign|Book a time|Reschedule meeting|Record attendance/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'View review' }));
+    expect(await screen.findByRole('heading', { name: event.title })).toBeVisible();
+    expect(saveEmployerReviewAnswers).not.toHaveBeenCalled();
+    expect(signReviewAsEmployer).not.toHaveBeenCalled();
+    expect(saveMigratedReviewPartyAnswers).not.toHaveBeenCalled();
+    expect(signMigratedReviewAsParty).not.toHaveBeenCalled();
+  });
+
   it.each(['native', 'Progress Review', 'Progress Review (+ Skills Radar)'])('joins a scheduled %s from the list and details while keeping form access', async type => {
     const day = '2099-10-26';
     event = { ...event, status: 'scheduled', scheduledDate: day, targetDate: day, date: day,
@@ -80,6 +290,35 @@ describe('employer progress reviews', () => {
     expect(saveEmployerReviewAnswers).not.toHaveBeenCalled();
     expect(signReviewAsEmployer).not.toHaveBeenCalled();
     expect(saveMigratedReviewPartyAnswers).not.toHaveBeenCalled();
+  });
+
+  it('offers the meeting recording once the booked meeting has passed, and nothing else from Teams', async () => {
+    event = { ...event, invited: true, calendarEventKey: 'cal:1' };
+    vi.mocked(fetchEmployerMeetingArtifacts).mockResolvedValue({ artifacts: [
+      { id: 'rec-1', artifact_type: 'recording', graph_artifact_id: 'rec-1', end_datetime: '2026-09-14T10:00:00Z' },
+    ] });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'View all reviews (1)' }));
+    fireEvent.click(screen.getByRole('button', { name: /View review|Read & sign/ }));
+    expect(await screen.findByRole('button', { name: /Play/ })).toBeVisible();
+    expect(fetchEmployerMeetingArtifacts).toHaveBeenCalledWith('7', 'commercial', '499', 'cal:1', expect.anything());
+    expect(screen.getByRole('link', { name: /Download/ })).toHaveAttribute('href',
+      '/learner_api/employer-portal/7/learner/commercial/499/progress-reviews/cal%3A1/artifacts/recording/rec-1/content/');
+    // The transcript, the attendance tracker and the meeting summary stay staff-side.
+    expect(screen.queryByText(/Transcript|Attendance|Meeting summary/)).not.toBeInTheDocument();
+  });
+
+  it('does not reach for a recording before the meeting has happened', async () => {
+    const day = '2099-10-26';
+    event = { ...event, invited: true, status: 'scheduled', scheduledDate: day, targetDate: day, date: day,
+      meetingLink: 'https://teams.microsoft.com/meet/synthetic', calendarEventKey: 'cal:1' };
+    definition = { ...definition, instance: { ...definition.instance!, status: 'scheduled' } };
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'View all reviews (1)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View review' }));
+    expect(await screen.findByRole('link', { name: 'Join meeting' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Play/ })).not.toBeInTheDocument();
+    expect(fetchEmployerMeetingArtifacts).not.toHaveBeenCalled();
   });
 
   it('keeps View review beside Join meeting on the meeting day', async () => {

@@ -835,7 +835,12 @@ def analytics(request):
         return json_error('Method not allowed.', status=405)
     sync_module_feedback()
     form_id = request.GET.get('formId')
+    form_type = request.GET.get('formType')
+    if form_type and form_type not in FORM_TYPES:
+        return json_error('Unknown feedback form type.', status=400)
     forms = _forms_queryset(current_only=True)
+    if form_type:
+        forms = forms.filter(form_type=form_type)
     family_ids = None
     if form_id:
         forms = forms.filter(pk=form_id)
@@ -844,21 +849,29 @@ def analytics(request):
             family_ids = FeedbackForm.objects.filter(template_key=selected.template_key).values_list('id', flat=True)
         else:
             family_ids = [form_id]
+    elif form_type:
+        template_keys = forms.values_list('template_key', flat=True)
+        family_ids = FeedbackForm.objects.filter(template_key__in=template_keys).values_list('id', flat=True)
     assigned = sum(_assigned_count(f) for f in forms)
     responses = FeedbackResponse.objects.all()
-    if form_id:
+    if family_ids is not None:
         responses = responses.filter(form_id__in=family_ids)
     in_progress = responses.filter(status='in_progress').count()
     completed = responses.filter(status='completed').count()
     rating_questions = FeedbackQuestion.objects.filter(question_type='rating')
-    if form_id:
+    if family_ids is not None:
         rating_questions = rating_questions.filter(section__form_id__in=family_ids)
     ratings = []
     for question in rating_questions:
         values = [a.answer for a in question.answers.filter(response__status='completed')]
         numeric = [float(v) for v in values if isinstance(v, (int, float))]
         if numeric:
-            ratings.append({'questionId': question.id, 'question': question.question_text, 'average': round(sum(numeric) / len(numeric), 2), 'responses': len(numeric)})
+            config = question.config or {}
+            ratings.append({
+                'questionId': question.id, 'question': question.question_text,
+                'average': round(sum(numeric) / len(numeric), 2), 'responses': len(numeric),
+                'min': config.get('min', 1), 'max': config.get('max', 5),
+            })
     return JsonResponse({'analytics': {
         'totalAssigned': assigned, 'notStarted': max(assigned - in_progress - completed, 0),
         'inProgress': in_progress, 'completed': completed,

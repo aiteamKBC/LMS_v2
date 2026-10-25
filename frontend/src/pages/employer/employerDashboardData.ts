@@ -1,9 +1,10 @@
-import type { EmployerDashboardMetrics, EmployerLearnerCard } from '@/api/employerPortal';
+import type { EmployerDashboardMetrics, EmployerLearnerAttendance, EmployerLearnerCard } from '@/api/employerPortal';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { reviewCategory } from '@/lib/reviewCategory';
 
 export type Loadable<T> = { status: 'loading' | 'ready' | 'error'; data?: T; error?: string };
 export type DashboardReviews = Record<string, Loadable<LearnerCalendarEvent[]>>;
+export type DashboardAttendance = Record<string, Loadable<EmployerLearnerAttendance | null>>;
 export const learnerKey = (learner: EmployerLearnerCard) => `${learner.kind}:${learner.id}`;
 export const learnerHref = (employerId: string, learner: EmployerLearnerCard, tab?: string) =>
   `/employers/${employerId}/learner/${learner.kind}/${learner.id}${tab ? `?tab=${tab}` : ''}`;
@@ -45,6 +46,12 @@ export const isOpenReview = (event: LearnerCalendarEvent) => ['planned', 'schedu
 export function progressReviews(events: LearnerCalendarEvent[]) {
   return events.filter(event => reviewCategory(event) === 'progress-review' && reviewState(event) !== 'cancelled')
     .sort((a, b) => (reviewDate(a) || '9999').localeCompare(reviewDate(b) || '9999') || a.sequence - b.sequence);
+}
+
+/** Match the learner's programme order; appointment order still drives Next review. */
+export function orderReviewJourney(events: readonly LearnerCalendarEvent[]) {
+  return [...events].sort((a, b) => (a.targetDate || '9999-12-31').localeCompare(b.targetDate || '9999-12-31')
+    || (a.occurrenceNumber ?? a.sequence) - (b.occurrenceNumber ?? b.sequence));
 }
 
 export function nextReview(events: LearnerCalendarEvent[] = []) {

@@ -20,14 +20,31 @@ export interface ReviewPresentation {
   canReschedule: boolean;
 }
 
+/**
+ * The vocabulary the review detail header already shows for every review
+ * (``statusLabel`` in progress-reviews/page.tsx). An imported row stays read-only,
+ * but naming where its data came from instead of what state it is in contradicted
+ * both that header and the programme timeline.
+ */
+const importedStatusLabels: Readonly<Record<string, string>> = {
+  'not-scheduled': 'Not scheduled', planned: 'Not scheduled', scheduled: 'Scheduled', 'in-progress': 'In progress',
+  'awaiting-signature': 'Awaiting signatures', completed: 'Completed', cancelled: 'Cancelled',
+};
+
+export const isAptemReview = (session: LearnerCalendarEvent) => session.reviewSource === 'aptem' || Boolean(session.importedReview);
+
 /** Display state only. Keep the original event for all existing action handlers. */
 export function presentReview(session: LearnerCalendarEvent, attendance: MeetingAttendance | undefined, today: string, definition?: LearnerReviewDefinition | null, viewerRole: 'participant' | 'employer' = 'participant'): ReviewPresentation {
   const storedStatus = meetingStatus(session);
   const bookingStatus = (attendance?.status || session.bookingStatus || storedStatus).trim().toLowerCase().replace(/[ _]+/g, '-');
   const submittedStatus = definition?.instance?.status;
-  const cancelled = storedStatus === 'cancelled' || ['cancelled', 'deleted', 'superseded'].includes(bookingStatus);
-  const status = cancelled ? 'cancelled' : ['awaiting-signature', 'completed'].includes(submittedStatus || '') ? submittedStatus!
-    : ['awaiting-signature', 'completed'].includes(storedStatus) ? storedStatus : bookingStatus;
+  // apply_imported_state already resolves source completion, the local form and
+  // booking. A separate calendar/attendance copy must not demote that lifecycle.
+  const effectiveStatus = isAptemReview(session) ? session.effectiveLmsStatus?.trim().toLowerCase().replace(/[ _]+/g, '-') : undefined;
+  const cancelled = effectiveStatus ? effectiveStatus === 'cancelled'
+    : storedStatus === 'cancelled' || ['cancelled', 'deleted', 'superseded'].includes(bookingStatus);
+  const status = effectiveStatus || (cancelled ? 'cancelled' : ['awaiting-signature', 'completed'].includes(submittedStatus || '') ? submittedStatus!
+    : ['awaiting-signature', 'completed'].includes(storedStatus) ? storedStatus : bookingStatus);
   const scheduledDate = attendance ? attendance.date : session.scheduledDate;
   const date = scheduledDate || session.targetDate || session.date || null;
   // Aptem's planned date is not a local appointment. A durable key distinguishes
@@ -38,7 +55,7 @@ export function presentReview(session: LearnerCalendarEvent, attendance: Meeting
   const hasLocalBooking = Boolean(session.calendarEventKey || attendance?.calendarEventKey);
   const canBookImported = importedProgressReview && !hasLocalBooking && !imported.completedDate
     && !attendance?.attendanceConfirmed && ['not-scheduled', 'scheduled'].includes(storedStatus)
-    && ![storedStatus, bookingStatus, submittedStatus, importedStatus, session.sourceStatus]
+    && ![status, storedStatus, bookingStatus, submittedStatus, importedStatus, session.sourceStatus]
       .some(value => ['completed', 'awaiting-signature', 'in-progress', 'cancelled', 'deleted', 'superseded']
         .includes((value || '').trim().toLowerCase().replace(/[ _]+/g, '-')));
   const importedBooking = Boolean(imported && (session.calendarEventKey || attendance?.calendarEventKey)
@@ -54,6 +71,10 @@ export function presentReview(session: LearnerCalendarEvent, attendance: Meeting
       && ![storedStatus, submittedStatus, session.bookingStatus, importedStatus].includes('in-progress') };
   const result = (label: string, description: string, action: ReviewPresentation['action'], past = false, needsAttention = false): ReviewPresentation =>
     ({ ...base, label, description, action, past, needsAttention });
+  // importedReview is source data for future occurrences too; its presence is
+  // not evidence that the review has happened or that a form is initialized.
+  const importedPending = Boolean(imported && !imported.completedDate
+    && ['not-scheduled', 'planned', 'scheduled', 'in-progress'].includes(status));
 
   if (cancelled) return result('Cancelled', 'This review was cancelled. Its record is still available.', 'view', true);
   if (viewerRole === 'employer') {
@@ -64,13 +85,13 @@ export function presentReview(session: LearnerCalendarEvent, attendance: Meeting
       return result('Your signature is needed', 'Read the review and agreed next steps, then sign as employer.', 'sign', true, true);
     }
     if (signed) return result('Your signature is saved', 'Your employer signature is saved. You can read the review and check the other signatures.', 'view', true);
-    if (session.importedReview && !session.migratedForm && !booked) return result(status === 'completed' ? 'Completed' : 'Archived review', 'Read this saved review and its attachments.', 'view', true);
+    if (session.importedReview && !session.migratedForm && !booked) return result(importedStatusLabels[status] || 'Review record', 'Read this saved review and its attachments.', 'view', !importedPending);
     if (['awaiting-signature', 'completed'].includes(status)) return result(status === 'completed' ? 'Completed' : 'Waiting for signatures', 'Read the review and check its signature status.', 'view', true);
     if (booked) return result(isToday ? 'Today' : status === 'in-progress' ? 'In progress' : 'Scheduled', 'Review the learner’s progress and agreed next steps.', isToday && joinUrl ? 'join' : 'view', Boolean(date && date < today));
     return result(['not-scheduled', 'planned'].includes(status) ? 'Not scheduled' : 'In preparation', 'The coach is preparing this review. You can read the available details and answer any employer questions.', 'view');
   }
   if (canBookImported) return result('Not scheduled', 'Choose a date and time with your coach. The target date is not a confirmed appointment.', 'schedule', false, Boolean(date && date < today));
-  if (session.importedReview && !booked) return result(status === 'completed' ? 'Completed' : 'Archived review', 'You can read this saved review and its attachments.', 'view', true);
+  if (session.importedReview && !booked) return result(importedStatusLabels[status] || 'Review record', 'You can read this saved review and its attachments.', 'view', !importedPending);
   if (['awaiting-signature', 'completed'].includes(status)) {
     // Match the existing detail form's signature eligibility. A calendar status
     // alone cannot establish whose signature is required by a Curriculum form.
@@ -129,9 +150,12 @@ export function reviewOverview(sessions: readonly LearnerCalendarEvent[], attend
     .map(item => ({ ...item.session, status: item.status, scheduledDate: item.booked ? item.date : null,
       scheduledTime: item.attendance?.startTime ?? item.session.scheduledTime })), today);
   const attention = all.filter(item => item.needsAttention);
-  const current = all.find(item => item.session.id === featured?.id) || attention[0]
-    || (viewerRole === 'employer' ? all.filter(item => item.status !== 'cancelled').at(-1) : null) || null;
-  return { all, attention, current, upcoming: all.filter(item => !item.past), past: all.filter(item => item.past).reverse() };
+  const nextActionableReview = all.find(item => item.session.id === featured?.id) || attention[0] || null;
+  // Keep Native's historical-card fallback. Imported history remains selectable
+  // in the timeline/list, but it is not a next action when nothing is pending.
+  const current = nextActionableReview
+    || (viewerRole === 'employer' ? all.filter(item => !isAptemReview(item.session) && item.status !== 'cancelled').at(-1) : null) || null;
+  return { all, attention, current, nextActionableReview, upcoming: all.filter(item => !item.past), past: all.filter(item => item.past).reverse() };
 }
 
 /** Only carry recognised presentation parameters; identity always comes from the resolved learner. */

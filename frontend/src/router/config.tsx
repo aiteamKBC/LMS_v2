@@ -223,6 +223,7 @@ const ExtraActivityPage = lazyRoute(() => import("../pages/learner/monthly-submi
 const MonthlySubmissionPage = lazyRoute(() => import("../pages/learner/monthly-submission/page"));
 const HistoricalAssignmentPage = lazyRoute(() => import("../pages/learner/monthly-submission/HistoricalAssignmentPage"));
 const MyLearningPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
+const PersonalCoursesPage = lazyRoute(() => import("../pages/personal-learning/page"));
 const MySchedulePage = lazyRoute(() => import("../pages/learner/clubs/events/schedule/page"));
 const NotFound = lazyRoute(() => import("../pages/NotFound"));
 const PaymentsPage = lazyRoute(() => import("../pages/finance/payments/page"));
@@ -569,7 +570,7 @@ const routes: RouteObject[] = [
   },
   {
     path: "/my-courses",
-    element: <Navigate to="/workspace/admin" replace />,
+    element: <PersonalCoursesPage />,
   },
   {
     // Canonical URL for the merged Overview/Modules/Quizzes page. The three

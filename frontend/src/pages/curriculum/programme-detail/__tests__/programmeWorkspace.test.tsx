@@ -389,7 +389,7 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     expect(api.fetchCurriculumProgrammeDetailShell).toHaveBeenCalledTimes(2);
     vi.mocked(api.fetchCurriculumProgrammeDetailShell).mockResolvedValueOnce({ schema: 'test', programme: updated, flat: { cohorts, groups, groupIds: ['GROUP-1'], weekTemplates: [] } });
     await userEvent.click(screen.getByText('More programme tools'));
-    await userEvent.click(screen.getByRole('button', { name: 'Quality', exact: true }));
+    await userEvent.click(screen.getByRole('button', { name: /^Quality$/ }));
     await userEvent.click(await screen.findByRole('button', { name: 'Refresh checks' }));
     await vi.waitFor(() => expect(onReloaded).toHaveBeenCalledTimes(1));
     expect(api.fetchCurriculumProgrammeDetailShell).toHaveBeenCalledTimes(3);

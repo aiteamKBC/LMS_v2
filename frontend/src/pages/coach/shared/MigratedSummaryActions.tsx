@@ -2,6 +2,11 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { fetchMigratedReviewIntelligence, uploadMigratedSummaryTranscript } from '@/api/reviewInstances';
 import type { CoachMeetingArtifactsResponse, MigratedSummaryBinding } from './calendarEvents';
 
+function bindingRevision(instanceId: string, binding: MigratedSummaryBinding) {
+  return JSON.stringify([instanceId, binding.fieldKey, binding.generationStatus, binding.generationAttemptedAt,
+    binding.generatedAt, binding.generationError?.requestId]);
+}
+
 export function MigratedSummaryActions({ instanceId, binding, editable, showActions = editable, teamsAvailable, busy, unsaved,
   onResult, onBusyChange }: {
   instanceId: string;
@@ -19,12 +24,14 @@ export function MigratedSummaryActions({ instanceId, binding, editable, showActi
   const running = useRef(false);
   const [action, setAction] = useState<'teams' | 'upload' | null>(null);
   const [error, setError] = useState('');
+  const completedRevision = useRef<string | undefined>(undefined);
+  const currentRevision = bindingRevision(instanceId, binding);
   // A successful Check Session can update this field from another control.
   // Keep transport/validation errors local to their attempt, not to the mounted form.
-  useEffect(() => { setError(''); }, [
-    instanceId, binding.fieldKey, binding.generationStatus, binding.generationAttemptedAt,
-    binding.generatedAt, binding.generationError?.requestId,
-  ]);
+  useEffect(() => {
+    // Applying this action's own response must keep its precise transport error.
+    if (completedRevision.current !== currentRevision) setError('');
+  }, [currentRevision]);
   const failureMessage = (value?: MigratedSummaryBinding['generationError']) => value
     ? `${value.message} Your saved answer is unchanged. Reference: ${value.requestId}`
     : 'The transcript was processed, but the AI summary could not be generated. You can enter the answer manually.';
@@ -43,11 +50,14 @@ export function MigratedSummaryActions({ instanceId, binding, editable, showActi
       // The field button and Check Session share the dedicated migrated route.
       const result = file ? await uploadMigratedSummaryTranscript(instanceId, file)
         : await fetchMigratedReviewIntelligence(instanceId, undefined, { refresh: true });
+      completedRevision.current = result.summaryBinding ? bindingRevision(instanceId, result.summaryBinding) : undefined;
       onResult(result);
       if ((result.summaryBinding?.generationStatus ?? result.intelligence?.summaryStatus) === 'failed') {
         setError(failureMessage(result.summaryBinding?.generationError ?? result.intelligence?.generationError ?? undefined));
       } else if (result.summaryBinding?.generationStatus === 'unavailable' || result.summaryBinding?.status === 'summary-unavailable') {
-        setError('No transcript was found for this meeting. Upload a transcript or enter the answer manually.');
+        setError(result.intelligence?.errorCodes?.includes('TRANSCRIPT_FETCH_FAILED')
+          ? 'The Teams transcript could not be fetched. Retry, or upload the correct transcript. Your saved answer is unchanged.'
+          : 'No transcript was found for this meeting. Upload a transcript or enter the answer manually.');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The transcript could not be processed. You can enter the answer manually.');
@@ -60,7 +70,7 @@ export function MigratedSummaryActions({ instanceId, binding, editable, showActi
   const message = binding.generationStatus === 'failed'
     ? failureMessage(binding.generationError)
     : binding.generationStatus === 'unavailable'
-      ? 'No transcript was found for this meeting. Upload a transcript or enter the answer manually.'
+      ? 'No transcript is available for summary generation. Check Session for details, upload a transcript, or enter the answer manually.'
       : binding.status === 'summary-too-long'
         ? 'AI summary is longer than this field allows. Review and shorten it before saving.'
         : binding.status === 'populated'

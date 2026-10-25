@@ -74,6 +74,26 @@ describe('Curriculum route preparation', () => {
     expect(loader).not.toHaveBeenCalled();
   });
 
+  it.each(['hidden', 'kept-preview'])('ignores a %s Curriculum builder beneath another workspace', async mode => {
+    const { loader } = setup();
+    const workspace = document.querySelector('main')!;
+    const slot = document.createElement('div');
+    workspace.before(slot);
+    slot.append(workspace);
+    if (mode === 'hidden') slot.hidden = true;
+    else { slot.style.display = 'none'; slot.setAttribute('aria-hidden', 'true'); }
+    const returnLink = document.createElement('a');
+    returnLink.href = '/curriculum/courses';
+    document.body.append(returnLink);
+    returnLink.dispatchEvent(new Event('pointerover', { bubbles: true }));
+    expect(loader).not.toHaveBeenCalled();
+    slot.hidden = false;
+    slot.style.display = 'contents';
+    slot.removeAttribute('aria-hidden');
+    returnLink.dispatchEvent(new Event('pointerover', { bubbles: true }));
+    await vi.waitFor(() => expect(loader).toHaveBeenCalledTimes(1));
+  });
+
   it('leaves speculative failures to navigation and allows the next attempt to retry', async () => {
     const { link, loader, Page } = setup();
     loader.mockRejectedValueOnce(new Error('Failed to fetch dynamically imported module'));

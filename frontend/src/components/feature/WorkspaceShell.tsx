@@ -136,38 +136,32 @@ function buildBreadcrumbs(pathname: string, search: string, navItems: SidebarNav
       crumbs.push({ label: workspaceLabel, href: dashboardItem.href, isLink: true });
     }
 
-    // Find the deepest matching item, tracking its parent group (if any).
-    // Items with an empty href (group headers) are never matched directly —
-    // pathname.startsWith('' + '/') would otherwise match every route.
+    // Find the most specific matching item, tracking its parent group (if any).
+    // A parent route can prefix a nested child (for example /reports prefixes
+    // /reports/feedback), so navigation order must not decide the breadcrumb.
+    // Items with an empty href (group headers) are never matched directly.
     let matched: SidebarNavItem | undefined;
     let matchedParent: SidebarNavItem | undefined;
     const current = `${pathname}${search}`;
-    for (const item of navItems) {
-      if (item.href && item.href.includes('?') && item.href === current) {
-        matched = item;
-        break;
-      }
-      if (item.children) {
-        const queryChild = item.children.find(c => c.href && c.href.includes('?') && c.href === current);
-        if (queryChild) {
-          matched = queryChild;
-          matchedParent = item;
-          break;
-        }
-      }
-      if (item.href && !item.href.includes('?') && (pathname === item.href || pathname.startsWith(item.href + '/'))) {
-        matched = item;
-        break;
-      }
-      if (item.children) {
-        const child = item.children.find(c => c.href && !c.href.includes('?') && (pathname === c.href || pathname.startsWith(c.href + '/')));
-        if (child) {
-          matched = child;
-          matchedParent = item;
-          break;
-        }
-      }
-    }
+    const entries = navItems.flatMap(item => [
+      { item, parent: undefined as SidebarNavItem | undefined },
+      ...(item.children || []).map(child => ({ item: child, parent: item })),
+    ]);
+    const explicitMatch = entries.find(entry => entry.item.active === true);
+    const routeMatch = entries
+      .map(entry => {
+        if (!entry.item.href) return { ...entry, score: -1 };
+        if (entry.item.href.includes('?')) return { ...entry, score: entry.item.href === current ? 1_000_000 + entry.item.href.length : -1 };
+        const candidates = [entry.item.href, ...(entry.item.matchPaths || [])];
+        const score = Math.max(-1, ...candidates.map(candidate => (
+          pathname === candidate || pathname.startsWith(candidate + '/') ? candidate.length : -1
+        )));
+        return { ...entry, score };
+      })
+      .filter(entry => entry.score >= 0)
+      .sort((left, right) => right.score - left.score)[0];
+    matched = explicitMatch?.item || routeMatch?.item;
+    matchedParent = explicitMatch?.parent || routeMatch?.parent;
 
     if (matched) {
       if (matchedParent && matchedParent.label) {
@@ -278,7 +272,11 @@ export function WorkspaceShell({
         ? homeDashboardPath : learnerHref(page, routeLearner.kind, routeLearner.id), children } : children ? { ...item, children } : item;
     })
     : navItems;
-  const workspaceNavItems = stableNavItems;
+  // A builder preview leaves only by returning to the builder kept under it.
+  const previewing = personal?.mode === 'preview' || personal?.mode === 'all';
+  const workspaceNavItems = auth.account?.role === 'admin' && role !== 'curriculum' && !previewing && !navItems.some(item => item.id === 'personal-courses')
+    ? [...stableNavItems, { id: 'personal-courses', label: 'My Courses', icon: 'ri-graduation-cap-line', href: '/my-courses' }]
+    : stableNavItems;
   const navigate = useNavigate();
   const displayBackButton = showBackButton ?? ['coach', 'learner', 'curriculum'].includes(role);
   const [searchOpen, setSearchOpen] = useState(false);

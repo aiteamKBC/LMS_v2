@@ -10,7 +10,8 @@ export function installCurriculumRoutePreloading(routes: RouteObject[]): () => v
   const prepare = (event: Event) => {
     const link = event.target instanceof Element ? event.target.closest('a[href]') : null;
     if (!link || link.hasAttribute('download') || (link.getAttribute('target') && link.getAttribute('target') !== '_self')) return;
-    if (!document.querySelector('.workspace-shell[data-workspace-role="curriculum"]')) return;
+    const workspace = document.querySelector('.workspace-shell[data-workspace-role="curriculum"]');
+    if (!workspace || workspace.closest('[hidden], [aria-hidden="true"][style*="display: none"]')) return;
     if ((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData) return;
     let url: URL;
     try { url = new URL(link.getAttribute('href') || '', window.location.href); } catch { return; }

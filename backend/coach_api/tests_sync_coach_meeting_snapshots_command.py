@@ -144,12 +144,14 @@ class FailureIsolationTestCase(TestCase):
             )
 
         with patch('coach_api.management.commands.sync_coach_meeting_snapshots.fetch_coach_meeting_graph_snapshot', side_effect=fake_snapshot), \
+             patch('coach_api.management.commands.sync_coach_meeting_snapshots.imported_context', return_value=None) as source, \
              patch('coach_api.management.commands.sync_coach_meeting_snapshots.coach_meeting_snapshot_tables_ready', return_value=True), \
              patch('coach_api.management.commands.sync_coach_meeting_snapshots.persist_coach_meeting_snapshots', return_value={"stored": True}), \
              patch('coach_api.management.commands.sync_coach_meeting_snapshots.apply_teams_attendance_status_transition', return_value=False):
             out = StringIO()
             from django.core.management import call_command
             call_command('sync_coach_meeting_snapshots', '--recent', stdout=out)
+            self.assertEqual(source.call_count, 2)  # This fixture exercises the Native/generic branch.
 
         output = out.getvalue()
         self.assertIn('Skipped', output)

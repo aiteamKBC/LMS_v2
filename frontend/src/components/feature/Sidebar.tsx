@@ -102,6 +102,8 @@ export interface SidebarNavItem {
   icon: string;
   /** Leaf destination. Navigation groups intentionally omit it. */
   href?: string;
+  /** Optional page-resolved selection for destinations with query-string tabs. */
+  active?: boolean;
   /**
    * Existing routes that belong to this destination without changing their
    * public URL. Hub-style navigation uses these aliases to keep one of the five
@@ -446,6 +448,9 @@ export function Sidebar({
 
   const isActive = useCallback((href?: string, matchPaths: string[] = []) => {
     if (!href) return false;
+    const explicitActive = filteredNavItems.flatMap(item => [item, ...(item.children ?? [])])
+      .find(item => item.href === href)?.active;
+    if (explicitActive !== undefined) return explicitActive;
     const [hrefPath] = href.split('?');
     const current = `${location.pathname}${location.search}`;
     if (href.includes('?')) return current === href;
@@ -463,7 +468,7 @@ export function Sidebar({
       candidate.length > href.length
       && (location.pathname === candidate || location.pathname.startsWith(candidate + '/'))
     );
-  }, [location.pathname, location.search, navHrefs, queryMatchedHref]);
+  }, [filteredNavItems, location.pathname, location.search, navHrefs, queryMatchedHref]);
 
   // Keep the section containing the current route open when navigation is
   // supplied dynamically by the active role/configuration.

@@ -8,7 +8,6 @@ export interface PersonalLearningContext {
   returnTo: string;
 }
 const KEY = 'personal-learning-context';
-const DEFAULT_RETURN_TO = '/workspace/admin';
 const ID = /^pl\.(\d+)\.(study|preview|all)\.([A-Za-z0-9_-]+)$/;
 let personalAccountId: number | null = null;
 
@@ -39,8 +38,8 @@ export function rememberPersonalLearning(id: string, returnTo?: string): void {
   const context = parsePersonalLearning(id);
   if (!context) return;
   const previous = readPersonalLearning();
-  const destination = returnTo?.startsWith('/curriculum/') || returnTo === DEFAULT_RETURN_TO
-    ? returnTo : previous?.returnTo || DEFAULT_RETURN_TO;
+  const destination = returnTo?.startsWith('/curriculum/') || returnTo === '/my-courses'
+    ? returnTo : previous?.returnTo || '/my-courses';
   sessionStorage.setItem(KEY, JSON.stringify({ ...context, returnTo: destination }));
 }
 
@@ -49,8 +48,8 @@ export function readPersonalLearning(): PersonalLearningContext | null {
     const stored = JSON.parse(sessionStorage.getItem(KEY) || 'null');
     const context = parsePersonalLearning(stored?.id);
     if (!context) return null;
-    const returnTo = typeof stored.returnTo === 'string' && (stored.returnTo.startsWith('/curriculum/') || stored.returnTo === DEFAULT_RETURN_TO)
-      ? stored.returnTo : DEFAULT_RETURN_TO;
+    const returnTo = typeof stored.returnTo === 'string' && (stored.returnTo.startsWith('/curriculum/') || stored.returnTo === '/my-courses')
+      ? stored.returnTo : '/my-courses';
     return { ...context, returnTo };
   } catch { return null; }
 }
@@ -63,7 +62,7 @@ export function activePersonalLearning(pathname = window.location.pathname): Per
   if (explicit && !parsePersonalLearning(decoded)) return null;
   const parsed = explicit && parsePersonalLearning(decoded);
   const stored = readPersonalLearning();
-  return parsed ? { ...parsed, returnTo: stored?.returnTo || DEFAULT_RETURN_TO } : stored;
+  return parsed ? { ...parsed, returnTo: stored?.returnTo || '/my-courses' } : stored;
 }
 
 export function clearPersonalLearning(): void {

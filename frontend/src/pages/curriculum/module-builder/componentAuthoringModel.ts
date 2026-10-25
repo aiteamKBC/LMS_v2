@@ -494,9 +494,12 @@ export function allowedSettingKeysForType(type: ModuleComponentType) {
 
 export function normaliseComponentSettings(type: ModuleComponentType, settings: ComponentSettings = {}): ComponentSettings {
   let storedLegacy: ComponentSettings = {};
-  if (typeof settings.legacySettings === 'string') {
+  const rawLegacy: unknown = settings.legacySettings;
+  if (rawLegacy && typeof rawLegacy === 'object' && !Array.isArray(rawLegacy)) {
+    storedLegacy = rawLegacy as ComponentSettings;
+  } else if (typeof rawLegacy === 'string') {
     try {
-      const parsed = JSON.parse(settings.legacySettings);
+      const parsed = JSON.parse(rawLegacy);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) storedLegacy = parsed as ComponentSettings;
     } catch {
       storedLegacy = {};
@@ -552,14 +555,16 @@ export function normaliseComponentSettings(type: ModuleComponentType, settings: 
   const defaults = getDefaultComponentSettings(type);
   const allowed = allowedSettingKeysForType(type);
   const next: ComponentSettings = { ...defaults };
-  const legacySettings: Record<string, ComponentSettingValue> = {};
+  const legacySettings: Record<string, unknown> = Object.create(null);
   Object.entries(source).forEach(([key, value]) => {
-    if (value === null || value === undefined) return;
+    if (value === undefined) return;
     if (key === 'legacySettings') return;
     if (allowed.has(key)) {
-      next[key] = value;
-    } else if (['string', 'number', 'boolean'].includes(typeof value) || Array.isArray(value)) {
-      legacySettings[key] = value as ComponentSettingValue;
+      if (value !== null) next[key] = value;
+    } else {
+      // Quarantined JSON is opaque authored data, including nested values/null.
+      // Ordinary editor saves must not discard fields this editor does not own.
+      legacySettings[key] = value;
     }
   });
   if (Object.keys(legacySettings).length) next.legacySettings = JSON.stringify(legacySettings);
