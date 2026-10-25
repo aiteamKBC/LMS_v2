@@ -193,7 +193,7 @@ describe('coaching learner navigation and actions', () => {
     const next = session('next:2', '2026-10-28');
     mount({ sessions: [signedMeeting, next, session('far-future', '2027-01-01')], reviews: { 'summary:1': signatureDefinition() } });
     const timeline = within(screen.getByRole('region', { name: 'Monthly coaching programme timeline' }));
-    const september = timeline.getByRole('button', { name: /29 Sept 2026, Scheduled/ });
+    const september = timeline.getByRole('button', { name: /29 Sept 2026, Awaiting signatures/ });
     const october = timeline.getByRole('button', { name: /28 Oct 2026, Scheduled/ });
     expect(september).toHaveAttribute('aria-pressed', 'true');
     expect(october).toHaveAttribute('aria-pressed', 'false');

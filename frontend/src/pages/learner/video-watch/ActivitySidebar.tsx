@@ -7,6 +7,7 @@ import { learningSchedule } from '@/api/learnerOverview';
 import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import { weekHolidayNotes } from '@/pages/learner/training-plan-timeline/model';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
+import { PointActivityRows } from './PointActivityRows';
 import {
   isNavigableComponent,
   toggleExpandedWeek,
@@ -190,7 +191,7 @@ export function ActivitySidebar({
           <HolidayNoteHint note={currentWeekNote} className="mt-2" />
         </div>
         <ul className="divide-y divide-emerald-100">
-          {weekComponents.map((c) => {
+          <PointActivityRows components={weekComponents} current={isCurrentRow} renderRow={(c) => {
             const cm = sidebarActivityMeta(c);
             const isCurrent = isCurrentRow(c);
             const contentAvailable = contentAvailableFor(c);
@@ -256,7 +257,7 @@ export function ActivitySidebar({
                 {rowExtras?.(c, completed)}
               </li>
             );
-          })}
+          }} />
         </ul>
       </div>
 
@@ -338,7 +339,8 @@ export function ActivitySidebar({
                       yet, so the count above and the list below agree. */}
                   {expanded && (
                     <ul className="border-t border-primary-100 bg-primary-50/40 divide-y divide-primary-100">
-                      {weekComponentRows(w, completedIds).map((row) => {
+                      <PointActivityRows components={w.components} current={isCurrentRow} renderRow={(component) => {
+                        const row = weekComponentRows({ ...w, components: [component] }, completedIds)[0];
                         const rowMeta = sidebarActivityMeta(row.component);
                         const openable = canOpen ? canOpen(row.component) : row.openable;
                         const accessBlocked = openable && !accessOpen;
@@ -378,7 +380,7 @@ export function ActivitySidebar({
                             </button>
                           </li>
                         );
-                      })}
+                      }} />
                     </ul>
                   )}
                 </li>

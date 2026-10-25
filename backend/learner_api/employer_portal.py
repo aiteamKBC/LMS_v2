@@ -34,6 +34,7 @@ from login.permissions import employer_or_staff
 
 from .learner_detail import SOURCE_MODELS
 from .identity import learner_profile_for_source
+from .employer_review_dates import imported_document_dates
 from .mappers import _s, to_employer_row
 from .models import Employer, EnrolmentReview, LearnerProfile
 from .review_form import (
@@ -45,7 +46,8 @@ from .review_form import (
 )
 from .views import _error, _parse_body
 from coach_api.models import CoachAbsenceReport, CoachCalendarEvent, ImportedReviewInstance
-from coach_api.migrated_completion import signature_states
+from coach_api.migrated_completion import is_personal_support_form, signature_states
+from coach_api.review_categories import review_event_category
 from curriculum_api import review_instances
 
 logger = logging.getLogger(__name__)
@@ -251,8 +253,9 @@ def _review_signing_rows_for(learners, *, employer_only=True):
             source_review_id__isnull=False,
             status__in=[ImportedReviewInstance.STATUS_AWAITING_SIGNATURE, ImportedReviewInstance.STATUS_COMPLETED],
         )
-        if overlay.migrated_template_id and overlay.migrated_template.review_family == "PR"
+        if overlay.migrated_template_id
     ]
+    imported_dates = imported_document_dates(overlays)
     for key, ids in identity_ids.items():
         ids = {int(value) for value in ids}
         for overlay in overlays:
@@ -260,12 +263,16 @@ def _review_signing_rows_for(learners, *, employer_only=True):
                 continue
             signatures = signature_states(overlay)
             employer_state = signatures["employer"]
+            if not employer_state["required"]:
+                continue
+            family = (overlay.template_snapshot.get("templateSource") or {}).get("family") or overlay.migrated_template.review_family
             rows_by_learner[key].append({
                 "kind": "review", "eventKey": overlay.event_key,
                 "reviewInstanceId": overlay.event_key, "migratedForm": True,
-                "reviewType": "aptem_progress_review",
-                "label": overlay.template_snapshot.get("name") or "Migrated Progress Review",
-                "scheduledDate": "", "signable": overlay.status == ImportedReviewInstance.STATUS_AWAITING_SIGNATURE,
+                "reviewType": "aptem_psp" if family == "PSP" else "aptem_mcm" if family == "MCM" else "aptem_progress_review",
+                "label": overlay.template_snapshot.get("name") or ("Personal Support Plan" if family == "PSP" else "Monthly Coaching Meeting" if family == "MCM" else "Migrated Progress Review"),
+                "scheduledDate": imported_dates.get((overlay.learner_id, overlay.source_review_id), ""),
+                "signable": overlay.status == ImportedReviewInstance.STATUS_AWAITING_SIGNATURE,
                 "completed": overlay.status == ImportedReviewInstance.STATUS_COMPLETED,
                 "sectionsTotal": len(overlay.template_snapshot.get("sections") or []),
                 "employerSignatureRequired": True,
@@ -586,6 +593,72 @@ def employer_portal(request, employer_id):
     })
 
 
+def _dashboard_otjh_risk(value):
+    """Project the saved learner status into the employer dashboard's labels."""
+    label = ' '.join(str(value or '').casefold().replace('-', ' ').replace('_', ' ').split())
+    return {
+        'on track': 'on-track',
+        'need attention': 'need-attention',
+        'needs attention': 'need-attention',
+        'at risk': 'at-risk',
+    }.get(label, 'unavailable')
+
+
+@employer_or_staff()
+def employer_dashboard_metrics(request, employer_id):
+    """Compact, read-only dashboard facts for this employer's own learners."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    employer, err = _employer_or_404(employer_id)
+    if err is not None:
+        return err
+    from zoneinfo import ZoneInfo
+    from old_otjh.service import ServiceError
+    from . import canonical_learning
+    from .module_progress import canonical_module_progress
+
+    try:
+        learners = list(SOURCE_MODELS["apprenticeship"].all_learners
+                        .filter(employer_id=employer.pk).only(
+                            "id", "aptem_id", "programme", "cohort", "group",
+                            "training_plan", "learning_plan", "modules", "weeks", "components"))
+        learner_ids = [learner.pk for learner in learners]
+        # Read only the employer's learner statuses; use a row only after its
+        # profile identity is validated below. Missing monthly targets do not
+        # invalidate a saved OTJ status.
+        statuses = {
+            (profile_id, enrolment_id): _dashboard_otjh_risk(status)
+            for profile_id, enrolment_id, status in LearnerProfile.objects.filter(
+                enrolment_id__in=learner_ids,
+            ).values_list('pk', 'enrolment_id', 'otjh_status')
+        } if learner_ids else {}
+        today = timezone.localdate(timezone=ZoneInfo("Europe/London"))
+        rows = {}
+        for learner in learners:
+            learner_id = learner.pk
+            owner = canonical_learning.profile(learner_id)
+            programme = None
+            if owner is not None:
+                # Student Home counts the assigned catalogue, including work
+                # not started yet, rather than only saved progress records.
+                profile = LearnerProfile(id=owner['id'], enrolment_id=learner_id)
+                modules = canonical_module_progress(learner, profile)
+                programme = canonical_learning.point_ratio(
+                    sum(module['completed'] for module in modules),
+                    sum(module['total'] for module in modules),
+                )
+            rows[str(learner_id)] = {
+                "programme": {key: programme.get(key) for key in ("completed", "total", "percent", "status")} if programme else None,
+                "risk": statuses.get((owner['id'], learner_id), 'unavailable') if owner is not None else 'unavailable',
+            }
+    except (DatabaseError, ServiceError):
+        logger.exception("employer_dashboard_metrics: metrics unavailable for employer %s", employer.pk)
+        return _error("Could not load learner progress. Please try again.", 503)
+    response = JsonResponse({"learners": rows, "asOf": today.isoformat()})
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
 @csrf_exempt
 @employer_or_staff()
 def employer_portal_documents(request, employer_id):
@@ -704,9 +777,9 @@ def employer_portal_learner(request, employer_id, kind, learner_id):
 
 @csrf_exempt
 @employer_or_staff()
-def employer_review_instance(request, employer_id, kind, learner_id, event_key):
+def employer_review_instance(request, employer_id, kind, learner_id, event_key, as_pdf=False):
     """Read or sign the same Curriculum Review instance used by coach/learner."""
-    if request.method not in ("GET", "POST"):
+    if request.method not in ("GET", "POST") or (as_pdf and request.method != "GET"):
         return _error("Method not allowed.", 405)
     employer, err = _employer_or_404(employer_id)
     if err:
@@ -735,7 +808,12 @@ def employer_review_instance(request, employer_id, kind, learner_id, event_key):
     if not definition['template']['visibleTo'].get('employer', False):
         return _error("This review is not visible to the employer.", 403)
     if request.method == "GET":
-        return JsonResponse(definition)
+        if as_pdf:
+            from curriculum_api.review_pdf import learner_information, mcm_pdf_response
+            return mcm_pdf_response(definition, learner_information(learner))
+        response = JsonResponse(definition)
+        response["Cache-Control"] = "private, no-store"
+        return response
     try:
         payload = _parse_body(request)
     except (TypeError, ValueError, ValidationError):
@@ -1000,6 +1078,59 @@ def _owned_learner(employer_id, kind, learner_id):
     return learner, None
 
 
+@employer_or_staff()
+def employer_document_preview(request, employer_id, kind, learner_id, document_kind, document_id):
+    """Read an owned, issued document without deriving or issuing new content."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    learner, err = _owned_learner(employer_id, kind, learner_id)
+    if err is not None:
+        return err
+    from .models import ApprenticeshipAgreement, TrainingPlanDocument, WrittenAgreement
+    from .apprenticeship_agreement import _agreement_json
+    from .training_plan_document import _document_json as training_plan_json
+    from .written_agreement import _document_json as written_agreement_json
+
+    snapshots = {
+        "agreement": (ApprenticeshipAgreement, _agreement_json),
+        "training-plan": (TrainingPlanDocument, training_plan_json),
+        "written-agreement": (WrittenAgreement, written_agreement_json),
+    }
+    try:
+        if document_kind in snapshots:
+            model, serialize = snapshots[document_kind]
+            document = model.objects.filter(
+                pk=document_id, learner_id=learner.pk, learner_kind=kind, status=model.STATUS_ACTIVE,
+            ).first()
+            if document is None:
+                return _error("Document not found.", 404)
+            payload = {"kind": document_kind, "document": serialize(document)}
+        elif document_kind == "document":
+            from enrolment_api.documents import SIGNING_PARTIES, _conn, azure_configured, get_download_sas
+            with _conn().cursor() as cursor:
+                cursor.execute(
+                    'select "Container", "Blob_name", "Doc_type" from enrolment."Enrolment_Documents" '
+                    'where id = %s and "Learner_kind" = %s and "Learner_id" = %s',
+                    [str(document_id), kind, learner.pk],
+                )
+                row = cursor.fetchone()
+            if not row or "employer" not in SIGNING_PARTIES.get(row[2], ("employer",)):
+                return _error("Document not found.", 404)
+            if not azure_configured():
+                return _error("Document storage is not configured.", 503)
+            payload = {"kind": "document", "url": get_download_sas(row[0], row[1])}
+        else:
+            return _error("Unknown document kind.", 404)
+    except (ValueError, ValidationError):
+        return _error("Document not found.", 404)
+    except DatabaseError:
+        logger.exception("employer_document_preview: document read unavailable")
+        return _error("Could not load the document. Please try again.", 503)
+    response = JsonResponse(payload)
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
 def _employer_progress_definition(event, learner, profile, template_cache):
     """Read an owned occurrence or its template preview without creating it."""
     from curriculum_api import reviews
@@ -1049,9 +1180,27 @@ def employer_portal_progress_reviews(request, employer_id, kind, learner_id, eve
         events = coaching_events_for_learner(learner, profile)
         rows, definitions, template_cache = [], {}, {}
         for source in events:
-            code = source.get("reviewTypeCode")
-            is_progress = code == "progress_review" if code else not source.get("reviewTemplateId") and source.get("source") == "progress-review"
-            if not is_progress or (event_key is not None and event_key not in {source.get("id"), source.get("eventKey")}):
+            # Imported Gateway/support reviews also use the legacy progress-review
+            # routing source; their original review type determines this list.
+            category = review_event_category(source)
+            is_progress = category == "progress-review"
+            if source.get("reviewTemplateId") and not source.get("reviewTypeCode"):
+                is_progress = False
+            if event_key is not None and event_key not in {source.get("id"), source.get("eventKey")}:
+                continue
+            migrated_state = None
+            if source.get("migratedForm") and category in {"mcr", "progress-review", "review"}:
+                overlay = ImportedReviewInstance.objects.filter(
+                    event_key=source["eventKey"], learner_id=getattr(profile, "pk", learner.pk),
+                ).first()
+                if overlay is None:
+                    continue
+                if category == "review" and not is_personal_support_form(overlay):
+                    continue
+                migrated_state = signature_states(overlay)["employer"]
+                if category in {"mcr", "review"}:
+                    is_progress = bool(migrated_state["required"])
+            if not is_progress:
                 continue
             event = dict(source)
             definition = None
@@ -1067,16 +1216,20 @@ def employer_portal_progress_reviews(request, employer_id, kind, learner_id, eve
                     event["reviewInstanceId"] = instance["id"]
                     event["status"] = instance["status"]
                 definitions[event["eventKey"]] = definition
-            elif event.get("migratedForm"):
-                overlay = ImportedReviewInstance.objects.filter(
-                    event_key=event["eventKey"], learner_id=getattr(profile, "pk", learner.pk),
-                ).first()
-                if overlay is None:
-                    continue
-                state = signature_states(overlay)["employer"]
-                event.update({"employerSigned": bool(state["signed"]), "employerSignatureRequired": bool(state["required"])})
-            # Meeting access stays with the existing learner/coach calendar.
-            event["meetingLink"] = ""
+            elif migrated_state is not None:
+                event.update({"employerSigned": bool(migrated_state["signed"]), "employerSignatureRequired": bool(migrated_state["required"])})
+            # Only the owned, employer-visible PR appointment can be joined.
+            # Keep the calendar reader's sync verdict (and its empty link on failure).
+            booking_status = _s(source.get("bookingStatus") or source.get("status")).lower().replace("_", "-").replace(" ", "-")
+            review_status = _s(event.get("status")).lower().replace("_", "-").replace(" ", "-")
+            imported = event.get("importedReview") or {}
+            can_join = (
+                category == "progress-review" and event.get("scheduledDate")
+                and booking_status in {"scheduled", "in-progress"}
+                and review_status not in {"completed", "awaiting-signature", "cancelled", "deleted", "superseded"}
+                and (not imported or (event.get("calendarEventKey") and not imported.get("completedDate")))
+            )
+            event["meetingLink"] = (source.get("meetingLink") or "") if can_join else ""
             rows.append(event)
         rows.sort(key=lambda event: (event.get("date") or event.get("targetDate") or "", event.get("sequence") or 0, event["eventKey"]))
     except DatabaseError:

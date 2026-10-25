@@ -200,6 +200,9 @@ export interface ReviewInstanceFormDefinition {
   sourceStatus?: string;
   localStatus?: string | null;
   booking?: {
+    /** Aptem PSP appointments do not require an editable review form. */
+    formRequired?: boolean;
+    status?: string;
     booked: boolean;
     conflict: boolean;
     canAttach?: boolean;

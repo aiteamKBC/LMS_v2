@@ -241,10 +241,12 @@ def booking_for_imported_review(profile, review, overlay=None, *, lock=False):
     """Resolve the same durable appointment from a form or its occurrence."""
     from .models import CoachCalendarEvent
     from .migrated_reviews import booking_event_type, review_family
+    from .personal_support_booking import is_personal_support_plan
 
     event = {**imported_identity(review, profile.id),
              "eventKey": f"imported-review:{review['aptemReviewId']}",
-             "source": booking_event_type(review_family(review["type"])),
+             "source": ("progress-review" if is_personal_support_plan(review["type"])
+                        else booking_event_type(review_family(review["type"]))),
              **imported_learner_identity(profile)}
     if not event["source"]:
         return None

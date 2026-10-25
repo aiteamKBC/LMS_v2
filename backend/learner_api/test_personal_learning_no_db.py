@@ -257,6 +257,44 @@ class PersonalLearningTests(unittest.TestCase):
                     self.ns['learner_request'](self.request, self.account, self.context['id'])
         self.assertEqual(self.writes, 0)
 
+    def test_timing_checkpoint_keeps_personal_identity_and_original_token(self):
+        activity = types.ModuleType('learner_api.personal_learning_activities')
+        activity.handle_activity_request = Mock(return_value=None)
+        drafts = types.ModuleType('learner_api.timing_drafts')
+        drafts.checkpoint = Mock(return_value={'trackingToken': 'signed-personal', 'savedSeconds': 120})
+        self.request.GET = {'path': '/learner_api/time-tracking/checkpoint/'}
+        self.request.body = json.dumps({'trackingToken': 'signed-personal', 'activityKind': 'component',
+                                        'activityId': 'C1', 'elapsedSeconds': 120}).encode()
+        with patch.dict(sys.modules, {'learner_api.personal_learning_activities': activity,
+                                     'learner_api.timing_drafts': drafts}):
+            result = self.ns['learner_request'](self.request, self.account, self.context['id'])
+        self.assertEqual(result['savedSeconds'], 120)
+        drafts.checkpoint.assert_called_once_with('signed-personal', activity_kind='component',
+            activity_id='C1', learner_kind='personal', learner_id=self.context['id'], seconds=120)
+        self.assertEqual(self.writes, 0)
+
+    def test_timing_checkpoint_rejects_closed_unassigned_or_other_account_before_storage(self):
+        activity = types.ModuleType('learner_api.personal_learning_activities')
+        activity.handle_activity_request = Mock(return_value=None)
+        drafts = types.ModuleType('learner_api.timing_drafts')
+        drafts.checkpoint = Mock()
+        self.request.GET = {'path': '/learner_api/time-tracking/checkpoint/'}
+        with patch.dict(sys.modules, {'learner_api.personal_learning_activities': activity,
+                                     'learner_api.timing_drafts': drafts}):
+            for identity, component, blocked, error in [
+                (self.context['id'], 'OTHER', False, LookupError),
+                (self.context['id'], 'C1', True, PermissionError),
+                ('pl.8.study.MOD-A', 'C1', False, PermissionError),
+            ]:
+                with self.subTest(identity=identity, component=component, blocked=blocked):
+                    self.detail['learningAccess']['blocked'] = blocked
+                    self.request.body = json.dumps({'trackingToken': 'signed-personal',
+                        'activityKind': 'component', 'activityId': component, 'elapsedSeconds': 120}).encode()
+                    with self.assertRaises(error):
+                        self.ns['learner_request'](self.request, self.account, identity)
+        drafts.checkpoint.assert_not_called()
+        self.assertEqual(self.writes, 0)
+
     def activity_namespace(self):
         personal = types.ModuleType('learner_api.personal_learning')
         personal.__dict__.update(self.ns)

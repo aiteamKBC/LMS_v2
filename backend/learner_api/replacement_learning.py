@@ -94,5 +94,25 @@ def project_approved_learning(components, settings_by_id, items):
                 'group_id': int(item['courseRef'][7:]), 'catalogue_kind': match['catalogueKind'],
                 'source_activity_id': match['sourceActivityId'], 'activity_id': match['activityId'], 'completed': True}
     projected = project_replacement_learning(clean, settings_by_id, courses, list(activities.values()))
-    return [c if c.get('previousLearning') == matches.get((c.get('moduleId'), c.get('componentId')))
-            else {key: value for key, value in c.items() if key != 'previousLearning'} for c in projected]
+    result = [c if c.get('previousLearning') == matches.get((c.get('moduleId'), c.get('componentId')))
+              else {key: value for key, value in c.items() if key != 'previousLearning'} for c in projected]
+    # Manual equivalence is an explicit admin decision saved on this learner's
+    # approved request. It does not rewrite shared catalogue provenance.
+    from .progress_transfer_matching import target_fingerprint
+    manual = {}
+    for item in approved:
+        source_uses = Counter(match.get('activityId') for match in item.get('matchedComponents', {}).values())
+        for ident, match in item.get('matchedComponents', {}).items():
+            ref = f"{match.get('catalogueKind')}:{match.get('sourceActivityId')}"
+            if (match.get('manualMatch') is True and match.get('completed') is True
+                    and match.get('courseRef') == item['courseRef']
+                    and ref in item.get('completedSourceActivities', [])
+                    and match.get('activityId') == f"catalogue:{item['courseRef'][7:]}:{ref}"
+                    and source_uses[match['activityId']] == 1):
+                manual[(item['moduleId'], ident)] = match
+    for component in result:
+        match = manual.get((component.get('moduleId'), component.get('componentId')))
+        if (match and not component.get('retired') and match.get('targetFingerprint') ==
+                target_fingerprint(component, settings_by_id.get(component.get('componentId')))):
+            component['previousLearning'] = match
+    return result

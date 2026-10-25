@@ -317,13 +317,14 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
 def weekly_hour_records(owner):
     """Hours-only projection; retain learner-wide facts needed by native dedupe.
 
-    Attempts/source completion cannot change accepted ledger seconds. Only
-    unsynchronised direct saves need current assignment markings. Reporting
+    Stored, measured legacy attempts contribute separate evidence without
+    changing accepted ledger seconds. Only unsynchronised direct saves need
+    current assignment markings. Reporting
     segments are a presence gate here, never additional hour allocations.
     """
     if owner.get('progress_transfer_active'):
         return entries_for(owner, lineage_only=True)
-    from .current_learning import project_current
+    from .current_learning import project_current, merge_attempts, subject_attempt_rows
     fields = ('id', 'learner_id', 'kind', 'module_ref', 'module_title', 'component_ref',
               'component_type', 'quiz_ref', 'passed', 'reported_time', 'submitted_at',
               'started_at', 'time_tracking_source', 'claimed_seconds', 'verified_seconds',
@@ -351,15 +352,19 @@ def weekly_hour_records(owner):
               AND component_ref=ANY(%s) ORDER BY submitted_at NULLS FIRST,id''',
             [str(owner['enrolment_id']), owner.get('learner_type'), pending])
         markings = {str(row['component_ref']): row for row in submissions}
-    return progress_records_with_completion(records, project_current(records, markings))
+    projected = project_current(records, markings)
+    projected = merge_attempts(projected, subject_attempt_rows(owner, timed_only=True))
+    return progress_records_with_completion(records, projected)
 
 
 def progress_records_with_completion(records, current):
-    """Enrich progress completion without replacing stored hours or adding rows.
+    """Enrich completion while preserving stored hours and historical dates.
 
     Counts, acceptance, seconds and reporting months belong to progress entries.
     Newer attempts may still supply completion and scores for those same entries.
     Unpersisted submissions cannot become extra accepted-hour records on a read.
+    Server-measured, persisted legacy attempts are separate timed evidence;
+    their stable placement IDs prevent retries from duplicating those hours.
 
     The exception is a stored direct LMS save that nothing has given seconds
     yet: its projected time and decision are the only record of that learning,
@@ -374,6 +379,10 @@ def progress_records_with_completion(records, current):
             fields += ('accepted', 'actual_seconds', 'activity_status', 'reporting_month',
                        'reporting_started_at', 'reporting_ended_at')
         result.append({**record, **{key: latest[key] for key in fields if key in latest}})
+    existing = {str(record['id']) for record in records}
+    result.extend(record for record in current
+                  if record.get('actual_basis') == 'legacy_activity_verified_timer'
+                  and str(record['id']) not in existing)
     return result
 
 
@@ -783,6 +792,22 @@ def source_quiz_parts(item, owner, record):
 def content(item, owner=None, record=None):
     if owner is not None and record is None:
         record = next((r for r in entries_for(owner) if str(r['id']) == str(item.get('progress_id'))), None)
+    if owner is not None and record is not None and record.get('actual_basis') == 'legacy_activity_verified_timer':
+        # This evidence belongs to a persisted subject attempt, not a numeric
+        # learner_progress_entries ID. Keep its preview in that owned store.
+        from .monthly_log_sources import _answers_html
+        evidence = source_payload_metadata(record.get('source_payload'))
+        attempts = query('''SELECT definition,answers FROM "Learner".subject_activity_attempts
+            WHERE id=%s AND enrolment_id=%s AND aptem_id=%s AND submitted_at IS NOT NULL''',
+            [evidence.get('subject_attempt_id'), owner['enrolment_id'], owner.get('aptem_id')])
+        if not attempts:
+            raise ServiceError('Activity not found.', 'not_found', 404)
+        saved = attempts[0]
+        seconds = int(record.get('actual_seconds') or 0)
+        html = f'<p>Measured study time: {seconds // 60}m {seconds % 60}s. Activity completed.</p>'
+        html += _answers_html(decoded(saved['definition'], {}), decoded(saved['answers'], {}))
+        return {'id': item['id'], 'parts': [{'id': item['id'], 'title': item['title'],
+            'category': item['category'], 'url': None, 'quiz': None, 'html': html}]}
     parts = material_parts(item, owner, record) if owner is not None and record is not None else []
     if not parts and owner is not None and record is not None:
         parts = component_parts(item, owner, record)
@@ -1027,10 +1052,12 @@ def recorded_course_items(courses, catalogue, records, *, overview_only=False, i
         counted_courses = set()
         for definition in placements:
             course = str(definition['source_course_ref'])
-            if include_catalogue and not overview_only:
+            if include_catalogue and not overview_only and not record.get('hours_only'):
                 retain_learner_schedule(definition, record,
                     completed=counts_as_completed(record, include_source_evidence='completed' in record))
             if overview_only:
+                if record.get('hours_only'):
+                    continue
                 by_course[course].append({'activity_id': f"record:{course}:{record['id']}",
                     'group_id': int(course),
                     'completed': counts_as_completed(record, include_source_evidence='completed' in record)})
@@ -1180,7 +1207,7 @@ def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
     # A configured review allowance contributes hours, not a taught activity
     # or a KSB achievement. Keep programme completion denominators unchanged.
     records = list(records)
-    counted = [item for item in records if item.get('kind') != 'migrated_review']
+    counted = [item for item in records if item.get('kind') != 'migrated_review' and not item.get('hours_only')]
     accepted = [item for item in records if item.get('accepted') is True]
     completed = [item for item in counted if counts_as_completed(
         item, include_source_evidence='completed' in item)]

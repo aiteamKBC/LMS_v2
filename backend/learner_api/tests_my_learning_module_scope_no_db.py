@@ -1,10 +1,12 @@
 """Module-open regressions; all persistence and external services are mocked."""
 from contextlib import ExitStack
 from copy import deepcopy
+import inspect
+import json
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, RequestFactory
 
 from . import my_learning as learning
 from . import canonical_learning as canonical
@@ -13,7 +15,7 @@ from .tests_progress_transfer_no_db import item, saved
 
 
 class ModuleContextScopeTests(SimpleTestCase):
-    def context(self, selected, kind):
+    def context(self, selected, kind, *, transfers=None, component_settings=None, imported_links=None):
         from . import (models, weekly_learning, student_activity, subject_origins,
                        previous_learning_groups, progress_transfer_store)
         plan = [{'moduleId': f'M{i}', 'moduleTitle': f'Module {i}',
@@ -28,7 +30,10 @@ class ModuleContextScopeTests(SimpleTestCase):
         manager = MagicMock()
         manager.only.return_value.filter.return_value.first.return_value = SimpleNamespace(pk=9, enrolment_id=7)
         builders = {f'current:M{i}': {'id': f'M{i}', 'title': f'Module {i}'} for i in range(100)}
-        links = {'current:M1': 'legacy:50', 'current:M2': 'legacy:50'}
+        links = {'current:M1': 'legacy:50', 'current:M2': 'legacy:50'} if imported_links is None else imported_links
+        connections = fake_connections()
+        cursor = connections['enrolment'].cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = list((component_settings or {}).items())
 
         def content(selected_source, pk, **kwargs):
             assigned = kwargs['assigned_modules']
@@ -42,7 +47,7 @@ class ModuleContextScopeTests(SimpleTestCase):
 
         with ExitStack() as stack:
             stack.enter_context(patch.object(models.LearnerProfile, 'objects', manager))
-            stack.enter_context(patch.object(learning, 'connections', fake_connections()))
+            stack.enter_context(patch.object(learning, 'connections', connections))
             stack.enter_context(patch.object(learning, 'effective_training_plan', return_value=plan))
             reader = stack.enter_context(patch.object(weekly_learning, 'build_learning_content_summary', side_effect=content))
             stack.enter_context(patch.object(canonical, 'entries_for', return_value=[]))
@@ -52,10 +57,34 @@ class ModuleContextScopeTests(SimpleTestCase):
             stack.enter_context(patch.object(subject_origins, 'read_imported_courses', return_value=links))
             stack.enter_context(patch.object(subject_origins, 'read_replacement_courses', return_value={}))
             stack.enter_context(patch.object(previous_learning_groups, 'read_previous_learning_groups', return_value={}))
-            stack.enter_context(patch.object(progress_transfer_store, 'read_state', return_value=saved('approved')))
+            stack.enter_context(patch.object(progress_transfer_store, 'read_state', return_value=transfers if transfers is not None else saved('approved')))
             result = learning.load_context(source, {'id': 9, 'progress_transfer_active': True}, selected)
         self.assertEqual((source.training_plan, source.learning_plan), original)
         return result, reader
+
+    def test_imported_module_settings_are_loaded_for_pending_and_approved_matches(self):
+        from .progress_transfer_matching import build_review, manual_completion
+        from .replacement_learning import project_approved_learning
+        settings = {'C1': {'legacySettings': {'sourceLessonId': 7, 'sourceMaterialKey': 'reading-7'}}}
+        for kind in ('commercial', 'apprenticeship'):
+            pending = saved(modules=[item(completedSourceActivities=['material:7'])])
+            context, _ = self.context('current:M1', kind, transfers=pending,
+                                     component_settings=settings, imported_links={'current:M1': 'legacy:50'})
+            self.assertEqual(context[9]['replacement_settings'], settings)
+            review = build_review(pending['items'][0]['requestId'], pending['items'], context)
+            self.assertEqual(review['modules'][0]['sources'][0]['automaticTargetId'], 'C1')
+            # A manually chosen target can carry different source provenance.
+            transfer = saved('approved', modules=[item(completedSourceActivities=['material:8'])])
+            transfer['items'][0]['matchedComponents'] = {'C1': manual_completion(
+                transfer['items'][0], 'material:8', review['modules'][0]['targets'][0])}
+            for links in ({'current:M1': 'legacy:50'}, {}):
+                with self.subTest(kind=kind, links=links):
+                    approved, _ = self.context('current:M1', kind, transfers=transfer,
+                                              component_settings=settings, imported_links=links)
+                    self.assertEqual(approved[9]['replacement_settings'], settings)
+                    projected = project_approved_learning(approved[3]['components'],
+                        approved[9]['replacement_settings'], transfer['items'])
+                    self.assertTrue(projected[0]['previousLearning']['completed'])
 
     def test_current_module_reads_one_assignment_even_in_large_plans_for_both_kinds(self):
         for kind in ('commercial', 'apprenticeship'):
@@ -94,7 +123,7 @@ class ModuleContextScopeTests(SimpleTestCase):
 
 
 class TransferredModuleOpenTests(SimpleTestCase):
-    def open_module(self, kind, status, *, new_completion=False):
+    def open_module(self, kind, status, *, new_completion=False, http=False):
         from . import (weekly_learning, dashboard_training, training_plan_dashboard, live_session_progress,
                        teams_attendance, builder_activity_dates, subject_store)
         source = SimpleNamespace(pk=7, id=7, email='learner@example.test', programme='Programme',
@@ -125,8 +154,40 @@ class TransferredModuleOpenTests(SimpleTestCase):
             stack.enter_context(patch.object(teams_attendance, 'annotate_attendance_completion', side_effect=lambda rows, *a: rows))
             stack.enter_context(patch.object(builder_activity_dates, 'read_builder_activity_dates', return_value={}))
             stack.enter_context(patch.object(subject_store, 'covers_for', return_value={}))
-            result = learning.read_module(source, kind, {'id': 9, 'name': 'Synthetic'}, 'current:M1')
+            owner = {'id': 9, 'name': 'Synthetic'}
+            if http:
+                model = Mock()
+                model.DoesNotExist = type('MissingLearner', (Exception,), {})
+                model.all_learners.only.return_value.get.return_value = source
+                stack.enter_context(patch.dict(learning.SOURCE_MODELS, {kind: model}))
+                stack.enter_context(patch.object(canonical, 'require_profile', return_value=owner))
+                # Exercise the real endpoint and Django JSON encoder. Only the
+                # authentication wrapper is outside this isolated read fixture.
+                response = inspect.unwrap(learning.my_learning)(RequestFactory().get('/'),
+                    kind=kind, pk=7, subject_id='current:M1')
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response['Cache-Control'], 'private, no-store')
+                result = json.loads(response.content)
+            else:
+                result = learning.read_module(source, kind, owner, 'current:M1')
         return result, historical
+
+    def test_transferred_module_http_response_is_serializable_with_completion_credit(self):
+        for kind in ('commercial', 'apprenticeship'):
+            for completed, expected in ((False, 40), (True, 50)):
+                with self.subTest(kind=kind, new_completion=completed):
+                    result, _ = self.open_module(kind, 'approved', new_completion=completed, http=True)
+                    self.assertNotIn('_completion', result['detail'])
+                    self.assertEqual(result['metadata']['module_credits']['current:M1']['progress'], expected)
+                    self.assertEqual(len(result['detail']['components']), 10)
+                    self.assertTrue(result['detail']['components'][0]['previousLearning']['completed'])
+
+    def test_pending_module_http_response_keeps_historical_content(self):
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind):
+                result, _ = self.open_module(kind, 'pending', http=True)
+                self.assertEqual(result['subjectId'], 'legacy:50')
+                self.assertTrue(result['metadata']['module_credits']['legacy:50']['transferPending'])
 
     def test_pending_transfer_still_opens_owned_old_course_for_both_kinds(self):
         for kind in ('commercial', 'apprenticeship'):

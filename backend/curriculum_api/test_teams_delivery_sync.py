@@ -190,6 +190,72 @@ class DeliverySyncTests(TestCase):
                          [('ART-FILED', 'OCC-1', 'new-id')])
 
 
+class RecordingDeliveryWindowTests(SimpleTestCase):
+    """Exercise the worker endpoint's recording gates with storage and Graph mocked."""
+
+    def setUp(self):
+        self.series = {'id': SERIES, 'organizer_email': 'tutor@example.invalid',
+                       'join_url': 'https://teams.microsoft.com/l/meetup-join/delivery',
+                       'online_meeting_id': 'meeting-1', 'status': 'active'}
+        self.occurrences = [
+            {'id': f'OCC-{number}', 'live_session_id': SERIES, 'session_number': number,
+             'scheduled_start': datetime(2026, 10, day, 8, 30),
+             'scheduled_end': datetime(2026, 10, day, 10, 30), 'status': 'scheduled'}
+            for number, day in ((1, 9), (2, 16))
+        ]
+
+    def rows(self, table, *_args, **_kwargs):
+        return {
+            views.LIVE_SESSIONS_TABLE: [self.series],
+            views.LIVE_SESSION_OCCURRENCES_TABLE: self.occurrences,
+            views.LIVE_SESSION_ATTENDANCE_TABLE: [],
+            views.LIVE_SESSION_ARTIFACTS_TABLE: [],
+            views.LIVE_SESSION_JOIN_LAUNCHES_TABLE: [],
+        }[table]
+
+    def sync_recording(self, artifact):
+        def graph(method, path, *_args, **_kwargs):
+            self.assertEqual(method, 'GET')
+            return {'value': [artifact] if path.endswith('/recordings') else []}
+
+        with patch.object(views.schema_gate, 'require_tables'), \
+                patch.object(views, 'authoring_fetch_all', side_effect=self.rows), \
+                patch.object(views, 'upsert_live_session_artifact', return_value=True) as save, \
+                patch.object(views, 'remove_artifact_from_wrong_occurrences'), \
+                patch.object(views, 'update_authoring_rows') as update, \
+                patch.object(views, 'authoring_delete', side_effect=AssertionError('Existing evidence must be kept')), \
+                patch.object(views, 'resolve_directory_accounts', return_value={'resolved': 0, 'notFound': 0, 'denied': 0}), \
+                patch('curriculum_api.teams_dial_in.remember_teams_dial_in'), \
+                patch('coach_api.views.microsoft_graph_request', side_effect=graph), \
+                patch('coach_api.views.has_graph_credentials', return_value=True), \
+                patch('coach_api.views.get_graph_settings', return_value=GRAPH_SETTINGS), \
+                patch('learner_api.teams_attendance.sync_verified_teams_attendance_reporting', return_value=0):
+            request = RequestFactory().post('/internal/session-result-worker/')
+            request.session_result_worker = True
+            response = views.curriculum_teams_meeting_artifacts(request, SERIES)
+        self.assertEqual(response.status_code, 200, response.content)
+        for call in update.call_args_list:
+            self.assertEqual(call.args[0], views.LIVE_SESSION_OCCURRENCES_TABLE)
+            self.assertEqual(set(call.args[3]), {'artifacts_synced_at', 'last_sync_error'})
+        return save
+
+    def test_recording_started_early_and_ending_after_the_lecture_is_saved(self):
+        artifact = recording('early-start', created='2026-10-09T08:17:00Z', end='2026-10-09T10:31:00Z')
+
+        save = self.sync_recording(artifact)
+
+        save.assert_called_once()
+        occurrence, kind, saved = save.call_args.args
+        self.assertEqual((occurrence['id'], kind), ('OCC-1', 'recording'))
+        self.assertEqual(saved['endDateTime'], artifact['endDateTime'])
+        self.assertEqual(saved['lmsOccurrenceId'], 'OCC-1')
+
+    def test_recording_finished_before_the_lecture_is_not_saved(self):
+        save = self.sync_recording(recording('rehearsal', created='2026-10-09T08:17:00Z',
+                                            end='2026-10-09T08:20:00Z'))
+        save.assert_not_called()
+
+
 class ArchiveReuseTests(SimpleTestCase):
     """A row that is the same Teams file as one already saved points at that copy: no download, no upload."""
 

@@ -34,6 +34,8 @@ class StoredQuizAttemptTests(unittest.TestCase):
         self.enterContext(patch.object(subject_store, 'connections', {'enrolment': connection}))
         self.enterContext(patch.object(subject_store, 'ready', return_value=True))
         self.enterContext(patch.object(subject_store.transaction, 'atomic', return_value=nullcontext()))
+        self.enterContext(patch('learner_api.progress_transfer_store.lock_learner', side_effect=lambda _: nullcontext(self.cursor)))
+        self.enterContext(patch('learner_api.progress_transfer_store.assert_legacy_writable'))
         self.enterContext(patch('socket.socket', side_effect=AssertionError('Network prohibited')))
 
     def finish(self, answers):
@@ -90,6 +92,7 @@ class LegacyAttemptEndpointTests(unittest.TestCase):
         canonical = ModuleType('learner_api.canonical_learning')
         canonical.ServiceError = ServiceError
         self.enterContext(patch.dict('sys.modules', {canonical.__name__: canonical}))
+        self.enterContext(patch('learner_api.canonical_learning', canonical))
         self.owned = Mock(return_value=(11, {'title': 'Example quiz', 'completed': False}))
         self.store = SimpleNamespace(start=Mock(return_value='attempt'), finish=Mock(return_value={'completed': True}),
                                      StoreUnavailable=subject_store.StoreUnavailable)
@@ -107,10 +110,10 @@ class LegacyAttemptEndpointTests(unittest.TestCase):
         load(ROOT / 'student_activity.py', {'_error', '_private'}, self.scope)
         load(ROOT / 'student_activity.py', {'start_subject_attempt', 'submit_subject_attempt'}, self.scope, decorated=True)
 
-    def request(self, name='submit_subject_attempt', role='learner', learner=9, kind='commercial', **kwargs):
+    def request(self, name='submit_subject_attempt', role='learner', learner=9, kind='commercial', payload=None, **kwargs):
         request = SimpleNamespace(method='POST', path='/attempts/',
             account=SimpleNamespace(role=role, subject_id=learner) if role else None,
-            GET={'catalogue_kind': 'quiz'}, body=json.dumps({'answers': {'1': ['1']},
+            GET={'catalogue_kind': 'quiz'}, body=json.dumps(payload if payload is not None else {'answers': {'1': ['1']},
                 'aptem_id': 999, 'completed': True, 'score_percent': 100}).encode())
         if name == 'submit_subject_attempt':
             kwargs['attempt_id'] = '00000000-0000-4000-8000-000000000001'
@@ -121,7 +124,8 @@ class LegacyAttemptEndpointTests(unittest.TestCase):
             self.assertEqual(self.request(kind=kind).status_code, 200)
             self.owned.assert_called_with(kind, 9, 50, 60)
             self.store.finish.assert_called_with(9, 11, 50, 60,
-                '00000000-0000-4000-8000-000000000001', {'1': ['1']}, False, catalogue_kind='quiz')
+                '00000000-0000-4000-8000-000000000001', {'1': ['1']}, False, catalogue_kind='quiz', learner_kind=kind,
+                timing_payload={'answers': {'1': ['1']}, 'aptem_id': 999, 'completed': True, 'score_percent': 100})
 
     def test_other_accounts_and_staff_preview_cannot_write(self):
         for role, learner, status in [('learner', 10, 404), ('staff', 9, 403), ('employer', 9, 403), (None, 9, 401)]:
@@ -153,13 +157,22 @@ class LegacyAttemptEndpointTests(unittest.TestCase):
             'solutions': [{'question_id': 1, 'correct_answer': ['Yes']}]}
         self.scope['_connection'] = lambda: SimpleNamespace(cursor=lambda: nullcontext(Mock()))
         with patch('learner_api.subject_quiz.imported_quiz', return_value=original):
-            response = self.request('start_subject_attempt')
+            response = self.request('start_subject_attempt', payload={'track_time': True})
         self.assertEqual(response.status_code, 201)
         snapshot = self.store.start.call_args.args[-1]
         self.assertEqual(snapshot['catalogue_kind'], 'quiz')
         self.assertEqual(snapshot['quiz']['questions'][0]['solution_ids'], ['1'])
         self.assertNotIn('solution_ids', response.content.decode())
         self.assertTrue(json.loads(response.content)['definition']['quiz']['ready'])
+        self.assertEqual(json.loads(response.content)['timing']['countingMode'], 'active_quiz')
+        self.assertEqual(self.store.start.call_args.kwargs['timing_session'], json.loads(response.content)['timing'])
+
+    def test_completion_validation_returns_recoverable_response_without_success(self):
+        from .working_rules import DeclaredCompletionError
+        self.store.finish.side_effect = DeclaredCompletionError('Choose a completion time', reason='outside_working_hours')
+        response = self.request(payload={'trackingToken': 'signed', 'timeTakenSeconds': 60})
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(json.loads(response.content)['validation']['reason'], 'outside_working_hours')
 
     def test_revoked_course_or_identity_conflict_cannot_save(self):
         for status in (404, 409):

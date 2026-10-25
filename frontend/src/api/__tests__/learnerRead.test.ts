@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { readLearnerJson, invalidateLearnerReads, LEARNER_READ_TIMEOUT_MS, LEARNER_SOURCE_READ_TIMEOUT_MS } from '../learnerRead';
+import { readLearnerJson, invalidateLearnerReads, LEARNER_READ_TIMEOUT_MS, LEARNER_SOURCE_READ_TIMEOUT_MS, MY_LEARNING_READ_TIMEOUT_MS } from '../learnerRead';
 import { clearAllCachedResources } from '../cachedRequest';
 import { fetchLearnerDetail, fetchLearnerSummary, peekLearnerDetail, invalidateLearnerDetailCache } from '../learnerDetail';
 import { fetchStudentActivity, peekStudentActivity } from '../studentActivity';
@@ -21,6 +21,28 @@ beforeEach(() => { clearAllCachedResources(); vi.stubGlobal('fetch', vi.fn()); }
 afterEach(() => { clearAllCachedResources(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('learner data transport', () => {
+  it.each(['commercial/125/', 'apprenticeship/125/', 'commercial/125/modules/current%3AM1/', 'commercial/125/upcoming/'])(
+    'lets My Learning %s finish after connection checkout and still bounds a stuck request', async path => {
+      vi.useFakeTimers();
+      const network = pending<Response>();
+      vi.mocked(fetch).mockReturnValueOnce(network.promise);
+      const request = readLearnerJson(`/learner_api/my-learning/${path}`);
+      await vi.advanceTimersByTimeAsync(85_000);
+      expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(false);
+      network.resolve(reply({ loaded: true }));
+      await expect(request).resolves.toEqual({ loaded: true });
+
+      vi.mocked(fetch).mockReturnValueOnce(new Promise(() => {}));
+      const stuck = expect(readLearnerJson(`/learner_api/my-learning/${path}`))
+        .rejects.toMatchObject({ code: 'timeout' });
+      await vi.advanceTimersByTimeAsync(MY_LEARNING_READ_TIMEOUT_MS);
+      await stuck;
+      expect(vi.mocked(fetch).mock.calls[1][1]?.signal?.aborted).toBe(true);
+
+      vi.mocked(fetch).mockResolvedValueOnce(reply({ loaded: true }));
+      await expect(readLearnerJson(`/learner_api/my-learning/${path}`)).resolves.toEqual({ loaded: true });
+    });
+
   it('isolates the My Learning catalogue from the full OTJH ledger and invalidates both after saves', async () => {
     const compact = { activities: [], subjects: [], verification_status: 'verified' };
     vi.mocked(fetch).mockResolvedValueOnce(reply(compact));

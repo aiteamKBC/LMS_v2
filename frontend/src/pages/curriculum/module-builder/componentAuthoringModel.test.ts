@@ -1,6 +1,39 @@
 import { describe, expect, it } from 'vitest';
 import { componentLooksUnedited, componentTypeDescription, firstValidationMessage, MEDIA_SOURCE_TYPES, normaliseComponentSettings, normaliseVideoSourceType, providerForVideoSourceType, validateComponentAuthoring, validateModuleAuthoringStructure } from './componentAuthoringModel';
 import { createEmptyComponent } from './moduleAuthoringData';
+import type { ComponentSettings } from './componentAuthoringModel';
+
+describe('opaque legacy settings round trip', () => {
+  it.each(['object', 'string'])('retains unknown JSON and typed point metadata from %s legacy settings', representation => {
+    const legacy = { pointNumber: 3, unknownText: 'keep', unknownNumber: 0, unknownFalse: false,
+      unknownNull: null, unknownNested: { ids: ['a', 'b'], retained: true }, unknownArray: [1, { v: null }],
+      ['__proto__']: { retainedAsData: true },
+      podcastEmbedCode: '<iframe src="https://example.com/old"></iframe>' };
+    const input = { podcastSource: 'Embed', embedCode: '', podcastEmbedCode: '',
+      legacySettings: representation === 'object' ? legacy : JSON.stringify(legacy) } as unknown as ComponentSettings;
+    const before = JSON.stringify(input);
+    const first = normaliseComponentSettings('podcast', input);
+    const second = normaliseComponentSettings('podcast', first);
+    const { podcastEmbedCode: _known, ...unknown } = legacy;
+    expect(JSON.parse(String(first.legacySettings))).toEqual(unknown);
+    expect(second).toEqual(first);
+    expect(first.embedCode).toBe('');
+    expect(first.podcastEmbedCode).toBe('');
+    expect(JSON.stringify(input)).toBe(before);
+  });
+
+  it('keeps explicit authored overrides and does not coerce a numeric string', () => {
+    const output = normaliseComponentSettings('reading', {
+      pointNumber: '4', legacySettings: { pointNumber: 3, other: 'retained' },
+    } as unknown as ComponentSettings);
+    expect(JSON.parse(String(output.legacySettings))).toEqual({ pointNumber: '4', other: 'retained' });
+  });
+
+  it.each([null, [], '{bad', '[]', 'null', 'true', '"text"'])('ignores invalid legacy containers (%j)', legacySettings => {
+    const output = normaliseComponentSettings('reading', { legacySettings } as unknown as ComponentSettings);
+    expect(output.legacySettings).toBeUndefined();
+  });
+});
 
 describe('normaliseComponentSettings week-template compatibility', () => {
   it('offers HTML (MP4) as a video source and keeps it distinct', () => {

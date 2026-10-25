@@ -19,7 +19,7 @@ import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerK
 import { markingVerdict } from '@/lib/markingVerdict';
 import { submitVideoProgress } from '@/api/videos';
 import { submitComponentProgress } from '@/api/components';
-import { startTimeTracking, resumeTimeTracking, type TimeTrackingSession, type TrackingCountingMode } from '@/api/timeTracking';
+import { startTimeTracking, resumeTimeTracking, checkpointTimeTracking, type TimeTrackingSession, type TrackingCountingMode } from '@/api/timeTracking';
 import { EvidenceFilesButton, EvidencePreviewModal, type EvidencePreview } from '@/components/feature/EvidenceFilesButton';
 import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
 import {
@@ -49,6 +49,7 @@ import { CompletionTimeDialog } from '@/components/feature/CompletionTimeDialog'
 import { CompletionValidationError, type WorkingRuleReason } from '@/lib/completionValidation';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { ActivitySidebar } from './ActivitySidebar';
+import { AudioYouTubeAlternative } from './AudioYouTubeAlternative';
 import { isNavigableComponent, placeActivity, weekDisplayLabel, type ActivityPlacement } from './weekPreview';
 import { componentRoute } from './componentRoute';
 import { ActivityElapsedTimer } from './ActivityElapsedTimer';
@@ -285,6 +286,9 @@ export default function ComponentViewPage() {
   const [trackingGeneration, setTrackingGeneration] = useState(0);
   const trackingSessionRef = useRef<TimeTrackingSession | null>(null);
   const trackingPromiseRef = useRef<Promise<TimeTrackingSession> | null>(null);
+  const [timingSyncError, setTimingSyncError] = useState<string | null>(null);
+  const currentTimingKeyRef = useRef(timerStorageKey);
+  currentTimingKeyRef.current = timerStorageKey;
 
   // React Router can reuse this page while only the component id changes.
   // Restore the independently saved counter for the newly selected activity.
@@ -543,11 +547,22 @@ export default function ComponentViewPage() {
     if (canResumeActivityTimer(savedTimer, trackingMode)
         || (isAudio && canResumeActivityTimer(savedTimer, 'visible_page'))) {
       const savedSession = savedTimer!.session!;
-      if (savedSession.rewardTracking) {
-        const resumed = resumeTimeTracking(savedSession, activityKind, componentId);
+      if (savedSession.rewardTracking || savedSession.persistent) {
+        const resumed = savedSession.persistent
+          ? checkpointTimeTracking(savedSession, activityKind, componentId, learnerKind, id, savedTimer!.elapsedSeconds)
+          : resumeTimeTracking(savedSession, activityKind, componentId).catch(error => {
+            if (!timingSessionExpired(error)) throw error;
+            return checkpointTimeTracking(savedSession, activityKind, componentId, learnerKind, id, savedTimer!.elapsedSeconds);
+          });
         trackingPromiseRef.current = resumed;
-        resumed.then(session => { if (!cancelled) trackingSessionRef.current = session; })
-          .catch(error => { if (!cancelled) { setExpiredTiming(timingSessionExpired(error)); setSubmitError(error instanceof Error ? error.message : 'Study timing could not synchronize. Your draft is kept.'); } });
+        resumed.then(session => { if (!cancelled) {
+          trackingSessionRef.current = session;
+          saveActivityTimerSession(timerStorageKey, session);
+          const seconds = Math.max(elapsedRef.current, savedTimer!.elapsedSeconds, session.savedSeconds || 0);
+          elapsedRef.current = seconds; setWallElapsed(seconds); saveActivityTimerElapsed(timerStorageKey, seconds);
+          setExpiredTiming(false); setTimingSyncError(null);
+        } })
+          .catch(error => { if (!cancelled) { setExpiredTiming(true); setSubmitError(error instanceof Error ? error.message : 'Study timing could not synchronize. Your draft is kept.'); } });
       } else {
         trackingSessionRef.current = savedSession;
         trackingPromiseRef.current = Promise.resolve(savedSession);
@@ -556,12 +571,17 @@ export default function ComponentViewPage() {
       return () => { cancelled = true; };
     }
 
-    // An expired or incompatible signed session cannot verify its old seconds.
-    // Start clean rather than showing a value the server would later reject.
+    // Ask the server to validate and recover older drafts before using them.
     if (savedTimer?.session) {
-      // Let the learner explicitly preserve and replace this stale draft.
-      setExpiredTiming(true);
-      setSubmitError('This saved timing session can no longer be resumed. Your draft is kept.');
+      // Recover expired legacy drafts under their original signature and ID.
+      const pending = checkpointTimeTracking(savedTimer.session, activityKind, componentId, learnerKind, id, savedTimer.elapsedSeconds);
+      trackingPromiseRef.current = pending;
+      pending.then(session => { if (!cancelled) {
+        trackingSessionRef.current = session; saveActivityTimerSession(timerStorageKey, session);
+        const seconds = Math.max(elapsedRef.current, savedTimer.elapsedSeconds, session.savedSeconds || 0);
+        elapsedRef.current = seconds; setWallElapsed(seconds); saveActivityTimerElapsed(timerStorageKey, seconds);
+        setExpiredTiming(false); setSubmitError(null);
+      } }).catch(error => { if (!cancelled) { setExpiredTiming(true); setSubmitError(error instanceof Error ? error.message : 'Your time could not sync. Your draft is kept.'); } });
       return () => { cancelled = true; };
     }
 
@@ -587,17 +607,48 @@ export default function ComponentViewPage() {
       const saved = readActivityTimer(timerStorageKey);
       archiveTimingDraft(timerStorageKey, trackingSessionRef.current || saved?.session || null,
         Math.max(elapsedRef.current, saved?.elapsedSeconds || 0), { reflection: lastReflectionRef.current, manualTimeSeconds, timeSource });
-      const session = await startTimeTracking(isVideo ? 'video' : 'component', componentId, kind as LearnerKind, id, trackingMode);
-      // Archive succeeded before replacing anything. Old observations stay under the old session ID.
-      localStorage.setItem(timerStorageKey, JSON.stringify({ session, elapsedSeconds: 0 }));
+      const previous = trackingSessionRef.current || saved?.session;
+      if (!previous) throw new Error('Your timing draft is unavailable. Keep this page open and contact support.');
+      const session = await checkpointTimeTracking(previous, isVideo ? 'video' : 'component', componentId, kind, id,
+        Math.max(elapsedRef.current, saved?.elapsedSeconds || 0));
+      if (currentTimingKeyRef.current !== timerStorageKey) return;
+      const seconds = Math.max(elapsedRef.current, saved?.elapsedSeconds || 0, session.savedSeconds || 0);
+      localStorage.setItem(timerStorageKey, JSON.stringify({ session, elapsedSeconds: seconds }));
       trackingSessionRef.current = session; trackingPromiseRef.current = Promise.resolve(session);
-      elapsedRef.current = 0; setWallElapsed(0); timerRemainder.current.milliseconds = 0;
-      setManualTimeSeconds(null); setTimeSource(usesManualTimeOnly ? 'input' : 'timer');
+      elapsedRef.current = seconds; setWallElapsed(seconds);
       setExpiredTiming(false); setSubmitError(null);
-      setTimingNotice('A new timing session has started. The previous timing draft is kept on this device for review and is not included in this session. Your saved progress is unchanged.');
-    } catch (error) { setSubmitError(error instanceof Error ? error.message : 'Could not start a new timing session. Your draft is kept.'); }
+      setTimingSyncError(null);
+      setTimingNotice('Your time has been restored. Your reflection and entered time are kept. You can finish the activity.');
+    } catch (error) { setSubmitError(error instanceof Error ? error.message : 'Could not restore your timing session. Your draft is kept.'); }
     finally { recoveryInFlight.current = false; setRecoveringTiming(false); }
   };
+
+  useEffect(() => {
+    if (!recordingAttempt || !componentId || !kind || !id || !canUseComponent) return;
+    let cancelled = false;
+    let busy = false;
+    const sync = async () => {
+      const session = trackingSessionRef.current || readActivityTimer(timerStorageKey)?.session;
+      if (!session?.persistent || busy || completionInFlightRef.current) return;
+      busy = true;
+      try {
+        const restored = await checkpointTimeTracking(session, isVideo ? 'video' : 'component', componentId, kind, id, elapsedRef.current);
+        if (cancelled || (trackingSessionRef.current && trackingSessionRef.current.sessionId !== session.sessionId)) return;
+        trackingSessionRef.current = restored;
+        trackingPromiseRef.current = Promise.resolve(restored);
+        saveActivityTimerSession(timerStorageKey, restored);
+        setExpiredTiming(false);
+        if (restored.rewardTracking) await flushRewardObservations(restored, isVideo ? 'video' : 'component', componentId);
+        if (!cancelled) setTimingSyncError(null);
+      } catch (error) {
+        if (!cancelled) setTimingSyncError(`Your time could not sync. Your draft is kept on this device. ${error instanceof Error ? error.message : 'Retry when connected.'}`);
+      }
+      finally { busy = false; }
+    };
+    const interval = setInterval(() => void sync(), 60000);
+    window.addEventListener('online', sync);
+    return () => { cancelled = true; clearInterval(interval); window.removeEventListener('online', sync); };
+  }, [recordingAttempt, componentId, kind, id, canUseComponent, isVideo, timerStorageKey]);
 
   // Ordinary page content counts only while visible. Media counts while it is
   // genuinely playing, even when the learner switches tab or opens another
@@ -682,9 +733,15 @@ export default function ComponentViewPage() {
     setSubmitError(null);
     setRefreshError(null);
     try {
-      const tracking = trackingSessionRef.current || await trackingPromiseRef.current;
-      if (tracking?.rewardTracking && timeSource === 'timer') await flushRewardObservations(tracking,isVideo?'video':'component',componentId);
+      let tracking = trackingSessionRef.current || await trackingPromiseRef.current;
       if (!tracking) throw new Error('Activity timing did not start. Reopen the activity and try again.');
+      if (tracking.persistent || !canResumeActivityTimer({ session: tracking, elapsedSeconds: elapsedRef.current }, tracking.countingMode)) {
+        tracking = await checkpointTimeTracking(tracking, isVideo ? 'video' : 'component', componentId, kind, id, elapsedRef.current)
+          .catch(error => { setExpiredTiming(true); throw error; });
+        trackingSessionRef.current = tracking;
+        saveActivityTimerSession(timerStorageKey, tracking);
+      }
+      if (tracking.rewardTracking && timeSource === 'timer') await flushRewardObservations(tracking,isVideo?'video':'component',componentId, Boolean(tracking.persistent));
       if (isVideo) {
         const res = await submitVideoProgress(componentId, kind as 'commercial' | 'apprenticeship', id, {
           week: weekTitle || null, module: moduleTitle || null,
@@ -803,9 +860,10 @@ export default function ComponentViewPage() {
 
 
         {expiredTiming && <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4">
-          <p>Your timing session has ended. Keep the previous draft for review and start a new timer. Your answers and saved progress will be kept.</p>
-          <button type="button" disabled={recoveringTiming} onClick={restartTiming} className="mt-2 font-semibold underline">{recoveringTiming ? 'Starting...' : 'Keep draft and start new timer'}</button>
+          <p>Your time needs to sync before you finish. Your previous time and answers are kept.</p>
+          <button type="button" disabled={recoveringTiming} onClick={restartTiming} className="mt-2 font-semibold underline">{recoveringTiming ? 'Restoring...' : 'Restore saved time'}</button>
         </div>}
+        {timingSyncError && <p role="status" className="rounded-xl border border-amber-300 p-3">{timingSyncError}</p>}
         {timingNotice && <p role="status" className="rounded-xl border p-3">{timingNotice}</p>}
         {loading ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} avatar={false} /></div>
@@ -1208,6 +1266,8 @@ export default function ComponentViewPage() {
             onSelectSource={setTimeSource}
             onCancel={() => setPhase('consume')}
             onConfirm={confirmCompletion}
+            onRecoverTiming={expiredTiming ? restartTiming : undefined}
+            recoveringTiming={recoveringTiming}
           />
         )}
         {phase === 'reflection-choice' && (
@@ -1217,6 +1277,8 @@ export default function ComponentViewPage() {
             error={submitError}
             onCancel={() => setPhase('consume')}
             onAddReflection={() => setPhase('reflect')}
+            onRecoverTiming={expiredTiming ? restartTiming : undefined}
+            recoveringTiming={recoveringTiming}
             onFinishWithoutReflection={() => void finalizeSubmit({
               ksbs: (component?.ksbMappings || []).map(mapping => mapping.code),
               feedback: '',
@@ -1263,6 +1325,8 @@ function CompletionConfirmPopup({
   onSelectSource,
   onCancel,
   onConfirm,
+  onRecoverTiming,
+  recoveringTiming = false,
 }: {
   title: string; noun: string; timerLabel: string; inputLabel: string | null; selectedSource: TimeSource; manualTimeOnly: boolean; evidenceFileName?: string | null;
   previousTimeLabel?: string | null; keepPreviousTime: boolean; onKeepPreviousTimeChange: (keep: boolean) => void;
@@ -1270,6 +1334,7 @@ function CompletionConfirmPopup({
   inputSeconds: number | null; onInputChange: (seconds: number | null) => void;
   continueToReflection?: boolean; timeEntryHint?: string;
   onSelectSource: (source: TimeSource) => void; onCancel: () => void; onConfirm: () => void;
+  onRecoverTiming?: () => void; recoveringTiming?: boolean;
 }) {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -1396,6 +1461,10 @@ function CompletionConfirmPopup({
             {error}
           </p>
         )}
+        {error && onRecoverTiming && <button type="button" onClick={onRecoverTiming} disabled={submitting || recoveringTiming}
+          className="mt-3 text-sm font-semibold text-primary-700 underline">
+          {recoveringTiming ? 'Restoring...' : 'Restore saved time'}
+        </button>}
 
         <div className="mt-5 grid grid-cols-2 gap-3">
           <button
@@ -2598,6 +2667,7 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
     tick(); window.addEventListener('focus', tick);
     return () => { clearTimeout(timer); window.removeEventListener('focus', tick); };
   }, [sessionEnd, preview]);
+  const primaryAudioRef = useRef<HTMLAudioElement>(null);
   if (contentKind === 'video' && parsed) {
     // The video's "Component content" from the Module Builder, shown under the
     // player. Its own field: title, description and video URL are unchanged.
@@ -2631,6 +2701,7 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
             controls
             preload="metadata"
             className="w-full"
+            ref={primaryAudioRef}
             src={audioSource}
             onPlaying={() => onPlayingChange(true)}
             onWaiting={() => onPlayingChange(false)}
@@ -2660,6 +2731,10 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
         {component.audioUrl && (
           <a href={proxiedMaterialUrl(component.audioUrl)} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-600 hover:text-violet-700"><AppIcon className="ri-external-link-line" />Open in a new tab</a>
         )}
+        {audioSource && <AudioYouTubeAlternative url={component.alternativeYouTubeUrl} onLeave={() => {
+          primaryAudioRef.current?.pause();
+          onPlayingChange(false);
+        }} />}
         <ExtraComponentFiles component={component} title={title} primaryUrl={component.audioUrl} audio />
       </div>
     );

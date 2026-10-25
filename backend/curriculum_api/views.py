@@ -5259,8 +5259,10 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                     if (artifact_type == 'recording' and occurrence and not stored
                             and not recording_matches_occurrence(artifact, occurrence, linked_by_launch=bool(launch))):
                         continue
+                    # Recordings are matched by their start; judge delivery by their actual end.
                     if occurrence and not stored and launch is None and run_not_delivery(
-                            occurrence, parse_graph_datetime(artifact.get('createdDateTime')) or timestamp, timestamp):
+                            occurrence, parse_graph_datetime(artifact.get('createdDateTime')) or timestamp,
+                            parse_graph_datetime(artifact.get('endDateTime')) or timestamp):
                         # Matched only as the nearest scheduled session, yet recorded
                         # outside it -- another day's use of the link (a week with no
                         # session, a session booked on its own meeting). Filing it
@@ -20399,6 +20401,21 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                 if planned_rescheduled:
                     planned_settings['sessionRescheduled'] = True
                 component['settings'] = planned_settings
+            first_settings = live_components[0].get('settings')
+            first_settings = first_settings if isinstance(first_settings, dict) else {}
+            first_number = parse_int(first_settings.get('teamsSessionNumber'), 0)
+            first_numbered = next(
+                (item for item in session_plan if first_number > 0 and item.get('sessionNumber') == first_number),
+                None,
+            )
+            if first_numbered:
+                # The header follows its first numbered session, including a
+                # confirmed Teams date kept above, when its authored week moves.
+                first_planned = {
+                    **first_numbered,
+                    'date': format_date(first_settings.get('sessionDate')) or first_numbered.get('date'),
+                    'day': clean_str(first_settings.get('sessionDay')) or first_numbered.get('day'),
+                }
         # The week runs on the day its live session is delivered on. A closed
         # delivery slot is not this week -- it is a reading week of its own,
         # which the plan's `slots` spine keeps in the curriculum at the closed
