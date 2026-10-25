@@ -286,12 +286,16 @@ const migratedUrl = (instanceId: string) => `/coach_api/migrated-reviews/${encod
 export async function fetchMigratedReviewIntelligence(
   instanceId: string,
   signal?: AbortSignal,
-  options: { refresh?: boolean } = {},
+  options: { refresh?: boolean; generateSummary?: boolean } = {},
 ): Promise<CoachMeetingArtifactsResponse> {
   const path = options.refresh ? 'check-session' : 'intelligence';
   return readJsonResponse<CoachMeetingArtifactsResponse>(await coachFetch(`${migratedUrl(instanceId)}/${path}`, {
     signal,
     ...(options.refresh ? { method: 'POST' } : {}),
+    ...(options.refresh && options.generateSummary ? {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ generateSummary: true }),
+    } : {}),
   }));
 }
 

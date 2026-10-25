@@ -9063,9 +9063,9 @@ def coach_meeting_artifact_content_response(request, record, event_key, artifact
         from .migrated_session_scope import (has_verified_meeting_evidence, scope_snapshot,
                                              stored_transcript_selection)
 
-        # Imported Review content is a stored, source-qualified read. The
-        # selected call may be outside the planned booking, but an arbitrary
-        # provider artifact ID must never turn into a Graph fallback request.
+        # Imported Review content starts with a stored, source-qualified read.
+        # The selected call may be outside the planned booking; only a saved,
+        # verified recording can become an on-demand Graph playback request.
         snapshot = stored_coach_meeting_snapshot(record)
         if snapshot.get('partial') or not (snapshot.get('storage') or {}).get('stored'):
             return JsonResponse({'detail': 'Saved meeting resources are temporarily unavailable.'}, status=503)
@@ -9103,15 +9103,18 @@ def coach_meeting_artifact_content_response(request, record, event_key, artifact
                                     content_type=stored_transcript['transcript_content_type'] or 'text/vtt')
             response['Content-Disposition'] = f'{disposition}; filename="{filename}"'
             return response
-        allowed_recordings = {row.get('graph_artifact_id') for row in scoped['artifacts']
-                              if row.get('artifact_type') == 'recording'
-                              and (row.get('metadata') or {}).get('_lms_graph_event_id') == record.graph_event_id}
-        if artifact_id not in allowed_recordings:
+        recording = next((row for row in scoped['artifacts']
+                          if row.get('artifact_type') == 'recording'
+                          and row.get('graph_artifact_id') == artifact_id
+                          and (row.get('metadata') or {}).get('_lms_graph_event_id') == record.graph_event_id), None)
+        if not recording:
             return JsonResponse({'detail': 'The recording is not available for this Review.'}, status=404)
         from coach_api.recording_archive import archived_recording_url
         archived_url = archived_recording_url(event_key, artifact_id)
-        return (HttpResponseRedirect(archived_url) if archived_url else
-                JsonResponse({'detail': 'A saved copy of this recording is not available yet.'}, status=404))
+        if archived_url:
+            return HttpResponseRedirect(archived_url)
+        from .imported_recording_playback import stream_imported_recording
+        return stream_imported_recording(request, record, scoped, recording)
 
     if artifact_type == "transcript":
         selection = coach_meeting_transcript_selection(record)

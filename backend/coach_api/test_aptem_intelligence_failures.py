@@ -28,7 +28,7 @@ class ImportedTranscriptCompletenessTests(SimpleTestCase):
         snapshot['artifacts'].append(second)
         return snapshot
 
-    def test_partial_call_never_generates_or_binds_in_any_imported_summary_family(self):
+    def test_partial_check_only_never_generates_or_binds_in_any_imported_summary_family(self):
         for family in ('MCM', 'PR', 'PR_SKILLS_RADAR'):
             for answer in ({}, {'summary': 'Coach edit'}, {'summary': ''}):
                 with self.subTest(family=family, answer=answer):
@@ -74,8 +74,8 @@ class ImportedTranscriptCompletenessTests(SimpleTestCase):
             self.call_check(self.segments(), {'artifactId': 'transcript-1', 'text': 'Opening'})
             ai.assert_not_called()
             complete = {'artifactId': 'transcript-1,transcript-2', 'text': 'Opening\n\nFinal actions'}
-            self.call_check(self.segments(failed=False), complete)
-            self.call_check(self.segments(failed=False), complete)
+            self.call_check(self.segments(failed=False), complete, generate=True)
+            self.call_check(self.segments(failed=False), complete, generate=True)
         ai.assert_called_once_with(self.record, complete['text'])
 
     def test_failed_transcript_listing_does_not_generate_from_unproven_partial_cache(self):

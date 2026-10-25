@@ -118,9 +118,9 @@ function MigratedMeetingIntelligenceContent({
       <div>
         <h2 className="text-sm font-bold text-foreground-900">Meeting Intelligence</h2>
         <p className="text-xs text-foreground-500">{mapped
-          ? 'Check Session refreshes Teams results. Generate from Teams at the Meeting Summary question uses the same check.'
-          : 'Check Session refreshes attendance, recordings, transcripts and the AI summary from Teams.'}</p>
-        <p className="mt-1 text-xs text-foreground-500">Check for available Teams resources. Attendance, recordings and transcripts may become available at different times. AI generation has separate eligibility checks.</p>
+          ? 'Check Session refreshes saved Teams resources. Generate from Teams at the Meeting Summary question uses the saved transcript.'
+          : 'Check Session refreshes attendance, recordings and transcripts from Teams.'}</p>
+        <p className="mt-1 text-xs text-foreground-500">Attendance, recordings and transcripts may become available at different times. Generate from Teams can use readable saved transcript text without waiting for attendance or call-end confirmation.</p>
       </div>
       <div className="flex flex-wrap gap-2 text-xs" aria-label="Meeting intelligence status">
         <span>Attendance: <strong>{statusLabel[intelligence?.attendanceStatus || 'not-checked']}</strong></span>
@@ -132,10 +132,10 @@ function MigratedMeetingIntelligenceContent({
         <p className="text-xs text-foreground-600">Planned appointment: {appointment.scheduledDate} at {appointment.scheduledTime}</p>
       ) : null}
       {intelligence?.meetingEndStatus === 'pending' && intelligence.lastCheckedAt ? (
-        <p role="status" className="text-xs text-foreground-600">Teams resources were checked. Eligible resources, if available, were saved. AI summary generation remains pending until the actual call completion can be verified. The planned appointment end does not confirm that a call ended.</p>
+        <p role="status" className="text-xs text-foreground-600">Teams resources were checked. Call-end confirmation is still pending; a summary generated from readable saved transcript text will be provisional.</p>
       ) : null}
       {intelligence?.meetingEndStatus === 'scheduled-end-reached' ? (
-        <p className="text-xs text-foreground-500">The planned appointment end has passed. Actual call completion still needs an associated ended attendance report before AI generation.</p>
+        <p className="text-xs text-foreground-500">The planned appointment end has passed. It does not confirm when the Teams call ended.</p>
       ) : null}
       {viewAs ? <p className="text-xs text-amber-800">Admin view-as is read-only. Session checks and summary edits are unavailable.</p> : null}
       {checkBlocked && !viewAs && !readOnly ? <p className="text-xs text-foreground-500">Save your draft and wait for any current action to finish before checking the session.</p> : null}
@@ -150,7 +150,7 @@ function MigratedMeetingIntelligenceContent({
               ? 'Your Meeting Summary answer has been kept.'
               : binding?.state === 'AI_POPULATED_UNEDITED'
                 ? 'The AI summary is saved in the review form. Review and edit it before submission. Further checks keep this answer.'
-                : 'Check Session can fill the Meeting Summary question once. You can also type the answer yourself.'}
+                : 'Generate from Teams can fill the Meeting Summary question once. You can also type the answer yourself.'}
       </div>}
       {showBoundSummary && mapped && <div className="rounded-lg bg-background-50 p-3 text-xs">
         <h3 className="font-bold">Meeting Summary</h3>

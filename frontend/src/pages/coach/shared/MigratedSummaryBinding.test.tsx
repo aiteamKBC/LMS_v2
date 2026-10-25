@@ -309,7 +309,7 @@ describe('bound migrated review answers', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Generate from Teams' }));
     expect(screen.getByRole('button', { name: 'Generating summary...' })).toBeDisabled();
     expect(field).toBeDisabled();
-    expect(api.fetchMigratedReviewIntelligence).toHaveBeenLastCalledWith(id, undefined, { refresh: true });
+    expect(api.fetchMigratedReviewIntelligence).toHaveBeenLastCalledWith(id, undefined, { refresh: true, generateSummary: true });
     await act(async () => release({ ...result({ fieldKey: 'recap', state: 'AI_POPULATED_UNEDITED', status: 'populated', suggestionSource: 'teams' }),
       answerVersion: 'v2', reviewAnswers: { recap: 'Teams summary', other: 'Existing other answer' } }));
     expect(field).toHaveValue('Teams summary');
@@ -419,7 +419,7 @@ describe('bound migrated review answers', () => {
     expect(field).toBeEnabled();
   });
 
-  it('reports an available transcript awaiting actual-end evidence without calling it missing', async () => {
+  it('reports a saved transcript without mislabeling it missing when generation is pending', async () => {
     vi.mocked(api.fetchMigratedReviewIntelligence).mockImplementation(async (_id, _signal, options) => options?.refresh
       ? { ...result({ fieldKey: 'recap', state: 'NEVER_POPULATED', status: 'summary-unavailable', generationStatus: 'unavailable' }),
         intelligence: { ...result().intelligence!, transcriptStatus: 'available', summaryStatus: 'pending',
@@ -428,7 +428,7 @@ describe('bound migrated review answers', () => {
       : result());
     mount();
     fireEvent.click(await screen.findByRole('button', { name: 'Generate from Teams' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('The Teams transcript is saved');
+    expect(await screen.findByRole('alert')).toHaveTextContent('The saved Teams transcript is available');
     expect(screen.queryByText(/No transcript was found/)).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Discussion record' })).toBeEnabled();
   });
@@ -488,7 +488,7 @@ describe('summary request ownership', () => {
     vi.mocked(api.fetchMigratedReviewIntelligence).mockImplementation(async (_key, _signal, options) => options?.refresh ? pending : result());
     render(<ReviewInstanceModal instanceId={id} onClose={vi.fn()} presentation="page" />);
     fireEvent.click(await screen.findByRole('button', { name: 'Generate from Teams' }));
-    await waitFor(() => expect(api.fetchMigratedReviewIntelligence).toHaveBeenCalledWith(id, undefined, { refresh: true }));
+    await waitFor(() => expect(api.fetchMigratedReviewIntelligence).toHaveBeenCalledWith(id, undefined, { refresh: true, generateSummary: true }));
     fireEvent.click(screen.getByRole('button', { name: 'Next step' }));
     expect(screen.queryByRole('button', { name: 'Generate from Teams' })).not.toBeInTheDocument();
     await act(async () => { resolveGeneration({ ...result({ fieldKey: 'recap', state: 'AI_POPULATED_UNEDITED', generationStatus: 'ready' }),
@@ -526,7 +526,8 @@ describe('summary request ownership', () => {
       const action = await screen.findByRole('button', { name: source === 'check' ? 'Check Session' : 'Generate from Teams' });
       await waitFor(() => expect(action).toBeEnabled());
       fireEvent.click(action);
-      await waitFor(() => expect(api.fetchMigratedReviewIntelligence).toHaveBeenCalledWith(id, undefined, { refresh: true }));
+      await waitFor(() => expect(api.fetchMigratedReviewIntelligence).toHaveBeenCalledWith(id, undefined,
+        source === 'check' ? { refresh: true } : { refresh: true, generateSummary: true }));
     } else {
       fireEvent.change(screen.getByLabelText('Select migrated review transcript'), {
         target: { files: [new File(['Synthetic transcript'], 'meeting.txt', { type: 'text/plain' })] },

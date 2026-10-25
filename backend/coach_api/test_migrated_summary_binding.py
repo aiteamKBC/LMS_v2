@@ -156,7 +156,8 @@ class MigratedBindingFlowTests(TestCase):
              patch.object(views, "stored_coach_meeting_snapshot", side_effect=lambda *a, **kw: deepcopy(saved)), \
              patch.object(views, "stored_coach_meeting_transcript_for_summary", return_value={"artifactId": "artifact-one", "text": transcript} if transcript else None), \
              patch.object(views, "openai_meeting_summary", side_effect=generate) as ai:
-            response = unwrap(intelligence.migrated_review_check_session)(self.factory.post("/"), self.overlay.event_key)
+            response = unwrap(intelligence.migrated_review_check_session)(self.factory.post("/",
+                data=json.dumps({'generateSummary': True}), content_type='application/json'), self.overlay.event_key)
         self.overlay.refresh_from_db()
         return response, ai
 

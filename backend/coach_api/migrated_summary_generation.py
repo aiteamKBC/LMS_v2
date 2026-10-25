@@ -100,6 +100,7 @@ def summary_binding_response(overlay):
     if isinstance(latest.get("summary"), dict):
         text = meeting_summary_plain_text(latest["summary"])
         result.update(suggestionText=text, suggestionSource=provenance.get("source"),
+                      provisional=bool(provenance.get('source') == 'teams' and provenance.get('provisional')),
                       summaryTooLong=len(text) > TEXT_ANSWER_LIMIT,
                       generatedAt=provenance.get("generatedAt"), transcriptTruncated=bool(provenance.get("transcriptTruncated")),
                       replacementAvailable=bool(text and text != result.get("answer") and result["state"] != "NEVER_POPULATED"))

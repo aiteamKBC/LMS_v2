@@ -49,14 +49,14 @@ export function MigratedSummaryActions({ instanceId, binding, editable, showActi
     try {
       // The field button and Check Session share the dedicated migrated route.
       const result = file ? await uploadMigratedSummaryTranscript(instanceId, file)
-        : await fetchMigratedReviewIntelligence(instanceId, undefined, { refresh: true });
+        : await fetchMigratedReviewIntelligence(instanceId, undefined, { refresh: true, generateSummary: true });
       completedRevision.current = result.summaryBinding ? bindingRevision(instanceId, result.summaryBinding) : undefined;
       onResult(result);
       if ((result.summaryBinding?.generationStatus ?? result.intelligence?.summaryStatus) === 'failed') {
         setError(failureMessage(result.summaryBinding?.generationError ?? result.intelligence?.generationError ?? undefined));
       } else if (result.intelligence?.transcriptStatus === 'available'
         && (result.intelligence.summaryStatus === 'pending' || result.summaryBinding?.status === 'summary-pending')) {
-        setError('The Teams transcript is saved, but summary generation is pending sufficient proof that the selected call or calls have ended. Retry after attendance is complete, or enter the answer manually.');
+        setError('The saved Teams transcript is available, but the summary was not generated. Retry Generate from Teams or enter the answer manually.');
       } else if (result.intelligence?.transcriptStatus === 'available'
         && result.summaryBinding?.generationStatus === 'unavailable') {
         setError(result.summaryBinding.message
@@ -79,7 +79,7 @@ export function MigratedSummaryActions({ instanceId, binding, editable, showActi
   const message = binding.generationStatus === 'failed'
     ? failureMessage(binding.generationError)
     : binding.status === 'summary-pending'
-      ? 'The Teams transcript is saved. Summary generation is pending sufficient proof that the selected call or calls have ended.'
+      ? 'The saved Teams transcript is available. Use Generate from Teams to create an editable summary.'
       : binding.generationStatus === 'unavailable'
       ? binding.message || 'No transcript is available for summary generation. Check Session for details, upload a transcript, or enter the answer manually.'
       : binding.status === 'summary-too-long'
@@ -119,6 +119,7 @@ export function MigratedSummaryActions({ instanceId, binding, editable, showActi
       {editable && unsaved && <p className="text-xs text-foreground-600">Save your draft before generating a summary so your edits are preserved.</p>}
     </>}
     {binding.suggestionSource && <p className="text-xs text-primary-800">Latest AI summary generated from {binding.suggestionSource === 'teams' ? 'Teams transcript' : 'uploaded transcript'}.</p>}
+    {binding.provisional && <p role="status" className="text-xs text-amber-800">Provisional AI summary: the saved Teams transcript may be partial. Review and edit the answer before saving.</p>}
     {binding.transcriptTruncated && <p role="status" className="text-xs text-amber-800">The transcript exceeded the AI input limit. The summary covers only its initial portion; review it against the full transcript.</p>}
     {error ? <p role="alert" className="text-xs text-red-700">{error}</p> : message && <p
       role={binding.generationStatus === 'failed' || binding.generationStatus === 'unavailable' ? 'alert' : 'status'}

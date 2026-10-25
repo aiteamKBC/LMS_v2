@@ -87,10 +87,11 @@ class CheckSessionResourceTests(SimpleTestCase):
     def transcript(self, record, *, artifact_ids=None):
         rows=[a for a in self.stored['artifacts'] if a['artifact_type']=='transcript'
               and a.get('transcript_text') and (artifact_ids is None or a['graph_artifact_id'] in artifact_ids)]
+        rows.sort(key=lambda row: (row.get('created_datetime') or row.get('end_datetime') or '', row['graph_artifact_id']))
         self.transcript_reads.append([a['graph_artifact_id'] for a in rows])
         return {'artifactId':','.join(a['graph_artifact_id'] for a in rows),'text':'\n\n'.join(a['transcript_text'] for a in rows)} if rows else None
 
-    def call(self):
+    def call(self, *, generate=True):
         with ExitStack() as stack:
             def p(name,**kwargs): return stack.enter_context(patch(name,**kwargs))
             p('coach_api.migrated_intelligence_views.timezone.now',return_value=NOW)
@@ -117,10 +118,12 @@ class CheckSessionResourceTests(SimpleTestCase):
             p('coach_api.migrated_intelligence_views.owns',return_value=True)
             p('coach_api.migrated_intelligence_views.release')
             def ai(*args):
+                self.ai_input = args[1]
                 if self.ai_hook: self.ai_hook()
                 return ({'overview':'Synthetic OLD transcript recap'},'fake-model')
             provider=p('coach_api.views.openai_meeting_summary',side_effect=ai)
-            response=inspect.unwrap(action.migrated_review_check_session)(RequestFactory().post('/',data='{}',content_type='application/json'),KEY)
+            response=inspect.unwrap(action.migrated_review_check_session)(RequestFactory().post('/',
+                data=json.dumps({'generateSummary': generate}), content_type='application/json'),KEY)
             self.ai_calls=provider.call_count
             self.archive_calls=archive.call_args_list
         self.payload=json.loads(response.content)
@@ -138,15 +141,16 @@ class CheckSessionResourceTests(SimpleTestCase):
         self.assertEqual(self.ai_calls, 0)
         self.assertEqual(self.overlay.answers, {})
 
-    def test_early_complete_transcript_saved_and_start_returned_without_ai(self):
+    def test_early_complete_transcript_saved_started_and_provisionally_summarized(self):
         self.overlay.status = self.record.status = 'scheduled'
         self.add_artifact()
         self.assertEqual(self.call(), 200)
         self.assertEqual(self.payload['event']['status'], 'in-progress')
         self.assertEqual(self.payload['intelligence']['transcriptStatus'], 'available')
         self.assertEqual(self.stored['artifacts'][0]['transcript_text'], 'Opening and agreed actions')
-        self.assertEqual(self.ai_calls, 0)
-        self.assertEqual(self.overlay.answers, {})
+        self.assertEqual(self.ai_calls, 1)
+        self.assertTrue(self.payload['summaryBinding']['provisional'])
+        self.assertTrue(self.overlay.answers.get('summary'))
 
     def test_early_recording_saved_without_start_or_video_download(self):
         self.overlay.status = self.record.status = 'scheduled'
@@ -169,9 +173,10 @@ class CheckSessionResourceTests(SimpleTestCase):
 
     def test_gradual_resources_then_ended_report_generates_once(self):
         self.add_artifact(); self.add_artifact('recording', 'video')
-        self.assertEqual(self.call(), 200); self.assertEqual(self.ai_calls, 0)
-        self.add_report()
         self.assertEqual(self.call(), 200); self.assertEqual(self.ai_calls, 1)
+        self.assertTrue(self.payload['summaryBinding']['provisional'])
+        self.add_report()
+        self.assertEqual(self.call(), 200); self.assertEqual(self.ai_calls, 0)
         self.assertEqual(self.payload['intelligence']['meetingEndStatus'], 'attendance-confirmed')
         answers = deepcopy(self.overlay.answers)
         self.assertEqual(self.call(), 200); self.assertEqual(self.ai_calls, 0)
@@ -216,16 +221,16 @@ class CheckSessionResourceTests(SimpleTestCase):
         self.assertEqual(binding['suggestionSource'], 'teams')
         self.assertIn('Synthetic OLD transcript recap', binding['suggestionText'])
 
-    def test_unrelated_ended_report_does_not_enable_off_window_ai(self):
+    def test_unrelated_ended_report_does_not_make_off_window_ai_final(self):
         self.add_artifact(createdDateTime='2026-10-24T11:10:00Z',
                           endDateTime='2026-10-24T11:40:00Z')
         self.add_report(meetingStartDateTime='2026-10-23T11:00:00Z',
                         meetingEndDateTime='2026-10-23T11:45:00Z')
         self.assertEqual(self.call(), 200)
-        self.assertEqual(self.ai_calls, 0)
-        self.assertEqual(self.payload['intelligence']['summaryStatus'], 'pending')
+        self.assertEqual(self.ai_calls, 1)
+        self.assertTrue(self.payload['summaryBinding']['provisional'])
 
-    def test_several_calls_with_one_ended_report_remain_ai_pending(self):
+    def test_several_calls_with_one_ended_report_generate_provisionally(self):
         self.add_artifact(key='first', createdDateTime='2026-10-24T11:10:00Z',
                           endDateTime='2026-10-24T11:20:00Z')
         self.add_artifact(key='second', call='two', createdDateTime='2026-10-24T11:25:00Z',
@@ -233,42 +238,110 @@ class CheckSessionResourceTests(SimpleTestCase):
         self.add_report(meetingStartDateTime='2026-10-24T11:00:00Z',
                         meetingEndDateTime='2026-10-24T11:45:00Z')
         self.assertEqual(self.call(), 200)
-        self.assertEqual(self.ai_calls, 0)
+        self.assertEqual(self.ai_calls, 1)
         self.assertEqual(self.payload['intelligence']['transcriptStatus'], 'available')
-        self.assertEqual(self.payload['summaryBinding']['status'], 'summary-pending')
-        self.assertEqual(self.overlay.answers, {})
+        self.assertTrue(self.payload['summaryBinding']['provisional'])
+        self.assertTrue(self.overlay.answers.get('summary'))
 
-    def test_report_change_during_ai_rejects_stale_summary(self):
+    def test_report_change_during_ai_does_not_change_transcript_summary(self):
         self.add_artifact()
         self.add_report()
         self.ai_hook = lambda: self.stored['attendanceReports'][0].update(
             meetingEndDateTime='2026-10-25T11:35:00Z')
-        self.assertEqual(self.call(), 409)
-        self.assertEqual(self.overlay.answers, {})
+        self.assertEqual(self.call(), 200)
+        self.assertTrue(self.overlay.answers.get('summary'))
 
-    def test_after_booked_end_without_actual_completion_keeps_ai_pending(self):
+    def test_after_booked_end_without_actual_completion_generates_provisionally(self):
         self.after_end(); self.add_artifact()
-        self.assertEqual(self.call(), 200); self.assertEqual(self.ai_calls, 0)
+        self.assertEqual(self.call(), 200); self.assertEqual(self.ai_calls, 1)
         self.assertEqual(self.payload['intelligence']['meetingEndStatus'], 'pending')
         self.assertEqual(self.payload['intelligence']['transcriptStatus'], 'available')
-        self.assertEqual(self.payload['summaryBinding']['status'], 'summary-pending')
-        self.assertEqual(self.overlay.answers, {})
+        self.assertTrue(self.payload['summaryBinding']['provisional'])
+        self.assertTrue(self.overlay.answers.get('summary'))
 
-    def test_incomplete_transcript_keeps_recording_but_never_generates(self):
+    def test_review_4256_synthetic_saved_transcript_generates_without_end_report(self):
+        self.overlay.source_review_id = 4256  # Synthetic reproduction; no learner record is read.
+        self.add_artifact(key='saved-transcript', body='Synthetic actions agreed',
+                          createdDateTime='2026-10-24T11:00:00Z', endDateTime='2026-10-24T11:40:00Z')
+        self.assertEqual(self.call(generate=False), 200)
+        self.assertEqual(self.ai_calls, 0)
+        self.assertEqual(self.stored['artifacts'][0]['transcript_text'], 'Synthetic actions agreed')
+        self.assertEqual(self.overlay.answers, {})
+        # A later listing can be empty while the already verified saved
+        # transcript remains readable under the same meeting identity.
+        self.collections['transcripts']['value'] = []
+        self.assertEqual(self.call(), 200)
+        self.assertEqual(self.ai_calls, 1)
+        self.assertEqual(self.ai_input, 'Synthetic actions agreed')
+        self.assertEqual(self.overlay.answers['summary'], 'Synthetic OLD transcript recap')
+        self.assertTrue(self.payload['summaryBinding']['provisional'])
+        self.assertEqual(self.payload['intelligence']['meetingEndStatus'], 'pending')
+
+    def test_check_session_saves_preview_text_without_generating_or_editing_the_form(self):
+        self.add_artifact(body='A saved decision')
+        self.assertEqual(self.call(generate=False), 200)
+        self.assertEqual(self.ai_calls, 0)
+        self.assertEqual(self.stored['artifacts'][0]['transcript_text'], 'A saved decision')
+        self.assertEqual(self.overlay.answers, {})
+        self.assertEqual(self.payload['intelligence']['transcriptStatus'], 'available')
+        self.assertEqual(self.call(generate=True), 200)
+        self.assertEqual(self.ai_calls, 1)
+        self.assertEqual(self.ai_input, 'A saved decision')
+
+    def test_multiple_verified_calls_generate_one_provisional_summary_without_attendance(self):
+        self.add_artifact(key='later', call='two', body='Second call decisions',
+                          createdDateTime='2026-10-24T12:00:00Z', endDateTime='2026-10-24T12:30:00Z')
+        self.add_artifact(key='earlier', call='one', body='First call decisions',
+                          createdDateTime='2026-10-24T10:00:00Z', endDateTime='2026-10-24T10:30:00Z')
+        self.assertEqual(self.call(), 200)
+        self.assertEqual(self.ai_calls, 1)
+        self.assertEqual(self.ai_input, 'First call decisions\n\nSecond call decisions')
+        self.assertEqual(self.payload['intelligence']['transcriptStatus'], 'available')
+        self.assertTrue(self.payload['summaryBinding']['provisional'])
+
+    def test_readable_saved_segment_can_generate_provisional_summary_when_another_fetch_fails(self):
+        self.add_artifact(key='readable', body='Saved readable decision')
+        self.add_artifact(key='missing', body=RuntimeError('synthetic segment failure'))
+        self.assertEqual(self.call(), 207)
+        self.assertEqual(self.ai_calls, 1)
+        self.assertEqual(self.ai_input, 'Saved readable decision')
+        self.assertTrue(self.payload['summaryBinding']['provisional'])
+        self.assertIn('TRANSCRIPT_INCOMPLETE', self.payload['intelligence']['errorCodes'])
+        self.assertEqual(self.payload['intelligence']['transcriptStatus'], 'incomplete')
+
+    def test_incomplete_transcript_keeps_recording_and_generates_from_readable_text(self):
         self.add_artifact(); self.add_artifact(key='second', body=RuntimeError())
         self.add_artifact('recording', 'video'); self.add_report()
         self.assertEqual(self.call(), 207)
-        self.assertEqual(self.ai_calls, 0)
+        self.assertEqual(self.ai_calls, 1)
+        self.assertEqual(self.ai_input, 'Opening and agreed actions')
+        self.assertTrue(self.payload['summaryBinding']['provisional'])
         self.assertIn('TRANSCRIPT_INCOMPLETE', self.payload['intelligence']['errorCodes'])
+        self.assertEqual(self.payload['intelligence']['transcriptStatus'], 'incomplete')
         self.assertEqual({a['graph_artifact_id'] for a in self.stored['artifacts']}, {'t1', 'video'})
 
-    def test_two_verified_calls_are_saved_separately_without_ai(self):
+    def test_duplicate_metadata_id_is_summarized_once(self):
+        self.add_artifact(key='once', body='One verified decision')
+        self.collections['transcripts']['value'].append(deepcopy(self.collections['transcripts']['value'][0]))
+        self.assertEqual(self.call(), 200)
+        self.assertEqual(self.ai_calls, 1)
+        self.assertEqual(self.ai_input, 'One verified decision')
+
+    def test_other_meeting_artifact_never_enters_summary(self):
+        self.add_artifact(key='owned', body='Owned meeting decision')
+        self.add_artifact(key='foreign', body='Other meeting words', meetingId='different-meeting')
+        self.assertEqual(self.call(), 207)
+        self.assertEqual(self.ai_input, 'Owned meeting decision')
+        self.assertEqual({row['graph_artifact_id'] for row in self.stored['artifacts']}, {'owned'})
+
+    def test_two_verified_calls_are_saved_separately_and_summarized_provisionally(self):
         self.overlay.status = self.record.status = 'scheduled'
         self.add_artifact(); self.add_artifact(key='other', call='two')
         self.assertEqual(self.call(), 200)
         self.assertEqual({row['graph_artifact_id'] for row in self.stored['artifacts']}, {'t1', 'other'})
         self.assertEqual({row['call_id'] for row in self.stored['artifacts']}, {'one', 'two'})
-        self.assertEqual(self.ai_calls, 0)
+        self.assertEqual(self.ai_calls, 1)
+        self.assertTrue(self.payload['summaryBinding']['provisional'])
 
     def test_verified_early_content_is_saved_without_exposing_its_body_in_metadata(self):
         self.add_artifact(key='PRIVATE-OLD-ID', body='PRIVATE OLD WORDS',
@@ -276,7 +349,7 @@ class CheckSessionResourceTests(SimpleTestCase):
         self.assertEqual(self.call(), 200)
         self.assertEqual(self.stored['artifacts'][0]['transcript_text'], 'PRIVATE OLD WORDS')
         self.assertEqual(self.payload['artifacts'][0]['graph_artifact_id'], 'PRIVATE-OLD-ID')
-        self.assertNotIn('PRIVATE OLD WORDS', json.dumps(self.payload)); self.assertEqual(self.ai_calls, 0)
+        self.assertNotIn('PRIVATE OLD WORDS', json.dumps(self.payload)); self.assertEqual(self.ai_calls, 1)
 
     def test_two_call_segments_and_early_recording_remain_distinct(self):
         self.add_artifact()
@@ -284,7 +357,7 @@ class CheckSessionResourceTests(SimpleTestCase):
         self.add_artifact('recording', 'old', call='old', createdDateTime='2026-10-24T11:00:00Z', endDateTime='2026-10-24T11:10:00Z')
         self.assertEqual(self.call(), 200)
         self.assertEqual({a['graph_artifact_id'] for a in self.stored['artifacts']}, {'t1', 'later', 'old'})
-        self.assertEqual(self.ai_calls, 0)
+        self.assertEqual(self.ai_calls, 1)
 
     def test_missing_or_partial_attendance_preserves_prior_evidence(self):
         self.add_report(); self.assertEqual(self.call(), 200)
@@ -375,7 +448,7 @@ class CheckSessionResourceTests(SimpleTestCase):
         self.assertEqual(self.call(), 200); self.assertEqual(self.ai_calls, 0)
         self.assertEqual(self.payload['attendance']['reportCount'], 1)
         self.assertEqual(self.payload['intelligence']['meetingEndStatus'], 'attendance-confirmed')
-        self.assertEqual(self.payload['intelligence']['summaryStatus'], 'pending')
+        self.assertEqual(self.payload['intelligence']['summaryStatus'], 'unavailable')
 
     def test_transcript_content_timeout_keeps_recording_and_never_starts_or_generates(self):
         self.overlay.status = self.record.status = 'scheduled'

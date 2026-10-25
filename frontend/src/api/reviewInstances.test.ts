@@ -20,6 +20,20 @@ afterEach(() => {
 });
 
 describe('imported meeting intelligence diagnostics', () => {
+  it('keeps Check Session resource-only and explicitly requests AI for Generate', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ csrfToken: 'server-token' }))
+      .mockResolvedValue(jsonResponse({ artifacts: [] }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { fetchMigratedReviewIntelligence } = await import('./reviewInstances');
+    await fetchMigratedReviewIntelligence('imported-review:42', undefined, { refresh: true });
+    await fetchMigratedReviewIntelligence('imported-review:42', undefined, { refresh: true, generateSummary: true });
+    const check = fetchMock.mock.calls[1][1] as RequestInit;
+    const generate = fetchMock.mock.calls[2][1] as RequestInit;
+    expect(check.method).toBe('POST');
+    expect(check.body).toBeUndefined();
+    expect(JSON.parse(generate.body as string)).toEqual({ generateSummary: true });
+    expect(new Headers(generate.headers).get('X-CSRFToken')).toBe('server-token');
+  });
   it.each([
     [403, 'GRAPH_PERMISSION_ERROR'], [404, 'GRAPH_MEETING_NOT_FOUND'],
     [409, 'GRAPH_MEETING_UNRESOLVED'], [429, 'GRAPH_THROTTLED'],
