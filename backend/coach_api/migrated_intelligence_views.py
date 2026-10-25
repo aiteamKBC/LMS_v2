@@ -342,6 +342,32 @@ def _transcript_basis(artifacts):
     return sorted(result, key=lambda row: row[0])
 
 
+def _single_call_ended(transcripts, reports, now):
+    """Require one identified transcript call within one ended meeting report.
+
+    Report IDs do not carry a documented call ID. This conservative envelope
+    permits a single call without attributing a report to multiple calls.
+    """
+    calls = set()
+    for row in transcripts:
+        call = row.get('call_id') or (row.get('metadata') or {}).get('callId')
+        if not isinstance(call, str) or not call.strip():
+            return False
+        calls.add(call)
+    if not transcripts or len(calls) != 1 or len(reports) != 1:
+        return False
+    report_start, report_end = report_window(reports[0])
+    if not report_start or not report_end or report_start >= report_end or report_end > now:
+        return False
+    for row in transcripts:
+        metadata = row.get('metadata') or {}
+        start = instant(row.get('created_datetime') or metadata.get('createdDateTime'))
+        end = instant(row.get('end_datetime') or metadata.get('endDateTime'))
+        if not start or not end or not report_start <= start < end <= report_end:
+            return False
+    return True
+
+
 @coach_access_required
 @require_POST
 def migrated_review_check_session(request, review_id):
@@ -510,17 +536,12 @@ def migrated_review_check_session(request, review_id):
                 errors.append('The complete Teams transcript could not be retrieved. Retry Check Session or upload the complete session transcript. Your saved answer is unchanged.')
             resource_state = _resource_state(current_record, snapshot, selected, reports, transcript, errors, incomplete,
                                              timezone.now(), meeting_scoped=True)
-            # The meeting-scoped resource read may contain several calls. The
-            # old single booked-call AI path cannot prove their report-to-call
-            # mapping, so it must not generate a combined or partial answer.
-            legacy_ai_selection = scope_snapshot(current_record, selected)
-            legacy_ai_ids = {row.get('graph_artifact_id') for row in legacy_ai_selection['artifacts']
-                             if row.get('artifact_type') == 'transcript'}
-            calls = {row.get('call_id') or (row.get('metadata') or {}).get('callId')
-                     for row in selected['artifacts'] if row.get('artifact_type') == 'transcript'}
-            ai_pending = (len(calls) != 1 or not next(iter(calls), None)
-                          or legacy_ai_selection['selectionError'] or legacy_ai_ids != set(transcript_ids)
-                          or len(current_reports(current_record, {'attendanceReports': reports})) != 1)
+            # One verified call with a fully enclosing ended report can use the
+            # same saved segments as Preview, regardless of booked time. A
+            # meeting-level report cannot establish the end of several calls.
+            ai_pending = (bool(selected['selectionError']) or bool((snapshot.get('resourceErrors') or {}).get('attendance'))
+                          or not snapshot.get('attendanceCollectionComplete', True)
+                          or not _single_call_ended(transcript_rows, reports, timezone.now()))
             if ai_pending:
                 if not (locked.meeting_intelligence or {}).get('summary'):
                     resource_state['summaryStatus'] = 'pending'
@@ -537,7 +558,11 @@ def migrated_review_check_session(request, review_id):
                     state['summaryGeneration'] = {'status': 'unavailable', 'source': 'teams'}
                     resource_state['summaryStatus'] = 'unavailable'
                 state.update(resource_state)
-                populate_answer(locked, state, '')
+                if transcript and (state.get('summaryGeneration') or {}).get('status') == 'unavailable':
+                    state.pop('summaryGeneration', None)
+                binding = populate_answer(locked, state, '')
+                if transcript and binding.get('status') == 'summary-unavailable':
+                    state['summaryBinding']['status'] = 'summary-pending'
                 locked.meeting_intelligence = state
                 locked.save(update_fields=['meeting_intelligence', 'updated_at'])
                 return _response(locked, current_record, errors=errors, status=207 if errors else 200)
@@ -575,9 +600,13 @@ def migrated_review_check_session(request, review_id):
                     meeting_scoped=True, meeting_id=target.online_meeting_id)
                 current_ids = {row['graph_artifact_id'] for row in current_selection['artifacts']
                                if row.get('artifact_type') == 'transcript' and row.get('graph_artifact_id')}
+                current_rows = [row for row in current_selection['artifacts']
+                                if row.get('artifact_type') == 'transcript']
                 if (not current_transcript or not transcript
                         or current_snapshot.get('partial') or current_selection['selectionError']
                         or current_ids != set(current_transcript['artifactId'].split(','))
+                        or not _single_call_ended(current_rows, current_selection['attendanceReports'], timezone.now())
+                        or current_selection['attendanceReports'] != selected['attendanceReports']
                         or _transcript_basis(current_selection['artifacts']) != _transcript_basis(selected['artifacts'])
                         or current_transcript['artifactId'] != transcript['artifactId']
                         or current_transcript['text'] != transcript['text']):

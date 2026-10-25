@@ -54,10 +54,19 @@ export function MigratedSummaryActions({ instanceId, binding, editable, showActi
       onResult(result);
       if ((result.summaryBinding?.generationStatus ?? result.intelligence?.summaryStatus) === 'failed') {
         setError(failureMessage(result.summaryBinding?.generationError ?? result.intelligence?.generationError ?? undefined));
+      } else if (result.intelligence?.transcriptStatus === 'available'
+        && (result.intelligence.summaryStatus === 'pending' || result.summaryBinding?.status === 'summary-pending')) {
+        setError('The Teams transcript is saved, but summary generation is pending sufficient proof that the selected call or calls have ended. Retry after attendance is complete, or enter the answer manually.');
+      } else if (result.intelligence?.transcriptStatus === 'available'
+        && result.summaryBinding?.generationStatus === 'unavailable') {
+        setError(result.summaryBinding.message
+          || 'A saved Teams transcript is available, but it could not be used for this summary. Check Session for details; your answer is unchanged.');
       } else if (result.summaryBinding?.generationStatus === 'unavailable' || result.summaryBinding?.status === 'summary-unavailable') {
-        setError(result.intelligence?.errorCodes?.includes('TRANSCRIPT_FETCH_FAILED')
-          ? 'The Teams transcript could not be fetched. Retry, or upload the correct transcript. Your saved answer is unchanged.'
-          : 'No transcript was found for this meeting. Upload a transcript or enter the answer manually.');
+        setError(result.intelligence?.errorCodes?.includes('TRANSCRIPT_INCOMPLETE')
+          ? 'The complete Teams transcript is not available yet. Retry Check Session or upload the complete transcript. Your saved answer is unchanged.'
+          : result.intelligence?.errorCodes?.includes('TRANSCRIPT_FETCH_FAILED')
+            ? 'The Teams transcript could not be fetched. Retry, or upload the correct transcript. Your saved answer is unchanged.'
+            : 'No transcript was found for this meeting. Upload a transcript or enter the answer manually.');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The transcript could not be processed. You can enter the answer manually.');
@@ -69,8 +78,10 @@ export function MigratedSummaryActions({ instanceId, binding, editable, showActi
   };
   const message = binding.generationStatus === 'failed'
     ? failureMessage(binding.generationError)
-    : binding.generationStatus === 'unavailable'
-      ? 'No transcript is available for summary generation. Check Session for details, upload a transcript, or enter the answer manually.'
+    : binding.status === 'summary-pending'
+      ? 'The Teams transcript is saved. Summary generation is pending sufficient proof that the selected call or calls have ended.'
+      : binding.generationStatus === 'unavailable'
+      ? binding.message || 'No transcript is available for summary generation. Check Session for details, upload a transcript, or enter the answer manually.'
       : binding.status === 'summary-too-long'
         ? 'AI summary is longer than this field allows. Review and shorten it before saving.'
         : binding.status === 'populated'
