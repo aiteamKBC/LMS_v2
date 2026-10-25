@@ -25,8 +25,26 @@ it('renders pages without a browser save toolbar and cleans up the PDF', async (
   expect(screen.getByRole('button', { name: 'Zoom out report' })).toBeDisabled();
   fireEvent.click(screen.getByRole('button', { name: 'Reset zoom' }));
   expect(sheet).toHaveStyle({ maxWidth: '794px' });
+  fireEvent.click(screen.getByRole('button', { name: 'Zoom in report' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Zoom in report' }));
+  expect(screen.getByRole('button', { name: 'Zoom in report' })).toBeDisabled();
+  expect(screen.getByLabelText('Report zoom level')).toHaveTextContent('150%');
   fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
   await waitFor(() => expect(getPage).toHaveBeenLastCalledWith(2));
   expect(screen.getByText('Page 2 of 2')).toBeVisible();
   view.unmount(); expect(destroy).toHaveBeenCalledOnce();
+});
+
+it('allows a coaching popup to opt into readable scrollable zoom without changing learner defaults', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new Uint8Array([37,80,68,70]).buffer }));
+  const getPage = vi.fn().mockResolvedValue({ getViewport: () => ({ width: 800, height: 1100 }), render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }) });
+  vi.mocked(getDocument).mockReturnValue({ promise: Promise.resolve({ numPages: 1, getPage }), destroy: vi.fn() } as any);
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({} as CanvasRenderingContext2D);
+  render(<AssignmentPdfPreview url="blob:coaching" filename="Saved coaching report.pdf" scrollableZoom label="AI analysis PDF preview" />);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Zoom in report' })).toBeEnabled());
+  for (let step=0; step<12; step++) fireEvent.click(screen.getByRole('button', { name: 'Zoom in report' }));
+  expect(screen.getByLabelText('Report zoom level')).toHaveTextContent('400%');
+  expect(screen.getByRole('button', { name: 'Zoom in report' })).toBeDisabled();
+  expect(screen.getByLabelText('Report page 1')).toHaveStyle({ width: '400%' });
+  expect(screen.getByRole('region', { name: 'AI analysis PDF preview' })).toBeInTheDocument();
 });

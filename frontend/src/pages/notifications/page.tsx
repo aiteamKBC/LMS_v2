@@ -5,6 +5,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { roleNotifications, type RoleNotification } from '@/mocks/role-notifications';
 import { fetchAbsenceNotifications } from '@/api/absenceNotifications';
+import CompletionNotifications from './CompletionNotifications';
 
 const typeColors: Record<string, string> = {
   otjh: 'bg-primary-50 text-primary-700 border-primary-200/50',
@@ -229,6 +230,7 @@ export default function NotificationsPage() {
         </div>
 
         {/* Role indicator */}
+        <CompletionNotifications account={account} />
         <div className="px-6 py-2 flex items-center gap-2">
           <div className="flex items-center gap-2 bg-primary-50 border border-primary-200/50 px-3 py-1.5 rounded-xl">
             <AppIcon className="ri-user-line text-primary-500 text-xs"></AppIcon>

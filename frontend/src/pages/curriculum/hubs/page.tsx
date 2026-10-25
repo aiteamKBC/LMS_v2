@@ -246,6 +246,7 @@ function hubCards(kind: HubKind, counts: {
       { title: 'Module Builder', description: 'Build reusable module content with weeks and components.', href: '/curriculum/module-builder', icon: 'ri-layout-4-line', meta: `${counts.modules} modules`, tone: 'primary' },
       { title: 'Teams Meetings', description: 'Review and restore the meetings attached to live sessions.', href: '/curriculum/teams-meetings', icon: 'ri-vidicon-line', tone: 'primary' },
       { title: 'Session Recordings', description: 'Find the recording of any live session by module, group and week, then play or download it.', href: '/curriculum/recordings', icon: 'ri-video-line', tone: 'sky' },
+      { title: 'Coach Meetings & Recordings', description: 'Choose a coach and review their meeting calendar, learners, recordings and attendance.', href: '/curriculum/coaching-recordings', icon: 'ri-video-line', tone: 'primary' },
       { title: 'Bank Holidays', description: 'One non-delivery calendar: GOV.UK bank holidays stay synced here, and workshops or closures can be added with start and end dates.', href: '/curriculum/england-holidays', icon: 'ri-flag-line', tone: 'amber' },
       { title: 'Session Calendar', description: 'See every curriculum session in one chronological view.', href: '/curriculum/session-calendar', icon: 'ri-calendar-schedule-line', meta: `${counts.sessions} sessions`, tone: 'emerald' },
     ];
