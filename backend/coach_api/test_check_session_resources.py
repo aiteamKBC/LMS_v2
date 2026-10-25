@@ -177,11 +177,81 @@ class CheckSessionResourceTests(SimpleTestCase):
         self.assertEqual(self.call(), 200); self.assertEqual(self.ai_calls, 0)
         self.assertEqual(self.overlay.answers, answers)
 
+    def test_verified_early_call_with_its_ended_report_generates_from_saved_segments(self):
+        self.add_artifact(key='early-1', body='First decision',
+                          createdDateTime='2026-10-24T11:10:00Z', endDateTime='2026-10-24T11:20:00Z')
+        self.add_artifact(key='early-2', body='Second decision',
+                          createdDateTime='2026-10-24T11:20:00Z', endDateTime='2026-10-24T11:40:00Z')
+        self.add_report(meetingStartDateTime='2026-10-24T11:00:00Z',
+                        meetingEndDateTime='2026-10-24T11:45:00Z')
+        self.assertEqual(self.call(), 200)
+        self.assertEqual(self.ai_calls, 1)
+        self.assertEqual(set(self.transcript_reads[-1]), {'early-1', 'early-2'})
+        self.assertEqual(self.payload['intelligence']['transcriptStatus'], 'available')
+        self.assertTrue(self.overlay.answers.get('summary'))
+        self.assertEqual(self.payload['summaryBinding']['generationStatus'], 'ready')
+
+    def test_verified_late_call_with_its_ended_report_generates(self):
+        self.record.scheduled_date = date(2026, 10, 20)
+        self.add_artifact(createdDateTime='2026-10-24T11:10:00Z',
+                          endDateTime='2026-10-24T11:40:00Z')
+        self.add_report(meetingStartDateTime='2026-10-24T11:00:00Z',
+                        meetingEndDateTime='2026-10-24T11:45:00Z')
+        self.assertEqual(self.call(), 200)
+        self.assertEqual(self.ai_calls, 1)
+        self.assertTrue(self.overlay.answers.get('summary'))
+
+    def test_off_window_suggestion_remains_verifiable_on_form_reload(self):
+        from coach_api.migrated_summary_generation import summary_binding_response
+        self.add_artifact(createdDateTime='2026-10-24T11:10:00Z',
+                          endDateTime='2026-10-24T11:40:00Z')
+        self.add_report(meetingStartDateTime='2026-10-24T11:00:00Z',
+                        meetingEndDateTime='2026-10-24T11:45:00Z')
+        self.assertEqual(self.call(), 200)
+        with patch('coach_api.review_sources.booking_for_overlay', return_value=self.record), \
+             patch.object(views, 'stored_coach_meeting_snapshot', return_value=deepcopy(self.stored)), \
+             patch.object(views, 'stored_coach_meeting_transcript_for_summary', side_effect=self.transcript):
+            binding = summary_binding_response(self.overlay)
+        self.assertEqual(binding['generationStatus'], 'ready')
+        self.assertEqual(binding['suggestionSource'], 'teams')
+        self.assertIn('Synthetic OLD transcript recap', binding['suggestionText'])
+
+    def test_unrelated_ended_report_does_not_enable_off_window_ai(self):
+        self.add_artifact(createdDateTime='2026-10-24T11:10:00Z',
+                          endDateTime='2026-10-24T11:40:00Z')
+        self.add_report(meetingStartDateTime='2026-10-23T11:00:00Z',
+                        meetingEndDateTime='2026-10-23T11:45:00Z')
+        self.assertEqual(self.call(), 200)
+        self.assertEqual(self.ai_calls, 0)
+        self.assertEqual(self.payload['intelligence']['summaryStatus'], 'pending')
+
+    def test_several_calls_with_one_ended_report_remain_ai_pending(self):
+        self.add_artifact(key='first', createdDateTime='2026-10-24T11:10:00Z',
+                          endDateTime='2026-10-24T11:20:00Z')
+        self.add_artifact(key='second', call='two', createdDateTime='2026-10-24T11:25:00Z',
+                          endDateTime='2026-10-24T11:40:00Z')
+        self.add_report(meetingStartDateTime='2026-10-24T11:00:00Z',
+                        meetingEndDateTime='2026-10-24T11:45:00Z')
+        self.assertEqual(self.call(), 200)
+        self.assertEqual(self.ai_calls, 0)
+        self.assertEqual(self.payload['intelligence']['transcriptStatus'], 'available')
+        self.assertEqual(self.payload['summaryBinding']['status'], 'summary-pending')
+        self.assertEqual(self.overlay.answers, {})
+
+    def test_report_change_during_ai_rejects_stale_summary(self):
+        self.add_artifact()
+        self.add_report()
+        self.ai_hook = lambda: self.stored['attendanceReports'][0].update(
+            meetingEndDateTime='2026-10-25T11:35:00Z')
+        self.assertEqual(self.call(), 409)
+        self.assertEqual(self.overlay.answers, {})
+
     def test_after_booked_end_without_actual_completion_keeps_ai_pending(self):
         self.after_end(); self.add_artifact()
         self.assertEqual(self.call(), 200); self.assertEqual(self.ai_calls, 0)
         self.assertEqual(self.payload['intelligence']['meetingEndStatus'], 'pending')
         self.assertEqual(self.payload['intelligence']['transcriptStatus'], 'available')
+        self.assertEqual(self.payload['summaryBinding']['status'], 'summary-pending')
         self.assertEqual(self.overlay.answers, {})
 
     def test_incomplete_transcript_keeps_recording_but_never_generates(self):

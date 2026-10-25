@@ -410,12 +410,27 @@ describe('bound migrated review answers', () => {
   it('explains a missing Teams transcript without blocking manual entry', async () => {
     vi.mocked(api.fetchMigratedReviewIntelligence).mockImplementation(async (_id, _signal, options) => options?.refresh
       ? { ...result({ fieldKey: 'recap', state: 'NEVER_POPULATED', status: 'summary-unavailable', generationStatus: 'unavailable' }),
+        intelligence: { ...result().intelligence!, transcriptStatus: 'unavailable', summaryStatus: 'unavailable', errorCodes: ['TRANSCRIPT_PENDING'] },
         answerVersion: 'v2', reviewAnswers: { other: 'Existing other answer' } } : result());
     mount();
     const field = await screen.findByRole('textbox', { name: 'Discussion record' });
     fireEvent.click(screen.getByRole('button', { name: 'Generate from Teams' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('No transcript was found for this meeting.');
     expect(field).toBeEnabled();
+  });
+
+  it('reports an available transcript awaiting actual-end evidence without calling it missing', async () => {
+    vi.mocked(api.fetchMigratedReviewIntelligence).mockImplementation(async (_id, _signal, options) => options?.refresh
+      ? { ...result({ fieldKey: 'recap', state: 'NEVER_POPULATED', status: 'summary-unavailable', generationStatus: 'unavailable' }),
+        intelligence: { ...result().intelligence!, transcriptStatus: 'available', summaryStatus: 'pending',
+          meetingEndStatus: 'pending', errorCodes: ['MEETING_END_PENDING'] },
+        answerVersion: 'pending-version', reviewAnswers: { other: 'Existing other answer' } }
+      : result());
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate from Teams' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The Teams transcript is saved');
+    expect(screen.queryByText(/No transcript was found/)).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Discussion record' })).toBeEnabled();
   });
 
   it.each(['aptem_mcm', 'aptem_progress_review'])('shows disabled admin summary controls for %s without a file picker or mutation', async reviewTypeCode => {
@@ -554,7 +569,7 @@ describe('summary request ownership', () => {
     vi.mocked(api.fetchMigratedReviewIntelligence).mockImplementation(async (_key, _signal, options) => options?.refresh
       ? { ...result({ fieldKey: 'recap', state: 'NEVER_POPULATED', generationStatus: 'unavailable' }),
         answerVersion: 'fetch-failed-version', reviewAnswers: { other: 'Existing other answer' },
-        intelligence: { ...result().intelligence!, errorCodes: ['TRANSCRIPT_FETCH_FAILED'] } }
+        intelligence: { ...result().intelligence!, transcriptStatus: 'fetch-failed', errorCodes: ['TRANSCRIPT_FETCH_FAILED'] } }
       : result());
     mount();
     const action = await screen.findByRole('button', { name: 'Generate from Teams' });
@@ -562,5 +577,17 @@ describe('summary request ownership', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('The Teams transcript could not be fetched.');
     expect(screen.queryByText(/No transcript was found/)).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Discussion record' })).toBeEnabled();
+  });
+
+  it('distinguishes an incomplete transcript from a missing transcript', async () => {
+    vi.mocked(api.fetchMigratedReviewIntelligence).mockImplementation(async (_key, _signal, options) => options?.refresh
+      ? { ...result({ fieldKey: 'recap', state: 'NEVER_POPULATED', generationStatus: 'unavailable' }),
+        intelligence: { ...result().intelligence!, transcriptStatus: 'incomplete', summaryStatus: 'unavailable',
+          errorCodes: ['TRANSCRIPT_INCOMPLETE'] } }
+      : result());
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate from Teams' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The complete Teams transcript is not available yet.');
+    expect(screen.queryByText(/No transcript was found/)).not.toBeInTheDocument();
   });
 });
