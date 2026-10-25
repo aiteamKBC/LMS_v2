@@ -413,6 +413,12 @@ INSTALLED_APPS = [
     'login',
 ]
 
+# Short-lived, service-specific memory investigation. Keep the middleware out
+# of the shared Django stack unless the current service explicitly opts in.
+ENGAGEMENT_MEMORY_OBSERVABILITY = (
+    os.environ.get('ENGAGEMENT_MEMORY_OBSERVABILITY', 'false').lower() == 'true'
+)
+
 MIDDLEWARE = [
     # Outermost on purpose: a cancelled request unwinds through every
     # middleware below, and this one's handler is the last chance to hand
@@ -460,6 +466,14 @@ MIDDLEWARE = [
     'curriculum_api.middleware.SchemaNotProvisionedMiddleware',
 ]
 
+if ENGAGEMENT_MEMORY_OBSERVABILITY:
+    # Keep request IDs available to the telemetry middleware. The middleware
+    # itself rejects every non-/engagement_api/ path.
+    MIDDLEWARE.insert(
+        MIDDLEWARE.index('config.observability.RequestObservabilityMiddleware') + 1,
+        'engagement_api.observability.EngagementMemoryObservabilityMiddleware',
+    )
+
 PERFORMANCE_DIAGNOSTICS = os.environ.get('PERFORMANCE_DIAGNOSTICS', 'false').lower() == 'true'
 SLOW_REQUEST_THRESHOLD_MS = int(os.environ.get('SLOW_REQUEST_THRESHOLD_MS', '750'))
 PERFORMANCE_DIAGNOSTIC_ACCOUNT_IDS = frozenset(
@@ -468,6 +482,21 @@ PERFORMANCE_DIAGNOSTIC_ACCOUNT_IDS = frozenset(
     if value.strip()
 )
 PERFORMANCE_SAMPLE_RETENTION_DAYS = int(os.environ.get('PERFORMANCE_SAMPLE_RETENTION_DAYS', '14'))
+
+# PSS is deliberately cadence-limited because /proc/self/smaps_rollup walks the
+# process mappings.
+ENGAGEMENT_MEMORY_OBSERVABILITY_MAX_EVENTS_PER_MINUTE = int(
+    os.environ.get('ENGAGEMENT_MEMORY_OBSERVABILITY_MAX_EVENTS_PER_MINUTE', '240')
+)
+ENGAGEMENT_MEMORY_OBSERVABILITY_MAX_REQUESTS_PER_MINUTE = int(
+    os.environ.get('ENGAGEMENT_MEMORY_OBSERVABILITY_MAX_REQUESTS_PER_MINUTE', '120')
+)
+ENGAGEMENT_MEMORY_OBSERVABILITY_MAX_PRIORITY_REQUESTS_PER_MINUTE = int(
+    os.environ.get('ENGAGEMENT_MEMORY_OBSERVABILITY_MAX_PRIORITY_REQUESTS_PER_MINUTE', '30')
+)
+ENGAGEMENT_MEMORY_OBSERVABILITY_PSS_INTERVAL_SECONDS = float(
+    os.environ.get('ENGAGEMENT_MEMORY_OBSERVABILITY_PSS_INTERVAL_SECONDS', '15')
+)
 
 # Legacy feedback switches retained for deployment compatibility. Learner
 # feedback is currently local-only (DEBUG) in engagement_api.feedback;
@@ -1173,12 +1202,21 @@ LOGGING = {
         'plain': {
             'format': '%(levelname)s %(name)s request_id=%(request_id)s %(message)s',
         },
+        # engagement_api.observability constructs an explicit safe JSON object;
+        # keep it machine-readable regardless of the global DEBUG formatter.
+        'engagement_telemetry': {
+            'format': '%(message)s',
+        },
     },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
             'filters': ['request_context'],
             'formatter': 'plain' if DEBUG else 'json',
+        },
+        'engagement_telemetry_console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'engagement_telemetry',
         },
     },
     'root': {
@@ -1188,6 +1226,11 @@ LOGGING = {
     'loggers': {
         'curriculum_api': {
             'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'engagement_api.memory': {
+            'handlers': ['engagement_telemetry_console'],
             'level': 'INFO',
             'propagate': False,
         },

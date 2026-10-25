@@ -16,6 +16,7 @@ from .models import (
     EventAttendance, EventBooking, FlashCard, FlashCardDeck, FlashCardView, PointsGrant, PointsRule,
     Recognition, Reward, VoucherClaim,
 )
+from .observability import ai_flashcard_invocation, analytics_build, record_analytics_cache
 from .permissions import (
     actor_name, is_staff, learner_read_scope, learner_target_identity, require_learner_identity,
     require_self_or_staff, require_staff, staff_error,
@@ -576,100 +577,129 @@ def learner_analytics(request):
     cache_key = f'engagement:learner-analytics:{programme or ""}:{cohort or ""}'
     cached = cache.get(cache_key)
     if cached is not None:
-        return JsonResponse({'learners': cached})
+        response = JsonResponse({'learners': cached})
+        record_analytics_cache(
+            request,
+            'hit',
+            len(response.content),
+            programme=programme,
+            cohort=cohort,
+        )
+        return response
 
     from coach_api.views import fetch_all_learner_profiles, serialize_caseload_learner
     from learner_api.attendance import _summarize_attendance
     from learner_api.teams_attendance import fetch_verified_teams_attendance_rows
 
-    profiles = fetch_all_learner_profiles(programme=programme, cohort=cohort)
-    if not profiles:
-        cache.set(cache_key, [], CACHE_TTL_SECONDS)
-        return JsonResponse({'learners': []})
+    with analytics_build(request, programme=programme, cohort=cohort) as diagnostic:
+        profiles = fetch_all_learner_profiles(programme=programme, cohort=cohort)
+        diagnostic.count('profile_rows', len(profiles))
+        if not profiles:
+            cache.set(cache_key, [], CACHE_TTL_SECONDS)
+            response = JsonResponse({'learners': []})
+            diagnostic.count('learner_rows', 0)
+            diagnostic.response_size_bytes = len(response.content)
+            return response
 
-    profile_ids = [row.id for row in profiles]
-    learner_ids = [str(row.enrolment_id) for row in profiles]
+        profile_ids = [row.id for row in profiles]
+        learner_ids = [str(row.enrolment_id) for row in profiles]
 
-    # -- Bulk sidecars: one query each, never one per learner -----------------
-    attendance_rows = fetch_verified_teams_attendance_rows(profile_ids)
-    attendance_by_profile_id = {}
-    for row in attendance_rows:
-        attendance_by_profile_id.setdefault(row['learner_id'], []).append(row)
-    attendance_by_profile_id = {
-        pid: _summarize_attendance(rows) for pid, rows in attendance_by_profile_id.items()
-    }
+        # -- Bulk sidecars: one query each, never one per learner -------------
+        attendance_rows = fetch_verified_teams_attendance_rows(profile_ids)
+        diagnostic.count('attendance_rows', len(attendance_rows))
+        attendance_by_profile_id = {}
+        for row in attendance_rows:
+            attendance_by_profile_id.setdefault(row['learner_id'], []).append(row)
+        attendance_by_profile_id = {
+            pid: _summarize_attendance(rows) for pid, rows in attendance_by_profile_id.items()
+        }
 
-    month_start = dj_timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    points_all_time = dict(
-        PointsGrant.objects.filter(learner_id__in=learner_ids)
-        .values('learner_id').annotate(total=Sum('points')).values_list('learner_id', 'total')
-    )
-    points_this_month = dict(
-        PointsGrant.objects.filter(learner_id__in=learner_ids, awarded_at__gte=month_start)
-        .values('learner_id').annotate(total=Sum('points')).values_list('learner_id', 'total')
-    )
-    club_counts = dict(
-        ClubMembership.objects.filter(learner_id__in=learner_ids, status='active')
-        .values('learner_id').annotate(total=Count('club_id')).values_list('learner_id', 'total')
-    )
-    open_interventions = {}
-    for intervention in (
-        AttendanceIntervention.objects.filter(learner_id__in=learner_ids, resolved=False).order_by('-created_at')
-    ):
-        open_interventions.setdefault(intervention.learner_id, intervention)  # most recent wins
-    response_rates = compute_message_response_rates(learner_ids)
+        month_start = dj_timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        points_all_time = dict(
+            PointsGrant.objects.filter(learner_id__in=learner_ids)
+            .values('learner_id').annotate(total=Sum('points')).values_list('learner_id', 'total')
+        )
+        points_this_month = dict(
+            PointsGrant.objects.filter(learner_id__in=learner_ids, awarded_at__gte=month_start)
+            .values('learner_id').annotate(total=Sum('points')).values_list('learner_id', 'total')
+        )
+        club_counts = dict(
+            ClubMembership.objects.filter(learner_id__in=learner_ids, status='active')
+            .values('learner_id').annotate(total=Count('club_id')).values_list('learner_id', 'total')
+        )
+        diagnostic.count('points_all_time_rows', len(points_all_time))
+        diagnostic.count('points_month_rows', len(points_this_month))
+        diagnostic.count('club_rows', len(club_counts))
 
-    learners = []
-    for row in profiles:
-        engagement_id = str(row.enrolment_id)
-        base = serialize_caseload_learner(row, refresh_live_snapshots=False)
-        progress_entries = row.training_plan_progress or []
-        attendance = attendance_by_profile_id.get(row.id)
+        open_interventions = {}
+        intervention_rows = 0
+        for intervention in (
+            AttendanceIntervention.objects.filter(learner_id__in=learner_ids, resolved=False)
+            .order_by('-created_at')
+        ):
+            intervention_rows += 1
+            open_interventions.setdefault(intervention.learner_id, intervention)  # most recent wins
+        diagnostic.count('intervention_rows', intervention_rows)
+        response_rates = compute_message_response_rates(learner_ids)
+        diagnostic.count('message_response_rows', len(response_rates))
 
-        otjh_completed = base['otjhCompleted'] or 0
-        otjh_target = base['otjhTarget'] or 1
-        otjh_progress = min(100, round(otjh_completed / otjh_target * 100)) if otjh_target else None
-        ksb_progress = base['ksbProgress'] if base['ksbProgressAvailable'] else None
-        attendance_rate = attendance['attendanceRate'] if attendance else None
-        quiz_average = _quiz_average(progress_entries)
+        learners = []
+        for row in profiles:
+            engagement_id = str(row.enrolment_id)
+            base = serialize_caseload_learner(row, refresh_live_snapshots=False)
+            progress_entries = row.training_plan_progress or []
+            attendance = attendance_by_profile_id.get(row.id)
 
-        score = compute_engagement_score(attendance_rate, ksb_progress, otjh_progress, quiz_average)
-        intervention = open_interventions.get(engagement_id)
+            otjh_completed = base['otjhCompleted'] or 0
+            otjh_target = base['otjhTarget'] or 1
+            otjh_progress = min(100, round(otjh_completed / otjh_target * 100)) if otjh_target else None
+            ksb_progress = base['ksbProgress'] if base['ksbProgressAvailable'] else None
+            attendance_rate = attendance['attendanceRate'] if attendance else None
+            quiz_average = _quiz_average(progress_entries)
 
-        learners.append({
-            'id': engagement_id,
-            'name': base['name'],
-            'programme': row.programme or '',
-            'cohort': base['cohortName'],
-            'coach': base['coachName'],
-            'engagementScore': score,
-            'riskLevel': _risk_level(score),
-            'overallStatus': base['status'],
-            'flags': base['riskFlags'],
-            'attendanceRate': attendance_rate,
-            'sessionsAttended': attendance['present'] if attendance else None,
-            'totalSessions': attendance['sessions'] if attendance else None,
-            'sessionsMissed': attendance['absent'] if attendance else None,
-            'consecutiveMissed': attendance['consecutiveMissed'] if attendance else None,
-            'lastAttendance': attendance['lastSessionDate'] if attendance else None,
-            'otjhHours': otjh_completed,
-            'otjhTarget': otjh_target,
-            'ksbProgress': ksb_progress,
-            'evidenceSubmitted': base['evidenceCompletedCount'],
-            'evidenceTarget': base['evidenceCount'],
-            'quizAverage': quiz_average,
-            'messageResponse': response_rates.get(engagement_id),
-            'clubActivity': club_counts.get(engagement_id, 0),
-            'lastActive': _last_active(progress_entries, attendance),
-            'points': points_all_time.get(engagement_id, 0),
-            'pointsThisMonth': points_this_month.get(engagement_id, 0),
-            'attendanceAction': intervention.action if intervention else None,
-            'employerNotified': intervention.employer_notified if intervention else False,
-            'interventionDate': intervention.intervention_date.isoformat() if intervention and intervention.intervention_date else None,
-        })
+            score = compute_engagement_score(attendance_rate, ksb_progress, otjh_progress, quiz_average)
+            intervention = open_interventions.get(engagement_id)
 
-    cache.set(cache_key, learners, CACHE_TTL_SECONDS)
-    return JsonResponse({'learners': learners})
+            learners.append({
+                'id': engagement_id,
+                'name': base['name'],
+                'programme': row.programme or '',
+                'cohort': base['cohortName'],
+                'coach': base['coachName'],
+                'engagementScore': score,
+                'riskLevel': _risk_level(score),
+                'overallStatus': base['status'],
+                'flags': base['riskFlags'],
+                'attendanceRate': attendance_rate,
+                'sessionsAttended': attendance['present'] if attendance else None,
+                'totalSessions': attendance['sessions'] if attendance else None,
+                'sessionsMissed': attendance['absent'] if attendance else None,
+                'consecutiveMissed': attendance['consecutiveMissed'] if attendance else None,
+                'lastAttendance': attendance['lastSessionDate'] if attendance else None,
+                'otjhHours': otjh_completed,
+                'otjhTarget': otjh_target,
+                'ksbProgress': ksb_progress,
+                'evidenceSubmitted': base['evidenceCompletedCount'],
+                'evidenceTarget': base['evidenceCount'],
+                'quizAverage': quiz_average,
+                'messageResponse': response_rates.get(engagement_id),
+                'clubActivity': club_counts.get(engagement_id, 0),
+                'lastActive': _last_active(progress_entries, attendance),
+                'points': points_all_time.get(engagement_id, 0),
+                'pointsThisMonth': points_this_month.get(engagement_id, 0),
+                'attendanceAction': intervention.action if intervention else None,
+                'employerNotified': intervention.employer_notified if intervention else False,
+                'interventionDate': (
+                    intervention.intervention_date.isoformat()
+                    if intervention and intervention.intervention_date else None
+                ),
+            })
+
+        cache.set(cache_key, learners, CACHE_TTL_SECONDS)
+        response = JsonResponse({'learners': learners})
+        diagnostic.count('learner_rows', len(learners))
+        diagnostic.response_size_bytes = len(response.content)
+        return response
 
 
 def intervention_to_dict(intervention):
@@ -1974,61 +2004,71 @@ def generate_flashcards_view(request):
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
 
-    readable_files = []
-    unreadable_files = []
-    if request.FILES:
-        files = request.FILES.getlist('files') or request.FILES.getlist('file')
+    files = (
+        request.FILES.getlist('files') or request.FILES.getlist('file')
+        if request.FILES else []
+    )
+    with ai_flashcard_invocation(request, files, max_files=ai.MAX_FILES) as diagnostic:
+        readable_files = []
+        unreadable_files = []
+        if files:
+            try:
+                with diagnostic.extraction():
+                    source_text, readable_files, unreadable_files = ai.extract_text_from_files(files)
+            except ValueError as exc:
+                diagnostic.set_outcome('rejected')
+                return json_error(str(exc), status=400)
+            payload = request.POST
+            fallback = str(payload.get('lessonContent') or payload.get('text') or '').strip()
+            source_text = source_text.strip() or fallback
+        else:
+            payload = json_body(request)
+            if payload is None:
+                diagnostic.set_outcome('rejected')
+                return json_error('Invalid JSON body.')
+            source_text = str(payload.get('lessonContent') or payload.get('text') or '').strip()
+
+        topic = str(payload.get('topic') or '').strip()
+        custom_instructions = str(payload.get('customInstructions') or '').strip()
+        programme = str(payload.get('programme') or '').strip()
+        module = str(payload.get('module') or '').strip()
+        count = ai.clamp_count(payload.get('questionCount') or payload.get('count') or ai.DEFAULT_CARD_COUNT)
+
+        if not source_text and not topic:
+            diagnostic.set_outcome('rejected')
+            note = f' Unreadable files: {", ".join(unreadable_files)}.' if unreadable_files else ''
+            return json_error(
+                f'No readable content. Add a topic, paste lesson text, or upload readable files.{note}',
+                status=400, unreadableFiles=unreadable_files,
+            )
+
         try:
-            source_text, readable_files, unreadable_files = ai.extract_text_from_files(files)
-        except ValueError as exc:
-            return json_error(str(exc), status=400)
-        payload = request.POST
-        fallback = str(payload.get('lessonContent') or payload.get('text') or '').strip()
-        source_text = source_text.strip() or fallback
-    else:
-        payload = json_body(request)
-        if payload is None:
-            return json_error('Invalid JSON body.')
-        source_text = str(payload.get('lessonContent') or payload.get('text') or '').strip()
+            cards = ai.generate_flashcards(
+                source_text, topic=topic, custom_instructions=custom_instructions,
+                programme=programme, module=module, count=count,
+            )
+        except RuntimeError as exc:
+            diagnostic.set_outcome('provider_error')
+            message = str(exc)
+            status = 502
+            if 'not configured' in message or 'not installed' in message:
+                status = 503
+            elif 'quota' in message:
+                status = 429
+            elif 'API key is invalid' in message:
+                status = 401
+            return json_error(message, status=status)
 
-    topic = str(payload.get('topic') or '').strip()
-    custom_instructions = str(payload.get('customInstructions') or '').strip()
-    programme = str(payload.get('programme') or '').strip()
-    module = str(payload.get('module') or '').strip()
-    count = ai.clamp_count(payload.get('questionCount') or payload.get('count') or ai.DEFAULT_CARD_COUNT)
-
-    if not source_text and not topic:
-        note = f' Unreadable files: {", ".join(unreadable_files)}.' if unreadable_files else ''
-        return json_error(
-            f'No readable content. Add a topic, paste lesson text, or upload readable files.{note}',
-            status=400, unreadableFiles=unreadable_files,
-        )
-
-    try:
-        cards = ai.generate_flashcards(
-            source_text, topic=topic, custom_instructions=custom_instructions,
-            programme=programme, module=module, count=count,
-        )
-    except RuntimeError as exc:
-        message = str(exc)
-        status = 502
-        if 'not configured' in message or 'not installed' in message:
-            status = 503
-        elif 'quota' in message:
-            status = 429
-        elif 'API key is invalid' in message:
-            status = 401
-        return json_error(message, status=status)
-
-    return JsonResponse({
-        'cards': cards,
-        'source': {
-            'model': settings.OPENAI_MODEL,
-            'cardCount': len(cards),
-            'readableFiles': readable_files,
-            'unreadableFiles': unreadable_files,
-        },
-    })
+        diagnostic.set_outcome('success')
+        return JsonResponse({
+            'cards': cards,
+            'source': {
+                'model': settings.OPENAI_MODEL,
+                'cardCount': len(cards),
+                'readableFiles': readable_files,
+                'unreadableFiles': unreadable_files,
+            },
+        })
 
 
 def flash_card_flip(request, card_id):
