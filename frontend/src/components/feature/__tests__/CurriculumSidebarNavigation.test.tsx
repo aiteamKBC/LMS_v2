@@ -39,12 +39,12 @@ describe('Curriculum workspace sidebar presentation', () => {
   it('orders verified destinations and retains the original additional tools without mutating navigation', () => {
     const before = JSON.stringify(curriculumNavItems);
     const items = curriculumNavigation(curriculumNavItems);
-    expect(items.map(item => item.label)).toEqual(['Home', 'Programmes', 'Module Builder', 'Library', 'Quality', 'Bulk Attendance', 'Archive', 'Additional tools']);
+    expect(items.map(item => item.label)).toEqual(['Home', 'Programmes', 'Module Builder', 'Courses', 'Library', 'Quality', 'Bulk Attendance', 'Archive', 'Additional tools']);
     expect(items[2].children?.map(item => [item.label, item.href])).toEqual([
       ['Modules', '/curriculum/module-builder'], ['Session recordings', '/curriculum/recordings'], ['Bank holidays', '/curriculum/england-holidays'],
     ]);
     // Transfer Progress belongs to the enrolment sidebars (/users/progress-transfers), not curriculum.
-    expect(items[7].children?.map(item => item.href)).toEqual(['/curriculum/coach-directory']);
+    expect(items[8].children?.map(item => item.href)).toEqual(['/curriculum/coach-directory']);
     expect(curriculumNavItems.some(item => item.href === '/curriculum/delivery')).toBe(false);
     expect(JSON.stringify(curriculumNavItems)).toBe(before);
     show();
@@ -57,11 +57,13 @@ describe('Curriculum workspace sidebar presentation', () => {
   it('preserves parent and child permission checks', () => {
     viewer.denied.add('curriculum-delivery');
     viewer.denied.add('curriculum-library');
+    viewer.denied.add('curriculum-courses');
     show();
     expect(menu().queryByRole('button', { name: 'Module Builder' })).not.toBeInTheDocument();
     expect(menu().queryByRole('link', { name: 'Modules' })).not.toBeInTheDocument();
     expect(menu().queryByRole('link', { name: 'Delivery' })).not.toBeInTheDocument();
     expect(menu().queryByRole('link', { name: 'Library' })).not.toBeInTheDocument();
+    expect(menu().queryByRole('link', { name: 'Courses' })).not.toBeInTheDocument();
   });
 
   it('filters an individually denied child and preserves locked delivery destinations', () => {
@@ -87,6 +89,8 @@ describe('Curriculum workspace sidebar presentation', () => {
   it.each([
     ['/curriculum/programmes/P1', 'Programmes'],
     ['/curriculum/library', 'Library'],
+    ['/curriculum/courses', 'Courses'],
+    ['/curriculum/free-courses', 'Courses'],
     ['/curriculum/quality', 'Quality'],
     ['/curriculum/bulk-attendance', 'Bulk Attendance'],
     ['/curriculum/archive', 'Archive'],

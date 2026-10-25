@@ -89,7 +89,7 @@ const CurriculumLibraryHub = lazyRoute(() => import("../pages/curriculum/hubs/pa
 const MigratedReviewTemplates = lazyRoute(() => import("../pages/curriculum/review-templates/page"));
 const CurriculumBulkAttendance = lazyRoute(() => import("../pages/curriculum/bulk-attendance/page"));
 const CurriculumQualityHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumQualityHub })));
-const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/free-courses/page"));
+const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/courses/page"));
 const CoachAuditTrailPage = lazyRoute(() => import("../pages/coach/audit-trail/page"));
 const CoachAuditTrailPersonPage = lazyRoute(() => import("../pages/coach/audit-trail/person/page"));
 const CurriculumAuditTrailPage = lazyRoute(() => import("../pages/curriculum/audit-trail/page"));
@@ -1135,6 +1135,10 @@ const routes: RouteObject[] = [
   },
   {
     path: "/curriculum/free-courses",
+    element: <Navigate to="/curriculum/courses?type=free" replace />,
+  },
+  {
+    path: "/curriculum/courses",
     element: <CurriculumFreeCourses />,
   },
   {

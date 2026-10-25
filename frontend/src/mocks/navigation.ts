@@ -262,13 +262,19 @@ export const curriculumNavItems: SidebarNavItem[] = [
     href: '/curriculum/library',
     matchPaths: [
       '/curriculum/week-builder',
-      '/curriculum/free-courses',
       '/curriculum/standards',
       '/curriculum/quiz-xml',
       '/curriculum/knowledge-base',
       '/curriculum/question-bank',
       '/curriculum/checkpoints',
     ],
+  },
+  {
+    id: 'curriculum-courses',
+    label: 'Courses',
+    icon: 'ri-graduation-cap-line',
+    href: '/curriculum/courses',
+    matchPaths: ['/curriculum/free-courses'],
   },
   {
     id: 'curriculum-quality',

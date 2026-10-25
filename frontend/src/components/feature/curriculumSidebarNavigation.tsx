@@ -1,4 +1,4 @@
-import { Archive, ArrowLeftRight, BookOpen, CalendarCheck, CalendarDays, Film, FolderOpen, Home, Layers, LayoutGrid, ShieldCheck, Users } from 'lucide-react';
+import { Archive, ArrowLeftRight, BookOpen, CalendarCheck, CalendarDays, Film, FolderOpen, GraduationCap, Home, Layers, LayoutGrid, ShieldCheck, Users } from 'lucide-react';
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
 import type { SidebarNavigationPresentation } from '@/components/feature/SidebarNavigationContext';
 import { roleNavMap } from '@/mocks/navigation';
@@ -15,7 +15,7 @@ export function curriculumNavigation(permittedItems: SidebarNavItem[]): SidebarN
       { id: 'curriculum-bank-holidays', label: 'Bank holidays', href: '/curriculum/england-holidays', icon: 'ri-calendar-line' },
     ].map(child => ({ ...child, locked: delivery.locked, lockedReason: delivery.lockedReason, comingSoon: delivery.comingSoon })),
   };
-  const ordered = [find('curriculum-home'), find('curriculum-programmes'), builder, find('curriculum-library'), find('curriculum-quality'), find('curriculum-bulk-attendance'), find('curriculum-archive')]
+  const ordered = [find('curriculum-home'), find('curriculum-programmes'), builder, find('curriculum-courses'), find('curriculum-library'), find('curriculum-quality'), find('curriculum-bulk-attendance'), find('curriculum-archive')]
     .filter((item): item is SidebarNavItem => Boolean(item));
   const usedIds = new Set(ordered.map(item => item.id));
   usedIds.add('curriculum-delivery');
@@ -31,6 +31,7 @@ const icons: Record<string, typeof Home> = {
   'curriculum-recordings': Film,
   'curriculum-bank-holidays': CalendarDays,
   'curriculum-library': FolderOpen,
+  'curriculum-courses': GraduationCap,
   'curriculum-quality': ShieldCheck,
   'curriculum-bulk-attendance': CalendarCheck,
   'curriculum-archive': Archive,

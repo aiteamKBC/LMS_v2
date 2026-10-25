@@ -39,6 +39,7 @@ from django.views.decorators.gzip import gzip_page
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from login.permissions import require_role
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
+from .course_types import CourseTypeError, course_types_for_modules
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
 from .teams_options_retry import microsoft_update_summary
 from .session_overrides import apply_session_overrides, override_clock, session_overrides
@@ -15459,6 +15460,7 @@ def provision_free_programme_tables():
             create table if not exists {authoring_table_name(FREE_COURSES_TABLE)} (
                 id varchar(128) primary key,
                 course_name text not null default '',
+                course_type varchar(16) not null default 'free' check (course_type in ('free', 'apprentices')),
                 description text,
                 cover_image_url text,
                 week_builder_week_ids {json_type} not null default '[]',
@@ -15511,6 +15513,11 @@ def provision_free_programme_tables():
             cursor.execute(f'''
                 alter table {authoring_table_name(FREE_COURSES_TABLE)}
                 add column if not exists course_name text not null default ''
+            ''')
+            cursor.execute(f'''
+                alter table {authoring_table_name(FREE_COURSES_TABLE)}
+                add column if not exists course_type varchar(16) not null default 'free'
+                check (course_type in ('free', 'apprentices'))
             ''')
             cursor.execute(f'''
                 alter table {authoring_table_name(FREE_COURSES_TABLE)}
@@ -15601,6 +15608,8 @@ def provision_free_programme_tables():
             module_columns = {row[1] for row in cursor.fetchall()}
             cursor.execute(f'pragma table_info({quote_ident(FREE_COURSES_TABLE)})')
             course_columns = {row[1] for row in cursor.fetchall()}
+            if 'course_type' not in course_columns:
+                cursor.execute(f"alter table {authoring_table_name(FREE_COURSES_TABLE)} add column course_type varchar(16) not null default 'free' check (course_type in ('free', 'apprentices'))")
             if 'course_name' not in course_columns:
                 cursor.execute(f'alter table {authoring_table_name(FREE_COURSES_TABLE)} add column course_name text not null default ""')
             if 'description' not in course_columns:
@@ -23703,6 +23712,7 @@ def free_programme_module_response(row, components, course=None):
     return {
         'id': module_id,
         'courseId': row.get('course_id') or course.get('id') or module_id,
+        'courseType': course.get('course_type') or 'free',
         'weekId': row.get('week_id') or '',
         'weekNumber': parse_int(row.get('week_number'), 1),
         'weekTitle': row.get('week_title') or '',
@@ -23820,6 +23830,11 @@ def save_free_programme_modules(programme_id, payload):
         modules = []
 
     with transaction.atomic():
+        existing_types = {
+            clean_str(course.get('id')): course.get('course_type') or 'free'
+            for course in free_programme_fetch_all(FREE_COURSES_TABLE, columns=['id', 'course_type'])
+        }
+        course_types = course_types_for_modules(modules, existing_types)
         # Scope the rewrite to this programme's own free courses/weeks. This
         # used to delete every row in both tables, destroying other
         # programmes' free-course data on every save.
@@ -23844,11 +23859,13 @@ def save_free_programme_modules(programme_id, payload):
         for module_index, module in enumerate(modules):
             if not isinstance(module, dict):
                 continue
+            course_type = course_types[module_index]
             course_key = (
                 clean_str(module.get('courseId') or module.get('course_id')),
                 clean_str(module.get('courseName') or module.get('course_name') or module.get('title') or module.get('name')),
                 clean_str(module.get('description') or ''),
                 clean_str(module.get('coverImageUrl') or module.get('cover_image_url') or ''),
+                course_type,
             )
             course_id = course_key[0]
             if not course_id:
@@ -23904,6 +23921,7 @@ def save_free_programme_modules(programme_id, payload):
                 'total_otjh': total_otjh,
             })
             group = course_groups.setdefault(course_id, {
+                'course_type': course_type,
                 'course_name': module.get('courseName') or module.get('course_name') or module.get('title') or module.get('name') or f'Free course {len(course_groups) + 1}',
                 'description': module.get('description') or '',
                 'cover_image_url': cover_image_url,
@@ -26972,6 +26990,8 @@ def curriculum_free_programme_modules(request, programme_id):
         return json_error('Invalid JSON body.')
     try:
         modules = save_free_programme_modules(programme_id, payload)
+    except CourseTypeError as exc:
+        return json_error(str(exc), status=400)
     except Exception as exc:
         logger.exception('Unable to save free programme modules for %s.', programme_id)
         return json_error('Unable to save free programme modules.', status=500, detail=str(exc))
@@ -27242,6 +27262,7 @@ def _free_module_response_to_input(module):
     return {
         'id': module.get('id'),
         'courseId': module.get('courseId'),
+        'courseType': module.get('courseType') or 'free',
         'weekId': module.get('weekId'),
         'weekNumber': module.get('weekNumber'),
         'weekTitle': module.get('weekTitle'),

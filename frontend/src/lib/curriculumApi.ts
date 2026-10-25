@@ -2399,9 +2399,12 @@ export interface FreeProgrammeComponent {
   settings?: Record<string, unknown>;
 }
 
+export type CurriculumCourseType = 'free' | 'apprentices';
+
 export interface FreeProgrammeModule {
   id: string;
   courseId?: string;
+  courseType?: CurriculumCourseType;
   weekId?: string;
   weekNumber?: number;
   weekTitle?: string;
@@ -4226,6 +4229,7 @@ export type FreeProgrammeComponentInput = Partial<FreeProgrammeComponent> & {
 export type FreeProgrammeModuleInput = {
   id?: string;
   courseId?: string;
+  courseType?: CurriculumCourseType;
   weekId?: string;
   weekNumber?: number;
   weekTitle?: string;
