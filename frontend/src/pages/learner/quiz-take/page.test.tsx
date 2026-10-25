@@ -340,8 +340,16 @@ describe('quiz requirements loading', () => {
     expect(screen.getByText('Business outcome')).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: /Retake Quiz/ }));
+    expect(mocks.start).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep current date and duration' }));
     expect(mocks.start).toHaveBeenCalledOnce();
     expect(await screen.findByRole('button', { name: 'Finish Quiz' })).toBeVisible();
+    mocks.submit.mockResolvedValue({ passed: true, achievedScore: 1, totalScore: 1,
+      breakdown: [], attempt: { attempt: 3 } });
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    await act(async () => {});
+    expect(mocks.submit).toHaveBeenCalledWith(1, 'commercial', '501', expect.objectContaining({ retakeTimeChoice: 'keep' }));
   });
 
   it('starts signed timing when the AI reading opens and records it once on finish', async () => {
@@ -408,7 +416,8 @@ describe('quiz submit working rules', () => {
     expect(screen.getByText(/Reason:/)).toBeVisible();
 
     fireEvent.change(screen.getByLabelText('Completion date'), { target: { value: '2026-01-15' } });
-    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14:30' } });
+    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14' } });
+    fireEvent.change(screen.getByLabelText('Completion minutes'), { target: { value: '30' } });
     fireEvent.click(screen.getByRole('button', { name: 'Final Submit' }));
     await act(async () => {});
 
@@ -430,7 +439,8 @@ describe('quiz submit working rules', () => {
 
     await answerAndFinish();
     fireEvent.change(await screen.findByLabelText('Completion date'), { target: { value: '2026-01-15' } });
-    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14:30' } });
+    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14' } });
+    fireEvent.change(screen.getByLabelText('Completion minutes'), { target: { value: '30' } });
     fireEvent.click(screen.getByRole('button', { name: 'Final Submit' }));
     await act(async () => {});
 

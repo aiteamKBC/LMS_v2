@@ -35,6 +35,7 @@ import { startTimeTracking, checkpointTimeTracking, type TimeTrackingSession } f
 import { ComponentAccessNotice } from '@/components/feature/ComponentAccessNotice';
 import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
 import { CompletionTimeDialog } from '@/components/feature/CompletionTimeDialog';
+import { RetakeTimeDialog, type RetakeTimeChoice } from '@/components/feature/RetakeTimeDialog';
 import { CompletionValidationError, type WorkingRuleReason } from '@/lib/completionValidation';
 
 const learnerNav = roleNavMap.learner;
@@ -319,7 +320,14 @@ export default function QuizTakePage() {
   // moment to offer a way out of it, and leaving mid-attempt loses the answers.
   const showSidebar = Boolean(placement) && (phase === 'intro' || phase === 'results');
 
+  const [retakeTimeOpen, setRetakeTimeOpen] = useState(false);
+  const retakeTimeChoice = useRef<RetakeTimeChoice | undefined>(undefined);
   const startQuiz = () => {
+    if (latestAttempt || result) { setRetakeTimeOpen(true); return; }
+    retakeTimeChoice.current = undefined;
+    beginQuiz();
+  };
+  const beginQuiz = () => {
     if (!quiz || quiz.unavailableReason || !kind || !id || !canUseComponent || detailLoading || detailError) return;
     setSubmitError(null);
     setReflectionChoiceOpen(false);
@@ -421,6 +429,7 @@ export default function QuizTakePage() {
         reportedTime: reflection.reportedTime,
         skipReflection: options.skipReflection === true,
         declaredCompletedAt: options.declaredCompletedAt,
+        retakeTimeChoice: retakeTimeChoice.current,
       });
       setReflectionChoiceOpen(false);
       setResult(res);
@@ -564,6 +573,9 @@ export default function QuizTakePage() {
             accessOpen={componentAccess.open}
           />
         )}
+        {retakeTimeOpen && <RetakeTimeDialog onClose={() => setRetakeTimeOpen(false)} onChoose={selection => {
+          retakeTimeChoice.current = selection; setRetakeTimeOpen(false); beginQuiz();
+        }} />}
         {correction && (
           <CompletionTimeDialog
             reason={correction.reason}

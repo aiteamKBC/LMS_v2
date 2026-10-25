@@ -154,7 +154,9 @@ def review_request(request_id):
     items = [item for item in store.read_state(pk)['items'] if item['requestId'] == str(request_id)]
     if not items or any(item['status'] != 'pending' for item in items):
         raise ServiceError('This request is no longer pending. Refresh the requests.', 'transfer_not_pending', 409)
-    return build_review(request_id, items, with_planned_hours(load_context(source, owner), items))
+    from .progress_transfer_content import content_review, verified_source_types
+    context = verified_source_types(with_planned_hours(load_context(source, owner), items), items)
+    return content_review(build_review(request_id, items, context), context)
 
 
 def with_planned_hours(context, items):
@@ -200,7 +202,8 @@ def approve_request(request_id, account, decisions=None):
         if any(pairs.get('current:' + item['moduleId']) != item['courseRef'] for item in items):
             raise ServiceError('A module assignment or course mapping changed. Review it before approving this request.',
                                'transfer_mapping_changed', 409)
-        context = with_planned_hours(context, items)
+        from .progress_transfer_content import verified_source_types
+        context = verified_source_types(with_planned_hours(context, items), items)
         review = build_review(request_id, items, context)
         manual = validate_decisions(review, decisions)
         for item in items:

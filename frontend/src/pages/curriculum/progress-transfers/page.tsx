@@ -9,6 +9,7 @@ import { getTransferRequests, getTransferReview, approveTransferRequest, type Ad
 import { formatSystemTimestamp } from '@/lib/format';
 import { formatHoursMinutes } from '@/utils/learnerJourney';
 import styles from './progressTransfers.module.css';
+import { componentSuggestions } from './componentSuggestions';
 
 export default function ProgressTransfersPage() {
   const { auth } = useAuth();
@@ -144,7 +145,7 @@ function ComponentMatching({ review, mappings, disabled, onChange }: {
           ...mappings.filter(mapping => mapping.moduleId === module.moduleId && mapping.sourceActivityRef !== source.sourceActivityRef).map(mapping => mapping.targetComponentId)]);
         const automatic = module.targets.find(target => target.componentId === source.automaticTargetId);
         const manualTarget = module.targets.find(target => target.componentId === value?.targetComponentId);
-        const candidates = module.targets.filter(target => target.type === source.type && source.type !== 'unknown');
+        const { candidates, suggestedId } = componentSuggestions(source, module.targets, used);
         return <div className={styles.matchRow} key={source.sourceActivityRef}>
           <div><strong>{source.title}</strong><small>{source.week || 'No week specified'} · {source.type} · {source.sourceActivityRef}</small></div>
           {source.automaticTargetId ? <div><span className={styles.approvedBadge}>Automatically matched</span><strong>{automatic?.title || source.automaticTargetId}</strong><small>{automatic?.week}</small></div>
@@ -152,8 +153,10 @@ function ComponentMatching({ review, mappings, disabled, onChange }: {
               onChange={event => onChange([...mappings.filter(mapping => mapping.moduleId !== module.moduleId || mapping.sourceActivityRef !== source.sourceActivityRef),
                 ...(event.target.value ? [{ moduleId: module.moduleId, sourceActivityRef: source.sourceActivityRef, targetComponentId: event.target.value }] : [])])}>
               <option value="">Choose a matching component</option>
-              {candidates.map(target => <option key={target.componentId} value={target.componentId} disabled={used.has(target.componentId)}>{target.week ? `${target.week} · ` : ''}{target.title} ({target.type} · {target.componentId})</option>)}
-            </select><small>Choose only an equivalent activity. Each destination can be used once.</small>
+              {candidates.map(target => <option key={target.componentId} value={target.componentId} disabled={used.has(target.componentId)}>{target.componentId === suggestedId ? 'Recommended — ' : ''}{target.week ? `${target.week} · ` : ''}{target.title} ({target.type} · {target.componentId}){source.contentScores?.find(row => row.componentId === target.componentId)?.contentAvailable === false ? ' — Target content unavailable' : ''}</option>)}
+            </select><small>{source.contentAvailable
+              ? 'Ordered by similarity of stored content and question text. Review the recommended match before choosing.'
+              : 'Source content is unavailable for comparison. Choose an equivalent component manually.'} Each destination can be used once.</small>
               {!candidates.length && <small className={styles.error}>No compatible component is available. Check the source type or add the equivalent component to the new module, then reload matches.</small>}
               {manualTarget && <small>New component planned hours: {manualTarget.plannedHours == null ? 'Not specified' : formatHoursMinutes(manualTarget.plannedHours)}. Actual transferred hours are unchanged.</small>}
             </label>}
