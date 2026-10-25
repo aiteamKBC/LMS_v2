@@ -381,3 +381,29 @@ or PDF, and sent no messages. It did not validate authenticated end-user PDF
 delivery, playback, seek or attendance expansion in a live browser. Those remain
 separate checks after reviewed deployment. Raw evidence and private runtime
 probe inputs are excluded from Git.
+## Release preparation, 25 October 2026
+
+The coaching feature was integrated with main `dfd76c39` on the existing
+`khaled-is-here` branch. An empty Coach migration merge joins the existing
+personal-support-template branch with coaching completion migration 0030; it
+does not duplicate schema operations or rewrite data. No application release
+was performed. Existing unrelated working-tree changes were preserved.
+
+Checks on the integrated feature state:
+
+- Isolated backend coaching suites: **378 passed** (SQLite, mocked external
+  services; the normal production provisioning runner was not used).
+- Frontend feature/shared-consumer Vitest selection: **243 passed in 22 files**.
+- `npm --prefix frontend run type-check`: **PASS**.
+- Scoped existing ESLint with `--max-warnings 0`: **PASS**.
+- `npm --prefix frontend run build`: **PASS**; dependency eval and plugin timing
+  diagnostics remain visible.
+- Offline migration graph: one Coach leaf, no conflicts, zero network.
+- PR diff whitespace check against main: **PASS**.
+
+Teams baseline and expanded Teams suites: **NOT REQUIRED** for the scoped diff
+against current main. No trigger file, or changed function/type/API consumed by
+a trigger file, was edited. The changed archive queue selector is called by its
+archive management command, not the existing Teams endpoints. Live Microsoft
+calendar GET verification is described below; no meeting mutation, invitation,
+email, playback or full authenticated deployed feature check was performed.

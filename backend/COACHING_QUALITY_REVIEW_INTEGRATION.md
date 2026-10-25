@@ -149,6 +149,46 @@ Displaying this record in the separately hosted Coaching Session UI still
 requires its teammate's implementation/release. This repository does not modify
 or deploy that other application's source.
 
+On 25 October the owner clarified the external viewer's policy: a coach can
+read reviews of their own meetings, without edit rights. Source-app staff access
+must use its fresh server-side role/active-account checks. LMS Curriculum write
+permissions remain unchanged. The owner confirmed that the Coaching Session
+maintainer will implement that app's viewer; the LMS deliverable is the canonical
+database record and this integration contract. No source-app branch, source
+change or deployment is part of this handoff. An empty shared store remains a
+genuine empty result until a reviewer saves a real form; do not seed learner
+reviews to demonstrate the UI.
+
+### Location to send to the Coaching Session maintainer
+
+After the reviewer uses **Save draft** or **Complete review**, read the same
+New era database named above:
+
+| Purpose | Location |
+| --- | --- |
+| Current saved form, evidence text and actions | `lms_quality.review.payload` |
+| Stable review key / current saved version | `lms_quality.review.id` / `version` |
+| Immutable history | `lms_quality.revision` (`review_id`, `version`) |
+| Saved screenshots | `lms_quality.image` (`review_id`, `section`, `id`) |
+
+The form response contains its review UUID. Text being typed is not saved until
+the explicit save succeeds. Both drafts and completed reviews are distinguishable
+by `status`; only completed current versions can be downloaded as the LMS review
+PDF. Use the verified meeting/coach/learner matching above and enforce the
+coach's own-meeting read scope before returning payload or image bytes.
+
+```sql
+-- Parameter is the verified review UUID; execute only after server-side scope checks.
+SELECT id, status, version, updated_at, payload
+FROM lms_quality.review
+WHERE id = %s;
+```
+
+There is no duplicate form/action write for the source viewer. No PDF file is
+inserted into `all_sessions_cache`: the LMS generates the PDF from the current
+completed canonical snapshot and caches those bytes. Source cache refreshes
+must leave the `lms_quality` schema intact.
+
 ## Loading and verification
 
 - No review read occurs when the calendar/drawer first opens. The form button
