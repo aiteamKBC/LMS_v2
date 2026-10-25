@@ -283,6 +283,16 @@ describe('Attendance lecture workspace', () => {
     expect(await screen.findByText('Unmarked')).toBeInTheDocument();
   });
 
+  it('shows cancelled lectures as cancelled without absence or catch-up actions', async () => {
+    payload.lectures = [lecture({ id: 'cancelled', title: 'Cancelled lecture', status: 'cancelled', canReportAbsence: false })];
+    payload.totals = { total: 0, attended: 0, absent: 0, covered: 0, upcoming: 0, attendanceRate: null };
+    mount();
+    const row = await screen.findByRole('article', { name: 'Cancelled lecture' });
+    expect(within(row).getByText('Canceled')).toBeInTheDocument();
+    expect(within(row).queryByText(/Missed|Make-up needed/)).not.toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: /Catchup|Report Absence|Open Activities/ })).not.toBeInTheDocument();
+  });
+
   it('features today ahead of future lectures and credits its full hours once', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-14T08:00:00Z'));
     payload.lectures = [lecture({ id: 'later', date: '2026-10-01', status: 'upcoming' }),
