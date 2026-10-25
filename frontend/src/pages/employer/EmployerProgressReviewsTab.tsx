@@ -1,14 +1,16 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Video } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import {
-  downloadEmployerProgressReview, fetchEmployerProgressReview, fetchEmployerProgressReviews, saveEmployerReviewAnswers, signReviewAsEmployer,
+  downloadEmployerProgressReview, employerMeetingArtifactContentUrl, fetchEmployerMeetingArtifacts, fetchEmployerProgressReview,
+  fetchEmployerProgressReviews, saveEmployerReviewAnswers, signReviewAsEmployer,
 } from '@/api/employerPortal';
 import {
   downloadMigratedReviewForParty, fetchMigratedReviewForParty, signMigratedReviewAsParty, saveMigratedReviewPartyAnswers,
   type LearnerReviewDefinition,
 } from '@/api/learnerCalendar';
+import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
 import ReviewsHome from '@/pages/learner/progress-reviews/ReviewsHome';
 import { presentReview } from '@/pages/learner/progress-reviews/reviewPresentation';
 import { ImportedReviewSections } from '@/pages/learner/progress-reviews/page';
@@ -41,6 +43,17 @@ export function EmployerProgressReviewsTab({ employerId, kind, learnerId, employ
   const definition = detail.data?.definition;
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
   const meeting = review ? presentReview(review, undefined, today, definition, 'employer') : null;
+  // APTEM archives belong to the source-qualified Review's linked booking,
+  // independently of its current invitation/schedule. The resource API checks
+  // ownership and association again and reports whether a saved copy exists.
+  const recordingKey = review?.reviewSource === 'aptem'
+    ? (review.calendarEventKey ? review.eventKey : '')
+    : review && review.invited && review.scheduledDate && review.scheduledDate <= today
+      ? review.calendarEventKey || review.eventKey || review.id : '';
+  const loadArtifacts = useCallback((key: string, signal?: AbortSignal) =>
+    fetchEmployerMeetingArtifacts(employerId, kind, learnerId, key, signal), [employerId, kind, learnerId]);
+  const artifactContentUrl = useCallback((key: string, artifactType: string, artifactId: string, options: { preview?: boolean } = {}) =>
+    employerMeetingArtifactContentUrl(employerId, kind, learnerId, key, artifactType, artifactId, options), [employerId, kind, learnerId]);
   const refresh = async () => {
     await Promise.all([
       client.invalidateQueries({ queryKey: listKey }),
@@ -74,6 +87,11 @@ export function EmployerProgressReviewsTab({ employerId, kind, learnerId, employ
   if (selectedKey) return <section className={`${styles.home} space-y-4`} aria-label="Employer progress review">
     <button type="button" className={styles.secondaryButton} onClick={() => setSelectedKey(null)}><ArrowLeft size={19} aria-hidden="true" />Back to reviews</button>
     {!detail.isPending && !detail.isError && meeting?.joinUrl && !meeting.past && <a className={styles.primaryButton} href={meeting.joinUrl} target="_blank" rel="noopener noreferrer"><Video size={19} aria-hidden="true" />Join meeting</a>}
+    {!detail.isPending && !detail.isError && recordingKey && review && <CoachMeetingArtifactsPanel
+      event={{ ...review, eventKey: recordingKey }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl}
+      storedOnly={review.reviewSource === 'aptem'}
+      hasTeamsMeeting showAttendance={false} showMeetingSummary={false} canCheck={false}
+      visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />}
     {detail.isPending ? <p role="status" className={styles.loading}>Loading review…</p>
       : detail.isError ? <div role="alert" className={styles.empty}><p>{errorMessage(detail.error)}</p><button type="button" className={styles.secondaryButton} onClick={() => void detail.refetch()}>Try again</button></div>
       : definition ? <LearnerReviewInstanceForm key={review?.eventKey} definition={definition} viewerRole="employer" signatoryName={employerName}

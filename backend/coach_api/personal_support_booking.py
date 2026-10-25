@@ -57,6 +57,42 @@ def booking_state(owner, learner, review, overlay=None, *, preview_only=False, l
     }
 
 
+def can_refresh_meeting(owner, record):
+    """Authorize the existing PSP meeting panel through its imported source.
+
+    PSP appointments do not require an initialized form and have no MCM/PR
+    Check Session adapter. A calendar key alone cannot grant this exception.
+    """
+    from . import views as v
+
+    if (record.owner_email.casefold() != owner.casefold()
+            or record.event_type != "progress-review"
+            or record.review_instance_id or record.review_template_id
+            or not record.graph_event_id or record.sync_state != CoachCalendarEvent.SYNC_SYNCED):
+        return False
+    definition = v._imported_review_definition(owner, record.event_key)
+    if not definition or definition.get("previewOnly"):
+        return False
+    instance = definition.get("instance") or {}
+    source = definition.get("historicalReview") or {}
+    booking = definition.get("booking") or {}
+    return bool(
+        (definition.get("template") or {}).get("reviewTypeCode") == "aptem_psp"
+        and is_personal_support_plan(source.get("type"))
+        and source.get("status") in v.MIGRATED_EDITABLE_STATUSES
+        and not v.migrated_source_is_completed(source)
+        and (definition.get("localStatus") or instance.get("status")) in v.MIGRATED_EDITABLE_STATUSES
+        and not instance.get("completedAt")
+        and instance.get("id") == record.event_key
+        and instance.get("learnerId") == record.learner_id
+        and booking.get("eventKey") == record.event_key
+        and not booking.get("conflict")
+        and booking.get("syncState") == CoachCalendarEvent.SYNC_SYNCED
+        and booking.get("meetingLink")
+        and booking["meetingLink"] == (record.meeting_link or record.graph_web_link)
+    )
+
+
 def book(request, instance_id, definition):
     from . import views as v
 

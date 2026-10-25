@@ -37,16 +37,29 @@ def prepare_learner_personal_support(request, review_id):
     if profile is None or source_for_learner(learner, profile).kind != "aptem":
         return JsonResponse({"detail": "Personal Support Plan not found."}, status=404)
     owner = (profile.coach_email or "").strip().casefold()
-    if not owner:
-        return JsonResponse({"detail": "A coach must be assigned before this plan can be opened."}, status=409)
 
-    from .views import _imported_review_definition
+    from .views import _imported_review_definition, lock_learner_calendar
     try:
         with transaction.atomic():
-            # The coach initializer and template editor take this same lock.
-            # Recheck eligibility after it: concurrent opens reuse one form.
+            # Match the Coach initializer/handover lock order. A stale first
+            # open must not create a second form after Coach reassignment.
+            lock_learner_calendar(profile.pk)
             lock_template_family("PSP")
-            definition = _imported_review_definition(owner, review_id)
+            existing = list(ImportedReviewInstance.objects.filter(
+                event_key=review_id, learner_id=profile.pk, source_review_id__isnull=False,
+            )[:2])
+            if len(existing) > 1:
+                raise ValueError("The existing Personal Support Plan association could not be verified.")
+            if existing:
+                # This learner has already been authorized against the exact
+                # source/profile above. Historical ownership is a read context,
+                # not permission for the former Coach to initialize or write.
+                owner = existing[0].owner_email.strip().casefold()
+                definition = _imported_review_definition(owner, review_id, learners=[profile])
+            else:
+                if not owner:
+                    return JsonResponse({"detail": "A coach must be assigned before this plan can be opened."}, status=409)
+                definition = _imported_review_definition(owner, review_id)
             history = (definition or {}).get("historicalReview") or {}
             if (not definition or definition["instance"]["learnerId"] != profile.pk
                     or review_family(history.get("type")) != "PSP"
