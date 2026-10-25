@@ -658,6 +658,7 @@ export default function CoachMeetingDetail() {
                 <MigratedMeetingIntelligence
                   key={importedReview.instance.id}
                   instanceId={importedReview.instance.id}
+                  resourceContextKey={JSON.stringify([coach.email, importedBooking?.eventKey, importedBooking?.scheduledDate, importedBooking?.scheduledTime, importedBooking?.durationMinutes])}
                   family={importedReview.template.reviewTypeCode || ''}
                   status={importedReview.localStatus || importedReview.instance.status}
                   viewAs={coach.isViewingAsCoach}

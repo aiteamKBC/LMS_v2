@@ -26,7 +26,7 @@ interface CoachMeetingArtifactEvent {
 type ArtifactState =
   | { status: 'idle' }
   | { status: 'loading' }
-  | { status: 'ready'; artifacts: CoachMeetingArtifact[]; attendance: CoachMeetingAttendanceSummary | null; meetingSummary: CoachMeetingSummary | null; errors: string[]; storedOnly?: boolean; syncedAt?: string }
+  | { status: 'ready'; artifacts: CoachMeetingArtifact[]; attendance: CoachMeetingAttendanceSummary | null; meetingSummary: CoachMeetingSummary | null; errors: string[]; storedOnly?: boolean; syncedAt?: string; refreshing?: boolean; refreshError?: string }
   | { status: 'error'; message: string };
 
 type PreviewSelection = {
@@ -642,6 +642,7 @@ export function CoachMeetingArtifactsPanel({
   allowContentAccess = true,
   onArtifactsLoaded,
   storedOnly = false,
+  preserveResourcesOnRefreshError = false,
 }: {
   event: CoachMeetingArtifactEvent;
   className?: string;
@@ -661,6 +662,8 @@ export function CoachMeetingArtifactsPanel({
   allowContentAccess?: boolean;
   onArtifactsLoaded?: (result: Awaited<ReturnType<typeof fetchCoachMeetingArtifacts>>) => void;
   storedOnly?: boolean;
+  /** Imported checks only; callers must remount on source/booking/access changes. */
+  preserveResourcesOnRefreshError?: boolean;
 }) {
   const eventKey = event.eventKey || '';
   const hasTeamsLink = hasTeamsMeeting || Boolean(event.meetingLink || event.graphWebLink);
@@ -670,7 +673,8 @@ export function CoachMeetingArtifactsPanel({
   const [transcriptPreview, setTranscriptPreview] = useState<TranscriptPreviewState>({ status: 'idle' });
 
   const loadArtifacts = useCallback((signal?: AbortSignal, refresh = false) => {
-    setState({ status: 'loading' });
+    setState(current => preserveResourcesOnRefreshError && refresh && current.status === 'ready'
+      ? { ...current, refreshing: true, refreshError: undefined } : { status: 'loading' });
     return fetchArtifacts(eventKey, signal, { refresh: storedOnly ? false : refresh })
       .then(result => {
         onArtifactsLoaded?.(result);
@@ -687,12 +691,16 @@ export function CoachMeetingArtifactsPanel({
       })
       .catch(error => {
         if (error instanceof DOMException && error.name === 'AbortError') return;
-        setState({
-          status: 'error',
-          message: error instanceof Error ? error.message : 'Unable to load Teams artifacts.',
-        });
+        const message = error instanceof Error ? error.message : 'Unable to load Teams artifacts.';
+        const failure = error as { status?: number; code?: string } | null;
+        const invalidContext = [401, 403, 404].includes(failure?.status || 0)
+          || (failure?.status === 409 && !['MEETING_END_NOT_CONFIRMED', 'SUMMARY_IN_PROGRESS', 'SUMMARY_SUPERSEDED'].includes(failure.code || ''));
+        if (invalidContext) setPreview(null);
+        setState(current => preserveResourcesOnRefreshError && refresh && !invalidContext && current.status === 'ready'
+          ? { ...current, refreshing: false, refreshError: message }
+          : { status: 'error', message });
       });
-  }, [eventKey, fetchArtifacts, onArtifactsLoaded, onEventStatusChange, storedOnly]);
+  }, [eventKey, fetchArtifacts, onArtifactsLoaded, onEventStatusChange, storedOnly, preserveResourcesOnRefreshError]);
 
   useEffect(() => {
     setPreview(null);
@@ -755,7 +763,7 @@ export function CoachMeetingArtifactsPanel({
   const meetingSummary = state.status === 'ready' ? state.meetingSummary : null;
   const visibleArtifacts = artifacts.filter(artifact => visibleArtifactTypes.includes(artifact.artifact_type));
   const hasArtifacts = visibleArtifacts.length > 0;
-  const isLoading = state.status === 'loading';
+  const isLoading = state.status === 'loading' || (state.status === 'ready' && state.refreshing);
   const savedResources = storedOnly || (state.status === 'ready' && state.storedOnly);
 
   return (
@@ -790,9 +798,9 @@ export function CoachMeetingArtifactsPanel({
         </button> : null}
       </div>
 
-      {state.status === 'error' ? (
+      {state.status === 'error' || (state.status === 'ready' && state.refreshError) ? (
         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-800">
-          {state.message}
+          {state.status === 'error' ? state.message : state.refreshError}
         </div>
       ) : null}
 
@@ -815,7 +823,9 @@ export function CoachMeetingArtifactsPanel({
 
       {state.status === 'ready' && !hasArtifacts ? (
         <div className="mt-3 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[12px] leading-5 text-foreground-500">
-          {savedResources
+          {preserveResourcesOnRefreshError
+            ? 'No saved meeting resources are available for this review yet. Check the resource status above or retry.'
+            : savedResources
             ? 'No saved meeting recording is available. Your coach can check Teams for updates.'
             : 'No meeting recording has been returned by Teams yet. It usually appears after the meeting ends and Teams finishes processing.'}
         </div>

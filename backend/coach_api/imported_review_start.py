@@ -1,7 +1,8 @@
 """Status-only start shared by explicit Coach Join and verified resource writes."""
 from django.utils import timezone
 
-from .migrated_session_scope import booking_window, current_reports, instant, select_artifacts
+from .migrated_session_scope import (booking_window, current_reports, instant,
+                                     meeting_artifacts, meeting_reports, select_artifacts)
 
 
 def start_locked(overlay, calendar, family, *, source_completed=False):
@@ -33,7 +34,7 @@ def start_locked(overlay, calendar, family, *, source_completed=False):
     return True
 
 
-def has_start_evidence(record, snapshot):
+def has_start_evidence(record, snapshot, *, session=None, meeting_id=None):
     """Fresh verified evidence only; tracker labels and stored recaps are not proof."""
     from .views import coach_attendance_record_confirms_expected
 
@@ -42,7 +43,9 @@ def has_start_evidence(record, snapshot):
     expected = [row for row in (snapshot.get('attendance') or {}).get('expectedAttendees', [])
                 if row.get('role') in {'coach', 'learner'}]
     if not failures.get('attendance'):
-        for report in current_reports(record, snapshot):
+        reports = (meeting_reports(snapshot)[0] if meeting_id else
+                   current_reports(record, snapshot, session=session))
+        for report in reports:
             if instant(report.get('meetingEndDateTime')) > now:
                 continue
             for row in report.get('records', []):
@@ -52,7 +55,8 @@ def has_start_evidence(record, snapshot):
                     return True
     if not snapshot.get('transcriptCollectionComplete') or failures.get('transcripts'):
         return False
-    selected, error = select_artifacts(record, snapshot)
+    selected, error = (meeting_artifacts(record, snapshot, meeting_id)
+                       if meeting_id else select_artifacts(record, snapshot, session=session))
     transcripts = [row for row in selected if row.get('artifact_type') == 'transcript']
     return bool(not error and transcripts and all(
         row.get('graph_artifact_id') and not row.get('transcript_fetch_error')

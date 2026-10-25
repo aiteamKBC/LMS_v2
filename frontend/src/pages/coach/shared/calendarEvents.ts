@@ -296,6 +296,9 @@ export interface CoachMeetingArtifactsResponse {
     generationError?: MigratedSummaryGenerationError | null;
     transcriptArtifactId?: string | null;
     errorCodes: string[];
+    meetingEndStatus?: 'pending' | 'attendance-confirmed' | 'scheduled-end-reached' | null;
+    meetingEndCode?: 'MEETING_END_PENDING' | null;
+    resourceErrors?: Record<string, string>;
   };
   event?: {
     eventKey: string;

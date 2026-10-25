@@ -29,7 +29,9 @@ describe('imported meeting intelligence diagnostics', () => {
       .mockResolvedValueOnce(jsonResponse({ code, detail: 'Safe meeting diagnostic.', request_id: 'synthetic-reference' }, status as number));
     vi.stubGlobal('fetch', fetchMock);
     const { fetchMigratedReviewIntelligence } = await import('./reviewInstances');
-    await expect(fetchMigratedReviewIntelligence('imported-review:42', undefined, { refresh: true })).rejects.toThrow(String(code));
+    const requestResult = fetchMigratedReviewIntelligence('imported-review:42', undefined, { refresh: true });
+    await expect(requestResult).rejects.toThrow(String(code));
+    await expect(requestResult).rejects.toMatchObject({ status, code });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const [url, request] = fetchMock.mock.calls[1];
     expect(url).toBe('/coach_api/migrated-reviews/imported-review%3A42/check-session');

@@ -6,6 +6,28 @@ Refresh remains a Coach action; these readers never fall back to Graph or AI.
 from django.http import HttpResponseRedirect, JsonResponse
 
 
+def _bound_resources(record, snapshot):
+    """Apply a saved call claim only after the party route resolved this Review."""
+    from coach_api.bound_actual_session import bound_session
+    from coach_api.migrated_session_scope import has_verified_meeting_evidence, scope_snapshot
+    from coach_api.models import ImportedReviewInstance
+
+    event = getattr(record, '_imported_review_event', None) or {}
+    if has_verified_meeting_evidence(snapshot):
+        return {**scope_snapshot(record, snapshot, meeting_scoped=True), '_boundSession': True}
+    try:
+        source_id = int(event.get('reviewId') or 0)
+    except (TypeError, ValueError):
+        source_id = 0
+    if source_id <= 0:
+        return snapshot
+    overlays = list(ImportedReviewInstance.objects.filter(source_review_id=source_id)[:2])
+    if len(overlays) > 1:
+        raise ValueError('Review continuation is ambiguous.')
+    bound = bound_session(record, overlay=overlays[0]) if overlays else None
+    return {**scope_snapshot(record, snapshot, session=bound.context), '_boundSession': True} if bound else snapshot
+
+
 def is_imported_meeting(record):
     # Set by _learner_calendar_record after source/association resolution,
     # including legacy booking keys and explicitly reconciled Native calendars.
@@ -16,7 +38,11 @@ def stored_resources(record, *, include_attendance=False):
     from coach_api.recording_archive import archived_recording_url
     from coach_api.views import public_coach_meeting_artifact, stored_coach_meeting_snapshot
 
-    snapshot = stored_coach_meeting_snapshot(record)
+    try:
+        snapshot = _bound_resources(record, stored_coach_meeting_snapshot(record))
+    except ValueError:
+        return JsonResponse({'detail': 'Meeting resources are unavailable for this Review.',
+                             'code': 'MEETING_RESOURCES_UNAVAILABLE'}, status=409)
     recordings = []
     for artifact in snapshot["artifacts"]:
         if str(artifact.get("artifact_type", "")).strip().lower() != "recording":
@@ -45,6 +71,16 @@ def stored_resources(record, *, include_attendance=False):
 
 def stored_recording(record, artifact_id):
     from coach_api.recording_archive import archived_recording_url
+    from coach_api.views import stored_coach_meeting_snapshot
+
+    try:
+        snapshot = _bound_resources(record, stored_coach_meeting_snapshot(record))
+    except ValueError:
+        snapshot = {'artifacts': [], '_boundSession': True}
+    if snapshot.get('_boundSession') and not any(row.get('artifact_type') == 'recording'
+               and row.get('graph_artifact_id') == artifact_id for row in snapshot['artifacts']):
+        return JsonResponse({'detail': 'A saved copy of this recording is not available yet.',
+                             'code': 'STORED_RECORDING_UNAVAILABLE'}, status=404)
 
     # This helper reads the event + recording ID and signs the existing private
     # blob locally. Missing archive/configuration must never trigger Graph.
