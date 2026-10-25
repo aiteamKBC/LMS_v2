@@ -1,9 +1,10 @@
-import type { EmployerDashboardMetrics, EmployerLearnerCard } from '@/api/employerPortal';
+import type { EmployerDashboardMetrics, EmployerLearnerAttendance, EmployerLearnerCard } from '@/api/employerPortal';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { reviewCategory } from '@/lib/reviewCategory';
 
 export type Loadable<T> = { status: 'loading' | 'ready' | 'error'; data?: T; error?: string };
 export type DashboardReviews = Record<string, Loadable<LearnerCalendarEvent[]>>;
+export type DashboardAttendance = Record<string, Loadable<EmployerLearnerAttendance | null>>;
 export const learnerKey = (learner: EmployerLearnerCard) => `${learner.kind}:${learner.id}`;
 export const learnerHref = (employerId: string, learner: EmployerLearnerCard, tab?: string) =>
   `/employers/${employerId}/learner/${learner.kind}/${learner.id}${tab ? `?tab=${tab}` : ''}`;

@@ -111,6 +111,26 @@ def summary_binding_response(overlay):
     result["generationAttemptedAt"] = generation.get("attemptedAt")
     if result["generationStatus"] == "failed" and generation.get("error"):
         result["generationError"] = generation["error"]
+    if result.get('suggestionText') and provenance.get('source') != 'uploaded_transcript':
+        # All callers (including initial form load) must validate a Teams cache;
+        # an invalid suggestion must not remain available as a replacement.
+        from django.db import DatabaseError
+        from .review_sources import booking_for_overlay
+        from .migrated_session_scope import summary_matches_session
+        from .views import stored_coach_meeting_transcript_for_summary
+        try:
+            record = booking_for_overlay(overlay)
+            verified = bool(record and summary_matches_session(
+                {**provenance, 'sessionProvenance': state.get('sessionProvenance')}, record,
+                stored_coach_meeting_transcript_for_summary(record)))
+        except DatabaseError:
+            verified = False
+        if not verified:
+            result.pop('suggestionText', None)
+            result['replacementAvailable'] = False
+            result['generationStatus'] = 'unavailable'
+            result['sessionCode'] = 'SUMMARY_SESSION_MISMATCH'
+            result['message'] = 'The stored suggestion cannot be verified for this session. Your saved answer is unchanged.'
     return result
 
 

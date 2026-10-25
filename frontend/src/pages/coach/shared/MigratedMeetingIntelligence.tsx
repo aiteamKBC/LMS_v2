@@ -51,23 +51,34 @@ export function MigratedMeetingIntelligence({
   const [binding, setBinding] = useState<CoachMeetingArtifactsResponse['summaryBinding']>();
   useEffect(() => { if (savedBinding) setBinding(savedBinding); }, [savedBinding]);
   const handlers = useRef({ onCheckComplete, onCheckingChange });
+  const requestGeneration = useRef(0);
+  useEffect(() => {
+    return () => { requestGeneration.current += 1; };
+  }, [instanceId, viewAs]);
   useEffect(() => { handlers.current = { onCheckComplete, onCheckingChange }; }, [onCheckComplete, onCheckingChange]);
   const fetchArtifacts = useCallback<typeof fetchMigratedReviewIntelligence>(
     async (eventKey, signal, options) => {
+      const generation = requestGeneration.current;
       if (options?.refresh) handlers.current.onCheckingChange?.(true);
       try {
         const result = await fetchMigratedReviewIntelligence(eventKey, signal, options);
+        if (generation !== requestGeneration.current) throw new DOMException('Review changed', 'AbortError');
         if (options?.refresh) handlers.current.onCheckComplete?.(result);
         return result;
+      } catch (error) {
+        if (generation !== requestGeneration.current) throw new DOMException('Review changed', 'AbortError');
+        throw error;
       } finally {
-        if (options?.refresh) handlers.current.onCheckingChange?.(false);
+        if (options?.refresh && generation === requestGeneration.current) handlers.current.onCheckingChange?.(false);
       }
     },
     [],
   );
   const saveSummary = useCallback<typeof saveMigratedMeetingSummary>(
     async (eventKey, summary) => {
+      const generation = requestGeneration.current;
       const result = await saveMigratedMeetingSummary(eventKey, summary);
+      if (generation !== requestGeneration.current) throw new DOMException('Review changed', 'AbortError');
       handlers.current.onCheckComplete?.({ ...result, artifacts: [] });
       return result;
     },
@@ -145,6 +156,7 @@ export function MigratedMeetingIntelligence({
         </div>
       ) : null}
       <CoachMeetingArtifactsPanel
+        key={`${instanceId}:${viewAs}`}
         event={{ id: instanceId, eventKey: instanceId, source: family === 'aptem_mcm' ? 'mcr' : 'progress-review', meetingLink: meetingLink || undefined }}
         fetchArtifacts={fetchArtifacts}
         saveSummary={saveSummary}

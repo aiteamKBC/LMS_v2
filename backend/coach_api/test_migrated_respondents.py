@@ -39,8 +39,10 @@ def fixture(family="PR"):
     return template, review
 
 
-def definition(owner, key):
+def definition(owner, key, *, learners=None):
     review = ImportedReviewInstance.objects.get(event_key=key)
+    if learners is not None:
+        assert len(learners) == 1 and learners[0].id == review.learner_id
     sections, _ = render_sections(review.template_snapshot, review.answers,
                                  answer_audit=review.meeting_intelligence.get("answerEdits", {}))
     return {"migratedForm": True, "readOnly": review.status not in {"not-scheduled", "scheduled", "in-progress"},

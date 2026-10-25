@@ -25,14 +25,15 @@ def save_enrolment_fields(user, fields):
         for field, value in contact.items():
             setattr(user, field, value)
         profile_fields.update(contact)
-    if set(fields).intersection({"username", "phone_number"}):
-        profile_fields = {key: value for key, value in profile_fields.items()
-                          if key not in DATE_FIELDS or key in fields}
-        if profile_fields:
-            save_verified_contact_fields(user, fields, profile_fields=profile_fields)
-        else:
-            save_verified_contact_fields(user, fields)
-        return
+        # Imported ownership is a separate, explicit outcome of reassignment.
+        # Resolve without opportunistically repairing an identity link.
+        profile = learner_profile_for_source(user, heal=False)
+        from coach_api.review_handover import save_assignment
+        handover = save_assignment(user, profile, fields, profile_fields)
+        if handover is not None and handover[0]:
+            return {"reviewHandover": handover[1]}
+    else:
+        handover = None
     if not profile_fields:
         user.save(update_fields=list(fields))
         return
@@ -43,7 +44,8 @@ def save_enrolment_fields(user, fields):
         profile = learner_profile_for_source(user)
         if profile is None:
             # Activation copies these values when the profile is created later.
-            return
+            return {"reviewHandover": handover[1]} if handover is not None else None
         for field, value in profile_fields.items():
             setattr(profile, field, value)
         profile.save(using="enrolment", update_fields=[*profile_fields, "updated_at"])
+    return {"reviewHandover": handover[1]} if handover is not None else None

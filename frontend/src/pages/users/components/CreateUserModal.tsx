@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useToast } from '@/hooks/useToast';
+import { reviewHandoverMessage } from '@/api/reviewHandover';
 import { fetchProgrammes, fetchCohorts, fetchGroups } from '@/api/curriculum';
 import { fetchCaseOwners } from '@/api/staffUsers';
 import {
@@ -232,7 +233,7 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
   /** Called with the edited row so the directory repaints without a refetch. */
   onSaved?: (row: UserListRow) => void;
 }) {
-  const { success, error } = useToast();
+  const { success, error, warning } = useToast();
   const phase: 'create' | 'edit' = editing ? 'edit' : 'create';
   const [formData, setFormData] = useState<Record<string, string>>(INITIAL);
   // Commercial is the default kind on create. When editing, the record's own
@@ -454,7 +455,7 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
         // learnerType is deliberately not sent: switching an apprenticeship
         // learner to commercial would drop their funded-ILR compliance trail,
         // which is not an edit to make from a details form.
-        await updateEnrolmentUser(editing.id, shared);
+        const updated = await updateEnrolmentUser(editing.id, shared);
         // The row repaints from what was just saved rather than from the board
         // the PATCH returns, which describes the programme rather than this
         // table's columns. The directory reloads behind the toast for anything
@@ -472,7 +473,9 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
           subscriptionVerified: (shared.status ?? '').toLowerCase() === 'fulluser',
           programmeStatus: (formData.programmeStatus ?? '') as UserListRow['programmeStatus'],
         });
-        success('Learner updated', `${name}'s record was saved.`);
+        const handoverMessage = reviewHandoverMessage(updated.reviewHandover);
+        if (handoverMessage) warning('Coach assignment saved; handover incomplete', handoverMessage);
+        else success('Learner updated', `${name}'s record was saved.`);
         onClose();
       } catch (err) {
         error('Could not save changes', err instanceof Error ? err.message : 'Unexpected error');

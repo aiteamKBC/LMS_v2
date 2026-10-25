@@ -1,9 +1,24 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchEmployerPortal } from '../employerPortal';
+import { fetchEmployerDashboardMetrics, fetchEmployerLearnerAttendance, fetchEmployerPortal } from '../employerPortal';
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('employer portal responses', () => {
+  it('requests lightweight saved totals independently from programme and attendance reads', async () => {
+    const fetch = vi.fn().mockImplementation(async () => new Response('{}'));
+    vi.stubGlobal('fetch', fetch);
+    const signal = new AbortController().signal;
+    await fetchEmployerDashboardMetrics('9', signal, 'summary');
+    await fetchEmployerDashboardMetrics('9', signal, 'programme');
+    await fetchEmployerLearnerAttendance('9', 'commercial', '12', signal);
+    expect(fetch.mock.calls.map(call => call[0])).toEqual([
+      '/learner_api/employer-portal/9/dashboard-metrics/?section=summary',
+      '/learner_api/employer-portal/9/dashboard-metrics/?section=programme',
+      '/learner_api/employer-portal/9/learner/commercial/12/overview/attendance/',
+    ]);
+    expect(fetch.mock.calls.every(call => call[1].credentials === 'include' && call[1].signal === signal)).toBe(true);
+  });
+
   it.each([500, 502])('reports an HTML server error without exposing a JSON parsing error (%s)', async status => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<!DOCTYPE html><h1>Server error</h1>', { status })));
     await expect(fetchEmployerPortal('9')).rejects.toThrow(`Could not load employer portal data (${status}). Please try again.`);

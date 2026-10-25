@@ -709,10 +709,11 @@ def learner_coach(request, pk):
             update["case_owner"] = update["coach_name"]
             for attr, value in update.items():
                 setattr(source, attr, value)
-            save_enrolment_fields(source, update)
+            handover = save_enrolment_fields(source, update)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
-        return JsonResponse({"coachName": update["coach_name"], "coachEmail": update["coach_email"]})
+        return JsonResponse({"coachName": update["coach_name"], "coachEmail": update["coach_email"],
+                             **(handover or {})})
 
     return _error("Method not allowed.", 405)
 
@@ -964,6 +965,7 @@ def enrolment_user_detail(request, pk):
         advance_learner(user)
         return JsonResponse(to_board(user))
     if request.method in ("PATCH", "PUT"):
+        handover = None
         try:
             payload = _parse_body(request)
             # A learner submitting their own wizard may only touch their own
@@ -984,48 +986,38 @@ def enrolment_user_detail(request, pk):
         except ValidationError as exc:
             return _error(str(exc), 400)
         try:
-            with locked_source(user) as user:
-                # Revalidate partial date updates against the locked current row.
-                validate_learner_dates(fields, user)
-                for attr, value in fields.items():
-                    setattr(user, attr, value)
-                if fields:
-                    save_enrolment_fields(user, fields)
-                    # The address and name on this row ARE the sign-in identity, and
-                    # the login account keeps its own copy — which is what an
-                    # invitation is sent to. Correcting an email here without this
-                    # left the invitation going to the old address for ever, since
-                    # the account only refreshes itself when its owner signs in and
-                    # an invited learner has not yet.
-                    if any(field in fields for field in ACCOUNT_IDENTITY_FIELDS):
-                        sync_account("learner", user.pk, subject=user)
-                    if any(field in fields for field in PLACEMENT_SOURCE_FIELDS):
-                        # A learner placed after they were created has none of the
-                        # cohort's dates, and progression cannot start them without
-                        # one. Stamped before advance_learner runs, so a learner who
-                        # is already past their start date activates on this save.
-                        stamp_cohort_window(user)
-                        # Where a learner sits is read from their permanent profile
-                        # by the workspace, the coach tools and the reports, so the
-                        # change has to reach that row too.
-                        mirror_learner_placement(user)
-                    promoted = advance_learner(user, strict=True)
-                    if 'programme_status' in fields and promoted != ACTIVE_STATUS:
-                        # An explicit staff status edit has already changed the
-                        # source before advance_learner runs. Its transition-only
-                        # hook cannot notice Active -> Active, leaving the profile
-                        # in Delivery and hiding coach/review/calendar records.
-                        if str(user.programme_status or "").strip() == ACTIVE_STATUS:
-                            require_active_profile(user)
-                        else:
-                            # A non-active sync also returns None on success;
-                            # strict mode distinguishes its actual DB failure.
-                            sync_active_user(user, strict=True)
-        except ValidationError as exc:
-            return _error(str(exc), 400)
+            for attr, value in fields.items():
+                setattr(user, attr, value)
+            if fields:
+                handover = save_enrolment_fields(user, fields)
+                # The address and name on this row ARE the sign-in identity, and
+                # the login account keeps its own copy — which is what an
+                # invitation is sent to. Correcting an email here without this
+                # left the invitation going to the old address for ever, since
+                # the account only refreshes itself when its owner signs in and
+                # an invited learner has not yet.
+                if any(field in fields for field in ACCOUNT_IDENTITY_FIELDS):
+                    sync_account("learner", user.pk, subject=user)
+                if any(field in fields for field in PLACEMENT_SOURCE_FIELDS):
+                    # A learner placed after they were created has none of the
+                    # cohort's dates, and progression cannot start them without
+                    # one. Stamped before advance_learner runs, so a learner who
+                    # is already past their start date activates on this save.
+                    stamp_cohort_window(user)
+                    # Where a learner sits is read from their permanent profile
+                    # by the workspace, the coach tools and the reports, so the
+                    # change has to reach that row too.
+                    mirror_learner_placement(user)
+                advance_learner(user)
+                if 'programme_status' in fields:
+                    # An explicit staff status edit has already changed the
+                    # source before advance_learner runs. Its transition-only
+                    # hook cannot notice Active -> Active, leaving the profile
+                    # in Delivery and hiding coach/review/calendar records.
+                    sync_active_user(user)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
-        return JsonResponse(to_board(user))
+        return JsonResponse({**to_board(user), **(handover or {})})
     return _error("Method not allowed.", 405)
 
 

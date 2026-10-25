@@ -232,6 +232,12 @@ urlpatterns = [
          employer_portal.employer_portal_progress_reviews, name="employer-progress-reviews"),
     path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/progress-reviews/<path:event_key>/pdf/",
          employer_portal.employer_portal_progress_reviews, {"as_pdf": True}, name="employer-progress-review-pdf"),
+    path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/progress-reviews/<path:event_key>/artifacts/",
+         employer_portal.employer_portal_review_artifacts, name="employer-progress-review-artifacts"),
+    path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/progress-reviews/<path:event_key>/"
+         "artifacts/<str:artifact_type>/<str:artifact_id>/content/",
+         employer_portal.employer_portal_review_artifact_content,
+         name="employer-progress-review-artifact-content"),
     path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/progress-reviews/<path:event_key>/",
          employer_portal.employer_portal_progress_reviews, name="employer-progress-review"),
     path(

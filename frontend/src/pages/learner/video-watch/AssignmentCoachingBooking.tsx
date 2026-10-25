@@ -148,7 +148,7 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
       {selected && <div className="rounded-xl bg-blue-50 p-4 text-sm"><p>{topicBooked ? "MCM already booked" : "Linked meeting"}: {selected.scheduledDate} at {selected.scheduledTime} with {selected.coachName}.</p>{topicBooked && <p className="mt-2">This meeting is shared across all three topics. You only need to book once.</p>}{selected.invited === false && <p className="mt-2 text-amber-800">The meeting is saved, but the calendar invitation has not been sent. Contact your coach.</p>}</div>}
       {selected && <div className="space-y-3">
         <p className="text-sm leading-6 text-slate-600">Recording and transcription are enabled automatically using the live-session settings. The recording, transcript and attendance appear here once Teams has processed them after the meeting.</p>
-        <CoachMeetingArtifactsPanel event={selected} fetchArtifacts={loadArtifacts} contentUrl={contentUrl} showAttendance />
+        <CoachMeetingArtifactsPanel event={selected} storedOnly={selected.reviewSource === 'aptem'} fetchArtifacts={loadArtifacts} contentUrl={contentUrl} showAttendance />
       </div>}
       {!topicBooked && <fieldset disabled={disabled || busy || !calendar} className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:p-5">
         <legend className="px-2 text-sm font-semibold">Schedule an official MCM</legend>
