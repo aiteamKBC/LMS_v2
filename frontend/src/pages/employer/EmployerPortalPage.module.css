@@ -196,6 +196,9 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 .journeySteps [data-status='signature'] .journeyMarker { border-color: #fa3d7e; background: #fa3d7e; color: #fff; }
 .journeySteps [data-status='signature'] small { color: #e73575; }
 .journeySteps small { color: var(--muted); font-size: 9px; }
+/* The review that is due next keeps an outline; the compensating margin holds the timeline line in place. */
+.journeySteps a[aria-current]:not([data-selection='marker']) { border-radius: 10px; padding-block: 6px; margin-block: -6px; box-shadow: 0 0 0 1.5px var(--purple); }
+.journeySteps a[aria-current]:not([data-selection='marker']) .journeyMarker { border-color: var(--purple); color: var(--purple); }
 .journeyLink { display: flex; align-items: center; justify-content: flex-end; gap: 5px; margin-top: 10px; color: var(--purple); font-size: 10px; text-decoration: none; }
 .journeyLink:hover { text-decoration: underline; }
 .journeyEmpty { padding: 16px 0 8px; color: var(--muted); font-size: 11px; }
@@ -279,6 +282,8 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 :global([data-theme='dark']) .sectionIcon { background: #35244e; border-color: #594270; }
 :global([data-theme='dark']) .sectionBack { background: #2b2138; border-color: #594270; }
 :global([data-theme='dark']) .journeys[data-wide] .journey { border-color: #3c3459; }
+:global([data-theme='dark']) .journeySteps a[aria-current]:not([data-selection='marker']) { box-shadow: 0 0 0 1.5px #a97dff; }
+:global([data-theme='dark']) .journeySteps a[aria-current]:not([data-selection='marker']) .journeyMarker { border-color: #a97dff; color: #c6a8ff; }
 :global([data-theme='dark']) .heroIcon { background: #35244e; border-color: #594270; }
 :global([data-theme='dark']) .statCard { --tint: #2c2440; --border: #4b3b65; }
 :global([data-theme='dark']) .panelHeader,
@@ -498,4 +503,15 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 :global([data-theme='dark']) .page[data-view='home'] { --card-shadow: 0 4px 8px #00000014, 0 14px 28px -12px #00000059; }
 @media (prefers-reduced-motion: reduce) {
   .page * { scroll-behavior: auto !important; transition: none !important; }
+}
+
+.meetingList { display: grid; gap: 12px; padding: 16px 20px; }
+.meetingItem { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; }
+.meetingItem > div:first-child { display: grid; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.meetingItem strong { font-size: 14px; }
+.meetingItem small { color: var(--muted); }
+.meetingActions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; }
+@media (max-width: 600px) {
+  .meetingItem { align-items: flex-start; flex-direction: column; }
+  .meetingActions { justify-content: flex-start; }
 }

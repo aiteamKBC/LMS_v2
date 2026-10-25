@@ -26,6 +26,9 @@ class PersonalSupportAccessTests(TestCase):
         self.source = {"canInitialize": True, "readOnly": True, "source": "aptem", "sourceStatus": "not-scheduled",
             "migratedProgrammeKey": None, "historicalReview": {"id": 7001, "type": "Personal Support Plan", "status": "not-scheduled"},
             "instance": {"id": self.key, "learnerId": 17}, "template": {"reviewTypeCode": "aptem_psp"}}
+        self.profiles = self.enterContext(patch('learner_api.models.LearnerProfile.objects.filter'))
+        self.profiles.return_value.first.return_value = self.profile
+        self.profiles.return_value.values_list.return_value.first.return_value = self.owner
         for target, kwargs in (
             ("coach_api.personal_support_access.authenticate_request", {"side_effect": lambda _: self.account}),
             ("coach_api.personal_support_access.EnrolmentUser.all_learners.filter", {}),
@@ -40,7 +43,9 @@ class PersonalSupportAccessTests(TestCase):
                 self.enrolments = mock
                 mock.return_value.first.return_value = self.learner
 
-    def definition(self, owner, key):
+    def definition(self, owner, key, *, learners=None):
+        if learners is not None:
+            self.assertEqual(learners, [self.profile])
         result = deepcopy(self.source)
         overlay = ImportedReviewInstance.objects.filter(owner_email=owner, event_key=key).first()
         if overlay:
@@ -74,6 +79,7 @@ class PersonalSupportAccessTests(TestCase):
                     self.assertNotIn("historicalReview", body)
                     self.assertEqual(body["sections"][0]["fields"][0]["answer"], "Imported goal")
         self.enrolments.assert_called_with(pk=71)
+        self.profiles.assert_called_with(pk=17)
         self.assertFalse(CoachCalendarEvent.objects.exists())
 
     def test_repeated_open_reuses_form_preserving_answers_and_completed_state(self):
@@ -92,6 +98,31 @@ class PersonalSupportAccessTests(TestCase):
         overlay.refresh_from_db()
         self.assertEqual((overlay.answers, overlay.template_snapshot, overlay.status),
                          ({"goal": "Learner's saved goal"}, snapshot, "completed"))
+
+    def test_learner_prepare_locks_assignment_before_template_like_coach_initializer(self):
+        order = []
+        with patch('coach_api.views.lock_learner_calendar', side_effect=lambda *_: order.append('learner')), \
+                patch.object(endpoint, 'lock_template_family', side_effect=lambda *_: order.append('template')):
+            self.assertEqual(self.request().status_code, 200)
+        self.assertEqual(order[:2], ['learner', 'template'])
+
+    def test_existing_psp_remains_readable_after_assignment_changes_without_reinitializing(self):
+        self.assertEqual(self.request().status_code, 200)
+        overlay = ImportedReviewInstance.objects.get()
+        for state in ('scheduled', 'in-progress', 'awaiting-signature', 'completed'):
+            with self.subTest(state=state):
+                overlay.status = state
+                overlay.answers = {'goal': 'Preserved signed or draft answer'}
+                overlay.save()
+                before = ImportedReviewInstance.objects.values().get(pk=overlay.pk)
+                self.profile.coach_email = 'new@example.invalid'
+                with patch.object(endpoint, 'initialize_imported_review') as initialize:
+                    response = self.request()
+                self.assertEqual(response.status_code, 200, response.content)
+                initialize.assert_not_called()
+                self.assertEqual(ImportedReviewInstance.objects.count(), 1)
+                self.assertEqual(ImportedReviewInstance.objects.values().get(pk=overlay.pk), before)
+                self.assertEqual(json.loads(response.content)['readOnly'], state in {'awaiting-signature', 'completed'})
 
     def test_other_roles_preview_unauthenticated_and_csrf_requests_cannot_initialize(self):
         for role in ("employer", "staff", "admin"):

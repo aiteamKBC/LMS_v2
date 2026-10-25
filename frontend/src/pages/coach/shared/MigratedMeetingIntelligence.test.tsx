@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MigratedMeetingIntelligence } from './MigratedMeetingIntelligence';
@@ -26,6 +26,37 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('migrated meeting intelligence', () => {
+  it.each(['success', 'failure'])('keeps a new session check intact when the previous check ends with %s', async outcome => {
+    let resolveOld!: (value: typeof empty) => void;
+    let rejectOld!: (reason: Error) => void;
+    let resolveNew!: (value: typeof empty) => void;
+    const oldRequest = new Promise<typeof empty>((resolve, reject) => { resolveOld = resolve; rejectOld = reject; });
+    const newRequest = new Promise<typeof empty>(resolve => { resolveNew = resolve; });
+    api.fetch.mockImplementation((key, _signal, options) => options?.refresh ? (key === id ? oldRequest : newRequest) : Promise.resolve(empty));
+    const oldComplete = vi.fn(), newComplete = vi.fn(), checking = vi.fn();
+    const { rerender } = render(<MigratedMeetingIntelligence instanceId={id} family="aptem_mcm" status="in-progress"
+      viewAs={false} onCheckComplete={oldComplete} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Check Session' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Check Session' }));
+    await waitFor(() => expect(api.fetch).toHaveBeenCalledWith(id, undefined, { refresh: true }));
+    rerender(<MigratedMeetingIntelligence instanceId="imported-review:new" family="aptem_progress_review" status="in-progress"
+      viewAs={false} onCheckComplete={newComplete} onCheckingChange={checking} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Check Session' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Check Session' }));
+    await waitFor(() => expect(checking).toHaveBeenCalledWith(true));
+    await act(async () => {
+      if (outcome === 'failure') rejectOld(new Error('Previous session failure'));
+      else resolveOld(empty);
+    });
+    expect(oldComplete).not.toHaveBeenCalled();
+    expect(newComplete).not.toHaveBeenCalled();
+    expect(checking).not.toHaveBeenCalledWith(false);
+    expect(screen.queryByText(/Previous session failure/)).not.toBeInTheDocument();
+    await act(async () => { resolveNew(empty); });
+    expect(newComplete).toHaveBeenCalledExactlyOnceWith(empty);
+    expect(checking).toHaveBeenLastCalledWith(false);
+  });
+
   it('updates the summary status from an uploaded binding without another Teams request', async () => {
     const { rerender } = render(<MigratedMeetingIntelligence instanceId={id} family="aptem_mcm" status="in-progress"
       viewAs={false} bound savedBinding={{ fieldKey: 'recap', generationStatus: 'failed' }} />);

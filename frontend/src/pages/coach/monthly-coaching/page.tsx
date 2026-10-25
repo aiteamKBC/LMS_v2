@@ -11,6 +11,7 @@ import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
 import { Pagination } from '@/components/ui/Pagination';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { useImportedMeetingJoin } from '../shared/useImportedMeetingJoin';
 import { cn } from '@/lib/cn';
 import { type StatusTone } from '@/lib/statusTone';
 import { roleNavMap } from '@/mocks/navigation';
@@ -35,7 +36,6 @@ import {
   isInProgressEvent,
   isScheduledEvent,
   latestCompletedReviewDate,
-  meetingUrl,
   needsScheduling,
   parseLocalDate,
   scheduleCoachCalendarEvent,
@@ -234,6 +234,7 @@ export default function CoachMonthlyCoaching() {
   const [ownerName, setOwnerName] = useState(() => initialCache?.ownerName || 'Coach');
   const [loading, setLoading] = useState(() => !initialCache);
   const [error, setError] = useState<string | null>(null);
+  const [joinError, setJoinError] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -462,10 +463,11 @@ export default function CoachMonthlyCoaching() {
     }
   };
 
-  const openMeeting = (event: CoachCalendarEvent) => {
-    const url = meetingUrl(event);
-    if (url) window.open(url, '_blank', 'noopener,noreferrer');
-  };
+  const openMeeting = useImportedMeetingJoin({
+    contextKey: `${coach.email}:${coach.isViewingAsCoach}`, readOnly: coach.isViewingAsCoach,
+    onError: setJoinError,
+    onStarted: joined => setEvents(current => current.map(row => row.eventKey === joined.eventKey ? { ...row, status: 'in-progress' } : row)),
+  });
 
   // The learner creates and edits their MCM slides; the coach views them.
   // enrolmentId, never learnerId: the slides API keys on the enrolment record.
@@ -561,6 +563,7 @@ export default function CoachMonthlyCoaching() {
         </section>
         {error ? <EmptyState variant="error" title="Unable to load coaching meetings." description={error} /> : null}
         <ReviewIdentityNotice issues={issues} />
+        {joinError ? <p role="alert" className="text-sm text-red-700">{joinError}</p> : null}
         {bookingNotice ? <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{bookingNotice}</p> : null}
         <section className={styles.controlsCard} aria-label="Coaching meeting filters and summary">
           <div className={styles.toolbar}>
@@ -633,12 +636,12 @@ export default function CoachMonthlyCoaching() {
         event={importedBookingEvent}
         viewingAsCoach={coach.isViewingAsCoach}
         onClose={() => setImportedBookingEvent(null)}
-        onSaved={(updated, notice) => {
+        onSaved={(updated, notice, options) => {
           const nextEvents = sortEvents(events.map(event => eventIdentity(event) === eventIdentity(updated) ? updated : event));
           setEvents(nextEvents);
           writeCoachSessionCache(cacheKey, { events: nextEvents, ownerName, issues });
           setBookingNotice(notice);
-          setImportedBookingEvent(null);
+          if (!options?.keepOpen) setImportedBookingEvent(null);
         }}
       /> : null}
       {scheduleModalOpen ? (

@@ -1299,6 +1299,9 @@ def learner_calendar_event_artifacts(request, kind, pk, event_key):
     record = _learner_calendar_record(kind, pk, event_key)
     if not record:
         return _error("Calendar event not found for this learner.", 404)
+    from .imported_meeting_resources import is_imported_meeting, stored_resources
+    if is_imported_meeting(record):
+        return stored_resources(record, include_attendance=True)
     from coach_api.views import (
         apply_teams_attendance_status_transition,
         fetch_coach_meeting_graph_snapshot, persist_coach_meeting_snapshots,
@@ -1345,6 +1348,9 @@ def learner_calendar_event_artifact_content(request, kind, pk, event_key, artifa
     allowed_types = {"recording"}
     if _s(artifact_type).lower() not in allowed_types:
         return _error("Only meeting recordings are available to learners.", 403)
+    from .imported_meeting_resources import is_imported_meeting, stored_recording
+    if is_imported_meeting(record):
+        return stored_recording(record, artifact_id)
     from coach_api.views import coach_meeting_artifact_content_response
     return coach_meeting_artifact_content_response(request, record, event_key, artifact_type, artifact_id)
 

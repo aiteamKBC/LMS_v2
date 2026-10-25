@@ -7,7 +7,7 @@ import MeetingAttendanceActions from '../reviews/MeetingAttendanceActions';
 import { meetingBookingWarning, meetingCalendarHref } from '../reviews/meetingBooking';
 import ProgrammeReviewTimeline from '../reviews/ProgrammeReviewTimeline';
 import { completedReviewTimelineStatus, reviewTimelineStatus } from '../reviews/reviewTimelineStatus';
-import { reviewOverview, reviewsListHref, type ReviewDefinitions, type ReviewFilter, type ReviewPresentation } from './reviewPresentation';
+import { isAptemReview, reviewOverview, reviewsListHref, type ReviewDefinitions, type ReviewFilter, type ReviewPresentation } from './reviewPresentation';
 import styles from './reviewsHome.module.css';
 
 export interface ReviewsHomeProps {
@@ -76,9 +76,12 @@ export default function ReviewsHome(props: ReviewsHomeProps) {
     if (selectedPage > 1) next.set('page', String(selectedPage));
     setParams(next);
   };
-  const selected = overview.all.find(item => item.session.id === selectedId);
-  const current = selected || overview.current;
-  const isSelected = Boolean(selected && selected.session.id !== overview.current?.session.id);
+  const selectedReview = overview.all.find(item => item.session.id === selectedId);
+  const nextActionableReview = overview.nextActionableReview;
+  // Selection changes the displayed card only, never the calculated next action.
+  // overview.current also retains the existing Native historical fallback.
+  const current = selectedReview || nextActionableReview || overview.current;
+  const isSelected = Boolean(selectedReview && selectedReview.session.id !== overview.current?.session.id);
   const selectTimelineItem = (id: string) => {
     setSelectedId(id);
     if (allView) setParams(new URLSearchParams({ kind: learner.kind, learner: learner.id }));
@@ -152,6 +155,7 @@ export default function ReviewsHome(props: ReviewsHomeProps) {
     {sessions.length > 0 && <ProgrammeReviewTimeline label={basePath === '/learner/reviews' ? 'Review' : 'Progress review'} activeId={current?.session.id || null} onSelect={selectTimelineItem} items={overview.all.map(state => ({
       id: state.session.id, title: titleOf(state.session), date: state.date,
       status: progressTimelineStatus(state, definitions),
+      markerSelection: isAptemReview(state.session),
     }))} />}
     {props.loading && !sessions.length ? <div className={styles.loading} role="status">Loading your reviews…</div>
       : props.error && !sessions.length ? <div className={styles.empty}><h2>Your reviews could not be loaded</h2><p>Use Try again above to reload your reviews.</p></div>
@@ -161,7 +165,7 @@ export default function ReviewsHome(props: ReviewsHomeProps) {
           <div className={styles.filters} role="group" aria-label="Filter reviews">{filters.map(item => <button type="button" key={item.id} aria-pressed={filter === item.id} onClick={() => updateView(item.id)}>{item.label} ({overview[item.id].length})</button>)}</div>
           {!rows.length ? <div className={styles.empty}><h2>{filter === 'past' ? 'No past reviews yet' : filter === 'upcoming' ? 'No upcoming reviews' : 'No reviews yet'}</h2><p>Your reviews will appear here when they are available.</p></div> : <ul className={styles.reviewList}>
             {rows.slice((page - 1) * 8, page * 8).map(state => <li key={state.session.id} className={styles.reviewRow}>
-              <div className={styles.rowIdentity}><h2>{reviewLink(state, titleOf(state.session), props.onOpenReview ? styles.textLink : undefined)}</h2><p>{state.session.coachName || 'Reviewer to be confirmed'}</p><p>{state.description}</p></div>
+              <div className={styles.rowIdentity}><h2>{reviewLink(state, titleOf(state.session), props.onOpenReview ? styles.textLink : undefined)}</h2><p>{state.session.reviewSource === 'aptem' && <span>{state.status === 'completed' ? 'Historical Reviewer / Coach' : 'Responsible Coach'}: </span>}<span>{state.session.coachName || 'Reviewer to be confirmed'}</span></p><p>{state.description}</p></div>
               <div className={styles.rowDate}>{status(state)}<p>{state.action === 'schedule' ? 'Target date' : state.booked ? 'Meeting date' : 'Review date'}</p><strong>{dateLabel(state.date)}</strong>{state.booked && <p>{state.attendance?.startTime || state.session.scheduledTime || 'Time to be confirmed'}{props.timeZone ? ` · ${props.timeZone}` : ''}</p>}</div>
               <div className={styles.rowActions}>{action(state, true)}{options(state)}{attendanceActions(state)}</div>{warning(state)}
             </li>)}
@@ -173,7 +177,7 @@ export default function ReviewsHome(props: ReviewsHomeProps) {
             <div className={styles.currentTop}><p className={styles.eyebrow}>{isSelected ? 'Selected review' : current.isToday ? "Today's review" : current.action === 'sign' || current.past ? 'Your next step' : 'Your next review'}</p>{status(current)}</div>
             <h2 className={styles.title}>{titleOf(current.session)}</h2>
             <div className={styles.appointment}><span className={styles.appointmentIcon}><CalendarDays size={28} aria-hidden="true"/></span><div><p className={styles.dateLabel}>{dateLabel(current.date)}</p><p className={styles.timeLabel}>{current.action === 'schedule' ? 'Target date — a meeting time has not been booked' : current.booked ? `${current.attendance?.startTime || current.session.scheduledTime || 'Time to be confirmed'}${props.timeZone ? ` · ${props.timeZone}` : ''}` : 'Review record'}</p></div></div>
-            <div className={styles.meta}><div><small>Reviewer / Coach</small><strong>{current.session.coachName || 'Not assigned yet'}</strong></div>{props.lineManager && <div><small>Line manager</small><strong>{props.lineManager}</strong></div>}{current.booked && <div><small>Meeting</small><strong>{current.attendance?.meetingProvider || current.session.meetingProvider || 'Location to be confirmed'}{(current.attendance?.durationMinutes ?? current.session.durationMinutes) > 0 ? ` · ${current.attendance?.durationMinutes ?? current.session.durationMinutes} minutes` : ''}</strong></div>}</div>
+            <div className={styles.meta}><div><small>{current.session.reviewSource === 'aptem' ? current.status === 'completed' ? 'Historical Reviewer / Coach' : 'Responsible Coach' : 'Reviewer / Coach'}</small><strong>{current.session.coachName || 'Not assigned yet'}</strong></div>{props.lineManager && <div><small>Line manager</small><strong>{props.lineManager}</strong></div>}{current.booked && <div><small>Meeting</small><strong>{current.attendance?.meetingProvider || current.session.meetingProvider || 'Location to be confirmed'}{(current.attendance?.durationMinutes ?? current.session.durationMinutes) > 0 ? ` · ${current.attendance?.durationMinutes ?? current.session.durationMinutes} minutes` : ''}</strong></div>}</div>
             <p className={styles.help}>{current.description}</p>{warning(current)}
             <div className={styles.actions}>{action(current)}{options(current)}</div>
             {attendanceActions(current)}
