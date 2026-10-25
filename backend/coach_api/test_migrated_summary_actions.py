@@ -212,8 +212,12 @@ class MigratedSummaryActionTests(TestCase):
         self.assertEqual(data['summaryBinding']['generationStatus'], 'ready')
         self.assertEqual(data['intelligence']['summaryStatus'], 'ready')
         self.assertFalse(data['partial'])
-        self.assertEqual(data['meetingSummary']['summary']['overview'], 'Earlier coach wording')
-        self.assertEqual(data['meetingSummary']['status'], 'edited')
+        # D03: keep the historical edit, but do not present an unproven cache as
+        # this call's summary. The independently uploaded suggestion stays ready.
+        self.assertIsNone(data['meetingSummary'])
+        self.assertIn('SUMMARY_SESSION_MISMATCH', data['intelligence']['errorCodes'])
+        self.assertEqual(self.overlay.meeting_intelligence['summary']['overview'], 'Earlier coach wording')
+        self.assertEqual(self.overlay.meeting_intelligence['summaryStatus'], 'edited')
 
     def test_upload_success_supersedes_failure_diagnostics_and_preserves_saved_answer(self):
         self.save({'recap': 'Keep coach wording'})
@@ -263,8 +267,11 @@ class MigratedSummaryActionTests(TestCase):
         self.assertIsNone(data['intelligence']['generationError'])
         self.assertNotIn('recap', self.overlay.answers)
         self.overlay.meeting_intelligence['summaryStatus'] = 'edited'
-        data = json.loads(intelligence._response(self.overlay, self.calendar, self.snapshot).content)
+        with patch.object(views, 'stored_coach_meeting_transcript_for_summary', return_value={
+                'artifactId': 'artifact-one', 'text': 'Synthetic transcript'}):
+            data = json.loads(intelligence._response(self.overlay, self.calendar, self.snapshot).content)
         self.assertEqual(data['intelligence']['summaryStatus'], 'edited')
+        self.assertEqual(data['meetingSummary']['status'], 'edited')
 
     def test_unbound_legacy_check_without_transcript_clears_previous_failure(self):
         self.overlay.template_snapshot['sections'][0]['fields'][0].pop('semanticKey')

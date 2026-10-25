@@ -467,7 +467,7 @@ export default function ProgressReviewsPage() {
 
                 <div className="space-y-5 p-5 sm:p-6">
                   {shouldShowLearnerMeetingPanel(selected) ? (
-                    <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.calendarEventKey || selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />
+                    <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.calendarEventKey || selected.eventKey || selected.id }} storedOnly={selected.reviewSource === 'aptem'} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />
                   ) : null}
 
                   {selected && !selected.importedReview && !instanceBacked && selected.learnerSigned && ['awaiting-signature', 'completed'].includes(selected.status) ? (

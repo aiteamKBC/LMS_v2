@@ -709,10 +709,11 @@ def learner_coach(request, pk):
             update["case_owner"] = update["coach_name"]
             for attr, value in update.items():
                 setattr(source, attr, value)
-            save_enrolment_fields(source, update)
+            handover = save_enrolment_fields(source, update)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
-        return JsonResponse({"coachName": update["coach_name"], "coachEmail": update["coach_email"]})
+        return JsonResponse({"coachName": update["coach_name"], "coachEmail": update["coach_email"],
+                             **(handover or {})})
 
     return _error("Method not allowed.", 405)
 
@@ -964,6 +965,7 @@ def enrolment_user_detail(request, pk):
         advance_learner(user)
         return JsonResponse(to_board(user))
     if request.method in ("PATCH", "PUT"):
+        handover = None
         try:
             payload = _parse_body(request)
             # A learner submitting their own wizard may only touch their own
@@ -990,7 +992,7 @@ def enrolment_user_detail(request, pk):
                 for attr, value in fields.items():
                     setattr(user, attr, value)
                 if fields:
-                    save_enrolment_fields(user, fields)
+                    handover = save_enrolment_fields(user, fields)
                     # The address and name on this row ARE the sign-in identity, and
                     # the login account keeps its own copy — which is what an
                     # invitation is sent to. Correcting an email here without this
@@ -1025,7 +1027,7 @@ def enrolment_user_detail(request, pk):
             return _error(str(exc), 400)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
-        return JsonResponse(to_board(user))
+        return JsonResponse({**to_board(user), **(handover or {})})
     return _error("Method not allowed.", 405)
 
 

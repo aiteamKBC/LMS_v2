@@ -1,8 +1,10 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight, BookOpen, CalendarDays, Check, CircleAlert, ClipboardPenLine, Layers, LoaderCircle, Users, Workflow } from 'lucide-react';
 import type { EmployerLearnerCard } from '@/api/employerPortal';
-import { formatReviewDate, learnerHref, learnerKey, orderReviewJourney, reviewDate, reviewLabels, reviewState, type DashboardReviews } from './employerDashboardData';
+import { formatReviewDate, learnerHref, learnerKey, nextReview, orderReviewJourney, reviewDate, reviewLabels, reviewState, type DashboardReviews } from './employerDashboardData';
 import styles from './EmployerReviewJourneys.module.css';
+import { isAptemReview } from '@/pages/learner/progress-reviews/reviewPresentation';
+import selection from '@/pages/learner/reviews/reviewMarkerSelection.module.css';
 
 type Props = {
   employerId: string;
@@ -38,6 +40,7 @@ export function EmployerReviewJourneys({ employerId, learners, totalLearners, re
         const resource = reviews[learnerKey(learner)];
         const ready = resource?.status === 'ready';
         const events = orderReviewJourney(resource?.data || []);
+        const upcomingKey = nextReview(resource?.data)?.eventKey;
         const completed = events.filter(event => reviewState(event) === 'completed').length;
         const signatures = events.filter(event => reviewState(event) === 'signature').length;
         const href = learnerHref(employerId, learner, 'reviews');
@@ -76,8 +79,8 @@ export function EmployerReviewJourneys({ employerId, learners, totalLearners, re
                       const StatusIcon = state === 'completed' ? Check : state === 'signature' ? ClipboardPenLine : CalendarDays;
                       return (
                         <li key={event.eventKey} data-status={state}>
-                          <Link to={href} className={styles.review} aria-label={`${learner.name}: ${event.title}, ${reviewLabels[state]}, ${formatReviewDate(date)}`}>
-                            <span className={styles.marker}><StatusIcon size={16} aria-hidden /></span>
+                          <Link to={href} className={`${styles.review} ${selection.control}`} data-selection={isAptemReview(event) ? 'marker' : undefined} aria-current={event.eventKey === upcomingKey ? 'step' : undefined} aria-label={`${learner.name}: ${event.title}, ${reviewLabels[state]}, ${formatReviewDate(date)}`}>
+                            <span className={`${styles.marker} ${selection.marker}`}><StatusIcon size={16} aria-hidden /></span>
                             <div className={styles.reviewBody}>
                               <span className={styles.status}>{reviewLabels[state]}</span>
                               <strong>{event.title}{event.occurrenceNumber ? ` #${event.occurrenceNumber}` : ''}</strong>

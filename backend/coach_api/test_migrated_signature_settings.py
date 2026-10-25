@@ -39,7 +39,10 @@ class MigratedSignatureSettingsTests(TestCase):
         source = {"canInitialize": True, "readOnly": True, "migratedProgrammeKey": "id:synthetic", "sourceStatus": "Scheduled",
             "historicalReview": {"id": 7000 + template.pk, "type": TYPES[family]},
             "instance": {"id": f"imported-review:settings-{template.pk}", "learnerId": 17}}
-        overlay, created = initialize_imported_review("coach@example.invalid", source)
+        with patch('learner_api.models.LearnerProfile.objects.filter') as profiles:
+            profiles.return_value.values_list.return_value.first.return_value = 'coach@example.invalid'
+            overlay, created = initialize_imported_review("coach@example.invalid", source)
+            profiles.assert_called_once_with(pk=17)
         self.assertTrue(created)
         booking = CoachCalendarEvent.objects.create(event_key=overlay.event_key, owner_email=overlay.owner_email, learner_id=17,
             event_type="mcr" if family == "MCM" else "progress-review", target_date=date(2026, 10, 22),

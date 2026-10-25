@@ -36,7 +36,9 @@ class PersonalSupportCompletionTests(TestCase):
             template_snapshot=snapshot_for(self.template), signature_requirements=requirements_for_family("PSP"),
             status="not-scheduled", answers={})
 
-    def definition(self, owner, key):
+    def definition(self, owner, key, *, learners=None):
+        if learners is not None:
+            self.assertEqual([profile.id for profile in learners], [self.review.learner_id])
         review = ImportedReviewInstance.objects.get(event_key=key)
         sections, _ = render_sections(review.template_snapshot, review.answers)
         return {"source": "aptem", "migratedForm": True, "readOnly": review.status in {"awaiting-signature", "completed"},
@@ -59,8 +61,11 @@ class PersonalSupportCompletionTests(TestCase):
         source = {"canInitialize": True, "readOnly": True, "sourceStatus": "Not Scheduled", "migratedProgrammeKey": None,
             "historicalReview": {"id": 7002, "type": "Personal Support Plan"},
             "instance": {"id": "imported-review:psp-new", "learnerId": 17}}
-        with patch("coach_api.personal_support_form.initial_answers", return_value={}):
+        with patch("coach_api.personal_support_form.initial_answers", return_value={}), \
+                patch.object(views.LearnerProfile.objects, 'filter') as profiles:
+            profiles.return_value.values_list.return_value.first.return_value = self.review.owner_email
             overlay, created = initialize_imported_review(self.review.owner_email, source)
+            profiles.assert_called_once_with(pk=17)
         self.assertTrue(created)
         self.assertEqual(required_roles(overlay), ("advisor", "employer"))
         self.assertEqual(overlay.signature_requirements, requirements_for_definition(self.template.definition_json, "PSP"))

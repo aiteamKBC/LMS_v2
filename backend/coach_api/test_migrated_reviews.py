@@ -350,6 +350,7 @@ class MigratedPreviewTests(SimpleTestCase):
         self.overlays.return_value.first.return_value = saved
         result = self._get()
         self.assertTrue(result["booking"]["canBook"])
+        self.assertEqual(result["bookingAdoptionVersion"], views._migrated_booking_adoption_version(saved))
         self.assertFalse(result["booking"]["booked"])
         self.assertEqual(result["migratedTemplateResolution"]["review_family"], "PR_SKILLS_RADAR")
         self.assertEqual(result["migratedTemplateResolution"]["resolved_template_id"], 22)

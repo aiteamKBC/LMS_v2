@@ -9,6 +9,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import type { EnrolmentBoard, FsBlock } from '../types';
+import { fetchLearnerCoach, updateLearnerCoach } from '@/api/coach';
+import { fetchCoachOptions } from '@/api/staffUsers';
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => children }));
 const toast = vi.hoisted(() => ({ info: vi.fn(), success: vi.fn(), error: vi.fn() }));
@@ -128,6 +130,19 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.clearAllMocks(); vi.restoreAllMocks(); });
 
 describe('the enrolment board', () => {
+  it('reports a blocked Review handover after saving the new Coach assignment', async () => {
+    vi.mocked(fetchLearnerCoach).mockResolvedValueOnce({ coachName: 'Previous Coach', coachEmail: 'old@example.invalid' });
+    vi.mocked(fetchCoachOptions).mockResolvedValueOnce([{ name: 'New Coach', email: 'new@example.invalid' }]);
+    vi.mocked(updateLearnerCoach).mockResolvedValueOnce({ coachName: 'New Coach', coachEmail: 'new@example.invalid',
+      reviewHandover: { transferred: [], unchanged: [], historical: [], uninitialized: [],
+        blocked: [{ reviewId: 'imported-review:synthetic', code: 'booking_handover_required' }] } });
+    renderBoard();
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Coach' }), { target: { value: 'new@example.invalid' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText(/Coach assignment saved.*Existing meeting bookings need a separate handover/)).toBeVisible();
+    expect(screen.getByRole('combobox', { name: 'Coach' })).toHaveValue('new@example.invalid');
+  });
+
   it('opens on the overview with the wired panels only', async () => {
     renderBoard();
     expect(await screen.findByRole('heading', { name: 'Sam Example' })).toBeInTheDocument();
