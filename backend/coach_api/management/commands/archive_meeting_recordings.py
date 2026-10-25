@@ -58,6 +58,22 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from coach_api.views import coach_meeting_graph_target
+        from coach_api.actual_session_resolution import review_meeting_target
+        from coach_api.background_meeting_sync import imported_context
+        from coach_api.imported_recording_archive import prepare_archive, published_reference
+
+        def verified_archive_target(record, attempt):
+            identity = {}
+            try:
+                base, error = review_meeting_target(record, identity_out=identity)
+            except Exception:
+                return None
+            target = identity.get('target')
+            if (error or not base or target is None or target.base_path != base
+                    or (attempt.verified_meeting_id
+                        and target.online_meeting_id != attempt.verified_meeting_id)):
+                return None
+            return target
 
         database = router.db_for_write(CoachCalendarEvent) or "default"
 
@@ -78,7 +94,19 @@ class Command(BaseCommand):
         wanted_key = (options.get("event_key") or "").strip()
         dry_run = bool(options.get("dry_run"))
 
-        rows = pending_recordings(database, limit=limit)
+        scoped_imported = False
+        if wanted_key:
+            try:
+                selected = CoachCalendarEvent.objects.using(database).filter(event_key=wanted_key).first()
+                if selected is None:
+                    self.stderr.write('Requested meeting was not found; no archive work performed.')
+                    return
+                scoped_imported = bool(imported_context(selected))
+            except Exception:
+                self.stderr.write('Requested recording scope could not be verified; archive skipped.')
+                return
+        rows = (pending_recordings(database, limit=limit, event_key=wanted_key) if scoped_imported
+                else pending_recordings(database, limit=limit))
         if wanted_key:
             rows = [row for row in rows if row.get("event_key") == wanted_key]
 
@@ -86,8 +114,9 @@ class Command(BaseCommand):
             # Transcripts are offloaded independently of recordings, so this
             # must not return: a run with no pending recordings still has
             # transcript work to do.
-            self.stdout.write("No recordings pending: every known recording is already in a container.")
-            if not dry_run:
+            self.stdout.write('No eligible recordings selected for this imported meeting.' if scoped_imported
+                              else "No recordings pending: every known recording is already in a container.")
+            if not dry_run and not scoped_imported:
                 self._archive_transcripts(database)
                 self._archive_live_sessions(database)
             return
@@ -104,14 +133,6 @@ class Command(BaseCommand):
             # The tail is the part that differs.
             label = f"{event_key} / ...{artifact_id[-18:]}"
 
-            if recording_is_archived(event_key, artifact_id, database):
-                skipped += 1
-                self.stdout.write(f"  skip    {label} (already archived)")
-                continue
-            if dry_run:
-                self.stdout.write(f"  would   {label}")
-                continue
-
             record = (
                 CoachCalendarEvent.objects.filter(event_key=event_key).first()
                 if event_key
@@ -122,32 +143,70 @@ class Command(BaseCommand):
                 self.stderr.write(f"  fail    {label}: no calendar event row")
                 continue
 
-            base, error_payload = coach_meeting_graph_target(record)
+            try:
+                imported_attempt = prepare_archive(record, row, database)
+                existing = published_reference(imported_attempt, database) if imported_attempt else None
+            except Exception:
+                failed += 1
+                self.stderr.write('  fail    Imported recording scope unavailable; archive skipped.')
+                continue
+            if existing:
+                skipped += 1
+                self.stdout.write('  skip    Imported recording already has a saved reference.')
+                continue
+            if imported_attempt is None and recording_is_archived(event_key, artifact_id, database):
+                skipped += 1
+                self.stdout.write(f"  skip    {label} (already archived)")
+                continue
+            if dry_run:
+                self.stdout.write('  would   Archive verified imported recording.' if imported_attempt
+                                  else f"  would   {label}")
+                continue
+
+            strict_archive = bool(imported_attempt and imported_attempt.context.get('family') in {
+                'MCM', 'PR', 'PR_SKILLS_RADAR'})
+            if strict_archive:
+                verified_target = verified_archive_target(record, imported_attempt)
+                base, error_payload = ((verified_target.base_path, None) if verified_target else
+                    ('', {'detail': 'The imported meeting identity could not be verified.'}))
+            else:
+                verified_target = None
+                base, error_payload = coach_meeting_graph_target(record)
             if not base or error_payload:
                 failed += 1
                 detail = (error_payload or {}).get("detail", "Graph could not resolve the meeting.")
-                self.stderr.write(f"  fail    {label}: {detail}")
+                self.stderr.write('  fail    Imported recording target unavailable.' if imported_attempt
+                                  else f"  fail    {label}: {detail}")
                 continue
 
             content, content_type, error = download_recording_from_graph(base, artifact_id)
             if error or not content:
                 failed += 1
-                self.stderr.write(f"  fail    {label}: {error or 'empty recording'}")
+                self.stderr.write('  fail    Imported recording download unavailable.' if imported_attempt
+                                  else f"  fail    {label}: {error or 'empty recording'}")
                 continue
 
-            result = archive_recording(event_key, artifact_id, content, content_type, database)
+            if strict_archive and verified_archive_target(record, imported_attempt) != verified_target:
+                failed += 1
+                self.stderr.write('  fail    Imported recording target changed; archive skipped.')
+                continue
+
+            result = archive_recording(event_key, artifact_id, content, content_type, database,
+                **({'imported_attempt': imported_attempt} if imported_attempt is not None else {}))
             if result["archived"]:
                 archived += 1
                 size_mb = len(content) / (1024 * 1024)
-                self.stdout.write(f"  ok      {label} -> {result['blob_name']} ({size_mb:.1f} MB)")
+                self.stdout.write('  ok      Imported recording reference retained.' if imported_attempt
+                                  else f"  ok      {label} -> {result['blob_name']} ({size_mb:.1f} MB)")
             else:
                 failed += 1
-                self.stderr.write(f"  fail    {label}: {result['error']}")
+                self.stderr.write(f"  fail    {result['error']}" if imported_attempt
+                                  else f"  fail    {label}: {result['error']}")
 
         self.stdout.write(
             self.style.SUCCESS(f"Done. archived={archived} skipped={skipped} failed={failed}")
         )
-        if not dry_run:
+        if not dry_run and not scoped_imported:
             self._archive_transcripts(database)
             self._archive_live_sessions(database)
 

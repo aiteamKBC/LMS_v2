@@ -10,6 +10,7 @@ const statusLabel: Record<string, string> = {
   'not-available': 'Not available',
   'fetch-failed': 'Fetch failed',
   'pending': 'Pending; check again later',
+  'incomplete': 'Incomplete; check again later',
   'available': 'Available',
   'unavailable': 'Unavailable',
   'unknown': 'Unknown',
@@ -19,7 +20,15 @@ const statusLabel: Record<string, string> = {
   'edited': 'Coach edited',
 };
 
-export function MigratedMeetingIntelligence({
+export function MigratedMeetingIntelligence(props: Parameters<typeof MigratedMeetingIntelligenceContent>[0]) {
+  // Drop saved resources and outstanding callbacks when their authority/booking
+  // changes, even if the selected source Review ID stays the same.
+  return <MigratedMeetingIntelligenceContent key={JSON.stringify([
+    props.instanceId, props.family, props.viewAs, props.readOnly, props.meetingLink, props.resourceContextKey,
+  ])} {...props} />;
+}
+
+function MigratedMeetingIntelligenceContent({
   instanceId,
   family,
   status,
@@ -45,10 +54,12 @@ export function MigratedMeetingIntelligence({
   onCheckingChange?: (checking: boolean) => void;
   savedBinding?: CoachMeetingArtifactsResponse['summaryBinding'];
   showBoundSummary?: boolean;
+  resourceContextKey?: string;
 }) {
   const [intelligence, setIntelligence] = useState<CoachMeetingArtifactsResponse['intelligence']>();
   const [attendance, setAttendance] = useState<CoachMeetingArtifactsResponse['attendance']>();
   const [binding, setBinding] = useState<CoachMeetingArtifactsResponse['summaryBinding']>();
+  const [appointment, setAppointment] = useState<CoachMeetingArtifactsResponse['event']>();
   useEffect(() => { if (savedBinding) setBinding(savedBinding); }, [savedBinding]);
   const handlers = useRef({ onCheckComplete, onCheckingChange });
   const requestGeneration = useRef(0);
@@ -67,6 +78,14 @@ export function MigratedMeetingIntelligence({
         return result;
       } catch (error) {
         if (generation !== requestGeneration.current) throw new DOMException('Review changed', 'AbortError');
+        const failure = error as { status?: number; code?: string } | null;
+        if ([401, 403, 404].includes(failure?.status || 0)
+            || (failure?.status === 409 && !['MEETING_END_NOT_CONFIRMED', 'SUMMARY_IN_PROGRESS', 'SUMMARY_SUPERSEDED'].includes(failure.code || ''))) {
+          setIntelligence(undefined);
+          setAttendance(undefined);
+          setBinding(undefined);
+          setAppointment(undefined);
+        }
         throw error;
       } finally {
         if (options?.refresh && generation === requestGeneration.current) handlers.current.onCheckingChange?.(false);
@@ -88,6 +107,7 @@ export function MigratedMeetingIntelligence({
     setIntelligence(result.intelligence);
     setAttendance(result.attendance);
     setBinding(result.summaryBinding);
+    setAppointment(result.event);
   }, []);
   const mapped = bound || Boolean(binding?.fieldKey);
   const canCheck = !viewAs && !readOnly && !checkBlocked && (status === 'scheduled' || status === 'in-progress');
@@ -100,14 +120,23 @@ export function MigratedMeetingIntelligence({
         <p className="text-xs text-foreground-500">{mapped
           ? 'Check Session refreshes Teams results. Generate from Teams at the Meeting Summary question uses the same check.'
           : 'Check Session refreshes attendance, recordings, transcripts and the AI summary from Teams.'}</p>
-        <p className="mt-1 text-xs text-foreground-500">Check after the call ends or the scheduled end time. Teams may need time to prepare attendance, recordings and transcripts.</p>
+        <p className="mt-1 text-xs text-foreground-500">Check for available Teams resources. Attendance, recordings and transcripts may become available at different times. AI generation has separate eligibility checks.</p>
       </div>
       <div className="flex flex-wrap gap-2 text-xs" aria-label="Meeting intelligence status">
         <span>Attendance: <strong>{statusLabel[intelligence?.attendanceStatus || 'not-checked']}</strong></span>
-        <span>Recording: <strong>{statusLabel[intelligence?.recordingStatus || 'unknown']}</strong></span>
+        <span>Recording metadata: <strong>{statusLabel[intelligence?.recordingStatus || 'unknown']}</strong></span>
         <span>Transcript: <strong>{statusLabel[intelligence?.transcriptStatus || 'not-checked']}</strong></span>
-        <span>AI Summary: <strong>{statusLabel[binding?.generationStatus || intelligence?.summaryStatus || 'not-generated']}</strong></span>
+        <span>AI Summary: <strong>{statusLabel[intelligence?.summaryStatus === 'pending' ? 'pending' : binding?.generationStatus || intelligence?.summaryStatus || 'not-generated']}</strong></span>
       </div>
+      {appointment?.scheduledDate && appointment.scheduledTime ? (
+        <p className="text-xs text-foreground-600">Planned appointment: {appointment.scheduledDate} at {appointment.scheduledTime}</p>
+      ) : null}
+      {intelligence?.meetingEndStatus === 'pending' && intelligence.lastCheckedAt ? (
+        <p role="status" className="text-xs text-foreground-600">Teams resources were checked. Eligible resources, if available, were saved. AI summary generation remains pending until the actual call completion can be verified. The planned appointment end does not confirm that a call ended.</p>
+      ) : null}
+      {intelligence?.meetingEndStatus === 'scheduled-end-reached' ? (
+        <p className="text-xs text-foreground-500">The planned appointment end has passed. Actual call completion still needs an associated ended attendance report before AI generation.</p>
+      ) : null}
       {viewAs ? <p className="text-xs text-amber-800">Admin view-as is read-only. Session checks and summary edits are unavailable.</p> : null}
       {checkBlocked && !viewAs && !readOnly ? <p className="text-xs text-foreground-500">Save your draft and wait for any current action to finish before checking the session.</p> : null}
       {binding?.status === 'no-binding' && <p className="text-xs text-foreground-500">This review has no AI Meeting Summary question. Session checks keep intelligence separate from form answers.</p>}
@@ -169,6 +198,7 @@ export function MigratedMeetingIntelligence({
         hasTeamsMeeting
         allowContentAccess={!viewAs}
         onArtifactsLoaded={onArtifactsLoaded}
+        preserveResourcesOnRefreshError
       />
     </section>
   );

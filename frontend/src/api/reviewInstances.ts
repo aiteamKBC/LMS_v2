@@ -273,7 +273,9 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
       typeof data.code === 'string' ? `Code: ${data.code}` : '',
       typeof data.request_id === 'string' ? `Reference: ${data.request_id}` : '',
     ].filter(Boolean);
-    throw new Error(diagnostics.length ? `${message} (${diagnostics.join(' · ')})` : message);
+    throw Object.assign(new Error(diagnostics.length ? `${message} (${diagnostics.join(' · ')})` : message), {
+      status: response.status, code: typeof data.code === 'string' ? data.code : undefined,
+    });
   }
   return data as T;
 }
