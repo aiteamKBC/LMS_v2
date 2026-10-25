@@ -151,6 +151,10 @@ def _party_overlay(review_id, account, *, lock=False, lock_calendar=False):
     overlay = query.filter(event_key=review_id, source_review_id__isnull=False).first()
     if not overlay or not overlay.template_snapshot.get("sections"):
         return None
+    from .migrated_completion import is_personal_support_form
+    if (account.role == "employer" and is_personal_support_form(overlay)
+            and "employer" not in required_roles(overlay)):
+        return None
     profile = LearnerProfile.objects.filter(pk=overlay.learner_id).first()
     from .review_sources import enrolment_for_review_profile
     learner = enrolment_for_review_profile(profile)
@@ -193,7 +197,12 @@ def migrated_review_party_detail(request, review_id):
 
 def _party_definition(overlay, account):
     from coach_api.views import _imported_review_definition
-    definition = _imported_review_definition(overlay.owner_email, overlay.event_key)
+    # _party_overlay already established learner/employer/source authority.
+    # Historical ownership is not membership of the former Coach's caseload.
+    profile = LearnerProfile.objects.filter(pk=overlay.learner_id).first()
+    if profile is None:
+        return None
+    definition = _imported_review_definition(overlay.owner_email, overlay.event_key, learners=[profile])
     if not definition or not definition.get("migratedForm"):
         return None
     role = "participant" if account.role == "learner" else "employer"
@@ -226,7 +235,10 @@ def migrated_review_party_answers(request, review_id):
         return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
     role = "participant" if account.role == "learner" else "employer"
     with transaction.atomic():
-        overlay = _party_overlay(review_id, account, lock=True)
+        from .migrated_completion import is_personal_support_form, complete_personal_support_if_ready
+        current = _party_overlay(review_id, account)
+        overlay = _party_overlay(review_id, account, lock=True,
+                                 lock_calendar=bool(current and is_personal_support_form(current)))
         if not overlay:
             return JsonResponse({"detail": "Review not found for this account."}, status=404)
         try:
@@ -240,10 +252,12 @@ def migrated_review_party_answers(request, review_id):
             if synchronize_definition_locked(overlay, definition):
                 return JsonResponse({"detail": "The review template changed. Reopen the review to check its latest questions before saving. Your unsaved answers have been kept on screen.", "code": "template_sync_changed"}, status=409)
             answers = merge_party_answers(overlay, payload["answers"], role)
-            record_answer_edit(overlay, active_answers(overlay.template_snapshot, answers),
-                               actor=account.email or str(account.pk), role=role, account_id=account.pk)
-            overlay.answers = answers
-            overlay.save(update_fields=["answers", "meeting_intelligence", "updated_at"])
+            with transaction.atomic():
+                record_answer_edit(overlay, active_answers(overlay.template_snapshot, answers),
+                                   actor=account.email or str(account.pk), role=role, account_id=account.pk)
+                overlay.answers = answers
+                overlay.save(update_fields=["answers", "meeting_intelligence", "updated_at"])
+                complete_personal_support_if_ready(overlay)
         except PermissionError as exc:
             return JsonResponse({"detail": str(exc)}, status=403)
         except (AnswerConflict, TemplateSyncConflict) as exc:

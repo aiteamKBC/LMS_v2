@@ -208,6 +208,8 @@ class MigratedHoursTests(TestCase):
 
     def test_planned_hours_use_real_owned_imports_not_native_recurrence(self):
         self.source(2)
+        # PSP has an editable form but must not add hours or break PR totals.
+        self.source(9, family="Personal Support Plan")
         self.source(3, status="Completed")
         self.source(4, status="Cancelled")
         self.source(5, learner=18)

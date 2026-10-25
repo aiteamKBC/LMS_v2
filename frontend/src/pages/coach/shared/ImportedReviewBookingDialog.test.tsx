@@ -2,14 +2,15 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CoachCalendarEvent } from './calendarEvents';
 import ImportedReviewBookingDialog from './ImportedReviewBookingDialog';
-import { importedBookingDefinition, installDialogTestSupport, scheduledImportedBooking } from './__tests__/importedBookingFixtures';
+import { importedBookingDefinition, installDialogTestSupport, personalSupportBooking, scheduledImportedBooking } from './__tests__/importedBookingFixtures';
 
-const { fetchForm, initializeForm, book, reschedule } = vi.hoisted(() => ({
-  fetchForm: vi.fn(), initializeForm: vi.fn(), book: vi.fn(), reschedule: vi.fn(),
+const { fetchForm, initializeForm, book, reschedule, adopt } = vi.hoisted(() => ({
+  fetchForm: vi.fn(), initializeForm: vi.fn(), book: vi.fn(), reschedule: vi.fn(), adopt: vi.fn(),
 }));
 vi.mock('@/api/reviewInstances', () => ({
   fetchReviewInstanceForm: fetchForm, initializeMigratedReview: initializeForm,
   bookMigratedReview: book, rescheduleMigratedReview: reschedule,
+  adoptMigratedReviewBooking: adopt,
 }));
 const event: CoachCalendarEvent = {
   id: 'row-31', eventKey: 'imported-review:31', reviewSource: 'aptem', aptemReviewId: '31',
@@ -31,6 +32,35 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('Aptem booking from a coach list', () => {
+  it.each([false, true])('books a PSP summary independently of its read-only form (scheduled=%s)', async scheduled => {
+    const current = personalSupportBooking(scheduled);
+    fetchForm.mockResolvedValue(current);
+    book.mockResolvedValue(personalSupportBooking(true));
+    reschedule.mockResolvedValue(personalSupportBooking(true));
+    mount({ event: { ...event, importedReviewType: 'Personal Support Plan', hasReviewForm: false } });
+    expect(await screen.findByRole('heading', { name: `${scheduled ? 'Reschedule' : 'Schedule'} Personal Support Plan` })).toBeVisible();
+    fireEvent.click(await screen.findByRole('button', { name: scheduled ? 'Save new time' : 'Confirm booking' }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({
+      eventKey: event.eventKey, calendarEventKey: 'imported-review:31', status: 'scheduled',
+    }), scheduled ? 'Review rescheduled.' : 'Review scheduled.'));
+    expect(initializeForm).not.toHaveBeenCalled();
+    expect(scheduled ? reschedule : book).toHaveBeenCalledOnce();
+  });
+
+  it.each(['completed', 'in-progress', 'awaiting-signature', 'cancelled'])('does not bypass PSP lifecycle permissions for %s', async status => {
+    const current = personalSupportBooking();
+    fetchForm.mockResolvedValue({ ...current, booking: { ...current.booking!, status, canBook: false } });
+    mount({ event: { ...event, importedReviewType: 'Personal Support Plan' } });
+    await screen.findByText(/Booking is not available/);
+    expect(screen.queryByRole('button', { name: 'Confirm booking' })).not.toBeInTheDocument();
+  });
+
+  it('keeps PSP booking disabled in coach preview', async () => {
+    fetchForm.mockResolvedValue(personalSupportBooking());
+    mount({ viewingAsCoach: true });
+    await screen.findByText(/coach preview is read-only/);
+    expect(screen.queryByRole('button', { name: 'Confirm booking' })).not.toBeInTheDocument();
+  });
   it('initializes an eligible summary then books its own review without changing its row identity', async () => {
     fetchForm.mockResolvedValueOnce(importedBookingDefinition({ migratedForm: false, formAvailable: false, canInitialize: true }));
     mount();
@@ -67,14 +97,40 @@ describe('Aptem booking from a coach list', () => {
     expect(book).not.toHaveBeenCalled();
   });
 
-  it('attaches an existing meeting without changing its slot or creating a new booking', async () => {
+  it('automatically adopts an existing meeting and updates the list with the same slot and identity', async () => {
     const current = scheduledImportedBooking();
+    current.template.reviewTypeCode = 'aptem_progress_review';
     fetchForm.mockResolvedValue({ ...current, localStatus: 'not-scheduled', booking: { ...current.booking, canReschedule: false, canAttach: true } });
+    adopt.mockResolvedValue(current);
     mount();
-    const attach = await screen.findByRole('button', { name: 'Use existing meeting' });
-    expect(screen.getByLabelText('Date')).toBeDisabled();
-    fireEvent.click(attach);
-    await waitFor(() => expect(book).toHaveBeenCalledWith('imported-review:31', expect.objectContaining({ scheduledDate: '2026-09-22', scheduledTime: '10:00', durationMinutes: 75 })));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'row-31', eventKey: event.eventKey, calendarEventKey: current.booking!.eventKey,
+      status: 'scheduled', scheduledDate: '2026-09-22', scheduledTime: '10:00', durationMinutes: 75,
+    }), 'Existing meeting linked automatically.', { keepOpen: true }));
+    expect(adopt).toHaveBeenCalledExactlyOnceWith('imported-review:31', expect.any(AbortSignal));
+    expect(screen.getByLabelText('Date')).toHaveValue('2026-09-22');
+    expect(screen.queryByRole('button', { name: 'Use existing meeting' })).not.toBeInTheDocument();
+    expect(book).not.toHaveBeenCalled();
+    expect(reschedule).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Time'), { target: { value: '14:30' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save new time' }));
+    await waitFor(() => expect(reschedule).toHaveBeenCalledWith('imported-review:31',
+      expect.objectContaining({ scheduledTime: '14:30' }), current.booking));
+    await waitFor(() => expect(onSaved).toHaveBeenLastCalledWith(expect.anything(), 'Review rescheduled.'));
+  });
+
+  it('keeps the reschedule form open after a failed adoption is retried', async () => {
+    const current = scheduledImportedBooking();
+    current.template.reviewTypeCode = 'aptem_progress_review';
+    fetchForm.mockResolvedValue({ ...current, localStatus: 'not-scheduled', booking: { ...current.booking!, canReschedule: false, canAttach: true } });
+    adopt.mockRejectedValueOnce(new Error('Temporary adoption failure')).mockResolvedValueOnce(current);
+    mount();
+    await screen.findByText('Temporary adoption failure');
+    fireEvent.click(screen.getByRole('button', { name: 'Retry linking meeting' }));
+    expect(await screen.findByRole('button', { name: 'Save new time' })).toBeEnabled();
+    expect(screen.getByLabelText('Time')).toBeEnabled();
+    expect(onSaved).toHaveBeenCalledWith(expect.anything(), 'Existing meeting linked.', { keepOpen: true });
+    expect(book).not.toHaveBeenCalled();
     expect(reschedule).not.toHaveBeenCalled();
   });
 

@@ -97,6 +97,25 @@ class CoachDetailProjectionTests(SimpleTestCase):
         self.assertEqual(self.read(page=4)['records'], [])
         self.assertEqual(len(self.read(pageSize=7)['records']), 7)
 
+    def test_module_filter_history_matches_view_across_all_pages_and_corrections(self):
+        from .attendance_modules import with_module_options
+        self.rows[0]['module_title'] = 'Old module beyond the first page'
+        self.rows[-1]['module_title'] = 'Current module'
+        self.manuals = [SimpleNamespace(id=9, session_date=date(2026, 9, 10), status='present',
+            module_name='Manual module', session_title='Manual session')]
+        self.adjustments = [SimpleNamespace(source='kbc-attendance', source_id=self.rows[-1]['session_id'],
+            is_deleted=False, session_date=None, module_name='Corrected module', session_title='',
+            status='', updated_at=NOW)]
+        records = self.read(pageSize=100)['records']
+        programme = {'id': 'p', 'groups': [{'id': 'g', 'name': 'Group', 'cohort': 'C'}]}
+        with patch('coach_api.attendance_modules.delivery_occurrences', return_value=[]):
+            payload = with_module_options(programme, {'42': SimpleNamespace(id=42, _caseload_source=self.source)},
+                [{'id': '42', 'programmeId': 'p', 'groupId': 'g'}])
+        self.assertEqual({row['name'] for row in payload['groups'][0]['modules']},
+                         {row['module'] for row in records})
+        self.assertIn('Old module beyond the first page', {row['module'] for row in records})
+        self.assertIn('Corrected module', {row['module'] for row in records})
+
     def test_saved_delivery_mode_is_returned_even_without_attendance_history(self):
         self.rows = []
         for kind in ('commercial', 'apprenticeship'):

@@ -15,12 +15,14 @@ import { cn } from '@/lib/cn';
 import { statusTone } from '@/lib/statusTone';
 import { roleNavMap } from '@/mocks/navigation';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
-import { bookMigratedReview, rescheduleMigratedReview, markReviewInstanceInProgressManually, openReviewInstanceForEvent, type ReviewInstanceFormDefinition } from '@/api/reviewInstances';
+import { adoptMigratedReviewBooking, bookMigratedReview, rescheduleMigratedReview, markReviewInstanceInProgressManually, openReviewInstanceForEvent, type ReviewInstanceFormDefinition } from '@/api/reviewInstances';
 import { MonthlyCoachingCompletionModal } from '../meetings/MonthlyCoachingCompletionModal';
 import { CoachMeetingArtifactsPanel } from '../shared/CoachMeetingArtifactsPanel';
+import { MigratedMeetingIntelligence } from '../shared/MigratedMeetingIntelligence';
 import ProgressReviewCompletionModal from '../shared/ProgressReviewCompletionModal';
 import { ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '../shared/ScheduleControls';
 import { loadImportedReviewForBooking } from '../shared/importedReviewBooking';
+import { useImportedMeetingJoin } from '../shared/useImportedMeetingJoin';
 import { reviewInstancePath, reviewInstanceRouteState } from '../shared/reviewInstanceNavigation';
 import {
   type CoachCalendarEvent,
@@ -184,8 +186,13 @@ export default function CoachMeetingDetail() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [completionEvent, setCompletionEvent] = useState<CoachCalendarEvent | null>(null);
-  const [importedReview, setImportedReview] = useState<ReviewInstanceFormDefinition | null>(null);
+  const [importedReviewData, setImportedReview] = useState<ReviewInstanceFormDefinition | null>(null);
+  const [loadedReviewKey, setLoadedReviewKey] = useState('');
+  const [importedReviewReload, setImportedReviewReload] = useState(0);
+  const [importedReviewLoading, setImportedReviewLoading] = useState(false);
+  const [importedReviewError, setImportedReviewError] = useState<string | null>(null);
   const bookingInFlightRef = useRef(false);
+  const importedRequestGeneration = useRef(0);
 
   useEffect(() => {
     if (!coach.isInitialized) return;
@@ -230,10 +237,20 @@ export default function CoachMeetingDetail() {
   // booking endpoint, neither of which is part of a calendar row. Reading it
   // here prepares exactly the form the Review workspace would, so the controls
   // below do not depend on which screen the coach happened to open first.
-  const importedReviewId = event?.reviewSource === 'aptem' ? eventIdentity(event) : '';
+  const importedReviewId = event?.reviewSource === 'aptem'
+    && (eventIdentity(event) === eventKey || event.reviewInstanceId === eventKey)
+    ? event.formEventKey || eventIdentity(event) : '';
+  const importedRequestKey = `${coach.email}:${coach.isViewingAsCoach}:${importedReviewId}`;
+  // The server may resolve a legacy form key. Associate its response with the
+  // request that loaded it, not an assumed equality with the calendar key.
+  const importedReview = importedReviewId && loadedReviewKey === importedRequestKey ? importedReviewData : null;
   useEffect(() => {
+    importedRequestGeneration.current += 1;
+    setImportedReview(null);
+    setLoadedReviewKey('');
+    setImportedReviewError(null);
+    setImportedReviewLoading(Boolean(importedReviewId));
     if (!importedReviewId) {
-      setImportedReview(null);
       return;
     }
     const controller = new AbortController();
@@ -241,10 +258,27 @@ export default function CoachMeetingDetail() {
     loadImportedReviewForBooking(importedReviewId, {
       viewingAsCoach: coach.isViewingAsCoach,
       signal: controller.signal,
+      onAdoptionError: err => {
+        if (active) setImportedReviewError(err instanceof Error ? err.message : 'Unable to link the existing meeting. Retry below.');
+      },
     })
       .then(definition => {
         if (!active) return;
         setImportedReview(definition);
+        setLoadedReviewKey(importedRequestKey);
+        if (!coach.isViewingAsCoach && definition.booking?.booked
+          && ['scheduled', 'in-progress'].includes(definition.localStatus || '')) {
+          setEvent(current => current ? {
+            ...current,
+            status: (definition.booking?.status || definition.localStatus || definition.instance.status) as CoachCalendarEvent['status'],
+            calendarEventKey: definition.booking?.eventKey ?? current.calendarEventKey,
+            meetingLink: definition.booking?.meetingLink ?? current.meetingLink,
+            scheduledDate: definition.booking?.scheduledDate ?? current.scheduledDate,
+            scheduledTime: definition.booking?.scheduledTime ?? current.scheduledTime,
+            durationMinutes: definition.booking?.durationMinutes ?? current.durationMinutes,
+            syncState: definition.booking?.syncState as CoachCalendarEvent['syncState'],
+          } : current);
+        }
         if (definition.booking?.canReschedule) {
           setScheduleForm({
             date: definition.booking.scheduledDate || definition.instance.targetDate,
@@ -253,9 +287,12 @@ export default function CoachMeetingDetail() {
           });
         }
       })
-      .catch(() => { if (active) setImportedReview(null); });
-    return () => { active = false; controller.abort(); };
-  }, [importedReviewId, coach.isViewingAsCoach]);
+      .catch(err => {
+        if (active) setImportedReviewError(err instanceof Error ? err.message : 'Unable to load this review. Reopen the details to try again.');
+      })
+      .finally(() => { if (active) setImportedReviewLoading(false); });
+    return () => { active = false; controller.abort(); importedRequestGeneration.current += 1; };
+  }, [importedReviewId, importedRequestKey, coach.isViewingAsCoach, importedReviewReload]);
 
   const updateEvent = (updatedEvent: CoachCalendarEvent) => {
     setEvent(updatedEvent);
@@ -307,6 +344,7 @@ export default function CoachMeetingDetail() {
     if (!event || !importedReview || !booking || bookingInFlightRef.current) return;
     if (!(useExistingMeeting ? booking.canAttach : booking.canBook || booking.canReschedule)) return;
     bookingInFlightRef.current = true;
+    const requestGeneration = importedRequestGeneration.current;
     setBusy(true);
     setActionError(null);
     setActionNotice(null);
@@ -317,13 +355,23 @@ export default function CoachMeetingDetail() {
         durationMinutes: useExistingMeeting ? booking.durationMinutes || 60 : scheduleForm.durationMinutes,
         timezoneOffsetMinutes: new Date().getTimezoneOffset(),
       };
-      const updated = booking.canReschedule && !useExistingMeeting
+      const updated = useExistingMeeting
+        ? await adoptMigratedReviewBooking(importedReview.instance.id)
+        : booking.canReschedule
         ? await rescheduleMigratedReview(importedReview.instance.id, slot, booking)
         : await bookMigratedReview(importedReview.instance.id, slot);
+      if (requestGeneration !== importedRequestGeneration.current) return;
       setImportedReview(updated);
+      setImportedReviewError(null);
+      if (updated.booking?.scheduledDate && updated.booking.scheduledTime) {
+        setScheduleForm({ date: updated.booking.scheduledDate, time: updated.booking.scheduledTime,
+          durationMinutes: updated.booking.durationMinutes || 60 });
+      }
       setEvent(current => (current ? {
         ...current,
-        status: (updated.localStatus || updated.instance.status) as CoachCalendarEvent['status'],
+        status: (updated.booking?.status || updated.localStatus || updated.instance.status) as CoachCalendarEvent['status'],
+        calendarEventKey: updated.booking?.eventKey ?? current.calendarEventKey,
+        syncState: updated.booking?.syncState as CoachCalendarEvent['syncState'],
         scheduledDate: updated.booking?.scheduledDate ?? current.scheduledDate,
         scheduledTime: updated.booking?.scheduledTime ?? current.scheduledTime,
         durationMinutes: updated.booking?.durationMinutes ?? current.durationMinutes,
@@ -331,22 +379,24 @@ export default function CoachMeetingDetail() {
       } : current));
       if (booking.canReschedule && !useExistingMeeting) setActionNotice('Meeting rescheduled.');
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : `Unable to book this ${isProgressReview ? 'review' : 'meeting'}.`);
+      if (requestGeneration === importedRequestGeneration.current) {
+        setActionError(err instanceof Error ? err.message : `Unable to book this ${isProgressReview ? 'review' : 'meeting'}.`);
+      }
     } finally {
       bookingInFlightRef.current = false;
       setBusy(false);
     }
   };
 
+  const joinMeeting = useImportedMeetingJoin({
+    contextKey: `${coach.email}:${coach.isViewingAsCoach}:${eventKey}`, readOnly: coach.isViewingAsCoach,
+    onError: setActionError,
+    onStarted: () => setEvent(current => current ? { ...current, status: 'in-progress' } : current),
+  });
   const handleJoin = () => {
     if (!event) return;
-    const url = meetingUrl(event);
-    if (!url) {
-      setActionError('This meeting does not have a Teams link yet.');
-      return;
-    }
     setActionError(null);
-    window.open(url, '_blank', 'noopener,noreferrer');
+    joinMeeting(event);
   };
 
   const handleCompleteMeeting = async (responses: ProgressReviewResponses) => {
@@ -466,6 +516,12 @@ export default function CoachMeetingDetail() {
   // Aptem bookings are authorized by the imported review itself, not by the
   // calendar row, and an admin reading another workspace never books.
   const importedBooking = event?.reviewSource === 'aptem' ? importedReview?.booking : undefined;
+  const usesMigratedIntelligence = event?.reviewSource === 'aptem'
+    && ['mcr', 'progress-review'].includes(event.source || '')
+    && event.importedReviewType?.trim().toLowerCase() !== 'personal support plan';
+  const migratedIntelligenceReady = importedReview?.migratedForm
+    && ['aptem_mcm', 'aptem_progress_review'].includes(importedReview.template.reviewTypeCode || '')
+    && importedBooking?.eventKey && importedBooking.syncState === 'synced';
   const canBookImported = Boolean(!coach.isViewingAsCoach && importedBooking?.canBook);
   const canRescheduleImported = Boolean(!coach.isViewingAsCoach && importedBooking?.canReschedule);
   const canAttachImported = Boolean(!coach.isViewingAsCoach && importedBooking?.canAttach);
@@ -524,6 +580,12 @@ export default function CoachMeetingDetail() {
 
             <MeetingProgress status={event.status} />
 
+            {importedReviewError ? <Panel>
+              <p role="alert" className="text-sm text-red-700">{importedReviewError}</p>
+              <RowAction label="Refresh booking" icon="ri-refresh-line" disabled={importedReviewLoading || busy}
+                onClick={() => setImportedReviewReload(value => value + 1)} />
+            </Panel> : null}
+
             {(actionError || actionNotice) ? (
               <div className={cn('flex items-start gap-2 rounded-lg border px-4 py-3 text-[12px] font-semibold', actionError ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-800')}>
                 <AppIcon className={actionError ? 'ri-error-warning-line mt-0.5' : 'ri-information-line mt-0.5'}></AppIcon>
@@ -556,7 +618,7 @@ export default function CoachMeetingDetail() {
                 <div className={cn('flex flex-wrap items-center gap-2', showScheduleFields && 'mt-5 border-t border-foreground-100 pt-4')}>
                   {canEditBooking ? <RowAction label={event.status === 'scheduled' ? 'Reschedule' : 'Schedule'} icon="ri-calendar-check-line" emphasis="primary" disabled={busy} onClick={() => { void handleSchedule(); }} /> : null}
                   {canBookImported || canRescheduleImported ? <RowAction label={canRescheduleImported ? 'Reschedule' : isProgressReview ? 'Book Review' : 'Book Meeting'} icon="ri-calendar-check-line" emphasis="primary" disabled={busy || !scheduleForm.date || !scheduleForm.time} onClick={() => { void bookImportedReview(false); }} /> : null}
-                  {canAttachImported ? <RowAction label="Use existing meeting" icon="ri-link" disabled={busy} onClick={() => { void bookImportedReview(true); }} /> : null}
+                  {canAttachImported ? <RowAction label="Retry linking meeting" icon="ri-link" disabled={busy} onClick={() => { void bookImportedReview(true); }} /> : null}
                   {event.reviewSource === 'aptem' ? <RowAction label="Open Review" icon="ri-file-list-3-line" emphasis="primary" disabled={busy} onClick={() => { void openReviewWorkflow(false); }} /> : null}
                   {(event.status === 'scheduled' || event.status === 'in-progress') && url ? <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" disabled={busy} onClick={() => { void handleJoin(); }} /> : null}
                   {event.status === 'scheduled' && event.reviewTemplateId ? <RowAction label="Mark In Progress" icon="ri-play-circle-line" disabled={busy} onClick={() => { void markReviewInProgress(); }} /> : null}
@@ -592,7 +654,36 @@ export default function CoachMeetingDetail() {
             </div>
 
             {url ? (
-              <CoachMeetingArtifactsPanel event={event} onEventStatusChange={handleArtifactsStatusChange} />
+              usesMigratedIntelligence ? migratedIntelligenceReady && importedReview ? (
+                <MigratedMeetingIntelligence
+                  key={importedReview.instance.id}
+                  instanceId={importedReview.instance.id}
+                  family={importedReview.template.reviewTypeCode || ''}
+                  status={importedReview.localStatus || importedReview.instance.status}
+                  viewAs={coach.isViewingAsCoach}
+                  readOnly={importedReview.readOnly || importedReview.templateSync?.status === 'conflict'}
+                  meetingLink={importedBooking?.meetingLink}
+                  bound={Boolean(importedReview.summaryBinding?.fieldKey)}
+                  savedBinding={importedReview.summaryBinding}
+                  showBoundSummary
+                  checkBlocked={busy}
+                  onCheckComplete={result => {
+                    if (result.event?.status === 'in-progress') {
+                      handleArtifactsStatusChange('in-progress');
+                      setImportedReview(current => current ? { ...current, localStatus: 'in-progress',
+                        instance: { ...current.instance, status: 'in-progress' } } : current);
+                    }
+                  }}
+                />
+              ) : (
+                <Panel className="bg-white">
+                  <p role="status" className="text-sm text-foreground-600">
+                    {importedReview
+                      ? 'Session checks require an available review form and a synced Teams booking. Open the review form to check its availability.'
+                      : importedReviewError ? 'Refresh the booking to load this review’s meeting resources.' : 'Loading review meeting resources…'}
+                  </p>
+                </Panel>
+              ) : <CoachMeetingArtifactsPanel event={event} onEventStatusChange={handleArtifactsStatusChange} />
             ) : (
               <Panel className="bg-white">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

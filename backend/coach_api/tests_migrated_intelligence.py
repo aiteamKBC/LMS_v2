@@ -2,12 +2,14 @@
 import inspect
 import json
 from contextlib import nullcontext
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from django.test import RequestFactory, SimpleTestCase
+from django.test import RequestFactory, SimpleTestCase, override_settings
 from django.utils import timezone
+from django.conf import settings
 
 from coach_api.migrated_intelligence_views import (
     _association, _response, migrated_review_check_session,
@@ -33,12 +35,16 @@ def meeting():
 
 
 def graph_snapshot(*, transcript=False, fetch_error=False, attendance=False):
+    # Real Graph evidence includes call timing; selection must not trust bare IDs.
+    start = datetime.combine(date.today() - timedelta(days=1), time(14), ZoneInfo(settings.TIME_ZONE))
+    end = start + timedelta(minutes=30)
     artifacts = []
     if transcript:
         artifacts.append({"artifact_type": "transcript", "graph_artifact_id": "transcript-1",
+                          "call_id": "synthetic-call", "created_datetime": start.isoformat(), "end_datetime": end.isoformat(),
                           "transcript_text": "Synthetic transcript" if not fetch_error else "",
                           **({"transcript_fetch_error": "Content unavailable"} if fetch_error else {})})
-    reports = [{"id": "report-1", "records": []}] if attendance else []
+    reports = [{"id": "report-1", "records": [], "meetingStartDateTime": start.isoformat(), "meetingEndDateTime": end.isoformat()}] if attendance else []
     return {
         "artifacts": artifacts, "attendanceReports": reports,
         "attendanceTracker": {"tracker": []},
@@ -102,6 +108,69 @@ class MigratedMeetingIntelligenceTests(SimpleTestCase):
         self.assertNotIn("summary", self.overlay.meeting_intelligence)
         self.assertEqual(persist.call_count, 1)
 
+    @override_settings(TIME_ZONE="Europe/London")
+    def test_ended_call_can_be_checked_before_booked_end_for_both_review_families(self):
+        self.record.scheduled_date = date(2026, 10, 22)
+        self.record.scheduled_time = time(10)
+        now = datetime(2026, 10, 22, 10, 35, tzinfo=ZoneInfo("Europe/London"))
+        snapshot = graph_snapshot(attendance=True)
+        snapshot["attendanceReports"][0].update(
+            meetingStartDateTime="2026-10-22T09:00:00Z", meetingEndDateTime="2026-10-22T09:30:00Z")
+        for family in ("mcr", "progress-review"):
+            for status in ("scheduled", "in-progress"):
+                with self.subTest(family=family, status=status), patch("coach_api.migrated_intelligence_views.timezone.now", return_value=now):
+                    self.record.event_type = family
+                    self.overlay.status = status
+                    result, persist = self.call_check(snapshot)
+                    self.assertEqual(result.status_code, 200)
+                    persist.assert_called_once()
+                    self.assertEqual(self.overlay.status, status)
+                    self.assertEqual(self.overlay.meeting_intelligence["transcriptStatus"], "pending")
+
+    @override_settings(TIME_ZONE="Europe/London")
+    def test_unconfirmed_early_end_does_not_persist_or_generate(self):
+        self.record.scheduled_date = date(2026, 10, 22)
+        self.record.scheduled_time = time(10)
+        now = datetime(2026, 10, 22, 10, 35, tzinfo=ZoneInfo("Europe/London"))
+        cases = [
+            {},
+            {"meetingStartDateTime": "2026-10-21T09:00:00Z", "meetingEndDateTime": "2026-10-21T09:30:00Z"},
+            {"meetingStartDateTime": "2026-10-22T08:00:00Z", "meetingEndDateTime": "2026-10-22T08:30:00Z"},
+            {"meetingStartDateTime": "2026-10-22T09:00:00Z", "meetingEndDateTime": "2026-10-22T09:45:00Z"},
+            {"meetingStartDateTime": "2026-10-22T09:30:00Z", "meetingEndDateTime": "2026-10-22T09:00:00Z"},
+            {"meetingStartDateTime": "invalid", "meetingEndDateTime": "invalid"},
+            {"meetingStartDateTime": "2026-10-22T09:00:00", "meetingEndDateTime": "2026-10-22T09:30:00"},
+        ]
+        for report in cases:
+            with self.subTest(report=report), patch("coach_api.migrated_intelligence_views.timezone.now", return_value=now), \
+                    patch("coach_api.views.openai_meeting_summary") as ai:
+                snapshot = graph_snapshot(transcript=True)
+                snapshot["attendanceReports"] = [report] if report else []
+                result, persist = self.call_check(snapshot, {"artifactId": "t1", "text": "Partial transcript"})
+                self.assertEqual(result.status_code, 409)
+                self.assertEqual(json.loads(result.content)["code"], "MEETING_END_NOT_CONFIRMED")
+                persist.assert_not_called()
+                ai.assert_not_called()
+                self.overlay.save.assert_not_called()
+
+    @override_settings(TIME_ZONE="Europe/London")
+    def test_scheduled_end_still_allows_check_without_attendance_report(self):
+        self.record.scheduled_date = date(2026, 10, 26)
+        self.record.scheduled_time = time(10)
+        now = datetime(2026, 10, 26, 11, tzinfo=ZoneInfo("Europe/London"))
+        with patch("coach_api.migrated_intelligence_views.timezone.now", return_value=now):
+            result, persist = self.call_check(graph_snapshot())
+        self.assertEqual(result.status_code, 200)
+        persist.assert_called_once()
+
+    def test_missing_booking_time_does_not_fetch_or_write(self):
+        self.record.scheduled_time = None
+        with patch("coach_api.migrated_intelligence_views._association", return_value=(self.overlay, self.record, {})), \
+                patch("coach_api.views.fetch_coach_meeting_graph_snapshot") as graph:
+            response = inspect.unwrap(migrated_review_check_session)(self.factory.post("/"), ID)
+        self.assertEqual(response.status_code, 409)
+        graph.assert_not_called()
+
     def test_transcript_generates_once_and_preserves_edited_summary(self):
         transcript = {"artifactId": "transcript-1", "text": "Synthetic meeting facts"}
         with patch("coach_api.views.openai_meeting_summary", return_value=({"title": "MCM", "overview": "Facts"}, "model")) as ai:
@@ -133,7 +202,7 @@ class MigratedMeetingIntelligenceTests(SimpleTestCase):
     def test_attendance_failure_preserves_previous_snapshot_and_transcript_can_continue(self):
         snapshot = graph_snapshot(transcript=True)
         snapshot["errors"] = ["Microsoft Graph could not return attendance reports for this meeting."]
-        previous = {"artifacts": [], "attendanceReports": [{"id": "old-report"}], "attendanceTracker": {"tracker": [{"id": "old-learner"}]}}
+        previous = {**graph_snapshot(attendance=True), "attendanceTracker": {"tracker": [{"id": "old-learner"}]}}
         with patch("coach_api.views.openai_meeting_summary", return_value=({"title": "MCM", "overview": "Facts"}, "model")):
             _result, persist = self.call_check(snapshot, {"artifactId": "transcript-1", "text": "Facts"}, stored_snapshot=previous)
         self.assertEqual(persist.call_args.kwargs["attendance_reports"], previous["attendanceReports"])
@@ -141,8 +210,9 @@ class MigratedMeetingIntelligenceTests(SimpleTestCase):
         self.assertEqual(self.overlay.meeting_intelligence["transcriptStatus"], "available")
 
     def test_empty_graph_response_retains_last_verified_attendance_and_recording(self):
-        previous = {"artifacts": [{"artifact_type": "recording", "graph_artifact_id": "recording-1"}],
-                    "attendanceReports": [{"id": "report-1"}], "attendanceTracker": {"tracker": []}}
+        previous = graph_snapshot(transcript=True, attendance=True)
+        previous['artifacts'][0].update(artifact_type='recording', graph_artifact_id='recording-1',
+                                         metadata={'_lms_graph_event_id': self.record.graph_event_id})
         _result, persist = self.call_check(graph_snapshot(), stored_snapshot=previous)
         self.assertEqual(persist.call_args.kwargs["attendance_reports"], previous["attendanceReports"])
         self.assertEqual(self.overlay.meeting_intelligence["attendanceStatus"], "available")
@@ -165,14 +235,16 @@ class MigratedMeetingIntelligenceTests(SimpleTestCase):
         persist.assert_not_called()
         self.overlay.save.assert_not_called()
 
-    def test_unresolved_graph_identity_reports_permission_and_never_persists(self):
+    def test_unresolved_graph_identity_does_not_claim_permission_denial_or_persist(self):
         with patch("coach_api.migrated_intelligence_views._association", return_value=(self.overlay, self.record, {})), \
+             patch("coach_api.views.stored_coach_meeting_snapshot", return_value={"storage": {"stored": True}}) as stored, \
              patch("coach_api.views.fetch_coach_meeting_graph_snapshot", return_value=(None, {"code": "coach_online_meeting_unresolved", "detail": "Online meeting unavailable"}, 409)), \
              patch("coach_api.views.persist_coach_meeting_snapshots") as persist:
             result = inspect.unwrap(migrated_review_check_session)(self.factory.post("/"), ID)
         self.assertEqual(result.status_code, 409)
-        self.assertEqual(json.loads(result.content)["code"], "GRAPH_PERMISSION_ERROR")
+        self.assertEqual(json.loads(result.content)["code"], "GRAPH_MEETING_UNRESOLVED")
         persist.assert_not_called()
+        stored.assert_called_once_with(self.record)
 
     def test_summary_edit_allows_scheduled_without_starting_and_retains_provenance(self):
         request = self.factory.patch("/", data=json.dumps({"summary": {"title": "Edited", "overview": "Coach edit"}}), content_type="application/json")

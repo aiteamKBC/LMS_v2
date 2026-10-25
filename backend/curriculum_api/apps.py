@@ -35,6 +35,8 @@ class CurriculumApiConfig(AppConfig):
             'flush', 'loaddata', 'dumpdata', 'check', 'diffsettings',
             'rebuild_read_model', 'reconcile_read_models',
             'process_read_model_events',
+            'import_global_migrated_review_template',
+            'enable_personal_support_form',
         }:
             return
         # runserver spawns a reloader child that does the actual serving; the

@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LearnerCalendarEvent, LearnerReviewDefinition } from '@/api/learnerCalendar';
@@ -48,6 +49,40 @@ function mount(overrides: Partial<ReviewsHomeProps> = {}, search = '?kind=appren
 
 afterEach(cleanup);
 
+it.each(['participant', 'employer'] as const)('keeps completed APTEM records selectable without a fabricated next action for %s', viewerRole => {
+  mount({ viewerRole, sessions: [session('history', { reviewSource: 'aptem', status: 'completed', effectiveLmsStatus: 'completed', learnerSigned: true })] });
+  expect(screen.getByRole('heading', { name: 'No current review' })).toBeVisible();
+  expect(screen.queryByText('Your next step')).not.toBeInTheDocument();
+  const marker = screen.getByRole('button', { name: /Progress Review history,/ });
+  expect(marker).toHaveAttribute('aria-pressed', 'false');
+  fireEvent.click(marker);
+  expect(within(screen.getByRole('article', { name: 'Selected review' })).getByRole('heading', { name: 'Progress Review history' })).toBeVisible();
+  expect(screen.queryByText('Your next step')).not.toBeInTheDocument();
+});
+
+it('opts only APTEM markers into circular selection and retains keyboard activation', async () => {
+  const user = userEvent.setup();
+  const props = mount({ viewerRole: 'employer', sessions: [session('native'), session('imported', {
+    reviewSource: 'aptem', status: 'not-scheduled', effectiveLmsStatus: 'not-scheduled', scheduledDate: null,
+  })] });
+  const native = screen.getByRole('button', { name: /Progress Review native,/ });
+  const imported = screen.getByRole('button', { name: /Progress Review imported,/ });
+  expect(native.closest('li')).not.toHaveAttribute('data-selection', 'marker');
+  expect(imported.closest('li')).toHaveAttribute('data-selection', 'marker');
+  native.focus();
+  await user.tab();
+  expect(imported).toHaveFocus();
+  await user.keyboard('{Enter}');
+  expect(imported).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByRole('article', { name: 'Selected review' })).toHaveTextContent('Progress Review imported');
+  await user.tab({ shift: true });
+  expect(native).toHaveFocus();
+  await user.keyboard(' ');
+  expect(native).toHaveAttribute('aria-pressed', 'true');
+  expect(props.onSchedule).not.toHaveBeenCalled();
+  expect(props.onAttend).not.toHaveBeenCalled();
+});
+
 it.each(['card', 'list', 'timeline', 'preview', 'employer'])('offers Book beside View review for an unbooked Aptem PR in the %s view', view => {
   const imported = session('imported-review:A-2', { status: 'not-scheduled', scheduledDate: null, scheduledTime: null,
     date: '2027-03-11', targetDate: '2027-03-11', reviewSource: 'aptem', reviewId: '2', importedReview: {
@@ -92,6 +127,30 @@ it('shows a real zero count after an empty successful read', () => {
 });
 
 describe('review learner navigation and safe actions', () => {
+  it.each(['today', 'future'])('shows a booked Aptem PSP in upcoming reviews with its %s meeting link', timing => {
+    const date = timing === 'today' ? today : '2026-09-20';
+    const psp = session('imported-review:A-11', {
+      title: 'Personal Support Plan', scheduledDate: date, reviewSource: 'aptem', reviewId: '11',
+      calendarEventKey: 'booking:11', importedReview: {
+        id: '11', aptemReviewId: 'A-11', name: 'Personal Support Plan', type: 'Personal Support Plan',
+        reviewerName: 'Coach', plannedDate: date, plannedTime: null, completedDate: null,
+        status: 'Not Scheduled', extractionStatus: 'complete', detailsAvailable: false, sections: [],
+      },
+    });
+    const props = mount({ sessions: [psp], basePath: '/learner/reviews' }, '?view=all');
+    expect(screen.getByRole('button', { name: 'Upcoming (1)' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Past (0)' })).toBeVisible();
+    expect(screen.queryByText('Archived review')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('More options'));
+    expect(screen.getByRole('link', { name: timing === 'today' ? 'Join meeting' : 'Open meeting link' }))
+      .toHaveAttribute('href', psp.meetingLink);
+    const calendar = new URL(screen.getByRole('link', { name: 'View in calendar' }).getAttribute('href')!, 'http://localhost');
+    expect(Object.fromEntries(calendar.searchParams)).toEqual({ kind: 'apprenticeship', learner: '12', event: 'booking:11', date });
+    expect(screen.queryByRole('button', { name: /Book a time|Reschedule meeting/ })).not.toBeInTheDocument();
+    expect(props.onSchedule).not.toHaveBeenCalled();
+    expect(props.onAttend).not.toHaveBeenCalled();
+  });
+
   it('selects a future programme review in the summary card without opening its detail page', () => {
     const props = mount({ sessions: [
       session('attended', { scheduledDate: '2026-09-01', meetingOutcome: 'completed' }),

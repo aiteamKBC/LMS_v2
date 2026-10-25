@@ -12,14 +12,30 @@
 // ============================================================================
 
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
-import type { OverviewWeek } from '@/api/learnerOverview';
+import type { HomeProgress, OverviewWeek } from '@/api/learnerOverview';
 import type { TrainingPlanContract, TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import type { MonthlyLogHours, LogSummary, LogDetail } from '@/features/monthly-logs/api';
 import type { ActivityContent } from '@/features/old-otjh/api';
 import type { ReviewFormResponse } from '@/api/reviewForm';
 import type { LearnerCalendarEvent, LearnerReviewDefinition } from '@/api/learnerCalendar';
+import type { CoachMeetingArtifactsResponse } from '@/pages/coach/shared/calendarEvents';
+import type { ProgressMetric } from '@/api/learnerMetrics';
 
 const BASE = '/learner_api/employer-portal';
+
+export type EmployerDashboardMetrics = {
+  asOf: string;
+  learners: Record<string, {
+    programme: Pick<ProgressMetric, 'completed' | 'total' | 'percent' | 'status'> | null;
+    otjh: Pick<HomeProgress['otjh'], 'actual' | 'planned' | 'percent'> | null;
+    attendance: EmployerLearnerAttendance | null;
+    risk: 'on-track' | 'need-attention' | 'at-risk' | 'unavailable';
+  }>;
+};
+
+export function fetchEmployerDashboardMetrics(employerId: string, signal?: AbortSignal, section?: 'summary' | 'programme') {
+  return request<EmployerDashboardMetrics>(`${BASE}/${employerId}/dashboard-metrics/${section ? `?section=${section}` : ''}`, { signal });
+}
 
 export type EmployerProgressReviews = {
   events: LearnerCalendarEvent[];
@@ -33,6 +49,18 @@ export function fetchEmployerProgressReviews(employerId: string, kind: LearnerKi
 export function fetchEmployerProgressReview(employerId: string, kind: LearnerKind, learnerId: string, eventKey: string, signal?: AbortSignal) {
   return request<{ event: LearnerCalendarEvent; definition: LearnerReviewDefinition | null }>(
     `${BASE}/${employerId}/learner/${kind}/${learnerId}/progress-reviews/${encodeURIComponent(eventKey)}/`, { signal });
+}
+
+export function fetchEmployerMeetingArtifacts(employerId: string, kind: LearnerKind, learnerId: string, eventKey: string, signal?: AbortSignal) {
+  return request<CoachMeetingArtifactsResponse>(
+    `${BASE}/${employerId}/learner/${kind}/${learnerId}/progress-reviews/${encodeURIComponent(eventKey)}/artifacts/`, { signal });
+}
+
+export function employerMeetingArtifactContentUrl(employerId: string, kind: LearnerKind, learnerId: string, eventKey: string,
+  artifactType: string, artifactId: string, options: { preview?: boolean } = {}): string {
+  const base = `${BASE}/${employerId}/learner/${kind}/${learnerId}/progress-reviews/${encodeURIComponent(eventKey)}`
+    + `/artifacts/${encodeURIComponent(artifactType)}/${encodeURIComponent(artifactId)}/content/`;
+  return options.preview ? `${base}?preview=1` : base;
 }
 
 export async function downloadEmployerProgressReview(employerId: string, kind: LearnerKind, learnerId: string, eventKey: string) {
@@ -190,9 +218,16 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    throw new Error(res.ok
+      ? 'The employer portal returned an unexpected response. Please try again.'
+      : `Could not load employer portal data (${res.status}). Please try again.`);
+  }
   if (!res.ok) {
-    throw new Error((data && data.error) || `Request failed (${res.status})`);
+    throw new Error((data && (data.error || data.detail)) || `Request failed (${res.status})`);
   }
   return data as T;
 }

@@ -17,7 +17,7 @@ explanations, because the learner was never asked for them. What the coach needs
 is the work, which is the evidence file.
 
 Upserted on the same key the reflection flow uses
-(learner_kind, learner_id, activity_type, activity_id), so a learner who
+(learner_kind, learner_id, activity_type, activity_id, assignment_topic_id), so a learner who
 re-completes an activity updates their submission rather than creating a second
 one -- and a coach who has already accepted it is not silently reset, since an
 accepted submission is left alone.
@@ -25,10 +25,13 @@ accepted submission is left alone.
 import json
 import logging
 import uuid
+from contextlib import nullcontext
 
-from django.db import DatabaseError, connections
+from django.db import DatabaseError, connections, transaction
 
+from .assignment_hours import lock_assignment_hours
 from .submission_audit import SUBMISSION_AUDIT_SQL, record_submission_row
+from .submission_visibility import ACTIVITY_MARKING_REFLECTION
 
 logger = logging.getLogger(__name__)
 
@@ -94,13 +97,34 @@ def queue_for_marking(*, component_id, kind, learner_id, context):
 
     ``context`` carries what the completion already knows -- learner name,
     programme, titles, planned and actual time -- so the coach's queue row reads
-    like any other. Returns the submission id, or None when nothing was written.
+    like any other. Returns the queued/existing submitted id, or None if no
+    submitted work is available. Topic work is owned by the assignment form.
 
     Never raises: the learner has completed their work, and a queue row that
     could not be written must not turn that into an error they see.
     """
+    assignment = context.get("activityType") == "assignment"
     try:
-        with connections["enrolment"].cursor() as cur:
+        with (transaction.atomic(using="enrolment") if assignment else nullcontext()), connections["enrolment"].cursor() as cur:
+            if assignment:
+                # Topic saves use the same transaction lock, including their
+                # first insert. Completion/reward retries must not create an
+                # empty legacy submission alongside the learner's topic work.
+                lock_assignment_hours(cur, kind, learner_id)
+                cur.execute(
+                    '''SELECT id, status FROM "Learner".learning_reflection_submissions
+                       WHERE learner_kind=%s AND learner_id=%s AND activity_type='assignment'
+                         AND activity_id=%s AND assignment_topic_id <> ''
+                       ORDER BY CASE status WHEN 'accepted' THEN 0
+                           WHEN 'submitted_for_tutor_review' THEN 1 ELSE 2 END,
+                           assignment_topic_id LIMIT 1''',
+                    [kind, str(learner_id), component_id],
+                )
+                topic = cur.fetchone()
+                if topic:
+                    # A draft/revision still belongs to the assignment form;
+                    # generic completion must not submit or reopen it.
+                    return topic[0] if topic[1] in ("accepted", "submitted_for_tutor_review") else None
             # Only a committed, owner-bound registered mobile submission may
             # reopen this activity for a NEW explicit progress row. Other callers
             # keep the historical accepted-row behaviour.
@@ -184,8 +208,7 @@ def queue_for_marking(*, component_id, kind, learner_id, context):
                     # the submission. Said plainly so the coach knows why the
                     # reflection panel is empty rather than assuming it was
                     # skipped.
-                    "Submitted for marking from the activity. No written "
-                    "reflection was requested for this component.",
+                    ACTIVITY_MARKING_REFLECTION,
                     json.dumps(evidence),
                     _actual_time_hours(context.get("actualTimeHours")),
                     100,

@@ -196,6 +196,8 @@ export function TemplateEditor({ template, programmeName, onClose, onSaved }: { 
   }, [dirty]);
   const close = () => { if (!busy && (!dirty || window.confirm('Discard unsaved template changes?'))) onClose(); };
   const sections = definition.sections;
+  const signatureDefaults = { advisor: template.review_family !== 'PSP', participant: template.review_family !== 'PSP', employer: template.review_family !== 'MCM' && template.review_family !== 'PSP' };
+  const signatures = definition.signatures ?? signatureDefaults;
   const updateSections = (next: MigratedDefinition['sections']) => setDefinition(current => ({ ...current, sections: next }));
   /**
    * Reports the problems the server would refuse the whole request for, and takes the
@@ -249,13 +251,27 @@ export function TemplateEditor({ template, programmeName, onClose, onSaved }: { 
       <p className="text-sm text-foreground-500">{FAMILY_LABELS[template.review_family]}</p>
     </div>
     <div className="mb-5 rounded-xl border border-sky-100 bg-sky-50 p-3 text-sm leading-6 text-sky-900">
-      {template.scope === 'GLOBAL'
+      {template.review_family === 'PSP'
+        ? 'Manage the global Personal Support Plan questions and required signatures here. No signatures are required by default. Learner information, Functional Skills and Reviews Schedule belong to each learner and are not shared template answers. Learner answer permissions are configured per question.'
+        : template.scope === 'GLOBAL'
         ? 'Changes apply to migrated reviews using this Standard Template while they are still editable. Working reviews synchronise when opened by the coach or checked on save. Reviews awaiting signatures or completed keep their saved version.'
         : 'This programme-specific copy can be edited independently. Working reviews synchronise when opened by the coach or checked on save. Reviews awaiting signatures or completed keep their saved version.'}
     </div>
     {!template.is_active && <p className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Saved but not in use. Saving your changes does not enable this version.{template.scope === 'PROGRAMME' ? ' Choose Use Custom Version when it is ready.' : ' Enable it from More when it is ready.'}</p>}
     {preview ? <PreviewForm preview={preview} /> : <fieldset disabled={busy} className="space-y-5">
       <div id={anchorId('name')}><FormField label="Template name" error={problemFor('name')}><TextControl value={name} onChange={setName} /></FormField><LengthHint value={name.trim()} limit={255}/></div>
+      <fieldset className="space-y-3 rounded-xl border border-background-200 p-4">
+        <legend className="px-1 text-sm font-semibold">Signatures required from</legend>
+        <div className="flex flex-wrap gap-4 text-sm">
+          {([['advisor', 'Coach'], ['participant', 'Learner'], ['employer', 'Employer']] as const).map(([role, label]) =>
+            <label key={role} className="flex items-center gap-2">
+              <input type="checkbox" checked={signatures[role]} onChange={event => setDefinition(current => ({
+                ...current, signatures: { ...(current.signatures ?? signatureDefaults), [role]: event.target.checked },
+              }))} />{label}
+            </label>)}
+        </div>
+        <p className="text-xs text-foreground-500">Applies to editable reviews using this template. Submitted and completed reviews keep their saved signature requirements. {template.review_family === 'PSP' ? 'Saving all required answers sends the plan for the selected signatures. If none are selected, the plan completes on save.' : 'If none are selected, submitting a completed form completes the review without signatures.'}</p>
+      </fieldset>
       <fieldset className="space-y-3 rounded-xl border border-background-200 p-4">
         <legend className="px-1 text-sm font-semibold">Off-the-job hours</legend>
         <div id={anchorId('hours')}><FormField label="Expected OTJH (hours)" error={problemFor('hours')}>
@@ -290,7 +306,7 @@ export function TemplateEditor({ template, programmeName, onClose, onSaved }: { 
         <div id={anchorId(`fields:${section.key}`)} className="p-3 sm:p-5">
           {problemFor(`fields:${section.key}`) && <p className="mb-3 text-[11px] font-semibold text-red-600">{problemFor(`fields:${section.key}`)}</p>}
           <Fields fields={section.fields} onChange={fields => updateSections(sections.map((s, i) => i === index ? { ...s, fields } : s))}
-          numberPrefix={`${index + 1}.`} addLabel={`Add question to section ${index + 1}`} summaryMapped={sections.some(s => hasSummary(s.fields))} allowEmployer={template.review_family !== 'MCM'} problemFor={problemFor} /></div>
+          numberPrefix={`${index + 1}.`} addLabel={`Add question to section ${index + 1}`} summaryMapped={sections.some(s => hasSummary(s.fields))} allowEmployer={template.review_family === 'PR' || template.review_family === 'PR_SKILLS_RADAR'} problemFor={problemFor} /></div>
       </section>;
       })}
       <div id={anchorId('sections')}>

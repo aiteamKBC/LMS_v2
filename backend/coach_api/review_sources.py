@@ -115,6 +115,47 @@ def review_profile_for_source(source, profile=None):
     return profile
 
 
+def meeting_profile(record):
+    """Resolve review attendance identity without mixing calendar ID namespaces.
+
+    The owner has already authorized the calendar record. A legacy learner-book
+    key qualifies its Enrolment identity; only the existing stable resolver may
+    translate that identity. Stored participant names/emails remain historical.
+    """
+    from learner_api.models import EnrolmentUser, LearnerProfile
+
+    owner = str(record.owner_email or '').strip().casefold()
+    if not owner or not record.learner_id:
+        return None
+    if record.review_instance_id:
+        from curriculum_api.review_instances import get_review_instance
+        instance = get_review_instance(record.review_instance_id)
+        if (not instance or instance.get('calendar_event_id') != record.pk
+                or instance.get('learner_id') != record.learner_id
+                or instance.get('review_template_id') != record.review_template_id
+                or str(instance.get('coach_email') or '').strip().casefold() != owner):
+            raise ReviewIdentityConflict('The Native Review meeting identity is inconsistent.')
+        return LearnerProfile.objects.filter(pk=instance['learner_id']).first()
+
+    parts = (record.idempotency_key or '').split(':')
+    if parts[0] == 'learner-book' and record.event_type in {'mcr', 'progress-review'}:
+        expected_family = 'mcm' if record.event_type == 'mcr' else 'progress-review'
+        if (len(parts) not in {5, 6} or parts[1] != expected_family
+                or parts[2] not in {'commercial', 'apprenticeship'} or not parts[3].isdigit()):
+            raise ReviewIdentityConflict('The legacy meeting identity cannot be verified.')
+        source = EnrolmentUser.all_learners.filter(pk=int(parts[3])).first()
+        if not source or source.learner_type != parts[2]:
+            raise ReviewIdentityConflict('The legacy meeting learner source is inconsistent.')
+        profile = review_profile_for_source(source)
+        if profile and record.learner_id not in {source.pk, profile.pk}:
+            raise ReviewIdentityConflict('The legacy meeting learner link is inconsistent.')
+    else:
+        profile = LearnerProfile.objects.filter(pk=record.learner_id).first()
+    if profile and str(profile.coach_email or '').strip().casefold() != owner:
+        raise ReviewIdentityConflict('The meeting fallback profile belongs to another coach.')
+    return profile
+
+
 def imported_identity(review, profile_id):
     """Keep both source IDs; the Aptem event key remains the existing form key."""
     return {
@@ -241,10 +282,12 @@ def booking_for_imported_review(profile, review, overlay=None, *, lock=False):
     """Resolve the same durable appointment from a form or its occurrence."""
     from .models import CoachCalendarEvent
     from .migrated_reviews import booking_event_type, review_family
+    from .personal_support_booking import is_personal_support_plan
 
     event = {**imported_identity(review, profile.id),
              "eventKey": f"imported-review:{review['aptemReviewId']}",
-             "source": booking_event_type(review_family(review["type"])),
+             "source": ("progress-review" if is_personal_support_plan(review["type"])
+                        else booking_event_type(review_family(review["type"]))),
              **imported_learner_identity(profile)}
     if not event["source"]:
         return None
@@ -378,6 +421,19 @@ def apply_imported_state(event, record=None, overlay=None, *, compact=False):
     if migrated:
         event["hasReviewForm"] = True
         event["formEventKey"] = overlay.event_key
+    if not historical:
+        # An unbooked source occurrence follows the current assignment. An
+        # initialized form follows its stored owner, including blocked handovers.
+        current_owner = str(event.get('ownerEmail') or '').strip().casefold()
+        responsible = str(overlay.owner_email if overlay else
+                          record.owner_email if record else current_owner).strip().casefold()
+        if responsible and responsible == current_owner:
+            event['coachName'] = event.get('ownerName') or ''
+            event['coachEmail'] = responsible
+        elif overlay and (not record or record.owner_email.strip().casefold() != responsible):
+            # A source reviewer is not proof of the current overlay's owner.
+            event['coachName'] = responsible
+            event['coachEmail'] = responsible
     # A legacy booking may carry old native linkage, which is not the form for
     # this occurrence. Keep the stored row intact; expose the imported form.
     event["reviewInstanceId"] = None

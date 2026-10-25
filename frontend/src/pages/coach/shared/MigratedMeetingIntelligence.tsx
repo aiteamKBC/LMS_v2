@@ -31,6 +31,7 @@ export function MigratedMeetingIntelligence({
   onCheckComplete,
   onCheckingChange,
   savedBinding,
+  showBoundSummary = false,
 }: {
   instanceId: string;
   family: string;
@@ -43,29 +44,41 @@ export function MigratedMeetingIntelligence({
   onCheckComplete?: (result: CoachMeetingArtifactsResponse) => void;
   onCheckingChange?: (checking: boolean) => void;
   savedBinding?: CoachMeetingArtifactsResponse['summaryBinding'];
+  showBoundSummary?: boolean;
 }) {
   const [intelligence, setIntelligence] = useState<CoachMeetingArtifactsResponse['intelligence']>();
   const [attendance, setAttendance] = useState<CoachMeetingArtifactsResponse['attendance']>();
   const [binding, setBinding] = useState<CoachMeetingArtifactsResponse['summaryBinding']>();
   useEffect(() => { if (savedBinding) setBinding(savedBinding); }, [savedBinding]);
   const handlers = useRef({ onCheckComplete, onCheckingChange });
+  const requestGeneration = useRef(0);
+  useEffect(() => {
+    return () => { requestGeneration.current += 1; };
+  }, [instanceId, viewAs]);
   useEffect(() => { handlers.current = { onCheckComplete, onCheckingChange }; }, [onCheckComplete, onCheckingChange]);
   const fetchArtifacts = useCallback<typeof fetchMigratedReviewIntelligence>(
     async (eventKey, signal, options) => {
+      const generation = requestGeneration.current;
       if (options?.refresh) handlers.current.onCheckingChange?.(true);
       try {
         const result = await fetchMigratedReviewIntelligence(eventKey, signal, options);
+        if (generation !== requestGeneration.current) throw new DOMException('Review changed', 'AbortError');
         if (options?.refresh) handlers.current.onCheckComplete?.(result);
         return result;
+      } catch (error) {
+        if (generation !== requestGeneration.current) throw new DOMException('Review changed', 'AbortError');
+        throw error;
       } finally {
-        if (options?.refresh) handlers.current.onCheckingChange?.(false);
+        if (options?.refresh && generation === requestGeneration.current) handlers.current.onCheckingChange?.(false);
       }
     },
     [],
   );
   const saveSummary = useCallback<typeof saveMigratedMeetingSummary>(
     async (eventKey, summary) => {
+      const generation = requestGeneration.current;
       const result = await saveMigratedMeetingSummary(eventKey, summary);
+      if (generation !== requestGeneration.current) throw new DOMException('Review changed', 'AbortError');
       handlers.current.onCheckComplete?.({ ...result, artifacts: [] });
       return result;
     },
@@ -87,6 +100,7 @@ export function MigratedMeetingIntelligence({
         <p className="text-xs text-foreground-500">{mapped
           ? 'Check Session refreshes Teams results. Generate from Teams at the Meeting Summary question uses the same check.'
           : 'Check Session refreshes attendance, recordings, transcripts and the AI summary from Teams.'}</p>
+        <p className="mt-1 text-xs text-foreground-500">Check after the call ends or the scheduled end time. Teams may need time to prepare attendance, recordings and transcripts.</p>
       </div>
       <div className="flex flex-wrap gap-2 text-xs" aria-label="Meeting intelligence status">
         <span>Attendance: <strong>{statusLabel[intelligence?.attendanceStatus || 'not-checked']}</strong></span>
@@ -108,6 +122,12 @@ export function MigratedMeetingIntelligence({
               : binding?.state === 'AI_POPULATED_UNEDITED'
                 ? 'The AI summary is saved in the review form. Review and edit it before submission. Further checks keep this answer.'
                 : 'Check Session can fill the Meeting Summary question once. You can also type the answer yourself.'}
+      </div>}
+      {showBoundSummary && mapped && <div className="rounded-lg bg-background-50 p-3 text-xs">
+        <h3 className="font-bold">Meeting Summary</h3>
+        <p className="mt-2 whitespace-pre-wrap">{typeof binding?.answer === 'string' && binding.answer
+          ? binding.answer : 'No Meeting Summary answer is saved yet.'}</p>
+        <p className="mt-2 text-foreground-500">Open the review form to edit this answer.</p>
       </div>}
       {!bound && binding?.status === 'summary-too-long' && binding.suggestionText && <details className="text-xs">
         <summary className="cursor-pointer font-semibold">View full AI suggestion to shorten</summary>
@@ -136,6 +156,7 @@ export function MigratedMeetingIntelligence({
         </div>
       ) : null}
       <CoachMeetingArtifactsPanel
+        key={`${instanceId}:${viewAs}`}
         event={{ id: instanceId, eventKey: instanceId, source: family === 'aptem_mcm' ? 'mcr' : 'progress-review', meetingLink: meetingLink || undefined }}
         fetchArtifacts={fetchArtifacts}
         saveSummary={saveSummary}

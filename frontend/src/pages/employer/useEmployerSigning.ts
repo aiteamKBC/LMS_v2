@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import {
-  fetchEmployerEnrolmentReview,
   fetchEmployerReviewInstance,
   saveEmployerReviewAnswers,
   signAgreementAsEmployer,
@@ -11,13 +10,9 @@ import {
   signWrittenAgreementAsEmployer,
   type SignableItem,
 } from '@/api/employerPortal';
-import { downloadMigratedReviewForParty, fetchMigratedReviewForParty, signMigratedReviewAsParty } from '@/api/learnerCalendar';
-import { fetchReviewForm } from '@/api/reviewForm';
-import { getEnrolmentDocumentUrl } from '@/api/enrolmentDocuments';
+import { fetchMigratedReviewForParty, signMigratedReviewAsParty } from '@/api/learnerCalendar';
 import type { LearnerKind } from '@/api/extendedIlr';
 import { useToast } from '@/hooks/useToast';
-import { downloadReviewPdf } from '@/pages/learner/onboarding/reviews/reviewDocument';
-import { REVIEW_QUESTION_LABELS } from '@/pages/learner/onboarding/reviews/questions';
 
 /** One signable item and the learner it belongs to. */
 export type SigningTarget = { item: SignableItem; kind: LearnerKind; learnerId: string };
@@ -30,7 +25,7 @@ export function documentState(item: SignableItem): 'signed' | 'to-sign' | 'waiti
 
 /** Reviews are keyed by event key and documents by id; the learner keeps keys unique across learners. */
 export function targetKey({ item, kind, learnerId }: SigningTarget) {
-  return `${kind}:${learnerId}:${item.kind === 'review' ? `r-${item.eventKey}` : `d-${item.id}`}`;
+  return `${kind}:${learnerId}:${item.kind === 'review' ? `r-${item.eventKey}` : `${item.kind}-${item.id}`}`;
 }
 
 /** Unsigned first, then signable-but-unsigned before blocked ones, so the row an employer can act on leads. */
@@ -47,12 +42,11 @@ export function compareSignable(a: SignableItem, b: SignableItem) {
  * reload the list it came from.
  */
 export function useEmployerSigning(employerId: string, onSigned: () => void) {
-  const { success, error: toastError } = useToast();
+  const { success } = useToast();
   const [signing, setSigning] = useState<SigningTarget | null>(null);
   const [reviewDefinition, setReviewDefinition] = useState<any>(null);
   const [loadedReviewKey, setLoadedReviewKey] = useState<string | null>(null);
-  // Which row is mid-open, so its button can show progress.
-  const [opening, setOpening] = useState<string | null>(null);
+  const [preview, setPreview] = useState<SigningTarget | null>(null);
 
   useEffect(() => {
     setReviewDefinition(null);
@@ -108,39 +102,6 @@ export function useEmployerSigning(employerId: string, onSigned: () => void) {
     onSigned();
   };
 
-  /**
-   * Open the saved document itself — the signed artefact, not the sign dialog.
-   *
-   * A review is rendered client-side into the same PDF the admin board exports
-   * (so it carries the Declaration block with every signature on it), while a
-   * compliance PDF already exists in blob storage and just needs a download URL.
-   */
-  const openDocument = async (target: SigningTarget) => {
-    const { item, kind, learnerId } = target;
-    setOpening(targetKey(target));
-    try {
-      if (item.kind === 'review') {
-        if (item.migratedForm) {
-          await downloadMigratedReviewForParty(item.eventKey);
-          return;
-        }
-        // Legacy enrolment reviews are read through the employer portal; the
-        // learner-side read refuses employers.
-        const review = item.reviewInstanceId
-          ? await fetchReviewForm(kind, learnerId, item.eventKey)
-          : await fetchEmployerEnrolmentReview(employerId, kind, learnerId, item.eventKey);
-        downloadReviewPdf(review, REVIEW_QUESTION_LABELS);
-      } else {
-        const url = await getEnrolmentDocumentUrl(kind, learnerId, item.id);
-        window.open(url, '_blank', 'noopener,noreferrer');
-      }
-    } catch (e) {
-      toastError('Could not open the document', e instanceof Error ? e.message : 'Unexpected error');
-    } finally {
-      setOpening(null);
-    }
-  };
-
   const signingItem = signing?.item;
   const saveReviewAnswers = signing && signingItem?.kind === 'review' && !signingItem.migratedForm
     ? (answers: Record<string, unknown>) =>
@@ -152,9 +113,11 @@ export function useEmployerSigning(employerId: string, onSigned: () => void) {
     startSigning: setSigning,
     closeSigning: () => setSigning(null),
     reviewDefinition,
-    opening,
+    preview,
+    closePreview: () => setPreview(null),
+    opening: preview ? targetKey(preview) : null,
     sign,
-    openDocument,
+    openDocument: setPreview,
     saveReviewAnswers,
   };
 }
