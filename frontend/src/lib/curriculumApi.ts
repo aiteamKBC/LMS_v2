@@ -3946,21 +3946,36 @@ export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal,
 // arrive. Both leave out the KSB stats (see fetchProgrammeKsbStats) and the
 // components; the modules' weekStructure is an outline, as with
 // `omitWeekComponents`.
-type ProgrammeDetailSectionOptions = { visibility?: 'all' | 'operational'; skipCache?: boolean; revalidate?: boolean; timeoutMs?: number };
+//
+// `readAfterWrite` is for the read straight after this client's own curriculum
+// save. It revalidates and sends `Cache-Control: max-age=0`, which has the
+// server check the database for the save's generation instead of trusting a
+// poll up to 3s old, without the full rebuild `skipCache` forces.
+type ProgrammeDetailSectionOptions = { visibility?: 'all' | 'operational'; skipCache?: boolean; revalidate?: boolean; readAfterWrite?: boolean; timeoutMs?: number };
 
 function programmeDetailSectionPath(id: string, section: 'shell' | 'modules', visibility?: 'all' | 'operational') {
   const suffix = visibility === 'all' ? '?visibility=all' : '';
   return `/curriculum/programmes/${encodeURIComponent(id)}/detail/${section}/${suffix}`;
 }
 
+function programmeDetailSectionInit(signal: AbortSignal | undefined, options: ProgrammeDetailSectionOptions): CurriculumRequestInit {
+  return {
+    signal,
+    skipCache: options.skipCache,
+    revalidate: options.revalidate || options.readAfterWrite,
+    timeoutMs: options.timeoutMs ?? 60000,
+    ...(options.readAfterWrite && !options.skipCache ? { headers: { 'Cache-Control': 'max-age=0' } } : {}),
+  };
+}
+
 export function fetchCurriculumProgrammeDetailShell(id: string, signal?: AbortSignal, options: ProgrammeDetailSectionOptions = {}): Promise<CurriculumProgrammeDetailShell> {
-  return fetchJson<CurriculumProgrammeDetailShell>(programmeDetailSectionPath(id, 'shell', options.visibility), { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 60000 });
+  return fetchJson<CurriculumProgrammeDetailShell>(programmeDetailSectionPath(id, 'shell', options.visibility), programmeDetailSectionInit(signal, options));
 }
 
 export function fetchCurriculumProgrammeDetailModules(id: string, signal?: AbortSignal, options: ProgrammeDetailSectionOptions & { view?: 'workspace' } = {}): Promise<CurriculumProgrammeDetailModules> {
   let path = programmeDetailSectionPath(id, 'modules', options.visibility);
   if (options.view === 'workspace') path += `${path.includes('?') ? '&' : '?'}view=workspace`;
-  return fetchJson<CurriculumProgrammeDetailModules>(path, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 60000 });
+  return fetchJson<CurriculumProgrammeDetailModules>(path, programmeDetailSectionInit(signal, options));
 }
 
 export { fetchCurriculumOverview as fetchCurriculumOverviewBundle };

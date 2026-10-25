@@ -41,6 +41,9 @@ DERIVED_MODULE_FIELDS = frozenset({
     'deliveryUsages', 'deliveryWeeks', 'deliveryStatus', 'deliveryMetadata',
     'itemFingerprints', 'id', 'moduleId', 'moduleCatalogueId', 'structureId',
     'catalogueId',
+    # Re-derived from the live-session components (the Builder's
+    # recalculateModule and the schedule both rewrite it); only a fallback.
+    'sessionsNumber',
 })
 
 # Week fields stamped from the session plan on every read. Not stored, so
