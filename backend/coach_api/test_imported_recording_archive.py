@@ -10,7 +10,7 @@ import sqlite3
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from django.test import SimpleTestCase, override_settings
+from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from . import recording_archive as archive
 from .management.commands.archive_meeting_recordings import Command
@@ -240,7 +240,7 @@ class ImportedRecordingArchiveTests(SimpleTestCase):
             response = stored_resources(self.record, include_attendance=False)
             self.assertTrue(json.loads(response.content)['artifacts'][0]['content_available'])
             self.assertNotIn(b'https://synthetic.invalid/private', response.content)
-            playback = stored_recording(self.record, 'recording-1')
+            playback = stored_recording(RequestFactory().get('/content/'), self.record, 'recording-1')
             self.assertEqual(playback.status_code, 302)
             self.assertEqual(playback['Location'], 'https://synthetic.invalid/private')
-            self.assertEqual(stored_recording(self.record, 'different-recording').status_code, 404)
+            self.assertEqual(stored_recording(RequestFactory().get('/content/'), self.record, 'different-recording').status_code, 404)

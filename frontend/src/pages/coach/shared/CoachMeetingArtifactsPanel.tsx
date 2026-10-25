@@ -670,6 +670,7 @@ export function CoachMeetingArtifactsPanel({
   const supportsMeetingSummary = event.source === 'mcr' || event.source === 'progress-review';
   const [state, setState] = useState<ArtifactState>({ status: 'idle' });
   const [preview, setPreview] = useState<PreviewSelection | null>(null);
+  const [playbackError, setPlaybackError] = useState(false);
   const [transcriptPreview, setTranscriptPreview] = useState<TranscriptPreviewState>({ status: 'idle' });
 
   const loadArtifacts = useCallback((signal?: AbortSignal, refresh = false) => {
@@ -704,6 +705,7 @@ export function CoachMeetingArtifactsPanel({
 
   useEffect(() => {
     setPreview(null);
+    setPlaybackError(false);
     if (!eventKey || !hasTeamsLink || event.source === 'live-session') {
       setState({ status: 'idle' });
       return;
@@ -839,7 +841,9 @@ export function CoachMeetingArtifactsPanel({
             const previewUrl = contentUrl(eventKey, type, artifactId, { preview: true });
             const downloadUrl = contentUrl(eventKey, type, artifactId);
             const selected = preview?.type === type && preview.artifactId === artifactId;
-            const contentAvailable = allowContentAccess && artifact.content_available !== false;
+            const contentAvailable = allowContentAccess &&
+              (artifact.content_available !== false || (type === 'recording' && artifact.graph_playback_candidate === true));
+            const downloadAvailable = allowContentAccess && artifact.content_available !== false;
             return (
               <div key={artifactKey(artifact)} className="rounded-lg border border-background-200 bg-background-50 px-3 py-2.5">
                 <div className="flex items-start gap-2">
@@ -854,7 +858,7 @@ export function CoachMeetingArtifactsPanel({
                     <div className="mt-2 flex flex-wrap gap-2">
                       {contentAvailable ? <button
                         type="button"
-                        onClick={() => setPreview({ artifact, artifactId, type, url: previewUrl })}
+                        onClick={() => { setPlaybackError(false); setPreview({ artifact, artifactId, type, url: previewUrl }); }}
                         className={cn(
                           'inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[12px] font-semibold transition',
                           selected
@@ -865,7 +869,7 @@ export function CoachMeetingArtifactsPanel({
                         <AppIcon className={type === 'recording' ? 'ri-play-circle-line' : 'ri-eye-line'}></AppIcon>
                         {type === 'recording' ? 'Play' : 'Preview'}
                       </button> : null}
-                      {contentAvailable ? <a
+                      {downloadAvailable ? <a
                         href={downloadUrl}
                         className="inline-flex items-center gap-1 rounded-md border border-background-300 bg-white px-2 py-1 text-[12px] font-semibold text-foreground-700 transition hover:border-background-400 hover:bg-background-100"
                       >
@@ -873,7 +877,9 @@ export function CoachMeetingArtifactsPanel({
                         Download
                       </a> : null}
                     </div>
-                    {artifact.content_available === false ? (
+                    {artifact.graph_playback_candidate && !artifact.content_available ? (
+                      <p className="mt-2 text-[12px] text-foreground-500">Play from Teams. Video availability is confirmed when playback starts.</p>
+                    ) : artifact.content_available === false ? (
                       <p className="mt-2 text-[12px] text-foreground-500">A saved copy of this recording is not available yet.</p>
                     ) : null}
                   </div>
@@ -897,7 +903,7 @@ export function CoachMeetingArtifactsPanel({
             </div>
             <button
               type="button"
-              onClick={() => setPreview(null)}
+              onClick={() => { setPreview(null); setPlaybackError(false); }}
               className="inline-flex h-8 items-center gap-1 rounded-md border border-primary-200 bg-white px-2 text-[12px] font-semibold text-primary-700 hover:bg-primary-50"
             >
               <AppIcon className="ri-close-line"></AppIcon>
@@ -910,6 +916,7 @@ export function CoachMeetingArtifactsPanel({
               src={preview.url}
               controls
               preload="metadata"
+              onError={() => setPlaybackError(true)}
               className="max-h-[420px] w-full rounded-lg bg-black"
             >
               <track kind="captions" />
@@ -921,6 +928,13 @@ export function CoachMeetingArtifactsPanel({
               Inline preview is not available for this artifact type.
             </div>
           )}
+          {preview.type === 'recording' && playbackError ? (
+            <p role="alert" className="mt-2 text-[12px] text-amber-800">
+              {preview.artifact.graph_playback_candidate && !preview.artifact.content_available
+                ? 'Teams could not play this recording. It may still be processing or access may have expired.'
+                : 'This recording could not be played. Please try again later.'}
+            </p>
+          ) : null}
         </div>
       ) : null}
 

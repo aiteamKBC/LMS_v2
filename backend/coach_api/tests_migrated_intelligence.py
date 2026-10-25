@@ -62,7 +62,7 @@ class MigratedMeetingIntelligenceTests(SimpleTestCase):
         self.overlay = review()
         self.record = meeting()
 
-    def call_check(self, snapshot, transcript=None, stored_snapshot=None):
+    def call_check(self, snapshot, transcript=None, stored_snapshot=None, *, generate=False):
         stored_snapshot = stored_snapshot or {"artifacts": [], "attendanceReports": [], "attendanceTracker": {"tracker": []}}
         saved = deepcopy(stored_snapshot)
         def store(_record, **kwargs):
@@ -90,7 +90,8 @@ class MigratedMeetingIntelligenceTests(SimpleTestCase):
         ):
             locked.return_value.get.return_value = self.overlay
             respond.side_effect = lambda overlay, record, **kwargs: SimpleNamespace(status_code=kwargs.get("status", 200))
-            result = inspect.unwrap(migrated_review_check_session)(self.factory.post("/", data="{}", content_type="application/json"), ID)
+            result = inspect.unwrap(migrated_review_check_session)(self.factory.post("/",
+                data=json.dumps({'generateSummary': generate}), content_type="application/json"), ID)
             return result, persist
 
     def test_association_uses_overlay_calendar_key_and_rejects_native_links(self):
@@ -190,12 +191,12 @@ class MigratedMeetingIntelligenceTests(SimpleTestCase):
     def test_transcript_generates_once_and_preserves_edited_summary(self):
         transcript = {"artifactId": "transcript-1", "text": "Synthetic meeting facts"}
         with patch("coach_api.views.openai_meeting_summary", return_value=({"title": "MCM", "overview": "Facts"}, "model")) as ai:
-            self.call_check(graph_snapshot(transcript=True, attendance=True), transcript)
+            self.call_check(graph_snapshot(transcript=True, attendance=True), transcript, generate=True)
             self.assertEqual(self.overlay.meeting_intelligence["summaryStatus"], "ready")
             self.assertEqual(self.overlay.meeting_intelligence["transcriptArtifactId"], "transcript-1")
             self.overlay.meeting_intelligence["summary"] = {"title": "Coach edit", "overview": "Edited facts"}
             self.overlay.meeting_intelligence["summaryStatus"] = "edited"
-            self.call_check(graph_snapshot(transcript=True, attendance=True), transcript)
+            self.call_check(graph_snapshot(transcript=True, attendance=True), transcript, generate=True)
             self.assertEqual(ai.call_count, 1)
             self.assertEqual(self.overlay.meeting_intelligence["summary"]["overview"], "Edited facts")
 
@@ -244,11 +245,11 @@ class MigratedMeetingIntelligenceTests(SimpleTestCase):
     def test_ai_failure_keeps_attendance_and_can_retry_explicitly(self):
         transcript = {"artifactId": "transcript-1", "text": "Synthetic meeting facts"}
         with patch("coach_api.views.openai_meeting_summary", side_effect=RuntimeError("synthetic failure")):
-            self.call_check(graph_snapshot(transcript=True, attendance=True), transcript)
+            self.call_check(graph_snapshot(transcript=True, attendance=True), transcript, generate=True)
         self.assertEqual(self.overlay.meeting_intelligence["summaryStatus"], "failed")
         self.assertEqual(self.overlay.meeting_intelligence["attendanceStatus"], "available")
         with patch("coach_api.views.openai_meeting_summary", return_value=({"title": "MCM", "overview": "Facts"}, "model")):
-            self.call_check(graph_snapshot(transcript=True, attendance=True), transcript)
+            self.call_check(graph_snapshot(transcript=True, attendance=True), transcript, generate=True)
         self.assertEqual(self.overlay.meeting_intelligence["summaryStatus"], "ready")
 
     def test_graph_failure_and_completed_status_do_not_write(self):

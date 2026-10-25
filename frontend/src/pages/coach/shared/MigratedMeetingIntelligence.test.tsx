@@ -38,7 +38,7 @@ describe('independent imported resources', () => {
     });
     render(<MigratedMeetingIntelligence instanceId={id} family="aptem_progress_review" status="scheduled" viewAs={false} />);
     expect(await screen.findByText(/Planned appointment: 2026-10-25 at 10:00/)).toBeVisible();
-    expect(screen.getByText(/actual call completion can be verified/)).toBeVisible();
+    expect(screen.getByText(/summary generated from readable saved transcript text will be provisional/)).toBeVisible();
     expect(screen.queryByText(/single-run association/)).not.toBeInTheDocument();
   });
   it('shows saved resources and pending end separately and returns the actual started status', async () => {
@@ -52,7 +52,7 @@ describe('independent imported resources', () => {
     await waitFor(() => expect(api.fetch).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole('button', { name: 'Check Session' }));
     expect(await screen.findByRole('button', { name: /Play/ })).toBeVisible();
-    expect(screen.getByText(/AI summary generation remains pending/)).toBeVisible();
+    expect(screen.getByText(/Call-end confirmation is still pending/)).toBeVisible();
     expect(complete).toHaveBeenCalledWith(checked);
   });
   it('distinguishes recording metadata from an archived playable copy', async () => {
@@ -117,7 +117,7 @@ describe('independent imported resources', () => {
     render(<MigratedMeetingIntelligence instanceId={id} family="aptem_mcm" status="scheduled" viewAs={false} />);
     expect(await screen.findByText(/Planned appointment: 2026-10-26 at 11:00/)).toBeVisible();
     expect(screen.getByText(/A saved copy of this recording is not available yet/)).toBeVisible();
-    expect(screen.getByText(/planned appointment end does not confirm/)).toBeVisible();
+    expect(screen.getByText(/Call-end confirmation is still pending/)).toBeVisible();
     expect(screen.queryByRole('button', { name: /Play/ })).not.toBeInTheDocument();
   });
   it('previews the saved content of an off-window transcript inside Review Details', async () => {

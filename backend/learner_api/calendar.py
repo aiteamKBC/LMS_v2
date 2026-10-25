@@ -1350,7 +1350,7 @@ def learner_calendar_event_artifact_content(request, kind, pk, event_key, artifa
         return _error("Only meeting recordings are available to learners.", 403)
     from .imported_meeting_resources import is_imported_meeting, stored_recording
     if is_imported_meeting(record):
-        return stored_recording(record, artifact_id)
+        return stored_recording(request, record, artifact_id)
     from coach_api.views import coach_meeting_artifact_content_response
     return coach_meeting_artifact_content_response(request, record, event_key, artifact_type, artifact_id)
 

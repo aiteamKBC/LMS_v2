@@ -152,6 +152,7 @@ def _summary(state):
 
 def _response(overlay, record, snapshot=None, *, errors=None, status=200):
     from coach_api.recording_archive import archived_recording_url
+    from coach_api.imported_recording_playback import graph_playback_candidate
     from coach_api.views import public_coach_meeting_artifact, stored_coach_meeting_snapshot, stored_coach_meeting_transcript_for_summary
 
     saved = snapshot if snapshot is not None else stored_coach_meeting_snapshot(record)
@@ -168,8 +169,6 @@ def _response(overlay, record, snapshot=None, *, errors=None, status=200):
     state = overlay.meeting_intelligence or {}
     binding = summary_binding_response(overlay)
     latest_status = generation_status(state)
-    if state.get('meetingEndStatus') == 'pending' and latest_status not in {'ready', 'failed'}:
-        latest_status = 'pending'
     codes = [code for code in state.get("errorCodes", []) if code != "AI_SUMMARY_FAILED"]
     summary = _summary(state)
     transcript_ids = sorted({row.get('graph_artifact_id') for row in snapshot['artifacts']
@@ -191,6 +190,8 @@ def _response(overlay, record, snapshot=None, *, errors=None, status=200):
             # is not a playable archive. The local signed URL never enters JSON.
             artifact['content_available'] = bool(archived_recording_url(
                 record.event_key, item.get('graph_artifact_id') or item.get('id')))
+            if not artifact['content_available'] and graph_playback_candidate(record, snapshot, item):
+                artifact['graph_playback_candidate'] = True
         artifacts.append(artifact)
     return JsonResponse({
         "event": {
@@ -214,6 +215,7 @@ def _response(overlay, record, snapshot=None, *, errors=None, status=200):
             "recordingStatus": state.get("recordingStatus", "unknown"),
             "transcriptStatus": state.get("transcriptStatus", "not-checked"),
             "summaryStatus": latest_status,
+            "summaryProvisional": bool(summary and state.get('source') == 'teams' and state.get('summaryProvisional')),
             "generationError": (state.get("summaryGeneration") or {}).get("error") if latest_status == "failed" else None,
             "transcriptArtifactId": state.get("transcriptArtifactId"),
             "errorCodes": codes,
@@ -325,7 +327,8 @@ def _resource_state(record, snapshot, selected, reports, transcript, errors, inc
         attendanceStatus='available' if reports else 'fetch-failed' if attendance_failed else 'pending',
         recordingStatus='available' if any(row.get('artifact_type') == 'recording' for row in selected['artifacts']) else
             'incomplete' if failures.get('recordings') == 'incomplete' else 'fetch-failed' if failures.get('recordings') else 'pending',
-        transcriptStatus='available' if transcript else 'unavailable' if gone else 'incomplete' if incomplete else 'fetch-failed' if fetch_failed else 'pending')
+        transcriptStatus='unavailable' if gone and not transcript else 'incomplete' if incomplete else
+            'available' if transcript else 'fetch-failed' if fetch_failed else 'pending')
 
 
 def _transcript_basis(artifacts):
@@ -382,6 +385,20 @@ def migrated_review_check_session(request, review_id):
     error = _check_writable(overlay, record, definition or {})
     if error is not None:
         return error
+    if request.content_type == 'application/json':
+        try:
+            options = json.loads(request.body or b'{}')
+        except (UnicodeDecodeError, ValueError):
+            return JsonResponse({'detail': 'Invalid JSON.'}, status=400)
+    else:
+        # Existing empty-body Check Session callers use Django's multipart
+        # default. Its encoded boundary is not a JSON options document.
+        if request.POST or request.FILES:
+            return JsonResponse({'detail': 'Invalid Check Session options.'}, status=400)
+        options = {}
+    if not isinstance(options, dict) or not isinstance(options.get('generateSummary', False), bool):
+        return JsonResponse({'detail': 'generateSummary must be a boolean.'}, status=400)
+    generate_summary = options.get('generateSummary', False)
     if (overlay.meeting_intelligence or {}).get('actualSession'):
         return JsonResponse({'detail': 'This historical Review has an immutable Actual Session claim. '
                              'Its schema and evidence need a controlled retirement before a meeting-wide refresh.',
@@ -526,51 +543,62 @@ def migrated_review_check_session(request, review_id):
                     for row in snapshot.get('artifacts', []))
                 # Text is read by artifact ID. Recheck its saved meeting/event
                 # metadata before treating it as this Review's content.
+                saved_snapshot = stored_coach_meeting_snapshot(current_record)
                 saved_selection = stored_transcript_selection(current_record,
-                    stored_coach_meeting_snapshot(current_record), meeting_scoped=True,
+                    saved_snapshot, meeting_scoped=True,
                     meeting_id=target.online_meeting_id)
-                incomplete = (incomplete or saved_selection['code'] is not None
-                              or set(saved_selection['artifactIds']) != set(transcript_ids))
-            if incomplete:
-                transcript = None
-                errors.append('The complete Teams transcript could not be retrieved. Retry Check Session or upload the complete session transcript. Your saved answer is unchanged.')
+                if (saved_selection['code'] is not None or not stored_ids
+                        or not stored_ids <= set(saved_selection['artifactIds'])
+                        or not stored_ids <= set(transcript_ids)
+                        or not (transcript or {}).get('text', '').strip()):
+                    transcript = None
+                incomplete = incomplete or set(saved_selection['artifactIds']) != set(transcript_ids)
+            if incomplete and not transcript:
+                errors.append('The Teams transcript has no readable, verified saved text yet. Retry Check Session or upload a transcript. Your saved answer is unchanged.')
+            elif incomplete:
+                errors.append('Some Teams transcript segments were unavailable. The summary uses verified saved text and is provisional.')
             resource_state = _resource_state(current_record, snapshot, selected, reports, transcript, errors, incomplete,
                                              timezone.now(), meeting_scoped=True)
-            # One verified call with a fully enclosing ended report can use the
-            # same saved segments as Preview, regardless of booked time. A
-            # meeting-level report cannot establish the end of several calls.
-            ai_pending = (bool(selected['selectionError']) or bool((snapshot.get('resourceErrors') or {}).get('attendance'))
-                          or not snapshot.get('attendanceCollectionComplete', True)
-                          or not _single_call_ended(transcript_rows, reports, timezone.now()))
-            if ai_pending:
-                if not (locked.meeting_intelligence or {}).get('summary'):
-                    resource_state['summaryStatus'] = 'pending'
-            if ai_pending or resource_state['meetingEndStatus'] == 'pending':
-                # Save checked resource state only: never claim a generation lease
-                # or run answer binding merely because evidence became available.
+            provisional = (incomplete or bool(selected['selectionError'])
+                           or not _single_call_ended(transcript_rows, reports, timezone.now()))
+            if not generate_summary:
                 state = dict(locked.meeting_intelligence or {})
                 preserve_original(state)
-                if (not transcript and not state.get('summary')
-                        and ((state.get('summaryGeneration') or {}).get('status') == 'failed'
-                             or state.get('summaryStatus') == 'failed')):
-                    # A new resource check supersedes a previous AI error. Keep
-                    # the missing transcript visible without replaying that error.
-                    state['summaryGeneration'] = {'status': 'unavailable', 'source': 'teams'}
-                    resource_state['summaryStatus'] = 'unavailable'
                 state.update(resource_state)
-                if transcript and (state.get('summaryGeneration') or {}).get('status') == 'unavailable':
-                    state.pop('summaryGeneration', None)
-                binding = populate_answer(locked, state, '')
-                if transcript and binding.get('status') == 'summary-unavailable':
-                    state['summaryBinding']['status'] = 'summary-pending'
+                if not transcript and not state.get('summary') and (
+                        (state.get('summaryGeneration') or {}).get('status') == 'failed'
+                        or state.get('summaryStatus') == 'failed'):
+                    state['summaryGeneration'] = {'status': 'unavailable', 'source': 'teams'}
                 locked.meeting_intelligence = state
                 locked.save(update_fields=['meeting_intelligence', 'updated_at'])
                 return _response(locked, current_record, errors=errors, status=207 if errors else 200)
+            if not transcript:
+                # Resource refresh remains useful without readable content, but
+                # never claims a generation lease or changes formal answers.
+                state = dict(locked.meeting_intelligence or {})
+                preserve_original(state)
+                if not state.get('summary'):
+                    resource_state['summaryStatus'] = 'unavailable'
+                state.update(resource_state)
+                if not state.get('summary'):
+                    state['summaryGeneration'] = {'status': 'unavailable', 'source': 'teams'}
+                populate_answer(locked, state, '')
+                locked.meeting_intelligence = state
+                locked.save(update_fields=['meeting_intelligence', 'updated_at'])
+                return _response(locked, current_record, errors=errors, status=207 if errors else 200)
+            saved_scope = scope_snapshot(current_record, saved_snapshot, meeting_scoped=True,
+                                         meeting_id=target.online_meeting_id)
+            if saved_scope['selectionError'] or not stored_ids <= {
+                    row.get('graph_artifact_id') for row in saved_scope['artifacts']
+                    if row.get('artifact_type') == 'transcript'}:
+                transcript = None
+                return JsonResponse({'detail': 'The saved transcript scope changed. Retry Check Session.',
+                                     'code': 'SUMMARY_SUPERSEDED'}, status=409)
             prior_state = locked.meeting_intelligence or {}
             if (prior_state.get('summary') and prior_state.get('source') != 'upload'
                     and not summary_matches_session(prior_state, current_record, transcript)):
                 errors.append('The stored suggestion cannot be verified for this session. Your saved answers are unchanged.')
-            if transcript and not (locked.meeting_intelligence or {}).get('summary'):
+            if not prior_state.get('summary'):
                 try:
                     token = claim(locked)
                 except SummaryInProgress as exc:
@@ -593,21 +621,17 @@ def migrated_review_check_session(request, review_id):
                 # The booking/lease can stay unchanged while a background writer
                 # adds or corrects transcript segments. Compare current scoped
                 # content, not the whole resource fingerprint (recordings can change).
-                current_transcript = stored_coach_meeting_transcript_for_summary(current_record,
-                    artifact_ids=transcript_ids)
                 current_snapshot = stored_coach_meeting_snapshot(current_record)
                 current_selection = scope_snapshot(current_record, current_snapshot,
                     meeting_scoped=True, meeting_id=target.online_meeting_id)
                 current_ids = {row['graph_artifact_id'] for row in current_selection['artifacts']
                                if row.get('artifact_type') == 'transcript' and row.get('graph_artifact_id')}
-                current_rows = [row for row in current_selection['artifacts']
-                                if row.get('artifact_type') == 'transcript']
+                current_transcript = stored_coach_meeting_transcript_for_summary(current_record,
+                    artifact_ids=sorted(current_ids))
                 if (not current_transcript or not transcript
-                        or current_snapshot.get('partial') or current_selection['selectionError']
-                        or current_ids != set(current_transcript['artifactId'].split(','))
-                        or not _single_call_ended(current_rows, current_selection['attendanceReports'], timezone.now())
-                        or current_selection['attendanceReports'] != selected['attendanceReports']
-                        or _transcript_basis(current_selection['artifacts']) != _transcript_basis(selected['artifacts'])
+                        or current_selection['selectionError']
+                        or current_ids != set(saved_selection['artifactIds'])
+                        or _transcript_basis(current_selection['artifacts']) != _transcript_basis(saved_scope['artifacts'])
                         or current_transcript['artifactId'] != transcript['artifactId']
                         or current_transcript['text'] != transcript['text']):
                     return JsonResponse({'detail': 'The saved transcript changed during generation. Your answer is unchanged. Retry Check Session.',
@@ -626,6 +650,7 @@ def migrated_review_check_session(request, review_id):
             if generated:
                 summary, model = generated
                 state.update(summary=summary, summaryStatus='ready', generatedAt=timezone.now().isoformat(),
+                    summaryProvisional=provisional,
                     generatedFromTranscript=True, transcriptArtifactId=transcript['artifactId'],
                     transcriptHash=hashlib.sha256(transcript['text'].encode('utf-8')).hexdigest(), model=model,
                     summaryError='', source='teams', eventKey=record.event_key, graphEventId=record.graph_event_id,
@@ -641,7 +666,8 @@ def migrated_review_check_session(request, review_id):
                 if binding_state(locked, state).get('fieldKey'):
                     provenance = {key: state.get(key) for key in ('generatedAt', 'generatedBy', 'model', 'transcriptArtifactId', 'transcriptHash')}
                     provenance.update(source='teams', eventKey=state.get('eventKey') or record.event_key, graphEventId=state.get('graphEventId'),
-                                      transcriptTruncated=bool(state.get('transcriptTruncated')))
+                                      transcriptTruncated=bool(state.get('transcriptTruncated')),
+                                      provisional=bool(state.get('summaryProvisional')))
                     result = apply_suggestion(locked, state, state['summary'], provenance)
                 else:
                     result = populate_answer(locked, state, '')
