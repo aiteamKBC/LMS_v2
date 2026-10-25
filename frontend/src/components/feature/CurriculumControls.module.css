@@ -11,6 +11,45 @@
   }
 }
 
+/* Loading feedback stays small in Curriculum, including body-portalled
+   confirmations. Keep the pending/disabled state owned by the action itself. */
+:global(.workspace-shell[data-workspace-role="curriculum"]),
+:global(body:has(.workspace-shell[data-workspace-role="curriculum"]) :is(.workspace-drawer, [role="dialog"], .swal2-popup)) {
+  & :global(svg:is(.app-icon.animate-spin, .lucide-loader-circle, .lucide-loader)),
+  & :global(span.animate-spin.rounded-full[class*="border"]) {
+    width: 16px !important;
+    height: 16px !important;
+    flex-shrink: 0;
+    transform-origin: center;
+    animation: curriculumLoadingSpin 900ms linear infinite !important;
+  }
+
+  & :global(svg:is(.lucide-loader-circle, .lucide-loader)) { stroke-width: 1.8; }
+}
+
+:global(body:has(.workspace-shell[data-workspace-role="curriculum"]) .swal2-loader) {
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  margin: 0 8px;
+  border: 2px solid #e7ddef !important;
+  border-top-color: #60308a !important;
+  border-radius: 50%;
+  animation: curriculumLoadingSpin 900ms linear infinite;
+}
+
+@keyframes curriculumLoadingSpin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.workspace-shell[data-workspace-role="curriculum"] svg:is(.app-icon.animate-spin, .lucide-loader-circle, .lucide-loader)),
+  :global(.workspace-shell[data-workspace-role="curriculum"] span.animate-spin.rounded-full[class*="border"]),
+  :global(body:has(.workspace-shell[data-workspace-role="curriculum"]) :is(.workspace-drawer, [role="dialog"], .swal2-popup) svg:is(.app-icon.animate-spin, .lucide-loader-circle, .lucide-loader)),
+  :global(body:has(.workspace-shell[data-workspace-role="curriculum"]) :is(.workspace-drawer, [role="dialog"], .swal2-popup) span.animate-spin.rounded-full[class*="border"]),
+  :global(body:has(.workspace-shell[data-workspace-role="curriculum"]) .swal2-loader) {
+    animation: none !important;
+  }
+}
+
 /* Curriculum content and its body-portalled controls share one control scale.
    Header/sidebar chrome and every other workspace retain their own styles. */
 :global(.workspace-shell.dashboard-theme[data-workspace-role="curriculum"] .workspace-main),
@@ -77,7 +116,7 @@
   }
 
   & :is(input, select, textarea, [role="combobox"]):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([aria-invalid="true"]):not([class*="border-red"]):not([class*="border-rose"]) {
-    border: 1px solid var(--curriculum-control-border) !important;
+    border: var(--curriculum-input-border, 1px solid var(--curriculum-control-border)) !important;
     background-color: var(--curriculum-control-surface) !important;
     color: var(--curriculum-control-text) !important;
   }
@@ -215,6 +254,74 @@
   & [aria-disabled="true"] {
     cursor: not-allowed;
     opacity: .55;
+  }
+
+  /* Inline search fields own one frame around the icon, input and trailing
+     count/clear action. Absolute-icon searches and menu headers keep theirs. */
+  & :is([class~="border"], label):has(> :is([class~="lucide-search"], [class~="ri-search-line"]):not([class~="absolute"])):has(> input) {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: min(100%, 220px);
+    max-width: 100%;
+    height: var(--curriculum-control-height) !important;
+    min-height: var(--curriculum-control-height) !important;
+    padding: 0 10px !important;
+    border: 1px solid var(--curriculum-control-border) !important;
+    border-radius: var(--curriculum-control-radius) !important;
+    background: var(--curriculum-control-surface) !important;
+    box-shadow: none !important;
+
+    &:focus-within {
+      border-color: #a78bc5 !important;
+      outline: 2px solid #a78bc5 !important;
+      outline-offset: 2px;
+    }
+
+    & > input {
+      /* Reuse the control variables because the shared input selectors also
+         own these properties with higher specificity. */
+      --curriculum-input-border: 0;
+      --curriculum-control-height: 100%;
+      --curriculum-control-radius: 0px;
+      --curriculum-control-surface: transparent;
+      flex: 1 1 0%;
+      width: 0 !important;
+      min-width: 0;
+      height: 100% !important;
+      min-height: 0 !important;
+      padding: 0 !important;
+      border: 0 !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      box-shadow: none !important;
+      outline: none !important;
+    }
+
+    & > :is([class~="lucide-search"], [class~="ri-search-line"]) {
+      flex-shrink: 0;
+      width: 16px;
+      height: 16px;
+      font-size: 16px;
+      line-height: 1;
+      color: var(--curriculum-filter-text);
+      pointer-events: none;
+    }
+
+    & > span:not([class~="sr-only"]) {
+      flex-shrink: 0;
+      color: var(--curriculum-filter-text);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    & > button {
+      flex-shrink: 0;
+      width: 28px;
+      min-height: 28px !important;
+      height: 28px !important;
+      padding: 0 !important;
+    }
   }
 
   /* The dropdown's search is framed by the menu; avoid a second input border. */

@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchFreeProgrammeModules, saveFreeProgrammeModules, type FreeProgrammeModule } from '@/lib/curriculumApi';
-import { fetchWeekTemplates } from '../week-builder/weekTemplateData';
-import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
+import { fetchCurriculumProgrammes, fetchFreeProgrammeModules, saveFreeProgrammeModules, type FreeProgrammeModule } from '@/lib/curriculumApi';
+import { fetchWeekTemplateDetail, fetchWeekTemplates, type WeekTemplate } from '../week-builder/weekTemplateData';
+import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import CoursesPage from './page';
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</> }));
@@ -32,12 +32,130 @@ function show(url = '/curriculum/courses') { return render(<MemoryRouter initial
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(saveFreeProgrammeModules).mockReset();
   vi.mocked(fetchFreeProgrammeModules).mockResolvedValue(modules);
   vi.mocked(fetchWeekTemplates).mockResolvedValue([]);
+  vi.mocked(fetchWeekTemplateDetail).mockReset();
+  vi.mocked(fetchCurriculumProgrammes).mockResolvedValue([]);
 });
 afterEach(cleanup);
 
 describe('Curriculum Courses', () => {
+  it('creates a course from searched weeks with optional details retained when collapsed', async () => {
+    const user = userEvent.setup();
+    const templates = ['Alpha', 'Beta'].map((title, index): WeekTemplate => ({
+      id: `T${index}`, title: `${title} week`, summary: `${title} learning`, learningOutcomes: [], courseType: 'free',
+      programmeId: '', programmeName: '', moduleCatalogueId: '', groupId: '', groupName: '', status: 'draft', ksbMappings: [],
+      totalOtjh: 2, points: 10, componentCount: 1, author: '',
+      components: [{ ...modules[0].components[0], id: `PART-${index}`, weekId: `T${index}`, type: 'reading', reflectionQuestion: '', coachValidationRequired: true, ksbMappings: [], settings: { readingContent: '<p>Stored guidance</p>', version: '3.2' } }],
+    }));
+    vi.mocked(fetchWeekTemplates).mockResolvedValue(templates);
+    vi.mocked(fetchWeekTemplateDetail).mockImplementation(async id => templates.find(template => template.id === id)!);
+    vi.mocked(saveFreeProgrammeModules).mockResolvedValue({ saved: true, programmeId: 'FREE-COURSES', modules });
+    show('/curriculum/courses?type=apprentices');
+    await screen.findByRole('article', { name: 'Workplace learning' });
+    await user.click(screen.getByRole('button', { name: 'Add course' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'Add course' }));
+    expect(dialog.getByRole('textbox', { name: 'Course name' })).toHaveFocus();
+    expect(dialog.getByLabelText('Description')).not.toBeVisible();
+    await user.paste('New workplace course');
+    expect(dialog.getByRole('button', { name: 'Create course' })).toBeDisabled();
+    for (const name of ['Alpha', 'Beta']) {
+      await user.clear(dialog.getByRole('searchbox', { name: 'Search week templates' }));
+      await user.type(dialog.getByRole('searchbox', { name: 'Search week templates' }), name);
+      await user.click(within(dialog.getByRole('group', { name: `${name} week` })).getByRole('button', { name: 'Add week' }));
+      await waitFor(() => expect(within(dialog.getByRole('group', { name: `${name} week` })).getByRole('button', { name: 'Remove week' })).toBeEnabled());
+    }
+    expect(dialog.getByText('2 weeks', { exact: true })).toBeInTheDocument();
+    await user.type(dialog.getByRole('searchbox', { name: 'Search week templates' }), 'not found');
+    expect(dialog.getByText('No weeks match your search.')).toBeInTheDocument();
+    expect(dialog.getByRole('button', { name: 'Create course' })).toBeEnabled();
+    await user.click(dialog.getByText('Description & cover image'));
+    await user.click(dialog.getByRole('textbox', { name: 'Description' }));
+    await user.paste('Course description');
+    await user.click(dialog.getByRole('textbox', { name: 'Cover image URL' }));
+    await user.paste('https://example.test/cover.png');
+    await user.click(dialog.getByText('Description & cover image'));
+    expect(dialog.getByLabelText('Description')).toHaveValue('Course description');
+    await user.click(dialog.getByRole('button', { name: 'Create course' }));
+    await waitFor(() => expect(saveFreeProgrammeModules).toHaveBeenCalledTimes(1));
+    const payload = vi.mocked(saveFreeProgrammeModules).mock.calls[0][1];
+    const created = payload.modules.filter(module => module.courseName === 'New workplace course');
+    expect(created).toHaveLength(2);
+    expect(created.map(module => module.weekId)).toEqual(['T0', 'T1']);
+    expect(created.every(module => module.courseType === 'apprentices' && module.description === 'Course description' && module.coverImageUrl === 'https://example.test/cover.png')).toBe(true);
+    expect(created[0].components?.[0]).toMatchObject({ expectedOtjh: 2, points: 10, reflectionRequired: true, settings: expect.objectContaining({ readingContent: '<p>Stored guidance</p>', version: '3.2' }) });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('keeps a pending save open and restores keyboard focus after completing it', async () => {
+    const user = userEvent.setup();
+    let finish: (response: Awaited<ReturnType<typeof saveFreeProgrammeModules>>) => void = () => {};
+    vi.mocked(saveFreeProgrammeModules).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    show();
+    const card = await screen.findByRole('article', { name: 'Workplace learning' });
+    const editButton = within(card).getByRole('button', { name: 'Edit' });
+    await user.click(editButton);
+    const dialog = within(screen.getByRole('dialog', { name: 'Edit course' }));
+    await user.click(dialog.getByRole('button', { name: 'Save changes' }));
+    expect(dialog.getByRole('button', { name: 'Saving...' })).toBeDisabled();
+    expect(dialog.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    expect(dialog.getByRole('button', { name: 'Close wizard' })).toBeDisabled();
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('dialog', { name: 'Edit course' })).toBeInTheDocument();
+    await act(async () => finish({ saved: true, programmeId: 'FREE-COURSES', modules }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(editButton).toHaveFocus();
+    expect(saveFreeProgrammeModules).toHaveBeenCalledTimes(1);
+  });
+
+  it('switches between cards and table without losing combined filters or fetching again', async () => {
+    const user = userEvent.setup();
+    show('/curriculum/courses?type=free');
+    await screen.findByRole('article', { name: 'Open learning' });
+    await user.type(screen.getByRole('searchbox'), 'practice');
+    const views = within(screen.getByRole('group', { name: 'Course view' }));
+    expect(views.getByRole('button', { name: 'Cards' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(views.getByRole('button', { name: 'Table' }));
+    const table = screen.getByRole('table', { name: 'Courses' });
+    expect(within(table).getAllByRole('row')).toHaveLength(2);
+    expect(within(table).getByRole('rowheader')).toHaveTextContent('Open learning');
+    expect(within(table).getByRole('cell', { name: 'Free' })).toBeInTheDocument();
+    expect(within(table).getByRole('cell', { name: '4h' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Current URL')).toHaveTextContent('?type=free&view=table');
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Apprentices 1' }));
+    expect(screen.getByText('No courses match your filters')).toBeInTheDocument();
+    await user.clear(screen.getByRole('searchbox'));
+    expect(within(screen.getByRole('table')).getByRole('rowheader')).toHaveTextContent('Workplace learning');
+    await user.click(views.getByRole('button', { name: 'Cards' }));
+    expect(screen.getByRole('article', { name: 'Workplace learning' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Current URL')).toHaveTextContent('?type=apprentices');
+    expect(fetchFreeProgrammeModules).toHaveBeenCalledTimes(1);
+    expect(saveFreeProgrammeModules).not.toHaveBeenCalled();
+  });
+
+  it('opens a bookmarked table with the same edit, delete confirmation and convert workflows', async () => {
+    const user = userEvent.setup();
+    show('/curriculum/courses?view=table&type=apprentices');
+    const table = within(await screen.findByRole('table', { name: 'Courses' }));
+    expect(table.getAllByRole('row')).toHaveLength(2);
+    expect(table.getByRole('cell', { name: 'Apprentices' })).toBeInTheDocument();
+    await user.click(table.getByRole('button', { name: 'Edit' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'Edit course' }));
+    expect(dialog.getByRole('textbox', { name: 'Course name' })).toHaveValue('Workplace learning');
+    expect(dialog.getByRole('combobox', { name: 'Course type' })).toHaveValue('apprentices');
+    await user.click(dialog.getByRole('button', { name: 'Close wizard' }));
+    await user.click(table.getByRole('button', { name: 'Delete Workplace learning' }));
+    expect(showCurriculumConfirm).toHaveBeenCalledWith(expect.objectContaining({ title: 'Delete course?', text: '"Workplace learning" and its 1 week will be removed.' }));
+    expect(saveFreeProgrammeModules).not.toHaveBeenCalled();
+    await user.click(table.getByRole('button', { name: 'Convert to programme' }));
+    expect(screen.getByRole('heading', { name: 'Convert to programme' })).toBeInTheDocument();
+    expect(screen.getByText('Turn “Workplace learning” into a real, enrolable programme module.')).toBeInTheDocument();
+    await waitFor(() => expect(fetchCurriculumProgrammes).toHaveBeenCalled());
+    expect(saveFreeProgrammeModules).not.toHaveBeenCalled();
+  });
+
   it('groups persisted weeks, defaults legacy courses to Free and combines URL filters with search', async () => {
     const user = userEvent.setup();
     show();
