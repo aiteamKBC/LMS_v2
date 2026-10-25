@@ -155,9 +155,17 @@ At the 24 October validation point, the production schema migration and schedule
 email activation were NOT RUN. See the preparation update below; incomplete-session
 linking remains a prerequisite for meaningful delivery.
 
-Mandatory feature checks use `.qa-tmp/coaching_index_tests.py` (verified isolated
-SQLite/LocMemCache, mocked source/email, no network). Teams checks are not
-required: no listed Teams implementation/imported contract is changed.
+The earlier feature checks used `.qa-tmp/coaching_index_tests.py` (verified
+isolated SQLite/LocMemCache, mocked source/email). The committed
+`config.settings_coaching_recordings_test` settings now provide that isolated
+runner configuration without a private script. For example:
+
+```powershell
+python backend/manage.py test coach_api.test_completion_reminders --settings=config.settings_coaching_recordings_test
+```
+
+Teams checks are not required: no listed Teams implementation/imported contract
+is changed.
 
 ## Preparation update — 25 October 2026
 

@@ -383,6 +383,19 @@ separate checks after reviewed deployment. Raw evidence and private runtime
 probe inputs are excluded from Git.
 ## Release preparation, 25 October 2026
 
+The committed opt-in `config.settings_coaching_recordings_test` settings make
+the isolated feature checks reproducible without private local scripts. It
+forces SQLite aliases and in-memory cache/mail, disables automatic jobs/mail,
+and selects the standard runner instead of the production provisioning runner.
+The feature suites mock external transports. Example:
+
+```powershell
+python backend/manage.py test coach_api.test_quality_reviews coach_api.test_completion_reminders --settings=config.settings_coaching_recordings_test
+```
+
+Run the `coach_api.test_recordings*` modules explicitly alongside these labels
+for the full coaching check. Do not substitute the default configured runner.
+
 The coaching feature was integrated with main `dfd76c39` on the existing
 `khaled-is-here` branch. An empty Coach migration merge joins the existing
 personal-support-template branch with coaching completion migration 0030; it
