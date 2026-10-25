@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
-import { feedbackApi, type FeedbackAnalyticsData, type FeedbackAssignmentSource, type FeedbackForm, type FeedbackFormVersion, type FeedbackLearnerOption, type FeedbackRecipient, type FeedbackResponse } from '@/api/feedback';
+import { feedbackApi, type FeedbackAnalyticsData, type FeedbackAssignmentSource, type FeedbackForm, type FeedbackFormType, type FeedbackFormVersion, type FeedbackLearnerOption, type FeedbackRecipient, type FeedbackResponse } from '@/api/feedback';
+import { ThemedSelect, type ThemedSelectOption } from '@/components/feature/ThemedSelect';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { FormRenderer } from '@/features/feedback/FormRenderer';
 import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
@@ -69,7 +70,7 @@ export default function FeedbackPage() {
         {tab === 'overview' && <Overview analytics={analytics} forms={forms} onViewForms={() => setTab('forms')} />}
         {tab === 'forms' && <FormsTable forms={filtered} search={search} status={status} onSearch={setSearch} onStatus={setStatusFilter} onEdit={form => navigate(`/engagement/reports/feedback/forms/${form.id}/edit`)} onPreview={form => navigate(`/engagement/reports/feedback/forms/${form.id}/preview`)} onAssign={setAssigning} onViewRecipients={setRecipientForm} onViewVersions={setVersionForm} onResponses={() => setTab('responses')} onAction={action} />}
         {tab === 'responses' && <ResponsesTable responses={responses} forms={forms} onOpen={response => void openResponse(response)} />}
-        {tab === 'analytics' && analytics && <AnalyticsView data={analytics} />}
+        {tab === 'analytics' && analytics && <AnalyticsView data={analytics} forms={forms} responses={responses} />}
       </>}
     </div>
     {assigning && <AssignmentDialog form={assigning} onClose={() => setAssigning(null)} onAssigned={() => { setAssigning(null); void refresh(); }} />}
@@ -99,7 +100,133 @@ function ResponsesTable({ responses, forms, onOpen }: { responses: FeedbackRespo
   return <div className="overflow-hidden rounded-xl border border-foreground-200/60 bg-background-50"><div className="flex flex-wrap gap-3 border-b p-4"><select value={formId} onChange={e => setFormId(e.target.value)} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All forms</option>{forms.map(f => <option key={f.id} value={f.id}>{f.title}</option>)}</select><select value={status} onChange={e => setStatus(e.target.value)} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All statuses</option><option value="in_progress">In progress</option><option value="completed">Completed</option></select><input value={learner} onChange={e => setLearner(e.target.value)} placeholder="Search learner…" className="rounded-lg border px-3 py-2 text-xs" /></div><div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="bg-background-100 text-foreground-500"><tr>{['Form', 'Learner', 'Programme', 'Status', 'Started', 'Submitted'].map(x => <th key={x} className="px-4 py-3">{x}</th>)}</tr></thead><tbody className="divide-y">{filtered.map(r => <tr key={r.id} onClick={() => onOpen(r)} className="cursor-pointer hover:bg-primary-50/40"><td className="px-4 py-3 font-semibold">{r.formTitle}</td><td className="px-4 py-3">{r.learnerName}</td><td className="px-4 py-3">{r.programme || '—'}</td><td className="px-4 py-3"><Status status={r.status} /></td><td className="px-4 py-3">{formatDate(r.startedAt)}</td><td className="px-4 py-3">{formatDate(r.submittedAt)}</td></tr>)}{!filtered.length && <tr><td colSpan={6} className="p-10 text-center text-foreground-400">No responses found.</td></tr>}</tbody></table></div></div>;
 }
 
-function AnalyticsView({ data, compact = false }: { data: FeedbackAnalyticsData; compact?: boolean }) { return <div className={`rounded-xl border border-foreground-200/60 bg-background-50 p-5 ${compact ? '' : 'space-y-5'}`}><h2 className="mb-4 font-heading text-sm font-semibold text-foreground-900">Completion analytics</h2><div className="grid grid-cols-2 gap-3 lg:grid-cols-5">{[['Assigned', data.totalAssigned], ['Not Started', data.notStarted], ['In Progress', data.inProgress], ['Completed', data.completed], ['Completion', `${data.completionRate}%`]].map(([label, value]) => <div key={String(label)} className="rounded-lg bg-background-100 p-3"><p className="text-[10px] text-foreground-500">{label}</p><p className="mt-1 text-lg font-bold text-foreground-900">{value}</p></div>)}</div>{!compact && <div><h3 className="mb-2 text-xs font-semibold text-foreground-700">Average ratings</h3>{data.ratingAverages.map(rating => <div key={rating.questionId} className="mb-2 flex items-center justify-between rounded-lg border p-3 text-xs"><span>{rating.question}</span><strong className="text-primary-700">{rating.average} ({rating.responses})</strong></div>)}{!data.ratingAverages.length && <p className="text-xs text-foreground-400">No completed rating answers yet.</p>}</div>}</div>; }
+type AnalyticsFormType = 'all' | FeedbackFormType;
+
+const ANALYTICS_FORM_TYPES: ThemedSelectOption<AnalyticsFormType>[] = [
+  { value: 'all', label: 'All feedback types' },
+  { value: 'post_lecture', label: 'Lecture Feedback' },
+  { value: 'mid_module', label: 'Mid-module Feedback' },
+  { value: 'end_module', label: 'End-module Feedback' },
+  { value: 'post_mcm_review', label: 'MCM Feedback' },
+  { value: 'post_progress_review', label: 'Progress Review Feedback' },
+  { value: 'post_event', label: 'Event Feedback' },
+  { value: 'event_rsvp', label: 'Event RSVP' },
+  { value: 'general', label: 'General Feedback' },
+];
+
+function AnalyticsView({ data, forms = [], responses = [], compact = false }: { data: FeedbackAnalyticsData; forms?: FeedbackForm[]; responses?: FeedbackResponse[]; compact?: boolean }) {
+  const [formType, setFormType] = useState<AnalyticsFormType>('all');
+  const [formId, setFormId] = useState('all');
+  const [scopedData, setScopedData] = useState(data);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState('');
+
+  const availableForms = useMemo(() => forms.filter(form => formType === 'all' || form.formType === formType), [formType, forms]);
+  const formOptions = useMemo<ThemedSelectOption<string>[]>(() => [
+    { value: 'all', label: 'All forms' },
+    ...availableForms.map(form => ({ value: String(form.id), label: form.title })),
+  ], [availableForms]);
+
+  useEffect(() => {
+    if (compact || (formType === 'all' && formId === 'all')) {
+      setScopedData(data);
+      setAnalyticsError('');
+      return undefined;
+    }
+    let active = true;
+    setAnalyticsLoading(true);
+    setAnalyticsError('');
+    const filters = formId !== 'all' ? { formId: Number(formId) } : { formType: formType as FeedbackFormType };
+    feedbackApi.analytics(filters).then(result => {
+      if (active) setScopedData(result.analytics);
+    }).catch(error => {
+      if (active) setAnalyticsError(error instanceof Error ? error.message : 'Could not load filtered analytics.');
+    }).finally(() => {
+      if (active) setAnalyticsLoading(false);
+    });
+    return () => { active = false; };
+  }, [compact, data, formId, formType]);
+
+  if (compact) return <AnalyticsKpis data={data} compact />;
+
+  const scopeForms = forms.filter(form => (formType === 'all' || form.formType === formType) && (formId === 'all' || form.id === Number(formId)));
+  const scopeFormIds = new Set(scopeForms.map(form => form.id));
+  const scopeResponses = responses.filter(response => scopeFormIds.has(response.formId));
+  const scopeLabel = formId !== 'all' ? scopeForms[0]?.title || 'Selected form' : formType !== 'all' ? ANALYTICS_FORM_TYPES.find(option => option.value === formType)?.label || 'Selected type' : 'All feedback';
+
+  return <div className="space-y-5">
+    <section className="overflow-hidden rounded-2xl border border-primary-100 bg-white shadow-sm">
+      <div className="bg-gradient-to-r from-[#4B197D] via-[#6024A8] to-[#7C3AED] px-5 py-5 text-white"><div className="flex items-center gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/20 bg-white/10 text-xl"><i className="ri-line-chart-line" /></span><div><h2 className="font-heading text-lg font-bold !text-white">Feedback Analytics</h2><p className="mt-0.5 text-xs text-purple-100">Monitor completion, response coverage and rating trends using submitted feedback.</p></div></div></div>
+      <div className="grid gap-3 border-t border-primary-100 bg-primary-50/40 p-4 md:grid-cols-2">
+        <div><p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-foreground-500">Feedback type</p><ThemedSelect<AnalyticsFormType> value={formType} options={ANALYTICS_FORM_TYPES} onChange={value => { setFormType(value); setFormId('all'); }} /></div>
+        <div><p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-foreground-500">Feedback form</p><ThemedSelect value={formId} options={formOptions} onChange={setFormId} /></div>
+      </div>
+    </section>
+
+    {analyticsError && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-medium text-rose-700">{analyticsError}</div>}
+    <div className={analyticsLoading ? 'pointer-events-none opacity-55' : ''} aria-busy={analyticsLoading}>
+      <AnalyticsKpis data={scopedData} />
+
+      <div className="mt-5 grid gap-5 xl:grid-cols-[0.8fr_1.2fr]">
+        <CompletionSplit data={scopedData} scopeLabel={scopeLabel} />
+        <FormCompletion forms={scopeForms} />
+      </div>
+
+      <div className="mt-5 grid gap-5 xl:grid-cols-[1.3fr_0.7fr]">
+        <RatingAverages ratings={scopedData.ratingAverages} />
+        <RatingInsights ratings={scopedData.ratingAverages} scopeLabel={scopeLabel} />
+      </div>
+
+      <RecentFeedback responses={scopeResponses} />
+    </div>
+  </div>;
+}
+
+function AnalyticsKpis({ data, compact = false }: { data: FeedbackAnalyticsData; compact?: boolean }) {
+  const cards = [
+    ['Assigned', data.totalAssigned, 'ri-file-list-3-line', 'bg-violet-50 text-violet-700'],
+    ['Not started', data.notStarted, 'ri-time-line', 'bg-slate-100 text-slate-600'],
+    ['In progress', data.inProgress, 'ri-loader-4-line', 'bg-amber-50 text-amber-700'],
+    ['Submitted', data.completed, 'ri-checkbox-circle-line', 'bg-emerald-50 text-emerald-700'],
+    ['Completion rate', `${data.completionRate}%`, 'ri-percent-line', 'bg-blue-50 text-blue-700'],
+  ] as const;
+  return <section aria-label="Feedback completion metrics" className={compact ? 'rounded-xl border border-foreground-200/60 bg-background-50 p-5' : ''}>{compact && <h2 className="mb-4 font-heading text-sm font-semibold text-foreground-900">Completion analytics</h2>}<div className="grid grid-cols-2 gap-3 lg:grid-cols-5">{cards.map(([label, value, icon, tone]) => <div key={label} className={`rounded-xl border border-foreground-200/60 p-4 ${compact ? 'bg-white' : 'bg-white shadow-sm'}`}><div className={`flex h-9 w-9 items-center justify-center rounded-lg text-lg ${tone}`}><i className={icon} /></div><p className="mt-3 text-2xl font-bold text-foreground-900">{value}</p><p className="mt-0.5 text-xs font-semibold text-foreground-500">{label}</p></div>)}</div></section>;
+}
+
+function CompletionSplit({ data, scopeLabel }: { data: FeedbackAnalyticsData; scopeLabel: string }) {
+  const total = Math.max(data.totalAssigned, 1);
+  const completed = data.completed / total * 100;
+  const progress = data.inProgress / total * 100;
+  const chart = { background: `conic-gradient(#16a34a 0 ${completed}%, #f59e0b ${completed}% ${completed + progress}%, #e2e8f0 ${completed + progress}% 100%)` };
+  return <section className="rounded-2xl border border-foreground-200/70 bg-white p-5 shadow-sm"><div><h3 className="font-heading text-sm font-bold text-foreground-900">Completion split</h3><p className="mt-0.5 text-[11px] text-foreground-500">{scopeLabel}</p></div><div className="mt-5 flex flex-col items-center gap-5 sm:flex-row sm:justify-center"><div className="relative h-36 w-36 shrink-0 rounded-full" style={chart}><div className="absolute inset-5 flex flex-col items-center justify-center rounded-full bg-white"><span className="text-2xl font-bold text-foreground-900">{data.totalAssigned}</span><span className="text-[10px] text-foreground-500">Assigned</span></div></div><div className="space-y-2 text-xs"><LegendDot color="bg-emerald-600" label="Submitted" value={data.completed} /><LegendDot color="bg-amber-500" label="In progress" value={data.inProgress} /><LegendDot color="bg-slate-300" label="Not started" value={data.notStarted} /></div></div></section>;
+}
+
+function LegendDot({ color, label, value }: { color: string; label: string; value: number }) { return <div className="grid grid-cols-[10px_90px_auto] items-center gap-2"><span className={`h-2.5 w-2.5 rounded-full ${color}`} /><span className="text-foreground-600">{label}</span><strong className="text-foreground-900">{value}</strong></div>; }
+
+function FormCompletion({ forms }: { forms: FeedbackForm[] }) {
+  const ranked = [...forms].filter(form => form.assignedCount > 0).sort((left, right) => responseRate(right) - responseRate(left)).slice(0, 8);
+  return <section className="rounded-2xl border border-foreground-200/70 bg-white p-5 shadow-sm"><div><h3 className="font-heading text-sm font-bold text-foreground-900">Response rate by form</h3><p className="mt-0.5 text-[11px] text-foreground-500">Submitted responses compared with assigned learners.</p></div>{ranked.length ? <div className="mt-5 space-y-4">{ranked.map(form => { const rate = responseRate(form); return <div key={form.id}><div className="mb-1.5 flex items-center justify-between gap-3 text-xs"><span className="truncate font-semibold text-foreground-700">{form.title}</span><span className="shrink-0 font-bold text-primary-700">{rate}% <span className="font-normal text-foreground-400">({form.responseCount}/{form.assignedCount})</span></span></div><div className="h-2 overflow-hidden rounded-full bg-background-300"><div className="h-full rounded-full bg-gradient-to-r from-primary-700 to-violet-400" style={{ width: `${rate}%` }} /></div></div>; })}</div> : <EmptyAnalytics message="No assigned forms in this selection yet." />}</section>;
+}
+
+function RatingAverages({ ratings }: { ratings: FeedbackAnalyticsData['ratingAverages'] }) {
+  return <section className="rounded-2xl border border-foreground-200/70 bg-white p-5 shadow-sm"><div><h3 className="font-heading text-sm font-bold text-foreground-900">Average rating questions</h3><p className="mt-0.5 text-[11px] text-foreground-500">Calculated from completed responses only.</p></div>{ratings.length ? <div className="mt-5 space-y-4">{ratings.map(rating => { const maximum = Number(rating.max) || 5; const width = Math.max(0, Math.min(100, rating.average / maximum * 100)); return <div key={rating.questionId}><div className="mb-1.5 flex items-start justify-between gap-4 text-xs"><span className="font-medium leading-5 text-foreground-700">{rating.question}</span><strong className="shrink-0 text-primary-700">{rating.average}/{maximum} <span className="font-normal text-foreground-400">({rating.responses})</span></strong></div><div className="h-2 overflow-hidden rounded-full bg-background-300"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${width}%` }} /></div></div>; })}</div> : <EmptyAnalytics message="No completed rating answers yet." />}</section>;
+}
+
+function RatingInsights({ ratings, scopeLabel }: { ratings: FeedbackAnalyticsData['ratingAverages']; scopeLabel: string }) {
+  const sorted = [...ratings].sort((left, right) => right.average - left.average);
+  const highest = sorted[0]; const lowest = sorted.length > 1 ? sorted[sorted.length - 1] : null;
+  return <section className="rounded-2xl border border-foreground-200/70 bg-white p-5 shadow-sm"><div><h3 className="font-heading text-sm font-bold text-foreground-900">Rating insights</h3><p className="mt-0.5 text-[11px] text-foreground-500">{scopeLabel}</p></div>{highest ? <div className="mt-5 space-y-3"><InsightCard icon="ri-thumb-up-line" tone="bg-emerald-50 text-emerald-700" label="Highest-rated question" rating={highest} />{lowest && <InsightCard icon="ri-arrow-down-circle-line" tone="bg-amber-50 text-amber-700" label="Lowest-rated question" rating={lowest} />}</div> : <EmptyAnalytics message="Insights will appear after rating responses are submitted." />}</section>;
+}
+
+function InsightCard({ icon, tone, label, rating }: { icon: string; tone: string; label: string; rating: FeedbackAnalyticsData['ratingAverages'][number] }) { return <div className={`rounded-xl p-4 ${tone}`}><div className="flex items-center gap-2 text-xs font-bold"><i className={`${icon} text-lg`} />{label}</div><p className="mt-2 text-xs font-semibold leading-5">{rating.question}</p><p className="mt-1 text-[11px]">Average {rating.average}/{rating.max || 5} from {rating.responses} responses</p></div>; }
+
+function RecentFeedback({ responses }: { responses: FeedbackResponse[] }) {
+  const recent = [...responses].sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()).slice(0, 6);
+  return <section className="mt-5 overflow-hidden rounded-2xl border border-foreground-200/70 bg-white shadow-sm"><div className="border-b border-foreground-100 px-5 py-4"><h3 className="font-heading text-sm font-bold text-foreground-900">Recent responses</h3><p className="mt-0.5 text-[11px] text-foreground-500">Latest activity in the selected analytics scope.</p></div>{recent.length ? <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left text-xs"><thead className="bg-background-100 text-[10px] uppercase tracking-wide text-foreground-500"><tr><th className="px-5 py-3">Form</th><th className="px-5 py-3">Learner</th><th className="px-5 py-3">Programme</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Updated</th></tr></thead><tbody className="divide-y divide-foreground-100">{recent.map(response => <tr key={response.id}><td className="px-5 py-3 font-semibold text-foreground-800">{response.formTitle}</td><td className="px-5 py-3 text-foreground-600">{response.learnerName}</td><td className="px-5 py-3 text-foreground-600">{response.programme || '—'}</td><td className="px-5 py-3"><Status status={response.status} /></td><td className="px-5 py-3 text-foreground-500">{formatDate(response.updatedAt)}</td></tr>)}</tbody></table></div> : <EmptyAnalytics message="No responses in this selection yet." />}</section>;
+}
+
+function EmptyAnalytics({ message }: { message: string }) { return <div className="py-8 text-center text-xs text-foreground-400"><i className="ri-bar-chart-line mb-2 block text-2xl text-foreground-300" />{message}</div>; }
+function responseRate(form: FeedbackForm) { return form.assignedCount ? Math.round(form.responseCount / form.assignedCount * 100) : 0; }
 
 function AssignmentDialog({ form, onClose, onAssigned }: { form: FeedbackForm; onClose: () => void; onAssigned: () => void }) {
   const [mode, setMode] = useState<'all_learners' | 'learner'>('learner'); const [learners, setLearners] = useState<FeedbackLearnerOption[]>([]); const [selected, setSelected] = useState<string[]>([]); const [search, setSearch] = useState('');

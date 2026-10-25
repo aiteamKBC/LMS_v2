@@ -19,6 +19,25 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('imported meeting intelligence diagnostics', () => {
+  it.each([
+    [403, 'GRAPH_PERMISSION_ERROR'], [404, 'GRAPH_MEETING_NOT_FOUND'],
+    [409, 'GRAPH_MEETING_UNRESOLVED'], [429, 'GRAPH_THROTTLED'],
+    [502, 'GRAPH_AUTHENTICATION_FAILED'], [504, 'GRAPH_TIMEOUT'],
+  ])('preserves HTTP %s category %s and sends only one protected refresh', async (status, code) => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ csrfToken: 'server-token' }))
+      .mockResolvedValueOnce(jsonResponse({ code, detail: 'Safe meeting diagnostic.', request_id: 'synthetic-reference' }, status as number));
+    vi.stubGlobal('fetch', fetchMock);
+    const { fetchMigratedReviewIntelligence } = await import('./reviewInstances');
+    await expect(fetchMigratedReviewIntelligence('imported-review:42', undefined, { refresh: true })).rejects.toThrow(String(code));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [url, request] = fetchMock.mock.calls[1];
+    expect(url).toBe('/coach_api/migrated-reviews/imported-review%3A42/check-session');
+    expect(request.method).toBe('POST');
+    expect(new Headers(request.headers).get('X-CSRFToken')).toBe('server-token');
+  });
+});
+
 describe('migrated summary transcript upload', () => {
   it('sends the reopen reason and observed answer version with CSRF', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ csrfToken: 'token' }))

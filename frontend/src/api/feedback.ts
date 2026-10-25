@@ -136,7 +136,7 @@ export interface FeedbackResponse {
 export interface FeedbackAnalyticsData {
   totalAssigned: number; notStarted: number; inProgress: number; completed: number;
   completionRate: number;
-  ratingAverages: { questionId: number; question: string; average: number; responses: number }[];
+  ratingAverages: { questionId: number; question: string; average: number; responses: number; min?: number; max?: number }[];
 }
 
 export interface FeedbackLearnerOption { id: string; name: string; email: string; programme: string; cohort: string }
@@ -230,7 +230,13 @@ export const feedbackApi = {
     return request<{ responses: FeedbackResponse[] }>(`/responses/?${params}`);
   },
   response: (id: number) => request<{ response: FeedbackResponse }>(`/responses/${id}/`),
-  analytics: (formId?: number) => request<{ analytics: FeedbackAnalyticsData }>(`/analytics/${formId ? `?formId=${formId}` : ''}`),
+  analytics: (filters?: { formId?: number; formType?: FeedbackFormType }) => {
+    const params = new URLSearchParams();
+    if (filters?.formId) params.set('formId', String(filters.formId));
+    if (filters?.formType) params.set('formType', filters.formType);
+    const query = params.toString();
+    return request<{ analytics: FeedbackAnalyticsData }>(`/analytics/${query ? `?${query}` : ''}`);
+  },
   myForms: (learnerId?: string | number | null) => request<{ forms: LearnerFeedbackListItem[] }>(`/my-forms/${learnerPreviewQuery(learnerId)}`),
   myForm: (id: number, learnerId?: string | number | null) => request<{ form: FeedbackForm }>(`/my-forms/${id}/${learnerPreviewQuery(learnerId)}`),
   myDelivery: (id: number, learnerId?: string | number | null) => request<{ form: FeedbackForm }>(`/my-deliveries/${id}/${learnerPreviewQuery(learnerId)}`),
