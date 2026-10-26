@@ -6,6 +6,7 @@ import { resolveDocEmbed } from '@/lib/docEmbed';
 import { normalizeReadingHtml } from '@/lib/readingHtml';
 import { previewUrl } from '@/features/old-otjh/previewUrl';
 import { subjectRequest, type SubjectMaterial, type SubjectAttemptResult } from '@/api/studentActivity';
+import { RetakeTimeDialog, type RetakeTimeChoice } from '@/components/feature/RetakeTimeDialog';
 import type { TimeTrackingSession } from '@/api/timeTracking';
 import { CompletionTimeDialog } from '@/components/feature/CompletionTimeDialog';
 import type { WorkingRuleReason } from '@/lib/completionValidation';
@@ -151,11 +152,19 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
     return () => controller.abort();
   }, [materialUrl, retry]);
   const post = <T,>(url: string, body: unknown) => subjectRequest<T>(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': data?.csrf_token || '' }, body: JSON.stringify(body) });
-  const start = async () => {
+  const [retakeTimeOpen, setRetakeTimeOpen] = useState(false);
+  const start = () => {
+    if (data && (data.completed || data.history.length || data.historical.attempt_number || savedResult)) {
+      setRetakeTimeOpen(true); return;
+    }
+    void beginAttempt();
+  };
+  const beginAttempt = async (retakeTimeChoice?: RetakeTimeChoice) => {
     if (readOnly || reviewQuiz || !data || busy || !data.can_attempt || !data.persistence_ready || !data.available || (data.quiz && !data.quiz.ready)) return;
     setBusy(true); setError(''); setResult('');
     try {
-      const response = await post<{ attempt_id: string; definition: Partial<SubjectMaterial>; timing: TimeTrackingSession }>(`${attempts}${quizQuery}`, { track_time: true });
+      const response = await post<{ attempt_id: string; definition: Partial<SubjectMaterial>; timing: TimeTrackingSession }>(`${attempts}${quizQuery}`, { track_time: true,
+        ...(retakeTimeChoice ? { retakeTimeChoice } : {}) });
       if (currentIdentity.current !== timerKey) return;
       study.begin(response.attempt_id, response.timing);
       setData({ ...data, ...response.definition });
@@ -262,6 +271,9 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
         <div className="mt-3 space-y-3">{attempt.study_time && <p className="text-sm">Measured study time: {Math.floor(attempt.study_time.verifiedSeconds / 60)}m {attempt.study_time.verifiedSeconds % 60}s</p>}{attempt.answer_review?.map((answer, index) => <div key={index}><Html value={answer.question} /><p className="text-sm">Your answer: {answer.selected.join(', ')} · {answer.correct ? 'Correct' : 'Incorrect'}</p></div>)}</div>
       </details>)}
     </section>}
+    {retakeTimeOpen && <RetakeTimeDialog onClose={() => setRetakeTimeOpen(false)} onChoose={selection => {
+      setRetakeTimeOpen(false); void beginAttempt(selection);
+    }} />}
     {correction && <CompletionTimeDialog reason={correction.reason} holidayName={correction.holidayName} holidays={[]}
       submitting={busy} serverError={error} onClose={() => setCorrection(null)} onSubmit={at => void submit(at)} />}
   </div>;

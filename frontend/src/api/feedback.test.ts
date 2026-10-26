@@ -56,6 +56,17 @@ describe('feedback API write protection', () => {
     );
   });
 
+  it('filters analytics by feedback type or a specific form', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ analytics: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await feedbackApi.analytics({ formType: 'post_lecture' });
+    await feedbackApi.analytics({ formId: 20 });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/engagement_api/feedback/analytics/?formType=post_lecture', expect.objectContaining({ credentials: 'include' }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/engagement_api/feedback/analytics/?formId=20', expect.objectContaining({ credentials: 'include' }));
+  });
+
   it('scopes staff learner-feedback preview reads to the selected learner', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ forms: [] }) });
     vi.stubGlobal('fetch', fetchMock);

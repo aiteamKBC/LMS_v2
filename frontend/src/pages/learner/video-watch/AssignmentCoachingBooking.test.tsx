@@ -40,6 +40,17 @@ const aptemMcm = (id: string, plannedDate: string, status = 'not-scheduled') => 
 }) as ImportedReview;
 const withAptemMcms = (...reviews: ImportedReview[]) => vi.mocked(fetchReviewHistory).mockResolvedValue({ learnerId: 1, category: 'monthly-coaching', reviews });
 afterEach(() => { cleanup(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
+it('reads saved imported meeting resources without exposing Coach refresh actions', async () => {
+  const imported = { ...slot, reviewSource: 'aptem' as const, eventKey: 'imported-review:901', status: 'scheduled',
+    scheduledDate: '2026-09-15', scheduledTime: '09:00', meetingLink: 'https://teams.example.test/saved' };
+  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind: 'commercial', id: 1 }, events: [imported] });
+  vi.mocked(fetchLearnerMeetingArtifacts).mockResolvedValue({ artifacts: [], resourceMode: 'stored' });
+  render(<AssignmentCoachingBooking {...props} meetingKey={imported.eventKey} />);
+  expect(await screen.findByText(/No saved meeting recording is available/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Check Teams' })).not.toBeInTheDocument();
+  expect(fetchLearnerMeetingArtifacts).toHaveBeenCalledExactlyOnceWith('commercial', '1', imported.eventKey, expect.any(AbortSignal));
+});
+
 it('books the official MCM key and links the returned meeting after saving the draft', async () => {
   render(<AssignmentCoachingBooking {...props} />);
   fireEvent.change(await screen.findByLabelText('Monthly Coaching Meeting slot'), { target: { value: slot.eventKey } });

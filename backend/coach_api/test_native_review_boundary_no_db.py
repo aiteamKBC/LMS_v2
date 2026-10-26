@@ -2,13 +2,14 @@
 import json
 from contextlib import ExitStack, nullcontext
 from copy import deepcopy
-from datetime import date
+from datetime import date, datetime, timezone as dt_timezone
 from inspect import unwrap
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.db import DatabaseError
-from django.test import RequestFactory, SimpleTestCase
+from django.test import RequestFactory, SimpleTestCase, override_settings
+from django.utils import timezone
 
 from coach_api import review_sources, views
 from coach_api.test_review_source_separation import profile, source, booking, base_event, imported_row
@@ -20,6 +21,9 @@ class NativeReviewBoundaryTests(SimpleTestCase):
     def setUp(self):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
+        self.stack.enter_context(override_settings(TIME_ZONE="Europe/London"))
+        self.stack.enter_context(timezone.override("Europe/London"))
+        self.stack.enter_context(patch.object(timezone, "now", return_value=datetime(2026, 11, 18, 12, tzinfo=dt_timezone.utc)))
         # These pre-reconciliation fixtures have no explicit source mappings.
         mappings = self.stack.enter_context(patch("coach_api.reconciliation_schema.CompatibleReconciliationQuerySet.filter"))
         mappings.return_value.first.return_value = None
@@ -145,7 +149,7 @@ class NativeReviewBoundaryTests(SimpleTestCase):
                                          scheduled_date=None, scheduled_time=None)):
                 records.return_value.first.return_value = stored
                 response = self.post(views.coach_timetable_schedule_event, {
-                    "eventKey": "review:21:T-MCM:1", "scheduledDate": "2099-11-19", "scheduledTime": "10:00",
+                    "eventKey": "review:21:T-MCM:1", "scheduledDate": "2026-11-20", "scheduledTime": "10:00",
                 })
                 self.assertEqual(response.status_code, 409, response.content)
                 self.assertEqual(json.loads(response.content)["code"], "APTEM_REVIEW_SOURCE_ONLY")
@@ -171,7 +175,7 @@ class NativeReviewBoundaryTests(SimpleTestCase):
             self.graph.side_effect = None
             self.graph.return_value = (record, "", True)
             response = self.post(views.coach_timetable_schedule_event, {
-                "eventKey": record.event_key, "scheduledDate": "2099-11-19", "scheduledTime": "10:00",
+                "eventKey": record.event_key, "scheduledDate": "2026-11-20", "scheduledTime": "10:00",
             })
             self.assertEqual(response.status_code, 200, response.content)
             self.assertTrue(all(call.kwargs["owner_email__iexact"] == "coach@example.invalid" for call in records.call_args_list))
@@ -181,13 +185,12 @@ class NativeReviewBoundaryTests(SimpleTestCase):
 
     def learner_book(self, **changes):
         payload = {"sessionType": "mcr", "eventKey": "review:21:T-MCM:1",
-                   "scheduledDate": "2099-11-19", "scheduledTime": "10:00", "durationMinutes": 60, **changes}
+                   "scheduledDate": "2026-11-20", "scheduledTime": "10:00", "durationMinutes": 60, **changes}
         request = self.factory.post("/", data=json.dumps(payload), content_type="application/json")
         model = MagicMock()
         model.all_learners.filter.return_value.first.return_value = self.enrolment
         with patch.dict(calendar.SOURCE_MODELS, {"commercial": model, "apprenticeship": model}), \
-             patch.object(calendar, "_calendar_profile", return_value=self.person), \
-             patch.object(calendar, "booking_date_restriction", return_value=None):
+             patch.object(calendar, "_calendar_profile", return_value=self.person):
             return unwrap(calendar.learner_calendar_book)(request, "commercial", 121)
 
     def test_all_learner_review_booking_types_refuse_native_keys_for_aptem(self):
@@ -202,9 +205,23 @@ class NativeReviewBoundaryTests(SimpleTestCase):
             reserve.assert_not_called()
         self.graph.assert_not_called()
 
+    def test_imported_mcm_invalid_dates_are_rejected_before_source_or_calendar_io(self):
+        with patch.object(calendar, "coaching_events_for_learner") as source_events, \
+             patch.object(views.CoachCalendarEvent.objects, "get_or_create") as create:
+            for day, message in (("2026-11-19", "20th"), ("2026-12-07", "20th"),
+                                 ("2026-11-21", "Saturdays or Sundays"),
+                                 ("2026-12-25", "bank holidays"), ("2026-11-05", "already passed")):
+                with self.subTest(day=day):
+                    response = self.learner_book(eventKey="imported-review:A-401", scheduledDate=day)
+                    self.assertEqual(response.status_code, 400)
+                    self.assertIn(message, json.loads(response.content)["error"])
+            source_events.assert_not_called()
+            create.assert_not_called()
+        self.graph.assert_not_called()
+
     def test_native_learner_booking_still_links_official_occurrence(self):
         self.make_native()
-        event = {"learnerId": "21", "reviewTemplateId": "T-MCM", "source": "mcr", "targetDate": "2099-11-19", "status": "not-scheduled"}
+        event = {"learnerId": "21", "reviewTemplateId": "T-MCM", "source": "mcr", "targetDate": "2026-11-20", "status": "not-scheduled"}
         record = booking("review:21:T-MCM:1")
         def reserve(row, **_):
             row.review_instance_id = "NEW-INSTANCE"
@@ -232,17 +249,23 @@ class NativeReviewBoundaryTests(SimpleTestCase):
                 record = booking(event["eventKey"], event_type=event["source"])
                 with patch.object(calendar, "coaching_events_for_learner", return_value=[event]), \
                      patch("learner_api.calendar_connections.booking_conflicts", return_value=False), \
+                     patch.object(views, "microsoft_graph_request", return_value={"value": []}) as outlook, \
+                     patch.object(views.CoachCalendarEvent.objects, "filter") as existing, \
                      patch.object(views.CoachCalendarEvent.objects, "get_or_create", return_value=(record, True)) as create, \
-                     patch.object(views, "persist_calendar_sync_reservation", side_effect=lambda row, **_: row) as reservation, \
+                     patch("learner_api.imported_booking.reserve_imported_booking", side_effect=lambda row, *_args, **_kwargs: (row, True)) as reservation, \
                      patch.object(calendar, "_mark_imported_review_scheduled") as mark_imported, \
                      patch.object(calendar, "_booking_response_event", return_value=event), \
                      patch.object(calendar, "require_native_review_creation", side_effect=AssertionError("Imported booking reached Native creation")) as native:
+                    existing.return_value.first.return_value = None
                     self.graph.side_effect = None
                     self.graph.return_value = (record, "", True)
                     response = self.learner_book(sessionType=event["source"], eventKey=event["eventKey"])
                 self.assertEqual(response.status_code, 201, response.content)
                 self.assertEqual(create.call_args.kwargs["event_key"], event["eventKey"])
-                self.assertEqual(reservation.call_args.kwargs["review_event"]["importedReviewType"], family)
+                self.assertEqual(reservation.call_args.args[1]["importedReviewType"], family)
+                self.assertEqual(reservation.call_args.args[1]["eventKey"], event["eventKey"])
+                self.assertEqual(outlook.call_args.args[0], "GET")
+                self.assertTrue(outlook.call_args.args[1].startswith("users/coach%40example.invalid/calendarView?"))
                 self.assertEqual(mark_imported.call_args.args[0], str(700 + index))
                 self.assertFalse(record.review_instance_id)
                 native.assert_not_called()

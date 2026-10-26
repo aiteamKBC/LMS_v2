@@ -13,6 +13,7 @@ import { Panel } from '@/components/ui/Panel';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { isImportedJoin, useImportedMeetingJoin } from '../shared/useImportedMeetingJoin';
 import { coachFetch } from '@/lib/coachFetch';
 import { initialsFor } from '@/lib/format';
 import { roleNavMap } from '@/mocks/navigation';
@@ -1881,7 +1882,12 @@ export default function CoachTimetablePage() {
     }
   }, [progressReviewCompletionEvent, updateSingleEvent]);
 
-  const handleJoinSelectedMeeting = useCallback(() => {
+  const joinMeeting = useImportedMeetingJoin({
+    contextKey: `${coach.email}:${coach.isViewingAsCoach}:${selectedEvent?.eventKey || selectedEvent?.id}`,
+    readOnly: coach.isViewingAsCoach, onError: setEventActionError,
+    onStarted: () => { if (selectedEvent) updateSingleEvent({ ...selectedEvent, status: 'in-progress' }); },
+  });
+  const handleJoinSelectedMeeting = useCallback((navigate = true) => {
     if (!selectedEvent) return;
     const url = selectedEvent.meetingLink || selectedEvent.graphWebLink;
     if (!url) {
@@ -1892,8 +1898,8 @@ export default function CoachTimetablePage() {
       );
       return;
     }
-    window.open(url, '_blank', 'noopener,noreferrer');
-  }, [selectedEvent]);
+    joinMeeting(selectedEvent, navigate);
+  }, [selectedEvent, joinMeeting]);
 
   const handleEventAction = useCallback(async (action: 'start' | 'complete' | 'sign' | 'cancel') => {
     if (!selectedEvent?.eventKey) return;
@@ -2635,7 +2641,7 @@ export default function CoachTimetablePage() {
                           {scheduleActionLabel(selectedEvent)}
                         </button>
                   )}
-                  {selectedEventMeetingUrl && <a href={selectedEventMeetingUrl} target="_blank" rel="noreferrer" className="meeting-join-action inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold"><AppIcon className="ri-video-chat-line" />Join meeting</a>}
+                  {selectedEventMeetingUrl && <a href={selectedEventMeetingUrl} onClick={() => handleJoinSelectedMeeting(false)} onAuxClick={e => { if (e.button === 1) handleJoinSelectedMeeting(false); }} target="_blank" rel="noreferrer" className="meeting-join-action inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold"><AppIcon className="ri-video-chat-line" />Join meeting</a>}
                 </>}
               >
                   <div className="mb-4 overflow-hidden rounded-2xl border border-background-200 bg-white">
@@ -2701,6 +2707,8 @@ export default function CoachTimetablePage() {
                     {selectedEventMeetingUrl && (
                       <a
                         href={selectedEventMeetingUrl}
+                        onClick={() => handleJoinSelectedMeeting(false)}
+                        onAuxClick={e => { if (e.button === 1) handleJoinSelectedMeeting(false); }}
                         target="_blank"
                         rel="noreferrer"
                         className="group flex items-center justify-between gap-3 rounded-lg border border-primary-100 bg-gradient-to-r from-primary-50 via-white to-background-50 px-3.5 py-3 text-left transition-smooth hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-sm"
@@ -2747,7 +2755,7 @@ export default function CoachTimetablePage() {
                       {(selectedEvent.meetingLink || selectedEvent.graphWebLink) && (
                         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-primary-200/70 pt-3">
                           <button
-                            onClick={handleJoinSelectedMeeting}
+                            onClick={() => handleJoinSelectedMeeting()}
                             disabled={eventActionBusy || Boolean(selectedEvent.meetingOutcome)}
                             title={selectedEvent.meetingOutcome ? 'This session has ended.' : undefined}
                             className="meeting-join-action rounded-lg px-3.5 py-2.5 text-[12px] font-bold shadow-sm transition-smooth cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"
@@ -2825,7 +2833,7 @@ export default function CoachTimetablePage() {
                         {selectedEvent.status === 'scheduled' && (
                         <button
                           onClick={() => {
-                            if (selectedEvent.reviewTemplateId) {
+                            if (selectedEvent.reviewTemplateId || isImportedJoin(selectedEvent)) {
                               handleJoinSelectedMeeting();
                               return;
                             }
@@ -2836,7 +2844,7 @@ export default function CoachTimetablePage() {
                           title={selectedEvent.meetingOutcome ? 'This meeting has ended.' : undefined}
                           className="rounded-lg bg-emerald-500 px-3.5 py-2.5 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
                         >
-                          <AppIcon className="ri-play-circle-line mr-1"></AppIcon>{selectedEvent.reviewTemplateId ? 'Join' : 'Start'}
+                          <AppIcon className="ri-play-circle-line mr-1"></AppIcon>{selectedEvent.reviewTemplateId || isImportedJoin(selectedEvent) ? 'Join' : 'Start'}
                           </button>
                         )}
                         {selectedEvent.status === 'scheduled' && selectedEvent.reviewTemplateId && (
@@ -2851,7 +2859,7 @@ export default function CoachTimetablePage() {
                         )}
                         {selectedEvent.status === 'in-progress' && (selectedEvent.meetingLink || selectedEvent.graphWebLink) && (
                           <button
-                            onClick={handleJoinSelectedMeeting}
+                            onClick={() => handleJoinSelectedMeeting()}
                             disabled={eventActionBusy || Boolean(selectedEvent.meetingOutcome)}
                             title={selectedEvent.meetingOutcome ? 'This meeting has ended.' : undefined}
                             className="meeting-join-action rounded-lg px-3.5 py-2.5 text-[12px] font-bold shadow-sm transition-smooth cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"
@@ -3658,7 +3666,7 @@ export default function CoachTimetablePage() {
         event={supportBookingEvent as CoachCalendarEvent}
         viewingAsCoach={coach.isViewingAsCoach}
         onClose={() => setSupportBookingEvent(null)}
-        onSaved={(saved, notice) => {
+        onSaved={(saved, notice, options) => {
           const day = new Date(`${saved.scheduledDate}T00:00:00`);
           const [hour, minute] = (saved.scheduledTime || '09:00').split(':').map(Number);
           const startHour = hour + minute / 60;
@@ -3671,7 +3679,7 @@ export default function CoachTimetablePage() {
           updateSingleEvent(updated);
           focusEventOnCalendar(updated);
           setEventActionNotice(notice);
-          setSupportBookingEvent(null);
+          if (!options?.keepOpen) setSupportBookingEvent(null);
         }}
       />}
     </WorkspaceShell>

@@ -76,6 +76,7 @@ class McmBookingWindowTests(unittest.TestCase):
                                            scheduled_date=date(2026, 10, 22), scheduled_time=time(10), duration_minutes=60)
         self.manager = Mock()
         self.manager.get_or_create.return_value = (self.record, True)
+        self.manager.filter.return_value.first.return_value = None
         self.coach = types.ModuleType('coach_api.views')
         self.coach.__dict__.update(date=date, datetime=datetime, time=time)
         load(ROOT.parent / 'coach_api/views.py', {'parse_date_value', 'parse_time_value', 'normalize_duration_minutes'}, self.coach.__dict__)
@@ -92,16 +93,29 @@ class McmBookingWindowTests(unittest.TestCase):
         connections = types.ModuleType('learner_api.calendar_connections')
         connections.booking_conflicts = Mock(return_value=False)
         self.conflicts = connections.booking_conflicts
+        availability = types.ModuleType('coach_api.booking_availability')
+        availability.ensure_coach_calendar_available = Mock()
+        availability.ensure_coach_outlook_available = Mock()
+        availability.CoachAvailabilityUnavailable = type('CoachAvailabilityUnavailable', (Exception,), {})
+        imported_booking = types.ModuleType('learner_api.imported_booking')
+        imported_booking.booking_slot = lambda record: (record.scheduled_date, record.scheduled_time, record.duration_minutes)
+        imported_booking.reserve_imported_booking = Mock(side_effect=lambda record, event, *_args, **_kwargs:
+            (self.coach.persist_calendar_sync_reservation(record, review_event=event), True))
         modules = patch.dict(sys.modules, {
             'coach_api': types.ModuleType('coach_api'), 'coach_api.views': self.coach,
+            'coach_api.booking_availability': availability,
             'learner_api': types.ModuleType('learner_api'), 'learner_api.monthly_assignment': self.monthly,
             'learner_api.calendar_connections': connections,
+            'learner_api.imported_booking': imported_booking,
         })
         modules.start()
         self.addCleanup(modules.stop)
         self.ns = dict(__package__='learner_api', json=json, datetime=datetime, FIRST_SESSION_TYPE='first-session',
                        _s=lambda value: str(value or '').strip(), JsonResponse=Response,
                        DatabaseError=type('DatabaseError', (Exception,), {}), logger=logging.getLogger(__name__),
+                       ReviewCreationBlocked=type('ReviewCreationBlocked', (Exception,), {}),
+                       require_native_review_creation=Mock(),
+                       CoachAvailabilityUnavailable=availability.CoachAvailabilityUnavailable,
                        SOURCE_MODELS={'commercial': model, 'apprenticeship': model},
                        _calendar_profile=Mock(return_value=self.profile),
                        source_for_learner=lambda *_: types.SimpleNamespace(kind=self.source_kind),

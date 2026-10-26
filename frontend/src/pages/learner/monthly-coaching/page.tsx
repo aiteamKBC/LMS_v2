@@ -28,6 +28,7 @@ import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 
 import CoachingHome from './CoachingHome';
+import { shouldShowLearnerMeetingRecording } from './recordingVisibility';
 import ProgressReviewPptxModal from '@/pages/coach/progress-reviews/components/ProgressReviewPptxModal';
 import { useCoachingReviewDefinitions } from './useCoachingReviewDefinitions';
 
@@ -60,14 +61,6 @@ function monthlyCoachingTitle(session?: LearnerCalendarEvent | null): string {
   if (session?.reviewTemplateId) return `${session.title}${occurrence != null ? ` #${occurrence}` : ' — Manual Review'}`;
   const month = monthLabel(dateOf(session));
   return `Monthly Coaching Meeting${month ? ` — ${month}` : ''}${occurrence != null ? ` #${occurrence}` : ''}`;
-}
-
-function shouldShowLearnerMeetingRecording(session?: LearnerCalendarEvent | null): boolean {
-  return Boolean(
-    session?.eventKey
-    && session?.meetingLink
-    && ['completed', 'awaiting-signature'].includes(session.status),
-  );
 }
 
 function formatTime(value?: string | null): string {
@@ -415,7 +408,7 @@ export default function MonthlyCoachingPage() {
               <div className="learner-super-admin-hero p-5 text-primary-800 sm:p-6 workspace-page-hero"><span className="rounded-full border border-primary-200/60 bg-primary-100/60 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{statusLabel(selected.status)}</span><div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">30-day coaching meeting</p><h1 className="mt-1 text-xl font-bold text-primary-800">{monthlyCoachingTitle(selected)}</h1><p className="mt-1 text-sm text-foreground-500">{formatDate(dateOf(selected), true)} at {formatTime(selected.scheduledTime)}</p></div>{selected.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action rounded-lg px-4 py-2 text-xs font-bold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}</div></div>
               <div className="space-y-5 p-5 sm:p-6">
                 {shouldShowLearnerMeetingRecording(selected) ? (
-                  <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.calendarEventKey || selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />
+                  <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.calendarEventKey || selected.eventKey || selected.id }} storedOnly={selected.reviewSource === 'aptem'} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />
                 ) : null}
                 <div><p className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-foreground-400">Session participants</p><div className="grid gap-3 sm:grid-cols-2"><div className="flex items-center gap-3 rounded-xl border border-background-200 p-3.5"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-100 text-xs font-bold text-primary-700">{initials(learner?.name)}</span><div><p className="text-[10px] font-semibold uppercase text-foreground-400">Learner</p><p className="text-sm font-bold text-foreground-900">{learner?.name || '-'}</p></div></div><div className="flex items-center gap-3 rounded-xl border border-background-200 p-3.5"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-accent-100 text-xs font-bold text-accent-700">{initials(selected.coachName)}</span><div><p className="text-[10px] font-semibold uppercase text-foreground-400">Coach</p><p className="text-sm font-bold text-foreground-900">{selected.coachName || '-'}</p></div></div></div></div>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{[['Duration', `${selected.durationMinutes || 60} minutes`], ['Meeting type', selected.meetingProvider || '-'], ['Scheduled time', formatTime(selected.scheduledTime)], ['Learning window', previous ? `Since session #${previous.sequence}` : 'First 30-day period']].map(([label, value]) => <div key={label} className="rounded-xl bg-background-100 p-3.5"><p className="text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p><p className="mt-1 text-xs font-bold text-foreground-800">{value}</p></div>)}</div>

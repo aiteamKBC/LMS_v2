@@ -216,6 +216,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
           {certificateReady && <span className={styles.certificateBadge}><Award size={13} aria-hidden="true" />Ready</span>}
         </div>
         <h3 className={styles.cardTitle}>{subject.title}</h3>
+        <p className="mb-2 text-xs text-foreground-500 break-words">Cohort: <span className="font-semibold">{planModule?.cohort_name?.trim() || 'Not available'}</span></p>
         <dl className={styles.moduleDetails} aria-label={`${moduleName} module details`}>
           <div><dt>Tutor</dt><dd>{tutorName}</dd></div>
           <div><dt>Start date</dt><dd>{startDate}</dd></div>

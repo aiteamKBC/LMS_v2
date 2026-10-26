@@ -15,7 +15,7 @@ function Location() { const location = useLocation(); return <output data-testid
 function view(overrides: Partial<Parameters<typeof StudentHomeHeader>[0]> = {}) {
   return <MemoryRouter initialEntries={['/workspace/learner']}><ThemeProvider>
     <StudentHomeHeader name="Ayman Ahmed" homeHref="/workspace/learner"
-      identity="account-3:apprenticeship:71" events={[]} loading={false} error={false} onRetry={vi.fn()} {...overrides}/><Location/>
+      identity="account-3:apprenticeship:71" events={[]} loading={false} error={false} onRetry={vi.fn()} feedbackEnabled {...overrides}/><Location/>
   </ThemeProvider></MemoryRouter>;
 }
 beforeEach(() => { localStorage.clear(); });
@@ -33,12 +33,11 @@ describe('student home header', () => {
     const careerPlanner = header.getByRole('link', { name: 'Career Planner' });
     expect(careerPlanner).toHaveAttribute('href', 'https://kentbusinesscollege.com/learners/career-planner/');
     expect(header.getByRole('button', { name: 'Notifications' }).nextElementSibling).toBe(careerPlanner);
-    const feedback = header.getByRole('button', { name: 'Feedback — coming soon' });
-    expect(feedback).toBeDisabled();
-    expect(within(feedback).getByText('Coming soon')).toBeVisible();
+    const feedback = header.getByRole('link', { name: 'Feedback' });
+    expect(feedback).toHaveAttribute('href', '/learner/feedback');
     expect(careerPlanner.nextElementSibling).toBe(feedback);
     fireEvent.click(feedback);
-    expect(screen.getByTestId('destination')).toHaveTextContent('/workspace/learner');
+    expect(screen.getByTestId('destination')).toHaveTextContent('/learner/feedback');
     expect(header.queryByRole('search')).not.toBeInTheDocument();
     expect(header.queryByRole('link', { name: 'Dashboard' })).not.toBeInTheDocument();
   });
@@ -51,6 +50,21 @@ describe('student home header', () => {
     fireEvent.click(menu.getByRole('menuitem', { name: 'My Profile' }));
     expect(screen.getByTestId('destination')).toHaveTextContent('/learner/profile');
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('shows pending feedback directly on the Feedback link', () => {
+    render(view({ feedbackPendingCount: 2 }));
+    const feedback = screen.getByRole('link', { name: 'Feedback, 2 pending' });
+    expect(feedback).toHaveAttribute('href', '/learner/feedback');
+    expect(within(feedback).getByText('2 pending')).toBeVisible();
+  });
+
+  it('keeps Feedback disabled when the production flag is off', () => {
+    render(view({ feedbackEnabled: false, feedbackPendingCount: 2 }));
+    const feedback = screen.getByRole('button', { name: 'Feedback — coming soon' });
+    expect(feedback).toBeDisabled();
+    expect(within(feedback).getByText('Coming soon')).toBeVisible();
+    expect(screen.queryByText('2 pending')).not.toBeInTheDocument();
   });
 
   it('supports menu keyboard navigation, Escape and dismissal outside the menu', () => {

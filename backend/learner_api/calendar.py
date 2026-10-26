@@ -1299,6 +1299,9 @@ def learner_calendar_event_artifacts(request, kind, pk, event_key):
     record = _learner_calendar_record(kind, pk, event_key)
     if not record:
         return _error("Calendar event not found for this learner.", 404)
+    from .imported_meeting_resources import is_imported_meeting, stored_resources
+    if is_imported_meeting(record):
+        return stored_resources(record, include_attendance=True)
     from coach_api.views import (
         apply_teams_attendance_status_transition,
         fetch_coach_meeting_graph_snapshot, persist_coach_meeting_snapshots,
@@ -1345,6 +1348,9 @@ def learner_calendar_event_artifact_content(request, kind, pk, event_key, artifa
     allowed_types = {"recording"}
     if _s(artifact_type).lower() not in allowed_types:
         return _error("Only meeting recordings are available to learners.", 403)
+    from .imported_meeting_resources import is_imported_meeting, stored_recording
+    if is_imported_meeting(record):
+        return stored_recording(request, record, artifact_id)
     from coach_api.views import coach_meeting_artifact_content_response
     return coach_meeting_artifact_content_response(request, record, event_key, artifact_type, artifact_id)
 
@@ -1911,6 +1917,13 @@ def learner_calendar_book(request, kind, pk):
             if existing and existing.sync_state == CoachCalendarEvent.SYNC_SYNCED:
                 if (existing.scheduled_date, existing.scheduled_time, existing.duration_minutes) != (scheduled_date, scheduled_time, duration_minutes):
                     return _error("This imported Review already has an appointment. Use reschedule to move it.", 409)
+                from coach_api import imported_meeting_ownership as meeting_ownership
+                if meeting_ownership.enabled_for(aptem_target):
+                    try:
+                        meeting_ownership.require_activation_ready()
+                        meeting_ownership.require_synced_owner(existing, aptem_target)
+                    except meeting_ownership.MeetingOwnershipError:
+                        return _error("This imported meeting needs ownership reconciliation.", 409)
                 return JsonResponse({"event": aptem_target, "warning": _friendly_sync_warning(existing.last_graph_sync_error)})
     # Generic MCM/PR requests still resolve to an official Curriculum
     # occurrence before they use the direct scheduling flow below.

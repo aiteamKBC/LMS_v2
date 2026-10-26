@@ -29,6 +29,7 @@ const lecture: LearnerFeedbackListItem = {
 describe('learner feedback categories', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal('AppIcon', () => null);
     flags.fullFeedbackEnabled = true;
     Object.assign(state.account, { role: 'learner', subjectType: 'learner', subjectId: 61, displayName: 'Learner' });
     Object.assign(state.resolved, { kind: 'apprenticeship', id: '61' });
@@ -40,9 +41,10 @@ describe('learner feedback categories', () => {
       vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [{ ...lecture, formType, title, sessionTitle: title }] });
       const user = userEvent.setup();
       render(<MemoryRouter initialEntries={['/learner/feedback']}><LearnerFeedbackPage /><Location /></MemoryRouter>);
-      const types = await screen.findByRole('region', { name: 'Feedback types' });
-      await user.click(within(types).getByRole('button', { name: new RegExp(title) }));
-      await user.click(screen.getByRole('button', { name: new RegExp(title) }));
+      await user.click(await screen.findByRole('button', { name: /All feedback types/ }));
+      await user.click(screen.getByRole('option', { name: title }));
+      const requests = screen.getByRole('region', { name: 'All feedback requests' });
+      await user.click(within(requests).getByRole('button', { name: new RegExp(`Start ${title}`) }));
       expect(screen.getByText(`/learner/feedback/delivery/21?category=${category}`)).toBeVisible();
     },
   );
@@ -53,16 +55,17 @@ describe('learner feedback categories', () => {
       lecture,
       { ...lecture, id: 6, deliveryId: null, eventRecipientId: 40, formType: 'post_event', title: 'Event feedback' },
     ] });
+    const user = userEvent.setup();
     render(<MemoryRouter initialEntries={['/learner/feedback?category=event']}><LearnerFeedbackPage /><Location /></MemoryRouter>);
-    const types = await screen.findByRole('region', { name: 'Feedback types' });
-    expect(within(types).getByRole('button', { name: /Lecture Feedback/ })).toBeVisible();
-    expect(within(types).getByRole('button', { name: /Mid-module Feedback/ })).toBeVisible();
-    expect(within(types).getByRole('button', { name: /End-module Feedback/ })).toBeVisible();
-    expect(within(types).queryByRole('button', { name: /Event Feedback/ })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: /All feedback types/ }));
+    expect(screen.getByRole('option', { name: /Lecture Feedback/ })).toBeVisible();
+    expect(screen.getByRole('option', { name: /Mid-module Feedback/ })).toBeVisible();
+    expect(screen.getByRole('option', { name: /End-module Feedback/ })).toBeVisible();
+    expect(screen.queryByRole('option', { name: /Event Feedback/ })).not.toBeInTheDocument();
     expect(screen.queryByText('Event feedback')).not.toBeInTheDocument();
   });
 
-  it('shows every feedback type, then groups attended lectures by module', async () => {
+  it('shows a unified request list with type, search, status filters and summary', async () => {
     vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [
       lecture,
       { ...lecture, id: 5, deliveryId: 22, sessionTitle: 'Data Foundations — Lecture 1', sessionStartsAt: '2026-09-16T09:00:00Z', status: 'completed' },
@@ -73,31 +76,40 @@ describe('learner feedback categories', () => {
     const user = userEvent.setup();
     render(<MemoryRouter initialEntries={['/learner/feedback']}><LearnerFeedbackPage /><Location /></MemoryRouter>);
 
-    const types = await screen.findByRole('region', { name: 'Feedback types' });
-    const lectureType = within(types).getByRole('button', { name: /Lecture Feedback/ });
-    const eventType = within(types).getByRole('button', { name: /Event Feedback/ });
-    const mcmType = within(types).getByRole('button', { name: /MCM Feedback/ });
-    const progressReviewType = within(types).getByRole('button', { name: /Progress Review Feedback/ });
-    const generalType = within(types).getByRole('button', { name: /General Feedback/ });
-    expect(within(lectureType).getByText('2')).toBeVisible();
-    expect(within(eventType).getAllByText('1')).toHaveLength(2);
-    expect(within(mcmType).getAllByText('1')).toHaveLength(2);
-    expect(within(progressReviewType).getAllByText('1')).toHaveLength(2);
-    expect(within(generalType).getAllByText('0')).toHaveLength(2);
+    const typeFilter = await screen.findByRole('button', { name: /All feedback types/ });
+    expect(screen.getByRole('region', { name: 'Action needed' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Your feedback summary' })).toBeVisible();
 
-    await user.click(lectureType);
+    await user.click(typeFilter);
+    expect(screen.getByRole('option', { name: /Event Feedback/ })).toBeVisible();
+    await user.click(screen.getByRole('option', { name: /Lecture Feedback/ }));
     expect(screen.getByText('/learner/feedback?category=lecture')).toBeVisible();
-    const module = screen.getByRole('region', { name: 'Martech - Thur' });
-    expect(within(module).getByText('2 lectures')).toBeVisible();
-    expect(within(module).getByRole('button', { name: /Data Foundations — Lecture 2/ })).toBeVisible();
+    const requests = screen.getByRole('region', { name: 'All feedback requests' });
+    expect(within(requests).getByText('Data Foundations — Lecture 2')).toBeVisible();
+    expect(within(requests).getByText('Data Foundations — Lecture 1')).toBeVisible();
 
-    await user.click(within(module).getByRole('button', { name: /Data Foundations — Lecture 2/ }));
+    await user.type(screen.getByRole('textbox', { name: 'Search feedback' }), 'Lecture 2');
+    expect(within(requests).queryByText('Data Foundations — Lecture 1')).not.toBeInTheDocument();
+    await user.clear(screen.getByRole('textbox', { name: 'Search feedback' }));
+    await user.click(screen.getByRole('button', { name: 'All statuses' }));
+    await user.click(screen.getByRole('option', { name: 'Submitted' }));
+    expect(within(requests).getByRole('button', { name: /View Data Foundations — Lecture 1/ })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Submitted' }));
+    await user.click(screen.getByRole('option', { name: 'All statuses' }));
+    await user.click(within(requests).getByRole('button', { name: /Start Data Foundations — Lecture 2/ }));
     expect(screen.getByText('/learner/feedback/delivery/21?category=lecture')).toBeVisible();
+  });
 
-    await user.click(screen.getByRole('button', { name: /All feedback types/ }));
-    await user.click(within(screen.getByRole('region', { name: 'Feedback types' })).getByRole('button', { name: /MCM Feedback/ }));
-    await user.click(screen.getByRole('button', { name: /October coaching meeting/ }));
-    expect(screen.getByText('/learner/feedback/review/71?category=mcm')).toBeVisible();
+  it('explains the learner feedback details and limits response visibility to the Engagement Team', async () => {
+    vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [lecture] });
+    render(<MemoryRouter initialEntries={['/learner/feedback']}><LearnerFeedbackPage /></MemoryRouter>);
+
+    expect(await screen.findByRole('heading', { name: 'Helpful details before you submit' })).toBeVisible();
+    for (const detail of ['Related session/module name', 'Event date', 'Deadline to submit', 'Estimated time to complete', 'Who can view it', 'Why this feedback matters', 'Can you resubmit?', 'Can you ignore it?']) {
+      expect(screen.getByText(detail)).toBeVisible();
+    }
+    expect(screen.getAllByText(/Engagement Team/).length).toBeGreaterThan(0);
+    expect(screen.queryByText('Anonymous or named')).not.toBeInTheDocument();
   });
 
   it('preserves learner preview and selected category when staff opens a lecture', async () => {
@@ -109,7 +121,8 @@ describe('learner feedback categories', () => {
 
     expect(await screen.findByText(/Preview is read-only/)).toBeVisible();
     expect(feedbackApi.myForms).toHaveBeenCalledWith('125');
-    await user.click(screen.getByRole('button', { name: /Data Foundations — Lecture 2/ }));
+    const requests = screen.getByRole('region', { name: 'All feedback requests' });
+    await user.click(within(requests).getByRole('button', { name: /Start Data Foundations — Lecture 2/ }));
     expect(screen.getByText('/learner/feedback/delivery/21?learnerId=125&kind=commercial&category=lecture')).toBeVisible();
   });
 });

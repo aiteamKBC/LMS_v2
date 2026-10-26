@@ -57,7 +57,7 @@ function activityStatus(activity: ActivityLike, history: CurriculumLearnerActivi
   return 'in-progress';
 }
 
-export function buildProgressRows(data: CurriculumScopeLearnerKsbImpactResponse, learnerId: string): ProgressRow[] {
+export function buildProgressRows(data: CurriculumScopeLearnerKsbImpactResponse, learnerId: string, weekOrder: readonly string[] = []): ProgressRow[] {
   const history = (data.learnerActivities || []).filter(row => String(row.learnerId) === learnerId
     && (!row.scopeStatus || row.scopeStatus === 'in_scope'));
   const byProgressId = new Map(history.map(row => [String(row.progressId), row]));
@@ -66,7 +66,9 @@ export function buildProgressRows(data: CurriculumScopeLearnerKsbImpactResponse,
   // History is enrichment; it must never remove unstarted activities.
   const base: ActivityLike[] = data.learnerActivityPlan !== undefined ? plan : history;
   const seen = new Set<string>();
-  const weekRanks = new Map<string, number>();
+  const weekRanks = new Map(weekOrder.map((id, index) => [id, index]));
+  // Preserve activities whose week is no longer in the authored structure.
+  // They follow the known weeks in their existing order, without merging titles.
   return base.flatMap((activity, index) => {
     const planned = 'activityPlanId' in activity;
     const id = planned ? activity.activityPlanId : `progress:${activity.progressId}`;

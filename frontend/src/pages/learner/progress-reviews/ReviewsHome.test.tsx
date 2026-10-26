@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LearnerCalendarEvent, LearnerReviewDefinition } from '@/api/learnerCalendar';
@@ -47,6 +48,40 @@ function mount(overrides: Partial<ReviewsHomeProps> = {}, search = '?kind=appren
 }
 
 afterEach(cleanup);
+
+it.each(['participant', 'employer'] as const)('keeps completed APTEM records selectable without a fabricated next action for %s', viewerRole => {
+  mount({ viewerRole, sessions: [session('history', { reviewSource: 'aptem', status: 'completed', effectiveLmsStatus: 'completed', learnerSigned: true })] });
+  expect(screen.getByRole('heading', { name: 'No current review' })).toBeVisible();
+  expect(screen.queryByText('Your next step')).not.toBeInTheDocument();
+  const marker = screen.getByRole('button', { name: /Progress Review history,/ });
+  expect(marker).toHaveAttribute('aria-pressed', 'false');
+  fireEvent.click(marker);
+  expect(within(screen.getByRole('article', { name: 'Selected review' })).getByRole('heading', { name: 'Progress Review history' })).toBeVisible();
+  expect(screen.queryByText('Your next step')).not.toBeInTheDocument();
+});
+
+it('opts only APTEM markers into circular selection and retains keyboard activation', async () => {
+  const user = userEvent.setup();
+  const props = mount({ viewerRole: 'employer', sessions: [session('native'), session('imported', {
+    reviewSource: 'aptem', status: 'not-scheduled', effectiveLmsStatus: 'not-scheduled', scheduledDate: null,
+  })] });
+  const native = screen.getByRole('button', { name: /Progress Review native,/ });
+  const imported = screen.getByRole('button', { name: /Progress Review imported,/ });
+  expect(native.closest('li')).not.toHaveAttribute('data-selection', 'marker');
+  expect(imported.closest('li')).toHaveAttribute('data-selection', 'marker');
+  native.focus();
+  await user.tab();
+  expect(imported).toHaveFocus();
+  await user.keyboard('{Enter}');
+  expect(imported).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByRole('article', { name: 'Selected review' })).toHaveTextContent('Progress Review imported');
+  await user.tab({ shift: true });
+  expect(native).toHaveFocus();
+  await user.keyboard(' ');
+  expect(native).toHaveAttribute('aria-pressed', 'true');
+  expect(props.onSchedule).not.toHaveBeenCalled();
+  expect(props.onAttend).not.toHaveBeenCalled();
+});
 
 it.each(['card', 'list', 'timeline', 'preview', 'employer'])('offers Book beside View review for an unbooked Aptem PR in the %s view', view => {
   const imported = session('imported-review:A-2', { status: 'not-scheduled', scheduledDate: null, scheduledTime: null,

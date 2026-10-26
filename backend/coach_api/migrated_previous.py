@@ -162,10 +162,6 @@ def previous_review(owner, event_key):
         if binding.get("answerPresent"):
             value = binding.get("answer")
             summary = value.strip() if isinstance(value, str) else ""
-        elif binding.get("status") == "no-binding":
-            state = overlay.meeting_intelligence or {}
-            if state.get("summaryStatus") in {"ready", "edited"}:
-                summary = views.meeting_summary_plain_text(state.get("summary") or {})
         try:
             record = booking_for_overlay(overlay)
         except ReviewIdentityConflict:
@@ -175,6 +171,12 @@ def previous_review(owner, event_key):
                 return unavailable("The previous session's calendar association could not be verified.")
             stored = views.stored_coach_meeting_transcript_for_summary(record)
             transcript = _text(stored.get("text")) if stored else ""
+            if binding.get('status') == 'no-binding':
+                from .migrated_session_scope import summary_matches_session
+                state = overlay.meeting_intelligence or {}
+                if (state.get('summaryStatus') in {'ready', 'edited'}
+                        and (state.get('source') == 'upload' or summary_matches_session(state, record, stored))):
+                    summary = views.meeting_summary_plain_text(state.get('summary') or {})
 
     limit = views.COACH_MEETING_SUMMARY_TRANSCRIPT_CHARS
     completed_at = review["completedDate"] if historical else overlay.completed_at if overlay else None

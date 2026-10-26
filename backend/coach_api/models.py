@@ -263,6 +263,50 @@ class ImportedReviewInstance(models.Model):
             ),
         ]
 
+
+class ImportedMeetingOwnership(models.Model):
+    """Verified provider meeting reserved for one source-qualified APTEM Review.
+
+    The calendar ID points to the physical Learner table in PostgreSQL. It is
+    deliberately an integer here because CoachCalendarEvent maps to a view.
+    Provider identity is never released for reuse after cancellation.
+    """
+
+    STATE_ACTIVE = "active"
+    STATE_CANCELLED = "cancelled"
+
+    source_review_id = models.BigIntegerField()
+    learner_id = models.IntegerField()
+    review_event_key = models.CharField(max_length=255)
+    calendar_event_id = models.BigIntegerField()
+    overlay = models.ForeignKey(ImportedReviewInstance, null=True, blank=True,
+                                on_delete=models.PROTECT, related_name="meeting_ownerships")
+    owner_email = models.EmailField(max_length=255)
+    tenant_id = models.UUIDField()
+    organizer_id = models.UUIDField()
+    online_meeting_id = models.CharField(max_length=240)
+    graph_event_id = models.CharField(max_length=255)
+    booking_fingerprint = models.CharField(max_length=64)
+    provenance = models.CharField(max_length=32, default="graph-calendar-verified")
+    state = models.CharField(max_length=16, default=STATE_ACTIVE)
+    verified_at = models.DateTimeField()
+
+    class Meta:
+        db_table = _table_name('coach_test_imported_meeting_ownership',
+                               'Coach"."coach_imported_meeting_ownership')
+        constraints = [
+            models.UniqueConstraint(fields=["tenant_id", "organizer_id", "online_meeting_id"],
+                                    name="aptem_owner_provider_uniq"),
+            models.UniqueConstraint(fields=["calendar_event_id"], name="aptem_owner_calendar_uniq"),
+            models.UniqueConstraint(fields=["source_review_id"],
+                                    condition=models.Q(state="active"),
+                                    name="aptem_owner_active_source_uniq"),
+            models.CheckConstraint(condition=models.Q(state__in=["active", "cancelled"]),
+                                   name="aptem_owner_state_valid"),
+            models.CheckConstraint(condition=~models.Q(online_meeting_id=""),
+                                   name="aptem_owner_meeting_nonempty"),
+        ]
+
 class ReviewSourceReconciliation(models.Model):
     """Explicit current authority; the calendar's Native fields remain provenance."""
 
@@ -633,3 +677,119 @@ class CatchupReminder(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["event_key", "kind", "starts_at"], name="catchup_reminder_once"),
         ]
+
+
+class CoachingQualitySuggestion(models.Model):
+    """Separate, review-only AI cache. Never changes reviews or sanctions."""
+
+    event_key = models.CharField(max_length=255)
+    fingerprint = models.CharField(max_length=64)
+    state = models.CharField(max_length=16, default='running')
+    claim = models.UUIDField(default=uuid.uuid4)
+    lease_until = models.DateTimeField()
+    result = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = _table_name('coach_test_quality_suggestion', 'Coach"."coaching_quality_suggestion')
+        constraints = [models.UniqueConstraint(fields=['event_key', 'fingerprint'], name='coach_quality_input_unique')]
+
+
+class CoachingRecordingJob(models.Model):
+    """Durable, leased calendar/discovery/archive work and last successful snapshot."""
+
+    key = models.CharField(max_length=96, primary_key=True)
+    kind = models.CharField(max_length=16)
+    owner_email = models.EmailField(max_length=320)
+    context = models.JSONField(default=dict)
+    result = models.JSONField(default=dict)
+    state = models.CharField(max_length=16, default='queued')
+    claim = models.UUIDField(null=True)
+    lease_until = models.DateTimeField(null=True)
+    next_run_at = models.DateTimeField(null=True)
+    last_success_at = models.DateTimeField(null=True)
+    error_code = models.CharField(max_length=64, default='')
+    retryable = models.BooleanField(default=True)
+    attempts = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = _table_name('coach_test_recording_job', 'Coach"."coaching_recording_job')
+        indexes = [models.Index(fields=['kind', 'next_run_at'], name='coach_recording_job_due')]
+
+
+class CoachingCalendarIndex(models.Model):
+    """Complete, versioned calendar projection; source jobs remain authoritative."""
+
+    key = models.CharField(max_length=96, primary_key=True)
+    owner_email = models.EmailField(max_length=320)
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField()
+    source_success_at = models.DateTimeField()
+    event_count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = _table_name('coach_test_calendar_index', 'Coach"."coaching_calendar_index')
+        indexes = [models.Index(fields=['owner_email', 'starts_at', 'ends_at'], name='coach_cal_index_owner_window')]
+
+
+class CoachingCalendarMeeting(models.Model):
+    """Thin calendar metadata only; never video bytes, tokens or review evidence."""
+
+    key = models.CharField(max_length=64, primary_key=True)
+    snapshot = models.ForeignKey(CoachingCalendarIndex, on_delete=models.CASCADE, related_name='meetings')
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField()
+    event = models.JSONField(default=dict)
+
+    class Meta:
+        db_table = _table_name('coach_test_calendar_meeting', 'Coach"."coaching_calendar_meeting')
+        indexes = [models.Index(fields=['snapshot', 'starts_at', 'ends_at'], name='coach_cal_meeting_window')]
+
+
+class CoachingCompletionSession(models.Model):
+    """Read-only Aptem projection; never marks a source review complete."""
+    key = models.CharField(max_length=64, primary_key=True)
+    component_id = models.BigIntegerField(db_index=True)
+    source_meeting_id = models.CharField(max_length=64)
+    owner_email = models.EmailField(max_length=320, db_index=True)
+    learner_name = models.CharField(max_length=255)
+    learner_email = models.EmailField(max_length=320)
+    family = models.CharField(max_length=3)
+    event_id = models.CharField(max_length=1024)
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField()
+    state = models.CharField(max_length=32)
+    source_status = models.CharField(max_length=64)
+    source_updated_at = models.DateTimeField()
+    checked_at = models.DateTimeField()
+    class Meta:
+        db_table = _table_name('coach_test_completion_session', 'Coach"."coaching_completion_session')
+        indexes = [models.Index(fields=['state', 'ends_at'], name='coach_completion_due'),
+            models.Index(fields=['owner_email', 'starts_at'], name='coach_completion_occurrence')]
+
+
+class CoachingCompletionDigest(models.Model):
+    owner_email = models.EmailField(max_length=320)
+    day = models.DateField()
+    state = models.CharField(max_length=16, default='sending')
+    created_at = models.DateTimeField()
+    sent_at = models.DateTimeField(null=True)
+    class Meta:
+        db_table = _table_name('coach_test_completion_digest', 'Coach"."coaching_completion_digest')
+        constraints = [models.UniqueConstraint(fields=['owner_email', 'day'], name='coach_completion_digest_once')]
+
+
+class CoachingCompletionReminder(models.Model):
+    session = models.ForeignKey(CoachingCompletionSession, on_delete=models.PROTECT, related_name='reminders')
+    stage = models.PositiveSmallIntegerField()
+    due_at = models.DateTimeField()
+    read_at = models.DateTimeField(null=True)
+    dismissed_at = models.DateTimeField(null=True)
+    cancelled_at = models.DateTimeField(null=True)
+    digest = models.ForeignKey(CoachingCompletionDigest, null=True, on_delete=models.PROTECT, related_name='reminders')
+    class Meta:
+        db_table = _table_name('coach_test_completion_reminder', 'Coach"."coaching_completion_reminder')
+        constraints = [models.UniqueConstraint(fields=['session', 'stage'], name='coach_completion_stage_once')]
+        indexes = [models.Index(fields=['cancelled_at', 'due_at'], name='coach_completion_inbox')]

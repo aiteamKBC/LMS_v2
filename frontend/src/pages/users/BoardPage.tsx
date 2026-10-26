@@ -29,6 +29,7 @@ import {
 } from '@/api/writtenAgreement';
 import { renderWrittenAgreementPdf, writtenAgreementFilename } from '@/lib/writtenAgreementPdf';
 import { fetchLearnerCoach, updateLearnerCoach } from '@/api/coach';
+import { reviewHandoverMessage } from '@/api/reviewHandover';
 import { fetchCoachOptions, type CoachOption } from '@/api/staffUsers';
 
 /** Render the Written Agreement from its record and save it. */
@@ -263,6 +264,7 @@ function HeroCoach({ learnerId, fallbackOwner }: { learnerId: string; fallbackOw
       setVal(email);
       setSaved(email);
       setSavedName(next.coachName?.trim() || '');
+      setErr(reviewHandoverMessage(next.reviewHandover));
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Could not save');
     } finally {

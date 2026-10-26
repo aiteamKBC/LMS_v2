@@ -6,6 +6,7 @@ only wake it up; HTTP requests never transfer recording bytes themselves.
 import io
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -30,17 +31,25 @@ if '_foreground' not in globals():
 REVIEW_IDLE_GRACE_SECONDS = 30
 
 
+def _log_command_summary(output, pattern, label):
+    # Commands may print private transport details: only allow numeric summaries.
+    for line in output.getvalue().splitlines():
+        if re.fullmatch(pattern, line):
+            log.info('%s: %s', label, line)
+
+
 def run_worker(*, series_id=None, scheduled=False):
     from django.core.management import call_command
     from django.core.management.base import CommandError
     from django.db import close_old_connections, connections
 
+    output = io.StringIO()
     try:
         close_old_connections()
         call_command('process_session_results', scheduled=scheduled,
                      limit=1 if series_id else 10,
                      live_session_ids=[series_id] if series_id else [],
-                     stdout=io.StringIO(), stderr=io.StringIO())
+                     stdout=output, stderr=io.StringIO())
     except CommandError as error:
         if getattr(error, 'session_jobs_need_retry', False):
             log.warning('Session sync saved retry state for %d jobs; saved results remain available.',
@@ -52,6 +61,7 @@ def run_worker(*, series_id=None, scheduled=False):
         log.error('Session sync worker failed (%s). Check saved job status and server configuration.',
                   type(error).__name__)
     finally:
+        _log_command_summary(output, r'Processed [0-9]+ session jobs; [0-9]+ need retry\.', 'Session sync')
         connections.close_all()
 
 
@@ -59,12 +69,16 @@ def run_reviewer():
     from django.core.management import call_command
     from django.db import close_old_connections, connections
 
+    output = io.StringIO()
     try:
         close_old_connections()
-        call_command('review_session_recordings', stdout=io.StringIO(), stderr=io.StringIO())
+        call_command('review_session_recordings', stdout=output, stderr=io.StringIO())
     except Exception as error:
         log.error('Session recording review failed (%s); the next pass will retry.', type(error).__name__)
     finally:
+        _log_command_summary(output,
+                             r'Checked [0-9]+ saved recordings; [0-9]+ queued for repair; [0-9]+ need review\.',
+                             'Session recording review')
         connections.close_all()
 
 

@@ -13,6 +13,15 @@ START, END = date(2026, 9, 3), date(2026, 9, 13)
 
 
 class HomeLiveHoursTests(SimpleTestCase):
+    def test_manual_attendance_adds_component_hours_to_home_once(self):
+        credit = {'componentId': 'LIVE-1', 'moduleId': 'M1', 'hours': 2.5,
+                  'timeTrackingSource': 'manual_attendance'}
+        records = [{'component_ref': 'LIVE-1', 'accepted': True, 'actual_seconds': 7200}]
+        result, _ = self.read(actual=2, records=records, credits=[credit])
+        self.assertEqual(result['otjh']['actual'], 2.5)
+        again, _ = self.read(actual=2, records=records, credits=[credit, credit])
+        self.assertEqual(again['otjh'], result['otjh'])
+
     def read(self, *, actual=0, planned=175, records=(), credits=None, unavailable=False, modules=None):
         source = SimpleNamespace(pk=7, _canonical_profile={'id': 70})
         credits = ([{'componentId': 'LIVE-1', 'moduleId': 'M1', 'hours': 2},

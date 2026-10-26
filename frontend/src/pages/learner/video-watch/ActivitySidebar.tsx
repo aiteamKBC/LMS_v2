@@ -32,6 +32,8 @@ export interface ActivitySidebarProps {
   /** This week's activities, in plan order. */
   weekComponents: JourneyComponent[];
   weekTitle: string;
+  weekDateLabel?: string;
+  dateLabelFor?: (week: SidebarWeek, index: number) => string | undefined;
   moduleTitle: string;
   /** Every week of the module, for the dropdown list. */
   weeks: SidebarWeek[];
@@ -102,6 +104,8 @@ function sidebarActivityMeta(component: JourneyComponent) {
 export function ActivitySidebar({
   weekComponents,
   weekTitle,
+  weekDateLabel,
+  dateLabelFor,
   moduleTitle,
   weeks,
   completedIds,
@@ -184,6 +188,7 @@ export function ActivitySidebar({
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-primary-600">{weekHeading}</p>
           <h2 className="text-sm font-heading font-bold text-primary-900">{currentWeekLabel || 'This week'}</h2>
           <p className="text-[11px] text-foreground-400 mt-0.5">
+            {weekDateLabel && <span className="mb-1 block text-foreground-500">{weekDateLabel}</span>}
             {weekComponents.length} components{' '}
             {weekDoneCount > 0 && <span className="text-emerald-600 font-semibold"> · {weekDoneCount} done</span>}
           </p>
@@ -311,6 +316,7 @@ export function ActivitySidebar({
                         {weekDisplayLabel(weeks, index)}
                       </span>
                       <span className={`block text-[10px] ${weekComplete ? 'text-emerald-700' : 'text-foreground-400'}`}>
+                        {dateLabelFor?.(w, index) && <span className="mb-1 block text-foreground-500">{dateLabelFor(w, index)}</span>}
                         {w.count} components{weekComplete ? ' complete' : ''}
                       </span>
                     </span>
