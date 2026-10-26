@@ -263,6 +263,50 @@ class ImportedReviewInstance(models.Model):
             ),
         ]
 
+
+class ImportedMeetingOwnership(models.Model):
+    """Verified provider meeting reserved for one source-qualified APTEM Review.
+
+    The calendar ID points to the physical Learner table in PostgreSQL. It is
+    deliberately an integer here because CoachCalendarEvent maps to a view.
+    Provider identity is never released for reuse after cancellation.
+    """
+
+    STATE_ACTIVE = "active"
+    STATE_CANCELLED = "cancelled"
+
+    source_review_id = models.BigIntegerField()
+    learner_id = models.IntegerField()
+    review_event_key = models.CharField(max_length=255)
+    calendar_event_id = models.BigIntegerField()
+    overlay = models.ForeignKey(ImportedReviewInstance, null=True, blank=True,
+                                on_delete=models.PROTECT, related_name="meeting_ownerships")
+    owner_email = models.EmailField(max_length=255)
+    tenant_id = models.UUIDField()
+    organizer_id = models.UUIDField()
+    online_meeting_id = models.CharField(max_length=240)
+    graph_event_id = models.CharField(max_length=255)
+    booking_fingerprint = models.CharField(max_length=64)
+    provenance = models.CharField(max_length=32, default="graph-calendar-verified")
+    state = models.CharField(max_length=16, default=STATE_ACTIVE)
+    verified_at = models.DateTimeField()
+
+    class Meta:
+        db_table = _table_name('coach_test_imported_meeting_ownership',
+                               'Coach"."coach_imported_meeting_ownership')
+        constraints = [
+            models.UniqueConstraint(fields=["tenant_id", "organizer_id", "online_meeting_id"],
+                                    name="aptem_owner_provider_uniq"),
+            models.UniqueConstraint(fields=["calendar_event_id"], name="aptem_owner_calendar_uniq"),
+            models.UniqueConstraint(fields=["source_review_id"],
+                                    condition=models.Q(state="active"),
+                                    name="aptem_owner_active_source_uniq"),
+            models.CheckConstraint(condition=models.Q(state__in=["active", "cancelled"]),
+                                   name="aptem_owner_state_valid"),
+            models.CheckConstraint(condition=~models.Q(online_meeting_id=""),
+                                   name="aptem_owner_meeting_nonempty"),
+        ]
+
 class ReviewSourceReconciliation(models.Model):
     """Explicit current authority; the calendar's Native fields remain provenance."""
 

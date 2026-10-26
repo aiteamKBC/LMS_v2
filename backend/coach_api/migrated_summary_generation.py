@@ -100,6 +100,7 @@ def summary_binding_response(overlay):
     if isinstance(latest.get("summary"), dict):
         text = meeting_summary_plain_text(latest["summary"])
         result.update(suggestionText=text, suggestionSource=provenance.get("source"),
+                      provisional=bool(provenance.get('source') == 'teams' and provenance.get('provisional')),
                       summaryTooLong=len(text) > TEXT_ANSWER_LIMIT,
                       generatedAt=provenance.get("generatedAt"), transcriptTruncated=bool(provenance.get("transcriptTruncated")),
                       replacementAvailable=bool(text and text != result.get("answer") and result["state"] != "NEVER_POPULATED"))
@@ -116,13 +117,24 @@ def summary_binding_response(overlay):
         # an invalid suggestion must not remain available as a replacement.
         from django.db import DatabaseError
         from .review_sources import booking_for_overlay
-        from .migrated_session_scope import summary_matches_session
-        from .views import stored_coach_meeting_transcript_for_summary
+        from .migrated_session_scope import (has_verified_meeting_evidence,
+                                             stored_transcript_selection, summary_matches_session)
+        from .views import stored_coach_meeting_snapshot, stored_coach_meeting_transcript_for_summary
         try:
             record = booking_for_overlay(overlay)
+            transcript = None
+            if record:
+                saved = stored_coach_meeting_snapshot(record)
+                if has_verified_meeting_evidence(saved) and not state.get('actualSession'):
+                    selection = stored_transcript_selection(record, saved, meeting_scoped=True)
+                    if selection['code'] is None:
+                        transcript = stored_coach_meeting_transcript_for_summary(
+                            record, artifact_ids=selection['artifactIds'])
+                else:
+                    transcript = stored_coach_meeting_transcript_for_summary(record)
             verified = bool(record and summary_matches_session(
                 {**provenance, 'sessionProvenance': state.get('sessionProvenance')}, record,
-                stored_coach_meeting_transcript_for_summary(record)))
+                transcript))
         except DatabaseError:
             verified = False
         if not verified:

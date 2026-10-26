@@ -1387,7 +1387,7 @@ def employer_portal_review_artifact_content(request, employer_id, kind, learner_
         return err
     from .imported_meeting_resources import is_imported_meeting, stored_recording
     if is_imported_meeting(record):
-        return stored_recording(record, artifact_id)
+        return stored_recording(request, record, artifact_id)
     from coach_api.views import coach_meeting_artifact_content_response
 
     # The archived copy is keyed by the calendar event, not by the review key

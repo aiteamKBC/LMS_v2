@@ -2,6 +2,7 @@
 from django.db import transaction
 from django.http import JsonResponse
 
+from . import imported_meeting_ownership as meeting_ownership
 from .models import CoachCalendarEvent, ImportedReviewInstance
 
 
@@ -96,6 +97,9 @@ def reschedule(request, instance_id):
             if current_slot != desired_slot and current_slot != previous_slot:
                 return conflict("This booking was changed by another request. Reload before rescheduling.")
             if current_slot == desired_slot and record.sync_state == CoachCalendarEvent.SYNC_SYNCED:
+                if getattr(v.settings, 'APTEM_MEETING_OWNERSHIP_ENABLED', False):
+                    meeting_ownership.require_activation_ready()
+                    meeting_ownership.require_synced_owner(record, {'reviewId': source['id']})
                 return JsonResponse(definition)
             base_event, _ = v.find_generated_timetable_event(owner, overlay.event_key)
             if (not base_event or base_event.get("reviewSource") != "aptem"
@@ -106,7 +110,8 @@ def reschedule(request, instance_id):
             # Reuse normal availability/weekly rules and the existing reservation.
             # No overlay, source, answers, lifecycle or meeting identity is written.
             record = v.persist_calendar_sync_reservation(record, review_event=base_event)
-    except (v.LearnerCalendarConflict, ReviewIdentityConflict, v.CalendarSyncInProgress, ReconciliationConflict) as exc:
+    except (v.LearnerCalendarConflict, ReviewIdentityConflict, v.CalendarSyncInProgress,
+            ReconciliationConflict, meeting_ownership.MeetingOwnershipError) as exc:
         return conflict(str(exc))
 
     try:

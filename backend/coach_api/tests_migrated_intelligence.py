@@ -1,6 +1,7 @@
 """Hermetic Phase E tests: synthetic meetings only; no Graph, AI or live DB."""
 import inspect
 import json
+from copy import deepcopy
 from contextlib import nullcontext
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
@@ -30,7 +31,7 @@ def meeting():
     return SimpleNamespace(event_key=ID, owner_email="coach@example.invalid", learner_id=42,
                            event_type="mcr", review_instance_id="", review_template_id="",
                            graph_event_id="synthetic-graph-event", meeting_link="https://teams.microsoft.com/test",
-                           sync_state="synced", scheduled_date=date.today() - timedelta(days=1), scheduled_time=time(14),
+                           sync_state="synced", status="in-progress", scheduled_date=date.today() - timedelta(days=1), scheduled_time=time(14),
                            duration_minutes=60, learner_name="Synthetic learner")
 
 
@@ -43,6 +44,7 @@ def graph_snapshot(*, transcript=False, fetch_error=False, attendance=False):
         artifacts.append({"artifact_type": "transcript", "graph_artifact_id": "transcript-1",
                           "call_id": "synthetic-call", "created_datetime": start.isoformat(), "end_datetime": end.isoformat(),
                           "transcript_text": "Synthetic transcript" if not fetch_error else "",
+                          "transcript_vtt": "WEBVTT\n\nSynthetic transcript" if not fetch_error else "",
                           **({"transcript_fetch_error": "Content unavailable"} if fetch_error else {})})
     reports = [{"id": "report-1", "records": [], "meetingStartDateTime": start.isoformat(), "meetingEndDateTime": end.isoformat()}] if attendance else []
     return {
@@ -60,21 +62,36 @@ class MigratedMeetingIntelligenceTests(SimpleTestCase):
         self.overlay = review()
         self.record = meeting()
 
-    def call_check(self, snapshot, transcript=None, stored_snapshot=None):
+    def call_check(self, snapshot, transcript=None, stored_snapshot=None, *, generate=False):
         stored_snapshot = stored_snapshot or {"artifacts": [], "attendanceReports": [], "attendanceTracker": {"tracker": []}}
+        saved = deepcopy(stored_snapshot)
+        def store(_record, **kwargs):
+            rows = {(row['artifact_type'], row['graph_artifact_id']): row for row in saved['artifacts']}
+            rows.update({(row['artifact_type'], row['graph_artifact_id']): row for row in kwargs['artifacts']})
+            saved.update(artifacts=list(rows.values()), attendanceReports=kwargs['attendance_reports'],
+                         attendanceTracker=kwargs['attendance_tracker'], partial=False, storage={'stored': True})
+            return {'stored': True}
+        def fetched(current, **options):
+            options['target_resolver'](current)
+            return snapshot, None, 200
         with (
             patch("coach_api.migrated_intelligence_views._association", return_value=(self.overlay, self.record, {})),
             patch("coach_api.migrated_intelligence_views.transaction.atomic", return_value=nullcontext()),
             patch("coach_api.migrated_intelligence_views.ImportedReviewInstance.objects.select_for_update") as locked,
-            patch("coach_api.views.fetch_coach_meeting_graph_snapshot", return_value=(snapshot, None, 200)),
-            patch("coach_api.views.persist_coach_meeting_snapshots", return_value={"stored": True}) as persist,
-            patch("coach_api.views.stored_coach_meeting_snapshot", return_value=stored_snapshot),
+            patch("coach_api.views.fetch_coach_meeting_graph_snapshot", side_effect=fetched),
+            patch("coach_api.actual_session_resolution.review_meeting_target",
+                  side_effect=lambda _record, *, identity_out: (
+                      identity_out.update(target=SimpleNamespace(online_meeting_id='synthetic-meeting'))
+                      or ('users/synthetic/onlineMeetings/synthetic-meeting', None))),
+            patch("coach_api.views.persist_coach_meeting_snapshots", side_effect=store) as persist,
+            patch("coach_api.views.stored_coach_meeting_snapshot", side_effect=lambda *a, **kw: deepcopy(saved)),
             patch("coach_api.views.stored_coach_meeting_transcript_for_summary", return_value=transcript),
             patch("coach_api.migrated_intelligence_views._response") as respond,
         ):
             locked.return_value.get.return_value = self.overlay
             respond.side_effect = lambda overlay, record, **kwargs: SimpleNamespace(status_code=kwargs.get("status", 200))
-            result = inspect.unwrap(migrated_review_check_session)(self.factory.post("/", data="{}", content_type="application/json"), ID)
+            result = inspect.unwrap(migrated_review_check_session)(self.factory.post("/",
+                data=json.dumps({'generateSummary': generate}), content_type="application/json"), ID)
             return result, persist
 
     def test_association_uses_overlay_calendar_key_and_rejects_native_links(self):
@@ -128,7 +145,7 @@ class MigratedMeetingIntelligenceTests(SimpleTestCase):
                     self.assertEqual(self.overlay.meeting_intelligence["transcriptStatus"], "pending")
 
     @override_settings(TIME_ZONE="Europe/London")
-    def test_unconfirmed_early_end_does_not_persist_or_generate(self):
+    def test_unconfirmed_early_end_persists_resources_but_does_not_generate(self):
         self.record.scheduled_date = date(2026, 10, 22)
         self.record.scheduled_time = time(10)
         now = datetime(2026, 10, 22, 10, 35, tzinfo=ZoneInfo("Europe/London"))
@@ -147,11 +164,11 @@ class MigratedMeetingIntelligenceTests(SimpleTestCase):
                 snapshot = graph_snapshot(transcript=True)
                 snapshot["attendanceReports"] = [report] if report else []
                 result, persist = self.call_check(snapshot, {"artifactId": "t1", "text": "Partial transcript"})
-                self.assertEqual(result.status_code, 409)
-                self.assertEqual(json.loads(result.content)["code"], "MEETING_END_NOT_CONFIRMED")
-                persist.assert_not_called()
+                self.assertEqual(result.status_code, 207)
+                self.assertEqual(self.overlay.meeting_intelligence['meetingEndCode'], 'MEETING_END_PENDING')
+                persist.assert_called_once()
                 ai.assert_not_called()
-                self.overlay.save.assert_not_called()
+                self.assertEqual(self.overlay.answers, {})
 
     @override_settings(TIME_ZONE="Europe/London")
     def test_scheduled_end_still_allows_check_without_attendance_report(self):
@@ -174,12 +191,12 @@ class MigratedMeetingIntelligenceTests(SimpleTestCase):
     def test_transcript_generates_once_and_preserves_edited_summary(self):
         transcript = {"artifactId": "transcript-1", "text": "Synthetic meeting facts"}
         with patch("coach_api.views.openai_meeting_summary", return_value=({"title": "MCM", "overview": "Facts"}, "model")) as ai:
-            self.call_check(graph_snapshot(transcript=True), transcript)
+            self.call_check(graph_snapshot(transcript=True, attendance=True), transcript, generate=True)
             self.assertEqual(self.overlay.meeting_intelligence["summaryStatus"], "ready")
             self.assertEqual(self.overlay.meeting_intelligence["transcriptArtifactId"], "transcript-1")
             self.overlay.meeting_intelligence["summary"] = {"title": "Coach edit", "overview": "Edited facts"}
             self.overlay.meeting_intelligence["summaryStatus"] = "edited"
-            self.call_check(graph_snapshot(transcript=True), transcript)
+            self.call_check(graph_snapshot(transcript=True, attendance=True), transcript, generate=True)
             self.assertEqual(ai.call_count, 1)
             self.assertEqual(self.overlay.meeting_intelligence["summary"]["overview"], "Edited facts")
 
@@ -203,6 +220,9 @@ class MigratedMeetingIntelligenceTests(SimpleTestCase):
         snapshot = graph_snapshot(transcript=True)
         snapshot["errors"] = ["Microsoft Graph could not return attendance reports for this meeting."]
         previous = {**graph_snapshot(attendance=True), "attendanceTracker": {"tracker": [{"id": "old-learner"}]}}
+        previous['attendanceReports'][0].update(
+            _lms_graph_event_id=self.record.graph_event_id,
+            _lms_verified_online_meeting_id='synthetic-meeting')
         with patch("coach_api.views.openai_meeting_summary", return_value=({"title": "MCM", "overview": "Facts"}, "model")):
             _result, persist = self.call_check(snapshot, {"artifactId": "transcript-1", "text": "Facts"}, stored_snapshot=previous)
         self.assertEqual(persist.call_args.kwargs["attendance_reports"], previous["attendanceReports"])
@@ -211,8 +231,12 @@ class MigratedMeetingIntelligenceTests(SimpleTestCase):
 
     def test_empty_graph_response_retains_last_verified_attendance_and_recording(self):
         previous = graph_snapshot(transcript=True, attendance=True)
+        previous['attendanceReports'][0].update(
+            _lms_graph_event_id=self.record.graph_event_id,
+            _lms_verified_online_meeting_id='synthetic-meeting')
         previous['artifacts'][0].update(artifact_type='recording', graph_artifact_id='recording-1',
-                                         metadata={'_lms_graph_event_id': self.record.graph_event_id})
+                                         metadata={'_lms_graph_event_id': self.record.graph_event_id,
+                                                   '_lms_verified_online_meeting_id': 'synthetic-meeting'})
         _result, persist = self.call_check(graph_snapshot(), stored_snapshot=previous)
         self.assertEqual(persist.call_args.kwargs["attendance_reports"], previous["attendanceReports"])
         self.assertEqual(self.overlay.meeting_intelligence["attendanceStatus"], "available")
@@ -221,11 +245,11 @@ class MigratedMeetingIntelligenceTests(SimpleTestCase):
     def test_ai_failure_keeps_attendance_and_can_retry_explicitly(self):
         transcript = {"artifactId": "transcript-1", "text": "Synthetic meeting facts"}
         with patch("coach_api.views.openai_meeting_summary", side_effect=RuntimeError("synthetic failure")):
-            self.call_check(graph_snapshot(transcript=True, attendance=True), transcript)
+            self.call_check(graph_snapshot(transcript=True, attendance=True), transcript, generate=True)
         self.assertEqual(self.overlay.meeting_intelligence["summaryStatus"], "failed")
         self.assertEqual(self.overlay.meeting_intelligence["attendanceStatus"], "available")
         with patch("coach_api.views.openai_meeting_summary", return_value=({"title": "MCM", "overview": "Facts"}, "model")):
-            self.call_check(graph_snapshot(transcript=True, attendance=True), transcript)
+            self.call_check(graph_snapshot(transcript=True, attendance=True), transcript, generate=True)
         self.assertEqual(self.overlay.meeting_intelligence["summaryStatus"], "ready")
 
     def test_graph_failure_and_completed_status_do_not_write(self):
