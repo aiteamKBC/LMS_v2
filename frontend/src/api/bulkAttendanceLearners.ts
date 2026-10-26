@@ -11,6 +11,10 @@ export interface BulkAttendanceDirectoryLearner {
   /** LMS enrolment status when the learner is enrolled, otherwise kbcStatus. */
   status?: string;
   statusSource?: 'enrolment' | 'kbc';
+  /** LMS enrolment email for the same KBC id, sent only when it differs from `email`. */
+  lmsEmail?: string;
+  /** Saved learner delivery mode; learners without a saved preference are live. */
+  attendanceMode?: 'live' | 'lazy';
 }
 
 export interface BulkAttendanceKbcHistoryRecord {
@@ -39,6 +43,8 @@ export interface BulkAttendanceHistoryResult {
 export interface BulkAttendanceHistoryReadOptions {
   /** Read only the LMS live-session register, excluding legacy KBC rows. */
   source?: 'live' | 'all';
+  /** Directory email used only when a legacy KBC row has an older learner ID. */
+  email?: string;
 }
 
 function warningsFrom(payload: { warnings?: unknown }): string[] {
@@ -76,6 +82,7 @@ export interface BulkAttendanceLiveDayInput {
   moduleCatalogueId: string;
   date: string;
   attendance: 'present' | 'absent';
+  occurrenceId?: string;
 }
 
 export interface BulkAttendanceLiveDayRecord {
@@ -84,6 +91,61 @@ export interface BulkAttendanceLiveDayRecord {
   moduleCatalogueId: string;
   occurrenceId: string;
   attendance: 'present' | 'absent';
+}
+
+export interface BulkAttendanceMonthOccurrence {
+  id: string;
+  date: string;
+  sessionNumber: number;
+  moduleCatalogueId: string;
+  moduleTitle: string;
+}
+
+export interface BulkAttendanceMonthRecord {
+  recordKey: string;
+  occurrenceId: string;
+  moduleCatalogueId: string;
+  learnerId: string;
+  attendance: 'present' | 'absent';
+}
+
+export interface BulkAttendanceMonthResult {
+  occurrences: BulkAttendanceMonthOccurrence[];
+  records: BulkAttendanceMonthRecord[];
+}
+
+/** Saved KBC/live attendance rows for the selected calendar month. */
+export async function fetchBulkAttendanceKbcMonthRecords(
+  month: string,
+  learnerIds: string[] = [],
+  signal?: AbortSignal,
+): Promise<BulkAttendanceKbcHistoryRecord[]> {
+  const query = new URLSearchParams({ month });
+  const ids = [...new Set(learnerIds.map((value) => value.trim()).filter(Boolean))];
+  if (ids.length) query.set("learner_ids", ids.join(","));
+  const response = await coachFetch(
+    `/curriculum_api/curriculum/bulk-attendance/kbc-month-records/?${query}`,
+    { signal },
+  );
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || "Unable to load monthly KBC attendance.");
+  if (!Array.isArray(payload.records) || !payload.records.every((record: BulkAttendanceKbcHistoryRecord) =>
+    record && typeof record === "object"
+    && typeof record.recordKey === "string"
+    && typeof record.learnerId === "string"
+    && /^\d{4}-\d{2}-\d{2}(?:[T\s].*)?$/.test(record.sessionDate)
+    && typeof record.moduleName === "string"
+    && typeof record.lectureName === "string"
+    && (record.sessionNumber === null || Number.isInteger(record.sessionNumber))
+    && (record.attendance === null || record.attendance === "present" || record.attendance === "absent")
+    && (record.source === "kbc" || record.source === "live"),
+  )) {
+    throw new Error("Monthly KBC attendance returned an invalid response.");
+  }
+  return payload.records.map((record: BulkAttendanceKbcHistoryRecord) => ({
+    ...record,
+    sessionDate: record.sessionDate.slice(0, 10),
+  }));
 }
 
 /** Thrown when a save failed; `saved` lists record keys that were saved before it failed. */
@@ -165,6 +227,39 @@ export async function fetchBulkAttendanceLiveDayRecords(
   );
 }
 
+/** Read a module or group's scheduled live occurrences and saved marks for a calendar month. */
+export async function fetchBulkAttendanceLiveMonthRecords(
+  month: string,
+  moduleCatalogueId: string,
+  signal?: AbortSignal,
+  groupId?: string,
+  moduleCatalogueIds: string[] = [],
+): Promise<BulkAttendanceMonthResult> {
+  const query = new URLSearchParams({ month });
+  if (moduleCatalogueId) query.set('module_catalogue_id', moduleCatalogueId);
+  if (groupId) query.set('group_id', groupId);
+  const requestedModuleIds = [...new Set(moduleCatalogueIds.map((value) => value.trim()).filter(Boolean))];
+  if (requestedModuleIds.length) query.set('module_catalogue_ids', requestedModuleIds.join(','));
+  const response = await coachFetch(
+    `/curriculum_api/curriculum/bulk-attendance/live-month-records/?${query}`,
+    { signal },
+  );
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Unable to load monthly attendance.');
+  if (!Array.isArray(payload.occurrences) || !Array.isArray(payload.records)
+    || !payload.occurrences.every((item: BulkAttendanceMonthOccurrence) =>
+      item && typeof item.id === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(item.date)
+      && Number.isInteger(item.sessionNumber) && typeof item.moduleCatalogueId === 'string'
+      && typeof item.moduleTitle === 'string')
+    || !payload.records.every((item: BulkAttendanceMonthRecord) =>
+      item && typeof item.recordKey === 'string' && typeof item.occurrenceId === 'string'
+      && typeof item.moduleCatalogueId === 'string' && typeof item.learnerId === 'string'
+      && (item.attendance === 'present' || item.attendance === 'absent'))) {
+    throw new Error('Monthly attendance returned an invalid response.');
+  }
+  return { occurrences: payload.occurrences, records: payload.records };
+}
+
 /** Learners with any saved KBC or live attendance on this exact calendar day. */
 export async function fetchBulkAttendanceDayLearners(date: string, signal?: AbortSignal): Promise<string[]> {
   const query = new URLSearchParams({ date });
@@ -203,6 +298,7 @@ export async function fetchBulkAttendanceKbcHistory(
   if (!learnerId) return { records: [], warnings: [] };
   const query = new URLSearchParams({ learner_id: learnerId });
   if (options.source) query.set('source', options.source);
+  if (options.email?.trim()) query.set('learner_email', options.email.trim());
   const response = await coachFetch(`/curriculum_api/curriculum/bulk-attendance/kbc-history/?${query}`, { signal });
   const payload = await response.json();
   if (!response.ok) {
