@@ -15,6 +15,56 @@ afterEach(() => { vi.resetAllMocks(); auth.role = 'admin'; });
 beforeEach(() => { vi.mocked(api.getTransferReview).mockResolvedValue({ reviewToken: 'review', csrfToken: 'csrf', modules: [] }); });
 
 describe('admin progress transfers', () => {
+  it('distinguishes missing source text from unavailable target content', async () => {
+    vi.mocked(api.getTransferRequests).mockResolvedValue({ requests: [request], nextOffset: null, csrfToken: 'csrf' });
+    vi.mocked(api.getTransferReview).mockResolvedValue({ reviewToken: 'review', csrfToken: 'csrf', modules: [{
+      moduleId: 'M1', courseRef: 'legacy:50', title: 'New module',
+      sources: [{ sourceActivityRef: 'material:7', title: 'Old quiz', type: 'quiz', week: '', automaticTargetId: null,
+        contentAvailable: false, contentScores: [{ componentId: 'A', score: null, contentAvailable: true }, { componentId: 'B', score: null, contentAvailable: false }] }],
+      targets: ['A', 'B'].map(componentId => ({ componentId, title: `Quiz ${componentId}`, type: 'quiz', week: '', plannedHours: null })),
+    }] });
+    render(<MemoryRouter><TransferRequests /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Review transfer' }));
+    const select = await screen.findByRole('combobox');
+    expect(screen.getByText(/Source content is unavailable for comparison/)).toBeVisible();
+    expect(within(select).getByRole('option', { name: /Quiz A/ })).not.toHaveTextContent('unavailable');
+    expect(within(select).getByRole('option', { name: /Quiz B/ })).toHaveTextContent('Target content unavailable');
+    expect(within(select).queryByRole('option', { name: /^Recommended/ })).not.toBeInTheDocument();
+  });
+
+  it('suggests within each module without selecting or approving, and updates reserved options', async () => {
+    vi.mocked(api.getTransferRequests).mockResolvedValue({ requests: [request], nextOffset: null, csrfToken: 'csrf' });
+    const title = 'Project Fundamentals and Value Delivery';
+    vi.mocked(api.getTransferReview).mockResolvedValue({ reviewToken: 'review', csrfToken: 'csrf', modules: [{
+      moduleId: 'M1', courseRef: 'legacy:50', title: 'New module',
+      sources: [7, 8].map(id => ({ sourceActivityRef: `material:${id}`, title, type: 'quiz', week: '', automaticTargetId: null, contentAvailable: true, contentScores: [{ componentId: 'A', score: 0.95 }, { componentId: 'B', score: 0.1 }] })),
+      targets: [
+        { componentId: 'B', title: 'Programme overview', type: 'quiz', week: '', plannedHours: null },
+        { componentId: 'A', title, type: 'quiz', week: '', plannedHours: null },
+        { componentId: 'WRONG', title, type: 'reading', week: '', plannedHours: null },
+      ],
+    }, {
+      moduleId: 'M2', courseRef: 'legacy:51', title: 'Other module', sources: [],
+      targets: [{ componentId: 'OTHER', title, type: 'quiz', week: '', plannedHours: null }],
+    }] });
+    render(<MemoryRouter><TransferRequests /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Review transfer' }));
+    const first = await screen.findByRole('combobox', { name: `Match ${title} (material:7) in New module` });
+    const second = screen.getByRole('combobox', { name: `Match ${title} (material:8) in New module` });
+    expect(within(first).getAllByRole('option').map(option => (option as HTMLOptionElement).value)).toEqual(['', 'A', 'B']);
+    expect(within(first).getByRole('option', { name: /^Recommended/ })).toHaveValue('A');
+    expect(first).toHaveValue('');
+    expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm' })).toBeDisabled();
+    expect(api.approveTransferRequest).not.toHaveBeenCalled();
+    fireEvent.change(first, { target: { value: 'A' } });
+    expect(first).toHaveValue('A');
+    expect(second).toHaveValue('');
+    expect(within(second).queryByRole('option', { name: /^Recommended/ })).not.toBeInTheDocument();
+    expect(within(second).getByRole('option', { name: /\(quiz · A\)/ })).toBeDisabled();
+    fireEvent.change(first, { target: { value: '' } });
+    expect(within(second).getByRole('option', { name: /^Recommended/ })).toHaveValue('A');
+  });
+
   it('requires review then Confirm, and reloads only after success', async () => {
     vi.mocked(api.getTransferRequests).mockResolvedValueOnce({ requests: [request], nextOffset: null, csrfToken: 'csrf' })
       .mockResolvedValue({ requests: [{ ...request, status: 'approved', approvedAt: '2026-10-19T10:00:00Z' }], nextOffset: null, csrfToken: 'csrf' });

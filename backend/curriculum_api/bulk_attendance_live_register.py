@@ -4,8 +4,8 @@ Reads never match learners by name or email: a learner reaches a KBC id only
 through the stable Aptem identity rule the coach dashboard uses
 (Created_users.aptem_id, then the profile copy).
 
-A saved correction changes only ``attendance_status``. The Teams attendance
-sync still owns this table and may recalculate the row on its next run.
+A saved correction also uses the existing staff correction ledger, so completion
+can distinguish manual attendance from provider evidence after a Teams sync.
 """
 import logging
 from datetime import datetime, time, timedelta
@@ -139,23 +139,32 @@ def read_live_day_learner_ids(session_date):
     return {str(identity) for identity in identities.values() if identity is not None}
 
 
-def save_live_attendance(changes):
+def save_live_attendance(changes, *, actor=''):
     """Apply {register row id: status}; returns the ids that were updated.
 
     Every id must exist, otherwise nothing is written.
     """
+    from coach_api.models import CoachAttendanceSourceAdjustment
+
     ids = list(changes)
-    with transaction.atomic(using=router.db_for_write(LiveSessionLearnerAttendance)):
-        existing = set(
+    database = router.db_for_write(LiveSessionLearnerAttendance)
+    with transaction.atomic(using=database):
+        rows = list(
             LiveSessionLearnerAttendance.objects.select_for_update()
-            .filter(id__in=ids).values_list('id', flat=True)
+            .filter(id__in=ids).values('id', 'learner_profile_id', 'occurrence_id')
         )
-        missing = sorted(set(ids) - existing)
+        missing = sorted(set(ids) - {row['id'] for row in rows})
         if missing:
             raise LookupError(missing)
         now = timezone.now()
         for row_id, status in changes.items():
             LiveSessionLearnerAttendance.objects.filter(id=row_id).update(
                 attendance_status=status, updated_at=now,
+            )
+        for row in rows:
+            CoachAttendanceSourceAdjustment.objects.using(database).update_or_create(
+                learner_id=row['learner_profile_id'], source='microsoft-teams', source_id=row['occurrence_id'],
+                defaults={'status': changes[row['id']], 'is_deleted': False,
+                          'owner_email': actor, 'updated_by': actor},
             )
     return sorted(ids)

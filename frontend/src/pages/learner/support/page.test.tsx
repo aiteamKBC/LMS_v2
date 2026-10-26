@@ -8,17 +8,20 @@ vi.mock('@/api/supportTickets', async () => ({
   ...await vi.importActual<typeof import('@/api/supportTickets')>('@/api/supportTickets'),
   createSupportTicket: vi.fn(), loadSupportTickets: vi.fn(), updateSupportTicket: vi.fn(),
 }));
+const coachHeader = vi.hoisted(() => ({ data: null as { coach: { name: string; email?: string; phone?: string | null } } | null }));
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(loadSupportTickets).mockResolvedValue([]);
+  coachHeader.data = null;
 });
 
 const session = vi.hoisted(() => ({
   account: { displayName: 'Alex Example', programme: 'Example Course' } as {
-    displayName: string | null; programme: string;
+    displayName: string | null; programme: string; subjectType?: string; subjectId?: number; learnerType?: string;
   } | null,
 }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: session }) }));
+vi.mock('@/hooks/useDashboardHeader', () => ({ useDashboardHeader: () => coachHeader }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children, userName, userRole }: { children: ReactNode; userName: string; userRole: string }) => (
     <main><span>{userName}</span><span>{userRole}</span>{children}</main>
@@ -37,6 +40,20 @@ it('uses the signed-in account and updates the greeting when the account changes
   view.rerender(<MemoryRouter><SupportPage /></MemoryRouter>);
   expect(screen.getByRole('heading', { name: 'How can we help, Taylor?' })).toBeInTheDocument();
   expect(screen.queryByText('Alex Example')).not.toBeInTheDocument();
+});
+
+it('shows the assigned learner coach email from the dashboard data', () => {
+  session.account = { displayName: 'Alex Example', programme: '', subjectType: 'learner', subjectId: 125, learnerType: 'commercial' };
+  coachHeader.data = { coach: { name: 'Sarah Collins', email: 'sarah.collins@kbc.ac.uk', phone: '01227 811 402' } };
+  render(<MemoryRouter><SupportPage /></MemoryRouter>);
+  fireEvent.click(screen.getByRole('button', { name: 'Contact Us' }));
+  expect(screen.getByText('Sarah Collins')).toBeInTheDocument();
+  expect(screen.getByText('sarah.collins@kbc.ac.uk')).toBeInTheDocument();
+  expect(screen.queryByText('01227 811 402')).not.toBeInTheDocument();
+  expect(screen.getByText('Crispin Reed')).toBeInTheDocument();
+  expect(screen.getByText('Crispin@kentbusinesscollege.com')).toBeInTheDocument();
+  expect(screen.queryByText('01227 811 235')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Call' })).not.toBeInTheDocument();
 });
 
 it.each([null, { displayName: null, programme: '' }, { displayName: '   ', programme: '' }])(

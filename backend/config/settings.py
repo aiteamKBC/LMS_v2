@@ -739,6 +739,17 @@ elif USE_SQLITE_FOR_TESTS:
     DATABASES['enrolment'] = dict(DATABASES['default'])
     DATABASES['enrolment']['TEST'] = {'MIRROR': 'default'}
 
+# Optional cross-project sink for LMS support-ticket submissions.  The ticket
+# workflow remains on the enrolment database; this separate alias is only used
+# for the idempotent copy into public.assistant_conversations.  Keep the URL in
+# the deployment environment rather than in source or the repository .env.
+_assistant_conversations_database_url = (
+    os.environ.get('ASSISTANT_CONVERSATIONS_DATABASE_URL')
+    or os.environ.get('TICKETING_DATABASE_URL')
+)
+if _assistant_conversations_database_url and not USE_SQLITE_FOR_TESTS and 'test' not in sys.argv:
+    DATABASES['assistant_conversations'] = database_from_url(_assistant_conversations_database_url)
+
 # Learner Log Pro reads Audit.mre from its own Neon branch. Keeping it on a
 # separate alias prevents the imported audit workspace from changing the LMS's
 # primary database connection.
