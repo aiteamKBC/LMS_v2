@@ -151,7 +151,8 @@ def record_observations(*, learner_id, profile_id, component, tracking, token,
                 raise RewardError("observation_id_conflict")
             cursor.execute('''SELECT coalesce(sum(observed_ms),0) FROM "Engagement".shared_reward_observations
                  WHERE session_id=%s AND sequence<=%s''',[session_id,sequence])
-            batch_cumulative=cursor.fetchone()[0]
+            # SUM(bigint) is Decimal on PostgreSQL; JSON receipts require a number.
+            batch_cumulative=int(cursor.fetchone()[0])
             return {"source":"lms","eventId":event_id,"sessionId":session_id,"sequence":sequence,
                     "status":"pending","observedMilliseconds":previous[0]["observed_ms"],
                     "cumulativeObservedMilliseconds":batch_cumulative,"duplicate":True}

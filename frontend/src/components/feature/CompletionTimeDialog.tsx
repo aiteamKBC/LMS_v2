@@ -18,9 +18,8 @@ import {
 // percentage, no history entry. The learner picks the date and time the work
 // was actually done at, and Final Submit sends that instant to be written.
 //
-// A selection outside the working rules is only warned about, never blocked:
-// the learner can still Final Submit it. The server refuses only an unusable
-// (unreadable or future) instant.
+// Clock choices are limited to 07:00 through 19:00 inclusive. Weekend and
+// holiday warnings remain advisory; the server also rejects future instants.
 // ============================================================================
 
 interface CompletionTimeDialogProps {
@@ -58,14 +57,16 @@ export function CompletionTimeDialog({
   closeRef.current = onClose;
 
   const [day, setDay] = useState('');
-  const [time, setTime] = useState('');
+  const [hour, setHour] = useState('');
+  const [minute, setMinute] = useState('');
+  const time = hour && minute ? `${hour}:${minute}` : '';
   const [touched, setTouched] = useState(false);
 
   const failure = useMemo(
     () => (day && time ? workingRuleFailure(day, time, holidays) : null),
     [day, time, holidays],
   );
-  const complete = Boolean(day && time);
+  const complete = Boolean(day && /^\d{2}:\d{2}$/.test(time) && time >= '07:00' && time <= '19:00');
   const canSubmit = complete && !submitting;
 
   useEffect(() => {
@@ -173,13 +174,36 @@ export function CompletionTimeDialog({
               <label htmlFor={timeId} className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-foreground-500">
                 Completion time
               </label>
-              <input
-                id={timeId}
-                type="time"
-                value={time}
-                onChange={event => { setTime(event.target.value); setTouched(true); }}
-                className="w-full rounded-xl border border-foreground-300 px-3 py-2.5 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500"
-              />
+              <div className="flex gap-2">
+                <select
+                  id={timeId}
+                  value={hour}
+                  onChange={event => {
+                    setHour(event.target.value);
+                    if (event.target.value === '19') setMinute('00');
+                    setTouched(true);
+                  }}
+                  className="w-full rounded-xl border border-foreground-300 px-3 py-2.5 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500"
+                >
+                  <option value="">Hour</option>
+                  {Array.from({ length: 13 }, (_, index) => index + 7).map(value => (
+                    <option key={value} value={String(value).padStart(2, '0')}>
+                      {value % 12 || 12} {value < 12 ? 'AM' : 'PM'}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Completion minutes"
+                  value={minute}
+                  onChange={event => { setMinute(event.target.value); setTouched(true); }}
+                  className="w-full rounded-xl border border-foreground-300 px-3 py-2.5 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500"
+                >
+                  <option value="">Minute</option>
+                  {Array.from({ length: hour === '19' ? 1 : 60 }, (_, index) => String(index).padStart(2, '0')).map(value => (
+                    <option key={value} value={value}>{value}</option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
 

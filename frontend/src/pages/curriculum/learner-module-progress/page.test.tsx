@@ -1,4 +1,4 @@
-import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, within, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CurriculumLearnerActivity, CurriculumLearnerActivityPlanItem, CurriculumScopeLearnerKsbImpactResponse } from '@/lib/curriculumApi';
@@ -6,10 +6,10 @@ import LearnerModuleProgressPage from './page';
 import { buildProgressRows, resolveProgressLearner, overallPercent } from './progressView';
 import { completionEnd, localTimeInput } from './completionTime';
 
-const { fetchImpact, fetchRoster, saveStatus, fetchHistory } = vi.hoisted(() => ({ fetchImpact: vi.fn(), fetchRoster: vi.fn(), saveStatus: vi.fn(), fetchHistory: vi.fn() }));
+const { fetchImpact, fetchRoster, fetchStructure, saveStatus, fetchHistory } = vi.hoisted(() => ({ fetchImpact: vi.fn(), fetchRoster: vi.fn(), fetchStructure: vi.fn(), saveStatus: vi.fn(), fetchHistory: vi.fn() }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
 vi.mock('@/mocks/navigation', () => ({ curriculumNavItems: [] }));
-vi.mock('@/lib/curriculumApi', () => ({ fetchCurriculumScopeLearnerKsbImpact: fetchImpact, fetchCurriculumScopeLearnerRoster: fetchRoster, saveCurriculumActivityStatus: saveStatus, fetchCurriculumActivityStatusHistory: fetchHistory }));
+vi.mock('@/lib/curriculumApi', () => ({ fetchCurriculumScopeLearnerKsbImpact: fetchImpact, fetchCurriculumScopeLearnerRoster: fetchRoster, fetchCurriculumJson: fetchStructure, saveCurriculumActivityStatus: saveStatus, fetchCurriculumActivityStatusHistory: fetchHistory }));
 
 const learner = { id: 'profile-1', enrolmentId: 'enrolment-91', name: 'Test Learner', email: 'learner@example.com', programme: 'Business Management', programmeStatus: 'active', cohort: 'October 2026', group: 'Group A', lifecycleStatus: 'active' };
 function plan(id: string, type: string, status = 'not_started', weekId = 'w1'): CurriculumLearnerActivityPlanItem {
@@ -41,6 +41,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   fetchImpact.mockResolvedValue(fixture());
   fetchRoster.mockResolvedValue({ assignedLearners: [learner] });
+  fetchStructure.mockResolvedValue({ weekStructure: [{ id: 'w1' }, { id: 'w2' }] });
   fetchHistory.mockResolvedValue({ history: [] });
 });
 
@@ -271,6 +272,66 @@ describe('Activity status and Overall Progress', () => {
 });
 
 describe('LearnerModuleProgressPage', () => {
+  it('uses the authored week order, including duplicate Reading Weeks and events, through filtering and collapsing', async () => {
+    const weeks = [
+      { id: 'w1', title: 'L1: Introduction' },
+      { id: 'reading-1', title: 'Reading Week' },
+      { id: 'w2', title: 'L2: Planning' },
+      { id: 'event', title: 'London Master Class Event' },
+      { id: 'w12', title: 'L12: Understanding What You Sell' },
+      { id: 'reading-2', title: 'Reading Week' },
+    ];
+    const data = fixture();
+    data.learnerActivityPlan = weeks.map((week, index) => ({
+      ...plan(`c${index + 1}`, 'reading', index === 0 ? 'completed' : 'not_started', week.id), week: week.title,
+    })).reverse();
+    fetchImpact.mockResolvedValue(data);
+    fetchStructure.mockResolvedValue({ weekStructure: weeks });
+    open();
+    await screen.findByText('Test reading c1');
+    const breakdown = screen.getByRole('region', { name: 'Weekly Activity Breakdown' });
+    const titles = () => within(breakdown).getAllByRole('region').map(region => region.getAttribute('aria-label'));
+    expect(titles()).toEqual(weeks.map(week => week.title));
+    expect(fetchStructure).toHaveBeenCalledWith('/curriculum/modules/MOD-1/structure/', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Not Started' }));
+    expect(titles()).toEqual(weeks.slice(1).map(week => week.title));
+    expect(screen.getByRole('article', { name: 'Activities Progress' })).toHaveTextContent('1 / 6 completed');
+    fireEvent.click(screen.getByRole('button', { name: 'All' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse all' }));
+    expect(titles()).toEqual(weeks.map(week => week.title));
+    expect(within(breakdown).queryAllByRole('table')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Expand all' }));
+    expect(titles()).toEqual(weeks.map(week => week.title));
+    expect(within(breakdown).getAllByRole('table')).toHaveLength(6);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search activities' }), { target: { value: 'Reading Week' } });
+    expect(titles()).toEqual(['Reading Week', 'Reading Week']);
+    expect(within(breakdown).getAllByRole('table')).toHaveLength(2);
+  });
+
+  it('waits for the module order before displaying the weekly breakdown', async () => {
+    let resolveStructure!: (value: unknown) => void;
+    fetchStructure.mockReturnValue(new Promise(resolve => { resolveStructure = resolve; }));
+    open();
+    await waitFor(() => expect(fetchRoster).toHaveBeenCalled());
+    expect(screen.queryByText('Test reading c1')).not.toBeInTheDocument();
+    await act(async () => resolveStructure({ weekStructure: [{ id: 'w2' }, { id: 'w1' }] }));
+    await screen.findByText('Test reading c1');
+    expect(within(screen.getByRole('region', { name: 'Weekly Activity Breakdown' })).getAllByRole('region')
+      .map(region => region.getAttribute('aria-label'))).toEqual(['Week 2 | Teams', 'Week 1 | Introduction']);
+  });
+
+  it('shows a failed module order read and retries without changing progress', async () => {
+    fetchStructure.mockRejectedValueOnce(new Error('Module order unavailable'));
+    open();
+    await screen.findByText('Module order unavailable');
+    expect(screen.queryByText('Test reading c1')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }));
+    await screen.findByText('Test reading c1');
+    expect(fetchStructure).toHaveBeenCalledTimes(2);
+    expect(saveStatus).not.toHaveBeenCalled();
+  });
+
   it('shows every assigned activity, including no-history and incomplete rows, in the screenshot layout', async () => {
     open();
     await screen.findByText('Test reading c1');
@@ -350,6 +411,23 @@ describe('LearnerModuleProgressPage', () => {
 });
 
 describe('progress display mapping', () => {
+  it('keeps component order, separate week identities and unmatched activities when applying the authored order', () => {
+    const data = fixture();
+    const input = [
+      { ...plan('c8', 'reading', 'not_started', 'old-week'), week: 'Earlier material' },
+      { ...plan('c7', 'reading', 'not_started', ''), week: '' },
+      { ...plan('c3', 'reading', 'not_started', 'w2'), week: 'Reading Week' },
+      { ...plan('c2', 'quiz'), week: 'Reading Week' },
+      { ...plan('c1', 'reading'), week: 'Reading Week' },
+      { ...plan('c9', 'reading'), learnerId: 'another-learner' },
+    ];
+    data.learnerActivityPlan = input;
+    const rows = buildProgressRows(data, 'profile-1', ['w1', 'w2']);
+    expect(rows.map(row => row.activity.componentId)).toEqual(['c1', 'c2', 'c3', 'c8', 'c7']);
+    expect(rows.map(row => row.weekId)).toEqual(['w1', 'w1', 'w2', 'old-week', 'unallocated']);
+    expect(input.map(row => row.componentId)).toEqual(['c8', 'c7', 'c3', 'c2', 'c1', 'c9']);
+  });
+
   it('binds history by progress identity and preserves component order across duplicate week titles', () => {
     const data = fixture();
     data.learnerActivityPlan = [plan('c2', 'reading', 'completed'), plan('c1', 'reading', 'completed'), { ...plan('c3', 'quiz', 'not_started', 'w2'), week: 'Week 1 | Introduction' }];

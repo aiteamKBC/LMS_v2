@@ -153,3 +153,27 @@ class TransferMatchingReviewTests(SimpleTestCase):
         self.assertTrue(snapshot['matchedComponents']['MANUAL']['manualMatch'])
         self.assertEqual(snapshot['componentMatches'][1]['plannedHours'], 1.5)
         self.assertEqual(write.args[1][1:], [request_id, 7, 'M1'])
+
+    def test_approval_uses_the_same_verified_reading_type_as_review(self):
+        from .progress_transfer_content import verified_source_types
+        data = context(); data[5][1]['source_activity_type'] = 'Reading+Quiz'
+        pending = saved(modules=[item(completedSourceActivities=['material:8'])])
+        request_id = pending['items'][0]['requestId']
+        type_cursor = MagicMock(); type_cursor.fetchall.return_value = [('50', 'material:8', 'pdf', {}, {}, None, None)]
+        type_connection = MagicMock(); type_connection.cursor.return_value.__enter__.return_value = type_cursor
+        cursor = MagicMock(); cursor.fetchone.return_value = (7, 'commercial')
+        connection = MagicMock(); connection.cursor.return_value.__enter__.return_value = cursor
+        with patch('learner_api.progress_transfer_content.connections', {'enrolment': type_connection}):
+            reviewed = build_review(request_id, pending['items'], verified_source_types(data, pending['items']))
+            decisions = {'reviewToken': reviewed['reviewToken'], 'mappings': [
+                {'moduleId': 'M1', 'sourceActivityRef': 'material:8', 'targetComponentId': 'MANUAL'}]}
+            with patch.object(api, 'connections', {'enrolment': connection}), \
+                 patch.object(api, 'with_planned_hours', side_effect=lambda c, _: c), \
+                 patch.object(api.store, 'lock_learner', return_value=nullcontext(cursor)), \
+                 patch.object(api.store, 'read_state', return_value=pending), \
+                 patch.object(api, 'source_owner', return_value=(SimpleNamespace(pk=7), {'id': 9})), \
+                 patch('learner_api.my_learning.load_context', return_value=data):
+                api.approve_request(request_id, SimpleNamespace(id=11), decisions)
+        write = next(call for call in cursor.execute.call_args_list if 'SET snapshot=' in call.args[0])
+        self.assertEqual(set(json.loads(write.args[1][0])['matchedComponents']), {'MANUAL'})
+        self.assertEqual(data[5][1]['source_activity_type'], 'Reading+Quiz')

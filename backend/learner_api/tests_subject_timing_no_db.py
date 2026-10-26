@@ -122,6 +122,21 @@ class TimedAttemptStoreTests(unittest.TestCase):
             subject_store.finish(9, 11, 50, 60, attempt, {}, True, learner_kind='commercial', timing_payload={'trackingToken': 'forged'})
         self.assertEqual(self.cursor.execute.call_count, 1)
 
+    def test_retake_choice_survives_start_restore_and_finish_without_changing_measured_time(self):
+        attempt, definition = self.session()
+        definition['retakeTimeChoice'] = 'keep'
+        subject_store.start(9, 11, 50, 60, definition, attempt_id=attempt,
+                            timing_session=definition['studyTimingSession'])
+        insert = next(call.args for call in self.cursor.execute.call_args_list if 'INSERT INTO' in call.args[0])
+        stored = json.loads(insert[1][-1])
+        self.assertEqual(stored['retakeTimeChoice'], 'keep')
+        self.cursor.fetchone.return_value = [stored, None, None, None, False]
+        with patch('learner_api.subject_timing.timezone.now', return_value=START + timedelta(seconds=60)):
+            saved = subject_store.finish(9, 11, 50, 60, attempt, {}, True, learner_kind='commercial',
+                timing_payload={'trackingToken': definition['studyTimingSession']['trackingToken'], 'timeTakenSeconds': 30})
+        self.assertEqual(saved['study_time']['retakeTimeChoice'], 'keep')
+        self.assertEqual(saved['study_time']['verifiedSeconds'], 30)
+
     def test_transfer_freezes_start_and_finish_before_any_writes(self):
         self.gate.side_effect = ValueError('Transfer pending')
         with self.assertRaisesRegex(ValueError, 'Transfer pending'):

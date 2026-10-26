@@ -66,6 +66,7 @@ async function pressFinish() {
   fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '20' } });
   fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
 }
 
 beforeEach(() => {
@@ -125,20 +126,22 @@ describe('the correction dialog', () => {
 
     // A weekend selection is warned about, not blocked.
     fireEvent.change(screen.getByLabelText('Completion date'), { target: { value: '2026-09-27' } });
-    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14:30' } });
+    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14' } });
+    fireEvent.change(screen.getByLabelText('Completion minutes'), { target: { value: '30' } });
     expect(finalSubmit).toBeEnabled();
     expect(screen.getByText(/This date\/time is outside official working rules/i)).toBeInTheDocument();
     expect(screen.getByText(/You can still submit it/i)).toBeInTheDocument();
     expect(screen.queryByText(/cannot be selected/i)).not.toBeInTheDocument();
 
-    // An out-of-hours time on a working day is only warned about too.
+    // The inclusive upper boundary remains available.
     fireEvent.change(screen.getByLabelText('Completion date'), { target: { value: '2026-09-29' } });
-    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '22:30' } });
+    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '19' } });
     expect(finalSubmit).toBeEnabled();
     expect(screen.getByText(/You can still submit it/i)).toBeInTheDocument();
 
     // A working instant shows no warning.
-    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14:30' } });
+    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14' } });
+    fireEvent.change(screen.getByLabelText('Completion minutes'), { target: { value: '30' } });
     expect(finalSubmit).toBeEnabled();
     expect(screen.queryByText(/You can still submit it/i)).not.toBeInTheDocument();
   });
@@ -153,7 +156,8 @@ describe('the correction dialog', () => {
     await screen.findByRole('dialog', { name: /review your completion date and time/i });
 
     fireEvent.change(screen.getByLabelText('Completion date'), { target: { value: '2026-12-28' } });
-    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14:30' } });
+    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14' } });
+    fireEvent.change(screen.getByLabelText('Completion minutes'), { target: { value: '30' } });
     expect(screen.getByRole('button', { name: /Final Submit/ })).toBeEnabled();
     expect(screen.getByText(/Bank holiday: Boxing Day/)).toBeInTheDocument();
 
@@ -172,12 +176,12 @@ describe('the correction dialog', () => {
     await screen.findByRole('dialog', { name: /review your completion date and time/i });
 
     fireEvent.change(screen.getByLabelText('Completion date'), { target: { value: '2026-09-27' } });
-    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '22:30' } });
+    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '19' } });
     fireEvent.click(screen.getByRole('button', { name: /Final Submit/ }));
 
     await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledTimes(2));
     expect(vi.mocked(submitComponentProgress).mock.calls[1][3]).toMatchObject({
-      declaredCompletedAt: '2026-09-27T22:30:00',
+      declaredCompletedAt: '2026-09-27T19:00:00',
     });
     await waitFor(() => expect(
       screen.queryByRole('dialog', { name: /review your completion date and time/i }),
@@ -193,7 +197,8 @@ describe('the correction dialog', () => {
     await screen.findByRole('dialog', { name: /review your completion date and time/i });
 
     fireEvent.change(screen.getByLabelText('Completion date'), { target: { value: '2026-09-29' } });
-    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14:30' } });
+    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14' } });
+    fireEvent.change(screen.getByLabelText('Completion minutes'), { target: { value: '30' } });
     fireEvent.click(screen.getByRole('button', { name: /Final Submit/ }));
 
     await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledTimes(2));
@@ -214,7 +219,8 @@ describe('the correction dialog', () => {
     await screen.findByRole('dialog', { name: /review your completion date and time/i });
 
     fireEvent.change(screen.getByLabelText('Completion date'), { target: { value: '2026-09-29' } });
-    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14:30' } });
+    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14' } });
+    fireEvent.change(screen.getByLabelText('Completion minutes'), { target: { value: '30' } });
     fireEvent.click(screen.getByRole('button', { name: /Final Submit/ }));
 
     expect(await screen.findByText('The completion date and time cannot be in the future.')).toBeInTheDocument();

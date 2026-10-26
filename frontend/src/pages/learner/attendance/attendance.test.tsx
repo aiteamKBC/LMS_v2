@@ -263,6 +263,27 @@ describe('Attendance lecture workspace', () => {
     expect(posts).toEqual([]);
   });
 
+  it.each(['apprenticeship', 'commercial'])('combines Dr variants outside G1 for %s without changing lecture actions', async kind => {
+    learnerIdentity.kind = kind;
+    payload.modules = [{ id: 'legacy:alex', title: 'Dr. Alex - Leadership - Feb 27' },
+      { id: 'native:alex', title: 'Alex - Leadership - Feb 27' }];
+    payload.lectures = [lecture({ id: 'historical', title: 'Historical lecture', moduleId: 'legacy:alex', module: payload.modules[0].title,
+      monthlyLog: { month: '2026-09', sourceRef: 'att:historical' } }),
+      lecture({ id: 'current', title: 'Current lecture', moduleId: 'native:alex', module: payload.modules[1].title, status: 'absent' })];
+    schedulePayload.modules = [planModule('alex', payload.modules[1].title)];
+    const original = structuredClone(payload);
+    mount();
+    const select = await screen.findByRole('combobox', { name: 'Module' });
+    await waitFor(() => expect(select).toHaveValue('native:alex'));
+    expect(within(select).getAllByRole('option')).toHaveLength(2);
+    expect(screen.getByText('50% attendance')).toBeInTheDocument();
+    expect(screen.getAllByRole('article')).toHaveLength(2);
+    fireEvent.click(within(screen.getByRole('article', { name: 'Historical lecture' })).getByRole('button', { name: 'Open Activities' }));
+    expect(screen.getByTestId('location')).toHaveTextContent(`/learner/monthly-logs/${kind}/12/2026-09?source=att%3Ahistorical`);
+    expect(payload).toEqual(original);
+    expect(posts).toEqual([]);
+  });
+
   it('groups historical aliases with a current module supplied only by the schedule', async () => {
     const title = 'G1- Ray - Project Management Professional - Jan 26';
     payload.modules = [{ id: 'legacy:g1', title: title.replace('Ray', 'Dr.Ray') }];

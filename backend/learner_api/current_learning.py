@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from old_otjh.repository import query
 from .active_users import completed_hours_value_from_progress
 from .progress_rules import progress_counts_as_achieved
+from .retake_timing import native_choices, measured_choice
 
 
 def instant(value):
@@ -68,7 +69,7 @@ def project_current(records, markings):
 
     Planned duration is never substituted for recorded time.
     """
-    result, native = [], {}
+    result, native, candidates = [], {}, []
     retained = {source_reference(p) for p in records if p.get('source_system')}
     # A staff hours correction is scoped to one activity. Retain every attempt
     # as evidence, but do not add native attempt time to the corrected ledger
@@ -80,6 +81,7 @@ def project_current(records, markings):
         p = dict(original)
         if not is_unsynchronised_direct_save(p):
             result.append(p)
+            candidates.append(p)
             continue
         if p.get('kind') == 'activity_event' or not p.get('submitted_at'):
             continue
@@ -101,13 +103,14 @@ def project_current(records, markings):
         p.update(accepted=accepted, completed=accepted, actual_seconds=seconds,
                  reporting_month=at.strftime('%Y-%m'), reporting_started_at=at,
                  reporting_ended_at=at, activity_status='Completed' if accepted else 'Submitted')
+        candidates.append(p)
         # Same component/quiz retries are one activity, not extra earned hours.
         key = ('quiz', p['quiz_ref']) if p.get('quiz_ref') else ('component', component) if component else ('entry', p['id'])
         previous = native.get(key)
         if previous is None or (accepted, seconds, str(at), str(p['id'])) > (
                 previous['accepted'], previous['actual_seconds'], str(previous['reporting_ended_at']), str(previous['id'])):
             native[key] = p
-    return result + list(native.values())
+    return native_choices(result + list(native.values()), candidates)
 
 
 def source_payload_metadata(value):
@@ -124,6 +127,7 @@ def source_reference(record):
 def merge_attempts(records, attempts):
     """Project completion and independently verified local time beside history."""
     result = [dict(p) for p in records]
+    superseded = set()
     # One record can be reached through several lineage links. Index positions,
     # preserving original row order and merging each matching row only once.
     by_route = {}
@@ -175,16 +179,27 @@ def merge_attempts(records, attempts):
                 old = float(p['achieved_score']) / float(maximum) * 100 if maximum and p.get('achieved_score') is not None else None
                 p['achieved_score'] = max(float(attempt['best_percent']), old) if old is not None else float(attempt['best_percent'])
                 p['total_score'] = 100
-        measured = measured_attempt_record(attempt, route)
+        measured = measured_attempt_record(attempt, route, has_accepted_history=any(
+            p.get('accepted') is True and p.get('actual_seconds') is not None for p in matches))
         if measured and not any(str(p['id']) == measured['id'] for p in result):
+            if measured.pop('retake_replace_existing', False):
+                measured['retake_superseded_ids'] = [str(p['id']) for p in matches if p.get('id')]
+                measured['ksbs'] = sorted({code for old in matches for code in old.get('ksbs', [])})
+                measured['achieved_score'] = attempt.get('best_percent')
+                measured['total_score'] = 100
+                for field in ('module_ref', 'module_title', 'group_ref', 'group_title'):
+                    measured[field] = next((old[field] for old in matches if old.get(field)), None)
+                superseded.update(str(old['id']) for old in matches)
+                measured['hours_only'] = False
+            else:
+                measured['hours_only'] = has_progress_record
             # Additional time for an existing activity is evidence, not another
             # activity in programme/recorded-course completion denominators.
-            measured['hours_only'] = has_progress_record
             result.append(measured)
-    return result
+    return [record for record in result if str(record['id']) not in superseded]
 
 
-def measured_attempt_record(attempt, route):
+def measured_attempt_record(attempt, route, *, has_accepted_history=False):
     """One best completed local duration per placement, as for native saves.
 
     Untimed historical attempts contribute no hours. Keep this row separate
@@ -202,7 +217,9 @@ def measured_attempt_record(attempt, route):
             candidates.append(saved)
     if not candidates:
         return None
-    saved = max(candidates, key=lambda row: (row['timing']['verifiedSeconds'], str(row.get('id'))))
+    saved, replace_history = measured_choice(candidates, has_accepted_history)
+    if saved is None:
+        return None
     timing = saved['timing']
     at = instant(timing.get('declaredCompletedAt') or timing.get('submittedAt'))
     if at is None:
@@ -212,6 +229,7 @@ def measured_attempt_record(attempt, route):
         'kind': 'quiz' if attempt.get('catalogue_kind') == 'quiz' else 'component',
         'accepted': True, 'completed': True, 'actual_seconds': timing['verifiedSeconds'],
         'actual_basis': 'legacy_activity_verified_timer', 'ksbs': [], 'sources': [route], 'segments': [],
+        'retake_replace_existing': replace_history,
         'reporting_month': at.strftime('%Y-%m'), 'reporting_started_at': at, 'reporting_ended_at': at,
         'source_payload': {'original_source_ref': ident, 'subject_attempt_id': str(saved['id']), 'studyTime': timing}}
 
