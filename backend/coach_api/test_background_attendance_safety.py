@@ -3,6 +3,7 @@ from contextlib import ExitStack, nullcontext
 from copy import deepcopy
 from datetime import timedelta
 from io import StringIO
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from django.test import SimpleTestCase
@@ -44,7 +45,8 @@ class BackgroundAttendanceTests(SimpleTestCase):
                         return snapshot, error, status
                     with patch.object(command, 'fetch_coach_meeting_graph_snapshot', side_effect=fetch):
                         self.run_command()
-                    self.assertEqual(self.overlay.status, 'in-progress' if kind == 'complete' else 'scheduled')
+                    expected_start = kind == 'complete' or (kind == 'other-call' and family != 'PSP')
+                    self.assertEqual(self.overlay.status, 'in-progress' if expected_start else 'scheduled')
 
     def test_reopened_current_scheduled_revision_starts_without_changing_archive_metadata(self):
         self.prepare('PSP')
@@ -103,6 +105,10 @@ class BackgroundAttendanceTests(SimpleTestCase):
                 return stack.enter_context(patch(target, **kwargs))
             mock('coach_api.views.has_graph_credentials', return_value=True)
             mock('coach_api.views.coach_meeting_graph_target', return_value=(self.base, None))
+            mock('coach_api.actual_session_resolution.review_meeting_target',
+                 side_effect=lambda _record, *, identity_out: (
+                     identity_out.update(target=SimpleNamespace(online_meeting_id='synthetic-meeting'))
+                     or (self.base, None)))
             def graph(method, path, *args, **kwargs):
                 response = self.graph(method, path, *args, **kwargs)
                 if path.endswith('/recordings') and getattr(self, 'during_fetch', None):
@@ -130,6 +136,7 @@ class BackgroundAttendanceTests(SimpleTestCase):
             mock('django.db.transaction.atomic', return_value=nullcontext())
             manager = mock('coach_api.models.CoachCalendarEvent.objects')
             manager.using.return_value.select_for_update.return_value.get.side_effect = lambda **kw: self.current_record
+            manager.using.return_value.filter.return_value.exclude.return_value.exists.return_value = False
             overlays = mock('coach_api.models.ImportedReviewInstance.objects')
             overlays.using.return_value.select_for_update.return_value.get.return_value = self.overlay
             stack.enter_context(patch.object(runner, '_matching_records', return_value=[self.record]))
@@ -320,7 +327,7 @@ class BackgroundAttendanceTests(SimpleTestCase):
                     self.assertEqual([r['id'] for r in self.writes[-1]['reports']], ['report-1'])
                     self.assertIn('partial=1', output)
 
-    def test_wrong_window_is_not_counted_or_written(self):
+    def test_verified_other_day_report_is_kept_for_imported_meeting_only(self):
         for family in fixtures.FAMILIES:
             with self.subTest(family=family):
                 self.prepare(family)
@@ -329,8 +336,14 @@ class BackgroundAttendanceTests(SimpleTestCase):
                 self.reports.append(old)
                 self.details['old-report'] = detail
                 self.run_command()
-                self.assertEqual([r['id'] for r in self.writes[-1]['reports']], ['report-1'])
-                self.assert_attended()
+                expected = ['report-1'] if family == 'PSP' else ['report-1', 'old-report']
+                self.assertEqual([r['id'] for r in self.writes[-1]['reports']], expected)
+                if family == 'PSP':
+                    self.assert_attended()
+                else:
+                    self.assertTrue(all(r['status'] == 'attended'
+                                        for r in self.writes[-1]['tracker']['tracker']
+                                        if r['role'] in {'coach', 'learner'}))
 
     def test_duplicate_reports_and_duplicate_fetch_do_not_double_seconds(self):
         for family in fixtures.FAMILIES:
@@ -345,7 +358,7 @@ class BackgroundAttendanceTests(SimpleTestCase):
                 self.assert_attended()
                 self.assertEqual(len(self.writes[-1]['reports']), 1)
 
-    def test_rescheduled_booking_never_reuses_old_window(self):
+    def test_reschedule_keeps_same_verified_meeting_for_imported_families(self):
         for family in fixtures.FAMILIES:
             with self.subTest(family=family):
                 self.prepare(family)
@@ -353,8 +366,13 @@ class BackgroundAttendanceTests(SimpleTestCase):
                 self.run_command()
                 self.record.scheduled_date -= timedelta(days=7)
                 self.run_command()
-                self.assertEqual(self.writes[-1]['reports'], [])
-                self.assertTrue(all(r['status'] == 'pending' for r in self.writes[-1]['tracker']['tracker']))
+                if family == 'PSP':
+                    self.assertEqual(self.writes[-1]['reports'], [])
+                    self.assertTrue(all(r['status'] == 'pending'
+                                        for r in self.writes[-1]['tracker']['tracker']))
+                else:
+                    self.assertEqual([r['id'] for r in self.writes[-1]['reports']], ['report-1'])
+                    self.assert_attended()
 
     def test_no_report_late_report_and_complete_zero_attendance(self):
         for family in fixtures.FAMILIES:
@@ -367,7 +385,11 @@ class BackgroundAttendanceTests(SimpleTestCase):
                 self.assert_attended()
                 self.load_report(roles=())
                 self.run_command()
-                self.assertTrue(all(r['status'] == 'absent' for r in self.writes[-1]['tracker']['tracker']))
+                if family == 'PSP':
+                    self.assertTrue(all(r['status'] == 'absent'
+                                        for r in self.writes[-1]['tracker']['tracker']))
+                else:
+                    self.assert_attended()
 
     def test_native_default_and_start_transition_are_unchanged(self):
         self.prepare('MCM')

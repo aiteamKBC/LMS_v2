@@ -6,15 +6,17 @@ rollback, constraints, or concurrent PostgreSQL commits.
 from contextlib import ExitStack, contextmanager, nullcontext
 from copy import deepcopy
 from datetime import timedelta
+from django.utils.dateparse import parse_datetime
 import inspect
 import re
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
 from django.utils import timezone
 
 from . import views, migrated_intelligence_views
-from .migrated_session_scope import snapshot_version
+from .migrated_session_scope import persist_imported_snapshot, scope_snapshot, snapshot_version
 from . import test_aptem_attendance_stabilization as fixtures
 
 
@@ -31,6 +33,40 @@ class ImportedSnapshotPersistenceTests(SimpleTestCase):
         self.previous = {**deepcopy(self.snapshot), 'attendanceReports': [self.report],
                          'storage': {'stored': True}, 'partial': False}
         self.started = timezone.now()
+
+    def test_stored_report_reader_retains_verified_meeting_scope_without_media(self):
+        metadata = {**self.report, '_lms_verified_online_meeting_id': 'meeting-one'}
+        report_row = ('report-1', parse_datetime(self.report['meetingStartDateTime']),
+                      parse_datetime(self.report['meetingEndDateTime']), 2, 2, 0,
+                      metadata, timezone.now())
+        with patch.object(views, 'coach_meeting_expected_attendees', return_value=[]), \
+             patch.object(views, 'coach_meeting_snapshot_tables_ready', return_value=True), \
+             patch.object(views, 'connections') as connections:
+            cursor = connections.__getitem__.return_value.cursor.return_value.__enter__.return_value
+            cursor.fetchall.side_effect = [[], [report_row], []]
+            snapshot = views.stored_coach_meeting_snapshot(self.record)
+        self.assertEqual(snapshot['attendanceReports'][0]['_lms_verified_online_meeting_id'], 'meeting-one')
+        scoped = scope_snapshot(self.record, snapshot, meeting_scoped=True)
+        self.assertEqual([item['id'] for item in scoped['attendance']['reports']], ['report-1'])
+
+    def test_unverified_legacy_report_is_not_reattributed_or_deactivated_by_empty_refresh(self):
+        previous = deepcopy(self.previous)
+        previous['attendanceTracker'] = {'tracker': [{'id': 'saved-attendee', 'attended': True}]}
+        with patch('django.db.router.db_for_write', return_value='snapshot-write'), \
+             patch('django.db.transaction.atomic', return_value=nullcontext()), \
+             patch('coach_api.models.CoachCalendarEvent.objects') as calendars, \
+             patch('coach_api.models.ImportedReviewInstance.objects') as overlays, \
+             patch('coach_api.views.stored_coach_meeting_snapshot', return_value=previous), \
+             patch('coach_api.views.persist_coach_meeting_snapshots', return_value={'stored': True}) as persist:
+            calendars.using.return_value.select_for_update.return_value.get.return_value = self.record
+            calendars.using.return_value.filter.return_value.exclude.return_value.exists.return_value = False
+            result = persist_imported_snapshot(self.record, deepcopy(self.snapshot),
+                expected_version=snapshot_version(previous), context={'overlayId': 3},
+                start_review=False, meeting_id='synthetic-meeting')
+        self.assertTrue(result['stored'])
+        self.assertEqual(persist.call_args.kwargs['attendance_reports'], [])
+        self.assertEqual(persist.call_args.kwargs['attendance_tracker'], previous['attendanceTracker'])
+        overlays.using.return_value.select_for_update.return_value.get.assert_called_once()
 
     def test_sql_retains_report_history_and_only_writes_resource_tables_under_calendar_lock(self):
         events, statements = [], []
@@ -100,11 +136,15 @@ class ImportedSnapshotPersistenceTests(SimpleTestCase):
                 snapshot = {**deepcopy(self.snapshot), 'errors': [], 'partial': False}
                 previous = deepcopy(self.previous)
                 previous['storage']['syncedAt'] = (timezone.now() + timedelta(seconds=1)).isoformat()
-                mock('coach_api.views.fetch_coach_meeting_graph_snapshot', return_value=(snapshot, None, 200))
+                fetch = mock('coach_api.views.fetch_coach_meeting_graph_snapshot',
+                             return_value=(snapshot, None, 200))
                 mock('coach_api.views.stored_coach_meeting_snapshot', side_effect=[deepcopy(self.previous), previous])
                 mock('django.db.transaction.atomic', return_value=nullcontext())
                 manager = mock('coach_api.models.CoachCalendarEvent.objects')
                 manager.using.return_value.select_for_update.return_value.get.return_value = record
+                manager.using.return_value.filter.return_value.exclude.return_value.exists.return_value = False
+                overlays = mock('coach_api.models.ImportedReviewInstance.objects')
+                overlays.using.return_value.select_for_update.return_value.get.return_value = overlay
                 ai = mock('coach_api.views.openai_meeting_summary')
                 recap = mock('coach_api.views.ensure_coach_meeting_summary')
                 connections = mock('coach_api.views.connections')
@@ -114,6 +154,12 @@ class ImportedSnapshotPersistenceTests(SimpleTestCase):
                     mock('coach_api.views.apply_teams_attendance_status_transition', return_value=False)
                     result = inspect.unwrap(views.coach_timetable_event_artifacts)(request, record.event_key)
                 else:
+                    mock('coach_api.actual_session_resolution.review_meeting_target',
+                         side_effect=lambda _record, *, identity_out: (
+                             identity_out.update(target=SimpleNamespace(online_meeting_id='synthetic-meeting'))
+                             or ('users/synthetic/onlineMeetings/synthetic-meeting', None)))
+                    fetch.side_effect = lambda _record, **options: (
+                        options['target_resolver'](_record) and snapshot, None, 200)
                     mock('coach_api.migrated_intelligence_views._association', return_value=(overlay, record, {}))
                     mock('coach_api.migrated_intelligence_views._checked_lock', return_value=(overlay, record, None))
                     result = inspect.unwrap(migrated_intelligence_views.migrated_review_check_session)(request, record.event_key)

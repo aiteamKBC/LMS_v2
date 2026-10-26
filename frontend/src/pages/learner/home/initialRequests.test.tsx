@@ -3,9 +3,11 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { invalidateLearnerReads } from '@/api/learnerRead';
+import { feedbackApi } from '@/api/feedback';
 import StudentHome from './page';
 
 const state = vi.hoisted(() => ({ status: 'Active', role: 'learner' }));
+vi.mock('@/api/feedback', () => ({ feedbackApi: { myForms: vi.fn() } }));
 vi.mock('lottie-react', () => ({ Lottie: () => null }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: {
   id: 3, subjectId: 71, learnerType: 'apprenticeship', role: state.role, displayName: 'Synthetic Learner',
@@ -36,6 +38,7 @@ beforeEach(() => {
   state.role = 'learner';
   invalidateLearnerReads();
   fetchMock.mockClear();
+  vi.mocked(feedbackApi.myForms).mockReset().mockResolvedValue({ forms: [] });
   vi.stubGlobal('fetch', fetchMock);
 });
 afterEach(() => { cleanup(); invalidateLearnerReads(); vi.unstubAllGlobals(); });
@@ -67,5 +70,6 @@ describe('Home card transport after identity resolves', () => {
     await act(async () => {});
     expect(screen.getByText('Existing onboarding destination')).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(feedbackApi.myForms).not.toHaveBeenCalled();
   });
 });

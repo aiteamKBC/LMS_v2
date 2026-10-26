@@ -309,7 +309,7 @@ describe('bound migrated review answers', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Generate from Teams' }));
     expect(screen.getByRole('button', { name: 'Generating summary...' })).toBeDisabled();
     expect(field).toBeDisabled();
-    expect(api.fetchMigratedReviewIntelligence).toHaveBeenLastCalledWith(id, undefined, { refresh: true });
+    expect(api.fetchMigratedReviewIntelligence).toHaveBeenLastCalledWith(id, undefined, { refresh: true, generateSummary: true });
     await act(async () => release({ ...result({ fieldKey: 'recap', state: 'AI_POPULATED_UNEDITED', status: 'populated', suggestionSource: 'teams' }),
       answerVersion: 'v2', reviewAnswers: { recap: 'Teams summary', other: 'Existing other answer' } }));
     expect(field).toHaveValue('Teams summary');
@@ -410,12 +410,27 @@ describe('bound migrated review answers', () => {
   it('explains a missing Teams transcript without blocking manual entry', async () => {
     vi.mocked(api.fetchMigratedReviewIntelligence).mockImplementation(async (_id, _signal, options) => options?.refresh
       ? { ...result({ fieldKey: 'recap', state: 'NEVER_POPULATED', status: 'summary-unavailable', generationStatus: 'unavailable' }),
+        intelligence: { ...result().intelligence!, transcriptStatus: 'unavailable', summaryStatus: 'unavailable', errorCodes: ['TRANSCRIPT_PENDING'] },
         answerVersion: 'v2', reviewAnswers: { other: 'Existing other answer' } } : result());
     mount();
     const field = await screen.findByRole('textbox', { name: 'Discussion record' });
     fireEvent.click(screen.getByRole('button', { name: 'Generate from Teams' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('No transcript was found for this meeting.');
     expect(field).toBeEnabled();
+  });
+
+  it('reports a saved transcript without mislabeling it missing when generation is pending', async () => {
+    vi.mocked(api.fetchMigratedReviewIntelligence).mockImplementation(async (_id, _signal, options) => options?.refresh
+      ? { ...result({ fieldKey: 'recap', state: 'NEVER_POPULATED', status: 'summary-unavailable', generationStatus: 'unavailable' }),
+        intelligence: { ...result().intelligence!, transcriptStatus: 'available', summaryStatus: 'pending',
+          meetingEndStatus: 'pending', errorCodes: ['MEETING_END_PENDING'] },
+        answerVersion: 'pending-version', reviewAnswers: { other: 'Existing other answer' } }
+      : result());
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate from Teams' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The saved Teams transcript is available');
+    expect(screen.queryByText(/No transcript was found/)).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Discussion record' })).toBeEnabled();
   });
 
   it.each(['aptem_mcm', 'aptem_progress_review'])('shows disabled admin summary controls for %s without a file picker or mutation', async reviewTypeCode => {
@@ -473,7 +488,7 @@ describe('summary request ownership', () => {
     vi.mocked(api.fetchMigratedReviewIntelligence).mockImplementation(async (_key, _signal, options) => options?.refresh ? pending : result());
     render(<ReviewInstanceModal instanceId={id} onClose={vi.fn()} presentation="page" />);
     fireEvent.click(await screen.findByRole('button', { name: 'Generate from Teams' }));
-    await waitFor(() => expect(api.fetchMigratedReviewIntelligence).toHaveBeenCalledWith(id, undefined, { refresh: true }));
+    await waitFor(() => expect(api.fetchMigratedReviewIntelligence).toHaveBeenCalledWith(id, undefined, { refresh: true, generateSummary: true }));
     fireEvent.click(screen.getByRole('button', { name: 'Next step' }));
     expect(screen.queryByRole('button', { name: 'Generate from Teams' })).not.toBeInTheDocument();
     await act(async () => { resolveGeneration({ ...result({ fieldKey: 'recap', state: 'AI_POPULATED_UNEDITED', generationStatus: 'ready' }),
@@ -511,7 +526,8 @@ describe('summary request ownership', () => {
       const action = await screen.findByRole('button', { name: source === 'check' ? 'Check Session' : 'Generate from Teams' });
       await waitFor(() => expect(action).toBeEnabled());
       fireEvent.click(action);
-      await waitFor(() => expect(api.fetchMigratedReviewIntelligence).toHaveBeenCalledWith(id, undefined, { refresh: true }));
+      await waitFor(() => expect(api.fetchMigratedReviewIntelligence).toHaveBeenCalledWith(id, undefined,
+        source === 'check' ? { refresh: true } : { refresh: true, generateSummary: true }));
     } else {
       fireEvent.change(screen.getByLabelText('Select migrated review transcript'), {
         target: { files: [new File(['Synthetic transcript'], 'meeting.txt', { type: 'text/plain' })] },
@@ -554,7 +570,7 @@ describe('summary request ownership', () => {
     vi.mocked(api.fetchMigratedReviewIntelligence).mockImplementation(async (_key, _signal, options) => options?.refresh
       ? { ...result({ fieldKey: 'recap', state: 'NEVER_POPULATED', generationStatus: 'unavailable' }),
         answerVersion: 'fetch-failed-version', reviewAnswers: { other: 'Existing other answer' },
-        intelligence: { ...result().intelligence!, errorCodes: ['TRANSCRIPT_FETCH_FAILED'] } }
+        intelligence: { ...result().intelligence!, transcriptStatus: 'fetch-failed', errorCodes: ['TRANSCRIPT_FETCH_FAILED'] } }
       : result());
     mount();
     const action = await screen.findByRole('button', { name: 'Generate from Teams' });
@@ -562,5 +578,17 @@ describe('summary request ownership', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('The Teams transcript could not be fetched.');
     expect(screen.queryByText(/No transcript was found/)).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Discussion record' })).toBeEnabled();
+  });
+
+  it('distinguishes an incomplete transcript from a missing transcript', async () => {
+    vi.mocked(api.fetchMigratedReviewIntelligence).mockImplementation(async (_key, _signal, options) => options?.refresh
+      ? { ...result({ fieldKey: 'recap', state: 'NEVER_POPULATED', generationStatus: 'unavailable' }),
+        intelligence: { ...result().intelligence!, transcriptStatus: 'incomplete', summaryStatus: 'unavailable',
+          errorCodes: ['TRANSCRIPT_INCOMPLETE'] } }
+      : result());
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate from Teams' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The complete Teams transcript is not available yet.');
+    expect(screen.queryByText(/No transcript was found/)).not.toBeInTheDocument();
   });
 });

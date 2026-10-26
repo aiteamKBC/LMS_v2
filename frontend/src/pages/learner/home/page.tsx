@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { ArrowRight, CalendarCheck2, MapPin, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
@@ -8,10 +8,12 @@ import { apprenticeHomeRedirect, isFreshStatus, isOnboardingStatus } from '@/hoo
 import { useFirstLoginDetailsRedirect } from '@/hooks/useFirstLoginDetailsRedirect';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { upcomingSchedule, homeSummary } from '@/api/learnerOverview';
+import { feedbackApi } from '@/api/feedback';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { SupportChatWidget } from '@/components/SupportChatWidget';
 import { learnerHref } from '@/lib/learnerRoutes';
+import { LEARNER_FEEDBACK_ENABLED } from '@/lib/featureFlags';
 import { homeActions, greeting, homeUpcomingEvents, withLearner } from './homeData';
 import { ReferenceIcon } from './ReferenceIcon';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
@@ -76,6 +78,9 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
   const now = new Date();
   const account = auth.account!;
   const homeHref = preview && kind && id ? `/workspace/learner/${kind}/${id}` : '/workspace/learner';
+  const feedbackHref = preview && kind && id
+    ? `/learner/feedback?learnerId=${encodeURIComponent(id)}&kind=${encodeURIComponent(kind)}`
+    : '/learner/feedback';
   // A staff preview names the learner in every link, so the workspace sidebar
   // keeps routing to that learner. A learner's own links stay bare: their
   // pages resolve them from the session, and the address bar shows no ids.
@@ -96,8 +101,20 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
     ? apprenticeHomeRedirect(profile.real?.programmeStatus) : null;
   // Do not start shared reads for cards this render is about to leave.
   const loadCards = ready && !onboarding && !fresh && !beforeActive;
+  const loadFeedbackCount = LEARNER_FEEDBACK_ENABLED && ready && !beforeActive && (preview || kind === 'commercial' || (!onboarding && !fresh));
   const schedule = useLiveLearnerRead(kind, id, loadCards, upcomingSchedule.read, upcomingSchedule.peek);
   const week = useLiveLearnerRead(kind, id, loadCards, homeSummary.read, homeSummary.peek);
+  const [feedbackPendingCount, setFeedbackPendingCount] = useState(0);
+  useEffect(() => {
+    let active = true;
+    if (!loadFeedbackCount) { setFeedbackPendingCount(0); return () => { active = false; }; }
+    feedbackApi.myForms(preview ? id : undefined).then(result => {
+      if (active) setFeedbackPendingCount(result.forms.filter(form => form.status !== 'completed').length);
+    }).catch(() => {
+      if (active) setFeedbackPendingCount(0);
+    });
+    return () => { active = false; };
+  }, [id, loadFeedbackCount, preview]);
   useEffect(() => { const previous = document.title; document.title = 'Student Home — Kent Business College'; return () => { document.title = previous; }; }, []);
 
   if (!kind || !id) return <LearnerLoadError error="We could not verify your learner profile. Please try again." onRetry={retryInitialization}/>;
@@ -116,6 +133,9 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
     <StudentHomeHeader key={`${account.id}:${kind}:${id}`} name={name} homeHref={homeHref}
       identity={`${account.id}:${kind}:${id}`} events={events} loading={schedule.loading}
       error={!!schedule.error} onRetry={schedule.refresh}
+      feedbackEnabled={LEARNER_FEEDBACK_ENABLED}
+      feedbackHref={feedbackHref}
+      feedbackPendingCount={feedbackPendingCount}
       supportHref={link('/learner/monthly-coaching')}/>
     <main id="student-main" className={styles.scene}>
       <section className={styles.hero} aria-labelledby="welcome-heading"><p>{greeting(now)}</p>

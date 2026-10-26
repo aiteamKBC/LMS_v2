@@ -28,7 +28,7 @@ class ImportedTranscriptCompletenessTests(SimpleTestCase):
         snapshot['artifacts'].append(second)
         return snapshot
 
-    def test_partial_call_never_generates_or_binds_in_any_imported_summary_family(self):
+    def test_partial_check_only_never_generates_or_binds_in_any_imported_summary_family(self):
         for family in ('MCM', 'PR', 'PR_SKILLS_RADAR'):
             for answer in ({}, {'summary': 'Coach edit'}, {'summary': ''}):
                 with self.subTest(family=family, answer=answer):
@@ -42,7 +42,7 @@ class ImportedTranscriptCompletenessTests(SimpleTestCase):
                         response, persist = self.call_check(self.segments(), {'artifactId': 'transcript-1', 'text': 'Opening only'})
                     ai.assert_not_called()
                     self.assertEqual(response.status_code, 207)
-                    self.assertEqual(self.overlay.meeting_intelligence['transcriptStatus'], 'fetch-failed')
+                    self.assertEqual(self.overlay.meeting_intelligence['transcriptStatus'], 'incomplete')
                     self.assertIn('TRANSCRIPT_INCOMPLETE', self.overlay.meeting_intelligence['errorCodes'])
                     self.assertNotIn('summary', self.overlay.meeting_intelligence)
                     self.assertEqual(self.overlay.answers, answer)
@@ -56,22 +56,26 @@ class ImportedTranscriptCompletenessTests(SimpleTestCase):
         self.assertEqual(response.status_code, 207)
         self.assertIn('TRANSCRIPT_INCOMPLETE', self.overlay.meeting_intelligence['errorCodes'])
 
-    def test_complete_same_event_cache_can_recover_content_failure(self):
+    def test_complete_same_event_cache_is_retained_without_using_failed_fresh_content_for_ai(self):
         transcript = {'artifactId': 'transcript-1,transcript-2', 'text': 'Opening\n\nFinal agreed actions'}
+        cached = self.segments(failed=False)
+        for row in cached['artifacts']:
+            row['metadata'] = {'_lms_graph_event_id': self.record.graph_event_id,
+                               '_lms_verified_online_meeting_id': 'synthetic-meeting'}
         with patch('coach_api.views.openai_meeting_summary', return_value=({'overview': 'All facts'}, 'model')) as ai:
-            response, _ = self.call_check(self.segments(), transcript)
-        ai.assert_called_once_with(self.record, transcript['text'])
+            response, _ = self.call_check(self.segments(), transcript, stored_snapshot=cached)
+        ai.assert_not_called()
         self.assertEqual(response.status_code, 207)  # Fresh fetch failure remains visible.
-        self.assertEqual(self.overlay.meeting_intelligence['transcriptStatus'], 'available')
-        self.assertEqual(self.overlay.meeting_intelligence['transcriptArtifactId'], transcript['artifactId'])
+        self.assertEqual(self.overlay.meeting_intelligence['transcriptStatus'], 'incomplete')
+        self.assertEqual(self.overlay.answers, {})
 
     def test_retry_after_missing_segment_generates_once_with_all_segments(self):
         with patch('coach_api.views.openai_meeting_summary', return_value=({'overview': 'All facts'}, 'model')) as ai:
             self.call_check(self.segments(), {'artifactId': 'transcript-1', 'text': 'Opening'})
             ai.assert_not_called()
             complete = {'artifactId': 'transcript-1,transcript-2', 'text': 'Opening\n\nFinal actions'}
-            self.call_check(self.segments(failed=False), complete)
-            self.call_check(self.segments(failed=False), complete)
+            self.call_check(self.segments(failed=False), complete, generate=True)
+            self.call_check(self.segments(failed=False), complete, generate=True)
         ai.assert_called_once_with(self.record, complete['text'])
 
     def test_failed_transcript_listing_does_not_generate_from_unproven_partial_cache(self):
@@ -94,7 +98,7 @@ class ImportedGraphTargetFailureTests(SimpleTestCase):
         with (
             patch('coach_api.migrated_intelligence_views._association', return_value=(self.overlay, self.record, {})),
             patch('coach_api.views.has_graph_credentials', return_value=True),
-            patch('coach_api.views.coach_meeting_graph_target', side_effect=error),
+            patch('coach_api.actual_session_resolution.review_meeting_target', side_effect=error),
             patch('coach_api.views.stored_coach_meeting_snapshot', return_value={'storage': {'stored': True}}) as stored,
             patch('coach_api.views.persist_coach_meeting_snapshots') as persist,
             patch('coach_api.views.openai_meeting_summary') as ai,
@@ -140,7 +144,7 @@ class ImportedGraphTargetFailureTests(SimpleTestCase):
         with patch('coach_api.migrated_intelligence_views._association', return_value=(self.overlay, self.record, {})), \
              patch('coach_api.views.stored_coach_meeting_snapshot', return_value={'storage': {'stored': True}}), \
              patch('coach_api.views.has_graph_credentials', return_value=True), \
-             patch('coach_api.views.coach_meeting_graph_target', return_value=('', {'code': 'coach_online_meeting_unresolved'})):
+             patch('coach_api.actual_session_resolution.review_meeting_target', return_value=('', {'code': 'coach_online_meeting_unresolved'})):
             response = inspect.unwrap(migrated_review_check_session)(self.factory.post('/'), fixtures.ID)
         self.assertEqual(response.status_code, 409)
         self.assertEqual(json.loads(response.content)['code'], 'GRAPH_MEETING_UNRESOLVED')
@@ -171,6 +175,10 @@ class ImportedTranscriptPagingTests(SimpleTestCase):
             patch('coach_api.migrated_intelligence_views.transaction.atomic', return_value=nullcontext()),
             patch('coach_api.views.has_graph_credentials', return_value=True),
             patch('coach_api.views.get_graph_settings', return_value={'base_url': 'https://graph.microsoft.com/v1.0'}),
+            patch('coach_api.actual_session_resolution.review_meeting_target',
+                  side_effect=lambda _record, *, identity_out: (
+                      identity_out.update(target=__import__('types').SimpleNamespace(online_meeting_id='meeting'))
+                      or (base, None))),
             patch('coach_api.views.coach_meeting_graph_target', return_value=(base, None)),
             patch('coach_api.views.microsoft_graph_request', side_effect=graph) as calls,
             patch('coach_api.views.coach_meeting_expected_attendees', return_value=[]),

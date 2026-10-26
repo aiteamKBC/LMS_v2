@@ -75,7 +75,7 @@ it('shows incomplete transcript retrieval as an unavailable suggestion and keeps
   fireEvent.click(screen.getByRole('button', { name: 'Generate from Teams' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Your saved answer is unchanged');
   expect(props.onResult).toHaveBeenCalledExactlyOnceWith(result);
-  expect(fetchMigratedReviewIntelligence).toHaveBeenCalledExactlyOnceWith(props.instanceId, undefined, { refresh: true });
+  expect(fetchMigratedReviewIntelligence).toHaveBeenCalledExactlyOnceWith(props.instanceId, undefined, { refresh: true, generateSummary: true });
   expect(screen.getByRole('button', { name: 'Generate from Teams' })).toBeEnabled();
 });
 
@@ -87,4 +87,11 @@ it('shows a target throttling error without retrying automatically', async () =>
   expect(fetchMigratedReviewIntelligence).toHaveBeenCalledOnce();
   expect(props.onResult).not.toHaveBeenCalled();
   expect(props.onBusyChange).toHaveBeenLastCalledWith(false);
+});
+
+it('labels a saved-transcript suggestion provisional without blocking Coach editing', () => {
+  render(<MigratedSummaryActions {...props} binding={{ fieldKey: 'recap', state: 'AI_POPULATED_UNEDITED',
+    status: 'populated', generationStatus: 'ready', suggestionSource: 'teams', provisional: true }} />);
+  expect(screen.getByText(/Provisional AI summary/)).toHaveTextContent('Review and edit the answer before saving');
+  expect(screen.getByRole('button', { name: 'Generate from Teams' })).toBeEnabled();
 });
