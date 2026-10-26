@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { learningFetch } from '@/lib/personalLearning';
 import { coachFetch } from '@/lib/coachFetch';
 import { clearAllCachedResources } from './cachedRequest';
-import { qualityContext, qualityPdf, saveQualityReview, QualityReviewError, type QualityReview, type QualityForm } from './coachingQualityReviews';
+import { qualityContext, qualityDefinition, qualityReview, saveQualityDefinition, qualityPdf, saveQualityReview, QualityReviewError, type QualityReview, type QualityForm, type QualityTemplate } from './coachingQualityReviews';
 vi.mock('@/lib/personalLearning', () => ({ learningFetch: vi.fn() }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn() }));
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
@@ -23,6 +23,29 @@ describe('Quality review request limits', () => {
     await saveQualityReview(payload, 'saved');
     expect(coachFetch).toHaveBeenCalledWith(expect.stringContaining('/reviews/saved'), expect.objectContaining({ method: 'PUT', body: JSON.stringify(payload) }));
     await qualityContext('event', 'signed', '1'); expect(learningFetch).toHaveBeenCalledTimes(2);
+  });
+  it('separates form, context and saved-review cache keys by selected type', async () => {
+    vi.mocked(learningFetch).mockImplementation(async () => response({ review: null }));
+    for (const kind of ['MCM', 'PR'] as const) {
+      await qualityDefinition(undefined, kind);
+      await qualityContext('event', 'signed', '1', undefined, kind);
+      await qualityReview('saved', undefined, kind);
+    }
+    expect(learningFetch).toHaveBeenCalledTimes(6);
+    await qualityDefinition(undefined, 'MCM'); await qualityContext('event', 'signed', '1', undefined, 'PR');
+    expect(learningFetch).toHaveBeenCalledTimes(6);
+    expect(vi.mocked(learningFetch).mock.calls.map(([url]) => String(url))).toEqual(expect.arrayContaining([
+      expect.stringContaining('/form?reviewType=MCM'), expect.stringContaining('/form?reviewType=PR'),
+      expect.stringContaining('/reviews/saved?reviewType=PR'),
+    ]));
+    await qualityContext('event', 'signed', '1', undefined, undefined, 'MCM');
+    expect(String(vi.mocked(learningFetch).mock.lastCall?.[0])).toContain('titleType=MCM');
+  });
+  it('publishes only the selected form with the existing CSRF transport', async () => {
+    vi.mocked(coachFetch).mockResolvedValue(response({ template: { revision: 1 } }));
+    const payload = { definition: { reviewType: 'PR' } as QualityTemplate, expectedRevision: 0, requestId: 'request', publish: true };
+    await saveQualityDefinition(payload);
+    expect(coachFetch).toHaveBeenCalledWith(expect.stringContaining('/form?reviewType=PR'), expect.objectContaining({ method: 'PUT', body: JSON.stringify(payload) }));
   });
   it('returns an explicit conflict and does not cache failures', async () => {
     vi.mocked(learningFetch).mockResolvedValueOnce(response({ error: 'Reload this version' }, 409)).mockResolvedValueOnce(response({ review: null }));

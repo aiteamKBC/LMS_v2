@@ -16,6 +16,7 @@ from .recordings_cache import recent_read
 from .recordings_calendar import _email, _instant
 from .recordings_calendar_media import attendance_rows
 from .recordings_media import in_session_window, session_window
+from .recordings_parts import merge_transcripts, occurrence_parts
 
 log = logging.getLogger(__name__)
 
@@ -46,15 +47,17 @@ def online_identity(job):
 def same_occurrence(row, owner, event, online, window):
     begin = _instant(row.get('start_at'))
     return (_email(row.get('coach_email')) == owner
+            and not (online and row.get('online_meeting_id') and row['online_meeting_id']!=online)
             and (row.get('event_id') == event or bool(online and row.get('online_meeting_id') == online))
             and begin is not None and abs(begin - window[0]) <= timedelta(minutes=15)
             and in_session_window(begin, row.get('end_at'), window) is True)
 
 
 def _attendance(cursor, meeting_id, window):
+    meeting_ids=list(meeting_id) if isinstance(meeting_id,(list,tuple)) else [meeting_id]
     cursor.execute('''SELECT id,report_id,status,meeting_start_at,meeting_end_at,updated_at
-        FROM public.attendance_reports WHERE meeting_id=%s
-        ORDER BY updated_at DESC LIMIT 51''', [meeting_id])
+        FROM public.attendance_reports WHERE meeting_id=ANY(%s)
+        ORDER BY updated_at DESC LIMIT 51''', [meeting_ids])
     reports = cursor.fetchall()
     if len(reports) > 50:
         raise ValueError('Too many occurrence reports.')
@@ -104,7 +107,7 @@ def _dashboard_evidence(cursor, meeting_id, window, learner_ids, *, include_cont
         FROM public.dashboard_sessions_cache d
         WHERE ''' + meeting_clause + ''' AND meeting_start_time BETWEEN %s AND %s
         AND (%s OR learner_id=ANY(%s))''' + owner_clause + ''' ORDER BY id LIMIT 101''',
-        [[str(value) for value in meeting_id] if multiple else str(meeting_id), window[0] - timedelta(minutes=15), window[0] + timedelta(minutes=15),
+        [[str(value) for value in meeting_id] if multiple else str(meeting_id), window[0] - timedelta(minutes=15), window[1]-timedelta(microseconds=1),
          learner_ids is None, learner_ids or [], *([owner] if owner else [])])
     rows = cursor.fetchall()
     if len(rows) > 100:
@@ -134,21 +137,30 @@ def _dashboard_transcript(rows):
     parts = list(dict.fromkeys(row['transcript'] for row in rows
         if row.get('has_transcript') and row.get('transcript')))
     stamps = [row['updated_at'] for row in rows if row.get('updated_at')]
-    return {'content': '\n\n'.join(parts), 'durationSeconds': None,
+    return {'content': '\n\n'.join(parts), 'durationSeconds': None, 'partCount':len(parts),
         'updatedAt': max(stamps).isoformat() if stamps else None} if parts else None
 
 
-def _meeting_transcript(cursor, meeting_ids):
+def _meeting_transcript(cursor, meeting_ids, window=None):
     # IDs have already been verified as copies of one physical occurrence.
     # The same Graph transcript can be ingested under several calendar copies.
-    cursor.execute('''SELECT content,duration_seconds,status,updated_at FROM (
-        SELECT DISTINCT ON (transcript_id) transcript_id,content,duration_seconds,status,updated_at,created_at
+    cursor.execute('''SELECT transcript_id,metadata,content,duration_seconds,status,updated_at FROM (
+        SELECT DISTINCT ON (transcript_id) transcript_id,metadata,content,duration_seconds,status,updated_at,created_at
         FROM public.meeting_transcripts WHERE meeting_id=ANY(%s::uuid[])
         ORDER BY transcript_id,updated_at DESC,id DESC
         ) latest ORDER BY created_at,transcript_id LIMIT 21''', [list(meeting_ids)])
     transcripts = cursor.fetchall()
     if len(transcripts) > 20:
         raise ValueError('Too many transcript parts.')
+    if window:
+        dated=[]; legacy=[]
+        for row in transcripts:
+            metadata=row.get('metadata') or {}
+            if isinstance(metadata,str):metadata=json.loads(metadata)
+            if metadata.get('createdDateTime') or metadata.get('endDateTime'):
+                dated.append({**metadata,'id':row['transcript_id'],'row':row})
+            else:legacy.append(row)
+        transcripts=[*legacy,*(value['row'] for value in occurrence_parts(dated,window))]
     parts = {}
     for row in transcripts:
         if row['status'] == 'synced' and row['content']:
@@ -158,14 +170,14 @@ def _meeting_transcript(cursor, meeting_ids):
         return None
     stamps = [row['updated_at'] for row in transcripts if row['updated_at']]
     return {
-        'content': transcripts[0]['content'] if len(transcripts) == 1 else '\n\n'.join(
-            f'Transcript {index + 1}\n{row["content"]}' for index, row in enumerate(transcripts)),
+        'content': '\n\n'.join(row['content'] for row in transcripts),
         # Parts can overlap; do not invent a summed meeting duration.
         'durationSeconds': transcripts[0]['duration_seconds'] if len(transcripts) == 1 else None,
+        'partCount':len(transcripts),
         'updatedAt': max(stamps).isoformat() if stamps else None}
 
 
-def _shared_dashboard(cursor, owner, online, window, learner_ids, part):
+def _shared_dashboard(cursor, owner, online, window, learner_ids, part, *, exclude=()):
     """A calendar attendee can own the review while another account hosts Teams.
 
     Only a worker-verified online identity may cross the source organizer account.
@@ -190,10 +202,12 @@ def _shared_dashboard(cursor, owner, online, window, learner_ids, part):
         return empty_evidence('ambiguous' if matches else 'not-found')
     # Several normalized rows can be calendar copies of this same physical
     # online occurrence. Read their original coach-owned reports in one query.
-    meeting_ids = list(dict.fromkeys(row['id'] for row in matches))
+    meeting_ids = list(dict.fromkeys(row['id'] for row in matches if row['id'] not in exclude))
+    if not meeting_ids:
+        return empty_evidence('not-found')
     rows = _dashboard_evidence(cursor, meeting_ids, window, learner_ids,
         include_context=part == 'pdf', owner=owner)
-    transcript = _dashboard_transcript(rows) or _meeting_transcript(cursor, meeting_ids)
+    transcript = merge_transcripts(_dashboard_transcript(rows), _meeting_transcript(cursor, meeting_ids, window))
     if not rows and not transcript:
         return empty_evidence('not-found')
     return {**empty_evidence('matched'), 'transcript': transcript,
@@ -213,43 +227,48 @@ def _read(dsn, owner, event, online, window, learner_ids, *, part='all'):
             cursor.execute('''SELECT id,coach_email,event_id,online_meeting_id,start_at,end_at
                 FROM public.meetings WHERE lower(trim(coach_email))=%s
                 AND (event_id=%s OR (%s<>'' AND online_meeting_id=%s))
-                AND start_at BETWEEN %s AND %s AND end_at>%s AND start_at<%s LIMIT 3''',
+                AND start_at BETWEEN %s AND %s AND end_at>%s AND start_at<%s LIMIT 51''',
                 [owner, event, online, online, window[0] - timedelta(minutes=15),
                  window[0] + timedelta(minutes=15), window[0], window[1]])
-            candidates = [row for row in cursor.fetchall() if same_occurrence(row, owner, event, online, window)]
+            source_rows=cursor.fetchall()
+            if len(source_rows)>50:
+                raise ValueError('Occurrence exceeds the bounded source scope.')
+            candidates = [row for row in source_rows if same_occurrence(row, owner, event, online, window)]
             exact = [row for row in candidates if row['event_id'] == event]
             matches = exact or candidates
-            if len(matches) != 1:
+            copies=bool(online and matches and all(row.get('online_meeting_id')==online for row in matches)
+                and len({(_instant(row['start_at']),_instant(row['end_at'])) for row in matches})==1)
+            if not matches or len(matches)>1 and not copies:
                 if not matches and online and part != 'attendance':
                     return _shared_dashboard(cursor, owner, online, window, learner_ids, part)
                 return empty_evidence('ambiguous' if matches else 'not-found')
-            meeting_id = matches[0]['id']
+            meeting_ids=list(dict.fromkeys(row['id'] for row in matches))
+            meeting_id = meeting_ids if len(meeting_ids)>1 else meeting_ids[0]
             result = empty_evidence('matched')
             if part == 'attendance':
                 result['attendance'] = _attendance(cursor, meeting_id, window)
                 return result
             dashboard = _dashboard_evidence(cursor, meeting_id, window, learner_ids, include_context=part == 'pdf')
-            result['transcript'] = _dashboard_transcript(dashboard)
-            if not result['transcript']:
-                result['transcript'] = _meeting_transcript(cursor, [meeting_id])
+            result['transcript'] = merge_transcripts(_dashboard_transcript(dashboard),
+                _meeting_transcript(cursor, list(dict.fromkeys(row['id'] for row in matches)), window))
             if dashboard:
                 analyses = dashboard
             else:
                 cursor.execute('''SELECT c.id,c.learner_id,c.learner_name,c.component_type,
                     r.ai_status,r.report,r.ai_checked_at
                     FROM public.all_sessions_cache c LEFT JOIN public.report_ai r ON r.session_id=c.id
-                    WHERE c.meeting_id=%s AND lower(trim(c.coach_email))=%s
+                    WHERE c.meeting_id=ANY(%s) AND lower(trim(c.coach_email))=%s
                     AND (%s OR c.learner_id=ANY(%s)) ORDER BY c.id LIMIT 101''',
-                    [meeting_id, owner, learner_ids is None, learner_ids or []])
+                    [meeting_ids, owner, learner_ids is None, learner_ids or []])
                 analyses = cursor.fetchall()
             if len(analyses) > 100:
                 raise ValueError('Evidence exceeds the bounded meeting scope.')
             result['analyses'] = _analyses(analyses, part)
-            if (not result['analyses'] or not result['transcript']) and online and part in ('evidence', 'pdf'):
-                shared = _shared_dashboard(cursor, owner, online, window, learner_ids, part)
+            if online and part in ('all', 'evidence', 'pdf'):
+                shared = _shared_dashboard(cursor, owner, online, window, learner_ids, part, exclude=meeting_ids)
                 if shared['state'] == 'matched':
-                    result['analyses'] = result['analyses'] or shared['analyses']
-                    result['transcript'] = result['transcript'] or shared['transcript']
+                    result['analyses'] = list({row['id']:row for row in [*result['analyses'],*shared['analyses']]}.values())
+                    result['transcript'] = merge_transcripts(result['transcript'],shared['transcript'])
             if part not in ('evidence', 'pdf'):
                 result['attendance'] = _attendance(cursor, meeting_id, window)
             return result
@@ -262,7 +281,7 @@ def saved_evidence(record, job, *, learner_ids=None, part='all'):
     if not all(window) or not record.graph_event_id:
         return empty_evidence('not-found')
     owner, online = _email(record.owner_email), online_identity(job)
-    identity = ['dashboard-source-v5', dsn, owner, record.graph_event_id, online, window, learner_ids, part]
+    identity = ['dashboard-source-v6-parts', dsn, owner, record.graph_event_id, online, window, learner_ids, part]
     try:
         # Source identity and current learner scope are part of the private key.
         # A brief failure cooldown prevents attendance polls hammering an offline DB.

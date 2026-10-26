@@ -41,6 +41,22 @@ class TranscriptReadTests(SimpleTestCase):
         self.assertEqual(transport.microsoft_transcript(self.record, self.job)['state'], 'missing')
         self.content.assert_not_called()
 
+    def test_more_than_five_transcript_parts_are_retained_and_cached(self):
+        self.graph.return_value={'value':[{'id':f'part-{index}','createdDateTime':START.isoformat(),'endDateTime':END.isoformat()} for index in range(7)]}
+        self.content.side_effect=[f'WEBVTT\n\nSynthetic part {index}' for index in range(7)]
+        value=transport.microsoft_transcript(self.record,self.job)
+        self.assertEqual(value['state'],'available');self.assertEqual(value['transcript']['partCount'],7)
+        for index in range(7):self.assertIn(f'Synthetic part {index}',value['transcript']['content'])
+        self.assertEqual(transport.microsoft_transcript(self.record,self.job),value)
+        self.graph.assert_called_once();self.assertEqual(self.content.call_count,7)
+
+    def test_explicit_check_keeps_saved_text_and_recovers_additional_microsoft_parts(self):
+        saved={**empty_evidence('matched'),'transcript':{'content':'Saved original part','durationSeconds':None,'updatedAt':None}}
+        result=evidence.check_microsoft_transcript(self.record,self.job,saved)
+        self.assertIn('Saved original part',result['transcript']['content'])
+        self.assertIn('Synthetic verified transcript',result['transcript']['content'])
+        self.assertEqual(result['transcript']['partCount'],2)
+
     def test_other_owner_or_future_or_unverified_job_does_not_contact_microsoft(self):
         other = calendar_record({**self.context, 'owner': 'other@example.invalid'})
         self.assertEqual(transport.microsoft_transcript(other, self.job)['code'], 'meeting_identity_pending')

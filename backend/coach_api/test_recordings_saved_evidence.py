@@ -38,7 +38,7 @@ class SavedEvidenceTests(SimpleTestCase):
         self.cursor.fetchall.side_effect = [meetings if meetings is not None else [self.meeting],
             [],  # No row in the original dashboard; exercise the existing ingest fallback.
             transcripts if transcripts is not None else [self.transcript],
-            analyses if analyses is not None else [self.analysis], reports if reports is not None else [self.report],
+            analyses if analyses is not None else [self.analysis], [], reports if reports is not None else [self.report],
             participants if participants is not None else [self.participant]]
 
     def read(self, *, online='online', learner_ids=None):
@@ -71,7 +71,7 @@ class SavedEvidenceTests(SimpleTestCase):
             self.assertEqual(result['analyses'], [])
 
     def test_ambiguous_meeting_is_withheld_instead_of_selecting_a_learner_or_title_match(self):
-        self.rows(meetings=[self.meeting, {**self.meeting, 'id': 'second'}])
+        self.rows(meetings=[self.meeting, {**self.meeting, 'id': 'second', 'start_at':START.replace(minute=3)}])
         self.assertEqual(self.read()['state'], 'ambiguous')
         self.cursor.fetchone.assert_not_called()
 
@@ -86,14 +86,14 @@ class SavedEvidenceTests(SimpleTestCase):
             'has_transcript': True, 'transcript': 'Verified original shared-meeting transcript',
             'updated_at': END, 'report_context': '{"source":"progress_review"}'}
         host = {**self.meeting, 'coach_email': 'host@example.invalid', 'event_id': 'organizer-copy'}
-        self.cursor.fetchall.side_effect = [[], [host], [original]]
+        self.cursor.fetchall.side_effect = [[], [host], [original], []]
         result = source._read('synthetic-dsn', OWNER, 'coach-calendar-copy', 'online', (START, END), [42], part='pdf')
         self.assertEqual(result['state'], 'matched')
         self.assertEqual(result['transcript']['content'], original['transcript'])
         self.assertEqual(result['analyses'][0]['report'], original['report'])
         self.assertEqual(result['analyses'][0]['sourceSessionId'], 'b' * 32)
         self.assertEqual(result['analyses'][0]['session'], {'source': 'progress_review'})
-        query, params = self.cursor.execute.call_args.args
+        query, params = next(call.args for call in self.cursor.execute.call_args_list if 'FROM public.dashboard_sessions_cache' in call.args[0])
         self.assertIn('lower(trim(case_owner_email))=%s', query)
         self.assertEqual(params[-1], OWNER)
         self.assertIn([42], params)
@@ -120,14 +120,14 @@ class SavedEvidenceTests(SimpleTestCase):
         original = {**self.analysis, 'id': 'dashboard:shared', 'source_session_id': 'b' * 32,
             'has_transcript': True, 'transcript': 'Original shared transcript', 'updated_at': END}
         host = {**self.meeting, 'id': 'organizer-copy', 'coach_email': 'host@example.invalid'}
-        self.cursor.fetchall.side_effect = [[self.meeting], [], [], [], [self.meeting, host], [original]]
+        self.cursor.fetchall.side_effect = [[self.meeting], [], [], [], [self.meeting, host], [original], []]
         result = source._read('synthetic-dsn', OWNER, 'event', 'online', (START, END), [42], part='evidence')
         self.assertEqual(result['state'], 'matched')
         self.assertEqual(result['analyses'][0]['report'], original['report'])
         self.assertEqual(result['transcript']['content'], original['transcript'])
-        query, params = self.cursor.execute.call_args.args
+        query, params = next(call.args for call in self.cursor.execute.call_args_list if 'FROM public.dashboard_sessions_cache' in call.args[0] and 'meeting_id=ANY' in call.args[0])
         self.assertIn('meeting_id=ANY(%s)', query)
-        self.assertEqual(params[0], ['meeting', 'organizer-copy'])
+        self.assertEqual(params[0], ['organizer-copy'])
         self.assertEqual(params[-1], OWNER)
 
     def test_shared_identity_without_a_report_in_the_current_coach_caseload_returns_no_evidence(self):
@@ -162,7 +162,7 @@ class SavedEvidenceTests(SimpleTestCase):
         self.assertEqual(result['transcript']['content'], self.transcript['content'])
         self.assertEqual(result['analyses'][0]['status'], 'processing')
         self.assertIsNone(result['analyses'][0]['report'])
-        self.assertEqual(self.cursor.execute.call_args.args[1], [['meeting', 'organizer-copy']])
+        self.assertEqual(self.cursor.execute.call_args.args[1], [['organizer-copy']])
 
     def test_shared_transcript_never_selects_a_different_online_identity_or_occurrence(self):
         host = {**self.meeting, 'id': 'organizer-copy', 'coach_email': 'host@example.invalid'}
@@ -205,6 +205,38 @@ class SavedEvidenceTests(SimpleTestCase):
         self.assertIn(self.transcript['content'], result['content'])
         self.assertIn('Second saved transcript part', result['content'])
         self.assertIsNone(result['durationSeconds'])
+
+    def test_identical_verified_calendar_copies_are_combined_instead_of_ambiguous(self):
+        self.rows(meetings=[self.meeting,{**self.meeting,'id':'calendar-copy'}])
+        result=self.read()
+        self.assertEqual(result['state'],'matched')
+        transcript_query=next(call for call in self.cursor.execute.call_args_list if 'FROM public.meeting_transcripts' in call.args[0])
+        self.assertEqual(transcript_query.args[1],[['meeting','calendar-copy']])
+        self.assertEqual(result['analyses'][0]['report'],self.analysis['report'])
+
+    def test_populated_own_copy_does_not_hide_additional_host_parts_or_saved_ai(self):
+        own={**self.analysis,'id':'dashboard:own','source_session_id':'a'*32,'has_transcript':True,
+            'transcript':'Original first part','updated_at':END}
+        other={**own,'id':'dashboard:host','source_session_id':'b'*32,'transcript':'Additional source part'}
+        host={**self.meeting,'id':'host-copy','coach_email':'host@example.invalid'}
+        self.cursor.fetchall.side_effect=[[self.meeting],[own],[],[self.meeting,host],[other],[self.transcript]]
+        result=source._read('synthetic-dsn',OWNER,'event','online',(START,END),[42],part='pdf')
+        for text in ('Original first part','Additional source part',self.transcript['content']):
+            self.assertIn(text,result['transcript']['content'])
+        self.assertEqual({row['id'] for row in result['analyses']},{'dashboard:own','dashboard:host'})
+        shared=next(call for call in self.cursor.execute.call_args_list if 'FROM public.dashboard_sessions_cache' in call.args[0] and 'case_owner_email' in call.args[0])
+        self.assertEqual(shared.args[1][0],['host-copy']);self.assertEqual(shared.args[1][-1],OWNER)
+
+    def test_source_transcript_dates_exclude_other_occurrences_on_a_recurring_link(self):
+        metadata=lambda begin,end,call:{'createdDateTime':begin.isoformat(),'endDateTime':end.isoformat(),'callId':call}
+        self.cursor.fetchall.side_effect=None
+        self.cursor.fetchall.return_value=[
+            {**self.transcript,'transcript_id':'one','metadata':metadata(START,END,'call')},
+            {**self.transcript,'transcript_id':'two','content':'Continued part','metadata':metadata(END,END.replace(minute=10),'call')},
+            {**self.transcript,'transcript_id':'old','content':'Wrong day','metadata':metadata(START.replace(day=21),END.replace(day=21),'old-call')}]
+        result=source._meeting_transcript(self.cursor,['meeting'],(START,END))
+        self.assertIn('Continued part',result['content']);self.assertNotIn('Wrong day',result['content'])
+        self.assertEqual(result['partCount'],2)
 
     def test_device_visits_are_unioned_and_zero_duration_never_infers_absence(self):
         self.rows(participants=[self.participant, {**self.participant, 'graph_record_id': 'device2'},
@@ -251,7 +283,7 @@ class SavedEvidenceTests(SimpleTestCase):
         self.assertNotIn('report_ai', statements)
 
     def test_evidence_does_not_query_or_wait_for_attendance(self):
-        self.cursor.fetchall.side_effect = [[self.meeting], [], [self.transcript], [self.analysis]]
+        self.cursor.fetchall.side_effect = [[self.meeting], [], [self.transcript], [self.analysis], []]
         result = source._read('synthetic-dsn', OWNER, 'event', 'online', (START, END), None, part='evidence')
         self.assertEqual(result['analyses'][0]['report'], self.analysis['report'])
         statements = ' '.join(call.args[0] for call in self.cursor.execute.call_args_list)
@@ -261,7 +293,7 @@ class SavedEvidenceTests(SimpleTestCase):
     def test_original_dashboard_is_authoritative_and_keeps_its_exact_export_identity(self):
         original = {**self.analysis, 'id': 'dashboard:10', 'source_session_id': 'a' * 32,
             'has_transcript': True, 'transcript': 'Exact original saved transcript', 'updated_at': END}
-        self.cursor.fetchall.side_effect = [[self.meeting], [original]]
+        self.cursor.fetchall.side_effect = [[self.meeting], [original], [], []]
         result = source._read('synthetic-dsn', OWNER, 'event', 'online', (START, END), [42], part='evidence')
         self.assertEqual(result['analyses'][0]['sourceSessionId'], 'a' * 32)
         self.assertEqual(result['analyses'][0]['report'], original['report'])
@@ -269,9 +301,9 @@ class SavedEvidenceTests(SimpleTestCase):
         statements = ' '.join(call.args[0] for call in self.cursor.execute.call_args_list)
         self.assertIn('dashboard_sessions_cache', statements)
         self.assertIn("SET LOCAL TIME ZONE 'UTC'", statements)
-        self.assertNotIn('FROM public.meeting_transcripts', statements)
+        self.assertIn('FROM public.meeting_transcripts', statements)
         self.assertNotIn('FROM public.all_sessions_cache', statements)
-        query = self.cursor.execute.call_args
+        query = next(call for call in self.cursor.execute.call_args_list if 'FROM public.dashboard_sessions_cache' in call.args[0])
         self.assertIn('meeting_id=%s', query.args[0])
         self.assertIn([42], query.args[1])
         self.assertNotIn('learner_name=', query.args[0])
@@ -279,7 +311,7 @@ class SavedEvidenceTests(SimpleTestCase):
     def test_pdf_reads_only_whitelisted_original_session_context_without_attendance_expansion(self):
         original = {**self.analysis, 'has_transcript': True, 'transcript': 'Original saved text',
                     'report_context': {'learner_name': 'Synthetic Learner', 'aptem_status': 'Awaiting signature'}}
-        self.cursor.fetchall.side_effect = [[self.meeting], [original]]
+        self.cursor.fetchall.side_effect = [[self.meeting], [original], [], []]
         result = source._read('synthetic-dsn', OWNER, 'event', '', (START, END), None, part='pdf')
         self.assertEqual(result['analyses'][0]['session'], original['report_context'])
         statements = ' '.join(call.args[0] for call in self.cursor.execute.call_args_list)
@@ -289,7 +321,7 @@ class SavedEvidenceTests(SimpleTestCase):
     def test_pdf_context_handles_the_configured_psycopg_text_json_loader(self):
         original = {**self.analysis, 'has_transcript': True, 'transcript': 'Original saved text',
                     'report_context': '{"learner_name":"Synthetic Learner","aptem_status":"Awaiting signature"}'}
-        self.cursor.fetchall.side_effect = [[self.meeting], [original]]
+        self.cursor.fetchall.side_effect = [[self.meeting], [original], [], []]
         result = source._read('synthetic-dsn', OWNER, 'event', '', (START, END), None, part='pdf')
         self.assertEqual(result['analyses'][0]['session']['aptem_status'], 'Awaiting signature')
 
@@ -301,11 +333,11 @@ class SavedEvidenceTests(SimpleTestCase):
     def test_original_dashboard_deduplicates_transcript_without_fabricating_pending_analysis(self):
         original = {**self.analysis, 'source_session_id': 'b' * 32, 'has_transcript': True,
             'transcript': 'One saved transcript', 'updated_at': END, 'ai_status': 'processing'}
-        self.cursor.fetchall.side_effect = [[self.meeting], [original, {**original, 'id': 'second'}]]
+        self.cursor.fetchall.side_effect = [[self.meeting], [original, {**original, 'id': 'second'}], [], []]
         result = source._read('synthetic-dsn', OWNER, 'event', 'online', (START, END), [], part='evidence')
         self.assertEqual(result['transcript']['content'], 'One saved transcript')
         self.assertTrue(all(row['report'] is None for row in result['analyses']))
-        self.assertIn([], self.cursor.execute.call_args.args[1])
+        self.assertTrue(any([] in call.args[1] for call in self.cursor.execute.call_args_list if 'FROM public.dashboard_sessions_cache' in call.args[0]))
 
     def test_test_runner_never_opens_configured_external_source(self):
         self.assertEqual(source.source_dsn(), '')

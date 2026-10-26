@@ -4,32 +4,42 @@ import { createCachedResource } from './cachedRequest';
 import { withCallerSignal } from './learnerRead';
 
 export type Rating = '' | 'gold' | 'green' | 'amber' | 'red' | 'na';
+export type QualityReviewType = 'MCM' | 'PR';
+export type QualityFieldType = 'rating' | 'text' | 'textarea' | 'boolean' | 'single_choice' | 'checklist' | 'date' | 'number' | 'image';
+export interface QualityField { id: string; text: string; type?: QualityFieldType; required?: boolean; options?: string[]; help?: string }
+export type QualityAnswer = string | number | boolean | null | string[];
 export interface QualityTemplate {
-  id: string; title: string; ratings: Record<Exclude<Rating, ''>, string>;
-  sections: { id: string; title: string; screenshots: boolean; criteria: { id: string; text: string }[] }[];
+  id: string; title: string; version?: number; actionsTitle?: string; reviewType?: QualityReviewType; ratings: Record<Exclude<Rating, ''>, string>;
+  sections: { id: string; title: string; screenshots: boolean; criteria: QualityField[] }[];
 }
+export interface QualityTemplateState { id: string; reviewType?: QualityReviewType; revision: number; draft: QualityTemplate; published: QualityTemplate; publishedAt: string | null; updatedAt: string | null }
 export interface QualityForm {
   header: { employer: string; programme: string; activityDate: string; startDate: string; endDate: string };
   criteria: Record<string, { rating: Rating; evidence: string }>;
   actions: { action: string; outcome: string; supportedBy: string; dueDate: string }[];
   images: Record<string, string[]>; sources: string[];
+  answers?: Record<string, QualityAnswer>;
 }
 export interface QualityReview {
-  id: string; version: number; templateId: string; identity: string; status: 'draft' | 'completed'; form: QualityForm;
+  id: string; version: number; templateId: string; identity: string; reviewType?: QualityReviewType | ''; status: 'draft' | 'completed'; form: QualityForm;
   coach: { email: string; name: string }; learner: { id: string; name: string; email?: string };
   meeting: { eventId: string; onlineMeetingId?: string; startsAt: string; endsAt: string; title: string };
   reviewer: { id: string; name: string; email: string }; updatedAt: string; updatedBy: string;
+  definition?: QualityTemplate;
+  document?: { state: 'ready' | 'failed'; version: number; message?: string } | null;
 }
 export interface QualityContext {
   template: QualityTemplate; learners: { id: string; name: string }[]; review: QualityReview | null;
-  snapshot: Pick<QualityReview, 'coach' | 'meeting'> & { learner: QualityReview['learner'] | null };
+  snapshot: Pick<QualityReview, 'coach' | 'meeting' | 'reviewType'> & { learner: QualityReview['learner'] | null };
   observer: QualityReview['reviewer'];
 }
 export interface QualitySummary {
   id: string; coachEmail: string; coachName: string; learnerId: string; learnerName: string;
   startsAt: string; status: 'draft' | 'completed'; version: number; updatedAt: string; title: string; actionCount: number;
+  pdfVersion?: number | null; reviewType?: QualityReviewType | '';
 }
 export interface ReviewList { reviews: QualitySummary[]; coaches: { email: string; name: string }[]; nextOffset: number | null }
+export interface MeetingQualityCheck { id: string; learnerId: string; learnerName: string; reviewType?: QualityReviewType | ''; status: string; version: number; pdfVersion: number | null; updatedAt: string }
 const base = '/coach_api/coaching-recordings/quality';
 export class QualityReviewError extends Error {
   status: number;
@@ -53,25 +63,37 @@ export function invalidateQualityReviews() { reads.invalidate(); }
 async function read<T>(url: string, signal?: AbortSignal): Promise<T> {
   return await withCallerSignal(reads.read(url), signal) as T;
 }
-export function qualityContext(eventKey: string, reference?: string, learnerId = '', signal?: AbortSignal): Promise<QualityContext> {
+export function qualityDefinition(signal?: AbortSignal, reviewType?: QualityReviewType) {
+  return read<{ template: QualityTemplateState; fieldTypes: QualityFieldType[] }>(`${base}/form${reviewType ? `?reviewType=${reviewType}` : ''}`, signal);
+}
+export async function saveQualityDefinition(payload: { definition: QualityTemplate; expectedRevision: number; requestId: string; publish: boolean }) {
+  const result = await request<{ template: QualityTemplateState }>(`${base}/form${payload.definition.reviewType ? `?reviewType=${payload.definition.reviewType}` : ''}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  reads.invalidate(); return result.template;
+}
+export function qualityContext(eventKey: string, reference?: string, learnerId = '', signal?: AbortSignal, reviewType?: QualityReviewType, titleType?: QualityReviewType): Promise<QualityContext> {
   const params = new URLSearchParams({ eventKey, learnerId });
   if (reference) params.set('reference', reference);
+  if (reviewType) params.set('reviewType', reviewType);
+  else if (titleType) params.set('titleType', titleType);
   return read(`${base}/context?${params}`, signal);
 }
-export function qualityReview(id: string, signal?: AbortSignal) {
-  return read<{ review: QualityReview; template: QualityTemplate }>(`${base}/reviews/${encodeURIComponent(id)}`, signal);
+export function qualityReview(id: string, signal?: AbortSignal, reviewType?: QualityReviewType) {
+  return read<{ review: QualityReview; reviewType?: QualityReviewType | ''; template: QualityTemplate }>(`${base}/reviews/${encodeURIComponent(id)}${reviewType ? `?reviewType=${reviewType}` : ''}`, signal);
 }
-export function qualityReviews(filters: { start: string; end: string; coachEmail: string; status: string; timeZone: string; search: string }, offset = 0, signal?: AbortSignal) {
+export function meetingQualityChecks(meetingId: string, signal?: AbortSignal, offset = 0) {
+  return read<{ reviews: MeetingQualityCheck[]; nextOffset?: number | null }>(`${base}/reviews?${new URLSearchParams({ meetingId, offset: String(offset) })}`, signal);
+}
+export function qualityReviews(filters: { start: string; end: string; coachEmail: string; status: string; timeZone: string; search: string; reviewType?: string; pdf?: string }, offset = 0, signal?: AbortSignal) {
   return read<ReviewList>(`${base}/reviews?${new URLSearchParams({ ...filters, offset: String(offset) })}`, signal);
 }
-export async function saveQualityReview(payload: { learnerId: string; expectedVersion: number; requestId: string; status: string; form: QualityForm },
+export async function saveQualityReview(payload: { learnerId: string; expectedVersion: number; requestId: string; status: string; form: QualityForm; templateVersion?: number; reviewType?: QualityReviewType },
   id?: string, eventKey = '', reference?: string) {
   const params = new URLSearchParams({ eventKey });
   if (reference) params.set('reference', reference);
-  const result = await request<{ review: QualityReview }>(`${base}/reviews${id ? `/${encodeURIComponent(id)}` : `?${params}`}`,
+  const result = await request<{ review: QualityReview; document?: QualityReview['document'] }>(`${base}/reviews${id ? `/${encodeURIComponent(id)}` : `?${params}`}`,
     { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   reads.invalidate();
-  return result.review;
+  return { ...result.review, ...(result.document ? { document: result.document } : {}) };
 }
 export async function uploadQualityImage(reviewId: string, section: string, image: File) {
   const data = new FormData(); data.set('section', section); data.set('image', image);
@@ -88,4 +110,5 @@ const pdfs = createCachedResource<Blob>('coaching-quality-pdfs', async url => {
     return blob;
   } finally { clearTimeout(timer); }
 }, 30000, 3);
-export function qualityPdf(review: QualityReview) { return pdfs.read(`${base}/reviews/${encodeURIComponent(review.id)}/pdf?version=${review.version}`); }
+export function qualityPdf(review: QualityReview) { return attachedQualityPdf(review.id, review.version); }
+export function attachedQualityPdf(reviewId: string, version: number) { return pdfs.read(`${base}/reviews/${encodeURIComponent(reviewId)}/documents/${version}`); }

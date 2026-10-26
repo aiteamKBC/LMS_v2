@@ -91,6 +91,7 @@ const CurriculumDeliveryHub = lazyRoute(() => import("../pages/curriculum/hubs/p
 const CurriculumBulkAttendance = lazyRoute(() => import("../pages/curriculum/bulk-attendance/page"));
 const CurriculumQualityHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumQualityHub })));
 const CoachingQualityReviewsPage = lazyRoute(() => import("../pages/coaching-recordings/QualityReviewsPage"));
+const CoachingQualityFormsPage = lazyRoute(() => import("../pages/coaching-recordings/QualityFormsPage"));
 const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/free-courses/page"));
 const CoachAuditTrailPage = lazyRoute(() => import("../pages/coach/audit-trail/page"));
 const CoachAuditTrailPersonPage = lazyRoute(() => import("../pages/coach/audit-trail/person/page"));
@@ -1252,6 +1253,10 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/coaching-recordings/reviews",
     element: <CoachingQualityReviewsPage />,
+  },
+  {
+    path: "/curriculum/quality/forms",
+    element: <CoachingQualityFormsPage />,
   },
   {
     // The bank holiday calendar: GOV.UK holidays stay synced here, and extra

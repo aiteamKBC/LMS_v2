@@ -595,7 +595,7 @@ describe('Coaching recordings calendar', () => {
     mount();
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(1);
-    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(2);
     expect(screen.queryByText(/Loading the remaining/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^View .+ on \d{4}-\d{2}-\d{2}$/ })).toBeInTheDocument();
@@ -620,24 +620,26 @@ describe('Coaching recordings calendar', () => {
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(2);
   });
 
-  it('bounds unchanged pending reads to nine requests over ten minutes instead of polling every thirty seconds', async () => {
+  it('stops after three automatic checks even when every reply reports new progress', async () => {
     vi.useFakeTimers();
-    const data = { ...fixture(), sync: { pending: true, pendingCalendars: 1, pendingEvidence: 10,
-      lastSuccessfulAt: null, directoryHash: 'one', directoryUnchanged: false } };
-    vi.mocked(loadCoachingCalendar).mockResolvedValue(data);
+    let version = 0;
+    vi.mocked(loadCoachingCalendar).mockImplementation(async () => ({ ...fixture(), sync: { pending: true,
+      pendingCalendars: 1, pendingEvidence: 10, version: String(++version),
+      lastSuccessfulAt: new Date().toISOString(), directoryHash: 'one', directoryUnchanged: false } }));
     mount();
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    // Advance each second so React commits each completed read before the next
-    // timer; a single giant fake-time jump would not simulate browser commits.
-    for (let second = 0; second < 600; second++) {
-      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
-    }
-    expect(loadCoachingCalendar).toHaveBeenCalledTimes(9);
-    expect(screen.getByRole('region', { name: 'Calendar data status' })).toHaveTextContent('Remaining checks pending');
+    for (let second = 0; second < 600; second++) await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(loadCoachingCalendar).toHaveBeenCalledTimes(4);
+    expect(screen.getByRole('region', { name: 'Calendar data status' })).toHaveTextContent('Automatic updates stopped');
+    expect(screen.queryByText('Checking for updates')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^View Monthly Coaching Meeting on / })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'All meetings' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Meeting type' }), { target: { value: 'PR' } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1800000); });
+    expect(loadCoachingCalendar).toHaveBeenCalledTimes(4);
   });
 
-  it('checks a completed snapshot every five minutes and keeps filters entirely local', async () => {
+  it('stops completed snapshots without periodic reads and keeps filters local', async () => {
     vi.useFakeTimers();
     const data = { ...fixture(), sync: { pending: false, pendingCalendars: 0, pendingEvidence: 0,
       lastSuccessfulAt: null, directoryHash: 'one', directoryUnchanged: false } };
@@ -646,44 +648,64 @@ describe('Coaching recordings calendar', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     fireEvent.click(screen.getByRole('button', { name: 'All meetings' }));
     fireEvent.change(screen.getByRole('combobox', { name: 'Meeting type' }), { target: { value: 'PR' } });
-    await act(async () => { await vi.advanceTimersByTimeAsync(299999); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1800000); });
     expect(loadCoachingCalendar).toHaveBeenCalledOnce();
-    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-    expect(loadCoachingCalendar).toHaveBeenCalledTimes(2);
     expect(screen.getByRole('combobox', { name: 'Meeting type' })).toHaveValue('PR');
-    expect(loadCoachingSession).not.toHaveBeenCalled();
-    expect(loadSavedCoachingEvidence).not.toHaveBeenCalled();
+    expect(loadCoachingSession).not.toHaveBeenCalled(); expect(loadSavedCoachingEvidence).not.toHaveBeenCalled();
   });
 
-  it('treats scheduled refreshes of saved results as usable data and uses the quiet five-minute interval', async () => {
+  it('counts slow successful reads towards the absolute ninety-second cycle limit', async () => {
     vi.useFakeTimers();
-    const data = { ...fixture(), partial: true,
-      errors: [{ coachEmail: 'two@example.invalid', code: 'calendar_not_found', retryable: false }],
-      sync: { pending: true, pendingCalendars: 1, pendingEvidence: 10,
-        initialPendingCalendars: 0, initialPendingEvidence: 0,
-        lastSuccessfulAt: '2026-10-20T11:00:00Z', directoryHash: 'one', directoryUnchanged: false } };
+    const data = { ...fixture(), sync: { pending: true, pendingCalendars: 1, pendingEvidence: 10,
+      lastSuccessfulAt: null, directoryHash: 'one', directoryUnchanged: false } };
+    vi.mocked(loadCoachingCalendar).mockImplementation(() => new Promise(resolve => {
+      window.setTimeout(() => resolve(data), 15000);
+    }));
+    mount();
+    for (let second = 0; second < 90; second++) await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(loadCoachingCalendar).toHaveBeenCalledTimes(3);
+    expect(screen.getByRole('region', { name: 'Calendar data status' })).toHaveTextContent('Automatic updates stopped');
+    expect(screen.queryByText('Checking for updates')).not.toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(600000); });
+    expect(loadCoachingCalendar).toHaveBeenCalledTimes(3);
+  });
+
+  it('starts a new bounded cycle for a different coach after the previous cycle has stopped', async () => {
+    vi.useFakeTimers();
+    const data = { ...fixture(), sync: { pending: true, pendingCalendars: 1, pendingEvidence: 0,
+      lastSuccessfulAt: null, directoryHash: 'one', directoryUnchanged: false } };
     vi.mocked(loadCoachingCalendar).mockResolvedValue(data);
     mount();
+    for (let second = 0; second < 100; second++) await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(loadCoachingCalendar).toHaveBeenCalledTimes(4);
+    fireEvent.change(screen.getByRole('combobox', { name: /^Coach$/ }), { target: { value: 'one@example.invalid' } });
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    const status = screen.getByRole('region', { name: 'Calendar data status' });
-    expect(status).toHaveTextContent('Saved results available');
-    expect(status).toHaveTextContent('Last calendar check:');
-    expect(status).toHaveTextContent('1 check needs attention');
-    expect(status).not.toHaveTextContent('Remaining checks pending');
-    fireEvent.click(screen.getByRole('button', { name: 'Sync & booking details' }));
-    const drawer = screen.getByRole('dialog', { name: 'Sync & booking details' });
-    expect(drawer).toHaveTextContent('Scheduled background checks keep them up to date');
-    expect(drawer).not.toHaveTextContent('First checks remaining:');
-    expect(drawer).toHaveTextContent('Account action required');
-    fireEvent.click(screen.getByRole('button', { name: 'Close sync details' }));
-    await act(async () => { await vi.advanceTimersByTimeAsync(299999); });
-    expect(loadCoachingCalendar).toHaveBeenCalledOnce();
-    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-    expect(loadCoachingCalendar).toHaveBeenCalledTimes(2);
-    expect(screen.getByRole('button', { name: /^View Monthly Coaching Meeting on / })).toBeInTheDocument();
+    expect(loadCoachingCalendar).toHaveBeenCalledTimes(5);
+    expect(vi.mocked(loadCoachingCalendar).mock.lastCall?.[0].coachEmail).toBe('one@example.invalid');
+    expect(screen.getByRole('region', { name: 'Calendar data status' })).not.toHaveTextContent('Automatic updates stopped');
+    for (let second = 0; second < 100; second++) await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(loadCoachingCalendar).toHaveBeenCalledTimes(8);
+    expect(screen.getByRole('region', { name: 'Calendar data status' })).toHaveTextContent('Automatic updates stopped');
   });
 
-  it('pauses in hidden or offline tabs and coalesces focus events into the next due check', async () => {
+  it('does not poll maintenance jobs or permanent account failures after saved results load', async () => {
+    vi.useFakeTimers();
+    const data = { ...fixture(), partial: true, errors: [{ coachEmail: 'two@example.invalid', code: 'calendar_not_found', retryable: false }],
+      sync: { pending: true, pendingCalendars: 1, pendingEvidence: 10, initialPendingCalendars: 0, initialPendingEvidence: 0,
+        lastSuccessfulAt: '2026-10-20T11:00:00Z', directoryHash: 'one', directoryUnchanged: false } };
+    vi.mocked(loadCoachingCalendar).mockResolvedValue(data); mount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const status = screen.getByRole('region', { name: 'Calendar data status' });
+    expect(status).toHaveTextContent('Saved results available'); expect(status).toHaveTextContent('1 check needs attention');
+    expect(status).not.toHaveTextContent('Remaining checks pending');
+    fireEvent.click(screen.getByRole('button', { name: 'Sync & booking details' }));
+    expect(screen.getByRole('dialog', { name: 'Sync & booking details' })).toHaveTextContent('Account action required');
+    fireEvent.click(screen.getByRole('button', { name: 'Close sync details' }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1800000); });
+    expect(loadCoachingCalendar).toHaveBeenCalledOnce();
+  });
+
+  it('coalesces focus events within the cycle and never restarts expired hidden or offline cycles', async () => {
     vi.useFakeTimers();
     const data = { ...fixture(), sync: { pending: true, pendingCalendars: 1, pendingEvidence: 0,
       lastSuccessfulAt: null, directoryHash: 'one', directoryUnchanged: false } };
@@ -691,73 +713,79 @@ describe('Coaching recordings calendar', () => {
     const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
     const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
     try {
-      mount();
-      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-      for (let event = 0; event < 5; event++) document.dispatchEvent(new Event('visibilitychange'));
-      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      mount(); await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      hidden.mockReturnValue(true); document.dispatchEvent(new Event('visibilitychange'));
+      await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
       expect(loadCoachingCalendar).toHaveBeenCalledOnce();
-      hidden.mockReturnValue(true);
-      document.dispatchEvent(new Event('visibilitychange'));
+      hidden.mockReturnValue(false);
+      for (let index = 0; index < 5; index++) document.dispatchEvent(new Event('visibilitychange'));
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(loadCoachingCalendar).toHaveBeenCalledTimes(2);
+      online.mockReturnValue(false); window.dispatchEvent(new Event('offline'));
       await act(async () => { await vi.advanceTimersByTimeAsync(600000); });
-      expect(loadCoachingCalendar).toHaveBeenCalledOnce();
-      online.mockReturnValue(false); hidden.mockReturnValue(false);
-      document.dispatchEvent(new Event('visibilitychange'));
-      await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
-      expect(loadCoachingCalendar).toHaveBeenCalledOnce();
       online.mockReturnValue(true);
-      for (let event = 0; event < 5; event++) window.dispatchEvent(new Event('online'));
-      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      await act(async () => {
+        for (let index = 0; index < 5; index++) window.dispatchEvent(new Event('online'));
+        await vi.advanceTimersByTimeAsync(0);
+      });
       expect(loadCoachingCalendar).toHaveBeenCalledTimes(2);
-      document.dispatchEvent(new Event('visibilitychange'));
-      await act(async () => { await vi.advanceTimersByTimeAsync(9999); });
-      expect(loadCoachingCalendar).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole('region', { name: 'Calendar data status' })).toHaveTextContent('Automatic updates stopped');
     } finally { hidden.mockRestore(); online.mockRestore(); }
   });
 
-  it('resets pending backoff when new results arrive and on explicit refresh without overlapping reads', async () => {
+  it('times out a stalled initial read and ignores a late response instead of leaving a spinner', async () => {
+    vi.useFakeTimers();
+    let finish!: (value: CoachingCalendar) => void;
+    vi.mocked(loadCoachingCalendar).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    mount(); await act(async () => { await vi.advanceTimersByTimeAsync(20000); });
+    expect(screen.getByRole('alert')).toHaveTextContent('timed out');
+    expect(screen.queryByRole('region', { name: 'Loading calendar preview' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh calendars' })).toBeEnabled();
+    expect(vi.mocked(loadCoachingCalendar).mock.calls[0][1]?.aborted).toBe(true);
+    await act(async () => finish(fixture()));
+    expect(screen.queryByRole('button', { name: /^View Monthly Coaching Meeting on / })).not.toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(600000); });
+    expect(loadCoachingCalendar).toHaveBeenCalledOnce();
+  });
+
+  it('preserves saved meetings on timeout and starts a fresh bounded cycle only on explicit refresh', async () => {
     vi.useFakeTimers();
     const data = { ...fixture(), sync: { pending: true, pendingCalendars: 1, pendingEvidence: 10,
       lastSuccessfulAt: null, directoryHash: 'one', directoryUnchanged: false } };
-    const progressed = { ...data, sync: { ...data.sync, pendingEvidence: 9 } };
     let finish!: (value: CoachingCalendar) => void;
-    vi.mocked(loadCoachingCalendar).mockResolvedValueOnce(data).mockResolvedValueOnce(data)
-      .mockResolvedValueOnce(progressed).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
-      .mockResolvedValue(progressed);
-    mount();
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    vi.mocked(loadCoachingCalendar).mockResolvedValueOnce(data).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue(data);
+    mount(); await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
-    expect(loadCoachingCalendar).toHaveBeenCalledTimes(3);
-    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
-    expect(loadCoachingCalendar).toHaveBeenCalledTimes(4);
     expect(screen.getByRole('button', { name: 'Refresh calendars' })).toBeDisabled();
-    for (let event = 0; event < 5; event++) document.dispatchEvent(new Event('visibilitychange'));
-    await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
-    expect(loadCoachingCalendar).toHaveBeenCalledTimes(4);
-    await act(async () => finish(progressed));
+    await act(async () => { await vi.advanceTimersByTimeAsync(20000); });
+    expect(screen.queryByText('Checking for updates')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^View Monthly Coaching Meeting on / })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh calendars' })).toBeEnabled();
+    await act(async () => finish({ ...data, meetings: [] }));
+    expect(screen.getByRole('button', { name: /^View Monthly Coaching Meeting on / })).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(600000); });
+    expect(loadCoachingCalendar).toHaveBeenCalledTimes(2);
     fireEvent.click(screen.getByRole('button', { name: 'Refresh calendars' }));
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(vi.mocked(loadCoachingCalendar).mock.lastCall?.[2]?.refresh).toBe(true);
-    expect(loadCoachingCalendar).toHaveBeenCalledTimes(5);
-    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
-    expect(loadCoachingCalendar).toHaveBeenCalledTimes(6);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+    expect(loadCoachingCalendar).toHaveBeenCalledTimes(4);
   });
 
-  it('backs off transient failures without hiding results and stops polling after access is revoked', async () => {
+  it('stops automatic checks on failure and clears saved data when an explicit retry finds revoked access', async () => {
     vi.useFakeTimers();
-    const data = { ...fixture(), sync: { pending: true, pendingCalendars: 1, pendingEvidence: 10,
+    const data = { ...fixture(), sync: { pending: true, pendingCalendars: 1, pendingEvidence: 0,
       lastSuccessfulAt: null, directoryHash: 'one', directoryUnchanged: false } };
-    vi.mocked(loadCoachingCalendar).mockResolvedValueOnce(data)
-      .mockRejectedValueOnce(new Error('Connection temporarily unavailable'))
+    vi.mocked(loadCoachingCalendar).mockResolvedValueOnce(data).mockRejectedValueOnce(new Error('Connection temporarily unavailable'))
       .mockRejectedValueOnce(new Error('You do not have access to this coaching calendar.'));
-    mount();
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    mount(); await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
     expect(screen.getByRole('alert')).toHaveTextContent('Connection temporarily unavailable');
     expect(screen.getByRole('button', { name: /^View Monthly Coaching Meeting on / })).toBeInTheDocument();
-    await act(async () => { await vi.advanceTimersByTimeAsync(59999); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(600000); });
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(2);
-    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh calendars' }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(screen.getByRole('alert')).toHaveTextContent('do not have access');
     expect(screen.queryByRole('button', { name: /^View Monthly Coaching Meeting on / })).not.toBeInTheDocument();
     await act(async () => { await vi.advanceTimersByTimeAsync(600000); });
@@ -780,7 +808,7 @@ describe('Coaching recordings calendar', () => {
     expect(screen.getByRole('dialog', { name: 'Meeting details' })).toBeInTheDocument();
     await act(async () => finish({ ...data, meetings: [] }));
     expect(screen.queryByRole('dialog', { name: 'Meeting details' })).not.toBeInTheDocument();
-    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(2);
   });
 

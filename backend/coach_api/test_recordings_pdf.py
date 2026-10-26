@@ -57,6 +57,14 @@ class CoachingPdfTests(SimpleTestCase):
             self.assertIn(f'Turn {index}:', text)
         self.assertIn('00:01:00.000 - 00:01:05.000', text)
 
+    def test_combined_source_and_microsoft_parts_are_all_present_in_the_pdf(self):
+        from .recordings_parts import merge_transcripts
+        parts=[{'content':f'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v Speaker>Retained part {index}</v>',
+            'durationSeconds':None,'updatedAt':None} for index in range(1,4)]
+        self.evidence['transcript']=merge_transcripts(*parts,parts[0])
+        text='\n'.join(page.extract_text() for page in PdfReader(BytesIO(evidence_pdf(self.record,self.evidence,kind='transcript'))).pages)
+        for index in range(1,4):self.assertEqual(text.count(f'Retained part {index}'),1)
+
     def test_plain_text_and_literal_markup_cannot_execute_or_load_external_assets(self):
         raw = 'First plain paragraph\n\n<script>literal saved content</script>\n\nFinal retained paragraph'
         self.evidence['transcript']['content'] = raw

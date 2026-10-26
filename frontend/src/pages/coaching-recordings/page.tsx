@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarDays, Loader2, RefreshCw, Users, Video } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { loadCoachingCalendar, loadLinkedCoachingMeeting, type LinkedCoachingMeeting, type CoachingCalendar, type CoachingCalendarQuery } from '@/api/coachingRecordings';
+import { loadCoachingCalendar, loadLinkedCoachingMeeting, COACHING_CALENDAR_REQUEST_TIMEOUT, type LinkedCoachingMeeting, type CoachingCalendar, type CoachingCalendarQuery } from '@/api/coachingRecordings';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { coachNavItems, curriculumNavItems } from '@/mocks/navigation';
 import { addDays, CALENDAR_TIME_ZONES, formatFullDate, parseIsoDate, todayIso } from '@/pages/curriculum/recordings/utils';
@@ -44,6 +44,7 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
   const [directory, setDirectory] = useState<Pick<CoachingCalendar, 'coaches' | 'learners' | 'scope'> | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [updatesPaused, setUpdatesPaused] = useState(false);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
   const [pollEpoch, setPollEpoch] = useState(0);
@@ -54,7 +55,7 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
   const lastRevision = useRef(0);
   const snapshot = useRef<{ query: CoachingCalendarQuery; data: CoachingCalendar } | undefined>(undefined);
   const loadAttempt = useRef(0);
-  const polling = useRef({ attempt: 0, key: '', progress: '', delay: 5000, dueAt: 0 });
+  const polling = useRef({ attempt: 0, key: '', checks: 0, deadline: 0, dueAt: 0 });
   const bounds = periodBounds(date, period);
   const month = parseIsoDate(date);
   const monthBounds = periodBounds(date, 'month');
@@ -65,61 +66,73 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
     loadAttempt.current += 1;
     const key = JSON.stringify([requested.start, requested.end, zone, coach]);
     const refresh = lastRevision.current !== revision;
+    const cycleKey = JSON.stringify([key, revision]);
+    if (polling.current.key !== cycleKey) {
+      polling.current = { attempt: 0, key: cycleKey, checks: 0, deadline: Date.now() + 90_000, dueAt: 0 };
+      setUpdatesPaused(false);
+    }
     lastRevision.current = revision;
+    let active = true, timedOut = false;
     setLoading(lastRequest.current !== key || !snapshot.current); setRefreshing(true); setSlow(false); setError('');
     if (lastRequest.current !== key) setData(null);
     if (lastRequest.current !== key || refresh) setSelectedSession(null);
     lastRequest.current = key;
     const query = { start: requested.start, end: requested.end, timeZone: zone, coachEmail: coach };
     const publish = (value: CoachingCalendar) => {
-      if (!controller.signal.aborted) { snapshot.current = { query, data: value }; setData(value); setDirectory(value); }
+      if (active && !timedOut) { snapshot.current = { query, data: value }; setData(value); setDirectory(value); }
     };
     const slowTimer = window.setTimeout(() => setSlow(true), 12000);
-    void loadCoachingCalendar(query, controller.signal, {
+    let requestTimer: number;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      requestTimer = window.setTimeout(() => {
+        timedOut = true; controller.abort();
+        reject(new Error('Calendar update timed out. Saved meetings remain available. Use Refresh calendars to try again.'));
+      }, Math.max(0, Math.min(COACHING_CALENDAR_REQUEST_TIMEOUT, polling.current.deadline - Date.now())));
+    });
+    void Promise.race([loadCoachingCalendar(query, controller.signal, {
       background: true, refresh, previous: snapshot.current, onProgress: publish, onDirectory: value => {
-        if (!controller.signal.aborted) {
+        if (active && !timedOut) {
           setData(current => current && current.scope !== value.scope ? null : current);
           setDirectory(value);
         }
       },
-    })
+    }), deadline])
       .then(publish)
       .catch(reason => {
-        if (!controller.signal.aborted) {
+        if (active) {
           if (reason instanceof Error && reason.message.startsWith('You do not have access')) {
             snapshot.current = undefined; setData(null); setDirectory(null);
           }
-          setError(reason instanceof Error ? reason.message : 'Coaching calendars could not be loaded.');
+          setUpdatesPaused(true);
+          setError(timedOut ? 'Calendar update timed out. Use Refresh calendars to try again.' : reason instanceof Error ? reason.message : 'Coaching calendars could not be loaded.');
         }
       })
-      .finally(() => { window.clearTimeout(slowTimer); if (!controller.signal.aborted) { setLoading(false); setRefreshing(false); } });
-    return () => { controller.abort(); window.clearTimeout(slowTimer); };
+      .finally(() => { window.clearTimeout(slowTimer); window.clearTimeout(requestTimer); if (active) { setLoading(false); setRefreshing(false); } });
+    return () => { active = false; controller.abort(); window.clearTimeout(slowTimer); window.clearTimeout(requestTimer); };
   }, [requested.start, requested.end, zone, coach, revision, pollEpoch]);
 
   useEffect(() => {
-    // Only completed reads advance the backoff. Closing a drawer or switching
-    // tabs must not reset it or create an additional request.
-    if (loading || refreshing || selectedSession || linkedId || !data?.sync) return;
-    const key = JSON.stringify([lastRequest.current, lastRevision.current]);
-    const progress = JSON.stringify([data.sync.version, data.sync.lastSuccessfulAt,
-      data.sync.pendingCalendars, data.sync.pendingEvidence, data.coverage.checkedCoachEmails,
-      data.meetings.reduce((sum, row) => sum + row.media.readyCount, 0)]);
-    const previous = polling.current;
-    if (previous.attempt !== loadAttempt.current || previous.key !== key) {
-      const unchanged = previous.key === key && previous.progress === progress;
-      const delay = error ? Math.min(300000, Math.max(60000, previous.delay * 2))
-        : !initialChecksPending(data.sync) ? 300000 : unchanged ? Math.min(120000, previous.delay * 2) : 5000;
-      polling.current = { attempt: loadAttempt.current, key, progress, delay, dueAt: Date.now() + delay };
+    // A finite browser read cycle; worker progress never renews its budget.
+    if (loading || refreshing || selectedSession || linkedId || error || !initialChecksPending(data?.sync)) return;
+    const cycle = polling.current;
+    if (cycle.checks >= 3 || Date.now() >= cycle.deadline) { setUpdatesPaused(true); return; }
+    if (cycle.attempt !== loadAttempt.current) {
+      cycle.attempt = loadAttempt.current;
+      cycle.dueAt = Date.now() + (cycle.checks + 1) * 10_000;
     }
     let timer: number | undefined;
     let fired = false;
     const schedule = () => {
       window.clearTimeout(timer);
-      if (fired || document.hidden || !navigator.onLine) return;
+      if (fired) return;
+      if (Date.now() >= cycle.deadline) { setUpdatesPaused(true); return; }
+      if (document.hidden || !navigator.onLine) return;
       timer = window.setTimeout(() => {
+        if (Date.now() >= cycle.deadline) { setUpdatesPaused(true); return; }
         fired = true;
+        cycle.checks += 1;
         setPollEpoch(value => value + 1);
-      }, Math.max(0, polling.current.dueAt - Date.now()));
+      }, Math.max(0, Math.min(cycle.dueAt, cycle.deadline) - Date.now()));
     };
     schedule();
     document.addEventListener('visibilitychange', schedule);
@@ -211,7 +224,8 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
         <div><p className="mb-2 text-xs font-bold uppercase tracking-widest text-primary-600">Coaching workspace</p><h1 className="font-heading text-2xl font-extrabold text-foreground-950">Coach Meetings &amp; Recordings</h1>
           <p className="mt-1 text-sm text-foreground-600">See every meeting on a coach's calendar by its original title. Filter by coach, learner, date or status.</p></div>
         <div className="flex flex-wrap gap-2">
-          {workspace === 'curriculum' && <Link className={`${control} inline-flex items-center gap-2 font-semibold text-primary-700`} to="/curriculum/coaching-recordings/reviews">Quality reviews &amp; evidence</Link>}
+          {workspace === 'curriculum' && <Link className={`${control} inline-flex items-center gap-2 font-semibold text-primary-700`} to="/curriculum/coaching-recordings/reviews">Quality Checks</Link>}
+          {workspace === 'curriculum' && <Link className={`${control} inline-flex items-center gap-2 font-semibold text-primary-700`} to="/curriculum/quality/forms?type=MCM">Edit quality forms</Link>}
           <button type="button" className={`${control} inline-flex items-center gap-2 disabled:opacity-50`} disabled={loading || refreshing} onClick={() => setRevision(value => value + 1)}><RefreshCw aria-hidden="true" size={16} />Refresh calendars</button>
         </div>
       </div>
@@ -288,7 +302,7 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
           <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-foreground-600">
             <span className="inline-flex items-center gap-2"><span aria-hidden="true" className={`h-2 w-2 rounded-full ${data.partial ? 'bg-amber-500' : preparing ? 'bg-primary-500' : 'bg-emerald-500'}`} />{data.coverage.checkedCoachEmails.length} of {data.coverage.totalCoaches} calendars loaded</span>
             {refreshing ? <span className="inline-flex items-center gap-1.5"><Loader2 size={12} aria-hidden="true" className="animate-spin motion-reduce:animate-none" />Checking for updates</span>
-              : preparing ? <span>Remaining checks pending</span> : data.sync?.pending && <span>Saved results available</span>}
+              : updatesPaused ? <span>Automatic updates stopped · Use Refresh calendars to check again</span> : preparing ? <span>Remaining checks pending</span> : data.sync?.pending && <span>Saved results available</span>}
             {data.sync?.lastSuccessfulAt && <span>Last calendar check: {clock(data.sync.lastSuccessfulAt)}</span>}
             {data.partial && <span className="font-medium text-amber-800">{issues.length ? `${issues.length} ${issues.length === 1 ? 'check needs' : 'checks need'} attention` : 'Some results are incomplete'}</span>}
             {lmsOnly.length > 0 && <span>{lmsOnly.length} {lmsOnly.length === 1 ? 'booking' : 'bookings'} to compare</span>}
@@ -296,7 +310,7 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
           <button type="button" className="text-xs font-semibold text-primary-700 underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500" onClick={() => { setSelectedSession(null); setShowSyncDetails(true); }}>Sync & booking details</button>
         </section>
         {!loading && !visible.length && phase === 'ready' && allMatching.length > 0 && <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary-200 bg-primary-50 p-4 text-sm">
-          <p>{preparing ? 'Recording checks are still running.' : `No meetings match ${filterLabels[phase]}.`} There are {allMatching.length} meetings loaded across all statuses{data.partial ? '; some calendars are still unavailable' : ''}.</p>
+          <p>{preparing ? updatesPaused ? 'Some recording checks are still pending.' : 'Recording checks are still running.' : `No meetings match ${filterLabels[phase]}.`} There are {allMatching.length} meetings loaded across all statuses{data.partial ? '; some calendars are still unavailable' : ''}.</p>
           <button className={control} onClick={() => setPhase('all')}>Show all loaded meetings</button>
         </div>}
         <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
@@ -326,6 +340,7 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
         activeTab={linkedId ? tab : undefined} onTabChange={linkedId ? value => navigate({ tab: value }, false) : undefined}
         timeZone={zone} now={now} coachName={coachName(selectedMeeting.coachEmail)} learnerNames={selectedMeeting.learnerIds.map(learnerName)} onClose={closeMeeting} />}
       {showSyncDetails && data && <SyncReviewDrawer data={data} issues={issues} bookings={lmsOnly} pending={loading} busy={refreshing}
+        updatesPaused={updatesPaused}
         coachName={coachName} learnerName={learnerName} onClose={() => setShowSyncDetails(false)} onRefresh={() => setRevision(value => value + 1)}
         onViewCoach={email => { setShowSyncDetails(false); navigate({ coach: email, learner: '' }); }} />}
       {showLearners && rosterCoach && <CoachLearnersDialog key={`${rosterCoach}:${requested.start}:${requested.end}:${zone}`}

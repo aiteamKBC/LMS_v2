@@ -21,6 +21,53 @@ describe('Saved Coaching Session evidence buttons', () => {
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
   beforeEach(() => { vi.mocked(loadCoachingPdf).mockReset().mockResolvedValue(new Blob(['%PDF-synthetic'], {type:'application/pdf'})); vi.stubGlobal('URL', class extends URL { static createObjectURL = vi.fn(() => 'blob:verified-pdf'); static revokeObjectURL = vi.fn(); }); vi.mocked(loadSavedCoachingEvidence).mockReset(); vi.mocked(loadCoachingSession).mockReset(); vi.mocked(loadCoachingKeywords).mockReset(); vi.mocked(loadCoachingQuality).mockReset(); });
 
+  it('offers PDFs from availability metadata without transcript or AI bodies', () => {
+    const data = evidence(); data.metadataOnly = true; data.transcript = { durationSeconds: null, updatedAt: null, partCount: 3 };
+    data.analyses = [{ ...data.analyses[0], report: undefined, reportAvailable: true }];
+    render(<SavedMeetingEvidence evidence={data} eventKey="event" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Transcript' }));
+    expect(screen.getByText(/All 3 verified transcript parts/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Preview PDF' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'AI analysis' }));
+    expect(screen.getByRole('button', { name: 'Preview PDF' })).toBeInTheDocument();
+    expect(loadSavedCoachingEvidence).not.toHaveBeenCalled(); expect(loadCoachingPdf).not.toHaveBeenCalled();
+  });
+
+  it('retains the saved transcript PDF when Microsoft has no additional published part', () => {
+    render(<SavedMeetingEvidence evidence={{ ...evidence(), transcriptCheck: { state: 'missing', code: 'no_transcript' } }} eventKey="event" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Transcript' }));
+    expect(screen.getByRole('button', { name: 'Preview PDF' })).toBeInTheDocument();
+    expect(screen.queryByText(/Microsoft has not published/)).not.toBeInTheDocument();
+  });
+
+  it('distinguishes exact recording coverage from longer participant attendance', async () => {
+    vi.mocked(loadCoachingSession).mockResolvedValue({ eventKey: 'event', partial: false,
+      media: { state: 'ready', readyCount: 2, recordings: [
+        { id: 'one', state: 'ready', startsAt: '2026-10-23T12:00:00Z', endsAt: '2026-10-23T12:04:00Z' },
+        { id: 'two', state: 'ready', startsAt: '2026-10-23T12:03:00Z', endsAt: '2026-10-23T12:08:00Z' }] },
+      attendance: { state: 'available', reportCount: 1, rows: [{ name: 'Synthetic participant', totalAttendanceSeconds: 560 }] } });
+    render(<SessionDetails eventKey="event" />);
+    expect(await screen.findByText(/2 recording parts.*8 min 0 sec recorded in total/)).toBeInTheDocument();
+    expect(screen.getByText('4 min 0 sec recorded')).toBeInTheDocument();
+    expect(screen.getByText('5 min 0 sec recorded')).toBeInTheDocument();
+    expect(screen.getByText('9 min 20 sec')).toBeInTheDocument(); expect(loadCoachingSession).toHaveBeenCalledOnce();
+  });
+
+  it('stops pending attendance checks after two retries instead of polling indefinitely', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(loadCoachingSession).mockResolvedValue({ eventKey: 'event', partial: false, media: { state: 'pending', readyCount: 0, recordings: [] }, attendance: { state: 'pending', reportCount: 0, rows: [] } });
+      render(<SessionDetails eventKey="event" />);
+      await act(async () => {});
+      await act(async () => { await vi.advanceTimersByTimeAsync(20000); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(20000); });
+      expect(loadCoachingSession).toHaveBeenCalledTimes(3);
+      expect(screen.getByText(/Automatic checks have stopped/)).toBeInTheDocument();
+      await act(async () => { await vi.advanceTimersByTimeAsync(300000); });
+      expect(loadCoachingSession).toHaveBeenCalledTimes(3);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('offers actual PDF preview/download without rendering raw transcript or loading an external report', async () => {
     const view = render(<SavedMeetingEvidence evidence={evidence()} eventKey="calendar:event" reference="signed-reference" />);
     expect(screen.getAllByRole('button').map(button => button.textContent)).toEqual(['Transcript', 'AI analysis']);

@@ -26,13 +26,14 @@ export interface CoachingSessionDetails {
 }
 
 export interface SavedCoachingEvidence {
+  metadataOnly?: boolean;
   completion?: { state: 'action-required' | 'completed' | 'awaiting-signature' | 'unverified' | 'unavailable' | 'mixed'; source: 'aptem'; checkedAt?: string };
   state: 'matched' | 'not-found' | 'ambiguous' | 'unavailable';
   source: 'coaching-session';
   analysisState?: 'matched' | 'not-found' | 'ambiguous' | 'unavailable';
   transcriptCheck?: { state: 'available' | 'missing' | 'unavailable'; code: string };
-  transcript: { content: string; durationSeconds: number | null; updatedAt: string | null; source?: 'lms' | 'microsoft' } | null;
-  analyses: { id: string; learnerName: string; type: string; status: string; report: unknown; updatedAt: string | null;
+  transcript: { content?: string; partCount?: number; durationSeconds: number | null; updatedAt: string | null; source?: 'lms' | 'microsoft' } | null;
+  analyses: { id: string; learnerName: string; type: string; status: string; report?: unknown; reportAvailable?: boolean; updatedAt: string | null;
     sourceSessionId?: string | null }[];
 }
 
@@ -237,6 +238,8 @@ export interface CalendarLoadOptions {
   previous?: { query: CoachingCalendarQuery; data: CoachingCalendar };
 }
 
+export const COACHING_CALENDAR_REQUEST_TIMEOUT = 20_000;
+
 type CalendarReply = { status: number; ok: boolean; data: unknown };
 
 // Share only an in-flight snapshot read (including StrictMode remounts).
@@ -245,7 +248,7 @@ type CalendarReply = { status: number; ok: boolean; data: unknown };
 const calendarReads = createCachedResource<CalendarReply>('coaching-calendar-read', async key => {
   const [url, version] = JSON.parse(key) as [string, string | null];
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 45000);
+  const timer = setTimeout(() => controller.abort(), COACHING_CALENDAR_REQUEST_TIMEOUT);
   try {
     const response = await learningFetch(url, {
       credentials: 'include', cache: 'no-store', signal: controller.signal,
@@ -273,7 +276,7 @@ async function readCalendarPage(query: CoachingCalendarQuery, offset: number, li
   const cancel = () => controller.abort();
   if (signal?.aborted) cancel();
   signal?.addEventListener('abort', cancel, { once: true });
-  const timer = setTimeout(cancel, 45000);
+  const timer = setTimeout(cancel, COACHING_CALENDAR_REQUEST_TIMEOUT);
   try {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const url = `/coach_api/coaching-recordings/calendar?${params}`;
@@ -437,6 +440,7 @@ export function loadCoachingPdf(eventKey: string, kind: 'transcript' | 'analysis
 
 function isSavedEvidence(value: unknown): value is SavedCoachingEvidence {
   return object(value) && value.source === 'coaching-session'
+    && (value.metadataOnly === undefined || value.metadataOnly === true)
     && (value.completion === undefined || (object(value.completion) && value.completion.source === 'aptem'
       && ['action-required', 'completed', 'awaiting-signature', 'unverified', 'unavailable', 'mixed'].includes(String(value.completion.state))
       && (value.completion.checkedAt === undefined || instant(value.completion.checkedAt))))
@@ -444,47 +448,57 @@ function isSavedEvidence(value: unknown): value is SavedCoachingEvidence {
     && (value.analysisState === undefined || ['matched', 'not-found', 'ambiguous', 'unavailable'].includes(String(value.analysisState)))
     && (value.transcriptCheck === undefined || (object(value.transcriptCheck)
       && ['available', 'missing', 'unavailable'].includes(String(value.transcriptCheck.state)) && typeof value.transcriptCheck.code === 'string'))
-    && (value.transcript === null || (object(value.transcript) && typeof value.transcript.content === 'string'
+    && (value.transcript === null || (object(value.transcript) && (typeof value.transcript.content === 'string' || (value.metadataOnly === true && value.transcript.content === undefined))
       && (value.transcript.durationSeconds === null || (typeof value.transcript.durationSeconds === 'number' && value.transcript.durationSeconds >= 0))
       && optionalInstant(value.transcript.updatedAt)
+      && (value.transcript.partCount === undefined || (Number.isInteger(value.transcript.partCount) && Number(value.transcript.partCount) > 0))
       && (value.transcript.source === undefined || ['lms', 'microsoft'].includes(String(value.transcript.source)))))
     && Array.isArray(value.analyses) && value.analyses.every(row => object(row) && typeof row.id === 'string'
       && typeof row.learnerName === 'string' && typeof row.type === 'string' && typeof row.status === 'string'
+      && (row.reportAvailable === undefined || (typeof row.reportAvailable === 'boolean' && (!row.reportAvailable || row.status === 'completed')))
       && (row.sourceSessionId == null || (typeof row.sourceSessionId === 'string' && /^[a-f0-9]{32}$/.test(row.sourceSessionId)))
-      && optionalInstant(row.updatedAt) && (row.status === 'completed' || row.report === null))
+      && optionalInstant(row.updatedAt) && (row.status === 'completed' || row.report === null || (value.metadataOnly === true && row.report === undefined && row.reportAvailable === false)))
     && (value.state === 'matched' || (value.transcript === null && value.analyses.length === 0));
 }
 
+const sessionReads = createCachedResource<unknown>('coaching-session-details', async url => {
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 45000);
+  try {
+    const response = await learningFetch(url, { credentials: 'include', cache: 'no-store', signal: controller.signal });
+    if (!response.ok) throw new Error('Saved meeting details could not be loaded. Please retry.');
+    return await response.json() as unknown;
+  } finally { clearTimeout(timer); }
+}, 15000, 16);
+export function invalidateCoachingDetails() { sessionReads.invalidate(); }
+
 export async function loadCoachingSession(eventKey: string, signal?: AbortSignal, reference?: string, part: 'all' | 'attendance' = 'all'): Promise<CoachingSessionDetails> {
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
   const params = new URLSearchParams({ eventKey });
   if (part !== 'all') params.set('part', part);
   if (reference) params.set('reference', reference);
-  const response = await learningFetch(`/coach_api/coaching-recordings/session?${params}`, {
-    credentials: 'include', cache: 'no-store', signal,
-  });
-  const data: unknown = await response.json();
-  if (!response.ok || !object(data) || typeof data.eventKey !== 'string' || (reference ? data.reference !== reference : data.eventKey !== eventKey) || !isMedia(data.media)
+  const url = `/coach_api/coaching-recordings/session?${params}`;
+  const data = await withCallerSignal(sessionReads.read(url), signal);
+  if (!object(data) || typeof data.eventKey !== 'string' || (reference ? data.reference !== reference : data.eventKey !== eventKey) || !isMedia(data.media)
       || typeof data.partial !== 'boolean' || (data.evidence !== undefined && !isSavedEvidence(data.evidence)) || !object(data.attendance)
       || !['available', 'pending', 'unavailable'].includes(String(data.attendance.state))
       || !Array.isArray(data.attendance.rows) || !data.attendance.rows.every(row => object(row)
         && ['name', 'displayName', 'email', 'role', 'status'].every(key => row[key] == null || typeof row[key] === 'string')
         && (row.totalAttendanceSeconds == null || (typeof row.totalAttendanceSeconds === 'number' && row.totalAttendanceSeconds >= 0)))) {
-    throw new Error('Recordings and attendance could not be loaded. Please retry.');
+    sessionReads.invalidate(url); throw new Error('Recordings and attendance could not be loaded. Please retry.');
   }
   return data as unknown as CoachingSessionDetails;
 }
 
 export async function loadSavedCoachingEvidence(eventKey: string, signal?: AbortSignal, reference?: string, checkMicrosoft = false): Promise<SavedCoachingEvidence> {
-  const params = new URLSearchParams({ eventKey, part: 'evidence' });
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  const params = new URLSearchParams({ eventKey, part: 'evidence', metadataOnly: '1' });
   if (checkMicrosoft) params.set('checkMicrosoft', '1');
   if (reference) params.set('reference', reference);
-  const response = await learningFetch(`/coach_api/coaching-recordings/session?${params}`, {
-    credentials: 'include', cache: 'no-store', signal,
-  });
-  const data: unknown = await response.json();
-  if (!response.ok || !object(data) || typeof data.eventKey !== 'string'
+  const url = `/coach_api/coaching-recordings/session?${params}`;
+  const data = await withCallerSignal(sessionReads.read(url), signal);
+  if (!object(data) || typeof data.eventKey !== 'string'
     || (reference ? data.reference !== reference : data.eventKey !== eventKey) || !isSavedEvidence(data.evidence)) {
-    throw new Error('Saved transcript and AI analysis could not be loaded. Refresh and retry.');
+    sessionReads.invalidate(url); throw new Error('Saved transcript and AI analysis could not be loaded. Refresh and retry.');
   }
   return data.evidence;
 }

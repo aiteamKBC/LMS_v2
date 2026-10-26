@@ -92,7 +92,8 @@ def save_review(snapshot, *, expected, request_id, actor):
         return saved
 
 
-def list_reviews(start,end,coach='',status='',offset=0,search=''):
+def list_reviews(start,end,coach='',status='',offset=0,search='',review_type='',pdf=''):
+    from .quality_review_types import type_sql
     where = 'starts_at >= %s AND starts_at < %s'
     params = [start,end]
     if coach:
@@ -101,6 +102,11 @@ def list_reviews(start,end,coach='',status='',offset=0,search=''):
     if status:
         where += ' AND status=%s'
         params.append(status)
+    if review_type:
+        where += ' AND (' + type_sql() + ')=%s'
+        params.append(review_type)
+    if pdf:
+        where += ' AND ' + ('NOT ' if pdf == 'missing' else '') + 'EXISTS (SELECT 1 FROM lms_quality.document d WHERE d.review_id=lms_quality.review.id)'
     if search:
         where += " AND (learner_name ILIKE %s ESCAPE '!' OR payload->'meeting'->>'title' ILIKE %s ESCAPE '!')"
         term='%'+search.replace('!','!!').replace('%','!%').replace('_','!_')+'%'
@@ -108,7 +114,8 @@ def list_reviews(start,end,coach='',status='',offset=0,search=''):
     with connect() as connection:
         rows = connection.execute('''SELECT id,coach_email,learner_id,learner_name,starts_at,status,version,updated_at,
           payload->'meeting'->>'title' AS title,payload->'coach'->>'name' AS coach_name,
-          jsonb_array_length(payload->'form'->'actions') AS action_count
+          jsonb_array_length(payload->'form'->'actions') AS action_count,'''+type_sql()+''' AS review_type,
+          (SELECT max(d.version) FROM lms_quality.document d WHERE d.review_id=lms_quality.review.id) AS pdf_version
           FROM lms_quality.review WHERE ''' + where + ' ORDER BY starts_at DESC,id LIMIT 31 OFFSET %s', [*params,offset]).fetchall()
     return rows[:30], offset+30 if len(rows)>30 else None
 
@@ -147,3 +154,97 @@ def read_images(review_id, sections):
     if any(identity not in images or images[identity]['section']!=section for section,values in sections.items() for identity in values):
         raise ReviewConflict('A saved screenshot is unavailable for this review version. Please retry.')
     return images
+
+
+def _template_state(connection, kind=''):
+    from .quality_form_definition import initial_state
+    key=initial_state(kind)['id']
+    row=connection.execute('SELECT payload FROM lms_quality.form_template WHERE id=%s',[key]).fetchone()
+    if row:
+        return _payload(row)
+    inherited=None
+    if kind:
+        inherited=_payload(connection.execute('SELECT payload FROM lms_quality.form_template WHERE id=%s',[initial_state()['id']]).fetchone())
+    return initial_state(kind,inherited)
+
+
+def read_template(kind=''):
+    with connect() as connection:
+        return _template_state(connection,kind)
+
+
+def save_template(definition, *, expected, request_id, actor, publish=False):
+    from datetime import datetime, timezone
+    from copy import deepcopy
+    from psycopg.types.json import Jsonb
+    from .quality_form_definition import initial_state
+    key=definition['id']
+    request_hash=digest([definition,expected,actor,publish])
+    with connect(write=True) as connection:
+        replay=connection.execute('SELECT request_hash,actor,payload FROM lms_quality.form_revision WHERE request_id=%s',[request_id]).fetchone()
+        if replay:
+            if replay['request_hash']!=request_hash or replay['actor']!=actor:
+                raise ReviewConflict('This form save identifier was used for another change.')
+            return _payload(replay)
+        row=connection.execute('SELECT payload FROM lms_quality.form_template WHERE id=%s',[key]).fetchone()
+        current=_payload(row) or _template_state(connection,definition.get('reviewType',''))
+        if current['revision']!=expected:
+            raise ReviewConflict('The form changed in another window. Reload it before saving.')
+        stamp=datetime.now(timezone.utc).isoformat()
+        saved={**current,'revision':expected+1,'draft':deepcopy(definition),'updatedAt':stamp,'updatedBy':actor}
+        if publish:
+            saved['published']={**deepcopy(definition),'version':current['published']['version']+1}
+            saved['publishedAt']=stamp
+        if row:
+            result=connection.execute('''UPDATE lms_quality.form_template SET revision=%s,payload=%s,updated_at=CURRENT_TIMESTAMP
+              WHERE id=%s AND revision=%s''',[expected+1,Jsonb(saved),key,expected])
+        else:
+            result=connection.execute('''INSERT INTO lms_quality.form_template(id,revision,payload)
+              VALUES (%s,%s,%s) ON CONFLICT(id) DO NOTHING''',[key,expected+1,Jsonb(saved)])
+        if result.rowcount!=1:
+            raise ReviewConflict('Another editor saved this form. Reload the saved definition.')
+        connection.execute('''INSERT INTO lms_quality.form_revision(template_id,revision,request_id,request_hash,actor,payload)
+          VALUES (%s,%s,%s,%s,%s,%s)''',[key,expected+1,request_id,request_hash,actor,Jsonb(saved)])
+        return saved
+
+
+def read_revision(review_id, version):
+    with connect() as connection:
+        return _payload(connection.execute('SELECT payload FROM lms_quality.revision WHERE review_id=%s AND version=%s',
+                                           [review_id,version]).fetchone())
+
+
+def read_document(review_id, version):
+    with connect() as connection:
+        return connection.execute('SELECT filename,digest,content FROM lms_quality.document WHERE review_id=%s AND version=%s',
+                                  [review_id,version]).fetchone()
+
+
+def save_document(review, content):
+    if not content.startswith(b'%PDF-') or len(content)>20*1024*1024:
+        raise ReviewUnavailable('The generated quality PDF is invalid or too large.')
+    filename=f'quality-check-{review["id"]}-v{review["version"]}.pdf'
+    value_hash=sha256(content).hexdigest()
+    with connect(write=True) as connection:
+        # The immutable saved revision must already exist. Duplicate concurrent
+        # PDF preparation keeps the first saved bytes for this version.
+        row=connection.execute('SELECT payload FROM lms_quality.revision WHERE review_id=%s AND version=%s',
+                               [review['id'],review['version']]).fetchone()
+        snapshot=_payload(row)
+        if not snapshot or snapshot['status']!='completed' or digest(snapshot)!=digest(review):
+            raise ReviewConflict('The PDF does not match a completed saved review version.')
+        connection.execute('''INSERT INTO lms_quality.document(review_id,version,filename,digest,content)
+          VALUES (%s,%s,%s,%s,%s) ON CONFLICT(review_id,version) DO NOTHING''',
+          [review['id'],review['version'],filename,value_hash,content])
+        return connection.execute('SELECT filename,digest,content FROM lms_quality.document WHERE review_id=%s AND version=%s',
+                                  [review['id'],review['version']]).fetchone()
+
+
+def reviews_for_meeting(identity, offset=0):
+    from .quality_review_types import type_sql
+    with connect() as connection:
+        rows=connection.execute('''SELECT r.id,r.learner_id,r.learner_name,r.status,r.version,r.updated_at,'''+type_sql('r')+''' AS review_type,
+          (SELECT max(d.version) FROM lms_quality.document d WHERE d.review_id=r.id) AS pdf_version
+          FROM lms_quality.review r WHERE r.payload->'meeting'->>'id'=%s
+          ORDER BY r.learner_name,r.id LIMIT 31 OFFSET %s''',[identity,offset]).fetchall()
+    return rows[:30],offset+30 if len(rows)>30 else None

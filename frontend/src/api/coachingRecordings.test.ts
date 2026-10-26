@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { learningFetch } from '@/lib/personalLearning';
 import { coachFetch } from '@/lib/coachFetch';
-import { coachingRecordingUrl, loadCoachingPdf, invalidateCoachingPdfs, loadCoachingCalendar, loadCoachingSession, loadSavedCoachingEvidence, loadCoachingQuality, loadCoachingKeywords, loadCoachLearners, loadLinkedCoachingMeeting, type CoachingCalendar, type CoachLearners } from './coachingRecordings';
+import { coachingRecordingUrl, loadCoachingPdf, invalidateCoachingDetails, invalidateCoachingPdfs, loadCoachingCalendar, loadCoachingSession, loadSavedCoachingEvidence, loadCoachingQuality, loadCoachingKeywords, loadCoachLearners, loadLinkedCoachingMeeting, type CoachingCalendar, type CoachLearners } from './coachingRecordings';
 import { clearAllCachedResources } from './cachedRequest';
 
 vi.mock('@/lib/personalLearning', () => ({ learningFetch: vi.fn() }));
@@ -179,7 +179,7 @@ describe('Coaching calendar client', () => {
     }));
     const loading = loadCoachingCalendar(query);
     const rejected = expect(loading).rejects.toThrow('taking too long');
-    await vi.advanceTimersByTimeAsync(45000);
+    await vi.advanceTimersByTimeAsync(20000);
     await rejected;
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -372,6 +372,30 @@ describe('Coaching calendar client', () => {
     expect(String(vi.mocked(learningFetch).mock.lastCall?.[0])).not.toContain('refresh');
   });
 
+  it('coalesces detail requests, survives one subscriber closing, and clears on explicit refresh', async () => {
+    const details = { eventKey: 'event', media: { state: 'pending', readyCount: 0, recordings: [] }, partial: false, attendance: { state: 'pending', reportCount: 0, rows: [] } };
+    let finish!: (value: Response) => void;
+    vi.mocked(learningFetch).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const controller = new AbortController();
+    const first = loadCoachingSession('event', controller.signal).catch(error => error);
+    const second = loadCoachingSession('event');
+    await Promise.resolve(); controller.abort(); finish(response(details));
+    expect((await first).name).toBe('AbortError'); expect(await second).toEqual(details);
+    expect(await loadCoachingSession('event')).toEqual(details); expect(learningFetch).toHaveBeenCalledOnce();
+    invalidateCoachingDetails(); vi.mocked(learningFetch).mockResolvedValueOnce(response(details));
+    await loadCoachingSession('event'); expect(learningFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('loads lightweight evidence metadata without transferring transcript or AI bodies', async () => {
+    const saved = { metadataOnly: true, source: 'coaching-session', state: 'matched', transcript: { partCount: 3, durationSeconds: null, updatedAt: null },
+      analyses: [{ id: 'analysis', learnerName: 'Synthetic learner', type: 'progress_review', status: 'completed', reportAvailable: true, updatedAt: null }] };
+    vi.mocked(learningFetch).mockResolvedValueOnce(response({ eventKey: 'event', evidence: saved }));
+    expect(await loadSavedCoachingEvidence('event')).toEqual(saved);
+    expect(new URL(vi.mocked(learningFetch).mock.calls[0][0], 'http://localhost').searchParams.get('metadataOnly')).toBe('1');
+    expect(learningFetch).toHaveBeenCalledOnce();
+    await loadSavedCoachingEvidence('event'); expect(learningFetch).toHaveBeenCalledOnce();
+  });
+
   it('binds calendar-only saved details and media links to the signed occurrence reference', async () => {
     const reference = 'signed/calendar+reference';
     const saved = { eventKey: 'coach-calendar:verified', reference,
@@ -387,6 +411,7 @@ describe('Coaching calendar client', () => {
     expect(media.get('recordingId')).toBe('file/one+');
     expect(media.get('preview')).toBe('1');
     for (const changes of [{ reference: 'different' }, { reference: undefined }, { eventKey: null }]) {
+      invalidateCoachingDetails();
       vi.mocked(learningFetch).mockResolvedValueOnce(response({ ...saved, ...changes }));
       await expect(loadCoachingSession('', undefined, reference)).rejects.toThrow();
     }
@@ -441,6 +466,7 @@ describe('Coaching calendar client', () => {
       { ...evidence, analyses: [{ ...evidence.analyses[0], sourceSessionId: 'https://foreign.invalid/report' }] },
       { ...evidence, transcript: { ...evidence.transcript, durationSeconds: -1 } },
     ]) {
+      invalidateCoachingDetails();
       vi.mocked(learningFetch).mockResolvedValueOnce(response({ ...details, evidence: invalid }));
       await expect(loadCoachingSession('event')).rejects.toThrow('could not be loaded');
     }
@@ -570,7 +596,7 @@ describe('Coaching calendar client', () => {
     }));
     const pending = loadCoachingCalendar(query, undefined, { background: true });
     const rejected = expect(pending).rejects.toThrow('taking too long');
-    await vi.advanceTimersByTimeAsync(45000);
+    await vi.advanceTimersByTimeAsync(20000);
     await rejected;
     expect(vi.mocked(learningFetch).mock.calls[0][1]?.signal?.aborted).toBe(true);
     expect(vi.getTimerCount()).toBe(0);

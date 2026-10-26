@@ -196,6 +196,17 @@ class CoachingRecordingsApiTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.attendance_queue.call_args.args[0].graph_event_id, 'external')
 
+    def test_evidence_metadata_preserves_availability_without_large_private_bodies(self):
+        context=api.calendar_context(OWNER,'external','2026-10-20T09:00:00Z','2026-10-20T10:00:00Z')
+        self.saved_evidence.return_value={**api.empty_evidence('matched'),
+            'transcript':{'content':'Private transcript','durationSeconds':None,'updatedAt':None,'partCount':2},
+            'analyses':[{'id':'report','status':'completed','report':{'summary':'Private analysis'}}]}
+        response=api.coaching_recording_session(self.factory.get('/session',{'reference':api.calendar_reference(context),'part':'evidence','metadataOnly':'1'}))
+        self.assertEqual(response.status_code,200);data=json.loads(response.content)['evidence']
+        self.assertTrue(data['analyses'][0]['reportAvailable']);self.assertEqual(data['transcript']['partCount'],2)
+        self.assertNotIn('content',data['transcript']);self.assertNotIn('report',data['analyses'][0])
+        self.assertNotIn('Private',response.content.decode())
+
     def test_due_idle_evidence_keeps_polling_until_background_refresh_finishes(self):
         event = meeting()
         context = api.event_context(OWNER, event)

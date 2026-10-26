@@ -19,6 +19,7 @@ describe('Saved quality reviews dashboard', () => {
     expect(qualityReviews).toHaveBeenCalledOnce();
     expect(vi.mocked(qualityReviews).mock.calls[0][0]).toMatchObject({ status: 'completed' });
     fireEvent.change(screen.getByRole('searchbox', { name: 'Learner or meeting' }), { target: { value: 'Learner' } });
+    fireEvent.click(screen.getByRole('button', { name: 'More filters' }));
     fireEvent.change(screen.getByRole('combobox', { name: 'Review status' }), { target: { value: 'draft' } });
     expect(qualityReviews).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }));
@@ -36,6 +37,48 @@ describe('Saved quality reviews dashboard', () => {
     fireEvent.click(screen.getByRole('link', { name: 'Open review for Learner 1' }));
     expect(await screen.findByRole('dialog')).toHaveTextContent('Saved form '+uuid('1'));
   });
+  it('applies one-click type, completion and PDF filters and restores them in the URL', async () => {
+    open(); await screen.findByText('Learner 1');
+    fireEvent.click(screen.getByRole('button', { name: 'PR (Progress Review)' }));
+    await waitFor(() => expect(qualityReviews).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'With PDF' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'With PDF' }));
+    await waitFor(() => expect(qualityReviews).toHaveBeenCalledTimes(3));
+    expect(vi.mocked(qualityReviews).mock.lastCall?.[0]).toMatchObject({ reviewType: 'PR', pdf: 'available', status: '' });
+    expect(screen.getByLabelText('Current review URL')).toHaveTextContent('type=PR');
+    expect(screen.getByLabelText('Current review URL')).toHaveTextContent('pdf=available');
+    expect(screen.getByRole('link', { name: 'Edit quality forms' })).toHaveAttribute('href', '/curriculum/quality/forms?type=PR');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Drafts' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Drafts' }));
+    await waitFor(() => expect(qualityReviews).toHaveBeenCalledTimes(4));
+    expect(vi.mocked(qualityReviews).mock.lastCall?.[0]).toMatchObject({ reviewType: 'PR', pdf: '', status: 'draft' });
+  });
+  it('restores type and PDF filters on refresh and resets the search without loading PDF bytes', async () => {
+    open('/?type=MCM&pdf=available&status=all&q=Somebody'); await screen.findByText('Learner 1');
+    expect(vi.mocked(qualityReviews).mock.calls[0][0]).toMatchObject({ reviewType: 'MCM', pdf: 'available', status: '', search: 'Somebody' });
+    expect(screen.getByRole('button', { name: 'MCM' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Reset filters' }));
+    await waitFor(() => expect(qualityReviews).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(qualityReviews).mock.lastCall?.[0]).toMatchObject({ reviewType: '', pdf: '', coachEmail: '', search: '', status: '' });
+  });
+  it('keeps the entered search when a quick type choice applies it', async () => {
+    open(); await screen.findByText('Learner 1');
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Learner or meeting' }), { target: { value: 'Typed learner' } });
+    expect(qualityReviews).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole('button', { name: 'MCM' }));
+    await waitFor(() => expect(qualityReviews).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(qualityReviews).mock.lastCall?.[0]).toMatchObject({ search: 'Typed learner', reviewType: 'MCM' });
+  });
+  it('opens hidden date filters with a useful error before sending an invalid range', async () => {
+    open(); await screen.findByText('Learner 1');
+    fireEvent.click(screen.getByRole('button', { name: 'More filters' }));
+    fireEvent.change(screen.getByLabelText('From', { exact: true }), { target: { value: '2030-01-01' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Fewer filters' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('To on or after From');
+    expect(screen.getByLabelText('From', { exact: true })).toBeVisible();
+    expect(qualityReviews).toHaveBeenCalledOnce();
+  });
   it('shows a load error without claiming an empty successful review list', async () => {
     vi.mocked(qualityReviews).mockRejectedValue(new Error('Access denied'));
     open(); expect(await screen.findByRole('alert')).toHaveTextContent('Access denied');
@@ -46,6 +89,7 @@ describe('Saved quality reviews dashboard', () => {
     expect(await screen.findByRole('dialog')).toHaveTextContent(uuid('2'));
     await screen.findByText('Learner 1');
     expect(qualityReviews).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole('button', { name: 'More filters' }));
     expect(screen.getByRole('combobox', { name: 'Time zone' })).toHaveValue('America/New_York');
     expect(vi.mocked(qualityReviews).mock.calls[0][0]).toMatchObject({ start: '2026-10-01', end: '2026-10-24', status: 'draft' });
     fireEvent.click(screen.getByRole('button', { name: 'Close saved form' }));
@@ -83,6 +127,7 @@ describe('Saved quality reviews dashboard', () => {
       nextOffset: filters.status === 'draft' || offset ? null : 30 }));
     open(); await screen.findByText('Learner 1');
     fireEvent.click(screen.getByRole('button', { name: 'Load more reviews' })); await screen.findByText('Learner 2');
+    fireEvent.click(screen.getByRole('button', { name: 'More filters' }));
     fireEvent.change(screen.getByRole('combobox', { name: 'Review status' }), { target: { value: 'draft' } });
     fireEvent.click(screen.getByRole('button', { name: 'Apply filters' })); await screen.findByText('Learner 3');
     fireEvent.click(screen.getByRole('button', { name: 'History back' })); await screen.findByText('Learner 1');

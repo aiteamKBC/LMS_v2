@@ -7,11 +7,12 @@ import { calendarErrorLabel, initialChecksPending } from './model';
 interface Props {
   data: CoachingCalendar; issues: CoachingCalendar['errors']; bookings: CoachingCalendar['lmsOnly'];
   pending: boolean; busy: boolean; coachName: (email: string) => string; learnerName: (id: string) => string;
+  updatesPaused?: boolean;
   onClose: () => void; onRefresh: () => void; onViewCoach: (email: string) => void;
 }
 const action = 'rounded-lg border border-background-200 bg-white px-3 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 disabled:opacity-50';
 
-export default function SyncReviewDrawer({ data, issues, bookings, pending, busy, coachName, learnerName, onClose, onRefresh, onViewCoach }: Props) {
+export default function SyncReviewDrawer({ data, issues, bookings, pending, busy, updatesPaused = false, coachName, learnerName, onClose, onRefresh, onViewCoach }: Props) {
   const titleId = useId(), panel = useRef<HTMLElement>(null), closeButton = useRef<HTMLButtonElement>(null);
   const close = useRef(onClose); close.current = onClose;
   useEffect(() => {
@@ -42,6 +43,7 @@ export default function SyncReviewDrawer({ data, issues, bookings, pending, busy
       <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-5 scrollbar-slim">
         <section aria-label="Calendar availability" className="rounded-xl border border-background-200 p-4">
           <h3 className="text-sm font-semibold">{data.coverage.checkedCoachEmails.length} of {data.coverage.totalCoaches} calendars loaded</h3>
+          {updatesPaused && <p className="mt-2 text-xs text-foreground-600">Automatic page updates have stopped. Saved results remain available; use Recheck calendars to request another update.</p>}
           <p className="mt-2 text-xs text-foreground-600">{data.partial ? 'Some checks need attention. The available meetings remain usable.' : pending || preparing ? 'Initial calendar checks are still pending. The available meetings remain usable.' : 'The latest available calendar results are loaded.'}</p>
           {preparing && <p className="mt-2 text-xs text-foreground-500">First checks remaining: {data.sync?.initialPendingCalendars ?? data.sync?.pendingCalendars} calendars and {data.sync?.initialPendingEvidence ?? data.sync?.pendingEvidence} meetings.</p>}
           {data.sync?.pending && !preparing && <p className="mt-2 text-xs text-foreground-500">Saved results are available. Scheduled background checks keep them up to date; you can use the calendar now.</p>}

@@ -49,12 +49,12 @@ export function CurriculumQualityHub() {
   return <CurriculumHub kind="quality" />;
 }
 
-/** Quality destinations with no record store behind them. */
+/** Broader quality workflows beyond the available meeting checks. */
 const QUALITY_NOT_BUILT: Array<{ title: string; description: string; missing: string; icon: string }> = [
   {
-    title: 'Quality Assurance',
-    description: 'Sampling, IQA checks and sign-off against live curriculum records.',
-    missing: 'Needs a QA store: review cycles, checklist results, findings and sign-off have nowhere to be saved.',
+    title: 'IQA review cycles and sign-off',
+    description: 'Manage wider curriculum review cycles and approval decisions.',
+    missing: 'Meeting forms and saved quality checks are available above. Wider IQA cycles and sign-off are not yet available.',
     icon: 'ri-shield-check-line',
   },
 ];
@@ -65,8 +65,7 @@ function NotBuiltPanel() {
       <div>
         <h2 className="font-heading text-base font-bold text-foreground-950">Not built yet</h2>
         <p className="mt-1 text-[12px] text-foreground-500">
-          This needs a record store that does not exist. Until it does, the work it would track is done in the records
-          themselves.
+          Meeting quality checks are available above. The wider workflows below still need their own implementation.
         </p>
       </div>
       <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -252,6 +251,8 @@ function hubCards(kind: HubKind, counts: {
     ];
   }
   return [
+    { title: 'Quality Forms', description: 'Edit, preview and publish the questions used to assess coach meetings.', href: '/curriculum/quality/forms', icon: 'ri-survey-line', tone: 'primary' },
+    { title: 'Quality Checks', description: 'Open saved meeting reviews, screenshots, action plans and completed PDFs.', href: '/curriculum/coaching-recordings/reviews', icon: 'ri-checkbox-circle-line', tone: 'emerald' },
     { title: 'Published Content', description: 'What is live, what is ready to run, and what an active cohort is already delivering before it was published.', href: '/curriculum/published', icon: 'ri-book-open-line', meta: `${counts.draftModules} not published`, tone: 'emerald', comingSoon: true },
     { title: 'Curriculum Reports', description: 'Coverage, delivery and staffing read from live records, previewed on screen and exportable as CSV.', href: '/curriculum/reports', icon: 'ri-bar-chart-box-line', tone: 'sky', comingSoon: true },
     { title: 'Audit Trail', description: 'Every create, edit and archive across programmes, modules, weeks, components, cohorts and groups.', href: '/curriculum/audit-trail', icon: 'ri-history-line', tone: 'primary' },

@@ -2,6 +2,7 @@
 from collections import Counter
 from datetime import datetime, timezone
 from io import BytesIO
+from pathlib import Path
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -10,7 +11,9 @@ from reportlab.platypus import SimpleDocTemplate, Spacer, Table, TableStyle, Ima
 
 from .recordings_cache import recent_read
 from .recordings_pdf import _fonts, _p, PURPLE, INK, MUTED, LINE, WIDTH
-from .quality_review_template import SECTIONS, DESCRIPTORS, TEMPLATE_ID, validate_form
+from .quality_review_template import TEMPLATE_ID
+from .quality_form_definition import definition_for, clean_answers
+from .quality_review_types import saved_type
 from . import quality_review_store as store
 
 LABELS = {'gold':'Gold', 'green':'Green', 'amber':'Amber', 'red':'Red', 'na':'N/A'}
@@ -30,15 +33,19 @@ def _utc(value):
 
 def _render(review, images):
     _fonts()
-    data=validate_form(review['form'],'completed')
+    definition=definition_for(review)
+    data=clean_answers(review['form'],'completed',definition)
     output=BytesIO()
     doc=SimpleDocTemplate(output,pagesize=A4,leftMargin=15*mm,rightMargin=15*mm,
-      topMargin=19*mm,bottomMargin=17*mm,title='Portfolio Sampling Feedback Form',author='Kent Business College')
-    story=[_p('PORTFOLIO SAMPLING',size=8,bold=True,color=PURPLE),
-      _p('Feedback and evidence review',size=20,bold=True,space=12),
-      _p('Completed review - saved version '+str(review['version']),size=9,bold=True)]
+      topMargin=19*mm,bottomMargin=17*mm,title=definition['title'],author='Kent Business College')
+    logo=Path(__file__).resolve().parents[1]/'curriculum_api'/'templates'/'kbc-logo.png'
+    brand=Table([[Image(str(logo),width=44*mm,height=22*mm,kind='proportional'),
+      _p('QUALITY CHECK',size=11,bold=True,color=PURPLE,space=0)]],colWidths=[WIDTH*.65,WIDTH*.35])
+    brand.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'MIDDLE'),('LINEBELOW',(0,0),(-1,-1),1.5,PURPLE),('BOTTOMPADDING',(0,0),(-1,-1),10)]))
+    story=[brand,Spacer(1,12),_p(definition['title'],size=19,bold=True,space=10),
+      _p(f'Completed review - saved version {review["version"]} | Form version {definition["version"]}',size=9,bold=True)]
     header=data['header']
-    details=[('Coach / tutor observed',review['coach']['name']),('Observer',review['reviewer']['name']),
+    details=[('Quality review type',saved_type(review) or 'Not classified'),('Coach / tutor observed',review['coach']['name']),('Observer',review['reviewer']['name']),
       ('Learner / cohort',review['learner']['name']),('Employer',header['employer']),
       ('Programme / standard',header['programme']),('Activity date',header['activityDate']),
       ('Start date',header['startDate']),('Planned end date',header['endDate']),
@@ -54,16 +61,33 @@ def _render(review, images):
       _p('Evidence relied on (declared by reviewer): '+(', '.join(SOURCES[key] for key in data['sources']) or 'Not recorded'),size=8),
       _p('The meeting is an evidence source. Judgements cover the learner experience across the apprenticeship.',size=8,color=MUTED)]
     story.append(_title('Rating descriptors'))
-    story.extend(_p(f'{LABELS[key]} - {description}',size=7.5) for key,description in DESCRIPTORS.items())
+    story.extend(_p(f'{LABELS[key]} - {description}',size=7.5) for key,description in definition['ratings'].items())
     story.append(Spacer(1,10))
-    for section,title,criteria in SECTIONS:
-        story.append(_title(title))
-        for index,text in enumerate(criteria,1):
-            answer=data['criteria'][f'{section}-{index}']
-            heading=_p(f'{index}. {text}',size=9,bold=True)
+    def pictures(key):
+        for image_id in data['images'].get(key,[]):
+            story.append(_p('Supporting screenshot',size=8,bold=True,color=MUTED))
+            picture=Image(BytesIO(bytes(images[image_id]['content'])))
+            scale=min(WIDTH/picture.imageWidth,180*mm/picture.imageHeight,1)
+            picture.drawWidth=picture.imageWidth*scale;picture.drawHeight=picture.imageHeight*scale
+            picture.hAlign='LEFT'
+            story.extend([picture,Spacer(1,10)])
+    for section in definition['sections']:
+        story.append(_title(section['title']))
+        for index,item in enumerate(section['criteria'],1):
+            heading=_p(f'{index}. {item["text"]}',size=9,bold=True)
             heading.keepWithNext=True
-            badge=Table([[_p(LABELS[answer['rating']],size=8,bold=True,space=0)]],colWidths=[WIDTH])
-            badge.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,-1),colors.HexColor(TINTS[answer['rating']])),
+            if item['type']=='image':
+                story.append(heading);pictures(item['id'])
+                if not data['images'].get(item['id']):story.append(_p('No image attached.',size=8.5))
+                continue
+            if item['type']!='rating':
+                answer=data['answers'].get(item['id'])
+                text='Yes' if answer is True else 'No' if answer is False else ', '.join(answer) if isinstance(answer,list) else str(answer) if answer not in (None,'') else 'Not answered'
+                story.extend([heading,_p(text,size=8.5),Spacer(1,10)])
+                continue
+            answer=data['criteria'][item['id']]
+            badge=Table([[_p(LABELS.get(answer['rating'],'Not rated'),size=8,bold=True,space=0)]],colWidths=[WIDTH])
+            badge.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,-1),colors.HexColor(TINTS.get(answer['rating'],'#F1F5F9'))),
               ('TOPPADDING',(0,0),(-1,-1),5),('BOTTOMPADDING',(0,0),(-1,-1),5)]))
             badge.keepWithNext=True
             evidence_label=_p('Evidence observed and impact on the learner',size=7,bold=True,color=MUTED)
@@ -71,14 +95,8 @@ def _render(review, images):
             evidence_label.spaceBefore=5
             story += [heading,badge,evidence_label,
               _p(answer['evidence'] or 'Not applicable - no additional evidence recorded.',size=8.5),Spacer(1,10)]
-        for image_id in data['images'].get(section,[]):
-            story.append(_p('Supporting screenshot',size=8,bold=True,color=MUTED))
-            picture=Image(BytesIO(bytes(images[image_id]['content'])))
-            scale=min(WIDTH/picture.imageWidth,180*mm/picture.imageHeight,1)
-            picture.drawWidth=picture.imageWidth*scale;picture.drawHeight=picture.imageHeight*scale
-            picture.hAlign='LEFT'
-            story += [picture,Spacer(1,10)]
-    story.append(_title('SMART action plan'))
+        pictures(section['id'])
+    story.append(_title(definition['actionsTitle']))
     if not data['actions']:
         story.append(_p('No follow-up actions were recorded by the reviewer.',size=8.5))
     for index,action in enumerate(data['actions'],1):
@@ -104,4 +122,17 @@ def review_pdf(review):
         images=store.read_images(review['id'],review['form']['images'])
         return _render(review,images)
     from .recordings_saved_evidence import source_dsn
-    return recent_read('quality-review-pdf',[store.digest(source_dsn()),review['id'],review['version'],TEMPLATE_ID,1],load,timeout=600)
+    return recent_read('quality-review-pdf',[store.digest(source_dsn()),review['id'],review['version'],store.digest(definition_for(review)),2],load,timeout=600)
+
+
+def stored_review_pdf(review):
+    if review['status']!='completed':
+        raise store.ReviewConflict('Complete and save this review before exporting its PDF.')
+    def load():
+        existing=store.read_document(review['id'],review['version'])
+        if existing:
+            return bytes(existing['content'])
+        content=review_pdf(review)
+        return bytes(store.save_document(review,content)['content'])
+    from .recordings_saved_evidence import source_dsn
+    return recent_read('quality-document',[store.digest(source_dsn()),review['id'],review['version']],load,timeout=600)

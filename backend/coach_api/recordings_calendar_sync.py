@@ -3,12 +3,13 @@ from urllib.parse import quote, urlencode
 
 
 from curriculum_api.recordings_calendar_policy import meeting_key
-from curriculum_api.recordings_external_policy import event_join_url, occurrence_recordings
+from curriculum_api.recordings_external_policy import event_join_url
 from curriculum_api.session_graph import collection
 from .recordings_calendar import _instant
 from .recordings_calendar_media import attendance_rows, calendar_record, event_context
 from .recordings_media import in_session_window
 from .recordings_cache import recent_read
+from .recordings_parts import occurrence_parts
 
 
 class CalendarMeetingWithoutTeams(ValueError):
@@ -50,7 +51,7 @@ def fetch_recordings(context, event):
     window = (_instant(context['start']), _instant(context['end']))
     files = recent_read('meeting-recordings', [get_graph_settings(), base],
         lambda: collection(microsoft_graph_request, f'{base}/recordings', graph_base), timeout=300)
-    return base, organizer, [serialize_coach_meeting_artifact('recording', row) for row in occurrence_recordings(files, *window)]
+    return base, organizer, [serialize_coach_meeting_artifact('recording', row) for row in occurrence_parts(files, window)]
 
 
 def fetch_attendance(context, base):

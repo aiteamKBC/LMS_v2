@@ -33,7 +33,7 @@ def snapshot():
 class SQLiteAdapter:
     def __init__(self,connection): self.connection=connection
     def execute(self,sql,params=()):
-        sql = sql.replace('lms_quality.','').replace(' FOR UPDATE','')
+        sql = sql.replace('lms_quality.','').replace(' FOR UPDATE','').replace(' ~* ', ' REGEXP ')
         params = list(params)
         if 'ANY(%s::uuid[])' in sql:
             values = params.pop()
@@ -141,6 +141,8 @@ class ReviewApiTests(SimpleTestCase):
         self.enterContext(patch.object(permissions,'authenticate_request',side_effect=auth))
         self.enterContext(patch.object(permissions,'_accesses_of',return_value=frozenset({'curriculum'})))
         self.reader=self.enterContext(patch.object(store,'read_review',return_value=None))
+        from .quality_form_definition import initial_state
+        self.enterContext(patch.object(store,'read_template',return_value=initial_state()))
         self.saver=self.enterContext(patch.object(store,'save_review',side_effect=lambda value,**kwargs:{**value,'id':str(uuid4()),'version':1}))
         self.ctx=self.enterContext(patch.object(api,'context',return_value=({'snapshot':{key:value for key,value in snapshot().items() if key not in ('form','status','reviewer')},'learners':[{'id':'1','name':'Synthetic Learner'}]},None)))
         self.enterContext(patch('socket.socket',side_effect=AssertionError('Network forbidden')))
@@ -190,7 +192,7 @@ class ReviewApiTests(SimpleTestCase):
         saved={**snapshot(),'id':str(uuid4()),'version':2,'status':'completed','form':form(True)}
         self.reader.return_value=saved
         from . import quality_review_pdf as pdf
-        with patch.object(pdf,'review_pdf',return_value=b'%PDF-synthetic') as render:
+        with patch.object(pdf,'stored_review_pdf',return_value=b'%PDF-synthetic') as render:
             self.assertEqual(api.review_document(self.factory.get('/quality?version=1'),saved['id']).status_code,409)
             render.assert_not_called()
             self.assertEqual(api.review_document(self.factory.get('/quality?version=2'),saved['id']).status_code,200)
@@ -231,6 +233,7 @@ class ReviewApiTests(SimpleTestCase):
         from PIL import Image
         from io import BytesIO
         data=BytesIO();Image.new('RGB',(32,32),'white').save(data,format='PNG')
+        self.reader.return_value=snapshot()
         request=self.factory.post('/quality',{'section':'progress','image':SimpleUploadedFile('capture.png',data.getvalue(),content_type='image/png')})
         request._dont_enforce_csrf_checks=True
         with patch.object(store,'save_image',return_value=str(uuid4())) as save:

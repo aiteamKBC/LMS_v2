@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { FileText, ChevronDown } from 'lucide-react';
-import { loadSavedCoachingEvidence, type CoachingMeeting, type SavedCoachingEvidence } from '@/api/coachingRecordings';
+import { loadSavedCoachingEvidence, invalidateCoachingDetails, type CoachingMeeting, type SavedCoachingEvidence } from '@/api/coachingRecordings';
 import SavedEvidencePdf from './SavedEvidencePdf';
 import type { EvidenceTab } from './location';
 import CompletionNotice from './CompletionNotice';
@@ -43,6 +43,7 @@ export default function SavedMeetingEvidence({ evidence, eventKey, reference, ca
   const select = (kind: 'transcript' | 'analysis', retry = false) => {
     if (!retry && active === kind) { setActive(null); return; }
     setActive(kind);
+    if (retry) invalidateCoachingDetails();
     const checkMicrosoft = kind === 'transcript';
     if (data && !retry && (!checkMicrosoft || data.transcript || data.transcriptCheck)) return;
     load(checkMicrosoft);
@@ -73,11 +74,12 @@ export default function SavedMeetingEvidence({ evidence, eventKey, reference, ca
         {!busy && (kind === 'analysis' ? analysisState : data?.state) === 'unavailable' && <p role="alert" className="text-xs text-amber-900">The Coaching Session source could not be checked. <button className="underline" onClick={() => select(kind, true)}>Retry saved evidence</button></p>}
         {!busy && (kind === 'analysis' ? analysisState : data?.state) === 'ambiguous' && <p role="alert" className="text-xs text-amber-900">More than one source meeting matches. Evidence is withheld until the meeting can be confirmed.</p>}
         {!busy && (kind === 'analysis' ? analysisState : data?.state) === 'not-found' && (kind === 'analysis' || !data?.transcriptCheck) && <p className="text-xs text-foreground-600">{kind === 'analysis' ? 'No saved AI report is linked to this occurrence in Coaching Session.' : 'No saved transcript is linked to this occurrence yet.'}</p>}
-        {!busy && kind === 'transcript' && data?.transcriptCheck?.state === 'missing' && <p className="mt-2 text-xs text-foreground-600">Microsoft has not published a transcript for this occurrence. A recording can be available without a transcript. <button className="underline" onClick={() => select(kind, true)}>Check transcript again</button></p>}
-        {!busy && kind === 'transcript' && data?.transcriptCheck?.state === 'unavailable' && <p role="alert" className="mt-2 text-xs text-amber-900">{data.transcriptCheck.code === 'microsoft_access_denied' ? 'Microsoft denied access to this transcript.' : data.transcriptCheck.code === 'meeting_identity_pending' ? 'The verified Microsoft meeting identity is not ready yet.' : 'Microsoft could not return the transcript. The service may be temporarily unavailable.'} <button className="underline" onClick={() => select(kind, true)}>Retry transcript</button></p>}
+        {!busy && kind === 'transcript' && !data?.transcript && data?.transcriptCheck?.state === 'missing' && <p className="mt-2 text-xs text-foreground-600">Microsoft has not published a transcript for this occurrence. A recording can be available without a transcript. <button className="underline" onClick={() => select(kind, true)}>Check transcript again</button></p>}
+        {!busy && kind === 'transcript' && data?.transcriptCheck?.state === 'unavailable' && <p role="alert" className="mt-2 text-xs text-amber-900">{data.transcript ? 'The saved transcript is available, but additional Microsoft parts could not be checked.' : data.transcriptCheck.code === 'microsoft_access_denied' ? 'Microsoft denied access to this transcript.' : data.transcriptCheck.code === 'meeting_identity_pending' ? 'The verified Microsoft meeting identity is not ready yet.' : 'Microsoft could not return the transcript. The service may be temporarily unavailable.'} <button className="underline" onClick={() => select(kind, true)}>Retry transcript</button></p>}
         {kind === 'transcript' && data && !data.transcript && !data.transcriptCheck && !busy && <button className="mt-2 text-xs font-semibold text-primary-700 underline" onClick={() => select(kind, true)}>Check Microsoft transcript</button>}
         {!busy && data?.state === 'matched' && (kind === 'transcript' || analysisState === 'matched') && (kind === 'transcript' ? data.transcript ? <>
           <SavedEvidencePdf eventKey={eventKey} reference={reference} kind="transcript" onPreviewChange={onPreviewChange} />
+          {Boolean(data.transcript.partCount && data.transcript.partCount > 1) && <p className="mt-2 text-xs text-foreground-500">All {data.transcript.partCount} verified transcript parts are included in this PDF.</p>}
           {data.transcript.source === 'microsoft' && <p className="mt-2 text-xs text-foreground-500">Verified transcript from Microsoft for this meeting.</p>}
         </> : !data.transcriptCheck && <p className="text-xs text-foreground-600">No saved transcript is available for this meeting.</p> : <>
           {!data.analyses.length && <div className="space-y-2 text-xs text-foreground-600">
@@ -86,7 +88,7 @@ export default function SavedMeetingEvidence({ evidence, eventKey, reference, ca
           </div>}
           {data.analyses.map(report => <article key={report.id} className="space-y-3 border-b border-background-100 pb-3 last:border-b-0 last:pb-0">
             <h4 className="text-xs font-semibold">{report.learnerName || 'Saved meeting report'}</h4>
-            {report.status === 'completed' && report.report != null
+            {report.status === 'completed' && (report.reportAvailable ?? report.report != null)
               ? <SavedEvidencePdf eventKey={eventKey} reference={reference} kind="analysis" analysisId={report.id} onPreviewChange={onPreviewChange} />
               : <p className="text-xs text-foreground-500">Saved analysis: {report.status.replace(/_/g, ' ')}</p>}
           </article>)}

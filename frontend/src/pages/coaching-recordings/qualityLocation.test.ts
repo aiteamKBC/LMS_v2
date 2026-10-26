@@ -3,7 +3,7 @@ import { readQualityLocation, writeQualityLocation } from './qualityLocation';
 const id = '11111111-1111-4111-8111-111111111111';
 describe('saved quality review links', () => {
   it('round trips filters and the UUID without signed credentials or form contents', () => {
-    const filters = { start: '2026-10-01', end: '2026-10-24', timeZone: 'America/New_York', coachEmail: 'coach@example.invalid', status: 'draft', search: 'Synthetic' };
+    const filters = { start: '2026-10-01', end: '2026-10-24', timeZone: 'America/New_York', coachEmail: 'coach@example.invalid', status: 'draft', search: 'Synthetic', reviewType: 'PR', pdf: 'available' };
     const params = writeQualityLocation(filters, id);
     expect(readQualityLocation(params)).toEqual({ filters, review: id, invalidReview: false });
     expect(params.has('reference')).toBe(false); expect(params.has('form')).toBe(false);

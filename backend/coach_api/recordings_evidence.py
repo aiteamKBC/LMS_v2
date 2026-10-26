@@ -3,6 +3,7 @@ import logging
 from django.db import DatabaseError
 from .recordings_saved_evidence import saved_evidence as source_evidence
 from .recordings_transcripts import local_transcript, cached_microsoft_transcript, microsoft_transcript
+from .recordings_parts import merge_transcripts
 
 log = logging.getLogger(__name__)
 
@@ -20,9 +21,8 @@ def saved_evidence(record, job, *, learner_ids=None, part='all'):
 
 
 def check_microsoft_transcript(record, job, data):
-    if data['transcript']:
-        return data
     value = microsoft_transcript(record, job)
+    transcript=merge_transcripts(data['transcript'],value['transcript'])
     return {**data, **({'state': 'matched', 'analysisState': data.get('analysisState', data['state']),
-        'transcript': value['transcript']} if value['transcript'] else {}),
+        'transcript': transcript} if transcript else {}),
         'transcriptCheck': {key: value[key] for key in ('state', 'code')}}

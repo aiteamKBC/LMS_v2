@@ -11,6 +11,7 @@ class Command(BaseCommand):
         parser.add_argument('--expected-project',required=True)
         parser.add_argument('--expected-branch',required=True)
         parser.add_argument('--apply',action='store_true')
+        parser.add_argument('--schema-version',type=int,choices=(1,2),default=2)
 
     def handle(self,*args,**options):
         try:
@@ -20,8 +21,9 @@ class Command(BaseCommand):
                     raise CommandError('The configured Coaching Session database is not the explicitly selected target.')
                 if options['apply']:
                     connection.execute('SELECT pg_advisory_xact_lock(1346525001,4)')
-                    sql = (Path(__file__).resolve().parents[2]/'sql'/'coaching_quality_v1.sql').read_text(encoding='utf-8')
-                    connection.execute(sql,prepare=False)
+                    for version in range(1,options['schema_version']+1):
+                        sql = (Path(__file__).resolve().parents[2]/'sql'/f'coaching_quality_v{version}.sql').read_text(encoding='utf-8')
+                        connection.execute(sql,prepare=False)
                 tables = connection.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='lms_quality' ORDER BY table_name").fetchall()
                 self.stdout.write('Verified Coaching Session target. Quality tables: '+', '.join(row['table_name'] for row in tables))
         except ReviewUnavailable as error:

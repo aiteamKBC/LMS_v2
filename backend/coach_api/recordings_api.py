@@ -504,6 +504,9 @@ def coaching_recording_session(request):
             evidence = {**evidence, 'completion': completion_summary(record)}
             if request.GET.get('checkMicrosoft') == '1':
                 evidence = check_microsoft_transcript(record, job, evidence)
+            if request.GET.get('metadataOnly') == '1':
+                from .recordings_parts import evidence_metadata
+                evidence = evidence_metadata(evidence)
             return _response({'eventKey': record.event_key, 'reference': getattr(record, 'recording_reference', None),
                 'evidence': {key: value for key, value in evidence.items() if key != 'attendance'}})
         except DatabaseError:
@@ -659,7 +662,9 @@ def coaching_recording_content(request):
         if not artifact:
             return _response({'error': 'Recording not found.', 'code': 'not_found'}, 404)
         window = session_window(record)
-        if not in_session_window(artifact.get('created_datetime'), artifact.get('end_datetime'), window):
+        from .recordings_parts import occurrence_parts, artifact_metadata
+        anchors=[artifact_metadata(row) for row in job.result.get('artifacts',[])]
+        if not occurrence_parts([artifact_metadata(artifact)],window,anchors=anchors):
             return _response({'error': 'Recording occurrence changed.', 'code': 'recording_session_mismatch'}, 409)
         from .views import get_graph_settings, microsoft_graph_request
         from .recordings_cache import recent_read
@@ -671,8 +676,7 @@ def coaching_recording_content(request):
             return _response({'error': 'Unsupported video range.', 'code': 'invalid_range'}, 416)
         def verify_identity():
             current = microsoft_graph_request('GET', f'{job.result["base"]}/recordings/{quote(artifact_id, safe="")}')
-            return current.get('id') == artifact_id and bool(in_session_window(
-                current.get('createdDateTime'), current.get('endDateTime'), window))
+            return current.get('id') == artifact_id and bool(occurrence_parts([current],window,anchors=anchors))
         verified = recent_read('source-identity', [get_graph_settings(), record.event_key, artifact_id],
                                verify_identity, cache_if=lambda value: value is True)
         if not verified:

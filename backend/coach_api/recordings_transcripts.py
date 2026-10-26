@@ -19,6 +19,7 @@ from .recordings_media import session_window, in_session_window
 from .recordings_saved_evidence import online_identity
 from .recordings_cache import recent_read
 from .recordings_errors import calendar_failure
+from .recordings_parts import occurrence_parts, artifact_metadata
 
 MAX_BYTES = 2 * 1024 * 1024
 log = logging.getLogger(__name__)
@@ -119,21 +120,24 @@ def microsoft_transcript(record, job):
         try:
             rows = collection(get, base + '/transcripts', get_graph_settings()['base_url'])
             window = session_window(record)
-            rows = [row for row in rows if row.get('id') and in_session_window(
-                row.get('createdDateTime'), row.get('endDateTime'), window) is True]
-            rows = list({row['id']: row for row in rows}.values())
+            rows = occurrence_parts(rows, window, anchors=[artifact_metadata(row)
+                for row in job.result.get('artifacts',[])])
             if not rows:
                 return {'state': 'missing', 'code': 'no_transcript', 'transcript': None}
-            if len(rows) > 5:
+            if len(rows) > 20:
                 raise ValueError('Too many transcript parts.')
             parts = []
             for row in sorted(rows, key=lambda item: item['createdDateTime']):
                 if monotonic() >= deadline:
                     raise TimeoutError('Transcript read budget exceeded.')
-                parts.append(_content(base, row['id']))
+                parts.append(recent_read('transcript-part', [get_graph_settings(),base,row['id'],
+                    row.get('createdDateTime'),row.get('endDateTime')],
+                    lambda row=row: _content(base, row['id']), timeout=600))
+                if sum(len(part.encode('utf8')) for part in parts)>8*MAX_BYTES:
+                    raise ValueError('Combined transcript exceeds the limit.')
             return {'state': 'available', 'code': 'verified', 'transcript': {
                 'content': '\n\n'.join(dict.fromkeys(parts)), 'durationSeconds': None,
-                'updatedAt': timezone.now().isoformat(), 'source': 'microsoft'}}
+                'updatedAt': timezone.now().isoformat(), 'source': 'microsoft', 'partCount':len(set(parts))}}
         except Exception as error:
             failure = calendar_failure(error)
             codes = {'calendar_access_denied': 'microsoft_access_denied',

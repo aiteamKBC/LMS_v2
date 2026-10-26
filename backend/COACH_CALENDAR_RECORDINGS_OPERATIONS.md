@@ -420,3 +420,189 @@ a trigger file, was edited. The changed archive queue selector is called by its
 archive management command, not the existing Teams endpoints. Live Microsoft
 calendar GET verification is described below; no meeting mutation, invitation,
 email, playback or full authenticated deployed feature check was performed.
+
+
+## Multipart evidence and request budgets - 25 October 2026 follow-up
+
+The drawer now labels each file's exact recorded duration in minutes/seconds,
+counts all known recording parts, and unions their timed intervals for total
+recorded coverage. Overlapping files do not double-count recording time.
+Recording coverage and participant attendance are separate facts: recording may
+start later or stop earlier. The LMS booking comparison is a collapsed neutral
+notice; it does not determine whether Microsoft media or attendance exists.
+
+`coach_api/recordings_parts.py` is the coach-only part selector. It retains timed
+artifacts overlapping the authorized occurrence, plus continuations with the
+same physical callId or contentCorrelationId as an already-timed anchor. An
+onlineMeeting ID or join URL by itself never extends the time scope. Distinct
+reconnections inside the occurrence are retained. Duplicate provider pages and
+same-correlation/time aliases do not repeat files; an updated copy of the same
+artifact ID keeps its longer verified end time. Playback/download rechecks the
+provider's artifact ID and the same occurrence/call boundary. The shared
+curriculum recording policy and Teams booking endpoints were not changed.
+
+The saved source reader combines verified calendar copies of the same online
+meeting and exact scheduled interval, rather than treating identical copies as
+separate ambiguous meetings. Different time candidates remain withheld. Existing
+learner scope, coach ownership, original report/session IDs and dashboard report
+authority remain in force. Cross-organizer report reads still require the
+worker-verified online identity and current coach case-owner filter. Attendance
+reads stay separate and do not download report/transcript bodies.
+
+A populated source copy no longer prevents reading additional verified source
+copies or transcript parts. Dashboard and ingest transcript content is combined;
+known dated transcripts from another occurrence are excluded. Source parts and
+an explicit Microsoft transcript check are merged without replacing a saved
+transcript. A missing/failed additional Microsoft check does not remove a valid
+saved transcript PDF or invent a missing AI report. The source cache namespace
+advanced to v6 so old first-result snapshots are not reused by the new reader.
+
+Explicit Microsoft transcript discovery supports up to 20 verified parts,
+retains its 30-second operation budget and four-page metadata budget, and reuses
+individual transcript part reads for ten minutes. Combined content is bounded
+at 16 MiB. Scope/timeout/permission failures remain unavailable, never a fabricated
+partial complete transcript. Recording playback stays in Microsoft/SharePoint.
+No audio transcription or new AI generation is performed.
+
+For the drawer, `GET /coach_api/coaching-recordings/session?part=evidence&metadataOnly=1`
+returns transcript availability/partCount and analysis reportAvailable flags,
+omitting transcript content and AI report bodies. The existing full response
+contract remains available without metadataOnly. PDF delivery uses full,
+authorized saved evidence. The client requests full bytes only for a requested
+PDF. Preview/download reuse the same private Blob.
+
+Session/evidence reads now coalesce in flight and use the existing auth-cleared
+resource registry: at most 16 URL/scope entries, retained for 15 seconds. Explicit
+refresh invalidates detail/PDF reads; invalid responses are not retained.
+One closed drawer subscriber does not abort another subscriber's shared request.
+Available attendance is not polled. Pending attendance gets at most two retries
+at 20-second intervals, then an explicit stopped status and Refresh details.
+The source's existing 60-second read cache and bounded failure cooldown remain;
+manual retry is not a promise of an uncached provider request every click.
+
+Read-only diagnosis of the reported occurrence found one saved recording lasting
+5 minutes 19 seconds and an attendance report spanning about 10 minutes 40 seconds.
+All three source calendar copies of that same occurrence had zero saved transcript
+parts and zero linked dashboard/all-session AI rows at the time of inspection.
+This establishes the saved source state, not whether Microsoft may publish a
+transcript later. A missing source AI remains a real empty result. No source
+records were created or modified. A read-only PostgreSQL EXPLAIN verified the
+scoped all-session lookup uses all_sessions_meeting_idx.
+
+Final validation for this follow-up:
+
+- Backend: 408 tests passed using config.settings_coaching_recordings_test;
+  SQLite aliases, memory cache/mail, automatic jobs disabled, external calls mocked.
+- Frontend: 265 tests passed in 25 files, including coaching, quality forms,
+  completion notifications, PDF viewer, fetch/auth consumers and routing.
+- npm --prefix frontend run type-check: PASS.
+- Scoped ESLint, --max-warnings 0: PASS.
+- npm --prefix frontend run build: PASS, 28.74 seconds. Existing dependency
+  eval/chunk-size/plugin-time diagnostics remain visible.
+- Synthetic Playwright desktop/mobile check: zero page errors, no horizontal
+  overflow, all recording parts visible, metadata-only discovery, actual PDF.js
+  rendering. Initial opening: two metadata reads (attendance/media and quality
+  checks). Transcript/AI share one evidence metadata read. Each requested PDF
+  uses one read; download reuses its bytes. Reopening within the read-cache TTL
+  adds no API calls. These are intercepted synthetic checks, not live latency
+  or tenant availability measurements.
+- Actual PDF output: three distinct transcript parts retained exactly once;
+  transcript page and all three original-style analysis pages visually inspected.
+- Teams baseline / expanded Teams checks: NOT REQUIRED. No Teams trigger file or
+  changed function/type/contract called by a trigger file was edited here.
+- Live Microsoft/Teams: NOT RUN for this follow-up. Source DB metadata/plan
+  inspection was read-only. No invitations, mail, AI or storage writes occurred.
+
+Prior local Quality Forms changes and unrelated teammate edits were preserved.
+Only MeetingDetailsDrawer also carries this follow-up's collapsed booking notice;
+its existing Quality Check behavior remains. Work stays local on khaled-is-here
+at HEAD 9422c852: no Pull, Merge, Commit, Push, branch switch or deployment.
+The new discovery rule will be used by normal scoped background recording
+refreshes; no live backfill/sync command was run to validate this code.
+
+Reproducible final commands for the follow-up (repository root unless noted):
+
+```powershell
+.\backend\.venv\Scripts\python.exe backend/manage.py test coach_api.test_recordings_api coach_api.test_recordings_calendar_media coach_api.test_recordings_calendar_no_db coach_api.test_recordings_categories coach_api.test_recordings_evidence_api coach_api.test_recordings_index coach_api.test_recordings_jobs coach_api.test_recordings_keywords_no_db coach_api.test_recordings_links coach_api.test_recordings_parts coach_api.test_recordings_pdf coach_api.test_recordings_quality coach_api.test_recordings_response_cache coach_api.test_recordings_saved_evidence coach_api.test_recordings_transcripts coach_api.test_recordings_transport coach_api.test_quality_reviews coach_api.test_quality_form_builder coach_api.test_completion_reminders --settings=config.settings_coaching_recordings_test --noinput
+# PASS: 408 tests.
+cd frontend
+npx vitest run src/pages/coaching-recordings src/api/coachingQualityReviews.test.ts src/api/coachingRecordings.test.ts src/api/coachingCompletion.test.ts src/pages/notifications/CompletionNotifications.test.tsx src/pages/learner/monthly-submission/AssignmentPdfPreview.test.tsx src/lib/__tests__/coachFetch.test.ts src/router/__tests__/navigation.test.tsx src/router/__tests__/lazyRoute.test.ts --maxWorkers=2 --reporter=dot
+# PASS: 265 tests / 25 files.
+npx eslint src/pages/coaching-recordings src/api/coachingRecordings.ts src/api/coachingRecordings.test.ts --max-warnings 0
+# PASS.
+cd ..
+npm --prefix frontend run type-check
+# PASS.
+npm --prefix frontend run build
+# PASS.
+git diff --check
+# PASS.
+```
+
+## Finite browser calendar refresh cycle (25 October 2026)
+
+This follow-up replaces the older page polling/backoff policy, including its
+five-minute idle polling. It changes only the coach recordings frontend and its
+calendar read timeout; the server jobs, database and response contracts are
+unchanged.
+
+- Opening a query makes one snapshot read. Only unfinished initial checks can
+  schedule further reads: at most three, with waits of 10, 20 and 30 seconds
+  after completed reads. The whole browser cycle has a 90-second wall-clock
+  budget, including request time. New snapshot versions, successful-check
+  timestamps and other worker progress never renew that budget.
+- Each calendar request has a 20-second timeout. A separate UI deadline releases
+  the loader even if a transport does not settle after cancellation. Late
+  progress/results cannot replace the displayed snapshot after timeout.
+- Completed snapshots, maintenance-only pending jobs, errors and timeouts do not
+  start periodic polling. Exhaustion removes the spinner and explicitly says
+  automatic updates stopped. Saved meetings, partial-result warnings, sync
+  details and an enabled Refresh calendars action remain available. Access
+  revocation continues to clear private saved data.
+- Hidden/offline pages and open meeting reviews pause additional checks without
+  renewing the cycle. Returning after expiry sends no automatic request. Local
+  learner/status/type/match filters do not refetch. A changed calendar query
+  (date range, coach or time zone), or explicit Refresh calendars/Recheck
+  calendars, starts a new finite cycle. Server background work remains separate
+  from the page spinner; stopping browser reads is not a claim it completed.
+- Existing in-flight request sharing, conditional versions/deltas, permission
+  checks, query scoping and saved directory reuse are retained. No new Redis,
+  Microsoft, AI-generation, notification or database operation was added.
+
+Final checks for this follow-up:
+
+```powershell
+# From frontend:
+npx vitest run src/pages/coaching-recordings src/api/coachingQualityReviews.test.ts src/api/coachingRecordings.test.ts src/api/coachingCompletion.test.ts src/pages/notifications/CompletionNotifications.test.tsx src/pages/learner/monthly-submission/AssignmentPdfPreview.test.tsx src/lib/__tests__/coachFetch.test.ts src/router/__tests__/navigation.test.tsx src/router/__tests__/lazyRoute.test.ts --maxWorkers=2 --reporter=dot
+# PASS: 268 tests / 25 files, 54.47 seconds.
+npx eslint src/pages/coaching-recordings src/api/coachingRecordings.ts src/api/coachingRecordings.test.ts --max-warnings 0
+# PASS.
+# From repository root:
+npm --prefix frontend run type-check
+# PASS.
+npm --prefix frontend run build
+# Build PASS: 29.32 seconds; dependency eval/plugin timing diagnostics visible.
+```
+
+Tests cover continuously changing snapshot versions, no maintenance/idle reads,
+slow successful reads consuming the absolute budget, hidden/offline expiry,
+request timeouts, late responses, explicit refresh/query resets and revoked
+access. A synthetic Playwright check used the real page/API client with all API
+responses intercepted, an isolated frontend server and an unreachable API proxy.
+The changing-version scenario made four calendar reads (initial plus three),
+then zero additional reads over 30 simulated minutes. A stalled manual request
+stopped after 20 seconds with saved meetings retained and refresh enabled.
+Desktop/mobile layouts were inspected: no horizontal overflow or page errors.
+These checks establish browser behavior, not live Microsoft/worker latency.
+
+The project-wide `npm --prefix frontend run lint` check failed with 30 errors
+and 139 warnings in 92 files outside this change. All diagnostic files were
+verified unchanged from HEAD; scoped coaching lint passed. These unrelated lint
+issues remain outstanding. `git diff --check`: PASS.
+
+Teams baseline / expanded checks: NOT REQUIRED for this follow-up; no Teams
+trigger file or a changed contract/function consumed by one was edited. Backend
+tests: NOT RUN for this frontend-only follow-up. Live Teams: NOT RUN. No schema,
+source data, environment, credential or deployment changes. Earlier Quality
+Forms, multipart and teammate edits remain preserved. Work stays local on
+khaled-is-here at HEAD 9422c852; no Pull, Merge, Commit, Push or deployment.
