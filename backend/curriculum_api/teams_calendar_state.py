@@ -1,4 +1,4 @@
-"""Read cancellations from Microsoft and report them; never cancels anything, never mails."""
+"""Read Microsoft cancellations and reconcile eligible local occurrences; never mail."""
 import json
 import time
 from contextlib import contextmanager
@@ -115,31 +115,56 @@ def reconcile_calendar(live_id):
     signature = state_signature(series, rows)
     with calendar_reader() as read:
         plan = cancellation_plan(series, rows, snapshot, read)
+    cancelled_ids = list(plan.get('cancelledIds') or [])
+    cancelled_sessions = sorted(
+        row.get('session_number') for row in rows
+        if row.get('id') in set(cancelled_ids) and row.get('session_number') is not None
+    )
+    changed = bool(cancelled_sessions)
     with transaction.atomic():
         current, current_rows, current_snapshot = load_calendar_state(live_id, lock=True)
         if state_signature(current, current_rows) != signature or current_snapshot != snapshot:
             raise CalendarStateError('This calendar changed during verification. Retry the status check.')
         with connection.cursor() as cursor:
-            # Never a cancellation. Only a person pressing Cancel in the LMS
-            # cancels a session or a calendar; what Microsoft shows cancelled --
-            # in Outlook, by anybody -- is reported for that person to record.
+            # A confirmed Microsoft cancellation is now applied to the local
+            # occurrence when it is still a scheduled, never-started session
+            # with no attendance report.  This is the same eligibility boundary
+            # used by an explicit LMS cancellation: historical attendance is
+            # never rewritten, while a learner cannot be marked absent for a
+            # meeting that Microsoft has already cancelled.
+            if cancelled_ids:
+                cursor.execute("""UPDATE curriculum.live_session_occurrences
+                                  SET status = 'cancelled', updated_at = %s
+                                  WHERE live_session_id = %s
+                                    AND id = ANY(%s)
+                                    AND status = 'scheduled'
+                                    AND actual_start IS NULL
+                                    AND COALESCE(attendance_report_id, '') = ''
+                                    AND COALESCE(participant_count, 0) = 0""",
+                               [datetime.now(timezone.utc), live_id, cancelled_ids])
+            # No Microsoft mutation or email is sent here. The status write is
+            # deliberately limited to rows whose cancellation is safe to apply.
             cursor.execute("""INSERT INTO curriculum.teams_calendar_sync_state (live_session_id, snapshot, checked_at)
                               VALUES (%s, %s::jsonb, %s)
                               ON CONFLICT (live_session_id) DO UPDATE
                               SET snapshot = EXCLUDED.snapshot, checked_at = EXCLUDED.checked_at""",
                            [live_id, json.dumps(plan['snapshot']), datetime.now(timezone.utc)])
-    # Read-only on Microsoft; this only notes that a check ran and what it found.
+    if changed:
+        from . import views as v
+        v.invalidate_curriculum_cache()
+    # Read-only on Microsoft; this records the verified result locally.
     from .teams_calendar_integrity import EVENT_VERIFIED, record_event
     record_event(live_id, EVENT_VERIFIED, module_catalogue_id=str(series.get('module_catalogue_id') or ''),
                  trigger='Calendar status check', outcome='attention' if plan['errors'] else 'success',
                  detail={'errors': plan['errors'][:20], 'unmatched': len(plan.get('unmatched') or []),
                          'leftovers': len(plan.get('leftovers') or [])})
-    return {'changed': False, 'seriesStatus': 'active', 'cancelledSessions': [],
-            # Cancelled in Microsoft, still scheduled here, and left that way.
-            'cancelledInMicrosoft': [row['session_number'] for row in rows if row['id'] in plan['cancelledIds']],
-            'seriesCancelledInMicrosoft': bool(plan['seriesCancelled']),
+    return {'changed': changed, 'seriesStatus': 'active', 'cancelledSessions': cancelled_sessions,
+            # Kept for older clients; sessions that were eligible are now
+            # recorded locally and therefore do not need a second manual action.
+            'cancelledInMicrosoft': [],
+            'seriesCancelledInMicrosoft': bool(plan['seriesCancelled']) and not changed,
             'errors': plan['errors'],
-            # Reported for a person to decide on; nothing here cancels them.
+            # Slots outside the plan remain report-only and are never changed.
             'leftovers': plan.get('leftovers') or []}
 
 

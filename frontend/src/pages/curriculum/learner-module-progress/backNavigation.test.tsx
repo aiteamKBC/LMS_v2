@@ -9,6 +9,7 @@ vi.mock('@/mocks/navigation', () => ({ curriculumNavItems: [] }));
 vi.mock('@/lib/curriculumApi', () => ({
   fetchCurriculumScopeLearnerKsbImpact: fetchImpact,
   fetchCurriculumScopeLearnerRoster: vi.fn(async () => ({ assignedLearners: [] })),
+  fetchCurriculumJson: vi.fn(async () => ({ weekStructure: [] })),
   saveCurriculumActivityStatus: vi.fn(),
   fetchCurriculumActivityStatusHistory: vi.fn(async () => ({ history: [] })),
 }));

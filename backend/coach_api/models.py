@@ -516,7 +516,28 @@ class CoachManualAttendance(models.Model):
 
     owner_email = models.EmailField(max_length=255, db_index=True)
     learner_id = models.IntegerField(db_index=True)
+    # Stable cross-schema links already present on Coach.coach_manual_attendance.
+    # learner_id/enrolment_id remain historical snapshots used by the existing
+    # attendance contract; these relations are the canonical joins for new code.
+    learner_profile_link = models.ForeignKey(
+        "learner_api.LearnerProfile",
+        db_column="learner_profile_link_id",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="coach_manual_attendance_links",
+        db_index=False,
+    )
     enrolment_id = models.IntegerField(null=True, blank=True)
+    enrolment_link = models.ForeignKey(
+        "learner_api.EnrolmentUser",
+        db_column="enrolment_link_id",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="coach_manual_attendance_enrolment_links",
+        db_index=False,
+    )
     learner_name = models.CharField(max_length=255)
     learner_email = models.EmailField(max_length=255, blank=True)
     session_date = models.DateField(db_index=True)
@@ -551,6 +572,17 @@ class CoachAttendanceSourceAdjustment(models.Model):
 
     owner_email = models.EmailField(max_length=255)
     learner_id = models.IntegerField(db_index=True)
+    # Existing FK column; keep learner_id as the legacy snapshot until all
+    # readers migrate to the stable LearnerProfile relation.
+    learner_profile_link = models.ForeignKey(
+        "learner_api.LearnerProfile",
+        db_column="learner_profile_link_id",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="coach_attendance_adjustment_links",
+        db_index=False,
+    )
     source = models.CharField(max_length=40)
     source_id = models.CharField(max_length=255)
     session_date = models.DateField(null=True, blank=True)

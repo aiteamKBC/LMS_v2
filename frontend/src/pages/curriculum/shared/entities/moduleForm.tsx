@@ -67,6 +67,7 @@ import {
   weekendDateNotice,
 } from './model';
 import { confirmTeamsCalendarUpdate } from './teamsCalendarNotice';
+import { weekCountChangeForSave, weekCountChangeText, type StoredWeekStructure } from './weekCountChange';
 import {
   CoEditNotice,
   ColorControl,
@@ -267,6 +268,7 @@ export function ModuleFormDrawer({
   onClose,
   onSaved,
   onSavingChange,
+  storedStructure,
 }: {
   open: boolean;
   /** Present when editing; absent when creating. */
@@ -286,6 +288,11 @@ export function ModuleFormDrawer({
   onSaved: (saved: SavedModuleRef) => unknown | Promise<unknown>;
   /** Lets the owning table keep its progress line visible for the whole save. */
   onSavingChange?: (saving: boolean) => void;
+  /**
+   * The module as the server last stored it, from a caller that holds it (the
+   * Module Builder). With it, a save that resizes the weeks says so first.
+   */
+  storedStructure?: () => StoredWeekStructure | null;
 }) {
   const [name, setName] = useState('');
   const [programmeId, setProgrammeId] = useState('');
@@ -833,7 +840,7 @@ export function ModuleFormDrawer({
   // Destructured rather than used through the hook's return value, which is a
   // fresh object every render: the memos below key off the parts that actually
   // move, so a keystroke in the name field does not rebuild the picker.
-  const { verdictFor, bookable, sessionDates, loading: checkingTutors } = useTutorAvailability(
+  const { verdictFor, bookable, sessionDates, loading: checkingTutors, failed: tutorCheckFailed } = useTutorAvailability(
     conflictSlot,
     { enabled: open },
   );
@@ -851,30 +858,50 @@ export function ModuleFormDrawer({
       ? tutorVerdicts.filter(item => item.verdict?.available).map(item => item.tutorName).slice(0, 4)
       : []
   ), [bookable, tutorVerdicts]);
-  const tutorOptions = useMemo<SelectOption[]>(() => tutorVerdicts.map(({ tutorName, verdict }) => {
-    if (!verdict || verdict.available) {
-      return {
-        value: tutorName,
-        label: tutorName,
-        // Only grouped once there is an answer to group by: headings over an
-        // unchecked list would say "free" about names nobody has checked.
-        group: bookable ? 'Free in this slot' : undefined,
-      };
-    }
-    const clash = verdict.conflicts[0];
-    const also = verdict.conflicts.length - 1;
-    return {
-      value: tutorName,
-      label: tutorName,
-      // The reason travels with the row: picking a busy name is still allowed --
-      // the delivery day or the time may be what moves instead -- but not by
-      // accident.
-      description: `${clash.moduleName} ${clash.startTime}-${clash.endTime}${also > 0 ? ` +${also} more` : ''}`,
-      meta: `${verdict.conflicts.reduce((count, item) => count + item.dates.length, 0)} clashes`,
-      icon: 'ri-error-warning-line',
-      group: 'Already teaching then',
-    };
-  }), [bookable, tutorVerdicts]);
+  const tutorOptions = useMemo<SelectOption[]>(() => {
+    const options = tutorVerdicts.map(({ tutorName, verdict }): SelectOption & { rank: number } => {
+      if (verdict?.available) {
+        return { value: tutorName, label: tutorName, group: 'Free in this slot', rank: 0 };
+      }
+      if (verdict) {
+        const clash = verdict.conflicts[0];
+        const also = verdict.conflicts.length - 1;
+        return {
+          value: tutorName,
+          label: tutorName,
+          // The reason travels with the row: picking a busy name is still allowed --
+          // the delivery day or the time may be what moves instead -- but not by
+          // accident.
+          description: `${clash.moduleName} ${clash.startTime}-${clash.endTime}${also > 0 ? ` +${also} more` : ''}`,
+          meta: `${verdict.conflicts.reduce((count, item) => count + item.dates.length, 0)} clashes`,
+          icon: 'ri-error-warning-line',
+          group: 'Already teaching then',
+          rank: 1,
+        };
+      }
+      // No verdict is not a free verdict. Once there is an answer to group by (or
+      // the check itself failed), a name it does not cover is said to be
+      // unchecked; before then the list stays ungrouped, since headings over an
+      // unchecked list would say "free" about names nobody has checked.
+      if (bookable || tutorCheckFailed) {
+        return {
+          value: tutorName,
+          label: tutorName,
+          description: tutorCheckFailed ? 'The availability check failed' : 'Not covered by the availability check',
+          icon: 'ri-question-line',
+          group: 'Not verified',
+          rank: 2,
+        };
+      }
+      return { value: tutorName, label: tutorName, rank: 0 };
+    });
+    // The menu prints a heading whenever the group changes from one row to the
+    // next, so the names are kept together by status (alphabetical within it);
+    // left in name order the headings repeated down the list.
+    return options
+      .sort((left, right) => left.rank - right.rank)
+      .map(({ rank: _rank, ...option }) => option);
+  }, [bookable, tutorCheckFailed, tutorVerdicts]);
   // The field says what it knows: which slot the names were checked against, or
   // what is still missing before anything can be checked. "Checked before it
   // saves" was the old promise, and it is now kept before the save, not by it.
@@ -960,11 +987,13 @@ export function ModuleFormDrawer({
     : '';
   const tutorHint = checkingTutors
     ? 'Checking who is already teaching in this slot...'
-    : bookable
-      ? `Checked against ${sessionDates.length} session${sessionDates.length === 1 ? '' : 's'} using each day's scheduled time.`
-      : groupDeliveryDayMissing
-        ? `${cleanText(selectedGroup?.name) || 'The group'} has no delivery day yet.`
-        : 'Select a Group and set the weeks to check who is free.';
+    : tutorCheckFailed
+      ? 'Could not check who is free in this slot. Saving still checks the tutor for clashes.'
+      : bookable
+        ? `Checked against ${sessionDates.length} session${sessionDates.length === 1 ? '' : 's'} using each day's scheduled time.`
+        : groupDeliveryDayMissing
+          ? `${cleanText(selectedGroup?.name) || 'The group'} has no delivery day yet.`
+          : 'Select a Group and set the weeks to check who is free.';
 
   const changeProgramme = (value: string) => {
     setProgrammeId(value);
@@ -1285,6 +1314,16 @@ export function ModuleFormDrawer({
           startTime: primaryPattern?.startTime || undefined,
           endTime: primaryPattern?.endTime || undefined,
         };
+        // The server resizes the stored weeks to the count this sends. Said
+        // first, so the author decides -- "No" saves nothing at all.
+        const weekChange = weekCountChangeForSave(storedStructure?.() ?? null, weeksChanged ? weeks : undefined);
+        if (weekChange && !(await showCurriculumConfirm({
+          title: `This module will have ${weekChange.after} weeks instead of ${weekChange.before}`,
+          text: weekCountChangeText(weekChange, weeksChanged),
+          confirmButtonText: 'Yes, save',
+          cancelButtonText: 'No, change nothing',
+          onConfirm: async () => undefined,
+        }))) return;
         // The PATCH merges onto the stored structure, so only what this form
         // owns is sent: the weeks, components and KSB mappings authored in the
         // Module Builder are left exactly as they are.

@@ -19,10 +19,11 @@ def load(filename, scope, names=None):
 
 
 def adapter():
-    scope = dict(datetime=datetime, ZoneInfo=ZoneInfo, json=json, re=re, isfinite=isfinite,
+    scope = dict(datetime=datetime, ZoneInfo=ZoneInfo, UK=ZoneInfo('Europe/London'), json=json, re=re, isfinite=isfinite,
                  GRADED_PROGRESS_KINDS={'quiz'})
     load('progress_rules.py', scope)
     load('ksb_points.py', scope)
+    load('retake_timing.py', scope)
     load('active_users.py', scope, {'_s', '_number', '_reported_minutes', '_progress_text',
         '_selected_timer_seconds', '_manual_claimed_seconds', '_progress_record_minutes', 'otjh_progress_dedupe_key',
         'dedupe_otjh_progress_records', '_component_expected_hours_lookup', 'completed_hours_value_from_progress'})
@@ -251,9 +252,9 @@ class CurrentLearningTests(unittest.TestCase):
     def test_dashboard_refresh_reads_new_saved_completion_and_time(self):
         scope = self.scope
         load('canonical_learning.py', scope, {'metrics', 'metrics_from_records',
-            'recorded_seconds', 'allocations', 'counts_as_completed', 'point_ratio'})
+            'recorded_seconds', 'allocations', 'completion_reporting_instant', 'counts_as_completed', 'point_ratio'})
         scope['number'] = lambda value: float(value or 0)
-        owner = {'id': 1}
+        owner = {'id': 1, 'enrolment_id': 123}
         scope['require_profile'] = lambda _: owner
         scope['targets_for'] = lambda _: {}
         saved = []
@@ -270,9 +271,9 @@ class CurrentLearningTests(unittest.TestCase):
     def test_quiz_only_completion_does_not_credit_unapproved_hours(self):
         scope = self.scope
         load('canonical_learning.py', scope, {'metrics', 'metrics_from_records',
-            'recorded_seconds', 'allocations', 'counts_as_completed', 'point_ratio'})
+            'recorded_seconds', 'allocations', 'completion_reporting_instant', 'counts_as_completed', 'point_ratio'})
         scope['number'] = lambda value: float(value or 0)
-        owner = {'id': 1}
+        owner = {'id': 1, 'enrolment_id': 123}
         scope['require_profile'] = lambda _: owner
         scope['targets_for'] = lambda _: {}
         record = {'id': 10, 'accepted': False, 'actual_seconds': 3600, 'ksbs': [],

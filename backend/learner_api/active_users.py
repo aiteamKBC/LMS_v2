@@ -1253,6 +1253,13 @@ def save_progress_record(learner, record, activity=None):
             ),
             component_link_source="direct" if component_id else ("quiz_ref" if _s(record.get("quizId")) else "none"),
         )
+        if record.get('retakeTimeChoice') is not None:
+            from .retake_timing import choice
+            selected = choice(record['retakeTimeChoice'])
+            with connections['enrolment'].cursor() as cursor:
+                cursor.execute('''UPDATE "Learner".learner_progress_entries
+                    SET source_payload=coalesce(source_payload,'{}'::jsonb) || jsonb_build_object('retakeTimeChoice',%s::text)
+                    WHERE id=%s AND learner_id=%s''', [selected, progress.pk, learner.pk])
         LearnerProgressKsb.objects.bulk_create(
             [
                 LearnerProgressKsb(

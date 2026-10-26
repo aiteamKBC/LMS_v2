@@ -224,7 +224,7 @@ function nextActivityRoute(detail: LearnerDetail | null, currentComponentId: str
 export default function ComponentViewPage() {
   const { kind, id, componentId } = useParams<{ kind: string; id: string; componentId: string }>();
   const timerStorageKey = activityTimerStorageKey(kind, id, componentId);
-  const [readyReading, setReadyReading] = useState<string | null>(null);
+  const [readyContent, setReadyContent] = useState<string | null>(null);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   useEffect(() => { rememberLearner(kind, id); }, [kind, id]);
@@ -258,7 +258,7 @@ export default function ComponentViewPage() {
   const [correctionError, setCorrectionError] = useState('');
   // The reflection the learner already gave, replayed with their declared
   // instant so Final Submit does not ask for it again.
-  const lastReflectionRef = useRef<{ ksbs: string[]; feedback: string; reportedTime: string; assignmentTopicId?: string }>({
+  const lastReflectionRef = useRef<{ ksbs: string[]; feedback: string; reportedTime: string; assignmentTopicId?: string; timeTakenSeconds?: number; timeEntrySource?: 'input' }>({
     ksbs: [], feedback: '', reportedTime: '',
   });
   const [submitting, setSubmitting] = useState(false);
@@ -345,9 +345,9 @@ export default function ComponentViewPage() {
   );
   const component = ctx?.component ?? null;
   const recordedEvent = Boolean(component?.recordingSeriesId && component.recordingSessionNumber && component.recordingDate);
-  const readingReadyKey = `${timerStorageKey}:${component?.resourceUrl || ''}`;
-  const onReadingReady = useCallback(() => setReadyReading(readingReadyKey), [readingReadyKey]);
-  useEffect(() => () => setReadyReading(null), [readingReadyKey]);
+  const contentReadyKey = `${timerStorageKey}:${component?.resourceUrl || ''}`;
+  const onContentReady = useCallback(() => setReadyContent(contentReadyKey), [contentReadyKey]);
+  useEffect(() => () => setReadyContent(null), [contentReadyKey]);
   // Where this activity stands with the coach. Only meaningful for an activity
   // the author sent for validation: everything else is finished when the
   // learner completes it. Without this the page said "Ready to complete" on
@@ -362,6 +362,7 @@ export default function ComponentViewPage() {
   const learnerKsbs: LearnerKsbItem[] = detail?.ksbs ?? [];
 
   const contentKind = componentContentKind(component?.type);
+  const waitsForPreview = contentKind === 'reading' || (contentKind === 'slides' && Boolean(component?.resourceUrl));
   const isVideo = contentKind === 'video';
   const isAudio = contentKind === 'audio';
   // Live sessions and assignments use learner-entered time instead of exposing
@@ -657,7 +658,8 @@ export default function ComponentViewPage() {
   useEffect(() => {
     const activeMedia = isVideo || isAudio;
     if (phase !== 'consume' || !recordingAttempt || !canUseComponent || expiredTiming) return;
-    if (contentKind === 'reading' && (loading || loadError || !openable || readyReading !== readingReadyKey)) return;
+    // Downloading/parsing a document is not study time; wait for its first page.
+    if (waitsForPreview && (loading || loadError || !openable || readyContent !== contentReadyKey)) return;
     if (activeMedia ? !playerPlaying : (!unsupported && !playerPlaying)) return;
     const clock = startActivityClock({
       onInterval: (start,end) => {
@@ -677,7 +679,7 @@ export default function ComponentViewPage() {
     });
     timerRef.current = clock;
     return () => clock.stop();
-  }, [phase, recordingAttempt, canUseComponent, unsupported, playerPlaying, isVideo, isAudio, timerStorageKey, contentKind, loading, loadError, openable, readyReading, readingReadyKey, expiredTiming]);
+  }, [phase, recordingAttempt, canUseComponent, unsupported, playerPlaying, isVideo, isAudio, timerStorageKey, contentKind, loading, loadError, openable, waitsForPreview, readyContent, contentReadyKey, expiredTiming]);
 
   const finishConsuming = () => {
     if (!recordingAttempt) return;
@@ -719,7 +721,7 @@ export default function ComponentViewPage() {
   };
 
   const finalizeSubmit = async (
-    reflection: { ksbs: string[]; feedback: string; reportedTime: string; assignmentTopicId?: string },
+    reflection: { ksbs: string[]; feedback: string; reportedTime: string; assignmentTopicId?: string; timeTakenSeconds?: number; timeEntrySource?: 'input' },
     options: { rethrow?: boolean; skipReflection?: boolean; declaredCompletedAt?: string } = {},
   ) => {
     if (!component || !componentId || !kind || !id || completionInFlightRef.current || !canUseComponent) return;
@@ -727,6 +729,8 @@ export default function ComponentViewPage() {
     // the server judges the instant and refuses with a 409 that has written
     // nothing, which opens the correction dialog below.
     const declared = options.declaredCompletedAt ?? null;
+    const finalTimeSeconds = reflection.timeTakenSeconds ?? submittedTimeSeconds;
+    const finalTimeSource = reflection.timeEntrySource ?? timeSource;
     lastReflectionRef.current = reflection;
     completionInFlightRef.current = true;
     setSubmitting(true);
@@ -741,12 +745,12 @@ export default function ComponentViewPage() {
         trackingSessionRef.current = tracking;
         saveActivityTimerSession(timerStorageKey, tracking);
       }
-      if (tracking.rewardTracking && timeSource === 'timer') await flushRewardObservations(tracking,isVideo?'video':'component',componentId, Boolean(tracking.persistent));
+      if (tracking.rewardTracking && finalTimeSource === 'timer') await flushRewardObservations(tracking,isVideo?'video':'component',componentId, Boolean(tracking.persistent));
       if (isVideo) {
         const res = await submitVideoProgress(componentId, kind as 'commercial' | 'apprenticeship', id, {
           week: weekTitle || null, module: moduleTitle || null,
-          startedAt: tracking.startedAt, timeTakenSeconds: submittedTimeSeconds, trackingToken: tracking.trackingToken,
-          timeEntrySource: timeSource,
+          startedAt: tracking.startedAt, timeTakenSeconds: finalTimeSeconds, trackingToken: tracking.trackingToken,
+          timeEntrySource: finalTimeSource,
           declaredCompletedAt: declared,
           videoTitle: meta?.detail || meta?.label || 'Video',
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
@@ -756,8 +760,8 @@ export default function ComponentViewPage() {
       } else {
         const res = await submitComponentProgress(componentId, kind as 'commercial' | 'apprenticeship', id, {
           week: weekTitle || null, module: moduleTitle || null,
-          startedAt: tracking.startedAt, timeTakenSeconds: submittedTimeSeconds, trackingToken: tracking.trackingToken,
-          timeEntrySource: timeSource,
+          startedAt: tracking.startedAt, timeTakenSeconds: finalTimeSeconds, trackingToken: tracking.trackingToken,
+          timeEntrySource: finalTimeSource,
           declaredCompletedAt: declared,
           componentTitle: pageTitle, componentType: component.type || undefined,
           plannedOtjh: plannedTimeLabel,
@@ -924,7 +928,7 @@ export default function ComponentViewPage() {
                   onDuration={(d) => setRealDuration((prev) => prev ?? d)}
                   onProgress={() => undefined}
                   onPlayingChange={setPlayerPlaying}
-                  onReadingReady={onReadingReady}
+                  onContentReady={onContentReady}
                   onEnded={() => setPlayerPlaying(false)}
                   onUnsupported={() => setUnsupported(true)}
                 />
@@ -1337,25 +1341,40 @@ function CompletionConfirmPopup({
   onRecoverTiming?: () => void; recoveringTiming?: boolean;
 }) {
   const titleId = useId();
+  const timeReviewId = useId();
+  const [reviewingManualTime, setReviewingManualTime] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
-    const panel = panelRef.current;
-    (panel?.querySelector<HTMLInputElement>('input') || panel?.querySelector<HTMLButtonElement>('button'))?.focus();
     return () => { if (previous?.isConnected) previous.focus(); };
   }, []);
+  useEffect(() => {
+    const panel = panelRef.current;
+    (panel?.querySelector<HTMLInputElement>('input') || panel?.querySelector<HTMLButtonElement>('button'))?.focus();
+  }, [reviewingManualTime]);
   const selectedTimeLabel = keepPreviousTime && previousTimeLabel ? previousTimeLabel : selectedSource === 'input'
     ? inputLabel || '--:--:--'
     : timerLabel;
+  const hours = Math.floor((inputSeconds ?? 0) / 3600);
+  const minutes = Math.floor(((inputSeconds ?? 0) % 3600) / 60);
+  const confirmSelectedTime = () => {
+    if (!reviewingManualTime && !keepPreviousTime && selectedSource === 'input' && inputSeconds != null && inputSeconds > 0) {
+      setReviewingManualTime(true);
+      return;
+    }
+    onConfirm();
+  };
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-foreground-950/35 px-4 py-6 backdrop-blur-[2px]">
-      <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby={titleId}
+      <div ref={panelRef} role={reviewingManualTime ? 'alertdialog' : 'dialog'} aria-modal="true" aria-labelledby={titleId}
+        aria-describedby={reviewingManualTime ? timeReviewId : undefined}
         onKeyDownCapture={(event) => {
           if (event.key === 'Escape' && !submitting) {
             event.preventDefault();
             event.stopPropagation();
-            onCancel();
+            if (reviewingManualTime) setReviewingManualTime(false);
+            else onCancel();
           }
           if (event.key === 'Tab') {
             const controls = panelRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)');
@@ -1369,12 +1388,17 @@ function CompletionConfirmPopup({
           <AppIcon className="ri-question-line text-2xl text-primary-700" />
         </div>
         <h1 id={titleId} className="text-lg font-heading font-bold text-foreground-900">
-          {continueToReflection ? 'Enter time spent' : `Confirm ${noun} completion?`}
+          {reviewingManualTime ? 'Check your time entry' : continueToReflection ? 'Enter time spent' : `Confirm ${noun} completion?`}
         </h1>
         <p className="mt-1 text-sm text-foreground-500">{title}</p>
-        {timeEntryHint && <p className="mt-3 text-sm font-medium text-foreground-700">{timeEntryHint}</p>}
+        {!reviewingManualTime && timeEntryHint && <p className="mt-3 text-sm font-medium text-foreground-700">{timeEntryHint}</p>}
 
-        <div className="mt-5 space-y-3 rounded-xl border border-background-300 bg-background-50 p-4 text-left">
+        {reviewingManualTime ? (
+          <div id={timeReviewId} className="mt-5 space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-left text-foreground-900">
+            <p>You entered <strong>{hours} {hours === 1 ? 'hour' : 'hours'} and {minutes} {minutes === 1 ? 'minute' : 'minutes'}</strong>.</p>
+            <p className="text-sm">Please check the hours and minutes before continuing. If you meant minutes, select Edit time and enter the value in the Minutes field.</p>
+          </div>
+        ) : <div className="mt-5 space-y-3 rounded-xl border border-background-300 bg-background-50 p-4 text-left">
           <div className="flex items-center justify-between gap-3 border-b border-background-300 pb-3">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-foreground-500">Save time</span>
             <span className="font-mono text-base font-bold tabular-nums text-foreground-900">{selectedTimeLabel}</span>
@@ -1454,7 +1478,7 @@ function CompletionConfirmPopup({
             </fieldset>
           )}
           </fieldset>
-        </div>
+        </div>}
 
         {error && (
           <p className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-left text-xs font-semibold text-red-700">
@@ -1469,20 +1493,20 @@ function CompletionConfirmPopup({
         <div className="mt-5 grid grid-cols-2 gap-3">
           <button
             type="button"
-            onClick={onCancel}
+            onClick={() => reviewingManualTime ? setReviewingManualTime(false) : onCancel()}
             disabled={submitting}
             className="inline-flex items-center justify-center rounded-xl border border-background-300 bg-white px-4 py-3 text-sm font-semibold text-foreground-700 shadow-sm transition-colors hover:bg-background-50 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Cancel
+            {reviewingManualTime ? 'Edit time' : 'Cancel'}
           </button>
           <button
             type="button"
-            onClick={onConfirm}
+            onClick={confirmSelectedTime}
             disabled={submitting || (!keepPreviousTime && (manualTimeOnly || selectedSource === 'input') && (inputSeconds == null || inputSeconds <= 0))}
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <AppIcon className={submitting ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} />
-            {submitting ? 'Saving...' : continueToReflection ? 'Continue' : 'Confirm'}
+            {submitting ? 'Saving...' : reviewingManualTime ? 'Confirm time' : continueToReflection ? 'Continue' : 'Confirm'}
           </button>
         </div>
       </div>
@@ -2640,8 +2664,8 @@ function ComponentContent(props: Parameters<typeof ComponentBody>[0]) {
   return <ComponentBody {...props} />;
 }
 
-export function ComponentBody({ component, contentKind, parsed, title, onDuration, onProgress, onPlayingChange, onEnded, onUnsupported, onReadingReady, preview = false }: {
-  onReadingReady?: () => void;
+export function ComponentBody({ component, contentKind, parsed, title, onDuration, onProgress, onPlayingChange, onEnded, onUnsupported, onContentReady, preview = false }: {
+  onContentReady?: () => void;
   preview?: boolean;
   component: JourneyComponent;
   contentKind: ReturnType<typeof componentContentKind>;
@@ -2750,7 +2774,7 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
             <p className="text-xs text-foreground-400">Read the material, then finish and reflect below.</p>
           </div>
         </div>
-        <AccessibleReadingMaterial component={component} title={title} onReady={onReadingReady} />
+        <AccessibleReadingMaterial component={component} title={title} onReady={onContentReady} />
         {component.audioUrl && (
           <div className="mt-4 pt-4 border-t border-background-200">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-2">Audio version</p>
@@ -2781,7 +2805,7 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
           )}
         </div>
         {component.resourceUrl ? (
-          <InlineAttachmentPreview url={component.resourceUrl} title={title} fileName={component.fileName} />
+          <InlineAttachmentPreview url={component.resourceUrl} title={title} fileName={component.fileName} onReady={onContentReady} />
         ) : (
           <p className="text-sm text-foreground-500">{component.fileName ? <>Slide deck: <span className="font-semibold text-foreground-700">{component.fileName}</span>. </> : ''}Review your slide deck for this week, then record your reflection below.</p>
         )}

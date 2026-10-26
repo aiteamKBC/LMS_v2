@@ -61,9 +61,12 @@ describe('previous quiz answers in the main quiz', () => {
     expect(quiz.getByRole('checkbox', { name: 'First answer' })).toBeDisabled();
     vi.mocked(subjectRequest).mockResolvedValueOnce({ attempt_id: 'new', definition: {}, timing: { trackingToken: 'synthetic-token', startedAt: new Date().toISOString(), countingMode: 'active_quiz' } });
     fireEvent.click(screen.getByRole('button', { name: 'Try quiz again' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Use new attempt date and duration' }));
     await screen.findByRole('button', { name: 'Submit answers' });
     expect(quiz.getByRole('checkbox', { name: 'First answer' })).not.toBeChecked();
     expect(quiz.getByRole('checkbox', { name: 'First answer' })).toBeEnabled();
+    const started = vi.mocked(subjectRequest).mock.calls.find(([url, options]) => url.includes('/attempts/') && options?.method === 'POST');
+    expect(JSON.parse(started![1]!.body as string)).toMatchObject({ retakeTimeChoice: 'new' });
   });
 
   it('keeps the timed attempt and answers when completion needs a corrected date', async () => {
@@ -71,6 +74,7 @@ describe('previous quiz answers in the main quiz', () => {
     vi.mocked(subjectRequest).mockResolvedValueOnce({ attempt_id: 'new', definition: {},
       timing: { trackingToken: 'synthetic-token', startedAt: new Date().toISOString(), countingMode: 'active_quiz' } });
     fireEvent.click(screen.getByRole('button', { name: 'Try quiz again' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Use new attempt date and duration' }));
     await screen.findByRole('button', { name: 'Submit answers' });
     fireEvent.click(screen.getByRole('checkbox', { name: 'First answer' }));
     fireEvent.click(screen.getByRole('checkbox', { name: 'I have completed the reading material.' }));

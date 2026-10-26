@@ -130,6 +130,28 @@ class CaseOwnerSaveTests(SimpleTestCase):
 
 
 class CoachResolutionTests(SimpleTestCase):
+    def test_case_owner_uses_authoritative_staff_email_when_source_is_stale(self):
+        source = learner(case_owner='Med Maher', coach_name='Med Maher',
+                         coach_email='med.maher@kbc.ac.uk')
+        with patch('learner_api.coach_assignment.StaffUser.objects.filter') as query:
+            query.return_value.only.return_value.__getitem__.return_value = [
+                SimpleNamespace(email='med.maher@kentbusinesscollege.com')]
+            self.assertEqual(case_owner_coach('Med Maher', source), {
+                'coach_name': 'Med Maher',
+                'coach_email': 'med.maher@kentbusinesscollege.com',
+            })
+
+    def test_named_source_uses_authoritative_staff_email_without_case_owner(self):
+        source = learner(case_owner=None, coach_name='Med Maher',
+                         coach_email='med.maher@kbc.ac.uk')
+        with patch('learner_api.coach_assignment.StaffUser.objects.filter') as query:
+            query.return_value.only.return_value.__getitem__.return_value = [
+                SimpleNamespace(email='med.maher@kentbusinesscollege.com')]
+            self.assertEqual(current_coach(source), {
+                'coach_name': 'Med Maher',
+                'coach_email': 'med.maher@kentbusinesscollege.com',
+            })
+
     def test_missing_or_duplicate_staff_names_never_reuse_old_coach_email(self):
         for staff in ([], [SimpleNamespace(email='a@example.com'), SimpleNamespace(email='b@example.com')]):
             with self.subTest(staff=staff), patch('learner_api.coach_assignment.StaffUser.objects.filter') as query:

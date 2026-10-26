@@ -31,8 +31,8 @@ def _email(value) -> str:
 def annotate_attendance_completion(components, learner_profile):
     """Read-only completion evidence, never an extra progress/hour ledger row.
 
-    Authoring requirements and the final learner register are authoritative.
-    Match stored occurrence identity, not titles, dates or client declarations.
+    Verified Teams evidence respects authoring requirements. An explicit staff
+    attendance decision also completes the activity, including those requirements.
     """
     clean = [{key: value for key, value in item.items()
               if key not in {'attendanceCompleted', 'attendanceCompletedAt'}} for item in components]
@@ -71,6 +71,13 @@ def annotate_attendance_completion(components, learner_profile):
               AND lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
         ''', [profile_id, list({item['componentId'] for item in candidates})])
         verified = {(str(cid), str(mid)): ended for cid, mid, ended in cursor.fetchall()}
+    from .manual_attendance_completion import read_manual_completion
+    manual = read_manual_completion(candidates, learner_profile)
+    for key, (present, ended) in manual.items():
+        if present:
+            verified[key] = ended
+        else:
+            verified.pop(key, None)
     for item in candidates:
         key = (str(item.get('componentId') or ''), str(item.get('moduleId') or ''))
         if key in verified:

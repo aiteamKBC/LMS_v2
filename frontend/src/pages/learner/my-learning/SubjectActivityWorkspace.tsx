@@ -72,6 +72,9 @@ export function SubjectActivityWorkspace({ subject, weeks: rawWeeks, requestedWe
     active: item.id === week?.id, components: item.activities.map(component),
   }));
   const sidebarWeek = current || week;
+  const weekDateLabel = (item?: LearningWeek) => item?.start
+    ? `${learningDate(item.start)}${item.end && item.end !== item.start ? ` – ${learningDate(item.end)}` : ''}`
+    : undefined;
   const monthFor = (item: LearningWeek) => item.id === 'introduction' ? 'Introduction'
     : item.id.startsWith('extra:') ? 'Extra activities'
       : item.start || item.month ? new Date(`${(item.month || item.start)!.slice(0, 7)}-01T12:00:00Z`)
@@ -104,6 +107,7 @@ export function SubjectActivityWorkspace({ subject, weeks: rawWeeks, requestedWe
     </div>
     {/* Use the catalogue's dates, rather than fetching a second plan by title. */}
     <ActivitySidebar moduleTitle={subject.title} weekTitle={sidebarWeek ? weekTitle(sidebarWeek) : ''}
+      weekDateLabel={weekDateLabel(sidebarWeek)} dateLabelFor={(_, index) => weekDateLabel(weeks[index])}
       weekComponents={(sidebarWeek?.activities || []).map(component)} weeks={sidebarWeeks}
       completedIds={new Set(combined.activities.filter(entry => entry.completed).map(entry => entry.id))}
       currentComponentId={activity?.id} currentWeekKey={current?.id ?? null}

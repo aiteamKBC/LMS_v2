@@ -53,6 +53,27 @@ beforeEach(() => {
 afterEach(() => { clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('compact My Learning route', () => {
+  it.each(['commercial', 'apprenticeship'] as const)('shows each module cohort independently of the learner cohort (%s)', async kind => {
+    const catalogue = makeCatalogue(kind);
+    catalogue.learner.cohort = 'Account cohort';
+    catalogue.modules[0].planModule!.cohort_name = 'October 2026';
+    catalogue.modules.push({ ...catalogue.modules[0], id: 'current:M2', moduleId: 'M2', title: 'Two',
+      planModule: { ...catalogue.modules[0].planModule, cohort_name: 'February 2026' } });
+    vi.mocked(fetch).mockImplementation(async input => reply(String(input).includes('/certificates/')
+      ? { template: null, csrfToken: '' } : catalogue));
+    route(`/learner/my-learning/${kind}/7`);
+    await screen.findByRole('heading', { name: 'One' });
+    const cards = new Map(screen.getAllByRole('heading', { level: 3 }).map(heading => [heading.textContent, heading.closest('article')!]));
+    const card = (title: string) => cards.get(title)!;
+    expect(card('One')).toHaveTextContent('Cohort: October 2026');
+    expect(card('Two')).toHaveTextContent('Cohort: February 2026');
+    expect(card('Old')).toHaveTextContent('Cohort: Not available');
+    expect(card('One')).not.toHaveTextContent('Account cohort');
+    fireEvent.click(screen.getByRole('button', { name: 'Grid' }));
+    expect(within(card('One')).getByText('October 2026')).toBeVisible();
+    expect(within(card('Two')).getByText('February 2026')).toBeVisible();
+  });
+
   it('retries a failed initial catalogue read and replaces the error with real subjects', async () => {
     let failed = true;
     vi.mocked(fetch).mockImplementation(async input => String(input).includes('/certificates/')
