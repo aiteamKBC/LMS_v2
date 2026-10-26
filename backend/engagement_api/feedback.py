@@ -2,7 +2,7 @@
 
 The route happens to be mounted by engagement_api, while form validation,
 assignment and response ownership are kept independent from any frontend page.
-General-form structural edits are locked after use. Post-lecture templates use
+General-form structural edits are locked after use. Live Sessions Feedback templates use
 immutable versions so future lectures can use edits without changing history.
 """
 from __future__ import annotations
@@ -31,6 +31,8 @@ from learner_api.profile_photo import normalize_photo
 
 from .helpers import json_body, json_error
 from .feedback_delivery import ensure_delivery_questions
+from .feedback_analytics import lecture_analytics_options, question_analytics
+from .feedback_scoring import validate_analytics_settings
 from .module_feedback import MODULE_FORM_TYPES, assigned_active_module_ids, module_delivery_accessible, sync_module_feedback
 from .models import (
     FeedbackAnswer, FeedbackAssignment, FeedbackDelivery, FeedbackDeliveryRecipient,
@@ -416,7 +418,7 @@ def _validated_sections(raw_sections, *, form_type=None):
             draw_count = None
         if draw_count is not None:
             if form_type != 'post_lecture':
-                raise ValueError('Random question selection is available only for Post-lecture feedback.')
+                raise ValueError('Random question selection is available only for Live Sessions Feedback.')
             if type(draw_count) is not int or draw_count < 1 or draw_count > len(questions):
                 raise ValueError(f'{title} must draw between 1 and {len(questions)} questions.')
         clean_questions = []
@@ -440,6 +442,7 @@ def _validated_sections(raw_sections, *, form_type=None):
                 if maximum not in (5, 10):
                     raise ValueError('Rating scales must be 1–5 or 1–10.')
                 config = {**config, 'min': 1, 'max': maximum}
+            validate_analytics_settings(kind, config)
             clean_questions.append({
                 'type': kind, 'text': text, 'required': bool(raw_question.get('required')),
                 'helpText': str(raw_question.get('helpText') or '').strip(), 'config': config,
@@ -877,6 +880,84 @@ def analytics(request):
         'inProgress': in_progress, 'completed': completed,
         'completionRate': round((completed / assigned * 100), 1) if assigned else 0,
         'ratingAverages': ratings,
+        **question_analytics(family_ids),
+        'lectures': lecture_analytics_options(family_ids),
+    }})
+
+
+@require_staff
+def insights_dashboard(request):
+    """Independent, read-only insights. Never sync attendance or initialize a draw."""
+    if request.method != 'GET':
+        return json_error('Method not allowed.', status=405)
+    from .feedback_analytics import dashboard_groups, dashboard_modules
+    from .feedback_insights import submission_period
+    kind = request.GET.get('formType')
+    classification = request.GET.get('classification')
+    group = request.GET.get('groupId')
+    module = request.GET.get('moduleId')
+    if kind and kind not in FORM_TYPES:
+        return json_error('Unknown feedback form type.', status=400)
+    if classification and classification not in {'positive', 'neutral', 'negative', 'unscored'}:
+        return json_error('Unknown response classification.', status=400)
+    if group and (len(group) > 255 or any(ord(character) < 32 for character in group)):
+        return json_error('Invalid feedback group.', status=400)
+    if module and (len(module) > 255 or any(ord(character) < 32 for character in module)):
+        return json_error('Invalid feedback module.', status=400)
+    try:
+        period = submission_period(request.GET.get('submittedFrom'), request.GET.get('submittedTo'))
+    except ValueError as error:
+        return json_error(str(error), status=400)
+    family_ids = list(FeedbackForm.objects.filter(form_type=kind).values_list('id', flat=True)) if kind else None
+    return JsonResponse({'analytics': {
+        **question_analytics(family_ids, group_id=group, classification=classification, dashboard=True,
+                             **({'module_id': module} if module else {}), **period),
+        'groups': dashboard_groups(family_ids),
+        'modules': dashboard_modules(family_ids, group_id=group),
+    }})
+
+
+@require_staff
+def question_analytics_detail(request):
+    """Table-only reporting filters: deliberately no sync or write helpers."""
+    if request.method != 'GET':
+        return json_error('Method not allowed.', status=405)
+    from .feedback_insights import submission_period
+    try:
+        period = submission_period(request.GET.get('submittedFrom'), request.GET.get('submittedTo'))
+    except ValueError as error:
+        return json_error(str(error), status=400)
+    form_type = request.GET.get('formType')
+    if form_type and form_type not in FORM_TYPES:
+        return json_error('Unknown feedback form type.', status=400)
+    identifiers = {}
+    for name in ('formId', 'deliveryId'):
+        raw = request.GET.get(name)
+        if raw:
+            if not raw.isascii() or not raw.isdecimal() or len(raw) > 19 or not 0 < int(raw) <= 9223372036854775807:
+                return json_error(f'{name} must be a positive record ID.', status=400)
+            identifiers[name] = int(raw)
+    forms = _forms_queryset(current_only=True)
+    if form_type:
+        forms = forms.filter(form_type=form_type)
+    family_ids = None
+    if identifiers.get('formId'):
+        selected = forms.filter(pk=identifiers['formId']).first()
+        if selected is None:
+            return json_error('Feedback form not found.', status=404)
+        family_ids = (FeedbackForm.objects.filter(template_key=selected.template_key).values_list('id', flat=True)
+                      if selected.form_type in {'post_lecture', *MODULE_FORM_TYPES} else [selected.id])
+    elif form_type:
+        family_ids = FeedbackForm.objects.filter(template_key__in=forms.values_list('template_key', flat=True)).values_list('id', flat=True)
+    lectures = lecture_analytics_options(family_ids)
+    module_id = request.GET.get('moduleId')
+    available = [lecture for lecture in lectures if not module_id or lecture['moduleId'] == module_id]
+    delivery_id = identifiers.get('deliveryId')
+    if delivery_id is not None and not any(lecture['deliveryId'] == delivery_id for lecture in available):
+        return json_error('Lecture not found in the selected feedback scope.', status=404)
+    delivery_ids = [delivery_id] if delivery_id is not None else [lecture['deliveryId'] for lecture in available] if module_id else None
+    return JsonResponse({'analytics': {
+        **question_analytics(family_ids, delivery_ids=delivery_ids, **period),
     }})
 
 

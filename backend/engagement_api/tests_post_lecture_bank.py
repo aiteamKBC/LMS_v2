@@ -172,7 +172,7 @@ class PostLectureBankTests(SimpleTestCase):
             feedback._validated_sections([section], form_type='post_lecture')
         section['questionsPerDelivery'] = 1
         self.assertEqual(feedback._validated_sections([section], form_type='post_lecture')[0]['questionsPerDelivery'], 1)
-        with self.assertRaisesRegex(ValueError, 'only for Post-lecture'):
+        with self.assertRaisesRegex(ValueError, 'only for Live Sessions Feedback'):
             feedback._validated_sections([section], form_type='general')
 
     def test_lecture_draws_from_each_category_and_avoids_previous_questions_when_possible(self):

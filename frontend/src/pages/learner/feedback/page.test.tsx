@@ -58,7 +58,7 @@ describe('learner feedback categories', () => {
     const user = userEvent.setup();
     render(<MemoryRouter initialEntries={['/learner/feedback?category=event']}><LearnerFeedbackPage /><Location /></MemoryRouter>);
     await user.click(await screen.findByRole('button', { name: /All feedback types/ }));
-    expect(screen.getByRole('option', { name: /Lecture Feedback/ })).toBeVisible();
+    expect(screen.getByRole('option', { name: /Live Sessions Feedback/ })).toBeVisible();
     expect(screen.getByRole('option', { name: /Mid-module Feedback/ })).toBeVisible();
     expect(screen.getByRole('option', { name: /End-module Feedback/ })).toBeVisible();
     expect(screen.queryByRole('option', { name: /Event Feedback/ })).not.toBeInTheDocument();
@@ -82,7 +82,7 @@ describe('learner feedback categories', () => {
 
     await user.click(typeFilter);
     expect(screen.getByRole('option', { name: /Event Feedback/ })).toBeVisible();
-    await user.click(screen.getByRole('option', { name: /Lecture Feedback/ }));
+    await user.click(screen.getByRole('option', { name: /Live Sessions Feedback/ }));
     expect(screen.getByText('/learner/feedback?category=lecture')).toBeVisible();
     const requests = screen.getByRole('region', { name: 'All feedback requests' });
     expect(within(requests).getByText('Data Foundations — Lecture 2')).toBeVisible();
