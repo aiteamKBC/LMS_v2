@@ -150,6 +150,8 @@ def scope_epochs():
                 return _STATE['epochs']
             _STATE['epochs'] = fresh
             _STATE['checked_at'] = time.monotonic()
+        # Read in the same statement: this is the global poll too.
+        _views().note_read_shared_curriculum_epoch(fresh[GLOBAL])
         return fresh
 
 

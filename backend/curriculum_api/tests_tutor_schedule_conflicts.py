@@ -73,9 +73,9 @@ class TutorConflictHarness(CurriculumPersistenceHarness):
     """Two modules in one group, both able to carry their own tutor and slot."""
 
     #: The people a picker can choose between. Curriculum reads its tutors from
-    #: the staff directory, so a roster answer only ever covers staff users who
-    #: hold tutor access -- these tests supply that directory rather than
-    #: inventing tutors out of the names typed onto modules.
+    #: the staff directory, so these tests supply that directory. The roster also
+    #: answers for any other name a module carries, since the picker lists those
+    #: names too and the save checks them.
     TUTORS = ('Tutor Solo', 'Tutor Busy', 'Tutor Free', 'Tutor Other', 'Tutor One')
 
     def setUp(self):
@@ -475,6 +475,17 @@ class AvailabilityPreviewTests(TutorConflictHarness):
         self.assertTrue(verdicts['Tutor Free'])
         self.assertEqual(result['busyCount'], 1)
         self.assertGreaterEqual(result['availableCount'], 1)
+
+    def test_a_tutor_only_a_module_carries_is_answered_for_like_the_save(self):
+        """A name outside the directory must not reach the picker unchecked."""
+        self.seed_group()
+        self.add_module('Module Alpha', tutor='kentbusinesscollege.org')
+
+        verdicts = {item['tutor']: item for item in self.preview()['results']}
+        self.assertFalse(verdicts['kentbusinesscollege.org']['available'])
+        self.assertFalse(verdicts['kentbusinesscollege.org']['inDirectory'])
+        self.assertEqual(verdicts['kentbusinesscollege.org']['conflicts'][0]['moduleName'], 'Module Alpha')
+        self.add_module('Module Beta', expect=409, tutor='kentbusinesscollege.org')
 
     def test_a_module_is_not_reported_as_blocking_its_own_slot(self):
         """Re-opening a saved module must not show its own booking as a clash."""

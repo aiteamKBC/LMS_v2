@@ -808,6 +808,11 @@ export default function ModuleBuilder() {
   const liveSyncRef = useRef<(trigger?: 'return' | 'live') => void | Promise<void>>(() => undefined);
   // A live read that arrived while a save was in flight, run once it settles.
   const liveSyncAfterSaveRef = useRef<'return' | 'live' | ''>('');
+  // Module settings is open: its own save is read back by its onSaved as this
+  // author's write, so a live read heard meanwhile waits for the drawer to close
+  // rather than reporting that save as somebody else's.
+  const placementOpenRef = useRef(false);
+  const liveSyncAfterPlacementRef = useRef<'return' | 'live' | ''>('');
   /** The live merge, reachable from the save path that is declared above it. */
   const mergeStoredRef = useRef<(structureId: string) => Promise<boolean>>(async () => false);
   /**
@@ -1195,11 +1200,28 @@ export default function ModuleBuilder() {
       module,
       deliveryUsageForModuleScope(module as ModuleBuilderListItem, programmeFilter, curriculumProgrammes),
     );
+    placementOpenRef.current = true;
     setPlacementModule(target);
   }, [curriculumProgrammes, programmeFilter]);
 
   const closePlacementForm = useCallback(() => {
+    placementOpenRef.current = false;
     setPlacementModule(null);
+    const deferred = liveSyncAfterPlacementRef.current;
+    liveSyncAfterPlacementRef.current = '';
+    // After the drawer's onSaved has started its own read (it runs in the same
+    // tick as this close), so this one finds the module already up to date.
+    if (deferred) setTimeout(() => { void liveSyncRef.current(deferred); }, 0);
+  }, []);
+
+  // The copy this workspace last agreed on with the server: what Module
+  // settings' PATCH will resize, so the drawer can say what that does first.
+  const storedStructureForPlacement = useCallback((): ModuleCatalogueItem | null => {
+    try {
+      return savedModuleSnapshotRef.current ? JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem : null;
+    } catch {
+      return null;
+    }
   }, []);
 
   const moduleFormOpen = createOpen || Boolean(placementModule);
@@ -2930,7 +2952,12 @@ export default function ModuleBuilder() {
    * Returns false when nothing was read, so a caller can leave the workspace
    * exactly as it was.
    */
-  const mergeStoredIntoWorkspace = useCallback(async (structureId: string): Promise<boolean> => {
+  const mergeStoredIntoWorkspace = useCallback(async (
+    structureId: string,
+    // The write being read back is this author's own (Module settings): it is
+    // folded in without "someone else" being said anywhere.
+    options: { ownWrite?: boolean } = {},
+  ): Promise<boolean> => {
     liveSyncReadAtRef.current = Date.now();
     const sequence = liveSyncSequenceRef.current + 1;
     liveSyncSequenceRef.current = sequence;
@@ -2961,7 +2988,7 @@ export default function ModuleBuilder() {
     const base = savedModuleSnapshotRef.current
       ? JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem
       : null;
-    const { module: merged, adopted, collisions } = mergeModuleStructures(base, current, stored);
+    const { module: merged, adopted, collisions } = mergeModuleStructures(base, current, stored, { ownWrite: options.ownWrite });
     // What the server holds is the stored copy, so that is what "saved" means
     // from here: the difference between it and the merged copy is exactly the
     // reader's outstanding work, which is what keeps the footer honest.
@@ -2989,7 +3016,7 @@ export default function ModuleBuilder() {
     setSaveFailure(null);
     // The disagreements have their own panel; this line only says that their
     // other changes arrived.
-    if (adopted) setRemoteUpdate({ revision, notices: [], adopted });
+    if (adopted && !options.ownWrite) setRemoteUpdate({ revision, notices: [], adopted });
     return true;
   }, [applySelectionSafely, readStoredModule, selection, setModuleConflicts]);
   mergeStoredRef.current = mergeStoredIntoWorkspace;
@@ -3051,7 +3078,7 @@ export default function ModuleBuilder() {
       await adoptStoredModule().catch(() => undefined);
       return;
     }
-    await mergeStoredIntoWorkspace(structureId);
+    await mergeStoredIntoWorkspace(structureId, { ownWrite: true });
   }, [adoptStoredModule, mergeStoredIntoWorkspace, workingModule]);
 
   /**
@@ -3083,6 +3110,10 @@ export default function ModuleBuilder() {
     // being dropped with a colleague's write in it.
     if (savingRef.current) {
       liveSyncAfterSaveRef.current = trigger;
+      return;
+    }
+    if (placementOpenRef.current) {
+      liveSyncAfterPlacementRef.current = trigger;
       return;
     }
     const sinceLastRead = Date.now() - liveSyncReadAtRef.current;
@@ -3702,6 +3733,7 @@ export default function ModuleBuilder() {
           holidays={moduleFormScope.holidays}
           tutorNames={tutorNames}
           onClose={closePlacementForm}
+          storedStructure={storedStructureForPlacement}
           onSaved={async () => {
             await syncWorkingModuleFromStore();
             await reload({ silent: true });
@@ -4076,6 +4108,7 @@ export default function ModuleBuilder() {
           holidays={moduleFormScope.holidays}
           tutorNames={tutorNames}
           onClose={closePlacementForm}
+          storedStructure={storedStructureForPlacement}
           onSaved={async () => {
             await reload({ silent: true });
           }}
