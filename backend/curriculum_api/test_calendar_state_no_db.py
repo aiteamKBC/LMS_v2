@@ -260,6 +260,7 @@ class ServiceTests(CalendarFixture):
         self.v = types.ModuleType('curriculum_api.views')
         self.v.invalidate_curriculum_cache = Mock()
         self.v.__package__ = 'curriculum_api'
+        setattr(package, 'views', self.v)
         modules = patch.dict(sys.modules, {'curriculum_api.views': self.v})
         modules.start()
         self.addCleanup(modules.stop)
@@ -273,24 +274,23 @@ class ServiceTests(CalendarFixture):
                   'connection': types.SimpleNamespace(cursor=lambda: nullcontext(cursor))}
         functions(ROOT / 'teams_calendar_state.py', {'state_signature', 'reconcile_calendar'}, self.n)
 
-    def test_a_cancellation_in_microsoft_is_reported_never_written(self):
-        # Only a person pressing Cancel in the LMS cancels anything. What
-        # Microsoft shows cancelled -- in Outlook, by anybody -- is reported,
-        # and the LMS keeps every session and the calendar exactly as they were.
+    def test_a_verified_microsoft_cancellation_updates_only_eligible_sessions(self):
+        # A confirmed external cancellation is applied to a scheduled session
+        # that has not started and has no attendance evidence. Historical rows
+        # remain untouched.
         self.master['isCancelled'] = True
         self.rows[0].update(status='held', attendance_report_id='report')
         result = self.n['reconcile_calendar']('LIVE-1')
-        self.assertEqual(result['cancelledSessions'], [])
-        self.assertFalse(result['changed'])
+        self.assertEqual(result['cancelledSessions'], [2])
+        self.assertTrue(result['changed'])
         self.assertEqual(result['seriesStatus'], 'active')
-        self.assertEqual(result['cancelledInMicrosoft'], [2])
-        self.assertTrue(result['seriesCancelledInMicrosoft'])
-        # The identity snapshot is the only write; no status is touched.
-        self.assertEqual(len(self.sql), 1)
-        self.assertIn('teams_calendar_sync_state', self.sql[0][0])
-        self.assertEqual(self.sql[0][1][0], 'LIVE-1')
-        self.assertFalse(any("status = 'cancelled'" in sql for sql, _args in self.sql))
-        self.v.invalidate_curriculum_cache.assert_not_called()
+        self.assertEqual(result['cancelledInMicrosoft'], [])
+        self.assertFalse(result['seriesCancelledInMicrosoft'])
+        self.assertEqual(len(self.sql), 2)
+        self.assertIn("status = 'cancelled'", self.sql[0][0])
+        self.assertIn('teams_calendar_sync_state', self.sql[1][0])
+        self.assertEqual(self.sql[1][1][0], 'LIVE-1')
+        self.v.invalidate_curriculum_cache.assert_called_once()
 
     def test_concurrent_local_edit_prevents_any_write(self):
         first = copy.deepcopy((self.series, self.rows, self.saved))

@@ -62,6 +62,7 @@ export interface Quiz {
 export type QuizAnswerValue = number | number[] | string | string[] | Record<string, string>;
 
 export interface QuizSubmission {
+  retakeTimeChoice?: 'keep' | 'new';
   answers: Record<string, QuizAnswerValue>;
   timeTakenSeconds: number;
   startedAt: string;

@@ -28,6 +28,7 @@ import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 
 import CoachingHome from './CoachingHome';
+import { shouldShowLearnerMeetingRecording } from './recordingVisibility';
 import ProgressReviewPptxModal from '@/pages/coach/progress-reviews/components/ProgressReviewPptxModal';
 import { useCoachingReviewDefinitions } from './useCoachingReviewDefinitions';
 
@@ -60,14 +61,6 @@ function monthlyCoachingTitle(session?: LearnerCalendarEvent | null): string {
   if (session?.reviewTemplateId) return `${session.title}${occurrence != null ? ` #${occurrence}` : ' — Manual Review'}`;
   const month = monthLabel(dateOf(session));
   return `Monthly Coaching Meeting${month ? ` — ${month}` : ''}${occurrence != null ? ` #${occurrence}` : ''}`;
-}
-
-function shouldShowLearnerMeetingRecording(session?: LearnerCalendarEvent | null): boolean {
-  return Boolean(
-    session?.eventKey
-    && session?.meetingLink
-    && ['completed', 'awaiting-signature'].includes(session.status),
-  );
 }
 
 function formatTime(value?: string | null): string {

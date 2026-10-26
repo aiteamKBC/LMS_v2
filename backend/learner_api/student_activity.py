@@ -604,6 +604,10 @@ def start_subject_attempt(request, kind, pk, group_id, activity_id):
         payload = json.loads(request.body) if request.body else {}
         if not isinstance(payload, dict):
             return _error('Invalid attempt request.', 400)
+        from .retake_timing import choice
+        retake_choice = choice(payload.get('retakeTimeChoice'))
+        if retake_choice is not None:
+            definition['retakeTimeChoice'] = retake_choice
         timing = None
         if payload.get('track_time') is True:
             from .subject_timing import create_session

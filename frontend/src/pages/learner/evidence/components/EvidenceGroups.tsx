@@ -67,7 +67,7 @@ function EvidenceFile({ item, onOpen }: { item: EvidenceItem; onOpen: (id: strin
   return <button type="button" className={styles.file} aria-label={`Open evidence: ${item.title}`} onClick={() => onOpen(item.id)}>
     <span className={styles.fileIcon}>{previous && !previous.has_file && previous.has_note ? <MessageSquare size={18} /> : <FileText size={18} />}</span>
     <span className={styles.fileInfo}><span className={styles.fileTitle}>{item.title}</span>
-      <span className={styles.fileMeta}><span>{item.date}</span><i /><span>{previous ? 'Previous evidence' : 'Uploaded here'}</span>
+      <span className={styles.fileMeta}><span>{previous ? item.date : `Uploaded ${item.date}`}</span><i /><span>{previous ? 'Previous evidence' : 'Uploaded here'}</span>
         <i /><span>{item.type}</span>{item.documents?.[0]?.size && <><i /><span>{item.documents[0].size}</span></>}
         {previous?.has_report && <span className={styles.attachment}><Paperclip size={12} />Assessment report</span>}
         {previous?.has_note && <span className={styles.attachment}><MessageSquare size={12} />Note</span>}

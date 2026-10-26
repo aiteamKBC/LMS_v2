@@ -200,7 +200,7 @@ def archived_recording_url(event_key: str, graph_artifact_id: str, database: str
 
 
 def _record_upload(database, event_key, graph_artifact_id, *, container="", blob_name="",
-                   size_bytes=None, content_type="", error=""):
+                   size_bytes=None, content_type="", error="", only_unarchived=False):
     """Persist the outcome of one archive attempt onto the artifact row."""
     from django.utils import timezone
 
@@ -218,6 +218,7 @@ def _record_upload(database, event_key, graph_artifact_id, *, container="", blob
              where event_key = %s
                and artifact_type = 'recording'
                and graph_artifact_id = %s
+               {"and coalesce(blob_name, '') = ''" if only_unarchived else ""}
             """,
             [
                 container or None,
@@ -231,10 +232,11 @@ def _record_upload(database, event_key, graph_artifact_id, *, container="", blob
                 graph_artifact_id,
             ],
         )
+        return cursor.rowcount
 
 
 def archive_recording(event_key: str, graph_artifact_id: str, content_bytes: bytes,
-                      content_type: str = "", database: str | None = None) -> dict:
+                      content_type: str = "", database: str | None = None, *, imported_attempt=None) -> dict:
     """Upload one already-downloaded recording and record where it landed.
 
     Returns ``{"archived": bool, "blob_name": str, "error": str}`` and never
@@ -248,6 +250,12 @@ def archive_recording(event_key: str, graph_artifact_id: str, content_bytes: byt
         return {"archived": False, "blob_name": "", "error": "Recording content was empty."}
     if not blob_columns_ready(database):
         return {"archived": False, "blob_name": "", "error": "Archive columns are not present yet."}
+
+    if imported_attempt is not None:
+        if (event_key, graph_artifact_id) != (imported_attempt.event_key, imported_attempt.artifact_id):
+            return {"archived": False, "blob_name": "", "error": "Imported recording identity mismatch."}
+        from .imported_recording_archive import archive_imported_recording
+        return archive_imported_recording(imported_attempt, content_bytes, content_type, database)
 
     container = recordings_container(meeting_type_from_event_key(event_key))
     blob_name = build_blob_name(event_key, graph_artifact_id, content_type)
@@ -325,11 +333,12 @@ def download_recording_from_graph(base: str, artifact_id: str) -> tuple[bytes, s
         return b"", "", str(exc)[:300]
 
 
-def pending_recordings(database: str | None = None, limit: int = 50) -> list[dict]:
+def pending_recordings(database: str | None = None, limit: int = 50, *, event_key: str = '') -> list[dict]:
     """Recordings Graph has handed us that are not archived yet.
 
-    Rows that already failed MAX_UPLOAD_ATTEMPTS times are left alone so one
-    permanently broken recording cannot stall every pass behind it.
+    Preserve the existing fresh-candidate selection. Spare capacity can retry
+    failed APTEM uploads, after source and stored session qualification. There
+    is no persisted attempt counter; an error alone is not retry exhaustion.
     """
     database = database or router.db_for_read(CoachCalendarEvent) or "default"
     if not blob_columns_ready(database):
@@ -340,15 +349,85 @@ def pending_recordings(database: str | None = None, limit: int = 50) -> list[dic
             select event_key, graph_artifact_id, owner_email, graph_organizer_email, graph_event_id
             from {ARTIFACTS_RELATION}
             where artifact_type = 'recording'
+              and event_key not like 'coach-calendar:%%'
               and (blob_name is null or blob_name = '')
               and coalesce(blob_upload_error, '') = ''
+              {"and event_key = %s" if event_key else ""}
             order by created_datetime desc nulls last
             limit %s
             """,
-            [limit],
+            [event_key, limit] if event_key else [limit],
         )
         columns = [column[0] for column in cursor.description]
-        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+        pending = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        remaining = limit - len(pending)
+        if remaining <= 0:
+            return pending
+        cursor.execute(
+            f"""
+            select event_key, graph_artifact_id, owner_email, graph_organizer_email, graph_event_id
+            from {ARTIFACTS_RELATION}
+            where artifact_type = 'recording'
+              and (blob_name is null or blob_name = '')
+              and coalesce(blob_upload_error, '') <> ''
+              {"and event_key = %s" if event_key else ""}
+            order by updated_at asc nulls first, created_datetime asc nulls first
+            limit %s
+            """,
+            [event_key, limit] if event_key else [limit],
+        )
+        failed = [dict(zip(columns, row)) for row in cursor.fetchall()]
+    for row in failed:
+        if _imported_recording_retry_allowed(row, database):
+            pending.append(row)
+            if len(pending) == limit:
+                break
+    return pending
+
+
+def _imported_recording_retry_allowed(row, database):
+    """Reuse APTEM identity/session guards; never initialize or start a Review."""
+    from .background_meeting_sync import imported_context
+    from .migrated_session_scope import select_artifacts
+    from .views import stored_coach_meeting_snapshot
+
+    try:
+        record = CoachCalendarEvent.objects.using(database).filter(event_key=row['event_key']).first()
+        context = imported_context(record) if record is not None else None
+        if record is None or not context:
+            return False
+        for field in ('owner_email', 'graph_organizer_email', 'graph_event_id'):
+            saved, current = str(row.get(field) or '').strip(), str(getattr(record, field, '') or '').strip()
+            if field != 'graph_event_id':
+                saved, current = saved.casefold(), current.casefold()
+            if not saved or saved != current:
+                return False
+        snapshot = stored_coach_meeting_snapshot(record, database=database, safe_diagnostics=True)
+        if snapshot.get('partial') or not (snapshot.get('storage') or {}).get('stored'):
+            return False
+        from .migrated_session_scope import has_verified_meeting_evidence
+        meeting_scoped = has_verified_meeting_evidence(snapshot)
+        from .bound_actual_session import bound_session
+        from .models import ImportedReviewInstance
+        overlay = (ImportedReviewInstance.objects.using(database).filter(pk=context['overlayId']).first()
+                   if context.get('overlayId') else None)
+        bound = bound_session(record, overlay=overlay) if not meeting_scoped and overlay and context['family'] in {
+            'MCM', 'PR', 'PR_SKILLS_RADAR'} else None
+        if meeting_scoped:
+            from .migrated_session_scope import scope_snapshot
+            scoped = scope_snapshot(record, snapshot, meeting_scoped=True)
+            selected, error = scoped['artifacts'], scoped['selectionError']
+        else:
+            selected, error = select_artifacts(record, snapshot, session=bound.context if bound else None)
+        return (not error or meeting_scoped) and any(
+            artifact.get('artifact_type') == 'recording'
+            and artifact.get('graph_artifact_id') == row['graph_artifact_id']
+            for artifact in selected
+        )
+    except Exception:
+        # Do not print provider paths, identities or stored metadata on failure.
+        logger.warning('Imported recording retry qualification unavailable; candidate skipped.')
+        return False
 
 
 def transcripts_container() -> str:

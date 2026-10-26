@@ -308,6 +308,13 @@ class OwnedValues(unittest.TestCase):
         merged, _ = merge.merge_partial_save(stored, save(base, local))
         self.assertEqual(find(merged, 'C1')[1]['settings']['sessionDate'], '2026-11-09')
 
+    def test_sessions_number_never_conflicts(self):
+        base = {**stored_module(), 'sessionsNumber': 9}
+        stored = {**copy.deepcopy(base), 'sessionsNumber': 11}
+        local = {**copy.deepcopy(base), 'sessionsNumber': 10}
+        merged, _ = merge.merge_partial_save(stored, save(base, local))
+        self.assertEqual(merged['sessionsNumber'], 10)
+
     def test_derived_week_fields_never_conflict(self):
         base = stored_module()
         base['weekStructure'][0]['sessionDate'] = '2026-11-02'

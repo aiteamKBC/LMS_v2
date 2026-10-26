@@ -1046,8 +1046,8 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
         setDetail(current => (current && current.series.id === liveSessionId
           ? { ...current, leftoverSlots: result.leftovers } : current));
       }
-      // Cancelled in Microsoft but not here. The check never cancels anything:
-      // only a person pressing Cancel does, so it is said, with the way to do it.
+      // A verified cancellation is applied to eligible local occurrences. Any
+      // historical or otherwise ineligible session remains visible for review.
       const outsideSessions = result.cancelledInMicrosoft || [];
       const outsideSeries = Boolean(result.seriesCancelledInMicrosoft);
       if (source === 'manual' || result.changed || result.errors.length || outsideSeries || outsideSessions.length) {

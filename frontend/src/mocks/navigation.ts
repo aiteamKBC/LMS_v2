@@ -99,6 +99,7 @@ export const coachNavItems: SidebarNavItem[] = [
       { id: 'coach-reviews', label: 'Review', icon: 'ri-file-list-3-line', href: '/coach/reviews' },
       { id: 'coach-catchup-queue', label: 'Catch-up Queue', icon: 'ri-refresh-line', href: '/coach/catchup-queue' },
       { id: 'coach-timetable', label: 'Calendar', icon: 'ri-calendar-schedule-line', href: '/coach/timetable' },
+      { id: 'coach-recordings', label: 'Meetings & Recordings', icon: 'ri-video-line', href: '/coach/recordings' },
     ],
   },
   {
@@ -247,6 +248,12 @@ export const curriculumNavItems: SidebarNavItem[] = [
       '/curriculum/session-calendar',
       '/curriculum/england-holidays',
     ],
+  },
+  {
+    id: 'curriculum-coaching-recordings',
+    label: 'Coach Meetings & Recordings',
+    icon: 'ri-video-line',
+    href: '/curriculum/coaching-recordings',
   },
   {
     id: 'curriculum-bulk-attendance',

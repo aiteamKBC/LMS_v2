@@ -161,8 +161,10 @@ export interface CoachMeetingArtifact {
   created_datetime?: string;
   end_datetime?: string;
   metadata?: Record<string, unknown>;
-  /** False when only metadata is saved and the portal cannot serve the content. */
+  /** False when an imported recording has no archived copy. */
   content_available?: boolean;
+  /** Saved, verified APTEM metadata permits an on-demand Teams playback attempt. */
+  graph_playback_candidate?: boolean;
 }
 
 export interface CoachMeetingAttendanceRecord {
@@ -279,6 +281,7 @@ export interface MigratedSummaryBinding {
   generationError?: MigratedSummaryGenerationError;
   replacementAvailable?: boolean;
   transcriptTruncated?: boolean;
+  provisional?: boolean;
   summaryTooLong?: boolean;
 }
 
@@ -293,9 +296,13 @@ export interface CoachMeetingArtifactsResponse {
     recordingStatus: string;
     transcriptStatus: string;
     summaryStatus: string;
+    summaryProvisional?: boolean;
     generationError?: MigratedSummaryGenerationError | null;
     transcriptArtifactId?: string | null;
     errorCodes: string[];
+    meetingEndStatus?: 'pending' | 'attendance-confirmed' | 'scheduled-end-reached' | null;
+    meetingEndCode?: 'MEETING_END_PENDING' | null;
+    resourceErrors?: Record<string, string>;
   };
   event?: {
     eventKey: string;

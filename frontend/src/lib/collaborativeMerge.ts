@@ -231,7 +231,9 @@ function mergeKeyedList(base: Dict[], local: Dict[], remote: Dict[], path: strin
     }
     // Gone from the other editor's copy. If the reader had not touched it, the
     // delete is simply their change and it stands.
-    if (baseEntry && sameValue(baseEntry, localEntry)) {
+    // "Touched" means authored: a week the planner re-dated on this screen is
+    // still one nobody here worked on.
+    if (baseEntry && !authoredChange(baseEntry, localEntry, entryPath(path, id), ctx)) {
       ctx.adopted += 1;
       return;
     }
@@ -254,7 +256,7 @@ function mergeKeyedList(base: Dict[], local: Dict[], remote: Dict[], path: strin
       // editor had edited is a real disagreement, and the reader's delete still
       // wins -- resurrecting a record somebody removed on purpose is worse than
       // telling them it was edited elsewhere.
-      if (!sameValue(baseEntry, remoteEntry)) {
+      if (authoredChange(baseEntry, remoteEntry, entryPath(path, id), ctx)) {
         ctx.collisions.push({ path: entryPath(path, id), local: undefined, remote: remoteEntry, kind: 'local-deleted' });
       }
       return;
@@ -298,6 +300,31 @@ function mergeKeyedList(base: Dict[], local: Dict[], remote: Dict[], path: strin
   }
   ctx.adopted += 1;
   return inRemoteOrder(merged, remote, remoteById);
+}
+
+/**
+ * Whether the other editor changed anything a person authors in this entry.
+ *
+ * A difference only in fields the server or Microsoft writes -- a week the
+ * planner re-dated after the reader deleted it -- is not someone editing it,
+ * and asking the reader to choose over it puts a question to them that nobody
+ * asked.
+ */
+function authoredChange(base: unknown, remote: unknown, path: string, ctx: MergeContext): boolean {
+  if (sameValue(base, remote)) return false;
+  const pattern = patternOf(path);
+  if (ctx.ignore(pattern) || ctx.preferRemote(pattern)) return false;
+  if (isPlainObject(base) && isPlainObject(remote)) {
+    const keys = new Set([...Object.keys(base), ...Object.keys(remote)]);
+    return [...keys].some(key => authoredChange(base[key], remote[key], childPath(path, key), ctx));
+  }
+  if (isKeyedList(base) && isKeyedList(remote) && base.length === remote.length) {
+    return remote.some((entry, index) => (
+      String(entry.id) !== String(base[index].id)
+      || authoredChange(base[index], entry, entryPath(path, String(entry.id)), ctx)
+    ));
+  }
+  return true;
 }
 
 /**

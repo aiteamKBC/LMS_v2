@@ -359,23 +359,21 @@ describe('Teams Meetings page', () => {
     } finally { clock.mockRestore(); }
   });
 
-  it('honours auto-sync off, and a manual check never cancels a series Microsoft shows cancelled', async () => {
+  it('honours auto-sync off, and a manual check records eligible Microsoft cancellations locally', async () => {
     window.localStorage.setItem('curriculumTeamsAutoSync', 'off');
     await renderPage();
     await screen.findByText('Data Foundations');
     await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
     const dialog = within(await screen.findByRole('dialog'));
     expect(syncTeamsCalendarState).not.toHaveBeenCalled();
-    // Cancelled in Microsoft (in Outlook, say), never in the LMS: the check
-    // reports it and changes nothing. Only the author's own Cancel records it.
-    vi.mocked(syncTeamsCalendarState).mockResolvedValueOnce({ changed: false, seriesStatus: 'active', cancelledSessions: [], errors: [],
-      cancelledInMicrosoft: [1, 2], seriesCancelledInMicrosoft: true });
+    // Confirmed cancellations are applied only to sessions without attendance
+    // evidence; the sync result tells the workspace which sessions changed.
+    vi.mocked(syncTeamsCalendarState).mockResolvedValueOnce({ changed: true, seriesStatus: 'active', cancelledSessions: [1, 2], errors: [],
+      seriesCancelledInMicrosoft: false });
     await userEvent.click(dialog.getByRole('button', { name: 'Sync calendar status' }));
-    // Named: the check reads Microsoft for one calendar, and its verdict has to
-    // say which module it is about.
-    expect(await screen.findByText(/^Data Foundations — Microsoft shows this whole calendar as cancelled, but nobody cancelled it in the LMS/)).toBeInTheDocument();
+    await waitFor(() => expect(syncTeamsCalendarState).toHaveBeenCalledWith('LIVE-1'));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Record the series cancellation' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Record the series cancellation' })).not.toBeInTheDocument();
     expect(syncTeamsMeetingArtifacts).not.toHaveBeenCalled();
     expect(createTeamsMeeting).not.toHaveBeenCalled();
   });

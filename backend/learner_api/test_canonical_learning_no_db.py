@@ -52,6 +52,84 @@ def adapter(query):
 
 
 class CanonicalLearningTests(unittest.TestCase):
+    def test_new_completion_date_moves_month_and_timestamp_without_rewriting_audit(self):
+        self.query.return_value = []
+        entry = {'id': 1, 'ksbs': [], 'accepted': True, 'actual_seconds': 1800,
+                 'reporting_month': '2026-10', 'submitted_at': '2026-10-02T10:00:00Z',
+                 'declared_completed_at': '2026-09-30T14:30:00+01:00',
+                 'started_at': '2026-10-02T09:30:00Z',
+                 'reporting_timestamp_label': '10:30:00 - 11:00:00'}
+        original = dict(entry)
+        row = self.scope['rows_for'](self.owner, [entry])[0]
+        self.assertEqual(row['reporting_month'], '2026-09')
+        self.assertEqual(row['activity_date'], '2026-09-30')
+        self.assertEqual(row['timestamp_label'], '14:30:00')
+        self.assertEqual(row['actual_hours'], 0.5)
+        self.assertEqual(entry, original)
+        scope = {'defaultdict': defaultdict, 'canonical_learning': SimpleNamespace(**self.scope)}
+        functions('training_plan_dashboard.py', scope, {'_canonical_actual_rows'})
+        totals = scope['_canonical_actual_rows'](self.owner, [entry])
+        self.assertEqual(totals, [{'month': '2026-09', 'groupId': None, 'hours': 0.5, 'count': 1}])
+        # The dashboard uses the same allocation to select the month and hours.
+        parts = self.scope['allocations'](entry)
+        self.assertEqual(sum(p['actual_seconds'] for p in parts if p['reporting_month'] == '2026-09'), 1800)
+        self.assertFalse(any(p['reporting_month'] == '2026-10' for p in parts))
+        dashboard = {'defaultdict': defaultdict, 'canonical': SimpleNamespace(**self.scope),
+                     'number': self.scope['number']}
+        functions('dashboard_tabs.py', dashboard, {'monthly_hours'})
+        chart = dashboard['monthly_hours'](self.owner, [entry], {}, current_month='2026-10')
+        self.assertEqual(chart['months'], [{'month': '2026-09', 'actual_hours': 0.5,
+                                          'not_accepted_hours': 0, 'training_plan_target': None}])
+        self.scope['entries_for'] = Mock(return_value=[entry])
+        found, original_record = self.scope['content_row'](self.owner, '2026-09', row['id'])
+        self.assertEqual(found['id'], row['id'])
+        self.assertEqual(original_record, original)
+        with self.assertRaises(ServiceError):
+            self.scope['content_row'](self.owner, '2026-10', row['id'])
+
+    def test_new_submission_fallback_uses_uk_month_and_saved_start(self):
+        self.query.return_value = []
+        entry = {'id': 2, 'ksbs': [], 'accepted': True, 'actual_seconds': 900,
+                 'reporting_month': '2026-10', 'submitted_at': '2026-09-30T23:30:00Z',
+                 'started_at': '2026-09-30T23:15:00Z'}
+        row = self.scope['rows_for'](self.owner, [entry])[0]
+        self.assertEqual(row['activity_date'], '2026-10-01')
+        self.assertEqual(row['reporting_month'], '2026-10')
+        self.assertEqual(row['timestamp_label'], '00:15:00 - 00:30:00')
+        report_start = {**entry, 'started_at': None, 'reporting_started_at': entry['started_at']}
+        self.assertEqual(self.scope['rows_for'](self.owner, [report_start])[0]['timestamp_label'],
+                         '00:15:00 - 00:30:00')
+        for missing in (None, ''):
+            single = self.scope['rows_for'](self.owner, [{**entry, 'started_at': missing,
+                                                          'declared_completed_at': missing}])[0]
+            self.assertEqual(single['timestamp_label'], '00:30:00')
+
+    def test_completion_policy_preserves_older_and_missing_submission_records(self):
+        cases = [
+            {'reporting_month': '2026-09', 'submitted_at': '2026-09-20T12:00:00Z',
+             'declared_completed_at': '2026-09-19T10:00:00Z'},
+            {'reporting_month': '2025-11', 'submitted_at': '2026-10-20T12:00:00Z',
+             'source_system': 'journal', 'reporting_timestamp_label': 'Input'},
+            {'reporting_month': '2026-10', 'submitted_at': None,
+             'reporting_timestamp_label': 'attended'},
+        ]
+        for entry in cases:
+            with self.subTest(entry=entry):
+                self.assertEqual(self.scope['allocations'](entry), [entry])
+
+    def test_declared_completion_handles_uk_dst_without_changing_seconds_or_acceptance(self):
+        for value, expected in [('2026-10-24T23:30:00Z', '00:30:00'),
+                                ('2026-10-25T02:30:00Z', '02:30:00'),
+                                ('2026-10-25T14:30:00', '14:30:00')]:
+            with self.subTest(value=value):
+                entry = {'submitted_at': '2026-11-02T12:00:00Z', 'declared_completed_at': value,
+                         'reporting_month': '2026-11', 'actual_seconds': 123, 'accepted': False}
+                part = self.scope['allocations'](entry)[0]
+                self.assertEqual(part['reporting_month'], '2026-10')
+                self.assertEqual(part['reporting_timestamp_label'], expected)
+                self.assertEqual(part['actual_seconds'], 123)
+                self.assertFalse(part['accepted'])
+
     def test_staff_input_date_reaches_activity_log_without_inventing_a_timestamp(self):
         self.query.return_value=[]
         entry={'id':1,'accepted':True,'actual_seconds':3617,'actual_basis':'staff:module-progress','reporting_month':'2026-10',
@@ -359,6 +437,7 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertEqual(compact[0]['ksbs'], ['K1'])
         self.assertEqual(compact[0]['source_payload'], entry['source_payload'])
         self.assertNotIn('SELECT progress.*', compact_sql)
+        self.assertIn('progress.declared_completed_at', compact_sql)
         self.assertNotIn('to_jsonb(s) ORDER BY s.segment_order', compact_sql)
         self.assertNotIn('to_jsonb(h) ORDER BY h.id', compact_sql)
         self.assertIn('course_display_placement', compact_sql)
