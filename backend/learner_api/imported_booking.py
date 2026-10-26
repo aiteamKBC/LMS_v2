@@ -36,9 +36,16 @@ def reserve_imported_booking(candidate, event, expected_slot, *, notes=None, exp
     from coach_api.migrated_reviews import initial_local_status, review_family, booking_event_type
     from coach_api.review_reconciliation import read_source, ReconciliationConflict
     from coach_api.review_sources import linked_booking, linked_overlay, ReviewIdentityConflict
+    from coach_api import imported_meeting_ownership as meeting_ownership
 
     desired = booking_slot(candidate)
     conflict = views.LearnerCalendarConflict
+    ownership_active = meeting_ownership.enabled_for(event)
+    if ownership_active:
+        try:
+            meeting_ownership.require_activation_ready()
+        except meeting_ownership.MeetingOwnershipError:
+            raise conflict("This imported meeting needs ownership reconciliation.") from None
     with transaction.atomic():
         views.lock_learner_calendar(candidate.learner_id)
         record = CoachCalendarEvent.objects.select_for_update().get(pk=candidate.pk)
@@ -68,6 +75,11 @@ def reserve_imported_booking(candidate, event, expected_slot, *, notes=None, exp
             raise conflict("This booking was changed by another request. Refresh before rescheduling.")
         if notes is not None and expected_notes is not None and record.notes not in {expected_notes, notes}:
             raise conflict("The booking notes were changed by another request. Refresh before saving.")
+        if ownership_active and record.sync_state == CoachCalendarEvent.SYNC_SYNCED:
+            try:
+                meeting_ownership.require_synced_owner(record, event)
+            except meeting_ownership.MeetingOwnershipError:
+                raise conflict("This imported meeting ownership changed. Refresh before rescheduling.") from None
         if current == desired and record.sync_state == CoachCalendarEvent.SYNC_SYNCED:
             if notes is not None and record.notes != notes:
                 record.notes = notes

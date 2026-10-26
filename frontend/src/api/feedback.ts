@@ -1,5 +1,5 @@
 export type FeedbackFormStatus = 'draft' | 'published' | 'closed';
-export type FeedbackFormType = 'general' | 'post_lecture' | 'post_event' | 'event_rsvp' | 'post_mcm_review' | 'post_progress_review';
+export type FeedbackFormType = 'general' | 'post_lecture' | 'post_event' | 'event_rsvp' | 'post_mcm_review' | 'post_progress_review' | 'mid_module' | 'end_module';
 export type FeedbackDeliveryScope = 'manual' | 'all_modules' | 'module';
 export type FeedbackQuestionType = 'short_text' | 'long_text' | 'yes_no' | 'single_choice' | 'multiple_choice' | 'dropdown' | 'rating' | 'likert' | 'number' | 'date' | 'name' | 'email' | 'photo_upload';
 export interface FeedbackNameAnswer { firstName: string; lastName: string }
@@ -136,13 +136,13 @@ export interface FeedbackResponse {
 export interface FeedbackAnalyticsData {
   totalAssigned: number; notStarted: number; inProgress: number; completed: number;
   completionRate: number;
-  ratingAverages: { questionId: number; question: string; average: number; responses: number }[];
+  ratingAverages: { questionId: number; question: string; average: number; responses: number; min?: number; max?: number }[];
 }
 
 export interface FeedbackLearnerOption { id: string; name: string; email: string; programme: string; cohort: string }
 export interface FeedbackRecipient {
   key: string; learnerId: string; learnerName: string; email: string; programme: string;
-  source: 'manual' | 'attendance' | 'event_attendance' | 'completed_review'; deliveryId: number | null; occurrenceKey: string;
+  source: 'manual' | 'attendance' | 'module_assignment' | 'event_attendance' | 'completed_review'; deliveryId: number | null; occurrenceKey: string;
   sourceKey: string; sourceType: 'manual' | 'lecture' | 'event' | string;
   sourceLabel: string; sourceTitle: string; sourceSubtitle: string; sourceStartsAt: string | null;
   sessionTitle: string; sessionStartsAt: string | null; moduleName: string;
@@ -230,7 +230,13 @@ export const feedbackApi = {
     return request<{ responses: FeedbackResponse[] }>(`/responses/?${params}`);
   },
   response: (id: number) => request<{ response: FeedbackResponse }>(`/responses/${id}/`),
-  analytics: (formId?: number) => request<{ analytics: FeedbackAnalyticsData }>(`/analytics/${formId ? `?formId=${formId}` : ''}`),
+  analytics: (filters?: { formId?: number; formType?: FeedbackFormType }) => {
+    const params = new URLSearchParams();
+    if (filters?.formId) params.set('formId', String(filters.formId));
+    if (filters?.formType) params.set('formType', filters.formType);
+    const query = params.toString();
+    return request<{ analytics: FeedbackAnalyticsData }>(`/analytics/${query ? `?${query}` : ''}`);
+  },
   myForms: (learnerId?: string | number | null) => request<{ forms: LearnerFeedbackListItem[] }>(`/my-forms/${learnerPreviewQuery(learnerId)}`),
   myForm: (id: number, learnerId?: string | number | null) => request<{ form: FeedbackForm }>(`/my-forms/${id}/${learnerPreviewQuery(learnerId)}`),
   myDelivery: (id: number, learnerId?: string | number | null) => request<{ form: FeedbackForm }>(`/my-deliveries/${id}/${learnerPreviewQuery(learnerId)}`),

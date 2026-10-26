@@ -26,7 +26,7 @@ export const learnerNavItems: SidebarNavItem[] = [
 
   // Published forms explicitly assigned to the signed-in learner.
   ...(LEARNER_FEEDBACK_ENABLED || LEARNER_POST_LECTURE_FEEDBACK_ENABLED
-    ? [{ id: 'learner-feedback', label: LEARNER_FEEDBACK_ENABLED ? 'Feedback' : 'Lecture Feedback', icon: 'ri-survey-line', href: LEARNER_FEEDBACK_ENABLED ? '/learner/feedback' : '/learner/feedback?category=lecture' }]
+    ? [{ id: 'learner-feedback', label: 'Feedback', icon: 'ri-survey-line', href: '/learner/feedback' }]
     : []),
 
   // My Progress
@@ -99,6 +99,7 @@ export const coachNavItems: SidebarNavItem[] = [
       { id: 'coach-reviews', label: 'Review', icon: 'ri-file-list-3-line', href: '/coach/reviews' },
       { id: 'coach-catchup-queue', label: 'Catch-up Queue', icon: 'ri-refresh-line', href: '/coach/catchup-queue' },
       { id: 'coach-timetable', label: 'Calendar', icon: 'ri-calendar-schedule-line', href: '/coach/timetable' },
+      { id: 'coach-recordings', label: 'Meetings & Recordings', icon: 'ri-video-line', href: '/coach/recordings' },
     ],
   },
   {
@@ -247,6 +248,12 @@ export const curriculumNavItems: SidebarNavItem[] = [
       '/curriculum/session-calendar',
       '/curriculum/england-holidays',
     ],
+  },
+  {
+    id: 'curriculum-coaching-recordings',
+    label: 'Coach Meetings & Recordings',
+    icon: 'ri-video-line',
+    href: '/curriculum/coaching-recordings',
   },
   {
     id: 'curriculum-bulk-attendance',

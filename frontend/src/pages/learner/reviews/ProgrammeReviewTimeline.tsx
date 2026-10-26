@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CalendarDays, Check, ChevronLeft, ChevronRight, Circle, Clock3, X } from 'lucide-react';
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Circle, Clock3, Signature, X } from 'lucide-react';
 import type { TimelineStatus } from './reviewTimelineStatus';
 import styles from './programmeReviewTimeline.module.css';
+import selection from './reviewMarkerSelection.module.css';
 
 export interface TimelineReview {
   id: string;
@@ -9,13 +10,14 @@ export interface TimelineReview {
   date: string | null;
   status: TimelineStatus;
   sequence?: number | null;
+  markerSelection?: boolean;
 }
 
 const statusLabels: Record<TimelineStatus, string> = {
-  planned: 'Planned', scheduled: 'Scheduled', 'in-progress': 'In Progress', attended: 'Attended', missed: 'Missed',
+  planned: 'Planned', scheduled: 'Scheduled', 'in-progress': 'In Progress', 'awaiting-signature': 'Awaiting signatures', attended: 'Attended', missed: 'Missed',
 };
 
-const icons = { planned: Circle, scheduled: CalendarDays, 'in-progress': Clock3, attended: Check, missed: X };
+const icons = { planned: Circle, scheduled: CalendarDays, 'in-progress': Clock3, 'awaiting-signature': Signature, attended: Check, missed: X };
 
 function dateLabel(value: string | null) {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return 'Date to confirm';
@@ -73,10 +75,10 @@ export default function ProgrammeReviewTimeline({ label, items, activeId, onSele
         const Icon = icons[item.status];
         const statusLabel = statusLabels[item.status];
         const sequence = item.sequence ?? index + 1;
-        return <li key={item.id} className={styles.step} data-status={item.status} data-active={item.id === activeId}>
-          <button type="button" className={styles.stepLink} aria-label={`${item.title}, ${dateLabel(item.date)}, ${statusLabel}`} aria-pressed={item.id === activeId} onClick={() => onSelect(item.id)}>
+        return <li key={item.id} className={styles.step} data-status={item.status} data-active={item.id === activeId} data-selection={item.markerSelection ? 'marker' : undefined}>
+          <button type="button" className={`${styles.stepLink} ${selection.control}`} data-selection={item.markerSelection ? 'marker' : undefined} aria-label={`${item.title}, ${dateLabel(item.date)}, ${statusLabel}`} aria-pressed={item.id === activeId} onClick={() => onSelect(item.id)}>
             <span className={styles.date}>{dateLabel(item.date)}</span>
-            <span className={styles.marker}><Icon size={14} strokeWidth={2.4} aria-hidden="true" /></span>
+            <span className={`${styles.marker} ${selection.marker}`}><Icon size={14} strokeWidth={2.4} aria-hidden="true" /></span>
             <span className={styles.title}>{label === 'Monthly coaching' ? 'MCM' : 'Review'} {sequence}</span>
             {showStatus && <span className={styles.status}>{statusLabel}</span>}
           </button>

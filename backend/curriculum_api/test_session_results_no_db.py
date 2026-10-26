@@ -1911,6 +1911,40 @@ class ArchiveWorkerTests(unittest.TestCase):
         finish = next(call for call in cursor.execute.call_args_list if 'finished_at=now()' in call.args[0])
         self.assertEqual(finish.args[1][0], 'failed')
 
+    def test_archive_failure_can_recover_on_the_next_claimed_attempt(self):
+        command, ns, cursor = self.worker()
+        ns['archive_series'].side_effect = [['Recording transfer failed.'], []]
+
+        with self.assertRaises(RuntimeError) as retry:
+            command.handle(limit=1, scheduled=False, provision_container=False)
+        self.assertTrue(retry.exception.session_jobs_need_retry)
+        first_finish = cursor.execute.call_args_list[-1]
+        self.assertEqual(first_finish.args[1][0], 'failed')
+        ns['sync_post_lecture_feedback'].assert_not_called()
+
+        # Model the queue granting the same series a later, fresh lease.
+        cursor.fetchone.side_effect = [('S', True)]
+        command.handle(limit=1, scheduled=False, provision_container=False)
+        second_finish = cursor.execute.call_args_list[-1]
+        self.assertEqual(second_finish.args[1][:2], ['complete', ''])
+        self.assertNotEqual(first_finish.args[1][-1], second_finish.args[1][-1])
+        self.assertEqual(ns['archive_series'].call_count, 2)
+        ns['sync_post_lecture_feedback'].assert_called_once_with('S')
+
+    def test_unexpected_transfer_exception_preserves_a_retryable_failure(self):
+        command, ns, cursor = self.worker()
+        ns['archive_series'].side_effect = RuntimeError('private transport credentials')
+
+        with self.assertRaises(RuntimeError) as retry:
+            command.handle(limit=1, scheduled=False, provision_container=False)
+
+        self.assertTrue(retry.exception.session_jobs_need_retry)
+        finish = cursor.execute.call_args_list[-1]
+        self.assertEqual(finish.args[1][0], 'failed')
+        self.assertNotIn('private transport credentials', finish.args[1][1])
+        ns['sync_post_lecture_feedback'].assert_not_called()
+        ns['reconcile_component_links'].assert_not_called()
+
     def test_link_repair_error_keeps_archive_and_retries_job(self):
         command, ns, cursor = self.worker()
         ns['reconcile_component_links'].side_effect = RuntimeError('private database error')

@@ -22,10 +22,11 @@ export const CHAT_ENABLED = false;
 /**
  * Learner feedback workspace.
  *
- * Local Vite development exposes all learner feedback categories for testing.
- * Production keeps non-lecture categories and their deep links closed.
+ * Local Vite development exposes learner feedback for testing.
+ * Production keeps every learner feedback entry point and deep link disabled
+ * until the feature is explicitly approved for release.
  */
 export const LEARNER_FEEDBACK_ENABLED = import.meta.env.DEV;
 
-/** Signed-in learners may access finalized post-lecture deliveries in production. */
-export const LEARNER_POST_LECTURE_FEEDBACK_ENABLED = true;
+/** Lecture deliveries follow the same local-only visibility as other feedback. */
+export const LEARNER_POST_LECTURE_FEEDBACK_ENABLED = LEARNER_FEEDBACK_ENABLED;

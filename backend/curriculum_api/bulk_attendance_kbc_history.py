@@ -67,9 +67,9 @@ def bulk_attendance_day_learners(request):
     return _with_warnings({'date': value, 'learnerIds': sorted(learner_ids)}, None)
 
 
-def _save_live_attendance(changes):
+def _save_live_attendance(changes, *, actor=''):
     from .bulk_attendance_live_register import save_live_attendance
-    return save_live_attendance(changes)
+    return save_live_attendance(changes, actor=actor)
 
 
 def save_kbc_attendance(dsn, changes):
@@ -140,7 +140,8 @@ def bulk_attendance_save_attendance(request):
     saved_live = []
     if live:
         try:
-            saved_live = _save_live_attendance(live)
+            actor = str(getattr(getattr(request, 'login_account', None), 'email', '') or '').strip()
+            saved_live = _save_live_attendance(live, actor=actor)
         except (LookupError, DatabaseError) as exc:
             missing = isinstance(exc, LookupError)
             if not saved_kbc:

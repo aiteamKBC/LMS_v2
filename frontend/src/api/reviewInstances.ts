@@ -173,6 +173,7 @@ export interface ReviewInstanceFormDefinition {
   summaryOnly?: boolean;
   migratedForm?: boolean;
   answerVersion?: string;
+  bookingAdoptionVersion?: string;
   reviewRevision?: number;
   reopenHistory?: Array<{
     number: number; reopenedAt: string; reasonCode: string; note: string;
@@ -272,7 +273,9 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
       typeof data.code === 'string' ? `Code: ${data.code}` : '',
       typeof data.request_id === 'string' ? `Reference: ${data.request_id}` : '',
     ].filter(Boolean);
-    throw new Error(diagnostics.length ? `${message} (${diagnostics.join(' · ')})` : message);
+    throw Object.assign(new Error(diagnostics.length ? `${message} (${diagnostics.join(' · ')})` : message), {
+      status: response.status, code: typeof data.code === 'string' ? data.code : undefined,
+    });
   }
   return data as T;
 }
@@ -283,12 +286,16 @@ const migratedUrl = (instanceId: string) => `/coach_api/migrated-reviews/${encod
 export async function fetchMigratedReviewIntelligence(
   instanceId: string,
   signal?: AbortSignal,
-  options: { refresh?: boolean } = {},
+  options: { refresh?: boolean; generateSummary?: boolean } = {},
 ): Promise<CoachMeetingArtifactsResponse> {
   const path = options.refresh ? 'check-session' : 'intelligence';
   return readJsonResponse<CoachMeetingArtifactsResponse>(await coachFetch(`${migratedUrl(instanceId)}/${path}`, {
     signal,
     ...(options.refresh ? { method: 'POST' } : {}),
+    ...(options.refresh && options.generateSummary ? {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ generateSummary: true }),
+    } : {}),
   }));
 }
 
@@ -389,12 +396,23 @@ export async function initializeMigratedReview(instanceId: string) {
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
 }
 
-export async function startMigratedReview(instanceId: string) {
+export async function startMigratedReview(instanceId: string, booking?: {
+  calendarEventKey: string; meetingLink?: string; scheduledDate?: string | null; scheduledTime?: string | null;
+}) {
   const response = await coachFetch(`${instanceUrl(instanceId)}/local-status`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status: 'in-progress' }),
+    body: JSON.stringify({ status: 'in-progress', ...booking }),
   });
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
+}
+
+export async function adoptMigratedReviewBooking(instanceId: string, signal?: AbortSignal, bookingAdoptionVersion?: string) {
+  return readJsonResponse<ReviewInstanceFormDefinition>(await coachFetch(`${instanceUrl(instanceId)}/adopt-booking`, {
+    method: 'POST', signal,
+    ...(bookingAdoptionVersion !== undefined ? {
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookingAdoptionVersion }),
+    } : {}),
+  }));
 }
 
 export async function bookMigratedReview(instanceId: string, slot: {

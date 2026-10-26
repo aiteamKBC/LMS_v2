@@ -16,6 +16,7 @@ import { fetchLearnerEventReviewInstance, fetchMigratedReviewForParty, type Lear
 import { MonthlyLogSignatureStatus } from './MonthlyLogSignatureStatus';
 import { MigratedReviewHistory } from '@/components/reviews/MigratedReviewHistory';
 import { downloadMigratedRevisionForParty } from '@/api/learnerCalendar';
+import { prepareLearnerPersonalSupport } from '@/api/learnerPersonalSupport';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { flattenReviewFields } from '@/api/reviewInstances';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
@@ -75,12 +76,14 @@ function writeSavedLearnerSignature(name: string, signature: string): void {
 
 /**
  * Loads a booked instance or an unscheduled occurrence's template preview.
- * This hook only issues a GET; opening a form never creates an instance.
+ * Reads existing forms. An owned, unfinished Aptem PSP can explicitly opt in
+ * to preparing its working copy automatically on open.
  */
 export function useLearnerReviewInstance(
   kind: LearnerKind,
   learnerId: string,
   eventKey: string,
+  preparePersonalSupport = false,
 ): LearnerReviewInstanceState {
   const [definition, setDefinition] = useState<LearnerReviewDefinition | null>(null);
   const [loading, setLoading] = useState(false);
@@ -99,7 +102,9 @@ export function useLearnerReviewInstance(
     setLoading(true);
     setDefinition(null);
     setError('');
-    (eventKey.startsWith('imported-review:')
+    (preparePersonalSupport
+      ? prepareLearnerPersonalSupport(eventKey, controller.signal)
+      : eventKey.startsWith('imported-review:')
       ? fetchMigratedReviewForParty(eventKey, controller.signal)
       : fetchLearnerEventReviewInstance(kind, learnerId, eventKey, controller.signal))
       .then((data) => {
@@ -113,7 +118,7 @@ export function useLearnerReviewInstance(
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [kind, learnerId, eventKey, revision]);
+  }, [kind, learnerId, eventKey, revision, preparePersonalSupport]);
 
   return { definition, loading, error, refresh };
 }
@@ -222,6 +227,7 @@ export function LearnerReviewInstanceForm({
   }, [definition]);
 
   const requiredSignatures = Object.values(definition.signatures).filter(state => state.required);
+  const signatureFreePersonalSupport = personalSupportForm && requiredSignatures.length === 0;
   const submitted = ['awaiting-signature', 'completed'].includes(definition.instance?.status || '');
   // Exactly the fields the Curriculum template opted this viewer into
   // answering -- every other field stays read-only regardless of onSaveAnswers.
@@ -313,7 +319,7 @@ export function LearnerReviewInstanceForm({
         </h2>
         <p className="mt-1 text-xs text-primary-800">
           <AppIcon className="ri-information-line mr-1.5" />
-          {personalSupportForm ? 'Save your answers to complete the plan once all required questions are answered.' : "Review your coach's notes and the agreed next steps."}
+          {personalSupportForm ? signatureFreePersonalSupport ? 'Save your answers to complete the plan once all required questions are answered.' : 'Saving all required answers sends the plan for the selected signatures.' : "Review your coach's notes and the agreed next steps."}
         </p>
       </div>
 
@@ -417,10 +423,10 @@ export function LearnerReviewInstanceForm({
         onOpenSectionChange={setOpenSectionId}
       />
 
-      <div ref={signatureSection} tabIndex={-1} aria-label={personalSupportForm ? 'Review documents' : 'Signature step'} className="scroll-mt-6 space-y-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">
-        {definition.migratedForm && definition.instance && <MigratedReviewHistory entries={definition.reopenHistory} signatureFree={personalSupportForm}
+      <div ref={signatureSection} tabIndex={-1} aria-label={signatureFreePersonalSupport ? 'Review documents' : 'Signature step'} className="scroll-mt-6 space-y-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">
+        {definition.migratedForm && definition.instance && <MigratedReviewHistory entries={definition.reopenHistory} signatureFree={signatureFreePersonalSupport}
           onDownload={number => downloadMigratedRevisionForParty(definition.instance!.id, number)} />}
-        {!personalSupportForm && <ReviewSignatures signatures={definition.signatures} />}
+        {!signatureFreePersonalSupport && <ReviewSignatures signatures={definition.signatures} />}
         {viewerRole === 'participant' && monthlyLogSync && <MonthlyLogSignatureStatus sync={monthlyLogSync} onRetry={onRetryMonthlyLogSignature}
           previousReviewVersion={Boolean(definition.reviewRevision && !definition.signatures.participant?.signed)} />}
         {(definition.source !== 'aptem' || definition.instance?.status === 'completed') && <ReviewPdfDownload

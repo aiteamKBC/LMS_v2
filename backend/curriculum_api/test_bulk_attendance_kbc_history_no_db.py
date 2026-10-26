@@ -406,9 +406,18 @@ class KbcHistoryTests(unittest.TestCase):
                 {'source': 'kbc', 'recordKey': 'k-1', 'attendance': 'absent'},
             ]}))
         self.assertEqual(response.status_code, 200)
-        live.assert_called_once_with({7: 'present', 9: 'absent'})
+        live.assert_called_once_with({7: 'present', 9: 'absent'}, actor='')
         kbc.assert_called_once_with('synthetic', {'k-1': 'absent'})
         self.assertEqual(json.loads(response.content), {'updated': ['live:7', 'live:9', 'k-1']})
+
+    def test_live_save_passes_authenticated_actor_not_body_identity(self):
+        request = self._post({'changes': [{'source': 'live', 'recordKey': 'live:7', 'attendance': 'present'}],
+                              'actor': 'untrusted@example.invalid'})
+        request.login_account = SimpleNamespace(email='staff@example.invalid')
+        with patch.object(history, '_save_live_attendance', return_value=[7]) as live:
+            response = history.bulk_attendance_save_attendance(request)
+        self.assertEqual(response.status_code, 200)
+        live.assert_called_once_with({7: 'present'}, actor='staff@example.invalid')
 
     def test_save_rejects_bad_sources_statuses_and_json_without_writing(self):
         for body in (

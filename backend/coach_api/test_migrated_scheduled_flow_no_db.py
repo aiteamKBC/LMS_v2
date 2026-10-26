@@ -1,5 +1,6 @@
 """Scheduled continuation through real readers/writers with synthetic IO only."""
 from contextlib import nullcontext
+from datetime import date, time
 from copy import copy, deepcopy
 from inspect import unwrap
 import json
@@ -72,12 +73,14 @@ class ScheduledContinuationTests(SimpleTestCase):
             migrated_signatures=Mock(), save=Mock(),
         )
         self.saved.migrated_signatures.all.return_value = []
+        self.saved.migrated_signatures.exists.return_value = False
         self.saved.migrated_signatures.values_list.return_value = []
         self.overlays.return_value.first.return_value = self.saved
         self.overlays.return_value.select_for_update.return_value.first.side_effect = lambda: self.order.append("overlay") or self.saved
         self.calendar = SimpleNamespace(pk=91, event_key=KEY, learner_id=21, owner_email=OWNER,
             event_type="mcr" if family == "MCM" else "progress-review", status="scheduled",
-            sync_state="synced", graph_event_id="synthetic-meeting", meeting_link="https://example.invalid/meeting", save=Mock())
+            sync_state="synced", graph_event_id="synthetic-meeting", meeting_link="https://example.invalid/meeting", save=Mock(),
+            scheduled_date=date(2026, 10, 20), scheduled_time=time(10), duration_minutes=60)
         self.answers = {"section-0:comment": "Coach's saved summary", "section-0:choice": "Good", "section-0:check": "no"}
         self.order.clear()
         self.calendar_updates.reset_mock()

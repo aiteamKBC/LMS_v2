@@ -46,7 +46,50 @@ const DERIVED_MODULE_FIELDS = new Set([
   'assignedLearnerCount',
   'sourceModule',
   'deliveryUsages',
+  // recalculateModule raises it to the live-session count and the schedule
+  // stores its own; the live sessions themselves are the sessions.
+  'sessionsNumber',
 ]);
+
+/**
+ * Week fields the session plan stamps on every read and every save.
+ *
+ * Nobody types a week's date: its position in the module decides it. So when a
+ * save elsewhere re-dates the weeks -- or this author's own save does, and the
+ * server's answer comes back through the merge -- the two copies disagree
+ * through no decision of anyone's. Reporting that as "you and someone else
+ * both changed the session date" asks the author to pick between two outputs
+ * of the planner. Mirrors DERIVED_WEEK_FIELDS in curriculum_api/module_merge.py;
+ * the next save re-derives them from the merged order.
+ */
+const DERIVED_WEEK_FIELDS = new Set([
+  'weekNumber',
+  'moduleId',
+  'sessionDate',
+  'sessionDay',
+  'sessionStartTime',
+  'sessionEndTime',
+  'sessionDurationMinutes',
+  'sessionRescheduled',
+]);
+
+/**
+ * Live-session settings the session plan or the Teams attachment path writes.
+ *
+ * The stored copy wins quietly, as the server's merge does
+ * (PLANNED_SETTING_KEYS in curriculum_api/module_merge.py): it is what the
+ * planner and Microsoft last said, and the author never chose it.
+ */
+const PLANNED_SETTINGS = new Set(
+  ['sessionDate', 'sessionDay', 'sessionTime', 'durationMinutes', 'sessionDateTimeUtc', 'teamsStartDateTimeUtc']
+    .map(key => `weekStructure[*].components[*].settings.${key}`),
+);
+
+function isDerivedWeekField(path: string): boolean {
+  return path.startsWith('weekStructure[*].')
+    && path.split('.').length === 2
+    && DERIVED_WEEK_FIELDS.has(mergePathLeaf(path));
+}
 
 /**
  * Values chosen as a set, merged as a set.
@@ -203,12 +246,31 @@ export function mergeModuleStructures(
   base: ModuleCatalogueItem | null,
   local: ModuleCatalogueItem,
   remote: ModuleCatalogueItem,
+  options: {
+    /**
+     * The stored copy is this author's own write from another door (Module
+     * settings), not a colleague's. A module-level field both copies moved is
+     * then their latest decision, not a question: theirs -- which is the
+     * author's -- is taken.
+     */
+    ownWrite?: boolean;
+  } = {},
 ): ModuleMergeResult {
-  const { value, collisions, adopted } = mergeRecords(base, local, remote, {
-    ignore: path => DERIVED_MODULE_FIELDS.has(mergePathLeaf(path)) && !path.includes('['),
+  const merged = mergeRecords(base, local, remote, {
+    ignore: path => (DERIVED_MODULE_FIELDS.has(mergePathLeaf(path)) && !path.includes('[')) || isDerivedWeekField(path),
     atomic: path => ATOMIC_MODULE_FIELDS.has(path),
-    preferRemote: path => TEAMS_OWNED_SETTINGS.has(path),
+    preferRemote: path => TEAMS_OWNED_SETTINGS.has(path) || PLANNED_SETTINGS.has(path),
   });
+  let { value, collisions } = merged;
+  const { adopted } = merged;
+  if (options.ownWrite) {
+    const settled = collisions.filter(item => item.kind === 'value' && item.path && !/[.[]/.test(item.path));
+    if (settled.length) {
+      value = { ...value };
+      settled.forEach(item => { (value as unknown as Record<string, unknown>)[item.path] = item.remote; });
+      collisions = collisions.filter(item => !settled.includes(item));
+    }
+  }
   // Weeks keep their own numbering, and the counts, totals and quality score are
   // derived from whatever the merge settled on rather than from either side's
   // copy of them.

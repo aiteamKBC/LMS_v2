@@ -1,5 +1,4 @@
 import type { ReactElement } from 'react';
-import type { RouteObject } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 afterEach(() => {
@@ -21,16 +20,24 @@ async function learnerFeedbackRoutes(enabled: boolean) {
 }
 
 describe('learner feedback routes', () => {
-  it('opens the lecture queue and delivery, but redirects other feedback in production', async () => {
+  it('redirects every learner feedback route in production', async () => {
     const routes = await learnerFeedbackRoutes(false);
     expect(routes).toHaveLength(4);
     for (const route of routes) {
       const element = route.element as ReactElement<{ to?: string; replace?: boolean }>;
-      if (route.path === '/learner/feedback' || route.path === '/learner/feedback/delivery/:deliveryId') {
-        expect(element.props.to).toBeUndefined();
-      } else {
-        expect(element.props).toMatchObject({ to: '/workspace/learner', replace: true });
-      }
+      expect(element.props).toMatchObject({ to: '/workspace/learner', replace: true });
+    }
+  });
+
+  it('keeps staff authoring and reporting routes available in production', async () => {
+    vi.stubEnv('DEV', false);
+    const { default: routes } = await import('../config');
+    const protectedLayout = routes.find(route => 'children' in route && !('path' in route && route.path));
+    const staffRoutes = (protectedLayout?.children || []).filter(route =>
+      'path' in route && route.path?.startsWith('/engagement/reports/feedback'));
+    expect(staffRoutes).toHaveLength(4);
+    for (const route of staffRoutes) {
+      expect((route.element as ReactElement<{ to?: string }>).props.to).toBeUndefined();
     }
   });
 

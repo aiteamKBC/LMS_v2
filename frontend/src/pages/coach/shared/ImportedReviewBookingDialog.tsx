@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { bookMigratedReview, rescheduleMigratedReview, type ReviewInstanceFormDefinition } from '@/api/reviewInstances';
+import { adoptMigratedReviewBooking, bookMigratedReview, rescheduleMigratedReview, type ReviewInstanceFormDefinition } from '@/api/reviewInstances';
 import { reviewCategory } from '@/lib/reviewCategory';
 import { eventIdentity, type CoachCalendarEvent } from './calendarEvents';
 import { loadImportedReviewForBooking } from './importedReviewBooking';
@@ -10,7 +10,7 @@ interface Props {
   event: CoachCalendarEvent;
   viewingAsCoach: boolean;
   onClose: () => void;
-  onSaved: (event: CoachCalendarEvent, notice: string) => void;
+  onSaved: (event: CoachCalendarEvent, notice: string, options?: { keepOpen: boolean }) => void;
 }
 
 const fieldClass = 'mt-1 h-10 w-full rounded-lg border border-foreground-200 bg-white px-3 text-sm text-foreground-800 focus:border-primary-400';
@@ -31,6 +31,8 @@ export default function ImportedReviewBookingDialog({ event, viewingAsCoach, onC
   const [time, setTime] = useState('09:00');
   const [duration, setDuration] = useState(60);
   const instanceId = event.formEventKey || eventIdentity(event);
+  const savedCallbackRef = useRef(onSaved);
+  useEffect(() => { savedCallbackRef.current = onSaved; }, [onSaved]);
 
   useEffect(() => {
     const dialog = dialogRef.current!;
@@ -52,7 +54,21 @@ export default function ImportedReviewBookingDialog({ event, viewingAsCoach, onC
     setLoading(true);
     setError(null);
     setDefinition(null);
-    loadImportedReviewForBooking(instanceId, { viewingAsCoach, signal: controller.signal })
+    loadImportedReviewForBooking(instanceId, {
+      viewingAsCoach, signal: controller.signal,
+      onAdoptionError: error => setError(error instanceof Error ? error.message : 'Unable to link the existing meeting. Retry below.'),
+      onAdopted: updated => {
+        const saved = updated.booking;
+        if (!saved?.booked || !saved.eventKey || !saved.scheduledDate || !saved.scheduledTime) return;
+        savedCallbackRef.current(normalizeResolvedReview({
+          ...event,
+          status: (saved.status || updated.localStatus || updated.instance.status) as CoachCalendarEvent['status'],
+          calendarEventKey: saved.eventKey, scheduledDate: saved.scheduledDate, scheduledTime: saved.scheduledTime,
+          durationMinutes: saved.durationMinutes ?? undefined, meetingLink: saved.meetingLink ?? undefined,
+          syncState: saved.syncState as CoachCalendarEvent['syncState'], syncWarning: undefined,
+        }), 'Existing meeting linked automatically.', { keepOpen: true });
+      },
+    })
       .then(data => {
         if (controller.signal.aborted) return;
         setDefinition(data);
@@ -65,7 +81,7 @@ export default function ImportedReviewBookingDialog({ event, viewingAsCoach, onC
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [instanceId, viewingAsCoach, reload]);
+  }, [instanceId, viewingAsCoach, reload, event]);
 
   const booking = definition?.booking;
   const independentBooking = booking?.formRequired === false;
@@ -100,7 +116,9 @@ export default function ImportedReviewBookingDialog({ event, viewingAsCoach, onC
     setError(null);
     try {
       const slot = { scheduledDate: slotDate, scheduledTime: slotTime, durationMinutes: slotDuration, timezoneOffsetMinutes: instant.getTimezoneOffset() };
-      const updated = booking.canReschedule
+      const updated = attaching
+        ? await adoptMigratedReviewBooking(definition.instance.id)
+        : booking.canReschedule
         ? await rescheduleMigratedReview(definition.instance.id, slot, booking)
         : await bookMigratedReview(definition.instance.id, slot);
       if (!activeRef.current) return;
@@ -110,11 +128,11 @@ export default function ImportedReviewBookingDialog({ event, viewingAsCoach, onC
       }
       const synced = saved.booked && saved.syncState === 'synced';
       const notice = synced
-        ? rescheduling ? 'Review rescheduled.' : 'Review scheduled.'
+        ? attaching ? 'Existing meeting linked.' : rescheduling ? 'Review rescheduled.' : 'Review scheduled.'
         : `Booking saved in LMS. Microsoft calendar sync ${saved.syncState === 'failed' ? 'failed' : 'is not yet confirmed'}. Open the review form to check its status before retrying.`;
       // Keep the imported row and its form identity; the calendar key may be a
       // reconciled native booking. Never replace one with the other.
-      onSaved(normalizeResolvedReview({
+      const savedEvent = normalizeResolvedReview({
         ...event,
         status: (saved.status || updated.localStatus || updated.instance.status) as CoachCalendarEvent['status'],
         calendarEventKey: saved.eventKey,
@@ -125,7 +143,16 @@ export default function ImportedReviewBookingDialog({ event, viewingAsCoach, onC
         graphWebLink: synced ? event.graphWebLink : undefined,
         syncState: (saved.syncState ?? undefined) as CoachCalendarEvent['syncState'],
         syncWarning: synced ? undefined : notice,
-      }), notice);
+      });
+      if (attaching) {
+        setDefinition(updated);
+        setDate(saved.scheduledDate);
+        setTime(saved.scheduledTime);
+        setDuration(saved.durationMinutes ?? 60);
+        onSaved(savedEvent, notice, { keepOpen: true });
+      } else {
+        onSaved(savedEvent, notice);
+      }
     } catch (err) {
       if (activeRef.current) setError(err instanceof Error ? err.message : 'Unable to save this review booking.');
     } finally {
@@ -160,7 +187,7 @@ export default function ImportedReviewBookingDialog({ event, viewingAsCoach, onC
         <div className="flex justify-end gap-2 border-t border-foreground-100 px-5 py-4">
           <button type="button" disabled={loading || saving} onClick={() => setReload(value => value + 1)} className="rounded-lg border border-foreground-200 px-3 py-2 text-sm disabled:opacity-50">Refresh booking</button>
           <button type="button" disabled={saving} onClick={onClose} className="rounded-lg border border-foreground-200 px-3 py-2 text-sm disabled:opacity-50">Cancel</button>
-          {eligible ? <button type="submit" disabled={saving || !date || !time || duration < 15 || duration > 480} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{saving ? 'Saving…' : attaching ? 'Use existing meeting' : rescheduling ? 'Save new time' : 'Confirm booking'}</button> : null}
+          {eligible ? <button type="submit" disabled={saving || !date || !time || duration < 15 || duration > 480} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{saving ? 'Saving…' : attaching ? 'Retry linking meeting' : rescheduling ? 'Save new time' : 'Confirm booking'}</button> : null}
         </div>
       </form>
     </dialog>, document.body,

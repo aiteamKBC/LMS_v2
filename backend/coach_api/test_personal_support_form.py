@@ -11,13 +11,15 @@ from django.db import transaction
 from django.test import RequestFactory, SimpleTestCase, TestCase
 
 from . import migrated_completion_views as endpoints, views
-from .migrated_completion import complete_personal_support_if_ready, required_roles, requirements_for_family, sign, submit
+from .migrated_completion import complete_personal_support_if_ready, required_roles, requirements_for_family, sign, signature_states, submit
+from .migrated_signature_rules import requirements_for_definition
+from .migrated_template_sync import synchronize_locked
 from .migrated_reviews import render_sections
 from .migrated_summary_binding import answer_version
 from .migrated_templates import snapshot_for
 from .models import CoachCalendarEvent, ImportedReviewInstance, MigratedReviewTemplate
 from .personal_support_form import initial_answers
-from .test_migrated_auto_completion import source_identity
+from .test_migrated_auto_completion import sign_request, source_identity
 from .test_migrated_respondents import post
 from .test_migrated_template_sync import field, form
 
@@ -34,14 +36,134 @@ class PersonalSupportCompletionTests(TestCase):
             template_snapshot=snapshot_for(self.template), signature_requirements=requirements_for_family("PSP"),
             status="not-scheduled", answers={})
 
-    def definition(self, owner, key):
+    def definition(self, owner, key, *, learners=None):
+        if learners is not None:
+            self.assertEqual([profile.id for profile in learners], [self.review.learner_id])
         review = ImportedReviewInstance.objects.get(event_key=key)
         sections, _ = render_sections(review.template_snapshot, review.answers)
-        return {"source": "aptem", "migratedForm": True, "readOnly": review.status == "completed",
+        return {"source": "aptem", "migratedForm": True, "readOnly": review.status in {"awaiting-signature", "completed"},
             "instance": {"id": key, "learnerId": 17, "status": review.status},
             "template": {"reviewTypeCode": "aptem_psp"}, "localStatus": review.status,
             "historicalReview": {"id": "7001", "type": "Personal Support Plan"},
-            "migratedProgrammeKey": None, "sections": sections, "answerVersion": answer_version(review)}
+            "migratedProgrammeKey": None, "sections": sections, "signatures": signature_states(review), "answerVersion": answer_version(review)}
+
+    def select_signatures(self, *roles):
+        self.template.definition_json["signatures"] = {role: role in roles for role in ("advisor", "participant", "employer")}
+        self.template.save()
+        with transaction.atomic():
+            synchronize_locked(self.review, "PSP", None)
+        self.review.refresh_from_db()
+
+    def test_configured_signatures_apply_on_initialization_and_editable_template_sync(self):
+        from .migrated_initialization import initialize_imported_review
+        self.select_signatures("advisor", "employer")
+        self.assertEqual(required_roles(self.review), ("advisor", "employer"))
+        source = {"canInitialize": True, "readOnly": True, "sourceStatus": "Not Scheduled", "migratedProgrammeKey": None,
+            "historicalReview": {"id": 7002, "type": "Personal Support Plan"},
+            "instance": {"id": "imported-review:psp-new", "learnerId": 17}}
+        with patch("coach_api.personal_support_form.initial_answers", return_value={}), \
+                patch.object(views.LearnerProfile.objects, 'filter') as profiles:
+            profiles.return_value.values_list.return_value.first.return_value = self.review.owner_email
+            overlay, created = initialize_imported_review(self.review.owner_email, source)
+            profiles.assert_called_once_with(pk=17)
+        self.assertTrue(created)
+        self.assertEqual(required_roles(overlay), ("advisor", "employer"))
+        self.assertEqual(overlay.signature_requirements, requirements_for_definition(self.template.definition_json, "PSP"))
+
+    def test_coach_and_both_learner_types_save_for_selected_signatures_and_lock_answers(self):
+        self.select_signatures("participant")
+        for actor in ("coach", "commercial", "apprenticeship"):
+            with self.subTest(actor=actor), self.identities("commercial" if actor == "commercial" else "apprenticeship"):
+                self.review.status, self.review.answers = "not-scheduled", {}
+                self.review.save()
+                save = self.coach_save if actor == "coach" else lambda answers: post(self.review, answers)
+                self.assertEqual(save({"goal": "Goal"}).status_code, 200)
+                self.review.refresh_from_db()
+                self.assertEqual(self.review.status, "not-scheduled")
+                response = save({"goal": "Goal", "support": "no"})
+                self.assertEqual(response.status_code, 200, response.content)
+                self.review.refresh_from_db()
+                self.assertEqual(self.review.status, "awaiting-signature")
+                self.assertIsNone(self.review.completed_at)
+                self.assertTrue(json.loads(response.content)["readOnly"])
+                self.assertEqual(save({"goal": "Changed"}).status_code, 409)
+
+    def test_selected_signatures_complete_on_last_signer_keep_booking_and_never_credit_hours(self):
+        self.template.definition_json["otjh"] = {"expectedHours": 2, "countsTowardsOtjh": True}
+        self.select_signatures("advisor", "participant", "employer")
+        booking = CoachCalendarEvent.objects.create(event_key=self.review.event_key, learner_id=17,
+            owner_email=self.review.owner_email, event_type="progress-review", target_date=date(2026, 11, 1),
+            status="scheduled", graph_event_id="original-event", meeting_link="https://example.invalid/original")
+        with self.identities(), patch("coach_api.migrated_otjh.record_completion", side_effect=AssertionError("PSP hours")):
+            self.assertEqual(self.coach_save({"goal": "Goal", "support": "no"}).status_code, 200)
+            self.review.refresh_from_db()
+            booking.refresh_from_db()
+            self.assertEqual(booking.status, "awaiting-signature")
+            # Changing the live template must not change a review already being signed.
+            self.select_signatures()
+            self.assertEqual(required_roles(self.review), ("advisor", "participant", "employer"))
+            for role in ("employer", "advisor", "participant"):
+                response = sign_request(self.review, role)
+                self.assertEqual(response.status_code, 200, response.content)
+                self.review.refresh_from_db()
+                self.assertEqual(self.review.status, "completed" if role == "participant" else "awaiting-signature")
+            self.assertEqual(sign_request(self.review, "participant").status_code, 409)
+        booking.refresh_from_db()
+        self.assertEqual((booking.status, booking.review_completed_at), ("completed", self.review.completed_at))
+        self.assertEqual((booking.graph_event_id, booking.meeting_link), ("original-event", "https://example.invalid/original"))
+        self.assertEqual(self.review.migrated_signatures.count(), 3)
+
+    def test_selected_employer_can_read_and_sign_only_own_plan_without_answer_permission(self):
+        self.select_signatures("employer")
+        for kind in ("commercial", "apprenticeship"):
+            with self.subTest(kind=kind), self.identities(kind):
+                for subject, expected in ((91, 200), (999, 404)):
+                    with patch.object(endpoints, "authenticate_request", return_value=SimpleNamespace(role="employer", subject_id=subject)):
+                        response = endpoints.migrated_review_party_detail(RequestFactory().get("/"), self.review.event_key)
+                    self.assertEqual(response.status_code, expected)
+                    if expected == 200:
+                        self.assertTrue(json.loads(response.content)["readOnly"])
+                self.assertEqual(post(self.review, {"goal": "Changed"}, role="employer", subject_id=91).status_code, 403)
+        with self.identities(), transaction.atomic():
+            submit(self.review, {"goal": "Goal", "support": "no"})
+            self.assertEqual(sign_request(self.review, "employer", subject_id=999).status_code, 404)
+            self.assertEqual(sign_request(self.review, "participant").status_code, 409)
+            self.assertEqual(sign_request(self.review, "advisor").status_code, 409)
+            self.assertEqual(sign_request(self.review, "employer").status_code, 200)
+        self.review.refresh_from_db()
+        self.assertEqual(self.review.status, "completed")
+
+    def test_signed_psp_pdf_and_reopen_archive_keep_selected_signatures(self):
+        from .migrated_completion import build_pdf
+        from .migrated_reopening import archive, clear_active_signatures
+        from pypdf import PdfReader
+        from io import BytesIO
+        self.select_signatures("participant")
+        with self.identities(), transaction.atomic():
+            submit(self.review, {"goal": "Synthetic agreed goal", "support": "no"})
+            self.assertEqual(sign_request(self.review, "participant").status_code, 200)
+        self.review.refresh_from_db()
+        context = {"learner_name": "Synthetic learner", "learner_email": "learner@example.invalid",
+            "programme": "Synthetic programme", "scheduled_date": "2026-11-01", "coach_name": "Synthetic coach"}
+        content = build_pdf(self.review, **context)
+        text = " ".join(page.extract_text() for page in PdfReader(BytesIO(content)).pages)
+        self.assertIn("Synthetic agreed goal", text)
+        self.assertIn("Participant", text)
+        self.assertIn("Signature:", text)
+        self.assertNotIn("\nEmployer\n", text)
+        self.assertNotIn("\nAdvisor\n", text)
+        self.assertNotIn("Learning Progress", text)
+        with transaction.atomic():
+            revision = archive(self.review, account=SimpleNamespace(pk=1, email=self.review.owner_email),
+                reason="signature-error", note="Correction", pdf_context=context)
+            clear_active_signatures(self.review)
+            self.review.status = "in-progress"
+            self.review.save()
+            self.select_signatures()
+        self.assertTrue(revision.snapshot["signature_requirements"]["participant"])
+        self.assertEqual(revision.snapshot["signatures"][0]["role"], "participant")
+        self.assertIn("Signature:", " ".join(page.extract_text() for page in PdfReader(BytesIO(bytes(revision.pdf_bytes))).pages))
+        self.assertEqual(required_roles(self.review), ())
 
     @contextmanager
     def identities(self, kind="apprenticeship", source_status="Not Scheduled"):
@@ -122,12 +244,19 @@ class PersonalSupportCompletionTests(TestCase):
         self.assertEqual(self.review.completed_at, completed_at)
         self.assertEqual(self.review.answers["goal"], "Goal")
 
-    def test_signature_endpoint_is_never_required_or_accepted(self):
+    def test_default_psp_does_not_require_or_accept_signatures(self):
         for status in ("not-scheduled", "scheduled", "in-progress", "awaiting-signature", "completed"):
             self.review.status = status
             with self.subTest(status=status), self.assertRaises(ValueError):
                 sign(self.review, "participant", account=SimpleNamespace(), signature="invalid")
         self.assertFalse(self.review.migrated_signatures.exists())
+
+    def test_legacy_psp_without_stored_requirements_keeps_its_frozen_default(self):
+        self.review.signature_requirements = {}
+        self.review.migrated_template = None
+        self.review.save()
+        self.assertEqual(required_roles(self.review), ())
+        self.assertTrue(all(not state["required"] for state in signature_states(self.review).values()))
 
     def test_compatibility_submit_completes_directly_and_never_assigns_hours(self):
         with self.identities(), patch("coach_api.migrated_otjh.record_completion", side_effect=AssertionError("PSP hours")), transaction.atomic():

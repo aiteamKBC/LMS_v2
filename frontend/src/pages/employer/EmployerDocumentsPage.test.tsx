@@ -112,13 +112,13 @@ describe('All documents', () => {
   it('filters by what the employer can do and searches by learner', async () => {
     renderPage();
     await screen.findByText('Progress Review');
-    const filters = screen.getByRole('navigation', { name: 'Filter documents' });
-    fireEvent.click(within(filters).getByRole('button', { name: /To sign/ }));
+    const summary = within(screen.getByRole('region', { name: 'Document summary' }));
+    fireEvent.click(summary.getByRole('button', { name: /Awaiting your signature/ }));
     expect(screen.getByText('Progress Review')).toBeInTheDocument();
     expect(screen.queryByText('Health & Safety Review')).not.toBeInTheDocument();
     expect(screen.queryByText('ILR Form')).not.toBeInTheDocument();
 
-    fireEvent.click(within(filters).getByRole('button', { name: /All/ }));
+    fireEvent.click(summary.getByRole('button', { name: /All documents/ }));
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search documents' }), { target: { value: 'ben' } });
     expect(screen.getByText('ILR Form')).toBeInTheDocument();
     expect(screen.queryByText('Progress Review')).not.toBeInTheDocument();
@@ -131,12 +131,14 @@ describe('All documents', () => {
     expect(screen.queryByText('Awaiting completion')).not.toBeInTheDocument();
 
     const summary = screen.getByRole('region', { name: 'Document summary' });
-    for (const [label, count] of [['Awaiting your signature', '1'], ['Waiting on others', '0'], ['Signed', '1'], ['All documents', '2']]) {
+    for (const [label, count] of [['All documents', '2'], ['Awaiting your signature', '1'], ['Signed', '1']]) {
       expect(within(summary).getByText(label).parentElement).toHaveTextContent(`${label}${count}`);
     }
-    const filters = screen.getByRole('navigation', { name: 'Filter documents' });
-    expect(within(filters).getByRole('button', { name: /^All/ })).toHaveTextContent('All2');
-    expect(within(filters).getByRole('button', { name: /^Waiting on others/ })).toHaveTextContent('Waiting on others0');
+    // The counts are the filter controls, so one set of numbers drives the list.
+    expect(screen.queryByRole('navigation', { name: 'Filter documents' })).not.toBeInTheDocument();
+    expect(within(summary).getByRole('button', { name: /All documents/ })).toHaveAttribute('aria-pressed', 'true');
+    // Nothing here can be waiting on others: the list keeps only signable or signed documents.
+    expect(within(summary).queryByText('Waiting on others')).not.toBeInTheDocument();
     expect(screen.getByText(/Showing/)).toHaveTextContent('Showing 2 of 2 documents');
 
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search documents' }), { target: { value: 'Health & Safety' } });

@@ -7,6 +7,7 @@ import { learningSchedule } from '@/api/learnerOverview';
 import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import { weekHolidayNotes } from '@/pages/learner/training-plan-timeline/model';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
+import { PointActivityRows } from './PointActivityRows';
 import {
   isNavigableComponent,
   toggleExpandedWeek,
@@ -31,6 +32,8 @@ export interface ActivitySidebarProps {
   /** This week's activities, in plan order. */
   weekComponents: JourneyComponent[];
   weekTitle: string;
+  weekDateLabel?: string;
+  dateLabelFor?: (week: SidebarWeek, index: number) => string | undefined;
   moduleTitle: string;
   /** Every week of the module, for the dropdown list. */
   weeks: SidebarWeek[];
@@ -101,6 +104,8 @@ function sidebarActivityMeta(component: JourneyComponent) {
 export function ActivitySidebar({
   weekComponents,
   weekTitle,
+  weekDateLabel,
+  dateLabelFor,
   moduleTitle,
   weeks,
   completedIds,
@@ -183,6 +188,7 @@ export function ActivitySidebar({
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-primary-600">{weekHeading}</p>
           <h2 className="text-sm font-heading font-bold text-primary-900">{currentWeekLabel || 'This week'}</h2>
           <p className="text-[11px] text-foreground-400 mt-0.5">
+            {weekDateLabel && <span className="mb-1 block text-foreground-500">{weekDateLabel}</span>}
             {weekComponents.length} components{' '}
             {weekDoneCount > 0 && <span className="text-emerald-600 font-semibold"> · {weekDoneCount} done</span>}
           </p>
@@ -190,7 +196,7 @@ export function ActivitySidebar({
           <HolidayNoteHint note={currentWeekNote} className="mt-2" />
         </div>
         <ul className="divide-y divide-emerald-100">
-          {weekComponents.map((c) => {
+          <PointActivityRows components={weekComponents} current={isCurrentRow} renderRow={(c) => {
             const cm = sidebarActivityMeta(c);
             const isCurrent = isCurrentRow(c);
             const contentAvailable = contentAvailableFor(c);
@@ -256,7 +262,7 @@ export function ActivitySidebar({
                 {rowExtras?.(c, completed)}
               </li>
             );
-          })}
+          }} />
         </ul>
       </div>
 
@@ -310,6 +316,7 @@ export function ActivitySidebar({
                         {weekDisplayLabel(weeks, index)}
                       </span>
                       <span className={`block text-[10px] ${weekComplete ? 'text-emerald-700' : 'text-foreground-400'}`}>
+                        {dateLabelFor?.(w, index) && <span className="mb-1 block text-foreground-500">{dateLabelFor(w, index)}</span>}
                         {w.count} components{weekComplete ? ' complete' : ''}
                       </span>
                     </span>
@@ -338,7 +345,8 @@ export function ActivitySidebar({
                       yet, so the count above and the list below agree. */}
                   {expanded && (
                     <ul className="border-t border-primary-100 bg-primary-50/40 divide-y divide-primary-100">
-                      {weekComponentRows(w, completedIds).map((row) => {
+                      <PointActivityRows components={w.components} current={isCurrentRow} renderRow={(component) => {
+                        const row = weekComponentRows({ ...w, components: [component] }, completedIds)[0];
                         const rowMeta = sidebarActivityMeta(row.component);
                         const openable = canOpen ? canOpen(row.component) : row.openable;
                         const accessBlocked = openable && !accessOpen;
@@ -378,7 +386,7 @@ export function ActivitySidebar({
                             </button>
                           </li>
                         );
-                      })}
+                      }} />
                     </ul>
                   )}
                 </li>

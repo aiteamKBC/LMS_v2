@@ -8,7 +8,7 @@ import { personalSupportBooking } from './__tests__/importedBookingFixtures';
 import { metricParityExample, progressExample, skillsExample } from '@/pages/learner/reviews/imported/presentationFixtures';
 import { ImportedReviewSection } from '@/pages/learner/reviews/imported/ImportedReviewSection';
 import { LearnerReviewInstanceForm } from '@/pages/learner/reviews/LearnerReviewInstanceForm';
-import { calculateMigratedReviewProgress, rescheduleMigratedReview } from '@/api/reviewInstances';
+import { adoptMigratedReviewBooking, calculateMigratedReviewProgress, rescheduleMigratedReview } from '@/api/reviewInstances';
 import { reopenMigratedReview, downloadMigratedReviewRevision } from '@/api/reviewInstances';
 import { bookMigratedReview, calculateReviewInstanceProgress, completeMigratedReview, completeReviewInstance, downloadReviewInstancePdf, fetchPreviousReviewSession, fetchReviewInstanceForm, generateMigratedReviewPdf, generateReviewMeetingSummary, initializeMigratedReview, reopenReviewInstance, saveReviewInstanceAnswers, signMigratedReviewAsCoach, signReviewInstance, startMigratedReview, submitMigratedReview, type ReviewInstanceFormDefinition, type ReviewProgressSnapshot } from '@/api/reviewInstances';
 
@@ -21,7 +21,7 @@ vi.mock('@/api/reviewInstances', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/api/reviewInstances')>(),
   fetchReviewInstanceForm: vi.fn(), saveReviewInstanceAnswers: vi.fn(), completeReviewInstance: vi.fn(), reopenReviewInstance: vi.fn(), signReviewInstance: vi.fn(),
   downloadReviewInstancePdf: vi.fn(), calculateReviewInstanceProgress: vi.fn(), generateReviewMeetingSummary: vi.fn(), fetchPreviousReviewSession: vi.fn(),
-  initializeMigratedReview: vi.fn(), startMigratedReview: vi.fn(), bookMigratedReview: vi.fn(), rescheduleMigratedReview: vi.fn(),
+  initializeMigratedReview: vi.fn(), startMigratedReview: vi.fn(), bookMigratedReview: vi.fn(), rescheduleMigratedReview: vi.fn(), adoptMigratedReviewBooking: vi.fn(),
   calculateMigratedReviewProgress: vi.fn(),
   reopenMigratedReview: vi.fn(), downloadMigratedReviewRevision: vi.fn(),
   submitMigratedReview: vi.fn(), signMigratedReviewAsCoach: vi.fn(), completeMigratedReview: vi.fn(), generateMigratedReviewPdf: vi.fn(),
@@ -125,7 +125,7 @@ beforeEach(() => {
   });
 });
 
-describe('Personal Support Plan completion without signatures', () => {
+describe('Personal Support Plan completion and optional signatures', () => {
   function psp(status = 'not-scheduled') {
     const result = migratedDefinition(status);
     result.template.reviewTypeCode = 'aptem_psp';
@@ -168,6 +168,26 @@ describe('Personal Support Plan completion without signatures', () => {
     expect(screen.getByText('Personal Support Plan completed')).toBeVisible();
     expect(screen.queryByLabelText('Signature step')).not.toBeInTheDocument();
     expect(screen.queryByText(/Awaiting required signatures|All signatures saved/)).not.toBeInTheDocument();
+  });
+
+  it('saves a configured PSP for signatures and waits for the selected parties after the coach signs', async () => {
+    const draft = psp();
+    draft.signatures.advisor.required = true;
+    draft.signatures.participant.required = true;
+    const submitted = { ...draft, readOnly: true, localStatus: 'awaiting-signature', instance: { ...draft.instance, status: 'awaiting-signature' } };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(draft);
+    vi.mocked(saveReviewInstanceAnswers).mockResolvedValue(submitted);
+    vi.mocked(signMigratedReviewAsCoach).mockResolvedValue({ ...submitted,
+      signatures: { ...submitted.signatures, advisor: { required: true, signed: true, signedName: 'Sam Coach' } } });
+    const { onStatusChange } = mount(draft.instance.id);
+    fireEvent.click(await screen.findByRole('button', { name: 'Save & send for signatures' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm coach signature' }));
+    await waitFor(() => expect(signMigratedReviewAsCoach).toHaveBeenCalled());
+    expect(onStatusChange).toHaveBeenCalledWith('awaiting-signature');
+    expect(await screen.findByText(/waiting for the remaining required signatures/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Save & complete' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Review completed')).not.toBeInTheDocument();
+    expect(submitMigratedReview).not.toHaveBeenCalled();
   });
 });
 
@@ -661,7 +681,7 @@ describe('review reopen flow', () => {
     const initialized: ReviewInstanceFormDefinition = {
       ...migratedDefinition('scheduled'), instance: pending.instance,
     };
-    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(pending).mockResolvedValueOnce(initialized);
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(pending);
     vi.mocked(initializeMigratedReview).mockResolvedValue(initialized);
     const { rerender } = mount(pending.instance.id);
     expect(fetchReviewInstanceForm).not.toHaveBeenCalled();
@@ -691,13 +711,13 @@ describe('review reopen flow', () => {
           configuration: { options: ['Good', 'Needs work'] } }],
       }],
     };
-    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(pending).mockResolvedValueOnce(initialized);
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(pending);
     vi.mocked(initializeMigratedReview).mockResolvedValue(initialized);
     const { rerender } = mount('imported-review:future');
     expect(await screen.findByText('Migrated questions')).toBeVisible();
     expect(initializeMigratedReview).toHaveBeenCalledTimes(1);
     expect(initializeMigratedReview).toHaveBeenCalledWith('imported-review:future');
-    expect(fetchReviewInstanceForm).toHaveBeenCalledTimes(2);
+    expect(fetchReviewInstanceForm).toHaveBeenCalledTimes(1);
     expect(fetchReviewInstanceForm).toHaveBeenLastCalledWith('imported-review:future', expect.any(AbortSignal));
     expect(screen.queryByRole('region', { name: 'Review information' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Initialize approved migrated form' })).not.toBeInTheDocument();
@@ -716,7 +736,7 @@ describe('review reopen flow', () => {
     expect(completeMigratedReview).not.toHaveBeenCalled();
     rerender();
     expect(initializeMigratedReview).toHaveBeenCalledTimes(1);
-    expect(fetchReviewInstanceForm).toHaveBeenCalledTimes(2);
+    expect(fetchReviewInstanceForm).toHaveBeenCalledTimes(1);
   });
 
   it('shows an initialization failure once and retries only when selected', async () => {
@@ -731,7 +751,7 @@ describe('review reopen flow', () => {
       migratedForm: true, formAvailable: true, localStatus: 'scheduled',
       sections: [{ id: 'migrated-section', title: 'Recovered form', displayOrder: 0, enabled: true, estimatedMinutes: 0, fields: [] }],
     };
-    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(pending).mockResolvedValueOnce(pending).mockResolvedValueOnce(initialized);
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(pending).mockResolvedValueOnce(pending);
     vi.mocked(initializeMigratedReview).mockRejectedValueOnce(new Error('Template unavailable')).mockResolvedValueOnce(initialized);
     const { rerender } = mount('imported-review:retry');
     expect(await screen.findByRole('alert')).toHaveTextContent('Unable to initialize this migrated review: Template unavailable');
@@ -741,11 +761,11 @@ describe('review reopen flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry loading form' }));
     expect(await screen.findByText('Recovered form')).toBeVisible();
     expect(initializeMigratedReview).toHaveBeenCalledTimes(2);
-    expect(fetchReviewInstanceForm).toHaveBeenCalledTimes(3);
+    expect(fetchReviewInstanceForm).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole('button', { name: 'Retry loading form' })).not.toBeInTheDocument();
   });
 
-  it('refetches on retry without repeating a successful initialization POST', async () => {
+  it('recovers an unavailable initialization response without recreating a prepared form', async () => {
     const pending: ReviewInstanceFormDefinition = {
       ...definition('scheduled'), source: 'aptem', readOnly: true, summaryOnly: true,
       canInitialize: true, formAvailable: false, sourceStatus: 'Scheduled',
@@ -757,17 +777,54 @@ describe('review reopen flow', () => {
       migratedForm: true, formAvailable: true, localStatus: 'scheduled',
       sections: [{ id: 'migrated-section', title: 'Recovered after refetch', displayOrder: 0, enabled: true, estimatedMinutes: 0, fields: [] }],
     };
-    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(pending)
-      .mockRejectedValueOnce(new Error('Temporary read failure'))
-      .mockResolvedValueOnce(initialized);
-    vi.mocked(initializeMigratedReview).mockResolvedValue(initialized);
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(pending).mockResolvedValueOnce(initialized);
+    vi.mocked(initializeMigratedReview).mockResolvedValue(pending);
     mount('imported-review:partial');
-    expect(await screen.findByRole('alert')).toHaveTextContent('Temporary read failure');
+    expect(await screen.findByRole('alert')).toHaveTextContent('The migrated form was not available after initialization.');
     expect(initializeMigratedReview).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button', { name: 'Retry loading form' }));
     expect(await screen.findByText('Recovered after refetch')).toBeVisible();
     expect(initializeMigratedReview).toHaveBeenCalledTimes(1);
-    expect(fetchReviewInstanceForm).toHaveBeenCalledTimes(3);
+    expect(fetchReviewInstanceForm).toHaveBeenCalledTimes(2);
+  });
+
+  it.each((['MCM', 'PR', 'PR_SKILLS_RADAR', 'PSP'] as const).flatMap(family =>
+    (['not-scheduled', 'scheduled'] as const).flatMap(status =>
+      (['page', 'modal'] as const).map(presentation => ({ family, status, presentation }))),
+  ))('opens the $status $family form directly in $presentation mode without another action or read', async ({ family, status, presentation }) => {
+    const initialized = family === 'PR' || family === 'PR_SKILLS_RADAR'
+      ? migratedPrDefinition(status, family) : migratedDefinition(status);
+    initialized.template.reviewTypeCode = family === 'PSP' ? 'aptem_psp'
+      : family === 'MCM' ? 'aptem_mcm' : 'aptem_progress_review';
+    initialized.template.name = family === 'PSP' ? 'Personal Support Plan' : initialized.template.name;
+    initialized.sections[0].fields[0].answer = 'Saved answer from the prepared form';
+    initialized.answerVersion = 'prepared-version';
+    initialized.booking = { booked: status === 'scheduled', canBook: status === 'not-scheduled', conflict: false,
+      eventKey: status === 'scheduled' ? initialized.instance.id : null,
+      scheduledDate: null, scheduledTime: null, durationMinutes: null, meetingLink: null, syncState: null };
+    const pending: ReviewInstanceFormDefinition = {
+      ...initialized, migratedForm: false, readOnly: true, canInitialize: true,
+      // PSP can already have captured Aptem sections when its local form opens.
+      formAvailable: family === 'PSP', summaryOnly: family !== 'PSP', localStatus: null,
+      sourceStatus: status === 'scheduled' ? 'Scheduled' : 'Not Scheduled', sections: [],
+    };
+    vi.mocked(fetchReviewInstanceForm).mockReset()
+      .mockResolvedValueOnce(pending).mockRejectedValue(new Error('A second read must not hide the prepared form'));
+    vi.mocked(initializeMigratedReview).mockResolvedValue(initialized);
+    const onStatusChanged = vi.fn();
+    render(<MemoryRouter><ReviewInstanceModal instanceId={pending.instance.id} presentation={presentation}
+      onClose={vi.fn()} onStatusChanged={onStatusChanged} /></MemoryRouter>);
+
+    expect(await screen.findByRole('textbox')).toHaveValue('Saved answer from the prepared form');
+    expect(screen.getByRole('textbox')).toBeEnabled();
+    expect(screen.queryByRole('button', { name: /Initialize|Retry loading form/ })).not.toBeInTheDocument();
+    expect(fetchReviewInstanceForm).toHaveBeenCalledTimes(1);
+    expect(initializeMigratedReview).toHaveBeenCalledExactlyOnceWith(pending.instance.id);
+    expect(screen.getByText(/Review status:/)).toHaveTextContent(status.replace('-', ' '));
+    for (const action of [startMigratedReview, bookMigratedReview, saveReviewInstanceAnswers,
+      submitMigratedReview, signMigratedReviewAsCoach, completeMigratedReview, onStatusChanged]) {
+      expect(action).not.toHaveBeenCalled();
+    }
   });
 
   it('initializes only once under StrictMode effect replay', async () => {
@@ -782,7 +839,7 @@ describe('review reopen flow', () => {
       migratedForm: true, formAvailable: true, localStatus: 'scheduled',
       sections: [{ id: 'strict-section', title: 'StrictMode form', displayOrder: 0, enabled: true, estimatedMinutes: 0, fields: [] }],
     };
-    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(pending).mockResolvedValueOnce(pending).mockResolvedValueOnce(initialized);
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(pending).mockResolvedValueOnce(pending);
     vi.mocked(initializeMigratedReview).mockResolvedValue(initialized);
     render(<StrictMode><ReviewInstanceModal event={{ learner: 'Test learner', programme: 'Test programme' }} instanceId="imported-review:strict" onClose={vi.fn()} /></StrictMode>);
     expect(await screen.findByText('StrictMode form')).toBeVisible();
@@ -934,7 +991,7 @@ describe('review reopen flow', () => {
     expect(bookMigratedReview).not.toHaveBeenCalled();
   });
 
-  it.each(['PR', 'PR_SKILLS_RADAR'] as const)('reuses a verified existing %s meeting without opening the date picker', async (family) => {
+  it.each(['PR', 'PR_SKILLS_RADAR'] as const)('automatically adopts a verified existing %s meeting without booking again', async (family) => {
     const existing: ReviewInstanceFormDefinition = {
       ...migratedPrDefinition('not-scheduled', family),
       localStatus: 'not-scheduled', readOnly: false,
@@ -944,11 +1001,67 @@ describe('review reopen flow', () => {
       instance: { ...definition().instance, id: 'imported-review:existing-meeting', occurrenceNumber: null, reviewTemplateId: '' },
     };
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(existing);
-    vi.mocked(bookMigratedReview).mockResolvedValue({ ...existing, localStatus: 'scheduled', booking: { ...existing.booking!, canAttach: false } });
+    vi.mocked(adoptMigratedReviewBooking).mockResolvedValue({ ...existing, localStatus: 'scheduled', instance: { ...existing.instance, status: 'scheduled' }, booking: { ...existing.booking!, canAttach: false } });
     mount('imported-review:existing-meeting');
-    fireEvent.click(await screen.findByRole('button', { name: 'Use existing meeting' }));
-    await waitFor(() => expect(bookMigratedReview).toHaveBeenCalledWith('imported-review:existing-meeting', expect.objectContaining({ scheduledDate: '2026-10-30', scheduledTime: '10:00', durationMinutes: 60 })));
+    await waitFor(() => expect(adoptMigratedReviewBooking).toHaveBeenCalledExactlyOnceWith('imported-review:existing-meeting', expect.any(AbortSignal)));
+    expect(await screen.findByRole('button', { name: 'Check Session' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Use existing meeting' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry linking meeting' })).not.toBeInTheDocument();
+    expect(bookMigratedReview).not.toHaveBeenCalled();
+    expect(rescheduleMigratedReview).not.toHaveBeenCalled();
+  });
+
+  it.each(['MCM', 'PR', 'PR_SKILLS_RADAR'] as const)('saves the retained %s draft with the new version after an adoption retry', async family => {
+    const existing = migratedPrDefinition('not-scheduled', family === 'PR_SKILLS_RADAR' ? family : 'PR');
+    if (family === 'MCM') existing.template.reviewTypeCode = 'aptem_mcm';
+    existing.answerVersion = 'before-adoption';
+    existing.bookingAdoptionVersion = 'saved-review-content';
+    existing.booking = { booked: true, conflict: false, canBook: false, canAttach: true,
+      eventKey: existing.instance.id, scheduledDate: '2026-09-01', scheduledTime: '10:00',
+      durationMinutes: 60, meetingLink: 'https://example.invalid/teams', syncState: 'synced' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(existing);
+    const updated = { ...existing, localStatus: 'scheduled', answerVersion: 'after-adoption', progressVersion: 'after-adoption',
+      canCalculateProgress: true, instance: { ...existing.instance, status: 'scheduled' }, booking: { ...existing.booking, canAttach: false } };
+    vi.mocked(adoptMigratedReviewBooking).mockRejectedValueOnce(new Error('Meeting link could not be confirmed.'))
+      .mockResolvedValueOnce(updated);
+    vi.mocked(saveReviewInstanceAnswers).mockResolvedValue(updated);
+    mount(existing.instance.id);
+    expect(await screen.findByText('Meeting link could not be confirmed.')).toBeVisible();
+    const input = await screen.findByDisplayValue('Review the next module');
+    fireEvent.change(input, { target: { value: 'Unsaved coach answer' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry linking meeting' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry linking meeting' })).not.toBeInTheDocument());
+    expect(screen.getByDisplayValue('Unsaved coach answer')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Check Session' })).not.toBeInTheDocument();
+    expect(bookMigratedReview).not.toHaveBeenCalled();
+    expect(adoptMigratedReviewBooking).toHaveBeenLastCalledWith(existing.instance.id, undefined, 'saved-review-content');
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(saveReviewInstanceAnswers).toHaveBeenCalledWith(existing.instance.id,
+      expect.objectContaining({ 'field-1': 'Unsaved coach answer' }),
+      expect.objectContaining({ answerVersion: 'after-adoption' })));
+  });
+
+  it.each([true, false])('keeps the draft and original version when adoption cannot validate its content (token=%s)', async hasToken => {
+    const existing = migratedPrDefinition('not-scheduled', 'PR');
+    existing.answerVersion = 'original-version';
+    existing.bookingAdoptionVersion = hasToken ? 'original-content' : undefined;
+    existing.booking = { booked: true, conflict: false, canBook: false, canAttach: true,
+      eventKey: existing.instance.id, scheduledDate: '2026-09-01', scheduledTime: '10:00',
+      durationMinutes: 60, meetingLink: 'https://example.invalid/teams', syncState: 'synced' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(existing);
+    vi.mocked(adoptMigratedReviewBooking).mockRejectedValueOnce(new Error('Temporary adoption failure'))
+      .mockRejectedValueOnce(new Error('This review changed in another session.'));
+    mount(existing.instance.id);
+    await screen.findByText('Temporary adoption failure');
+    fireEvent.change(await screen.findByDisplayValue('Review the next module'), { target: { value: 'Keep my draft' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry linking meeting' }));
+    await screen.findByText(hasToken ? 'This review changed in another session.'
+      : 'Reopen this review before linking the meeting. Your unsaved text has been kept on screen.');
+    expect(screen.getByDisplayValue('Keep my draft')).toBeVisible();
+    expect(adoptMigratedReviewBooking).toHaveBeenCalledTimes(hasToken ? 2 : 1);
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(saveReviewInstanceAnswers).toHaveBeenCalledWith(existing.instance.id,
+      expect.objectContaining({ 'field-1': 'Keep my draft' }), expect.objectContaining({ answerVersion: 'original-version' })));
   });
 
   it('clears migrated conditional answers when the coach changes branches', async () => {
@@ -1474,7 +1587,7 @@ describe('coach review signature workflow', () => {
     await screen.findByDisplayValue('Review the next module');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Send for signatures' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Send for signatures' }));
-    expect(await screen.findByRole('heading', { name: 'Your coach signature is required' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Coach signature required' })).toBeVisible();
     expect(completeReviewInstance).toHaveBeenCalledWith('instance-1', { 'field-1': 'Review the next module' });
     expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
     expect(onStatusChange).toHaveBeenCalledWith('awaiting-signature');
@@ -1499,7 +1612,7 @@ describe('coach review signature workflow', () => {
     expect(onStatusChange).toHaveBeenCalledWith('completed');
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Confirm coach signature' })).not.toBeInTheDocument();
-    expect(screen.getByText('Your coach signature has been saved.')).toBeVisible();
+    expect(screen.getByText('Coach signature saved.')).toBeVisible();
   });
 
   it('prevents duplicate signing and leaves a failed signature available for retry', async () => {
@@ -1521,7 +1634,7 @@ describe('coach review signature workflow', () => {
     signed.signatures.advisor = { required: true, signed: true, signedName: 'Sam Coach' };
     vi.mocked(signReviewInstance).mockResolvedValueOnce(signed);
     fireEvent.click(sign);
-    expect(await screen.findByText('Your coach signature has been saved.')).toBeVisible();
+    expect(await screen.findByText('Coach signature saved.')).toBeVisible();
     expect(onStatusChange).toHaveBeenCalledWith('awaiting-signature');
   });
 

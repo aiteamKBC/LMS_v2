@@ -161,6 +161,10 @@ export interface CoachMeetingArtifact {
   created_datetime?: string;
   end_datetime?: string;
   metadata?: Record<string, unknown>;
+  /** False when an imported recording has no archived copy. */
+  content_available?: boolean;
+  /** Saved, verified APTEM metadata permits an on-demand Teams playback attempt. */
+  graph_playback_candidate?: boolean;
 }
 
 export interface CoachMeetingAttendanceRecord {
@@ -277,6 +281,7 @@ export interface MigratedSummaryBinding {
   generationError?: MigratedSummaryGenerationError;
   replacementAvailable?: boolean;
   transcriptTruncated?: boolean;
+  provisional?: boolean;
   summaryTooLong?: boolean;
 }
 
@@ -291,9 +296,13 @@ export interface CoachMeetingArtifactsResponse {
     recordingStatus: string;
     transcriptStatus: string;
     summaryStatus: string;
+    summaryProvisional?: boolean;
     generationError?: MigratedSummaryGenerationError | null;
     transcriptArtifactId?: string | null;
     errorCodes: string[];
+    meetingEndStatus?: 'pending' | 'attendance-confirmed' | 'scheduled-end-reached' | null;
+    meetingEndCode?: 'MEETING_END_PENDING' | null;
+    resourceErrors?: Record<string, string>;
   };
   event?: {
     eventKey: string;
@@ -313,6 +322,8 @@ export interface CoachMeetingArtifactsResponse {
     reason?: string;
     syncedAt?: string;
   };
+  /** Imported party portals read saved evidence; only a Coach can refresh Teams. */
+  resourceMode?: 'stored';
 }
 
 async function readJsonResponse<T>(response: Response): Promise<T> {
@@ -431,10 +442,9 @@ export async function fetchCoachMeetingArtifacts(
   signal?: AbortSignal,
   options: { refresh?: boolean } = {},
 ): Promise<CoachMeetingArtifactsResponse> {
-  const query = options.refresh ? '?refresh=1' : '';
   const response = await coachFetch(
-    `/coach_api/coach/timetable/events/${encodeURIComponent(eventKey)}/artifacts${query}`,
-    { signal },
+    `/coach_api/coach/timetable/events/${encodeURIComponent(eventKey)}/artifacts`,
+    { signal, ...(options.refresh ? { method: 'POST' } : {}) },
   );
   return readJsonResponse<CoachMeetingArtifactsResponse>(response);
 }
