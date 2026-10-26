@@ -529,6 +529,27 @@ class PureTests(unittest.TestCase):
             self.assertEqual(graph.microsoft_graph_request.call_count, 3)
             self.assertFalse(getattr(ns['calendar_action'], 'csrf_exempt', False))
 
+    def test_directory_search_failures_answer_with_a_reason_not_a_crash(self):
+        ns = {'JsonResponse': Response, 'require_role': lambda *roles: (lambda fn: fn), 'require_GET': lambda fn: fn,
+              'logger': Mock(), 'directory_query': lambda value, include_guests=False: 'users?synthetic',
+              'directory_people': lambda data, include_guests=False: data}
+        functions(ROOT / 'teams_directory.py', ['search_teams_directory'], ns)
+        request = types.SimpleNamespace(GET={'q': 'enga'})
+        cases = [
+            (RuntimeError('Microsoft Graph GET users failed: HTTP 403; code=Authorization_RequestDenied'), "isn't allowed to search"),
+            (RuntimeError('Microsoft Graph GET users failed: HTTP 503'), 'Retry or enter a full email address'),
+            (TimeoutError('The read operation timed out'), 'Retry or enter a full email address'),
+        ]
+        for failure, message in cases:
+            graph = types.ModuleType('coach_api.views')
+            graph.microsoft_graph_request = Mock(side_effect=failure)
+            with self.subTest(failure=str(failure)), patch.dict(sys.modules, {'coach_api': types.ModuleType('coach_api'), 'coach_api.views': graph}):
+                response = ns['search_teams_directory'](request)
+                self.assertEqual(response.status_code, 502)
+                self.assertIn(message, response['error'])
+                self.assertNotIn('Authorization_RequestDenied', response['error'])
+                self.assertEqual(response['Cache-Control'], 'no-store, private')
+
     def test_readers_apply_rescheduled_component_dates_and_preserve_other_settings(self):
         module = {'sessions_number': 2, 'session_overrides': {'1': schedule_override(utc_datetime('2026-10-09T11:00:00Z'), 90, ZoneInfo('Europe/London'))}}
         plan = apply_session_overrides({'sessions': [dict(sessionNumber=n, date=day, day='Thursday')

@@ -1360,6 +1360,49 @@ class EndpointTests(unittest.TestCase):
         shared.assert_not_called()
         self.assertEqual(self.learner_series(['SOURCE'], {}, None)[0], (None, None))
 
+    def test_linked_recording_grants_only_the_linked_sessions_and_never_join(self):
+        access = types.ModuleType('curriculum_api.linked_recording_access')
+        access.linked_session_numbers = Mock(return_value={3})
+        series = {'id': 'S', 'module_catalogue_id': 'MOD-B', 'status': 'active'}
+        self.ns['__package__'] = 'curriculum_api'
+        try:
+            with patch.dict(sys.modules, {'curriculum_api.linked_recording_access': access}):
+                # Join and every other caller keep the old rule: not assigned, not shared -> refused.
+                self.assertEqual(self.learner_series(['MOD-A'], {}, series)[0], (None, None))
+                access.linked_session_numbers.assert_not_called()
+                learner = types.SimpleNamespace(email='a@example.invalid')
+                model = types.SimpleNamespace(all_learners=types.SimpleNamespace(
+                    filter=lambda **kwargs: types.SimpleNamespace(first=lambda: learner)))
+                detail = types.ModuleType('learner_api.learner_detail'); detail.SOURCE_MODELS = {'commercial': model}
+                lectures = types.ModuleType('learner_api.attendance_lectures')
+                lectures.read_assigned_modules = lambda source: [{'id': 'MOD-A'}]
+                lectures.shared_teams_sources = Mock(return_value={})
+                self.ns['read'].return_value = [series]
+                with patch.dict(sys.modules, {'learner_api.learner_detail': detail, 'learner_api.attendance_lectures': lectures}):
+                    _, found = self.ns['learner_series']('commercial', 7, 'S', linked_recordings=True)
+                self.assertEqual(found, {**series, 'linked_session_numbers': {3}})
+                self.assertEqual(access.linked_session_numbers.call_args.args, ({'MOD-A'}, 'S'))
+        finally:
+            self.ns.pop('__package__', None)
+        self.ns['learner_series'] = Mock(return_value=(learner, found))
+        response = self.ns['learner_results'](self.req('learner'), kind='commercial', learner_id=7, series_id='S', session_number=2)
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(self.ns['learner_series'].call_args.kwargs, {'linked_recordings': True})
+        # The linked session itself: served, but never projected as the
+        # learner's own recorded attendance, even for a recorded-delivery learner.
+        recorded = types.ModuleType('learner_api.recorded_attendance')
+        recorded.saved_delivery_mode = Mock(return_value='lazy')
+        recorded.apply_recorded_attendance = Mock()
+        rules = types.ModuleType('learner_api.attendance_rules'); rules.attendance_outcome = Mock()
+        self.ns['result_rows'] = Mock(return_value=[{'id': 'OCC-3', 'attendance': [{'email': 'a@example.invalid', 'status': 'absent'}], 'artifacts': []}])
+        with patch.dict(sys.modules, {'learner_api.recorded_attendance': recorded, 'learner_api.attendance_rules': rules}):
+            response = self.ns['learner_results'](self.req('learner'), kind='commercial', learner_id=7, series_id='S', session_number=3)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content['sessions'][0]['attendanceMode'], 'live')
+        self.assertEqual(response.content['sessions'][0]['attendance'], [])
+        recorded.saved_delivery_mode.assert_not_called()
+        recorded.apply_recorded_attendance.assert_not_called()
+
     def test_reported_catchup_is_shown_without_changing_original_absence(self):
         self.ns['read'].return_value = [{
             'occurrence_id': 'O', 'learner_email': 'a@example.invalid',

@@ -65,6 +65,10 @@ def component_content_available(c):
     if ctype == "video":
         return (_has_url(c.get("videoUrl")) or bool(c.get("recordingSeriesId")
                 and c.get("recordingSessionNumber") and c.get("recordingDate")))
+    # A session recording linked to its live session plays that session's recording.
+    if ctype == "recording_placeholder" and (c.get("recordingSeriesId")
+            and c.get("recordingSessionNumber") and c.get("recordingDate")):
+        return True
     if ctype in {"podcast", "audio"}:
         return _has_url(c.get("audioUrl")) or _has_url(c.get("resourceUrl")) or has_description
     if ctype == "reading":

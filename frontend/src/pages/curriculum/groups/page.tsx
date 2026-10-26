@@ -65,6 +65,17 @@ const COLUMNS = [
   { label: 'Actions', align: 'right' as const },
 ];
 
+const DELIVERY_DAY_OPTIONS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+/**
+ * Groups created before `weekDays` was introduced only have the display
+ * schedule, so retain that fallback when filtering the mixed list.
+ */
+function runsOnDeliveryDay(group: Pick<CurriculumGroup, 'weekDays' | 'schedule'>, day: string) {
+  const source = cleanText(group.weekDays) || cleanText(group.schedule);
+  return source.toLocaleLowerCase().includes(day.toLocaleLowerCase());
+}
+
 // The archive trades the planning columns for the two facts a restore or a
 // delete turns on: when it was archived, and who is still in it. Module count is
 // gone because there is never one -- archiving a group detaches its modules --
@@ -96,6 +107,7 @@ export default function CurriculumGroupsPage() {
   const [programmeFilter, setProgrammeFilter] = useState(searchParams.get('programme') || '');
   const [cohortFilter, setCohortFilter] = useState(searchParams.get('cohort') || '');
   const [coachFilter, setCoachFilter] = useState(() => searchParams.get('coach') || '');
+  const [deliveryDayFilter, setDeliveryDayFilter] = useState(() => searchParams.get('deliveryDay') || '');
   const [sort, setSort] = useState(() => searchParams.get('sort') || '');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<CurriculumGroup | null>(null);
@@ -120,11 +132,12 @@ export default function CurriculumGroupsPage() {
       ['cohort', cohortFilter],
       ['q', search],
       ['coach', coachFilter],
+      ['deliveryDay', deliveryDayFilter],
       ['sort', sort],
       ['view', showArchived ? 'archive' : ''],
     ] as const).forEach(([key, value]) => { if (value) next.set(key, value); else next.delete(key); });
     if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
-  }, [coachFilter, cohortFilter, programmeFilter, search, searchParams, setSearchParams, showArchived, sort]);
+  }, [coachFilter, cohortFilter, deliveryDayFilter, programmeFilter, search, searchParams, setSearchParams, showArchived, sort]);
 
   // Nothing is read until the archive is actually opened; see useCurriculumArchive.
   const archived = useCurriculumArchive(fetchArchivedCurriculumGroups, showArchived);
@@ -170,6 +183,7 @@ export default function CurriculumGroupsPage() {
     });
     const matched = scoped.filter(group => {
       if (coachFilter && normaliseKey(group.coach) !== normaliseKey(coachFilter)) return false;
+      if (deliveryDayFilter && !runsOnDeliveryDay(group, deliveryDayFilter)) return false;
       const context = resolveGroupContext(group, cohorts, programmes);
       return matchesSearch(search, [
         group.name, group.id, context.cohortName, context.programmeName,
@@ -177,7 +191,7 @@ export default function CurriculumGroupsPage() {
       ]);
     });
     return sortEntities(matched, GROUP_SORT_OPTIONS, sort);
-  }, [cohortFilter, coachFilter, cohorts, groups, programmeFilter, programmes, search, sort]);
+  }, [cohortFilter, coachFilter, cohorts, deliveryDayFilter, groups, programmeFilter, programmes, search, sort]);
 
   // The same programme/cohort/coach/search filters as the live list, applied to
   // rows that carry their own programme and cohort rather than resolving them
@@ -188,11 +202,12 @@ export default function CurriculumGroupsPage() {
     return scoped.filter(group => {
       if (cohortFilter && !sameIdentifier(group.cohortId, cohortFilter)) return false;
       if (coachFilter && normaliseKey(group.coach) !== normaliseKey(coachFilter)) return false;
+      if (deliveryDayFilter && !runsOnDeliveryDay(group, deliveryDayFilter)) return false;
       return matchesSearch(search, [
         group.name, group.id, group.cohort, group.programme, group.coach, scheduleLabel(group),
       ]);
     });
-  }, [archived.records, coachFilter, cohortFilter, programmeFilter, programmes, search]);
+  }, [archived.records, coachFilter, cohortFilter, deliveryDayFilter, programmeFilter, programmes, search]);
 
   const archive = async (group: CurriculumGroup) => {
     const moduleCount = modulesByGroup.get(normaliseKey(group.id)) || 0;
@@ -253,6 +268,7 @@ export default function CurriculumGroupsPage() {
   // so whatever would keep it out of the list is cleared.
   const revealGroup = (saved: CurriculumGroup) => {
     if (coachFilter && normaliseKey(saved.coach) !== normaliseKey(coachFilter)) setCoachFilter('');
+    if (deliveryDayFilter && !runsOnDeliveryDay(saved, deliveryDayFilter)) setDeliveryDayFilter('');
     if (cohortFilter && !sameIdentifier(saved.cohortId, cohortFilter)) setCohortFilter('');
     if (programmeFilter && !groupsForScope([saved], cohorts, programmes, { programmeId: programmeFilter }).length) {
       setProgrammeFilter('');
@@ -359,9 +375,18 @@ export default function CurriculumGroupsPage() {
               onChange: setCoachFilter,
               options: [{ value: '', label: 'All coaches' }, ...coachNames.map(name => ({ value: name, label: name }))],
             },
+            {
+              label: 'Delivery day',
+              value: deliveryDayFilter,
+              onChange: setDeliveryDayFilter,
+              options: [
+                { value: '', label: 'All delivery days' },
+                ...DELIVERY_DAY_OPTIONS.map(day => ({ value: day, label: day })),
+              ],
+            },
           ]}
           sort={showArchived ? undefined : { value: sort, onChange: setSort, options: GROUP_SORT_OPTIONS }}
-          onReset={() => { setSearch(''); setProgrammeFilter(''); setCohortFilter(''); setCoachFilter(''); setSort(''); }}
+          onReset={() => { setSearch(''); setProgrammeFilter(''); setCohortFilter(''); setCoachFilter(''); setDeliveryDayFilter(''); setSort(''); }}
           summary={showArchived
             ? (archived.loaded
               ? `Showing ${visibleArchivedGroups.length} of ${archived.records.length} archived groups`

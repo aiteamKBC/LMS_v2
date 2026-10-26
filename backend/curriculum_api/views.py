@@ -2289,10 +2289,9 @@ def teams_event_payload(payload, graph_settings):
     occurrences = max(1, min(52, int(payload.get('repeatOccurrences') or 12)))
     co_organizers = teams_attendee_emails(payload.get('coOrganizers'))
     co_organizer_set = set(co_organizers)
-    presenters = [
-        email for email in teams_attendee_emails(payload.get('presenters'))
-        if email not in co_organizer_set
-    ]
+    # A co-organiser may also be listed as a presenter. Teams gives each person
+    # one role (co-organiser wins), so keeping both only keeps the author's list.
+    presenters = teams_attendee_emails(payload.get('presenters'))
     elevated = co_organizer_set | set(presenters)
     attendees = [
         email for email in teams_attendee_emails(payload.get('attendees'))
@@ -4285,13 +4284,10 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             if 'coOrganizers' in payload else stored_co_organizers
         )
         co_organizer_set = set(co_organizers)
-        presenters = [
-            email for email in (
-                teams_attendee_emails(payload['presenters'])
-                if 'presenters' in payload else stored_presenters
-            )
-            if email not in co_organizer_set
-        ]
+        presenters = (
+            teams_attendee_emails(payload['presenters'])
+            if 'presenters' in payload else stored_presenters
+        )
         elevated = co_organizer_set | set(presenters)
         attendees = [
             email for email in (
@@ -4928,6 +4924,30 @@ def stored_leftover_slots(live_session_id):
     return leftovers if isinstance(leftovers, list) else []
 
 
+def curriculum_teams_meeting_off_schedule_runs(request, live_session_id):
+    """The calls on this calendar's link that were not one of its sessions, per session. Read-only.
+
+    Light enough for the Module Builder to read for each of a module's
+    calendars: the stored sessions and the integrity log, nothing from Microsoft.
+    """
+    from .teams_calendar_integrity import off_schedule_runs, read_events
+
+    if request.method != 'GET':
+        return json_error('Method not allowed.', status=405)
+    series_rows = authoring_fetch_all(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])
+    if not series_rows:
+        return json_error('Live session series not found.', status=404)
+    logged = read_events([live_session_id])
+    occurrences = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_session_id],
+                                      'session_number asc') if logged else []
+    runs = {clean_str(row.get('id')): off_schedule_runs(row, logged) for row in occurrences}
+    return JsonResponse({
+        'liveSessionId': clean_str(live_session_id),
+        'timeZoneIana': graph_timezone_iana(teams_schedule_settings({}, series=series_rows[0])),
+        'occurrences': {key: value for key, value in runs.items() if value},
+    })
+
+
 def curriculum_teams_meeting_artifacts(request, live_session_id):
     """Read the tracked lecture plan or pull completed artifacts from Graph."""
     from coach_api.views import has_graph_credentials, microsoft_graph_request, get_graph_settings
@@ -4950,7 +4970,11 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
         'session_number asc',
     )
     if request.method == 'GET':
+        from .teams_calendar_integrity import off_schedule_runs, read_events
+        logged = read_events([live_session_id])
         for occurrence in occurrences:
+            # Calls on this link that were not this session, said with their dates.
+            occurrence['off_schedule_runs'] = off_schedule_runs(occurrence, logged)
             actual_attendance = authoring_fetch_all(
                 LIVE_SESSION_ATTENDANCE_TABLE, 'occurrence_id = %s', [occurrence['id']], 'display_name asc'
             )
@@ -6467,7 +6491,9 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
     A module starting mid-week owns only the delivery days from its start date
     on: the Monday and Tuesday before a Wednesday start are inside week 1's
     window but before the module began, so they belong to nobody and week 1 is
-    simply shorter than the weeks after it.
+    simply shorter than the weeks after it. A start date with no delivery day
+    left in its own week does not spend a week on nothing: week 1 is the week
+    of the first delivery day after it, so N weeks are N delivery weeks.
 
     ``week_count`` asks for whole weeks: the plan runs to the end of that many
     Mon-Sun windows, however many delivery days that turns out to be. Callers
@@ -6500,10 +6526,20 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
     holidays_by_date = holiday_details_by_date(holidays)
     guard_days = max(3650, max(session_count, week_target * 7) * 21)
 
-    # Monday of the week the module starts in. Every week number below is
-    # measured from here, which is what makes an authored week a calendar week
-    # rather than a run of dates that can straddle two of them.
-    anchor_monday = start - timedelta(days=start.weekday())
+    # Monday of the week the module first DELIVERS in. Every week number below
+    # is measured from here, which is what makes an authored week a calendar
+    # week rather than a run of dates that can straddle two of them. Measured
+    # from the first delivery day on or after the start date, not from the
+    # start date itself: a module starting on the Sunday of a Wednesday group
+    # has no delivery day left in its opening week, and counting that empty
+    # week as week 1 gave five authored weeks four sessions (agreed 2026-10-26:
+    # N weeks means N delivery weeks). A start date with a delivery day still
+    # ahead of it in its own week anchors exactly as before.
+    first_delivery = next(
+        (start + timedelta(days=offset) for offset in range(7) if (start + timedelta(days=offset)).weekday() in days),
+        start,
+    )
+    anchor_monday = first_delivery - timedelta(days=first_delivery.weekday())
     # The first day past the last week asked for, when asking by weeks.
     week_limit = anchor_monday + timedelta(days=week_target * 7) if week_target else None
 
@@ -16830,6 +16866,12 @@ COMPONENT_SETTINGS_SCHEMA = {
         'source': 'MIS allocation',
         'recordingUrl': '',
         'expectedAvailability': 'After live session',
+        # The live-session component this recording plays (any week), and the
+        # module holding it when that is another group's module ('' = this
+        # module). Empty id = not linked. Mirrors the browser's definition in
+        # module-builder/componentAuthoringModel.ts.
+        'linkedLiveSessionComponentId': '',
+        'linkedLiveSessionModuleId': '',
     },
     'video': {
         **BASE_COMPONENT_SETTINGS,
@@ -17160,7 +17202,10 @@ def validate_component_authoring_payload(component, path):
         recording_url = clean_str(settings.get('recordingUrl'))
         if recording_url and not http_url(recording_url):
             errors.append({'path': f'{path}.settings.recordingUrl', 'message': 'Enter a valid recording URL.'})
-        if status != 'Draft' and not recording_url:
+        # A linked recording plays its live session's Teams recording, so it
+        # has no URL of its own to require.
+        linked = clean_str(settings.get('linkedLiveSessionComponentId'))
+        if status != 'Draft' and not recording_url and not linked:
             errors.append({'path': f'{path}.settings.recordingUrl', 'message': 'Recording URL is required before QA or approval.'})
 
     if component_type == 'podcast':
@@ -20409,13 +20454,12 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                 None,
             )
             if first_numbered:
-                # The header follows its first numbered session, including a
-                # confirmed Teams date kept above, when its authored week moves.
-                first_planned = {
-                    **first_numbered,
-                    'date': format_date(first_settings.get('sessionDate')) or first_numbered.get('date'),
-                    'day': clean_str(first_settings.get('sessionDay')) or first_numbered.get('day'),
-                }
+                # The header follows the plan's date for its first numbered
+                # session, even when that session is booked in Teams and kept its
+                # confirmed date above: a new start date moves the week at once,
+                # and the booked session shows its drift until Teams is updated.
+                # Mirrors the frontend's applyModuleWeekSessionPlan.
+                first_planned = first_numbered
         # The week runs on the day its live session is delivered on. A closed
         # delivery slot is not this week -- it is a reading week of its own,
         # which the plan's `slots` spine keeps in the curriculum at the closed
@@ -33090,6 +33134,15 @@ def curriculum_cohort_detail(request, identifier):
                 continue
             unassign_authoring_modules_from_group(stored_group_id)
             authoring_soft_delete(GROUPS_TABLE, 'group_id = %s', [stored_group_id], via_parent=cohort_id, deleted_by='cohort-delete')
+        # Any module row still naming this cohort directly, rather than through
+        # one of its groups, is detached too: it has to be given a new cohort and
+        # group from the module drawer, never left on an archived cohort.
+        update_authoring_rows(AUTHORING_MODULES_TABLE, 'cohort_id = %s', [cohort_id], {
+            'cohort_id': None,
+            'cohort_name': '',
+            'group_id': None,
+            'group_name': '',
+        })
         authoring_soft_delete(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id], deleted_by='cohort-delete')
         log_curriculum_decision(
             'cohort.archive', outcome='soft_deleted', entity_id=cohort_id,

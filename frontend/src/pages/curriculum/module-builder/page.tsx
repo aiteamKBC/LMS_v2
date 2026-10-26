@@ -190,6 +190,10 @@ import {
 } from './componentAuthoringModel';
 import { RichTextDraft } from './RichTextEditor';
 import { componentTypeCounts, mergeFilteredComponents } from './courseStructureFilter';
+import { useOffScheduleRuns } from './useOffScheduleRuns';
+import { offScheduleRunLabel, offScheduleRunSentence } from '../teams-meetings/offScheduleRuns';
+import { reviewDateLabel } from '../teams-meetings/calendarTime';
+import { linkedRecordingsOf, moveComponentToWeek, relinkCopiedComponents, withLinkedRecordings, withRecordingLink, type RecordingLinkContext } from '../shared/entities/liveSessionRecordingLink';
 
 // Course structure accordion: whether expanding a week collapses the others.
 // false = classic single-open accordion (the current default look/feel).
@@ -2141,22 +2145,114 @@ export default function ModuleBuilder() {
   // session's Teams meeting and date (`copyComponentToWeek` says why). Client
   // state only, same as `duplicateWeek` -- the normal module save writes the
   // whole week structure.
+  //
+  // A live session copies with its same-week linked recordings, and the copies
+  // are linked to each other. A recording copied on its own keeps its link:
+  // the session it names is still in this module.
   const copyComponentToAnotherWeek = useCallback((component: ModuleComponent, targetWeekId: string) => {
     let copyId = '';
-    updateWorkingModule(module => ({
-      ...module,
-      weekStructure: module.weekStructure.map(week => {
-        if (week.id !== targetWeekId) return week;
-        const copy = cloneComponentToWeek(component, targetWeekId, module.id);
-        copyId = copy.id;
-        return { ...week, components: [...week.components, copy] };
-      }),
-    }));
+    updateWorkingModule(module => {
+      const sourceWeek = module.weekStructure.find(week => week.components.some(item => item.id === component.id));
+      const sources = component.type === 'live-session' && sourceWeek
+        ? [component, ...linkedRecordingsOf(sourceWeek.components, component)]
+        : [component];
+      return {
+        ...module,
+        weekStructure: module.weekStructure.map(week => {
+          if (week.id !== targetWeekId) return week;
+          const copies = relinkCopiedComponents(sources, sources.map(source => cloneComponentToWeek(source, targetWeekId, module.id)), { sameModule: true });
+          copyId = copies[0].id;
+          return { ...week, components: [...week.components, ...copies] };
+        }),
+      };
+    });
     if (!copyId) return;
     // Open the target week and select the copy -- the point of a clone is the
     // edit you make to it, and here that edit happens on a different week.
     setExpandedWeekIds(prev => new Set(prev).add(targetWeekId));
     setSelection({ kind: 'component', weekId: targetWeekId, componentId: copyId });
+  }, [updateWorkingModule]);
+
+  // Everything the recording/live-session link needs beyond one week: this
+  // module's weeks, the other modules a recording may link into (read on
+  // demand, only when an author picks one), and the writes that set a link on
+  // a recording wherever it sits or add one after a live session.
+  const workingModuleLinkId = workingModule ? (workingModule.catalogueId || workingModule.id) : '';
+  const linkWeeks = useMemo(() => (workingModule?.weekStructure || []).map(week => ({
+    id: week.id, label: week.title || `Week ${week.weekNumber}`, components: week.components,
+  })), [workingModule?.weekStructure]);
+  const linkableModules = useMemo(() => catalogueModules
+    .filter(module => module.catalogueId && module.catalogueId !== workingModuleLinkId)
+    .map(module => ({
+      id: module.catalogueId,
+      label: [module.title, module.group || module.cohort || module.programmeName].filter(Boolean).join(' · '),
+      programmeId: module.programmeId || '',
+      programme: module.programmeName || '',
+      cohortId: module.cohortId || '',
+      cohort: module.cohort || '',
+      groupId: module.groupId || '',
+      group: module.group || '',
+    })), [catalogueModules, workingModuleLinkId]);
+  const loadLinkableModuleWeeks = useCallback(async (moduleId: string) => {
+    const structure = await loadModuleStructure(moduleId);
+    if (!structure) throw new Error('That module could not be found.');
+    return structure.weekStructure.map(week => ({ id: week.id, label: week.title || `Week ${week.weekNumber}`, components: week.components }));
+  }, []);
+  const setRecordingLink = useCallback((recordingId: string, liveSessionId: string, moduleId: string) => {
+    updateWorkingModule(module => ({
+      ...module,
+      weekStructure: module.weekStructure.map(week => ({
+        ...week,
+        components: week.components.map(component => (component.id === recordingId ? withRecordingLink(component, liveSessionId, moduleId) : component)),
+      })),
+    }));
+  }, [updateWorkingModule]);
+  const addLinkedRecording = useCallback((liveSession: ModuleComponent) => {
+    updateWorkingModule(module => ({
+      ...module,
+      weekStructure: module.weekStructure.map(week => {
+        const index = week.components.findIndex(component => component.id === liveSession.id);
+        if (index < 0) return week;
+        const [, recording] = withLinkedRecordings([liveSession], () => createNamedComponent(week, 'recording-placeholder'));
+        const components = [...week.components];
+        components.splice(index + 1, 0, recording);
+        return { ...week, components };
+      }),
+    }));
+  }, [updateWorkingModule]);
+  const removeLinkedComponents = useCallback((componentIds: string[]) => {
+    const removing = new Set(componentIds);
+    updateWorkingModule(module => ({
+      ...module,
+      weekStructure: module.weekStructure.map(week => (week.components.some(component => removing.has(component.id))
+        ? { ...week, components: week.components.filter(component => !removing.has(component.id)) }
+        : week)),
+    }));
+  }, [updateWorkingModule]);
+  const recordingLinks = useMemo<RecordingLinkContext>(() => ({
+    moduleId: workingModuleLinkId,
+    weeks: linkWeeks,
+    otherModules: linkableModules,
+    loadModuleWeeks: loadLinkableModuleWeeks,
+    setLink: setRecordingLink,
+    addLinkedRecording,
+    removeComponents: removeLinkedComponents,
+  }), [workingModuleLinkId, linkWeeks, linkableModules, loadLinkableModuleWeeks, setRecordingLink, addLinkedRecording, removeLinkedComponents]);
+
+  // Move to another week. Linked within this module, the live session and all
+  // its recordings move there together, from whatever weeks they were in, in
+  // one update; unlinked, the component moves alone. A link into another
+  // module never moves anything there. Nothing in the settings changes -- an
+  // unbooked session is re-dated by the week plan like any other, and a booked
+  // one keeps its Teams date with the rail's date notice saying it no longer
+  // matches. Client state only, saved with the module like the copy above.
+  const moveComponentToAnotherWeek = useCallback((component: ModuleComponent, targetWeekId: string) => {
+    updateWorkingModule(module => ({
+      ...module,
+      weekStructure: moveComponentToWeek(module.weekStructure, component.id, targetWeekId, module.catalogueId || module.id),
+    }));
+    setExpandedWeekIds(prev => new Set(prev).add(targetWeekId));
+    setSelection({ kind: 'component', weekId: targetWeekId, componentId: component.id });
   }, [updateWorkingModule]);
 
   const confirmDeleteWeek = async (weekId: string) => {
@@ -3565,6 +3661,8 @@ export default function ModuleBuilder() {
                 weekStructure: module.weekStructure.map(week => (week.id === weekId ? { ...week, components } : week)),
               }))}
               onCopyComponentToWeek={copyComponentToAnotherWeek}
+              onMoveComponentToWeek={moveComponentToAnotherWeek}
+              recordingLinks={recordingLinks}
               onWeekHolidayNoteChange={(weekId, next) => updateWorkingModule(module => ({
                 ...module,
                 weekStructure: module.weekStructure.map(week => (week.id === weekId
@@ -3639,6 +3737,7 @@ export default function ModuleBuilder() {
                     weekSessionTime={selectedWeek.sessionStartTime}
                     uploadResource={uploadComponentForModule}
                     moduleId={workingModule.catalogueId || workingModule.id}
+                    recordingLinks={recordingLinks}
                   />
                 </ModuleBuilderScrollArea>
               ) : selectedWeek ? (
@@ -3756,7 +3855,8 @@ export default function ModuleBuilder() {
             onAdd={async types => {
               const week = workingModule.weekStructure.find(item => item.id === lessonPickerWeekId);
               if (!week) return;
-              const components = createNamedComponents(week, types);
+              // Each live session arrives with its session recording right after it, linked.
+              const components = withLinkedRecordings(createNamedComponents(week, types), () => createNamedComponent(week, 'recording-placeholder'));
               if (!components.length) return;
               const liveSessions = components.filter(component => component.type === 'live-session').length;
               if (!(await confirmLiveSessionSlotOverflow(weekSlotOverflow(week.id, liveSessions)))) return;
@@ -4462,7 +4562,7 @@ function WorkspaceActionFooter({ saving, saved, status, autoSave, onToggleAutoSa
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onCopyComponentToWeek, onWeekHolidayNoteChange, onReuseComponents, onCreateTeamsMeeting, onReplaceTeamsLinks, onRestoreTeamsData, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks, onWeekHolidayNoteChange, onReuseComponents, onCreateTeamsMeeting, onReplaceTeamsLinks, onRestoreTeamsData, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -4477,6 +4577,8 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   onComponentsChange: (weekId: string, components: ModuleComponent[]) => void;
   // The clone button's "copy to another week" option, one component at a time.
   onCopyComponentToWeek: (component: ModuleComponent, targetWeekId: string) => void;
+  onMoveComponentToWeek: (component: ModuleComponent, targetWeekId: string) => void;
+  recordingLinks: RecordingLinkContext;
   /**
    * The curriculum author's hint for a week a holiday lands on, and whether
    * learners see it. Only this rail passes an editor to `WeekHolidayNotice`,
@@ -4512,6 +4614,8 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   allowMultipleExpanded?: boolean;
 }) {
   const totalComponents = module.weekStructure.reduce((total, week) => total + week.components.length, 0);
+  // Teams calls on a week's link that were not its session, shown on the week.
+  const offScheduleByWeek = useOffScheduleRuns(module);
   const actualWeekCount = module.weekStructure.length;
   // How many live sessions this module delivers: the live-session components
   // authored into it, and nothing else. A module can run fourteen weeks and
@@ -4952,6 +5056,15 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                         <span className="font-semibold text-amber-700">No delivery date this week</span>
                       </>
                     )}
+                    {offScheduleByWeek.has(week.id) && (
+                      <>
+                        <span className="h-1 w-1 rounded-full bg-amber-400"></span>
+                        <span className="truncate font-semibold text-amber-700"
+                          title={offScheduleByWeek.get(week.id)!.runs.map(run => offScheduleRunSentence(run, iso => reviewDateLabel(iso, offScheduleByWeek.get(week.id)!.timeZone))).join(' ')}>
+                          {offScheduleRunLabel(offScheduleByWeek.get(week.id)!.runs)}
+                        </span>
+                      </>
+                    )}
                   </p>
                 </button>
                 {/* Duplicating copies the week's components in full. The live
@@ -5039,6 +5152,8 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                       .filter(other => other.id !== week.id)
                       .map(other => ({ id: other.id, label: other.title || `Week ${other.weekNumber}` }))}
                     onCopyComponentToWeek={onCopyComponentToWeek}
+                    onMoveComponentToWeek={onMoveComponentToWeek}
+                    recordingLinks={recordingLinks}
                   />
                 </div>
               )}
@@ -5441,9 +5556,17 @@ function ModuleWeekPanel({ week, module, groupOptions, onChange, onOpenSessionKs
   onReuseComponents: () => void;
 }) {
   const totalOtjh = weekExpectedOtjhTotal(week);
+  const offSchedule = useOffScheduleRuns(module).get(week.id);
 
   return (
     <section className="space-y-4">
+      {offSchedule && (
+        <div role="note" className="space-y-1 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] text-amber-900">
+          {offSchedule.runs.map(run => (
+            <p key={`${run.runStartUtc}-${run.runEndUtc}`}>{offScheduleRunSentence(run, iso => reviewDateLabel(iso, offSchedule.timeZone))}</p>
+          ))}
+        </div>
+      )}
       <div className="grid gap-3 rounded-2xl border border-foreground-200/60 bg-background-50 px-4 py-3 shadow-sm lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:px-5">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
