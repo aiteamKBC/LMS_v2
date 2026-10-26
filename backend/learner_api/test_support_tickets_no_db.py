@@ -24,6 +24,8 @@ class SupportTicketsTests(SimpleTestCase):
             setattr(self, target, stub.start())
         stub = patch.object(tickets, 'connections', {'enrolment': connection})
         stub.start(); self.addCleanup(stub.stop)
+        stub = patch.object(tickets.assistant_conversations, 'record_ticket')
+        stub.start(); self.addCleanup(stub.stop)
         stub = patch.object(tickets.transaction, 'atomic', return_value=MagicMock())
         stub.start(); self.addCleanup(stub.stop)
 

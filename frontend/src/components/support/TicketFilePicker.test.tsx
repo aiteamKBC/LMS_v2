@@ -28,8 +28,17 @@ it('rejects unsupported, empty, oversized and excessive files while retaining a 
     fireEvent.change(input, { target: { files } });
     expect(screen.getByRole('alert')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Remove valid.pdf' })).toBeInTheDocument();
-    expect(screen.getAllByRole('button')).toHaveLength(1);
+    expect(screen.getAllByRole('button')).toHaveLength(2);
   }
+});
+it('shows the selected filename or attachment count and makes files previewable', () => {
+  render(<Picker />);
+  fireEvent.change(screen.getByLabelText('Attachments (optional)'), {
+    target: { files: [new File(['image'], 'image.png'), new File(['log'], 'error.log')] },
+  });
+  expect(screen.getByText('2 files attached')).toBeInTheDocument();
+  expect(screen.getByTitle('Open image.png')).toBeInTheDocument();
+  expect(screen.getByTitle('Open error.log')).toBeInTheDocument();
 });
 it('rejects files beyond the combined size limit', () => {
   render(<Picker />);

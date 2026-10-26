@@ -98,6 +98,19 @@ describe('employer progress reviews', () => {
     expect(document.querySelector('video')).not.toBeInTheDocument();
   });
 
+  it('plays a verified Teams recording through the protected review URL before archival', async () => {
+    vi.mocked(fetchEmployerMeetingArtifacts).mockResolvedValue({ resourceMode: 'stored', artifacts: [
+      { id: 'verified-video', graph_artifact_id: 'verified-video', artifact_type: 'recording',
+        content_available: false, graph_playback_candidate: true },
+    ] });
+    await openImportedRecordingReview({ status: 'completed' });
+    expect(await screen.findByText(/Play from Teams/)).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    expect(document.querySelector('video')).toHaveAttribute('src',
+      '/learner_api/employer-portal/7/learner/commercial/499/progress-reviews/imported-review%3Aarchive/artifacts/recording/verified-video/content/?preview=1');
+    expect(screen.queryByRole('link', { name: 'Download' })).not.toBeInTheDocument();
+  });
+
   it('keeps the linked APTEM recording section visible when the saved collection is empty', async () => {
     vi.mocked(fetchEmployerMeetingArtifacts).mockResolvedValue({ resourceMode: 'stored', artifacts: [] });
     await openImportedRecordingReview({ status: 'completed' });

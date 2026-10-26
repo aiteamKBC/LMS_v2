@@ -38,6 +38,10 @@ class ImportedMeetingResourceTests(SimpleTestCase):
         self.start(patch.object(employer_portal, "_employer_progress_review_rows",
                                side_effect=lambda *args: (self.rows, {}, None)))
         self.stored = self.start(patch.object(views, "stored_coach_meeting_snapshot", side_effect=lambda record: copy.deepcopy(self.snapshot)))
+        # These historical-resource fixtures have no initialized local Review
+        # and therefore no protected actual-call claim.
+        overlays = self.start(patch("coach_api.models.ImportedReviewInstance.objects"))
+        overlays.filter.return_value.__getitem__.return_value = []
         self.archive = self.start(patch("coach_api.recording_archive.archived_recording_url", return_value="https://storage.example.test/saved"))
         self.effects = {
             name: self.start(patch.object(views, name)) for name in (
@@ -66,6 +70,32 @@ class ImportedMeetingResourceTests(SimpleTestCase):
     def assert_no_effects(self):
         for name, mocked in self.effects.items():
             self.assertEqual(mocked.call_count, 0, name)
+
+    def test_bound_recordings_exclude_another_call_for_employer_and_playback(self):
+        from coach_api.migrated_session_scope import SessionContext
+        from learner_api.imported_meeting_resources import stored_recording
+
+        self.account = SimpleNamespace(role='employer', subject_id=91)
+        self.record.graph_event_id = 'graph-71'
+        self.snapshot['artifacts'] = [
+            {'artifact_type': 'recording', 'graph_artifact_id': artifact,
+             'call_id': call, 'created_datetime': '2026-10-28T10:00:00Z',
+             'end_datetime': '2026-10-28T10:30:00Z',
+             'metadata': {'callId': call, '_lms_graph_event_id': 'graph-71'}}
+            for artifact, call in (('rec-1', 'claimed-call'), ('rec-other', 'other-call'))
+        ]
+        with patch('coach_api.bound_actual_session.bound_session', return_value=SimpleNamespace(
+                context=SessionContext('claimed-call', 'report-1', 'online-1', 1))), \
+             patch('coach_api.views.build_coach_meeting_attendance_tracker', return_value={}):
+            from coach_api.models import ImportedReviewInstance
+            ImportedReviewInstance.objects.filter.return_value.__getitem__.return_value = [SimpleNamespace(pk=1)]
+            result = self.request('employer')
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual([row['graph_artifact_id'] for row in json.loads(result.content)['artifacts']], ['rec-1'])
+            self.archive.reset_mock()
+            denied = stored_recording(RequestFactory().get('/content/'), self.record, 'rec-other')
+            self.assertEqual(denied.status_code, 404)
+            self.archive.assert_not_called()
 
     def test_learner_get_is_stored_only_for_each_family_and_stage(self):
         self.check_families("learner")
@@ -109,6 +139,49 @@ class ImportedMeetingResourceTests(SimpleTestCase):
         artifact = json.loads(response.content)["artifacts"][0]
         self.assertEqual(artifact["graph_artifact_id"], "rec-1")
         self.assertFalse(artifact["content_available"])
+        self.assert_no_effects()
+
+    def test_verified_unarchived_recording_can_play_for_owned_learner_and_employer(self):
+        from io import BytesIO
+        from coach_api.actual_session_resolution import VerifiedMeetingTarget
+
+        self.record.pk = 17
+        self.record.graph_event_id = 'graph-71'
+        self.snapshot['artifacts'] = [{
+            'artifact_type': 'recording', 'graph_artifact_id': 'rec-1',
+            'metadata': {'_lms_graph_event_id': 'graph-71',
+                         '_lms_verified_online_meeting_id': 'meeting-1', 'meetingId': 'meeting-1'},
+        }]
+        self.archive.return_value = ''
+        target = VerifiedMeetingTarget('users/synthetic/onlineMeetings/meeting-1',
+            'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'meeting-1', 17,
+            'graph-71', 'synthetic-fingerprint')
+        def resolve(_record, *, identity_out):
+            identity_out['target'] = target
+            return target.base_path, None
+        with patch.object(views, 'has_graph_credentials', return_value=True), \
+             patch('coach_api.actual_session_resolution.review_meeting_target', side_effect=resolve), \
+             patch.object(views, 'get_graph_settings', return_value={'base_url': 'https://graph.microsoft.test/v1.0'}), \
+             patch.object(views, 'microsoft_graph_token', return_value='synthetic-token'), \
+             patch('coach_api.imported_recording_playback._open_graph') as fetch:
+            for portal in ('learner', 'employer'):
+                for status in ('scheduled', 'awaiting-signature', 'completed'):
+                    with self.subTest(portal=portal, status=status):
+                        self.account = SimpleNamespace(role=portal, subject_id=71 if portal == 'learner' else 91)
+                        self.record.status = status
+                        listed = json.loads(self.request(portal).content)['artifacts'][0]
+                        self.assertFalse(listed['content_available'])
+                        self.assertTrue(listed['graph_playback_candidate'])
+                        upstream = BytesIO(b'synthetic video')
+                        upstream.headers = {'Content-Type': 'video/mp4'}
+                        upstream.status = 200
+                        fetch.return_value = upstream
+                        response = self.request(portal, content=True)
+                        self.assertEqual(response.status_code, 200)
+                        self.assertEqual(b''.join(response.streaming_content), b'synthetic video')
+                        self.assertEqual(response['Cache-Control'], 'private, no-store')
+            self.assertEqual(fetch.call_count, 6)
         self.assert_no_effects()
 
     def test_missing_or_unreadable_storage_is_not_silently_refreshed(self):

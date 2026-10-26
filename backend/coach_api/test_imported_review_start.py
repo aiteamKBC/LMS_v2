@@ -16,8 +16,8 @@ class ImportedStartTests(SimpleTestCase):
     def setUp(self):
         self.overlay = SimpleNamespace(pk=3, event_key='imported-review:source-7',
             owner_email='coach@example.invalid', learner_id=41, source_review_id=7,
-            status='scheduled', completed_at=None, template_snapshot={'sections': [{'id': 'section'}]},
-            answers={'answer': 'Keep'}, meeting_intelligence={}, save=Mock(),
+            status='scheduled', completed_at=None, template_snapshot={'sections': [{'id': 'section', 'fields': []}]},
+            answers={'answer': 'Keep'}, meeting_intelligence={}, updated_at=timezone.now(), save=Mock(),
             migrated_signatures=Mock())
         self.overlay.migrated_signatures.exists.return_value = False
         self.calendar = SimpleNamespace(pk=8, event_key=self.overlay.event_key,
@@ -48,7 +48,7 @@ class ImportedStartTests(SimpleTestCase):
     def test_initialized_psp_starts_without_other_psp_lifecycle_work(self):
         self.definition['historicalReview']['type'] = 'Personal Support Plan'
         response, _ = self.start()
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(self.overlay.status, 'in-progress')
         self.assertEqual(self.calendar.status, 'in-progress')
 
@@ -191,23 +191,35 @@ class ImportedStartTests(SimpleTestCase):
         snapshot = self.snapshot()
         snapshot['attendanceReports'] = []
         snapshot['artifacts'] = [{'artifact_type': 'transcript', 'graph_artifact_id': 'segment', 'call_id': 'call',
-            'created_datetime': start.isoformat(), 'end_datetime': timezone.now().isoformat(), 'transcript_text': 'Synthetic content'}]
+            'created_datetime': start.isoformat(), 'end_datetime': timezone.now().isoformat(),
+            'transcript_text': 'Synthetic content', 'transcript_vtt': 'WEBVTT\n\nSynthetic content'}]
         request = RequestFactory().post('/', data='{}', content_type='application/json')
         handler = migrated_review_check_session
         while hasattr(handler, '__wrapped__'): handler = handler.__wrapped__
         with patch('coach_api.migrated_intelligence_views._association', return_value=(self.overlay, self.calendar, {})), \
              patch('coach_api.migrated_intelligence_views._checked_lock', return_value=(self.overlay, self.calendar, None)), \
-             patch('coach_api.views.stored_coach_meeting_snapshot', return_value={'artifacts': [], 'storage': {'stored': True}}), \
-             patch('coach_api.views.fetch_coach_meeting_graph_snapshot', return_value=(snapshot, None, 200)), \
+             patch('coach_api.views.stored_coach_meeting_snapshot', return_value={
+                 'artifacts': [{**snapshot['artifacts'][0], 'metadata': {
+                     '_lms_graph_event_id': self.calendar.graph_event_id,
+                     '_lms_verified_online_meeting_id': 'synthetic-meeting'}}],
+                 'storage': {'stored': True}}), \
+             patch('coach_api.views.fetch_coach_meeting_graph_snapshot',
+                   side_effect=lambda record, **options: (
+                       options['target_resolver'](record) and snapshot, None, 200)), \
+             patch('coach_api.actual_session_resolution.review_meeting_target',
+                   side_effect=lambda _record, *, identity_out: (
+                       identity_out.update(target=SimpleNamespace(online_meeting_id='synthetic-meeting'))
+                       or ('users/synthetic/onlineMeetings/synthetic-meeting', None))), \
              patch('django.db.transaction.atomic', return_value=nullcontext()), \
-             patch('coach_api.views.persist_coach_meeting_snapshots') as persist, \
+             patch('coach_api.views.persist_coach_meeting_snapshots', return_value={'stored': True}) as persist, \
+             patch('coach_api.views.stored_coach_meeting_transcript_for_summary', return_value={'artifactId': 'segment', 'text': 'Synthetic content'}), \
              patch('coach_api.views.openai_meeting_summary') as ai:
             response = handler(request, self.overlay.event_key)
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(json.loads(response.content)['code'], 'MEETING_END_NOT_CONFIRMED')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(json.loads(response.content)['intelligence']['meetingEndCode'], 'MEETING_END_PENDING')
         self.assertEqual(self.overlay.status, 'in-progress')
         self.assertEqual(self.overlay.answers, {'answer': 'Keep'})
-        persist.assert_not_called()
+        persist.assert_called_once()
         ai.assert_not_called()
 
     def test_psp_check_teams_evidence_starts_only_existing_scheduled_overlay(self):

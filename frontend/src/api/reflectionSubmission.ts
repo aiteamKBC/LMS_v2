@@ -28,6 +28,8 @@ export interface LearningReflectionSubmissionInput {
   selectedBenefits: string[];
   benefitExplanation: string;
   actualTimeHours: string;
+  /** A corrected reflection duration takes precedence when restoring a draft. */
+  reflectionTimeEdited?: boolean;
   completedDuringPaidHours: string;
   dateCompleted: string;
   otjhConfirmed: boolean;

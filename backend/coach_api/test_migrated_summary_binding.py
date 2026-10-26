@@ -106,14 +106,25 @@ class MigratedBindingFlowTests(TestCase):
             scheduled_time=time(10), duration_minutes=30, graph_event_id="synthetic", sync_state="synced", status="in-progress")
         self.definition = {"migratedForm": True, "readOnly": False, "instance": {"id": self.overlay.event_key, "learnerId": 42},
             "historicalReview": {"id": "7001", "type": "Monthly Coaching Meeting"}, "template": {"reviewTypeCode": "aptem_mcm"}}
-        self.snapshot = {"artifacts": [], "attendanceReports": [], "attendanceTracker": {"tracker": []},
-            "attendance": {"reports": [], "records": []}, "errors": [], "partial": False}
+        report_start = datetime.combine(self.calendar.scheduled_date, self.calendar.scheduled_time,
+                                        ZoneInfo(settings.TIME_ZONE))
+        ended_report = {"id": "synthetic-ended-report", "records": [],
+                        "meetingStartDateTime": report_start.isoformat(),
+                        "meetingEndDateTime": (report_start + timedelta(minutes=20)).isoformat()}
+        self.snapshot = {"artifacts": [], "attendanceReports": [ended_report],
+            "attendanceTracker": {"tracker": []},
+            "attendance": {"reports": [ended_report], "records": []}, "errors": [], "partial": False}
 
     def check(self, *, summary=None, transcript="Synthetic transcript", ai_error=None, during_fetch=None, during_generation=None, snapshot=None):
-        def fetch(_record, *, target_error_handler, transcript_collection_fetcher, attendance_response_validator):
+        saved = deepcopy(self.snapshot)
+        def fetch(_record, *, target_error_handler, transcript_collection_fetcher, transcript_content_selector,
+                  attendance_response_validator, independent_resources, target_resolver):
+            self.assertIs(independent_resources, True)
             self.assertIs(target_error_handler, intelligence._graph_target_failure)
             self.assertIs(transcript_collection_fetcher, intelligence._transcript_collection)
             self.assertIs(attendance_response_validator, validate_attendance_response)
+            self.assertTrue(callable(transcript_content_selector))
+            self.assertEqual(target_resolver(_record), ('synthetic/onlineMeetings/synthetic-meeting', None))
             if during_fetch:
                 during_fetch()
             current = deepcopy(snapshot or self.snapshot)
@@ -122,8 +133,13 @@ class MigratedBindingFlowTests(TestCase):
                 start = datetime.combine(self.calendar.scheduled_date, self.calendar.scheduled_time, ZoneInfo(settings.TIME_ZONE))
                 current['artifacts'] = [{'artifact_type': 'transcript', 'graph_artifact_id': 'artifact-one',
                     'created_datetime': start.isoformat(), 'end_datetime': (start + timedelta(minutes=20)).isoformat(),
-                    'call_id': 'synthetic-call'}]
+                    'call_id': 'synthetic-call', 'transcript_text': transcript,
+                    'transcript_vtt': f'WEBVTT\n\n{transcript}'}]
             return current, None, 200
+        def persist(_record, **kwargs):
+            saved.update(artifacts=deepcopy(kwargs['artifacts']), attendanceReports=deepcopy(kwargs['attendance_reports']),
+                         attendanceTracker=deepcopy(kwargs['attendance_tracker']), partial=False)
+            return {'stored': True}
         def generate(*_):
             if during_generation:
                 during_generation()
@@ -131,12 +147,17 @@ class MigratedBindingFlowTests(TestCase):
                 raise ai_error
             return summary or {"overview": "Original AI facts"}, "test-model"
         with patch.object(intelligence, "_coach_review", return_value=(OWNER, self.definition)), \
+             patch('coach_api.actual_session_resolution.review_meeting_target',
+                   side_effect=lambda _record, *, identity_out: (
+                       identity_out.update(target=SimpleNamespace(online_meeting_id='synthetic-meeting'))
+                       or ('synthetic/onlineMeetings/synthetic-meeting', None))), \
              patch.object(views, "fetch_coach_meeting_graph_snapshot", side_effect=fetch), \
-             patch.object(views, "persist_coach_meeting_snapshots", return_value={"stored": True}), \
-             patch.object(views, "stored_coach_meeting_snapshot", return_value=self.snapshot), \
+             patch.object(views, "persist_coach_meeting_snapshots", side_effect=persist), \
+             patch.object(views, "stored_coach_meeting_snapshot", side_effect=lambda *a, **kw: deepcopy(saved)), \
              patch.object(views, "stored_coach_meeting_transcript_for_summary", return_value={"artifactId": "artifact-one", "text": transcript} if transcript else None), \
              patch.object(views, "openai_meeting_summary", side_effect=generate) as ai:
-            response = unwrap(intelligence.migrated_review_check_session)(self.factory.post("/"), self.overlay.event_key)
+            response = unwrap(intelligence.migrated_review_check_session)(self.factory.post("/",
+                data=json.dumps({'generateSummary': True}), content_type='application/json'), self.overlay.event_key)
         self.overlay.refresh_from_db()
         return response, ai
 

@@ -173,7 +173,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     if lineage_only:
         payload = '''CASE WHEN jsonb_typeof(p.source_payload)='object'
             THEN to_jsonb(p)-'source_payload'||jsonb_build_object('source_payload',
-                 jsonb_build_object('original_source_ref',p.source_payload->'original_source_ref'))
+                 jsonb_build_object('retakeTimeChoice',p.source_payload->'retakeTimeChoice','original_source_ref',p.source_payload->'original_source_ref'))
             ELSE to_jsonb(p) END'''
     if dashboard_metadata or (training_summary and not catalogue_summary):
         # Dashboard summaries need the course's introduction marker and the
@@ -182,7 +182,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
         # source_payload_metadata supports encoded JSON without unsafe SQL casts.
         payload = '''CASE WHEN jsonb_typeof(p.source_payload)='object'
             THEN to_jsonb(p)-'source_payload'||jsonb_build_object('source_payload',
-            jsonb_build_object('original_source_ref',p.source_payload->'original_source_ref',
+            jsonb_build_object('retakeTimeChoice',p.source_payload->'retakeTimeChoice','original_source_ref',p.source_payload->'original_source_ref',
                 'course_display_placement',jsonb_build_object(
                     'course_id',p.source_payload->'course_display_placement'->'course_id',
                     'section',p.source_payload->'course_display_placement'->'section'),
@@ -195,7 +195,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
         columns = ','.join('progress.' + field for field in (
             'id', 'learner_id', 'kind', 'module_ref', 'module_title', 'component_ref',
             'component_title', 'component_type', 'quiz_ref', 'passed', 'reported_time',
-            'submitted_at', 'started_at', 'time_tracking_source', 'claimed_seconds',
+            'submitted_at', 'declared_completed_at', 'started_at', 'time_tracking_source', 'claimed_seconds',
             'verified_seconds', 'expected_otjh', 'source_system', 'component_link_source',
             'actual_seconds', 'accepted', 'reporting_started_at', 'reporting_ended_at',
             'reporting_month', 'achieved_score', 'total_score', 'activity_status'))
@@ -203,14 +203,14 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             # Narrow evidence before materialising/serialising the canonical
             # CTE row, rather than putting its full body in to_jsonb(p) first.
             columns += """,CASE WHEN jsonb_typeof(progress.source_payload)='object'
-                THEN jsonb_build_object('original_source_ref',progress.source_payload->'original_source_ref')
+                THEN jsonb_build_object('retakeTimeChoice',progress.source_payload->'retakeTimeChoice','original_source_ref',progress.source_payload->'original_source_ref')
                 ELSE progress.source_payload END AS source_payload,
                 progress.feed_kind,to_jsonb(progress)->'actual_basis' AS actual_basis"""
             payload = 'to_jsonb(p)'
         elif training_summary or monthly_summary:
             columns += ",progress.source_payload,progress.feed_kind,to_jsonb(progress)->'actual_basis' AS actual_basis"
         else:
-            columns += ",jsonb_build_object('original_source_ref',progress.source_payload->>'original_source_ref') AS source_payload"
+            columns += ",jsonb_build_object('retakeTimeChoice',progress.source_payload->'retakeTimeChoice','original_source_ref',progress.source_payload->>'original_source_ref') AS source_payload"
     segment_payload = "jsonb_build_object('id',s.id)" if training_summary else 'to_jsonb(s)'
     historical_payload = ("jsonb_build_object('source_system',h.source_system,"
         "'source_course_ref',h.source_course_ref,'source_activity_id',h.source_activity_id)"
@@ -326,13 +326,13 @@ def weekly_hour_records(owner):
         return entries_for(owner, lineage_only=True)
     from .current_learning import project_current, merge_attempts, subject_attempt_rows
     fields = ('id', 'learner_id', 'kind', 'module_ref', 'module_title', 'component_ref',
-              'component_type', 'quiz_ref', 'passed', 'reported_time', 'submitted_at',
+              'component_type', 'quiz_ref', 'passed', 'reported_time', 'submitted_at', 'declared_completed_at',
               'started_at', 'time_tracking_source', 'claimed_seconds', 'verified_seconds',
               'source_system', 'component_link_source', 'actual_seconds', 'accepted')
     records = query('''SELECT ''' + ','.join('progress.' + field for field in fields) + ''',
         to_jsonb(progress)->>'actual_basis' AS actual_basis,
         CASE WHEN jsonb_typeof(progress.source_payload)='object' THEN
-          jsonb_build_object('original_source_ref',progress.source_payload->'original_source_ref')
+          jsonb_build_object('retakeTimeChoice',progress.source_payload->'retakeTimeChoice','original_source_ref',progress.source_payload->'original_source_ref')
           ELSE progress.source_payload END AS source_payload,
         CASE WHEN EXISTS(SELECT 1 FROM "Learner".learner_activity_reporting_segments s
             WHERE s.progress_id=progress.id AND s.learner_id=progress.learner_id AND s.learner_id=%s)
@@ -371,13 +371,17 @@ def progress_records_with_completion(records, current):
     so they fill the empty ledger fields rather than leaving it at zero hours.
     """
     by_id = {str(record['id']): record for record in current}
+    superseded = {str(ident) for record in current for ident in record.get('retake_superseded_ids', [])}
     result = []
     for record in records:
+        if str(record['id']) in superseded:
+            continue
         latest = by_id.get(str(record['id']), {})
         fields = ('completed', 'achieved_score', 'total_score')
-        if is_unsynchronised_direct_save(record):
+        if is_unsynchronised_direct_save(record) or latest.get('retake_timing_applied'):
             fields += ('accepted', 'actual_seconds', 'activity_status', 'reporting_month',
-                       'reporting_started_at', 'reporting_ended_at')
+                       'reporting_started_at', 'reporting_ended_at', 'reporting_timestamp_label',
+                       'retake_timing_applied', 'completion_reporting_date')
         result.append({**record, **{key: latest[key] for key in fields if key in latest}})
     existing = {str(record['id']) for record in records}
     result.extend(record for record in current
@@ -387,8 +391,43 @@ def progress_records_with_completion(records, current):
 
 
 def allocations(entry):
-    """Use the progress row's own month and seconds; retain segments as history."""
-    return [entry]
+    """Allocate October-onward submissions by their saved completion instant.
+
+    This is a read projection: original audit timestamps, seconds, acceptance,
+    historical allocations and reporting segments are never rewritten.
+    """
+    if entry.get('retake_timing_applied'):
+        return [entry]
+    submitted = completion_reporting_instant(entry.get('submitted_at'))
+    if not submitted or submitted.strftime('%Y-%m') < '2026-10':
+        return [entry]
+    # Imported historical activity can carry a later submission/import date.
+    if entry.get('reporting_month') and entry['reporting_month'] < '2026-10':
+        return [entry]
+    completed = completion_reporting_instant(entry.get('declared_completed_at')) or submitted
+    started = completion_reporting_instant(entry.get('started_at') or entry.get('reporting_started_at'))
+    # A backdated declaration does not establish when the learner started.
+    # Show a range only when the saved start belongs to this completion day.
+    if not started or started.date() != completed.date() or started.timestamp() > completed.timestamp():
+        started = None
+    label = completed.strftime('%H:%M:%S')
+    if started and started.timestamp() < completed.timestamp():
+        label = f"{started:%H:%M:%S} - {completed:%H:%M:%S}"
+    return [{**entry, 'reporting_month': completed.strftime('%Y-%m'),
+             'reporting_started_at': started, 'reporting_ended_at': completed,
+             'reporting_timestamp_label': label,
+             'completion_reporting_date': completed.date().isoformat()}]
+
+
+def completion_reporting_instant(value):
+    """Read database instants in business time, never machine-local time."""
+    if not value:
+        return None
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value.replace('Z', '+00:00'))
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UK)
+    return value.astimezone(UK)
 
 
 def recorded_seconds(entry):
@@ -464,6 +503,8 @@ def rows_for(owner, records=None):
         declared_date = input_activity_date(entry)
         if declared_date:
             item['activity_date'] = declared_date
+        if entry.get('completion_reporting_date'):
+            item['activity_date'] = entry['completion_reporting_date']
         # Translate the historical system label for display without rewriting the ledger.
         if timestamp_label == '\u062a\u0642\u062f\u064a\u0631\u064a \u2014 \u064a\u062d\u062a\u0627\u062c \u0627\u0639\u062a\u0645\u0627\u062f':
             timestamp_label = 'Estimated — approval required'
@@ -1301,6 +1342,17 @@ def otjh_summary_bulk(learner_ids):
     if not owners:
         return result
     profile_ids = [int(owner['id']) for owner in owners.values()]
+    retake_profiles = {int(item['learner_id']) for item in query('''
+        SELECT DISTINCT learner_id FROM "Learner".learner_progress_entries
+        WHERE learner_id=ANY(%s) AND deleted_at IS NULL
+          AND source_payload->>'retakeTimeChoice' IN ('keep','new')''', [profile_ids])}
+    relation = query('SELECT to_regclass(%s) AS name', ['"Learner".subject_activity_attempts'])
+    if relation and relation[0].get('name'):
+        selected_enrolments = {int(item['enrolment_id']) for item in query('''
+            SELECT DISTINCT enrolment_id FROM "Learner".subject_activity_attempts
+            WHERE enrolment_id=ANY(%s) AND submitted_at IS NOT NULL AND completed IS TRUE
+              AND definition->'studyTime'->>'retakeTimeChoice' IN ('keep','new')''', [list(owners)])}
+        retake_profiles.update(int(owner['id']) for key, owner in owners.items() if key in selected_enrolments)
     records = {profile_id: [] for profile_id in profile_ids}
     # Aggregate before transfer: full caseloads can contain many historical rows.
     # Mirror number(): ignore non-finite values and clamp negative seconds to 0.
@@ -1329,7 +1381,7 @@ def otjh_summary_bulk(learner_ids):
             targets[int(item['learner_id'])][item['report_month']] = float(item['target_hours'])
     for enrolment_id, owner in owners.items():
         profile_id = int(owner['id'])
-        if owner.get('progress_transfer_active'):
+        if owner.get('progress_transfer_active') or profile_id in retake_profiles:
             records[profile_id] = entries_for(owner, lineage_only=True)
         result[enrolment_id] = {
             'profile_id': profile_id,
@@ -1387,13 +1439,13 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
     learner_profile_ids = [int(owner['id']) for owner in valid_owners.values()]
     progress_rows = query('''SELECT p.learner_id AS owner_id,p.id,p.kind,
         p.module_title,p.component_ref,p.component_title,p.component_type,p.quiz_ref,
-        p.passed,p.feedback,p.reported_time,p.submitted_at,p.started_at,
+        p.passed,p.feedback,p.reported_time,p.submitted_at,p.declared_completed_at,p.started_at,
         p.time_tracking_source,p.claimed_seconds,p.verified_seconds,p.expected_otjh,
         p.source_system,p.component_link_source,p.actual_seconds,p.accepted,
         p.reporting_started_at,p.reporting_ended_at,p.reporting_month,
         p.achieved_score,p.total_score,p.activity_status,
-        CASE WHEN p.source_payload ? 'original_source_ref'
-             THEN jsonb_build_object('original_source_ref',p.source_payload->>'original_source_ref')
+        CASE WHEN jsonb_typeof(p.source_payload)='object'
+             THEN jsonb_build_object('retakeTimeChoice',p.source_payload->'retakeTimeChoice','original_source_ref',p.source_payload->>'original_source_ref')
              ELSE '{}'::jsonb END AS source_payload
         FROM "Learner".learner_progress_entries p
         WHERE p.learner_id=ANY(%s) AND p.deleted_at IS NULL

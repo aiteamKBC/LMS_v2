@@ -1,8 +1,6 @@
 type ModuleOption = { id: string; title: string };
 export type AttendanceModuleGroup = ModuleOption & { moduleIds: string[] };
 
-const G1_RAY_TITLE = 'G1- Ray - Project Management Professional - Jan 26';
-
 function normalizedModuleTitle(title: string): string {
   return title.normalize('NFKC').replace(/[\u2010-\u2015]/g, '-').replace(/\s+/g, ' ').trim();
 }
@@ -22,29 +20,34 @@ export function attendanceLecturesForDisplay<T extends { moduleId: string; modul
   return lectures.filter(lecture => !excluded.has(lecture.moduleId) && !isLearningOnlyModule(lecture.module));
 }
 
-function confirmedAlias(title: string): string | null {
+function attendanceModuleName(title: string) {
   const normalized = normalizedModuleTitle(title);
-  // These register names are confirmed aliases of the G1 course.
-  // Keep the group and intake: G2, other dates and other courses stay separate.
-  return /^g1\s*-\s*(?:dr\.?\s*)?ray\s*-\s*project management professional\s*-\s*jan 26$/i.test(normalized)
-    ? G1_RAY_TITLE : null;
+  // Match dashboard_overview.py: remove the honorific, keeping every other word.
+  const withoutDr = normalized.replace(/(^|[\s(:-])dr(?:\.\s*|\s+)(?=\p{L})/giu, '$1').trim();
+  return { title: withoutDr, key: withoutDr.replace(/\s*-\s*/g, '-').toLowerCase(), hasDr: withoutDr !== normalized };
 }
 
 /** Group the selector only; original lecture identities still drive every action. */
 export function attendanceModuleGroups(options: readonly ModuleOption[]): AttendanceModuleGroup[] {
   const groups = new Map<string, AttendanceModuleGroup>();
+  const names = options.map(option => attendanceModuleName(option.title));
+  const aliasKeys = new Set(names.filter(name => name.hasDr && name.key).map(name => name.key));
   for (const option of options) {
     if (isLearningOnlyModule(option.title)) continue;
-    const alias = confirmedAlias(option.title);
-    const key = alias ? `alias:${alias}` : `module:${option.id}`;
+    const name = attendanceModuleName(option.title);
+    const alias = aliasKeys.has(name.key);
+    const key = alias ? `alias:${name.key}` : `module:${option.id}`;
     const existing = groups.get(key);
     if (!existing) {
-      groups.set(key, { ...option, title: alias || option.title, moduleIds: [option.id] });
+      groups.set(key, { ...option, title: alias ? name.title : option.title, moduleIds: [option.id] });
       continue;
     }
     if (!existing.moduleIds.includes(option.id)) existing.moduleIds.push(option.id);
     // Prefer the assigned module so the current-module default stays selected.
-    if (option.id.startsWith('native:') && !existing.id.startsWith('native:')) existing.id = option.id;
+    if (option.id.startsWith('native:') && !existing.id.startsWith('native:')) {
+      existing.id = option.id;
+      existing.title = alias ? name.title : option.title;
+    }
   }
   return [...groups.values()];
 }
