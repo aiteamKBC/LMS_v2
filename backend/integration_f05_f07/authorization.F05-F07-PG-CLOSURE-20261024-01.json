@@ -1,0 +1,16 @@
+{
+  "authorization_id": "F05-F07-PG-CLOSURE-20261024-01",
+  "project_id": "green-term-97168878",
+  "branch_id": "br-damp-river-abvy0gv6",
+  "parent_branch_id": "br-raspy-sky-abvs8lq9",
+  "endpoint_id": "ep-patient-paper-abu3q4y6",
+  "host": "ep-patient-paper-abu3q4y6.eu-west-2.aws.neon.tech",
+  "database": "neondb",
+  "role": "neondb_owner",
+  "starts_at": "2026-10-24T12:13:52Z",
+  "expires_at": "2026-10-24T14:13:52Z",
+  "approver": "Project Owner",
+  "rollback_owner": "Project Owner",
+  "ledger_sha256": "db539ffd7a63b7ae29ee104c94fd9b024e989fd0bf458319895325e88b5beec8",
+  "run_id": "f05f07_27d706f8e1984ca594e948faab65c66d"
+}

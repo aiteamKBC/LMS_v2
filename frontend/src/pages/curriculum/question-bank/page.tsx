@@ -9,6 +9,8 @@ import { QuizQuestionImage } from '@/components/feature/QuizQuestionImage';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
 
+import { questionBankQueryString } from './pagination';
+
 const curriculumNav = roleNavMap.curriculum;
 
 type QuestionType = 'single_choice' | 'multiple_choice' | 'true_false' | 'matching' | 'image_matching' | 'keywords' | 'fill_gap' | 'ordering';
@@ -62,6 +64,14 @@ interface QuestionBankData {
   questions: QuestionBankQuestion[];
   quizzes: QuestionBankQuiz[];
   totalQuestions: number;
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+    hasNext: boolean;
+    hasPrevious: boolean;
+  };
 }
 
 interface QuestionBankQuiz {
@@ -98,7 +108,7 @@ function statusIcon(status: string) {
   return 'ri-file-edit-line';
 }
 
-const QUESTION_BANK_QUERY_DEFAULTS = { programme: 'all', q: '', type: 'all', status: 'all' };
+const QUESTION_BANK_QUERY_DEFAULTS = { programme: 'all', q: '', type: 'all', status: 'all', page: '1' };
 
 export default function QuestionBankPage() {
   const { success, error: toastError } = useToast();
@@ -109,10 +119,11 @@ export default function QuestionBankPage() {
   const bankSearch = String(query.q);
   const typeFilter = String(query.type) as 'all' | QuestionType;
   const statusFilter = String(query.status);
-  const setBankProgramme = (value: string) => setQuery({ programme: value });
-  const setBankSearch = (value: string) => setQuery({ q: value });
-  const setTypeFilter = (value: 'all' | QuestionType) => setQuery({ type: value });
-  const setStatusFilter = (value: string) => setQuery({ status: value });
+  const bankPage = Math.max(1, Math.floor(Number(query.page)) || 1);
+  const setBankProgramme = (value: string) => setQuery({ programme: value, page: '1' });
+  const setBankSearch = (value: string) => setQuery({ q: value, page: '1' });
+  const setTypeFilter = (value: 'all' | QuestionType) => setQuery({ type: value, page: '1' });
+  const setStatusFilter = (value: string) => setQuery({ status: value, page: '1' });
   const [bankLoading, setBankLoading] = useState(true);
   const [bankError, setBankError] = useState('');
   const [selectedQuestion, setSelectedQuestion] = useState<QuestionBankQuestion | null>(null);
@@ -122,12 +133,16 @@ export default function QuestionBankPage() {
   const loadQuestionBank = useCallback(async (background = false, signal?: AbortSignal) => {
     if (!background) setBankLoading(true);
     setBankError('');
-    const params = new URLSearchParams();
-    params.set('programme', bankProgramme);
-    if (bankSearch.trim()) params.set('search', bankSearch.trim());
+    const params = questionBankQueryString({
+      programme: bankProgramme,
+      search: bankSearch,
+      questionType: typeFilter,
+      quizStatus: statusFilter,
+      page: bankPage,
+    });
 
     try {
-      const response = await fetch(`/quiz_api/question-bank/?${params.toString()}`, { signal });
+      const response = await fetch(`/quiz_api/question-bank/?${params}`, { signal });
       if (!response.ok) throw new Error('Could not load question bank');
       const data: QuestionBankData = await response.json();
       setQuestionBank(data);
@@ -138,7 +153,7 @@ export default function QuestionBankPage() {
     } finally {
       setBankLoading(false);
     }
-  }, [bankProgramme, bankSearch]);
+  }, [bankPage, bankProgramme, bankSearch, statusFilter, typeFilter]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -183,13 +198,13 @@ export default function QuestionBankPage() {
   const visibleKsbTaggedCount = filteredQuestions.filter(question => /(\bksb\b|knowledge|skill|behaviour|behavior|k\d|s\d|b\d)/i.test(question.explanation)).length;
   const ksbTaggedPercent = visibleQuestionCount ? Math.round((visibleKsbTaggedCount / visibleQuestionCount) * 100) : 0;
   const hasActiveQuestionFilters = typeFilter !== 'all' || statusFilter !== 'all' || Boolean(bankSearch.trim());
-  const statusOptions = useMemo(() => {
-    const statuses = Array.from(new Set((questionBank?.questions ?? []).map(question => question.quizStatus).filter(Boolean)));
-    return [
-      { value: 'all', label: 'All statuses' },
-      ...statuses.sort().map(status => ({ value: status, label: statusLabel(status) })),
-    ];
-  }, [questionBank?.questions]);
+  const statusOptions = useMemo(() => [
+    { value: 'all', label: 'All statuses' },
+    ...['draft', 'published', 'pending', 'validating', 'private'].map(status => ({
+      value: status,
+      label: statusLabel(status),
+    })),
+  ], []);
   const typeOptions: { value: 'all' | QuestionType; label: string }[] = useMemo(() => [
     { value: 'all' as const, label: 'All types' },
     ...questionTypeOptions,
@@ -352,7 +367,7 @@ export default function QuestionBankPage() {
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                   <div>
                     <p className="text-sm font-heading font-bold text-foreground-900">{bankProgramme === 'all' ? 'All programme questions' : bankProgramme === '__unassigned__' ? 'Unassigned questions' : bankProgramme}</p>
-                    <p className="text-xs text-[#647083] mt-1">{filteredQuestions.length} of {questionBank?.questions.length ?? 0} questions shown</p>
+                    <p className="text-xs text-[#647083] mt-1">{filteredQuestions.length} on this page, {questionBank?.pagination.total ?? 0} matching questions</p>
                   </div>
                   <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:items-center">
                     <ThemedSelect
@@ -391,7 +406,7 @@ export default function QuestionBankPage() {
                   {hasActiveQuestionFilters && (
                     <button
                       type="button"
-                      onClick={() => setQuery({ type: 'all', status: 'all', q: '' })}
+                      onClick={() => setQuery({ type: 'all', status: 'all', q: '', page: '1' })}
                       className="mt-4 h-9 px-4 rounded-lg bg-[#5b2dbb] text-white text-xs font-semibold hover:bg-[#4c1d95] transition-smooth"
                     >
                       Clear filters
@@ -451,6 +466,31 @@ export default function QuestionBankPage() {
                       })}
                     </div>
                   ))}
+                  <div className="flex flex-col items-center justify-between gap-3 rounded-xl border border-[#dfe4ec] bg-white px-4 py-3 sm:flex-row">
+                    <p className="text-xs text-[#647083]">
+                      Showing {(questionBank.pagination.page - 1) * questionBank.pagination.pageSize + 1}-
+                      {Math.min(questionBank.pagination.page * questionBank.pagination.pageSize, questionBank.pagination.total)} of {questionBank.pagination.total}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={!questionBank.pagination.hasPrevious}
+                        onClick={() => setQuery({ page: String(questionBank.pagination.page - 1) })}
+                        className="h-9 rounded-lg border border-[#d8dde6] px-3 text-xs font-semibold text-[#475569] disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Previous
+                      </button>
+                      <span className="text-xs font-semibold text-[#647083]">Page {questionBank.pagination.page} of {questionBank.pagination.totalPages}</span>
+                      <button
+                        type="button"
+                        disabled={!questionBank.pagination.hasNext}
+                        onClick={() => setQuery({ page: String(questionBank.pagination.page + 1) })}
+                        className="h-9 rounded-lg border border-[#d8dde6] px-3 text-xs font-semibold text-[#475569] disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
             </section>

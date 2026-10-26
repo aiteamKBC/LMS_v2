@@ -108,6 +108,12 @@ export default [
       globals: globals.node,
     },
   },
+  {
+    files: ['tests/**/*.ts'],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
   // Only enforce this rule for the router config file to avoid false positives elsewhere.
   {
     files: ['src/router/config.tsx'],

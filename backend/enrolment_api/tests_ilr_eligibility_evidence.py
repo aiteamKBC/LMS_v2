@@ -14,6 +14,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from enrolment_api import ilr_eligibility_evidence as view
+from learner_api.malware_scanning import MalwareDetected
 
 BASE = "/enrolment_api/extended-ilr/apprenticeship/41/eligibility-evidence/"
 AZURE = dict(
@@ -53,6 +54,9 @@ class EligibilityEvidenceTests(SimpleTestCase):
             patch.object(view.uploads, "move_blob"),
             patch.object(view.uploads, "delete_blob"),
             patch.object(view, "get_download_sas", return_value="https://sas.example/file"),
+            patch.object(view.uploads, "_ensure_scanner_ready"),
+            patch.object(view.uploads, "_scan"),
+            patch.object(view.uploads, "_verified_scan_verdict", return_value="clean"),
         ]
         self.mocks = [p.start() for p in patches]
         for p in patches:
@@ -114,7 +118,7 @@ class EligibilityEvidenceTests(SimpleTestCase):
         self.assertEqual(self.delete.call_args.args[0], "evidence-approved")
 
     def test_a_file_failing_the_scan_is_moved_to_rejected_and_not_recorded(self):
-        with patch.object(view.uploads, "_scan", return_value="infected"):
+        with patch.object(view.uploads, "_verified_scan_verdict", side_effect=MalwareDetected("synthetic")):
             response = self._post()
 
         self.assertEqual(response.status_code, 422)

@@ -2,6 +2,13 @@
 from django.db import migrations, models, connections
 
 
+# Keep the migration and the unmanaged runtime model independent of role-level
+# search_path settings.  The accepted compatibility contract is the public
+# schema because existing runtime queries have always resolved this unqualified
+# table there on the reviewed LMS database.
+TIMING_DRAFT_TABLE = 'public"."learner_activity_timing_drafts'
+
+
 def _database_identity(connection):
     config = connection.settings_dict
     # Django's two URL parsers represent PostgreSQL's default port as either
@@ -32,6 +39,6 @@ class Migration(migrations.Migration):
             ('windows', models.JSONField(default=list)),
             ('elapsed_seconds', models.PositiveIntegerField(default=0)),
             ('updated_at', models.DateTimeField()),
-        ], options={'managed': False, 'db_table': 'learner_activity_timing_drafts'}),
+        ], options={'managed': False, 'db_table': TIMING_DRAFT_TABLE}),
         migrations.RunPython(install, hints={'learner_schema_migration': True}),
     ]

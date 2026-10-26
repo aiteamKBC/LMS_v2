@@ -988,6 +988,46 @@ AZURE_QUARANTINE_CONTAINER = os.environ.get("AZURE_QUARANTINE_CONTAINER", "evide
 AZURE_APPROVED_CONTAINER = os.environ.get("AZURE_APPROVED_CONTAINER", "evidence-approved")
 AZURE_REJECTED_CONTAINER = os.environ.get("AZURE_REJECTED_CONTAINER", "evidence-rejected")
 AZURE_SAS_TTL_MINUTES = int(os.environ.get("AZURE_SAS_TTL_MINUTES", "15"))
+
+# F06-I3D Defender for Storage integration.  Every release gate defaults off;
+# enabling the adapter still requires exact provider, Event Grid and private
+# container identities plus worker-only storage credentials.
+DEFENDER_STORAGE_INTEGRATION_ENABLED = (
+    os.environ.get("DEFENDER_STORAGE_INTEGRATION_ENABLED", "false").lower() == "true"
+)
+DEFENDER_ON_UPLOAD_SCANNING_VERIFIED = (
+    os.environ.get("DEFENDER_ON_UPLOAD_SCANNING_VERIFIED", "false").lower() == "true"
+)
+DEFENDER_EVENT_GRID_VERIFIED = (
+    os.environ.get("DEFENDER_EVENT_GRID_VERIFIED", "false").lower() == "true"
+)
+DEFENDER_PRIVATE_QUARANTINE_VERIFIED = (
+    os.environ.get("DEFENDER_PRIVATE_QUARANTINE_VERIFIED", "false").lower() == "true"
+)
+DEFENDER_STORAGE_ACCOUNT = os.environ.get("DEFENDER_STORAGE_ACCOUNT", "").strip().lower()
+DEFENDER_QUARANTINE_CONTAINER = os.environ.get("DEFENDER_QUARANTINE_CONTAINER", "").strip().lower()
+DEFENDER_APPROVED_STORAGE_ACCOUNT = os.environ.get(
+    "DEFENDER_APPROVED_STORAGE_ACCOUNT", ""
+).strip().lower()
+DEFENDER_APPROVED_CONTAINER = os.environ.get("DEFENDER_APPROVED_CONTAINER", "").strip().lower()
+DEFENDER_QUARANTINE_STORAGE_SAS = os.environ.get("DEFENDER_QUARANTINE_STORAGE_SAS", "")
+DEFENDER_APPROVED_STORAGE_SAS = os.environ.get("DEFENDER_APPROVED_STORAGE_SAS", "")
+DEFENDER_EVENT_GRID_TENANT_ID = os.environ.get("DEFENDER_EVENT_GRID_TENANT_ID", "").strip().lower()
+DEFENDER_EVENT_GRID_AUDIENCE = os.environ.get("DEFENDER_EVENT_GRID_AUDIENCE", "").strip()
+DEFENDER_EVENT_GRID_PUBLISHER_APP_ID = os.environ.get(
+    "DEFENDER_EVENT_GRID_PUBLISHER_APP_ID", ""
+).strip().lower()
+DEFENDER_EVENT_GRID_SUBSCRIPTION_NAME = os.environ.get(
+    "DEFENDER_EVENT_GRID_SUBSCRIPTION_NAME", ""
+).strip()
+DEFENDER_EVENT_GRID_TOPIC = os.environ.get("DEFENDER_EVENT_GRID_TOPIC", "").strip()
+DEFENDER_EVENT_GRID_MAX_BODY_BYTES = int(
+    os.environ.get("DEFENDER_EVENT_GRID_MAX_BODY_BYTES", "262144")
+)
+DEFENDER_EVENT_GRID_MAX_EVENTS = int(os.environ.get("DEFENDER_EVENT_GRID_MAX_EVENTS", "16"))
+DEFENDER_EVENT_GRID_MAX_DELIVERY_COUNT = int(
+    os.environ.get("DEFENDER_EVENT_GRID_MAX_DELIVERY_COUNT", "30")
+)
 AZURE_LEARNER_PHOTOS_CONTAINER = os.environ.get("AZURE_LEARNER_PHOTOS_CONTAINER") or "learner-photos"
 AZURE_MATERIALS_STORAGE_ACCOUNT = os.environ.get("AZURE_MATERIALS_STORAGE_ACCOUNT", "")
 AZURE_MATERIALS_STORAGE_KEY = os.environ.get("AZURE_MATERIALS_STORAGE_KEY", "")

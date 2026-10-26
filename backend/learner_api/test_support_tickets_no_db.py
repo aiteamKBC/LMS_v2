@@ -8,6 +8,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import DatabaseError
 from . import support_ticket_files as files
 from . import support_tickets as tickets
+from .malware_scanning import MalwareDetected
 
 
 class SupportTicketsTests(SimpleTestCase):
@@ -266,7 +267,10 @@ class SupportTicketFileTests(SimpleTestCase):
              patch.object(files.storage, 'upload_to_quarantine', side_effect=[None, RuntimeError('storage unavailable')]), \
              patch.object(files.storage, 'move_blob') as move, \
              patch.object(files.storage, 'delete_blob') as delete, \
-             patch('learner_api.evidence._scan', return_value='clean'), self.assertRaises(files.AttachmentError):
+             patch('learner_api.evidence._ensure_scanner_ready'), \
+             patch('learner_api.evidence._scan'), \
+             patch('learner_api.evidence._verified_scan_verdict', return_value='clean'), \
+             self.assertRaises(files.AttachmentError):
             try:
                 with files.upload_session() as staged:
                     files.save(prepared, staged)
@@ -279,7 +283,10 @@ class SupportTicketFileTests(SimpleTestCase):
         with patch.object(files.storage, 'azure_configured', return_value=True), \
              patch.object(files.storage, 'upload_to_quarantine'), patch.object(files.storage, 'move_blob') as move, \
              patch.object(files.storage, 'delete_blob') as delete, \
-             patch('learner_api.evidence._scan', return_value='infected'), self.assertRaises(files.AttachmentError):
+             patch('learner_api.evidence._ensure_scanner_ready'), \
+             patch('learner_api.evidence._scan'), \
+             patch('learner_api.evidence._verified_scan_verdict', side_effect=MalwareDetected('synthetic')), \
+             self.assertRaises(files.AttachmentError):
             try:
                 with files.upload_session() as staged:
                     files.save(prepared, staged)

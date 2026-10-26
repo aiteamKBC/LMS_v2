@@ -19,6 +19,7 @@ import { convertAnswerTextForQuestionType, isPairAnswerComplete, parseQuizPairAn
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 
 import { createQuizWithQuestions } from './createQuizWithQuestions';
+import { quizListQueryString, quizStudentResultsUrl } from './pagination';
 
 const curriculumNav = roleNavMap.curriculum;
 
@@ -115,6 +116,22 @@ interface QuizPackage {
   updatedAt: string;
 }
 
+interface PaginationMeta {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  hasNext: boolean;
+  hasPrevious: boolean;
+}
+
+interface QuizListSummary {
+  published: number;
+  draft: number;
+  validationIssues: number;
+  totalQuestions: number;
+}
+
 interface QuizPreviewQuestion {
   id: number;
   text: string;
@@ -184,6 +201,7 @@ interface QuizStudentResultsData {
     averageBest: number | null;
   };
   students: QuizStudentResult[];
+  pagination: PaginationMeta;
 }
 
 interface QuizCourseLinkOption {
@@ -897,6 +915,12 @@ export default function QuizXmlWorkspacePage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [quizzes, setQuizzes] = useState<QuizPackage[]>([]);
+  const [quizPagination, setQuizPagination] = useState<PaginationMeta>({
+    page: 1, pageSize: 10, total: 0, totalPages: 1, hasNext: false, hasPrevious: false,
+  });
+  const [quizSummary, setQuizSummary] = useState<QuizListSummary>({
+    published: 0, draft: 0, validationIssues: 0, totalQuestions: 0,
+  });
   const [selectedQuiz, setSelectedQuiz] = useState<QuizPackage | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkAction, setBulkAction] = useState('');
@@ -935,6 +959,7 @@ export default function QuizXmlWorkspacePage() {
   const [previewLoadingId, setPreviewLoadingId] = useState<number | null>(null);
   const [studentResultsData, setStudentResultsData] = useState<QuizStudentResultsData | null>(null);
   const [studentResultsLoadingId, setStudentResultsLoadingId] = useState<number | null>(null);
+  const [studentResultsPage, setStudentResultsPage] = useState(1);
   const [activeStudentId, setActiveStudentId] = useState<number | null>(null);
   const [activeAttemptIndex, setActiveAttemptIndex] = useState(0);
   const [courseLinksData, setCourseLinksData] = useState<QuizCourseLinksData | null>(null);
@@ -962,12 +987,20 @@ export default function QuizXmlWorkspacePage() {
   const loadQuizzes = useCallback(async () => {
     setLoading(true);
     setError('');
-    const params = new URLSearchParams();
-    if (filterStatus !== 'all') params.set('status', filterStatus);
-    if (search.trim()) params.set('search', search.trim());
+    const requestedDateRange = dateFilterPreset === 'custom'
+      ? customDateRange
+      : dateRangeForPreset(dateFilterPreset);
+    const params = quizListQueryString({
+      status: filterStatus,
+      search,
+      page: currentPage,
+      pageSize,
+      updatedAfter: requestedDateRange.start,
+      updatedBefore: requestedDateRange.end,
+    });
 
     try {
-      const response = await fetch(`/quiz_api/quizzes/?${params.toString()}`);
+      const response = await fetch(`/quiz_api/quizzes/?${params}`);
       const contentType = response.headers.get('content-type') || '';
       if (!response.ok) {
         const payload = contentType.includes('application/json') ? await response.json().catch(() => null) : null;
@@ -978,12 +1011,15 @@ export default function QuizXmlWorkspacePage() {
       }
       const data = await response.json();
       setQuizzes(data.results);
+      setQuizPagination(data.pagination);
+      setQuizSummary(data.summary);
+      if (data.pagination.page !== currentPage) setCurrentPage(data.pagination.page);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load quizzes');
     } finally {
       setLoading(false);
     }
-  }, [filterStatus, search]);
+  }, [currentPage, customDateRange, dateFilterPreset, filterStatus, pageSize, search]);
 
   useEffect(() => {
     void loadQuizzes();
@@ -1030,8 +1066,8 @@ export default function QuizXmlWorkspacePage() {
   // otherwise send a restored page back to page 1.
   useEffect(() => {
     if (loading) return;
-    setCurrentPage(current => Math.min(current, Math.max(1, Math.ceil(quizzes.length / Number(pageSize)))));
-  }, [loading, quizzes.length, pageSize]);
+    setCurrentPage(current => Math.min(current, quizPagination.totalPages));
+  }, [loading, quizPagination.totalPages]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1132,36 +1168,29 @@ export default function QuizXmlWorkspacePage() {
       : `${compactDate(activeDateRange.start)} - ${compactDate(activeDateRange.end)}`
     : 'Jan 1, 1970 - ∞';
   const calendarDays = useMemo(() => monthCalendarDays(calendarViewDate), [calendarViewDate]);
-  const visibleQuizzes = useMemo(() => {
-    if (!activeDateRange.start || !activeDateRange.end) return quizzes;
-    return quizzes.filter(quiz => {
-      const updatedAt = new Date(quiz.updatedAt);
-      if (Number.isNaN(updatedAt.getTime())) return false;
-      return updatedAt >= activeDateRange.start! && updatedAt <= activeDateRange.end!;
-    });
-  }, [quizzes, activeDateRange.start, activeDateRange.end]);
+  const visibleQuizzes = quizzes;
 
-  const published = visibleQuizzes.filter(q => q.status === 'published').length;
-  const draft = visibleQuizzes.filter(q => q.status === 'draft').length;
-  const validationIssues = visibleQuizzes.filter(q => !q.schemaValid).length;
-  const totalQuestions = visibleQuizzes.reduce((sum, quiz) => sum + quiz.questions, 0);
+  const published = quizSummary.published;
+  const draft = quizSummary.draft;
+  const validationIssues = quizSummary.validationIssues;
+  const totalQuestions = quizSummary.totalQuestions;
   const isArchiveView = filterStatus === 'trash';
   const pageHeading = isArchiveView ? 'Quiz Archive' : 'Quiz Workspace';
   const pageSubtitle = isArchiveView
     ? 'Review archived quiz packages and restore anything needed back to the workspace'
     : 'Upload XML, SCORM or spreadsheet quiz files, then store questions and answers';
   const heroSummary = isArchiveView
-    ? `${visibleQuizzes.length} archived quiz packages ready to restore or permanently delete.`
+    ? `${quizPagination.total} archived quiz packages ready to restore or permanently delete.`
     : `${published} published, ${draft} in draft. ${validationIssues} with validation issues.`;
   const tertiaryStat = isArchiveView
-    ? { value: visibleQuizzes.length, label: 'Archived' }
+    ? { value: quizPagination.total, label: 'Archived' }
     : { value: published, label: 'Published' };
   const numericPageSize = Number(pageSize);
-  const pageCount = Math.max(1, Math.ceil(visibleQuizzes.length / numericPageSize));
-  const safeCurrentPage = Math.min(currentPage, pageCount);
+  const pageCount = quizPagination.totalPages;
+  const safeCurrentPage = quizPagination.page;
   const pageStartIndex = (safeCurrentPage - 1) * numericPageSize;
   const pageEndIndex = pageStartIndex + numericPageSize;
-  const paginatedQuizzes = visibleQuizzes.slice(pageStartIndex, pageEndIndex);
+  const paginatedQuizzes = visibleQuizzes;
   const allVisibleSelected = paginatedQuizzes.length > 0 && paginatedQuizzes.every(q => selectedIds.includes(q.id));
   const bulkActionOptions = useMemo(() => {
     const statusActions = editableStatusOptions
@@ -1666,14 +1695,15 @@ export default function QuizXmlWorkspacePage() {
     }
   };
 
-  const openStudentManager = async (quiz: QuizPackage) => {
+  const openStudentManager = async (quiz: QuizPackage, page = 1) => {
     setStudentResultsLoadingId(quiz.id);
     setError('');
     try {
-      const response = await fetch(`/quiz_api/quizzes/${quiz.id}/students/`);
+      const response = await fetch(quizStudentResultsUrl(quiz.id, page));
       const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(data?.error || 'Could not load quiz student results');
       setStudentResultsData(data);
+      setStudentResultsPage(data.pagination.page);
       setActiveStudentId(data.students?.[0]?.id ?? null);
       setActiveAttemptIndex(0);
     } catch (err) {
@@ -1798,11 +1828,11 @@ export default function QuizXmlWorkspacePage() {
           decorative
           eyebrow="Learning resources"
           title={pageHeading}
-          description={`${visibleQuizzes.length} quiz packages - ${heroSummary}`}
+          description={`${quizPagination.total} quiz packages - ${heroSummary}`}
           icon="ri-code-box-line"
           statIconPosition="leading"
           stats={[
-            { label: 'Quizzes', value: String(visibleQuizzes.length), icon: 'ri-questionnaire-line' },
+            { label: 'Quizzes', value: String(quizPagination.total), icon: 'ri-questionnaire-line' },
             { label: 'Questions', value: String(totalQuestions), icon: 'ri-file-list-3-line' },
             { label: tertiaryStat.label, value: String(tertiaryStat.value), icon: 'ri-checkbox-circle-line' },
           ]}
@@ -2191,12 +2221,12 @@ export default function QuizXmlWorkspacePage() {
               </tbody>
             </table>
           </div>
-          {!loading && visibleQuizzes.length > 0 && (
+          {!loading && quizPagination.total > 0 && (
             <div className="border-t border-foreground-200/50 bg-white px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div className="text-xs text-foreground-400">
                 Showing <span className="font-semibold text-foreground-700">{pageStartIndex + 1}</span>-
-                <span className="font-semibold text-foreground-700">{Math.min(pageEndIndex, visibleQuizzes.length)}</span> of{' '}
-                <span className="font-semibold text-foreground-700">{visibleQuizzes.length}</span> quizzes
+                <span className="font-semibold text-foreground-700">{Math.min(pageEndIndex, quizPagination.total)}</span> of{' '}
+                <span className="font-semibold text-foreground-700">{quizPagination.total}</span> quizzes
               </div>
 
               <div className="flex items-center gap-2 flex-wrap">
@@ -2496,7 +2526,7 @@ export default function QuizXmlWorkspacePage() {
                     <aside className="rounded-2xl border border-[#e2e8f0] bg-white overflow-hidden">
                       <div className="px-4 py-3 border-b border-[#e2e8f0]">
                         <h4 className="text-sm font-heading font-bold text-[#0f172a]">Students</h4>
-                        <p className="text-xs text-[#64748b]">{studentResultsData.students.length} learner{studentResultsData.students.length === 1 ? '' : 's'} attempted</p>
+                        <p className="text-xs text-[#64748b]">{studentResultsData.pagination.total} learner{studentResultsData.pagination.total === 1 ? '' : 's'} attempted</p>
                       </div>
                       <div className="max-h-[56vh] overflow-y-auto quiz-preview-scroll">
                         {studentResultsData.students.map(student => (
@@ -2526,6 +2556,27 @@ export default function QuizXmlWorkspacePage() {
                           </button>
                         ))}
                       </div>
+                      {studentResultsData.pagination.totalPages > 1 && (
+                        <div className="flex items-center justify-between gap-3 border-t border-[#e2e8f0] px-3 py-3">
+                          <button
+                            type="button"
+                            disabled={!studentResultsData.pagination.hasPrevious || studentResultsLoadingId !== null}
+                            onClick={() => void openStudentManager(studentResultsData.quiz, studentResultsPage - 1)}
+                            className="h-8 rounded-lg border border-[#d8dde6] px-3 text-xs font-semibold text-[#475569] disabled:opacity-40"
+                          >
+                            Previous
+                          </button>
+                          <span className="text-xs font-semibold text-[#64748b]">Page {studentResultsData.pagination.page} of {studentResultsData.pagination.totalPages}</span>
+                          <button
+                            type="button"
+                            disabled={!studentResultsData.pagination.hasNext || studentResultsLoadingId !== null}
+                            onClick={() => void openStudentManager(studentResultsData.quiz, studentResultsPage + 1)}
+                            className="h-8 rounded-lg border border-[#d8dde6] px-3 text-xs font-semibold text-[#475569] disabled:opacity-40"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      )}
                     </aside>
 
                     <section className="min-w-0 rounded-2xl border border-[#e2e8f0] bg-white overflow-hidden">

@@ -61,8 +61,8 @@ export function EvidenceGroups({ items, expandMatches, onOpen }: { items: Eviden
 
 function EvidenceFile({ item, onOpen }: { item: EvidenceItem; onOpen: (id: string) => void }) {
   const status = item.historical ? item.rawStatus || 'Recorded' : item.status;
-  const tone = item.status === 'Validated' ? 'validated' : item.status === 'Needs work' ? 'needsWork'
-    : item.status === 'Submitted' || item.status === 'Pending tutor' ? 'pending' : 'neutral';
+  const tone = item.status === 'Validated' ? 'validated' : item.status === 'Needs work' || item.status === 'Scan failed' ? 'needsWork'
+    : ['Submitted', 'Pending tutor', 'Processing file', 'Retry scheduled'].includes(item.status) ? 'pending' : 'neutral';
   const previous = item.historical;
   return <button type="button" className={styles.file} aria-label={`Open evidence: ${item.title}`} onClick={() => onOpen(item.id)}>
     <span className={styles.fileIcon}>{previous && !previous.has_file && previous.has_note ? <MessageSquare size={18} /> : <FileText size={18} />}</span>

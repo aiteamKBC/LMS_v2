@@ -15,12 +15,14 @@ from urllib.parse import quote, urlsplit
 from xml.etree import ElementTree
 
 from django.conf import settings
+from django.contrib.postgres.aggregates import ArrayAgg
 from django.db import DatabaseError, connection, transaction
 
 from curriculum_api import schema_gate as curriculum_schema_gate
-from django.db.models import Max
+from django.db.models import Count, Exists, F, Max, OuterRef, Prefetch, Q, Sum, prefetch_related_objects
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
@@ -30,7 +32,7 @@ from .question_images import validate_question_image
 from .answer_keys import choice_key_error, choice_label, quiz_publication_error
 from .key_readiness import quiz_requires_valid_key
 from .intake import InvalidQuizIntake, intake_error, key_indexes
-from learner_api.models import LearnerProfile
+from learner_api.models import LearnerProfile, LearnerProgressEntry
 
 logger = logging.getLogger(__name__)
 
@@ -51,68 +53,78 @@ AI_GENERATION_QUESTION_TYPES = {
 }
 QUIZ_STATUSES = {"draft", "published", "pending", "validating", "trash", "private"}
 ASSESSMENT_TYPES = {"quiz", "checkpoint"}
+QUIZ_STUDENTS_DATABASE_ERROR = "Quiz student results are temporarily unavailable."
+QUIZ_LIST_PAGE_SIZE = 10
+QUIZ_STUDENTS_PAGE_SIZE = 25
+QUESTION_BANK_PAGE_SIZE = 50
+MAX_PAGE_SIZE = 100
 
 
-_TABLE_EXISTS_CACHE = set()
-_COLUMN_EXISTS_CACHE = set()
+def _pagination_request(request, *, default_page_size):
+    """Return validated opt-in pagination without changing legacy callers.
 
-
-def _quote_ident(value):
-    return '"' + str(value).replace('"', '""') + '"'
-
-
-def _curriculum_table_name(table):
-    return f'curriculum.{_quote_ident(table)}'
-
-
-def _curriculum_table_exists(table):
-    # Cached like curriculum_api.views.table_exists: the list endpoints ask the
-    # same question hundreds of times per request. Only "exists" is cached, so a
-    # table created later is still found and a failed probe is retried.
-    if table in _TABLE_EXISTS_CACHE:
-        return True
+    Existing integrations that send neither pagination parameter keep their
+    historical complete response. First-party list screens opt in and always
+    receive explicit totals, so no collection is silently truncated.
+    """
+    raw_page = request.GET.get("page")
+    raw_page_size = request.GET.get("pageSize", request.GET.get("page_size"))
+    if raw_page is None and raw_page_size is None:
+        return None, None
     try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                select 1
-                from information_schema.tables
-                where table_schema = 'curriculum'
-                  and table_name = %s
-                limit 1
-                """,
-                [table],
-            )
-            exists = bool(cursor.fetchone())
-    except Exception:
-        return False
-    if exists:
-        _TABLE_EXISTS_CACHE.add(table)
-    return exists
+        page = int(raw_page or 1)
+        page_size = int(raw_page_size or default_page_size)
+    except (TypeError, ValueError):
+        return None, JsonResponse({"error": "page and pageSize must be whole numbers."}, status=400)
+    if page < 1:
+        return None, JsonResponse({"error": "page must be at least 1."}, status=400)
+    if not 1 <= page_size <= MAX_PAGE_SIZE:
+        return None, JsonResponse(
+            {"error": f"pageSize must be between 1 and {MAX_PAGE_SIZE}."},
+            status=400,
+        )
+    return {"page": page, "pageSize": page_size}, None
+
+
+def _pagination_payload(pagination, total):
+    page_size = pagination["pageSize"]
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    page = min(pagination["page"], total_pages)
+    return {
+        "page": page,
+        "pageSize": page_size,
+        "total": total,
+        "totalPages": total_pages,
+        "hasNext": page < total_pages,
+        "hasPrevious": page > 1,
+    }
+
+
+def _page_queryset(queryset, pagination, *, total):
+    payload = _pagination_payload(pagination, total)
+    start = (payload["page"] - 1) * payload["pageSize"]
+    return list(queryset[start:start + payload["pageSize"]]), payload
+
+
+_CURRICULUM_COLUMNS_BY_TABLE = {}
 
 
 def _curriculum_column_exists(table, column):
-    if (table, column) in _COLUMN_EXISTS_CACHE:
-        return True
-    try:
+    if table not in _CURRICULUM_COLUMNS_BY_TABLE:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                select 1
+                select column_name
                 from information_schema.columns
                 where table_schema = 'curriculum'
                   and table_name = %s
-                  and column_name = %s
-                limit 1
                 """,
-                [table, column],
+                [table],
             )
-            exists = bool(cursor.fetchone())
-    except Exception:
-        return False
-    if exists:
-        _COLUMN_EXISTS_CACHE.add((table, column))
-    return exists
+            _CURRICULUM_COLUMNS_BY_TABLE[table] = {
+                str(row[0]) for row in cursor.fetchall() if row
+            }
+    return column in _CURRICULUM_COLUMNS_BY_TABLE[table]
 
 
 def _first_existing_curriculum_table(*tables):
@@ -128,29 +140,20 @@ def _curriculum_table_name(table):
 
 
 def _curriculum_table_exists(table):
-    # Cached like curriculum_api.views.table_exists: the list endpoints ask the
-    # same question hundreds of times per request. Only "exists" is cached, so a
-    # table created later is still found and a failed probe is retried.
-    if table in _TABLE_EXISTS_CACHE:
-        return True
+    # Share Curriculum's one-shot catalog listing and verified-presence cache.
+    # A missing optional legacy table remains False; a connectivity/permission
+    # failure propagates instead of being misreported as schema absence.
     try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                select 1
-                from information_schema.tables
-                where table_schema = 'curriculum'
-                  and table_name = %s
-                limit 1
-                """,
-                [table],
-            )
-            exists = bool(cursor.fetchone())
+        return curriculum_schema_gate.table_exists(table)
+    except DatabaseError:
+        raise
     except Exception:
-        return False
-    if exists:
-        _TABLE_EXISTS_CACHE.add(table)
-    return exists
+        # Database-free SimpleTestCase paths deliberately forbid even SQLite
+        # catalog access. Preserve that isolated-test fallback without masking
+        # any PostgreSQL production failure.
+        if connection.vendor != "postgresql":
+            return False
+        raise
 
 
 def _training_plan_table_exists():
@@ -3316,6 +3319,11 @@ Rules:
 def quizzes(request):
     _ensure_quiz_assessment_type_column()
     if request.method == "GET":
+        pagination, pagination_error = _pagination_request(
+            request, default_page_size=QUIZ_LIST_PAGE_SIZE,
+        )
+        if pagination_error is not None:
+            return pagination_error
         query = request.GET.get("search", "").strip()
         status = request.GET.get("status", "all")
         assessment_type = request.GET.get("assessmentType", "").strip().lower()
@@ -3333,6 +3341,20 @@ def quizzes(request):
                 queryset = queryset.filter(status=status)
         if query:
             queryset = queryset.filter(title__icontains=query)
+        for parameter, lookup in (
+            ("updatedAfter", "updated_at__gte"),
+            ("updatedBefore", "updated_at__lte"),
+        ):
+            raw_value = request.GET.get(parameter)
+            if not raw_value:
+                continue
+            parsed_value = parse_datetime(raw_value)
+            if parsed_value is None:
+                return JsonResponse(
+                    {"error": f"{parameter} must be an ISO-8601 date-time."},
+                    status=400,
+                )
+            queryset = queryset.filter(**{lookup: parsed_value})
         if request.GET.get('view') == 'picker':
             # The authoring picker only links a quiz and displays its summary.
             # It does not use assignment counts, uploaded content or settings;
@@ -3341,10 +3363,37 @@ def quizzes(request):
                 {name: row[column] for name, column in QUIZ_PICKER_FIELDS.items()}
                 for row in queryset.values(*QUIZ_PICKER_FIELDS.values())
             ]})
-        quizzes_to_serialize = _sync_quiz_assignment_counts(queryset)
+        response_pagination = None
+        summary = None
+        if pagination is not None:
+            aggregates = queryset.aggregate(
+                total=Count("id"),
+                published=Count("id", filter=Q(status="published")),
+                draft=Count("id", filter=Q(status="draft")),
+                validation_issues=Count("id", filter=Q(schema_valid=False)),
+                total_questions=Sum("questions"),
+            )
+            ordered_queryset = queryset.order_by("-updated_at", "title", "id")
+            page_rows, response_pagination = _page_queryset(
+                ordered_queryset,
+                pagination,
+                total=aggregates["total"],
+            )
+            summary = {
+                "published": aggregates["published"],
+                "draft": aggregates["draft"],
+                "validationIssues": aggregates["validation_issues"],
+                "totalQuestions": aggregates["total_questions"] or 0,
+            }
+            quizzes_to_serialize = _sync_quiz_assignment_counts(page_rows)
+        else:
+            quizzes_to_serialize = _sync_quiz_assignment_counts(queryset)
         if status == "trash":
             quizzes_to_serialize = [_sync_quiz_assignment_count(quiz) for quiz in quizzes_to_serialize]
-        return JsonResponse({"results": [_serialize_quiz(quiz) for quiz in quizzes_to_serialize]})
+        response_payload = {"results": [_serialize_quiz(quiz) for quiz in quizzes_to_serialize]}
+        if response_pagination is not None:
+            response_payload.update({"pagination": response_pagination, "summary": summary})
+        return JsonResponse(response_payload)
 
     uploaded_file = request.FILES.get("file")
     if uploaded_file:
@@ -3596,6 +3645,129 @@ def _serialize_attempt_for_student(attempt, question_lookup, answer_lookup):
     }
 
 
+def _paginated_quiz_students(request, quiz, pagination, question_lookup, answer_lookup):
+    """Return one bounded learner page while retaining whole-quiz summary data."""
+    progress_filter = {
+        "kind": "quiz",
+        "quiz_ref": str(quiz.id),
+        "deleted_at__isnull": True,
+    }
+    summary_rows = list(
+        LearnerProgressEntry.objects
+        .filter(learner__lifecycle_status="active", **progress_filter)
+        .values("learner_id")
+        .annotate(
+            attempt_count=Count("id"),
+            best_grade=Max("grade"),
+            # The first value uses the same latest-attempt ordering as the
+            # response serializer, without issuing a correlated lookup for
+            # every learner in the grouped summary.
+            passed_by_recency=ArrayAgg(
+                "passed",
+                order_by=(
+                    F("submitted_at").desc(nulls_last=True),
+                    F("attempt").desc(),
+                    F("id").desc(),
+                ),
+            ),
+        )
+    )
+    grade_percents = [
+        parsed
+        for row in summary_rows
+        if (
+            parsed := _parse_grade_percent(
+                float(row["best_grade"]) if row["best_grade"] is not None else None
+            )
+        ) is not None
+    ]
+    summary = {
+        "students": len(summary_rows),
+        "attempts": sum(row["attempt_count"] for row in summary_rows),
+        "passed": sum(
+            1 for row in summary_rows
+            if row["passed_by_recency"] and row["passed_by_recency"][0]
+        ),
+        "averageBest": (
+            round(sum(grade_percents) / len(grade_percents), 1)
+            if grade_percents else None
+        ),
+    }
+
+    quiz_progress = (
+        LearnerProgressEntry.objects
+        .filter(**progress_filter)
+        .prefetch_related(
+            "ksb_links",
+            "quiz_answers__correct_answers",
+            "quiz_answers__chosen_answers",
+        )
+    )
+    active_users = (
+        LearnerProfile.objects
+        .filter(
+            lifecycle_status="active",
+            progress_entries__kind="quiz",
+            progress_entries__quiz_ref=str(quiz.id),
+            progress_entries__deleted_at__isnull=True,
+        )
+        .annotate(
+            latest_quiz_submitted=Max("progress_entries__submitted_at"),
+        )
+        .only(
+            "id", "full_name", "email", "programme", "cohort",
+            "group_name", "lifecycle_status",
+        )
+        .order_by(
+            F("latest_quiz_submitted").desc(nulls_last=True),
+            F("full_name").desc(nulls_last=True),
+            "-id",
+        )
+        .prefetch_related(Prefetch("progress_entries", queryset=quiz_progress))
+    )
+    page_learners, response_pagination = _page_queryset(
+        active_users, pagination, total=summary["students"],
+    )
+
+    students = []
+    for learner in page_learners:
+        history = learner.training_plan_progress if isinstance(learner.training_plan_progress, list) else []
+        quiz_attempts = [
+            attempt for attempt in history
+            if attempt.get("kind") == "quiz" and str(attempt.get("quizId")) == str(quiz.id)
+        ]
+        if not quiz_attempts:
+            continue
+        serialized_attempts = [
+            _serialize_attempt_for_student(attempt, question_lookup, answer_lookup)
+            for attempt in sorted(quiz_attempts, key=_attempt_sort_key, reverse=True)
+        ]
+        latest_attempt = serialized_attempts[0]
+        best_grade = max(
+            (attempt["gradePercent"] for attempt in serialized_attempts if attempt["gradePercent"] is not None),
+            default=None,
+        )
+        students.append({
+            "id": learner.id,
+            "name": learner.username or learner.email or f"Learner {learner.id}",
+            "email": learner.email or "",
+            "programme": learner.programme or "",
+            "cohort": learner.cohort or "",
+            "group": learner.group or "",
+            "attemptCount": len(serialized_attempts),
+            "bestGrade": best_grade,
+            "latestAttempt": latest_attempt,
+            "attempts": serialized_attempts,
+        })
+
+    return JsonResponse({
+        "quiz": _serialize_quiz(quiz),
+        "summary": summary,
+        "students": students,
+        "pagination": response_pagination,
+    })
+
+
 @require_http_methods(["GET"])
 def quiz_students(request, pk):
     try:
@@ -3605,12 +3777,42 @@ def quiz_students(request, pk):
 
     try:
         question_lookup, answer_lookup = _quiz_question_lookup(pk)
-        active_users = LearnerProfile.objects.filter(
-            lifecycle_status="active"
-        ).prefetch_related(
-            "progress_entries__ksb_links",
-            "progress_entries__quiz_answers__correct_answers",
-            "progress_entries__quiz_answers__chosen_answers",
+        pagination, pagination_error = _pagination_request(
+            request, default_page_size=QUIZ_STUDENTS_PAGE_SIZE,
+        )
+        if pagination_error is not None:
+            return pagination_error
+        if pagination is not None:
+            return _paginated_quiz_students(
+                request, quiz, pagination, question_lookup, answer_lookup,
+            )
+        # Keep the existing serializer, but constrain both the learner set and
+        # its prefetched progress graph to this quiz in PostgreSQL.
+        quiz_progress = (
+            LearnerProgressEntry.objects
+            .filter(kind="quiz", quiz_ref=str(pk), deleted_at__isnull=True)
+            .prefetch_related(
+                "ksb_links",
+                "quiz_answers__correct_answers",
+                "quiz_answers__chosen_answers",
+            )
+        )
+        matching_progress = LearnerProgressEntry.objects.filter(
+            learner_id=OuterRef("pk"),
+            kind="quiz",
+            quiz_ref=str(pk),
+            deleted_at__isnull=True,
+        )
+        active_users = (
+            LearnerProfile.objects
+            .filter(lifecycle_status="active")
+            .annotate(has_quiz_attempt=Exists(matching_progress))
+            .filter(has_quiz_attempt=True)
+            .only(
+                "id", "full_name", "email", "programme", "cohort",
+                "group_name", "lifecycle_status",
+            )
+            .prefetch_related(Prefetch("progress_entries", queryset=quiz_progress))
         )
         students = []
         all_grade_percents = []
@@ -3648,7 +3850,11 @@ def quiz_students(request, pk):
                 "attempts": serialized_attempts,
             })
     except DatabaseError as exc:
-        return JsonResponse({"error": f"Database error: {exc}"}, status=502)
+        logger.error(
+            "Quiz Students database query failed",
+            extra={"quiz_id": pk, "exception_type": type(exc).__name__},
+        )
+        return JsonResponse({"error": QUIZ_STUDENTS_DATABASE_ERROR}, status=502)
 
     students.sort(key=lambda item: (item["latestAttempt"].get("submittedAt") or "", item["name"]), reverse=True)
     passed_count = sum(1 for student in students if student["latestAttempt"].get("passed"))
@@ -4278,20 +4484,242 @@ def quiz_preview(request, pk):
     return JsonResponse(_quiz_preview_payload(quiz))
 
 
+def _programme_key_and_name(quiz):
+    if quiz.programme:
+        return quiz.programme, quiz.programme
+    if quiz.programme_id:
+        return quiz.programme_id, quiz.programme_id
+    return "__unassigned__", "Unassigned"
+
+
+def _programme_filter(key, *, quiz_prefix="quiz__"):
+    programme = f"{quiz_prefix}programme"
+    programme_id = f"{quiz_prefix}programme_id"
+    no_programme = Q(**{programme: ""}) | Q(**{f"{programme}__isnull": True})
+    no_programme_id = Q(**{programme_id: ""}) | Q(**{f"{programme_id}__isnull": True})
+    if key == "__unassigned__":
+        return no_programme & no_programme_id
+    return Q(**{programme: key}) | (no_programme & Q(**{programme_id: key}))
+
+
+def _paginated_question_bank(request, base_queryset, pagination, selected_programme):
+    question_type = request.GET.get("questionType", "all").strip()
+    quiz_status = request.GET.get("quizStatus", "all").strip()
+    if question_type != "all":
+        if question_type not in AI_GENERATION_QUESTION_TYPES:
+            return JsonResponse({"error": "Unknown questionType filter."}, status=400)
+        base_queryset = base_queryset.filter(question_type=question_type)
+    if quiz_status != "all":
+        if quiz_status not in QUIZ_STATUSES:
+            return JsonResponse({"error": "Unknown quizStatus filter."}, status=400)
+        base_queryset = base_queryset.filter(quiz__status=quiz_status)
+
+    programme_stats = {}
+    for programme in _training_plan_programmes():
+        programme_stats[programme["name"]] = {
+            "name": programme["name"],
+            "questionCount": 0,
+            "quizCount": 0,
+            "moduleRows": programme.get("moduleRows", programme.get("moduleCount", 0)),
+            "trainingPlanRows": programme.get("trainingPlanRows", 0),
+        }
+    for row in (
+        base_queryset
+        .values("quiz__programme", "quiz__programme_id")
+        .annotate(question_count=Count("id"), quiz_count=Count("quiz_id", distinct=True))
+    ):
+        programme_value = row["quiz__programme"] or row["quiz__programme_id"]
+        key = programme_value or "__unassigned__"
+        name = programme_value or "Unassigned"
+        current = programme_stats.setdefault(key, {
+            "name": name,
+            "questionCount": 0,
+            "quizCount": 0,
+            "moduleRows": 0,
+            "trainingPlanRows": 0,
+        })
+        current["questionCount"] += row["question_count"]
+        current["quizCount"] += row["quiz_count"]
+
+    selected_queryset = base_queryset
+    if selected_programme != "all":
+        selected_queryset = selected_queryset.filter(_programme_filter(selected_programme))
+        selected_total = programme_stats.get(selected_programme, {}).get("questionCount", 0)
+    else:
+        # The grouped programme query above already counted every row after
+        # search/type/status filtering. Reuse it instead of issuing a second
+        # full Question Bank COUNT query for pagination.
+        selected_total = sum(
+            programme["questionCount"] for programme in programme_stats.values()
+        )
+    selected_queryset = selected_queryset.order_by(
+        "quiz__programme_id", "quiz__module", "quiz__title", "sort_order", "id",
+    )
+    selected_questions, response_pagination = _page_queryset(
+        selected_queryset, pagination, total=selected_total,
+    )
+
+    prefetch_related_objects(
+        selected_questions,
+        Prefetch(
+            "answers",
+            queryset=QuizAnswer.objects.only(
+                "id", "question_id", "answer_text", "is_correct", "sort_order",
+            ),
+        ),
+    )
+
+    signature_filter = Q()
+    question_programme_info = {}
+    for question in selected_questions:
+        key, programme_name = _programme_key_and_name(question.quiz)
+        question_programme_info[question.id] = (key, programme_name)
+        normalized_tokens = re.split(r"\s+", (question.question_text or "").strip())
+        normalized_pattern = (
+            r"^\s*" + r"\s+".join(re.escape(token) for token in normalized_tokens) + r"\s*$"
+            if normalized_tokens != [""]
+            else r"^\s*$"
+        )
+        signature_filter |= (
+            _programme_filter(key)
+            & Q(question_type=question.question_type)
+            # The legacy response considers case and whitespace variants to
+            # be the same reusable question. Keep that contract while asking
+            # PostgreSQL to return only candidates for this bounded page.
+            & Q(question_text__iregex=normalized_pattern)
+            & Q(image_url=question.image_url)
+        )
+
+    question_usage_by_signature = {}
+    if selected_questions:
+        signature_candidates = (
+            QuizQuestion.objects
+            .filter(is_archived=False)
+            .exclude(quiz__status="trash")
+            .filter(signature_filter)
+            .select_related("quiz")
+            .only(
+                "id", "question_text", "question_type", "image_url", "quiz_id",
+                "quiz__programme", "quiz__programme_id", "quiz__module",
+                "quiz__title", "quiz__status",
+            )
+            .order_by("quiz_id", "id")
+        )
+        for candidate in signature_candidates:
+            key, _ = _programme_key_and_name(candidate.quiz)
+            signature = (
+                key,
+                candidate.question_type,
+                " ".join((candidate.question_text or "").split()).strip().lower(),
+                candidate.image_url,
+            )
+            question_usage_by_signature.setdefault(signature, {})[candidate.quiz_id] = {
+                "id": candidate.quiz_id,
+                "title": candidate.quiz.title,
+                "module": candidate.quiz.module,
+                "status": candidate.quiz.status,
+            }
+
+    questions = []
+    relevant_programmes = set()
+    for question in selected_questions:
+        key, programme_name = question_programme_info[question.id]
+        relevant_programmes.add(key)
+        signature = (
+            key,
+            question.question_type,
+            " ".join((question.question_text or "").split()).strip().lower(),
+            question.image_url,
+        )
+        questions.append({
+            "id": question.id,
+            "text": question.question_text,
+            "questionType": question.question_type,
+            "imageUrl": question.image_url,
+            "explanation": question.explanation,
+            "programme": programme_name,
+            "programmeKey": key,
+            "module": question.quiz.module,
+            "quizId": question.quiz_id,
+            "quizTitle": question.quiz.title,
+            "quizStatus": question.quiz.status,
+            "linkedQuizzes": list(question_usage_by_signature.get(signature, {}).values()),
+            "answers": [
+                {
+                    "id": answer.id,
+                    "text": answer.answer_text,
+                    "isCorrect": answer.is_correct,
+                }
+                for answer in question.answers.all()
+            ],
+        })
+
+    available_quizzes = QuizPackage.objects.exclude(status="trash")
+    if relevant_programmes:
+        quiz_programme_filter = Q()
+        for key in relevant_programmes:
+            quiz_programme_filter |= _programme_filter(key, quiz_prefix="")
+        available_quizzes = available_quizzes.filter(quiz_programme_filter)
+    else:
+        available_quizzes = available_quizzes.none()
+    available_quizzes = (
+        available_quizzes
+        .only("id", "title", "module", "programme", "programme_id", "questions", "status")
+        .order_by("programme_id", "title", "id")
+    )
+    quizzes = []
+    for quiz in available_quizzes:
+        key, programme_name = _programme_key_and_name(quiz)
+        quizzes.append({
+            "id": quiz.id,
+            "title": quiz.title,
+            "module": quiz.module,
+            "programme": programme_name,
+            "programmeKey": key,
+            "questions": quiz.questions,
+            "status": quiz.status,
+        })
+
+    programmes = sorted(
+        programme_stats.values(),
+        key=lambda item: (item["name"] == "Unassigned", item["name"].lower()),
+    )
+    return JsonResponse({
+        "programmes": programmes,
+        "questions": questions,
+        "quizzes": quizzes,
+        "totalQuestions": sum(programme["questionCount"] for programme in programmes),
+        "pagination": response_pagination,
+    })
+
+
 @require_http_methods(["GET"])
 def question_bank(request):
     _ensure_quiz_assessment_type_column()
     selected_programme = request.GET.get("programme", "all").strip()
     query = request.GET.get("search", "").strip()
+    pagination, pagination_error = _pagination_request(
+        request, default_page_size=QUESTION_BANK_PAGE_SIZE,
+    )
+    if pagination_error is not None:
+        return pagination_error
     base_queryset = (
         QuizQuestion.objects
         .filter(is_archived=False)
         .exclude(quiz__status="trash")
         .select_related("quiz")
-        .prefetch_related("answers")
+        .only(
+            "id", "question_text", "question_type", "image_url", "explanation",
+            "sort_order", "quiz_id", "quiz__programme", "quiz__programme_id",
+            "quiz__module", "quiz__title", "quiz__status",
+        )
     )
     if query:
         base_queryset = base_queryset.filter(question_text__icontains=query)
+    if pagination is not None:
+        return _paginated_question_bank(
+            request, base_queryset, pagination, selected_programme,
+        )
 
     programme_stats = {}
     for programme in _training_plan_programmes():
@@ -4306,7 +4734,11 @@ def question_bank(request):
     all_questions = list(
         base_queryset.order_by("quiz__programme_id", "quiz__module", "quiz__title", "sort_order", "id")
     )
-    available_quizzes = list(QuizPackage.objects.exclude(status="trash").order_by("programme_id", "title"))
+    available_quizzes = list(
+        QuizPackage.objects.exclude(status="trash")
+        .only("id", "title", "module", "programme", "programme_id", "questions", "status")
+        .order_by("programme_id", "title")
+    )
     def resolve_programme(quiz):
         if quiz.programme:
             return quiz.programme, quiz.programme
@@ -4344,12 +4776,26 @@ def question_bank(request):
             "status": question.quiz.status,
         }
 
-    questions = []
-    for question in all_questions:
-        key, programme_name = question_programme_info[question.id]
+    selected_questions = [
+        question
+        for question in all_questions
+        if selected_programme == "all" or selected_programme == question_programme_info[question.id][0]
+    ]
+    # Programme totals and linked-quiz signatures need complete question
+    # metadata, but answer rows are only needed for questions in the response.
+    prefetch_related_objects(
+        selected_questions,
+        Prefetch(
+            "answers",
+            queryset=QuizAnswer.objects.only(
+                "id", "question_id", "answer_text", "is_correct", "sort_order",
+            ),
+        ),
+    )
 
-        if selected_programme != "all" and selected_programme != key:
-            continue
+    questions = []
+    for question in selected_questions:
+        key, programme_name = question_programme_info[question.id]
 
         signature = (
             key,

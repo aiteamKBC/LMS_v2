@@ -1,8 +1,8 @@
 """Learner evidence upload/list/download API (Azure Blob Storage backed).
 
 Lifecycle (see EVIDENCE_CLOUD.md):
-    upload -> QUARANTINE container + evidence_files row (status 'pending')
-           -> scan (see _scan; no scanner infra yet -> TODO)
+    upload -> scanner readiness gate -> QUARANTINE + pending metadata
+           -> authoritative scan
            -> promote to APPROVED (status 'approved') and record the approved
               blob in "Learner"."Evidence"  ── OR ── move to REJECTED.
     download -> short-lived SAS URL, ONLY from the approved container, ONLY for
@@ -28,10 +28,17 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from .evidence_tables import ensure_evidence_tables
 from .evidence_storage import (
     azure_configured, upload_to_quarantine, move_blob, blob_url, get_download_sas,
     delete_blob,
+)
+from .malware_scanning import (
+    MalwareDetected,
+    ScanError,
+    ScannerUnavailable,
+    ensure_scanner_ready as _ensure_scanner_ready,
+    scan_uploaded_blob,
+    verified_verdict,
 )
 from login.permissions import learner_self_or_admin, learner_self_or_staff
 
@@ -130,20 +137,60 @@ def _error(message, status):
     return JsonResponse({"error": message}, status=status)
 
 
+EVIDENCE_SCHEMA_SQLSTATES = {
+    "3F000",  # invalid_schema_name
+    "42P01",  # undefined_table
+    "42703",  # undefined_column
+}
+
+
+def _database_sqlstate(exc):
+    """Find PostgreSQL's SQLSTATE through Django's wrapped exception chain."""
+    current = exc
+    seen = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        code = getattr(current, "sqlstate", None) or getattr(current, "pgcode", None)
+        if code:
+            return str(code)
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def _database_error_response(exc, *, operation, fallback):
+    """Return a stable response without exposing database or learner details."""
+    if _database_sqlstate(exc) in EVIDENCE_SCHEMA_SQLSTATES:
+        logger.error(
+            "Evidence schema dependency unavailable during %s (%s). "
+            "Run validate_evidence_schema for the deployment target.",
+            operation,
+            exc.__class__.__name__,
+        )
+        return _error("Evidence service is temporarily unavailable.", 503)
+    logger.warning("Evidence database operation %s failed (%s).", operation, exc.__class__.__name__)
+    return _error(fallback, 502)
+
+
 def _conn():
     return connections["enrolment"]
 
 
-def _scan(_data_container, _blob_name) -> str:
-    """Return a scan verdict: 'clean' | 'infected'.
+def _scan(data_container, blob_name):
+    """Return a provider-correlated result or raise; never fabricate ``clean``."""
+    return scan_uploaded_blob(data_container, blob_name)
 
-    TODO: no malware scanner is wired up yet (no ClamAV daemon / Defender event
-    subscription in this environment). Until one exists we optimistically treat
-    uploads as clean so the quarantine->approved promotion works end-to-end.
-    When a scanner is available, download the blob and inspect it here (see
-    EVIDENCE_CLOUD.md §6) and return 'infected' on a hit.
-    """
-    return "clean"
+
+def _verified_scan_verdict(result, container, blob_name):
+    return verified_verdict(
+        result,
+        expected_container=container,
+        expected_blob_name=blob_name,
+    )
+
+
+SCANNER_UNAVAILABLE_MESSAGE = (
+    "Malware scanning is temporarily unavailable. Upload has not been saved."
+)
 
 
 def _record_approved_evidence(cur, blob_name, original_filename, approved_path):
@@ -243,9 +290,17 @@ def upload_evidence(request, kind, pk):
             training_plan_details = json.loads(raw_details)
         except ValueError:
             return _error("training_plan_details must be valid JSON.", 400)
-    lineage = _evidence_lineage(kind, pk, section_ref)
 
-    ensure_evidence_tables()
+    # This deployment has no authoritative scanner. Reject before opening a
+    # database cursor or sending bytes to Azure; request fields can never
+    # substitute for a trusted provider result.
+    try:
+        _ensure_scanner_ready()
+    except ScannerUnavailable:
+        logger.error("Evidence upload blocked because malware scanning is unavailable.")
+        return _error(SCANNER_UNAVAILABLE_MESSAGE, 503)
+
+    lineage = _evidence_lineage(kind, pk, section_ref)
 
     ext = f.name.rsplit(".", 1)[-1].lower() if "." in f.name else "bin"
     file_id = uuid.uuid4()
@@ -255,7 +310,7 @@ def upload_evidence(request, kind, pk):
     try:
         upload_to_quarantine(f, blob_name, f.content_type)
     except Exception as exc:  # SDK / network / duplicate-blob errors
-        logger.warning("Evidence upload to quarantine failed: %s", exc)
+        logger.warning("Evidence upload to quarantine failed (%s).", exc.__class__.__name__)
         return _error("Upload to storage failed.", 502)
 
     # Record the pending row.
@@ -275,11 +330,24 @@ def upload_evidence(request, kind, pk):
                  lineage.get("component_ref"), lineage.get("progress_entry_id")],
             )
     except DatabaseError as exc:
-        logger.warning("Could not record evidence_files row: %s", exc)
-        return _error("Could not record evidence metadata.", 502)
+        return _database_error_response(
+            exc,
+            operation="upload metadata insert",
+            fallback="Could not record evidence metadata.",
+        )
 
-    # Scan + route. (No async worker infra yet -> inline; move to Celery/RQ later.)
-    verdict = _scan(quarantine, blob_name)
+    # Scan + route. Only a structured provider-correlated CLEAN result may be
+    # promoted. Infrastructure/timeout/invalid outcomes remain in quarantine.
+    try:
+        verdict = _verified_scan_verdict(_scan(quarantine, blob_name), quarantine, blob_name)
+    except MalwareDetected:
+        verdict = "infected"
+    except ScanError as exc:
+        logger.error(
+            "Evidence upload remains quarantined because scanning failed (%s).",
+            exc.__class__.__name__,
+        )
+        return _error("Malware scanning could not be completed. The file is not available.", 503)
     approved = settings.AZURE_APPROVED_CONTAINER
     rejected = settings.AZURE_REJECTED_CONTAINER
     dest = approved if verdict == "clean" else rejected
@@ -288,7 +356,7 @@ def upload_evidence(request, kind, pk):
     try:
         move_blob(quarantine, dest, blob_name)
     except Exception as exc:
-        logger.warning("Evidence promotion (%s -> %s) failed: %s", quarantine, dest, exc)
+        logger.warning("Evidence blob routing failed (%s).", exc.__class__.__name__)
         return _error("Could not finalise upload.", 502)
 
     try:
@@ -309,8 +377,11 @@ def upload_evidence(request, kind, pk):
             if status == "approved":
                 _record_approved_evidence(cur, blob_name, f.name, blob_url(approved, blob_name))
     except DatabaseError as exc:
-        logger.warning("Could not update evidence status / record approval: %s", exc)
-        return _error("Upload stored but metadata update failed.", 502)
+        return _database_error_response(
+            exc,
+            operation="upload metadata finalisation",
+            fallback="Upload stored but metadata update failed.",
+        )
 
     return JsonResponse(
         {"id": str(file_id), "status": status, "scanResult": verdict,
@@ -327,8 +398,6 @@ def list_evidence(request, kind, pk):
         return _error("Method not allowed.", 405)
     if kind not in VALID_KINDS:
         return _error("Unknown learner kind.", 400)
-    ensure_evidence_tables()
-
     where = ["learner_kind = %s", "learner_id = %s"]
     params = [kind, str(pk)]
     section_ref = (request.GET.get("section_ref") or "").strip()
@@ -352,20 +421,21 @@ def list_evidence(request, kind, pk):
             )
             rows = cur.fetchall()
     except DatabaseError as exc:
-        logger.warning("Could not list evidence: %s", exc)
-        return _error("Could not load evidence.", 502)
+        return _database_error_response(
+            exc,
+            operation="evidence list",
+            fallback="Could not load evidence.",
+        )
 
     # Whether each file may still be removed, answered the same way delete_evidence
     # answers it, so the page never offers a Remove the server will refuse.
     #
-    # Cached per section: every file under one activity shares its answer, and
-    # an assignment can carry several.
-    marking_by_section = {}
+    # Every file under one activity shares its answer. Resolve all activities
+    # in one bounded lookup instead of opening two cursors per section.
+    marking_by_section = _marking_statuses(kind, pk, (row[6] for row in rows))
 
     def _marking(section_ref):
-        if section_ref not in marking_by_section:
-            marking_by_section[section_ref] = _marking_status(kind, pk, section_ref)
-        return marking_by_section[section_ref]
+        return marking_by_section.get(str(section_ref or "").strip(), "")
 
     return JsonResponse({"results": [
         {
@@ -400,8 +470,6 @@ def download_evidence(request, kind, pk, file_id):
         return _error("Unknown learner kind.", 400)
     if not azure_configured():
         return _error("Evidence storage is not configured.", 503)
-    ensure_evidence_tables()
-
     try:
         with _conn().cursor() as cur:
             cur.execute(
@@ -411,8 +479,11 @@ def download_evidence(request, kind, pk, file_id):
             )
             row = cur.fetchone()
     except DatabaseError as exc:
-        logger.warning("Could not look up evidence for download: %s", exc)
-        return _error("Could not load evidence.", 502)
+        return _database_error_response(
+            exc,
+            operation="evidence download lookup",
+            fallback="Could not load evidence.",
+        )
 
     if not row:
         return _error("Evidence not found.", 404)
@@ -422,6 +493,83 @@ def download_evidence(request, kind, pk, file_id):
 
     url = get_download_sas(settings.AZURE_APPROVED_CONTAINER, blob_name)
     return JsonResponse({"url": url})
+
+
+def _marking_learner_ids(cur, learner_id):
+    """Return the canonical enrolment id plus unambiguous legacy profile ids.
+
+    Reflection submissions are canonically keyed by enrolment id. Older rows
+    can carry a linked Learner profile id, but a bare integer may also name a
+    different enrolment account. Only accept a profile id when the explicit
+    ``learners.enrolment_id`` bridge exists and that number is not owned by a
+    different enrolment account.
+    """
+    canonical = str(learner_id or "").strip()
+    if not canonical:
+        return []
+    candidates = {canonical}
+    try:
+        enrolment_id = int(canonical)
+    except (TypeError, ValueError):
+        return sorted(candidates)
+    cur.execute(
+        '''
+        select l.id::text
+          from "Learner".learners l
+         where l.enrolment_id = %s
+           and not exists (
+               select 1
+                 from enrolment."Created_users" other
+                where other.id = l.id
+                  and other.id <> %s
+           )
+        ''',
+        [enrolment_id, enrolment_id],
+    )
+    candidates.update(str(row[0]) for row in cur.fetchall() if row and row[0] is not None)
+    return sorted(candidates)
+
+
+def _marking_statuses(kind, learner_id, section_refs):
+    """Resolve the preferred marking status for every requested activity.
+
+    The precedence is deliberately identical to the former per-section query:
+    accepted, then submitted-for-review, then any other latest status.
+    """
+    sections = sorted({str(value or "").strip() for value in section_refs} - {""})
+    if not sections:
+        return {}
+    try:
+        with _conn().cursor() as cur:
+            candidates = _marking_learner_ids(cur, learner_id)
+            cur.execute(
+                '''
+                select distinct on (activity_id) activity_id, status
+                  from "Learner"."learning_reflection_submissions"
+                 where activity_id = any(%s)
+                   and learner_kind = %s
+                   and learner_id::text = any(%s)
+                 order by activity_id,
+                     case status when 'accepted' then 0 when 'submitted_for_tutor_review' then 1 else 2 end,
+                     submitted_at desc nulls last
+                ''',
+                [sections, kind, candidates],
+            )
+            statuses = {section: "" for section in sections}
+            for activity_id, status in cur.fetchall():
+                activity_id = str(activity_id or "").strip()
+                if activity_id in statuses:
+                    statuses[activity_id] = str(status or "")
+            return statuses
+    except DatabaseError as exc:
+        logger.warning(
+            "Could not read marking statuses for %s (%s activities): %s",
+            kind,
+            len(sections),
+            exc,
+        )
+        # A lookup failure must not make submitted evidence deletable.
+        return {section: MARKING_STATUS_UNKNOWN for section in sections}
 
 
 def _marking_status(kind, learner_id, section_ref):
@@ -440,35 +588,7 @@ def _marking_status(kind, learner_id, section_ref):
     section_ref = str(section_ref or "").strip()
     if not section_ref:
         return ""
-    try:
-        with _conn().cursor() as cur:
-            learner_ids = _learner_profile_ids_for_source(cur, learner_id)
-            candidates = sorted({str(learner_id), *(learner_ids or [])})
-            cur.execute(
-                """
-                select status
-                  from "Learner"."learning_reflection_submissions"
-                 where activity_id = %s
-                   and learner_kind = %s
-                   and learner_id::text = any(%s)
-                 order by case status when 'accepted' then 0 when 'submitted_for_tutor_review' then 1 else 2 end,
-                     submitted_at desc nulls last
-                 limit 1
-                """,
-                [section_ref, kind, candidates],
-            )
-            row = cur.fetchone()
-            return str(row[0] or "") if row else ""
-    except DatabaseError as exc:
-        logger.warning(
-            "Could not read marking status for %s/%s: %s", kind, section_ref, exc
-        )
-        # Not "" -- that would read as "never submitted" and unlock a file the
-        # delete gate exists to protect. Refusing is the recoverable direction:
-        # a learner can ask a tutor, whereas a file removed from a submission a
-        # coach has read cannot be put back. The library shows it as pending,
-        # which is honest: we do not currently know.
-        return MARKING_STATUS_UNKNOWN
+    return _marking_statuses(kind, learner_id, [section_ref]).get(section_ref, "")
 
 
 def _is_submitted_for_marking(kind, learner_id, section_ref):
@@ -502,8 +622,6 @@ def delete_evidence(request, kind, pk, file_id):
         return _error("Method not allowed.", 405)
     if kind not in VALID_KINDS:
         return _error("Unknown learner kind.", 400)
-    ensure_evidence_tables()
-
     # Scoping the lookup by learner is the ownership check: another learner's
     # file id simply does not resolve here.
     try:
@@ -516,8 +634,11 @@ def delete_evidence(request, kind, pk, file_id):
             )
             row = cur.fetchone()
     except DatabaseError as exc:
-        logger.warning("Could not look up evidence for delete: %s", exc)
-        return _error("Could not load evidence.", 502)
+        return _database_error_response(
+            exc,
+            operation="evidence delete lookup",
+            fallback="Could not load evidence.",
+        )
 
     if not row:
         return _error("Evidence not found.", 404)
@@ -557,7 +678,10 @@ def delete_evidence(request, kind, pk, file_id):
             if blob_name:
                 cur.execute('delete from "Learner"."Evidence" where "Azure_id" = %s', [blob_name])
     except DatabaseError as exc:
-        logger.warning("Could not delete evidence row: %s", exc)
-        return _error("Could not remove the evidence record.", 502)
+        return _database_error_response(
+            exc,
+            operation="evidence metadata delete",
+            fallback="Could not remove the evidence record.",
+        )
 
     return JsonResponse({"id": str(file_id), "deleted": True})

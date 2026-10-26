@@ -3,9 +3,13 @@ import ast
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+
+import learner_api
+from learner_api import monthly_log_history
 
 
 def functions(path, namespace):
@@ -32,17 +36,42 @@ class HistoricalLogsTests(unittest.TestCase):
                 {'month': '2026-01', 'actual_hours': 3, 'not_accepted_hours': 2,
                  'training_plan_target': 999, 'student_signature': {'saved': True}}]}))
         self.targets = Mock(return_value={'2026-01': {'planned': 25}})
-        self.ns = dict(date=date, repo=self.repo, old=self.old,
-                       PILOT_COACH='aryan.harikumar@kentbusinesscollege.com',
-                       selected_contract=lambda rows: rows[0] if rows else None,
-                       read_contract=Mock(return_value={'2026-01': {'planned': 25}}),
-                       contract_extract_metadata=lambda value: None,
-                       time=SimpleNamespace(time=lambda: 0))
-        self.history = functions(root / 'monthly_log_history.py', self.ns)
+        self.pilot_coach = 'aryan.harikumar@kentbusinesscollege.com'
+        self.read_contract = Mock(return_value={'2026-01': {'planned': 25}})
+        self.history = monthly_log_history
+        module_patch = patch.multiple(
+            self.history,
+            repo=self.repo,
+            old=self.old,
+            selected_contract=lambda rows: rows[0] if rows else None,
+            read_contract=self.read_contract,
+            contract_extract_metadata=lambda value: None,
+            time=SimpleNamespace(time=lambda: 0),
+        )
+        module_patch.start()
+        self.addCleanup(module_patch.stop)
+
+        journal_sources = ModuleType('learner_api.journal_sources')
+        journal_sources.enabled = Mock(return_value=False)
+        canonical_learning = ModuleType('learner_api.canonical_learning')
+        canonical_learning.targets = Mock(return_value={})
+        imports_patch = patch.dict(sys.modules, {
+            'learner_api.journal_sources': journal_sources,
+            'learner_api.canonical_learning': canonical_learning,
+        })
+        imports_patch.start()
+        self.addCleanup(imports_patch.stop)
+        for name, module in (
+            ('journal_sources', journal_sources),
+            ('canonical_learning', canonical_learning),
+        ):
+            package_patch = patch.object(learner_api, name, module, create=True)
+            package_patch.start()
+            self.addCleanup(package_patch.stop)
 
     def test_midmonth_start_and_empty_months(self):
-        self.ns['contract_targets'] = self.targets
-        result = self.history.summary(self.learner)['months']
+        with patch.object(self.history, 'contract_targets', self.targets):
+            result = self.history.summary(self.learner)['months']
         self.assertEqual([r['month'] for r in result], [f'2026-{m:02}' for m in range(1, 9)])
         self.assertEqual(result[0]['training_plan_target'], 25)
         self.assertEqual(result[0]['actual_hours'], 3)
@@ -55,7 +84,7 @@ class HistoricalLogsTests(unittest.TestCase):
     def test_all_aptem_linked_learners_regardless_of_coach(self):
         self.assertTrue(self.history.enabled(self.learner))
         self.assertTrue(self.history.enabled({**self.learner, '_profile': None,
-                                              'coach_email': self.ns['PILOT_COACH']}))
+                                              'coach_email': self.pilot_coach}))
         self.assertTrue(self.history.enabled({**self.learner, '_profile': {'coach_email': 'other@example.test'}}))
         self.assertFalse(self.history.enabled({**self.learner, 'aptem_id': None}))
 
@@ -167,8 +196,9 @@ class HistoricalLogsTests(unittest.TestCase):
 
     def test_unavailable_target_keeps_hours_signatures_and_months(self):
         for message in ('Missing contract', 'Unreadable PDF', 'Unverified hours'):
-            self.ns['contract_targets'] = Mock(side_effect=self.old.ServiceError(message, 'history_source_unavailable', 503))
-            result = self.history.summary(self.learner)['months']
+            target_reader = Mock(side_effect=self.old.ServiceError(message, 'history_source_unavailable', 503))
+            with patch.object(self.history, 'contract_targets', target_reader):
+                result = self.history.summary(self.learner)['months']
             self.assertEqual(len(result), 8)
             self.assertEqual(result[0]['actual_hours'], 3)
             self.assertEqual(result[0]['student_signature'], {'saved': True})
@@ -176,16 +206,17 @@ class HistoricalLogsTests(unittest.TestCase):
             self.assertIn(message, result[0]['target_warning'])
 
     def test_unrelated_errors_are_not_hidden(self):
-        self.ns['contract_targets'] = Mock(side_effect=self.old.ServiceError('Denied', 'forbidden', 403))
-        with self.assertRaises(self.old.ServiceError):
-            self.history.summary(self.learner)
+        target_reader = Mock(side_effect=self.old.ServiceError('Denied', 'forbidden', 403))
+        with patch.object(self.history, 'contract_targets', target_reader):
+            with self.assertRaises(self.old.ServiceError):
+                self.history.summary(self.learner)
 
     def test_contract_uses_audit_database_and_pdf_monthly_hours(self):
         self.repo.source_query.return_value = [{'azure_path': 'synthetic-plan.pdf',
             'fetched_at': 'version-2', 'training_plan_planned_hours': 999}]
         result = self.history.contract_targets(self.learner)
         self.repo.query.assert_not_called()
-        self.ns['read_contract'].assert_called_once_with('synthetic-plan.pdf', 999, 'version-2:0', None)
+        self.read_contract.assert_called_once_with('synthetic-plan.pdf', 999, 'version-2:0', None)
         self.assertEqual(result['2026-01']['planned'], 25)
         sql = self.repo.source_query.call_args.args[0]
         self.assertIn('lower(c.document_name)', sql)

@@ -12,6 +12,7 @@ from unittest.mock import patch
 from django.test import RequestFactory, SimpleTestCase
 
 from coach_api.views import (
+    MARKING_FEEDBACK_MAX_LENGTH,
     coach_caseload_coach_rag,
     coach_marking_queue,
     coach_monthly_activity,
@@ -120,7 +121,7 @@ class CoachValidationContractTests(SimpleTestCase):
 
         marking_request = self.factory.patch(
             "/coach_api/coach/marking-queue/submission",
-            data=json.dumps({"decision": "referred", "feedback": "x" * 4001}),
+            data=json.dumps({"decision": "referred", "feedback": "x" * (MARKING_FEEDBACK_MAX_LENGTH + 1)}),
             content_type="application/json",
         )
         response = self.call(coach_marking_queue, marking_request, uuid.uuid4())

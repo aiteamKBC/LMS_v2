@@ -122,18 +122,32 @@ describe('Previous evidence in the learner library', () => {
     expect(within(screen.getByRole('button', { name: 'Open evidence: Progress review' })).getByText('Recorded')).toBeVisible();
     expect(within(screen.getByRole('button', { name: `Open evidence: ${historical.name}` })).getByText('Accepted')).toBeVisible();
   });
+  it('renders additive scanner pending, retry and terminal failure states', () => {
+    const processing: EvidenceRecord = { ...native, id: 'processing', filename: 'Processing.pdf', status: 'pending', lifecycleState: 'scanning' };
+    const retrying: EvidenceRecord = { ...native, id: 'retrying', filename: 'Retrying.pdf', status: 'pending', lifecycleState: 'scan_failed', retryable: true };
+    const failed: EvidenceRecord = { ...native, id: 'failed', filename: 'Failed.pdf', status: 'pending', lifecycleState: 'expired', retryable: false };
+    show({ evidenceRecords: [processing, retrying, failed], historicalRecords: [] });
+    expect(within(screen.getByRole('button', { name: 'Open evidence: Processing.pdf' })).getByText('Processing file')).toBeVisible();
+    expect(within(screen.getByRole('button', { name: 'Open evidence: Retrying.pdf' })).getByText('Retry scheduled')).toBeVisible();
+    expect(within(screen.getByRole('button', { name: 'Open evidence: Failed.pdf' })).getByText('Scan failed')).toBeVisible();
+  });
   it('retries document preparation without losing the evidence details', async () => {
     const normal = vi.mocked(fetch).getMockImplementation()!;
-    let failed = false;
+    let failedAttempts = 0;
     vi.mocked(fetch).mockImplementation(async (...args) => {
-      if (String(args[0]).includes('/open/') && !failed) { failed = true; return new Response(JSON.stringify({ error: 'Storage unavailable' }), { status: 503 }); }
+      if (String(args[0]).includes('/open/') && failedAttempts < 2) {
+        failedAttempts += 1;
+        return new Response(JSON.stringify({ error: 'Storage unavailable' }), { status: 503 });
+      }
       return normal(...args);
     });
     show();
     fireEvent.click(screen.getByRole('button', { name: `Open evidence: ${historical.name}` }));
     expect(await screen.findByText('Storage unavailable')).toBeVisible();
+    expect(failedAttempts).toBe(2);
     fireEvent.click(screen.getByRole('button', { name: 'Retry document' }));
     expect(await screen.findByTitle(historical.name)).toBeVisible();
+    expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input).includes('/open/'))).toHaveLength(3);
   });
   it('does not replace an unfinished load with a no-evidence message', () => {
     show({ evidenceRecords: [], historicalRecords: [], historicalLoading: true });

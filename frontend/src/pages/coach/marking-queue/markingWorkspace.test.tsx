@@ -152,6 +152,7 @@ describe('coach marking workspace', () => {
       decision: 'accepted',
       feedback: 'AI draft for coach review.',
       reviewedBy: 'Test Coach',
+      expectedReviewedAt: null,
     });
   });
 });

@@ -131,7 +131,9 @@ def source_rows(cursor, aptem_id, tables, source_id=None):
     return dict_rows(cursor)
 
 
-def manual_documents(cursor, aptem_id, tables, row_id=None, *, include_mirrored=False):
+def manual_documents(
+    cursor, aptem_id, tables, row_id=None, *, include_mirrored=False, summary_only=False
+):
     if not {journal_sources.table('manual_learner_activities'), journal_sources.table('manual_activity_documents')}.issubset(tables):
         return []
     params = [aptem_id]
@@ -143,11 +145,21 @@ def manual_documents(cursor, aptem_id, tables, row_id=None, *, include_mirrored=
     # the evidence item. Keep only additional journal documents here.
     dedup = f'''AND NOT EXISTS (SELECT 1 FROM {EVIDENCE_ITEMS} e WHERE e.learner_id=d.aptem_id
         AND d.container='fetch-aptem-evidences' AND d.blob_name IN (e.file_blob,e.report_blob,e.note_blob))''' if EVIDENCE_ITEMS in tables and not include_mirrored else ''
-    cursor.execute(f'''SELECT d.id,d.manual_activity_id,d.display_name,d.content_type,d.size_bytes,
+    # List responses need one representative document per activity. Apply the
+    # existing uploaded/source deduplication before DISTINCT ON so an excluded
+    # first document cannot hide a later valid document for the same activity.
+    uploaded_dedup = f'''AND NOT EXISTS (SELECT 1 FROM {ARCHIVES} o
+        WHERE o.learner_id=d.aptem_id AND o.is_uploaded
+          AND o.deleted_at IS NULL AND o.archived_at IS NULL
+          AND (o.source_activity_id=r.id OR
+               (o.azure_container=d.container AND o.azure_blob_name=d.blob_name)))''' if summary_only and ARCHIVES in tables else ''
+    distinct = 'DISTINCT ON (r.id) ' if summary_only else ''
+    order = 'r.id,d.id' if summary_only else 'r.activity_date DESC NULLS LAST,r.id,d.id'
+    cursor.execute(f'''SELECT {distinct}d.id,d.manual_activity_id,d.display_name,d.content_type,d.size_bytes,
         d.container,d.blob_name,d.uploaded_at,r.title,r.category,r.activity_date,r.month
         FROM {journal_sources.table('manual_activity_documents')} d JOIN {journal_sources.table('manual_learner_activities')} r ON r.id=d.manual_activity_id AND r.aptem_id=d.aptem_id
-        WHERE d.aptem_id=%s AND d.deleted_at IS NULL AND r.deleted_at IS NULL {target} {dedup}
-        ORDER BY r.activity_date DESC NULLS LAST,r.id,d.id''', params)
+        WHERE d.aptem_id=%s AND d.deleted_at IS NULL AND r.deleted_at IS NULL {target} {dedup} {uploaded_dedup}
+        ORDER BY {order}''', params)
     return dict_rows(cursor)
 
 
@@ -224,10 +236,7 @@ def list_historical_evidence(request, kind, pk):
         tables = available_tables(cursor)
         items = project_source(source_rows(cursor, aptem_id, tables), aptem_id)
         uploads = uploaded_rows(cursor, aptem_id, tables)
-        selected_rows = {row['activity_id'] for row in uploads if row.get('activity_id')}
-        uploaded_blobs = {(row['azure_container'], row['azure_blob_name']) for row in uploads if row['azure_blob_name']}
-        extra_docs = [doc for doc in manual_documents(cursor, aptem_id, tables)
-                      if doc['manual_activity_id'] not in selected_rows and (doc['container'], doc['blob_name']) not in uploaded_blobs]
+        extra_docs = manual_documents(cursor, aptem_id, tables, summary_only=True)
         items += project_manual(extra_docs) + project_uploaded(uploads)
     items.sort(key=lambda item: (item['date'] or '', item['id']), reverse=True)
     return {'items': items, 'total': len(items)}

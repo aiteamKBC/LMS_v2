@@ -16,8 +16,9 @@ from django.conf import settings
 from django.http import JsonResponse
 from django.utils import timezone
 
-from learner_api.evidence import _scan
+from learner_api.evidence import _ensure_scanner_ready, _scan, _verified_scan_verdict
 from learner_api.evidence_storage import blob_url, delete_blob, move_blob, upload_to_quarantine
+from learner_api.malware_scanning import MalwareDetected, ScanError, ScannerUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ def discard(container, blob_name):
     try:
         delete_blob(container, blob_name)
     except Exception as exc:  # already gone / SDK / network
-        logger.warning("Could not remove unrecorded upload %s/%s: %s", container, blob_name, exc)
+        logger.warning("Could not remove an unrecorded upload (%s).", exc.__class__.__name__)
 
 
 def remove_blob(item):
@@ -101,7 +102,7 @@ def remove_blob(item):
         try:
             delete_blob(item["container"], item["blobName"])
         except Exception as exc:  # already deleted / SDK / network
-            logger.warning("Upload blob delete failed for %s/%s: %s", item["container"], item["blobName"], exc)
+            logger.warning("Learner upload blob deletion failed (%s).", exc.__class__.__name__)
 
 
 def store(f, blob_prefix, request):
@@ -111,6 +112,15 @@ def store(f, blob_prefix, request):
     (None, error response). A file failing the scan is moved to the rejected
     container and not returned, so the caller records nothing.
     """
+    try:
+        _ensure_scanner_ready()
+    except ScannerUnavailable:
+        logger.error("Learner enrolment upload blocked because malware scanning is unavailable.")
+        return None, error(
+            "Malware scanning is temporarily unavailable. Upload has not been saved.",
+            503,
+        )
+
     file_id = uuid.uuid4()
     ext = f.name.rsplit(".", 1)[-1].lower() if "." in f.name else "bin"
     blob_name = f"{blob_prefix}/{file_id}.{ext}"
@@ -119,22 +129,30 @@ def store(f, blob_prefix, request):
     try:
         upload_to_quarantine(f, blob_name, f.content_type)
     except Exception as exc:  # SDK / network / duplicate-blob errors
-        logger.warning("Upload to quarantine failed: %s", exc)
+        logger.warning("Learner upload to quarantine failed (%s).", exc.__class__.__name__)
         return None, error("Upload to storage failed.", 502)
 
-    verdict = _scan(quarantine, blob_name)
-    if verdict != "clean":
+    try:
+        verdict = _verified_scan_verdict(_scan(quarantine, blob_name), quarantine, blob_name)
+    except MalwareDetected:
         try:
             move_blob(quarantine, settings.AZURE_REJECTED_CONTAINER, blob_name)
         except Exception as exc:
-            logger.warning("Could not move rejected upload %s: %s", blob_name, exc)
+            logger.warning("Could not route a rejected learner upload (%s).", exc.__class__.__name__)
         return None, error("The file did not pass the security scan and was not stored.", 422)
+    except ScanError as exc:
+        logger.warning("Learner enrolment upload scan failed (%s).", exc.__class__.__name__)
+        discard(quarantine, blob_name)
+        return None, error(
+            "Malware scanning could not be completed. Upload has not been saved.",
+            503,
+        )
 
     approved = settings.AZURE_APPROVED_CONTAINER
     try:
         move_blob(quarantine, approved, blob_name)
     except Exception as exc:
-        logger.warning("Upload promotion (%s -> %s) failed: %s", quarantine, approved, exc)
+        logger.warning("Learner upload promotion failed (%s).", exc.__class__.__name__)
         return None, error("Could not finalise upload.", 502)
 
     return {

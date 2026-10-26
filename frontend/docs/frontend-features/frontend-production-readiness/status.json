@@ -1,0 +1,19 @@
+{
+  "feature": "frontend-production-readiness",
+  "phase": "verification",
+  "status": "blocked",
+  "updated": "2026-10-20",
+  "frontend_scope_only": true,
+  "backend_changes_approved": false,
+  "checks": {
+    "tests": "passed",
+    "typecheck": "passed",
+    "lint": "failed",
+    "build": "failed",
+    "e2e": "passed"
+  },
+  "blockers": [
+    "Existing frontend source lint findings are outside the approved implementation scope.",
+    "The standard Vite output directory is locked by Windows and cannot be cleaned; an equivalent build to a fresh temporary directory passes."
+  ]
+}

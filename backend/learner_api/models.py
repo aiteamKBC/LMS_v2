@@ -2053,3 +2053,6 @@ class WrittenAgreement(models.Model):
 
 # Kept in its own module so checkpoint storage has no progress-table side effects.
 from .timing_drafts import ActivityTimingDraft  # noqa: E402,F401
+
+# Provider-neutral scanner persistence remains isolated from HTTP request paths.
+from .malware_persistence import FileScanEvent, FileScanJob, FileScanOutbox  # noqa: E402,F401

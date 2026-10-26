@@ -220,7 +220,8 @@ class AssignmentFormReadinessTests(SimpleTestCase):
             "businessImpact": "",
         })
 
-        with patch("learner_api.components.connections", {"enrolment": connection}):
+        with patch("learner_api.components.connections", {"enrolment": connection}), \
+                patch("learner_api.monthly_assignment.booked_coaching", return_value=False):
             self.assertFalse(_assignment_form_ready("COMP-1", "commercial", "19"))
 
     def test_accepts_complete_json_assignment_payload(self):
@@ -1044,9 +1045,11 @@ class LearnerSoftDeletedCurriculumVisibilityTests(SimpleTestCase):
 
         self.assertEqual(resolved, ([], [], []))
         module_query, week_query, component_query = [" ".join(query.lower().split()) for query in cursor.queries[:3]]
-        self.assertIn("m.deleted_at is null or m.deleted_via_parent is not null", module_query)
-        self.assertIn("deleted_at is null or deleted_via_parent is not null", week_query)
-        self.assertIn("deleted_at is null or deleted_via_parent is not null", component_query)
+        self.assertIn("m.deleted_at is null or coalesce(m.deleted_via_parent, '') <> ''", module_query)
+        for child_query in (week_query, component_query):
+            self.assertIn("deleted_at is null or exists", child_query)
+            self.assertIn("deleted_via_parent", child_query)
+            self.assertIn("archived_module.deleted_at is not null", child_query)
 
 
 class LearnerWeekQuizVisibilityTests(SimpleTestCase):
@@ -2040,12 +2043,13 @@ class QuizSubmitWorkingRulesTests(SimpleTestCase):
             view = view.__wrapped__
 
         holidays = {access_time.date(): [{"label": "Christmas closure"}]} if holiday else {}
-        models = {"apprenticeship": Mock()}
-        models["apprenticeship"].objects.get.return_value = SimpleNamespace(id=19)
+        source = SimpleNamespace(id=19)
         profile = SimpleNamespace(training_plan_progress=[])
-        with patch.object(quiz_views, "SOURCE_MODELS", models), \
+        access = SimpleNamespace(
+            source=source, profile=profile, enrolment_id=19, kind="apprenticeship",
+        )
+        with patch.object(quiz_views, "authorize_quiz_access", return_value=access), \
              patch.object(quiz_views, "_fetch_quiz", return_value=self._quiz()), \
-             patch.object(quiz_views, "learner_profile_for_source", return_value=profile), \
              patch.object(quiz_views, "tracking_session_already_used", return_value=False), \
              patch.object(quiz_views, "save_progress_record", save), \
              patch.object(quiz_views, "record_quiz_attempt") as audit, \

@@ -275,7 +275,10 @@ class MonthlyReportEndpointTests(SimpleTestCase):
     def test_resubmitting_a_month_updates_the_same_report(self):
         first = self._post(self._signed(learnedSummary="First draft"))
         self.assertEqual(first.status_code, 201)
-        second = self._post(self._signed(learnedSummary="Revised draft"))
+        second = self._post(self._signed(
+            learnedSummary="Revised draft",
+            expectedUpdatedAt=first.json()["report"]["updatedAt"],
+        ))
         self.assertEqual(second.status_code, 201)
 
         listed = self.client.get(self._url()).json()["reports"]

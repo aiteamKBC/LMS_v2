@@ -41,12 +41,28 @@ export interface CoachMonthlyReportsResponse {
   items: CoachMonthlyReportSummary[];
   months: { monthKey: string; monthLabel: string | null }[];
   learners: { learnerId: string; learnerName: string | null }[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+    hasNext: boolean;
+    hasPrevious: boolean;
+  };
+  summary: {
+    reports: number;
+    learners: number;
+    attachments: number;
+    unsigned: number;
+  };
 }
 
 export interface CoachMonthlyReportFilters {
   month?: string;
   learner?: string;
   search?: string;
+  page?: number;
+  pageSize?: number;
 }
 
 async function parse<T>(res: Response): Promise<T> {
@@ -69,16 +85,19 @@ async function parse<T>(res: Response): Promise<T> {
 /** Every monthly report submitted by the learners on this coach's caseload. */
 export async function fetchCoachMonthlyReports(
   filters: CoachMonthlyReportFilters = {},
+  signal?: AbortSignal,
 ): Promise<CoachMonthlyReportsResponse> {
   const params = new URLSearchParams();
   if (filters.month) params.set('month', filters.month);
   if (filters.learner) params.set('learner', filters.learner);
   if (filters.search) params.set('search', filters.search);
+  params.set('page', String(filters.page || 1));
+  params.set('pageSize', String(filters.pageSize || 25));
   const qs = params.toString() ? `?${params.toString()}` : '';
 
   let res: Response;
   try {
-    res = await coachFetch(`${BASE}${qs}`, { cache: 'no-store' });
+    res = await coachFetch(`${BASE}${qs}`, { cache: 'no-store', signal });
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
@@ -87,6 +106,20 @@ export async function fetchCoachMonthlyReports(
     items: data.items || [],
     months: data.months || [],
     learners: data.learners || [],
+    pagination: data.pagination || {
+      page: 1,
+      pageSize: filters.pageSize || 25,
+      total: data.items?.length || 0,
+      totalPages: 1,
+      hasNext: false,
+      hasPrevious: false,
+    },
+    summary: data.summary || {
+      reports: data.items?.length || 0,
+      learners: new Set((data.items || []).map((item) => item.learnerId)).size,
+      attachments: (data.items || []).reduce((total, item) => total + item.attachments.length, 0),
+      unsigned: (data.items || []).filter((item) => !item.signed).length,
+    },
   };
 }
 

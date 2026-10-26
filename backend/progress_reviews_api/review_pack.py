@@ -240,8 +240,16 @@ def _resolve_learner(learner_id: int):
 
 
 def _resolve_profile(source, learner_id: int):
-    from learner_api.identity import learner_profile_for_source
-    return learner_profile_for_source(source, source_pk=learner_id)
+    from .identity import review_profile_for_source
+
+    return review_profile_for_source(source, source_pk=learner_id)
+
+
+_IDENTITY_NOT_SUPPLIED = object()
+
+
+def _learner_kind(source):
+    return "commercial" if _clean(source.learner_type).lower() == "commercial" else "apprenticeship"
 
 
 def _build_learner_section(source, profile, detail, warnings: list) -> dict:
@@ -528,11 +536,10 @@ def _classify_evidence(row: dict) -> str:
 
 def _build_evidence_sections(kind, learner_id, period: ReviewPeriod, warnings: list):
     try:
-        from learner_api.evidence import _marking_status, ensure_evidence_tables
+        from learner_api.evidence import _marking_statuses
         from learner_api.evidence_storage import azure_configured, get_download_sas
         from django.db import connections
 
-        ensure_evidence_tables()
         with connections["enrolment"].cursor() as cur:
             cur.execute(
                 'select id, original_filename, content_type, size_bytes, status, '
@@ -549,22 +556,35 @@ def _build_evidence_sections(kind, learner_id, period: ReviewPeriod, warnings: l
         logger.warning("Progress review: evidence lookup failed for learner %s: %s", learner_id, exc)
         warnings.append("Evidence records could not be loaded; evidence section is empty.")
         return [], [], []
-    except Exception as exc:  # ensure_evidence_tables/network
+    except Exception as exc:  # storage/network or unexpected source failure
         logger.warning("Progress review: evidence lookup failed for learner %s: %s", learner_id, exc)
         warnings.append("Evidence records could not be loaded; evidence section is empty.")
         return [], [], []
 
-    evidence_out = []
+    period_rows = []
     for row in rows:
         uploaded_at = _parse_date(row.get("uploaded_at"))
         if not _within(uploaded_at, period.review_period_start, period.review_period_end):
             continue
+        period_rows.append((row, uploaded_at))
+
+    section_refs = sorted({
+        str(row.get("section_ref") or "").strip()
+        for row, _uploaded_at in period_rows
+    } - {""})
+    try:
+        marking_statuses = _marking_statuses(kind, learner_id, section_refs) if section_refs else {}
+    except Exception:
+        # Preserve the former per-row fail-closed result if an unexpected
+        # resolver failure escapes its own database-error handling.
+        marking_statuses = {section_ref: "unknown" for section_ref in section_refs}
+
+    evidence_out = []
+    for row, uploaded_at in period_rows:
         details = _normalize_training_plan_details(row.get("Training_plan_details"))
         ksb_codes = details.get("ksbCodes")
-        try:
-            marking = _marking_status(kind, learner_id, row.get("section_ref"))
-        except Exception:
-            marking = "unknown"
+        section_ref = str(row.get("section_ref") or "").strip()
+        marking = marking_statuses.get(section_ref, "")
         file_link = NOT_AVAILABLE
         if row.get("status") == "approved" and azure_configured():
             try:
@@ -776,6 +796,8 @@ def build_review_pack(
     *,
     review_id=None,
     generated_by="",
+    source=None,
+    profile=_IDENTITY_NOT_SUPPLIED,
 ) -> dict:
     """Assemble the full progress_review_pack for one learner and period.
 
@@ -787,17 +809,25 @@ def build_review_pack(
     from learner_api.learner_detail import build_learner_detail
 
     warnings: list = []
-    kind, source = _resolve_learner(learner_id)
+    if source is None:
+        kind, source = _resolve_learner(learner_id)
+    else:
+        kind = _learner_kind(source)
+
+    if profile is _IDENTITY_NOT_SUPPLIED:
+        profile = _resolve_profile(source, learner_id)
 
     try:
-        detail = build_learner_detail(source, learner_id)
+        detail = build_learner_detail(
+            source,
+            learner_id,
+            resolved_profile=profile,
+        )
     except DatabaseError as exc:
         logger.warning("Progress review: build_learner_detail failed for learner %s: %s", learner_id, exc)
         warnings.append("Learner detail could not be loaded; programme/KSB/module sections are limited.")
         detail = {}
 
-    # Read after build_learner_detail, which refreshes the profile's OTJ snapshot.
-    profile = _resolve_profile(source, learner_id)
     if profile is None:
         warnings.append("This learner has no active LearnerProfile record; profile-derived fields may be limited.")
 

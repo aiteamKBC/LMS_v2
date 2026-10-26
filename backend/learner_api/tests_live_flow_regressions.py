@@ -19,18 +19,31 @@ class EvidenceMetadataTests(SimpleTestCase):
 class ProgressIdentityTests(SimpleTestCase):
     def test_explicit_profile_link_never_uses_an_unrelated_source_primary_key(self):
         cursor = Mock()
-        cursor.fetchall.return_value = [('647',)]
+        cursor.fetchall.return_value = [{
+            'requested_enrolment_id': 501, 'requested_position': 1,
+            'account_match_count': 1, 'id': 647, 'enrolment_id': 501,
+            'aptem_id': 7001, 'learner_type': 'commercial',
+            'account_record_id': 501, 'account_email': 'learner@example.test',
+            'account_aptem_id': '007001', 'email': 'LEARNER@example.test',
+        }]
         self.assertEqual(_learner_profile_ids_for_source(cursor, 501), ['647'])
         cursor.execute.assert_called_once()
 
     def test_unmatched_or_ambiguous_legacy_profiles_do_not_invent_a_profile_id(self):
-        for candidates in ([], [('2',), ('3',)]):
+        for candidates in ([], [
+            {'profile_id': 2, 'profile_match_count': 2, 'account_email_match_count': 1},
+            {'profile_id': 3, 'profile_match_count': 2, 'account_email_match_count': 1},
+        ]):
             cursor = Mock()
-            cursor.fetchall.side_effect = [[], candidates]
-            cursor.fetchone.return_value = ('shared@example.test',)
+            cursor.fetchall.side_effect = [
+                [],
+                [{'account_record_id': 500, 'account_email': 'shared@example.test',
+                  'account_aptem_id': None}],
+                candidates,
+            ]
             self.assertEqual(_learner_profile_ids_for_source(cursor, 500), [])
-            self.assertIn('enrolment_id is null', cursor.execute.call_args.args[0])
-            self.assertIn('not exists', cursor.execute.call_args.args[0])
+            self.assertIn('l.enrolment_id is null', cursor.execute.call_args.args[0].lower())
+            self.assertIn('account_email_match_count', cursor.execute.call_args.args[0])
 
 
 class ComponentEditReadScopeTests(SimpleTestCase):

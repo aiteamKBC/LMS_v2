@@ -84,6 +84,22 @@ export interface MonthlyReport {
   updatedAt: string | null;
 }
 
+/** List projection: enough to render/report edit controls, without transferring
+ * the frozen activity snapshot or signature image for every historical month. */
+export interface MonthlyReportSummary extends Omit<MonthlyReport, 'activitySnapshot' | 'signature'> {
+  signed: boolean;
+  activityCount: number;
+}
+
+export interface MonthlyReportPagination {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  hasNext: boolean;
+  hasPrevious: boolean;
+}
+
 export interface SubmitMonthlyReportInput {
   monthKey: string;
   monthLabel: string;
@@ -99,12 +115,14 @@ export interface SubmitMonthlyReportInput {
   signedName: string;
   /** Also keep this signature on the learner's own record for next time. */
   saveSignature?: boolean;
+  /** Optimistic concurrency token from the report being edited. */
+  expectedUpdatedAt?: string | null;
 }
 
 /** The months already reported on, plus the learner's reusable signature when
  *  they have saved one. */
 export interface MonthlyReportsResponse {
-  reports: MonthlyReport[];
+  reports: MonthlyReportSummary[];
   savedSignature: string;
   savedSignatureName: string;
 }
@@ -130,12 +148,44 @@ export async function fetchMonthlyReports(
   kind: LearnerKind,
   id: string,
 ): Promise<MonthlyReportsResponse> {
-  const data = await readLearnerJson<Partial<MonthlyReportsResponse>>(`${BASE}/${kind}/${id}/`);
+  const reports = new Map<string, MonthlyReportSummary>();
+  let page = 1;
+  let savedSignature = '';
+  let savedSignatureName = '';
+  let hasNext = true;
+  while (hasNext) {
+    const params = new URLSearchParams({ page: String(page), pageSize: '50' });
+    const data = await readLearnerJson<Partial<MonthlyReportsResponse> & {
+      pagination?: MonthlyReportPagination;
+    }>(`${BASE}/${kind}/${id}/?${params.toString()}`);
+    (data.reports || []).forEach((report) => reports.set(report.id, report));
+    if (page === 1) {
+      savedSignature = data.savedSignature || '';
+      savedSignatureName = data.savedSignatureName || '';
+    }
+    hasNext = Boolean(data.pagination?.hasNext);
+    page = (data.pagination?.page || page) + 1;
+  }
   return {
-    reports: data.reports || [],
-    savedSignature: data.savedSignature || '',
-    savedSignatureName: data.savedSignatureName || '',
+    reports: Array.from(reports.values()),
+    savedSignature,
+    savedSignatureName,
   };
+}
+
+/** Fetch the immutable snapshot and signature only when a report is opened or
+ * downloaded. */
+export async function fetchMonthlyReport(
+  kind: LearnerKind,
+  id: string,
+  monthKey: string,
+): Promise<MonthlyReport> {
+  const params = new URLSearchParams({ month: monthKey });
+  const data = await readLearnerJson<{ report: MonthlyReport | null }>(
+    `${BASE}/${kind}/${id}/?${params.toString()}`,
+  );
+  if (!data.report) throw new Error('This monthly report is no longer available.');
+  return data.report;
 }
 
 /** Same-origin URL for one attached document's bytes.

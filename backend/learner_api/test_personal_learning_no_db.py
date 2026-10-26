@@ -21,6 +21,11 @@ from unittest.mock import Mock, patch
 from urllib.parse import unquote
 from urllib.parse import urlparse
 
+from django.conf import settings
+
+if not settings.configured:
+    settings.configure(RUN_APP_ON_TEST_BRANCH=False, USE_TZ=True)
+
 if __name__ == '__main__' and not sys.flags.isolated:
     raise RuntimeError('Use python -I backend/learner_api/test_personal_learning_no_db.py')
 ROOT = Path(__file__).parent
@@ -49,6 +54,21 @@ class PersonalLearningTests(unittest.TestCase):
         blocker = patch('socket.socket', side_effect=AssertionError('Network is forbidden'))
         blocker.start()
         self.addCleanup(blocker.stop)
+        # AST-loaded production functions retain their real relative imports.
+        # Make the in-memory package doubles package-shaped so Python can load
+        # database-free collaborators such as working_rules and answer_keys.
+        learner_package = types.ModuleType('learner_api')
+        learner_package.__package__ = 'learner_api'
+        learner_package.__path__ = [str(ROOT)]
+        quiz_package = types.ModuleType('quiz_api')
+        quiz_package.__package__ = 'quiz_api'
+        quiz_package.__path__ = [str(ROOT.parent / 'quiz_api')]
+        packages = patch.dict(sys.modules, {
+            'learner_api': learner_package,
+            'quiz_api': quiz_package,
+        })
+        packages.start()
+        self.addCleanup(packages.stop)
         # The working rules themselves stay real -- these activities are
         # completed on a Friday morning, which is a working instant -- but the
         # learner's holiday calendar is a curriculum read, and this file runs
@@ -93,7 +113,8 @@ class PersonalLearningTests(unittest.TestCase):
         self.quiz._fetch_quiz = lambda _: {'title': 'Final quiz', 'passingGrade': 70, 'questions': [{'id': 1, 'text': 'Q', 'type': 'single_choice', 'points': 1,
             'answers': [{'id': 10, 'text': 'Correct', 'isCorrect': True}, {'id': 9, 'text': 'Wrong', 'isCorrect': False}]}]}
         self.quiz._grade_question = lambda q, answer: {'earned': int(answer == 10), 'possible': 1, 'correct': answer == 10}
-        self.modules = {'learner_api': types.ModuleType('learner_api'), 'learner_api.personal_learning_store': self.store,
+        self.modules = {'learner_api': learner_package, 'quiz_api': quiz_package,
+            'learner_api.personal_learning_store': self.store,
             'learner_api.time_tracking': tracking, 'learner_api.certificates': certificates, 'learner_api.quizzes': self.quiz}
         modules = patch.dict(sys.modules, self.modules)
         modules.start()

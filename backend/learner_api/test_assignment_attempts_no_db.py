@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 from django.conf import settings
 from django.http import JsonResponse
 from .assignment_attempts import HISTORY_KEY, attempt_document, preserve_attempts, submission_attempts
+from .submission_audit import SUBMISSION_AUDIT_SQL
 
 if not settings.configured:
     settings.configure(DEFAULT_CHARSET='utf-8')
@@ -34,7 +35,8 @@ class AttemptHistoryTests(unittest.TestCase):
             ('assignment', 'accepted', 'accepted', [{'status': 'rejected'}]),
             ('reading', 'reading-1', 'accepted', None),
         ]
-        scope = dict(json=json, JsonResponse=JsonResponse, VALID_KINDS={'commercial', 'apprenticeship'},
+        scope = dict(__name__='learner_api.reflection_submissions_ast', __package__='learner_api',
+                     json=json, JsonResponse=JsonResponse, VALID_KINDS={'commercial', 'apprenticeship'},
                      connections={'enrolment': connection}, DatabaseError=RuntimeError)
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), scope)
         for kind in ('commercial', 'apprenticeship'):
@@ -89,7 +91,7 @@ class SaveBoundaryTests(unittest.TestCase):
     def test_actual_draft_handler_archives_review_before_overwriting_row(self):
         # Compile the real handler without importing its auth/database modules.
         source = Path(__file__).with_name('reflection_submissions.py')
-        wanted = {'_submit_reflection', '_error', '_text', '_dict', '_list'}
+        wanted = {'_submit_reflection', '_error', '_text', '_dict', '_list', '_activity_title'}
         nodes = [n for n in ast.parse(source.read_text(encoding='utf-8')).body if isinstance(n, ast.FunctionDef) and n.name in wanted]
         for node in nodes:
             node.decorator_list = []
@@ -97,10 +99,13 @@ class SaveBoundaryTests(unittest.TestCase):
         cursor = connection.cursor.return_value.__enter__.return_value
         old = {'assignmentAnswer': 'Rejected answer'}
         cursor.fetchone.side_effect = [('rejected', old, 'Please revise', 'Coach', None, None), ('submission-1',)]
-        scope = dict(json=json, uuid=uuid, date=date, JsonResponse=JsonResponse,
+        scope = dict(__name__='learner_api.reflection_submissions_ast', __package__='learner_api',
+                     json=json, uuid=uuid, date=date, JsonResponse=JsonResponse,
                      VALID_KINDS={'commercial', 'apprenticeship'}, connections={'enrolment': connection},
                      transaction=SimpleNamespace(atomic=lambda **_: nullcontext()), DatabaseError=RuntimeError,
-                     _reflection_lineage=lambda *_: {}, preserve_attempts=preserve_attempts, submission_attempts=submission_attempts)
+                     _reflection_lineage=lambda *_: {}, preserve_attempts=preserve_attempts,
+                     submission_attempts=submission_attempts, SUBMISSION_AUDIT_SQL=SUBMISSION_AUDIT_SQL,
+                     record_submission_row=lambda _row: None)
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), scope)
         request = SimpleNamespace(method='POST', body=json.dumps({'learnerKind': 'commercial', 'learnerId': '1', 'activityType': 'assignment', 'activityId': 'A1', 'submissionMode': 'draft', 'assignmentAnswer': 'New answer', HISTORY_KEY: []}).encode())
         response = scope['_submit_reflection'](request)
@@ -152,7 +157,8 @@ class AttemptReportTests(unittest.TestCase):
         stored = {'assignmentAnswer': 'Current draft'}
         preserve_attempts(stored, {'assignmentAnswer': 'Archived answer'}, 'rejected', '2026-09-01', 'Archived feedback')
         cursor.fetchone.return_value = ('record-1', 'draft', json.dumps(stored), None, None, None, None)
-        scope = dict(__package__='learner_api', json=json, JsonResponse=JsonResponse,
+        scope = dict(__name__='learner_api.reflection_submissions_ast', __package__='learner_api',
+                     json=json, JsonResponse=JsonResponse,
                      VALID_KINDS={'commercial', 'apprenticeship'}, connections={'enrolment': connection}, DatabaseError=RuntimeError)
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), scope)
         for kind in ('commercial', 'apprenticeship'):
@@ -162,7 +168,9 @@ class AttemptReportTests(unittest.TestCase):
             result = json.loads(response.content)['submission']
             self.assertEqual(result['assignmentAnswer'], 'Archived answer')
             self.assertEqual(result['coachFeedback'], 'Archived feedback')
-            self.assertEqual(cursor.execute.call_args.args[1], [kind, '101', 'assignment', 'A1'])
+            sql, params = cursor.execute.call_args.args
+            self.assertIn('assignment_topic_id = %s', sql)
+            self.assertEqual(params, [kind, '101', 'assignment', 'A1', None, ''])
             for attempt in ('0', '2', '-1', 'invalid'):
                 response = scope['get_reflection_submission'](SimpleNamespace(GET={**query, 'attempt': attempt}))
                 self.assertEqual(response.status_code, 404)
