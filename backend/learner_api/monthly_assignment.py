@@ -405,6 +405,17 @@ def complete_saved_assignment(kind, learner_id, component_id, record, save_progr
                 raise ValueError("Some monthly submission requirements changed. Your draft is safe; recheck before submitting.")
             # Use the reviewed claims, not all planned KSBs automatically.
             record["ksbs"] = [c["code"] for c in payload["monthlyAssignment"]["claims"]]
+            # Completion must use the same validated hours as the saved form.
+            # The page timer can be stale or cover only time spent online;
+            # keep its verification evidence separate from the learner's input.
+            seconds = round(float(payload["actualTimeHours"]) * 3600)
+            minutes, remainder = divmod(seconds, 60)
+            source = "timer" if ("timeEntries" not in payload["monthlyAssignment"]
+                                 and payload.get("assignmentTimeSource") == "timer") else "input"
+            tracking_source = record.get("timeTrackingSource", "assignment").rsplit(":", 1)[0]
+            record.update(claimedSeconds=seconds, reportedTime=f"{seconds / 60} minutes",
+                          timeTaken=f"{minutes:02d}:{remainder:02d}",
+                          timeTrackingSource=f"{tracking_source}:{source}")
             save_progress()
             lineage = _reflection_lineage(learner_id, component_id)
             payload.update(submissionMode="submit", qualityScore=100, qualityChecks=checks,

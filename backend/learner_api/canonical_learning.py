@@ -325,6 +325,7 @@ def weekly_hour_records(owner):
     if owner.get('progress_transfer_active'):
         return entries_for(owner, lineage_only=True)
     from .current_learning import project_current, merge_attempts, subject_attempt_rows
+    from .canonical_hours import extra_activity_hour_records
     fields = ('id', 'learner_id', 'kind', 'module_ref', 'module_title', 'component_ref',
               'component_type', 'quiz_ref', 'passed', 'reported_time', 'submitted_at', 'declared_completed_at',
               'started_at', 'time_tracking_source', 'claimed_seconds', 'verified_seconds',
@@ -354,6 +355,7 @@ def weekly_hour_records(owner):
         markings = {str(row['component_ref']): row for row in submissions}
     projected = project_current(records, markings)
     projected = merge_attempts(projected, subject_attempt_rows(owner, timed_only=True))
+    projected.extend(extra_activity_hour_records([owner])[owner['id']])
     return progress_records_with_completion(records, projected)
 
 
@@ -362,7 +364,9 @@ def progress_records_with_completion(records, current):
 
     Counts, acceptance, seconds and reporting months belong to progress entries.
     Newer attempts may still supply completion and scores for those same entries.
-    Unpersisted submissions cannot become extra accepted-hour records on a read.
+    Standalone extra activities use their saved coach decision and entered time;
+    they have no curriculum plan or separate progress save. Other submissions
+    cannot introduce additional accepted-hour records on a read.
     Server-measured, persisted legacy attempts are separate timed evidence;
     their stable placement IDs prevent retries from duplicating those hours.
 
@@ -384,8 +388,9 @@ def progress_records_with_completion(records, current):
                        'retake_timing_applied', 'completion_reporting_date')
         result.append({**record, **{key: latest[key] for key in fields if key in latest}})
     existing = {str(record['id']) for record in records}
-    result.extend(record for record in current
-                  if record.get('actual_basis') == 'legacy_activity_verified_timer'
+    result.extend(({**record, 'hours_only': True} if record.get('actual_basis') == 'extra_activity_input' else record)
+                  for record in current
+                  if record.get('actual_basis') in {'legacy_activity_verified_timer', 'extra_activity_input'}
                   and str(record['id']) not in existing)
     return result
 
@@ -1313,7 +1318,8 @@ def otjh_summary_bulk(learner_ids):
     """Profile OTJH facts in bounded reads, without content/KSB hydration.
 
     Accepted seconds belong to progress rows, not their source snapshots,
-    segments or unpersisted submissions. The plan uses the same scoped monthly
+    segments or assignment-only submissions. Standalone extra activities add
+    only their reviewed input hours. The plan uses the same scoped monthly
     targets as Monthly Logs and the Coach Profile (not Created_users.Planned_hours).
     Invalid or ambiguous identities remain unavailable, just as in metrics().
     """

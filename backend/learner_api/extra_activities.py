@@ -7,6 +7,7 @@ from django.db import connections, DatabaseError
 from django.http import JsonResponse
 from login.permissions import learner_self_or_staff
 from .monthly_assignment import assignment_checks, mapping, text
+from .extra_activity_month import valid_activity_month
 
 EXTRA_CHECK_KEYS = {'answer', 'learning', 'evidence', 'ksbs', 'planned', 'declarations', 'hours'}
 
@@ -20,7 +21,11 @@ def prepare_extra_activity(payload):
     except ValueError:
         raise ValueError('A valid extra activity identifier is required.')
     current = timezone.now().astimezone(ZoneInfo('Europe/London'))
-    return {**payload, 'monthlyAssignment': {**mapping(payload.get('monthlyAssignment')), 'month': current.strftime('%Y-%m'), 'timeEntries': mapping(payload.get('monthlyAssignment')).get('timeEntries', [])},
+    monthly = mapping(payload.get('monthlyAssignment'))
+    month = monthly.get('month', current.strftime('%Y-%m'))
+    if not valid_activity_month(month):
+        raise ValueError('Choose a valid activity month (YYYY-MM).')
+    return {**payload, 'monthlyAssignment': {**monthly, 'month': month, 'timeEntries': monthly.get('timeEntries', [])},
             'dateCompleted': current.date().isoformat(), 'plannedOtjh': ''}
 
 
@@ -48,7 +53,9 @@ def list_extra_activities(request):
     result = []
     for identifier, title, status, submitted, raw, feedback, reviewer, reviewed in rows:
         data = json.loads(raw) if isinstance(raw, str) else mapping(raw)
-        month = submitted.astimezone(ZoneInfo('Europe/London')).strftime('%Y-%m') if submitted else ''
+        selected_month = mapping(data.get('monthlyAssignment')).get('month')
+        month = (selected_month if valid_activity_month(selected_month) else
+                 submitted.astimezone(ZoneInfo('Europe/London')).strftime('%Y-%m') if submitted else '')
         if request.GET.get('month') and (status == 'draft' or month != request.GET['month']):
             continue
         result.append({'activityId': identifier, 'title': title, 'status': status,
