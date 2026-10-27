@@ -1,10 +1,11 @@
 import { Link } from 'react-router-dom';
-import { ArrowRight, BookOpen, CalendarDays, Check, CircleAlert, ClipboardPenLine, Layers, LoaderCircle, Users, Workflow } from 'lucide-react';
+import { ArrowRight, BookOpen, CalendarDays, Check, Circle, CircleAlert, ClipboardPenLine, Clock3, Layers, LoaderCircle, Signature, Users, Workflow, X } from 'lucide-react';
 import type { EmployerLearnerCard } from '@/api/employerPortal';
-import { formatReviewDate, learnerHref, learnerKey, nextReview, orderReviewJourney, reviewDate, reviewLabels, reviewState, type DashboardReviews } from './employerDashboardData';
+import { formatReviewDate, learnerHref, learnerReviewHref, learnerKey, nextReview, orderReviewJourney, reviewDate, reviewLabels, reviewState, type DashboardReviews } from './employerDashboardData';
 import styles from './EmployerReviewJourneys.module.css';
 import { isAptemReview } from '@/pages/learner/progress-reviews/reviewPresentation';
 import selection from '@/pages/learner/reviews/reviewMarkerSelection.module.css';
+import { completedReviewTimelineStatus, reviewTimelineStatus, type TimelineStatus } from '@/pages/learner/reviews/reviewTimelineStatus';
 
 type Props = {
   employerId: string;
@@ -14,6 +15,23 @@ type Props = {
   onRetry: () => void;
   onClearFilters: () => void;
 };
+
+const timelineStatuses: TimelineStatus[] = ['planned', 'scheduled', 'in-progress', 'awaiting-signature', 'attended', 'missed'];
+const timelineStatusLabels: Record<TimelineStatus, string> = {
+  planned: 'Planned', scheduled: 'Scheduled', 'in-progress': 'In progress',
+  'awaiting-signature': 'Awaiting signatures', attended: 'Attended', missed: 'Missed',
+};
+const timelineStatusIcons = {
+  planned: Circle, scheduled: CalendarDays, 'in-progress': Clock3,
+  'awaiting-signature': Signature, attended: Check, missed: X,
+};
+
+function timelineStatus(event: Parameters<typeof completedReviewTimelineStatus>[0]): TimelineStatus {
+  if (event.source !== 'progress-review') return reviewTimelineStatus(event);
+  const state = reviewState(event);
+  return completedReviewTimelineStatus(event, undefined,
+    state === 'signature' || state === 'signatures' ? 'awaiting-signature' : state);
+}
 
 /** The full reviews page keeps each learner's complete timeline on its own row. */
 export function EmployerReviewJourneys({ employerId, learners, totalLearners, reviews, onRetry, onClearFilters }: Props) {
@@ -26,6 +44,10 @@ export function EmployerReviewJourneys({ employerId, learners, totalLearners, re
         </div>
         <span className={styles.learnerCount}><Users size={16} aria-hidden />{learners.length} of {totalLearners} learners</span>
       </header>
+
+      {learners.length > 0 && <ul className={styles.legend} aria-label="Review status colours">
+        {timelineStatuses.map(status => <li key={status} data-status={status}><span aria-hidden="true" />{timelineStatusLabels[status]}</li>)}
+      </ul>}
 
       {!learners.length && (
         <div className={styles.empty}>
@@ -49,7 +71,7 @@ export function EmployerReviewJourneys({ employerId, learners, totalLearners, re
           <article key={learnerKey(learner)} className={styles.learner} aria-label={`${learner.name} reviews`}>
             <header className={styles.learnerHeader}>
               <div className={styles.identity}>
-                <span className={styles.avatar} data-tone={Number(learner.id) % 2 ? 'blue' : 'mint'} aria-hidden>{initials || '?'}</span>
+                <span className={styles.avatar} aria-hidden>{initials || '?'}</span>
                 <div>
                   <h3><Link to={href}>{learner.name}</Link></h3>
                   <div className={styles.metadata}>
@@ -59,6 +81,7 @@ export function EmployerReviewJourneys({ employerId, learners, totalLearners, re
                 </div>
               </div>
               <div className={styles.actions}>
+                {ready && events.length > 0 && <span className={styles.completedNotice}><Check size={14} aria-hidden />{completed} of {events.length} completed</span>}
                 {ready && signatures > 0 && <span className={styles.signatureNotice}><ClipboardPenLine size={15} aria-hidden />{signatures} awaiting your signature</span>}
                 <Link className={styles.openButton} to={href} aria-label={`View reviews for ${learner.name}`}>
                   View reviews{ready ? ` (${events.length})` : ''}<ArrowRight size={16} aria-hidden />
@@ -68,24 +91,20 @@ export function EmployerReviewJourneys({ employerId, learners, totalLearners, re
 
             {ready ? events.length ? (
               <>
-                <div className={styles.timelineHeader}>
-                  <span>Review timeline</span><span><Check size={14} aria-hidden />{completed} of {events.length} completed</span>
-                </div>
+                <div className={styles.timelineHeader}><div><p className={styles.eyebrow}>YOUR LEARNER'S REVIEW JOURNEY</p><h4>Progress review timeline</h4></div><span className={styles.count}>{events.length} {events.length === 1 ? 'review' : 'reviews'}</span></div>
                 <div className={styles.timelineScroll} role="region" aria-label={`${learner.name} review timeline`} tabIndex={0}>
                   <ol className={styles.timeline}>
-                    {events.map(event => {
+                    {events.map((event, index) => {
                       const state = reviewState(event);
+                      const tone = timelineStatus(event);
                       const date = reviewDate(event);
-                      const StatusIcon = state === 'completed' ? Check : state === 'signature' ? ClipboardPenLine : CalendarDays;
+                      const StatusIcon = timelineStatusIcons[tone];
                       return (
-                        <li key={event.eventKey} data-status={state}>
-                          <Link to={href} className={`${styles.review} ${selection.control}`} data-selection={isAptemReview(event) ? 'marker' : undefined} aria-current={event.eventKey === upcomingKey ? 'step' : undefined} aria-label={`${learner.name}: ${event.title}, ${reviewLabels[state]}, ${formatReviewDate(date)}`}>
-                            <span className={`${styles.marker} ${selection.marker}`}><StatusIcon size={16} aria-hidden /></span>
-                            <div className={styles.reviewBody}>
-                              <span className={styles.status}>{reviewLabels[state]}</span>
-                              <strong>{event.title}{event.occurrenceNumber ? ` #${event.occurrenceNumber}` : ''}</strong>
-                              <span className={styles.date}><CalendarDays size={14} aria-hidden />{date ? <time dateTime={date}>{formatReviewDate(date)}</time> : 'Not scheduled'}</span>
-                            </div>
+                        <li key={event.eventKey} data-status={state} data-tone={tone} data-active={event.eventKey === upcomingKey} data-selection={isAptemReview(event) ? 'marker' : undefined}>
+                          <Link to={learnerReviewHref(employerId, learner, event.eventKey)} className={`${styles.review} ${selection.control}`} data-selection={isAptemReview(event) ? 'marker' : undefined} aria-current={event.eventKey === upcomingKey ? 'step' : undefined} aria-label={`${learner.name}: Review ${index + 1}, ${reviewLabels[state]}, ${formatReviewDate(date)}`}>
+                            <span className={styles.date}>{date ? formatReviewDate(date) : 'Date to confirm'}</span>
+                            <span className={`${styles.marker} ${selection.marker}`}><StatusIcon size={14} strokeWidth={2.4} aria-hidden /></span>
+                            <span className={styles.title}>Review {index + 1}</span>
                           </Link>
                         </li>
                       );
