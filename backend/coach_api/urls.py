@@ -3,6 +3,12 @@ from .migrated_reopening_views import reopen_review, coach_revision_pdf
 
 from .ai_marking import coach_marking_ai_feedback, coach_marking_ai_prompt
 from .csrf import coach_csrf_token
+from .recordings_api import coaching_recordings_calendar, coaching_recording_session, coaching_recording_content, coaching_recordings_learners, coaching_saved_evidence_download, coaching_saved_evidence_pdf
+from .recordings_quality_api import coaching_quality_suggestion
+from .quality_review_api import review_context, reviews, review_detail, review_image, review_document, review_attachment
+from .quality_form_api import quality_form
+from .recordings_link_api import coaching_linked_meeting
+from .completion_api import completion_notifications
 from .bulk_attendance import coach_bulk_attendance
 from .attendance_loading import coach_attendance_options, coach_attendance_group, coach_attendance_session, coach_attendance_sessions, coach_attendance_context
 from . import personal_learning
@@ -77,6 +83,22 @@ from .views import (
 
 
 urlpatterns = [
+    path('coach/completion-notifications', completion_notifications, name='coach-completion-notifications'),
+    path('coaching-recordings/meetings/<str:identity>', coaching_linked_meeting, name='coaching-linked-meeting'),
+    path('coaching-recordings/quality/context', review_context, name='coaching-quality-context'),
+    path('coaching-recordings/quality/form', quality_form, name='coaching-quality-form'),
+    path('coaching-recordings/quality/reviews', reviews, name='coaching-quality-reviews'),
+    path('coaching-recordings/quality/reviews/<uuid:review_id>', review_detail, name='coaching-quality-detail'),
+    path('coaching-recordings/quality/reviews/<uuid:review_id>/pdf', review_document, name='coaching-quality-pdf'),
+    path('coaching-recordings/quality/reviews/<uuid:review_id>/documents/<int:version>', review_attachment, name='coaching-quality-attachment'),
+    path('coaching-recordings/quality/reviews/<uuid:review_id>/images', review_image, name='coaching-quality-images'),
+    path('coaching-recordings/quality/reviews/<uuid:review_id>/images/<uuid:image_id>', review_image, name='coaching-quality-image'),
+    path('coaching-recordings/calendar', coaching_recordings_calendar, name='coaching-recordings-calendar'),
+    path('coaching-recordings/learners', coaching_recordings_learners, name='coaching-recordings-learners'),
+    path('coaching-recordings/session', coaching_recording_session, name='coaching-recording-session'),
+    path('coaching-recordings/recording', coaching_recording_content, name='coaching-recording-content'),
+    path('coaching-recordings/evidence', coaching_saved_evidence_download, name='coaching-saved-evidence-download'),
+    path('coaching-recordings/pdf', coaching_saved_evidence_pdf, name='coaching-saved-evidence-pdf'),
     path('coach/monthly-logs/learners', monthly_logs.learners, name='coach-monthly-log-learners'),
     path('coach/monthly-logs/<int:learner_id>', monthly_logs.learner_year, name='coach-monthly-log-year'),
     path('coach/monthly-logs/<int:learner_id>/<str:month>', monthly_logs.learner_month, name='coach-monthly-log-month'),
@@ -101,6 +123,7 @@ urlpatterns = [
     path('coach/personal-marking/<uuid:submission_id>/evidence', personal_learning.evidence),
     path('coach/personal-marking/<uuid:submission_id>/evidence/<uuid:file_id>', personal_learning.evidence),
     path('csrf', coach_csrf_token, name='coach-csrf'),
+    path('coaching-recordings/quality', coaching_quality_suggestion, name='coaching-quality-suggestion'),
     path('coaches', coach_directory, name='coach-directory'),
     path('coaches/calendar', coach_directory_calendar, name='coach-directory-calendar'),
     path('coach/dashboard', coach_dashboard, name='coach-dashboard'),

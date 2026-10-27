@@ -349,6 +349,7 @@ def pending_recordings(database: str | None = None, limit: int = 50, *, event_ke
             select event_key, graph_artifact_id, owner_email, graph_organizer_email, graph_event_id
             from {ARTIFACTS_RELATION}
             where artifact_type = 'recording'
+              and event_key not like 'coach-calendar:%%'
               and (blob_name is null or blob_name = '')
               and coalesce(blob_upload_error, '') = ''
               {"and event_key = %s" if event_key else ""}

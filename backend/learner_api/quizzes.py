@@ -458,6 +458,11 @@ def submit_quiz_attempt(request, quiz_id):
     # line and no OTJH credit behind. The learner's answers stay in the browser
     # and are re-posted unchanged with a declared instant, so the correction
     # never costs them a retake and grades to exactly the same score.
+    from .retake_timing import choice
+    try:
+        retake_choice = choice(payload.get('retakeTimeChoice'))
+    except ValueError as exc:
+        return _error(str(exc), 400)
     submitted_at_dt = timezone.now()
     try:
         declared_at, validation_reason = resolve_completion_instants(
@@ -613,6 +618,7 @@ def submit_quiz_attempt(request, quiz_id):
         # click had to be corrected, and the reason says why it was corrected.
         "declaredCompletedAt": declared_at.isoformat() if declared_at else None,
         "submissionValidationReason": validation_reason,
+        "retakeTimeChoice": retake_choice,
     }
 
     if active is not None:

@@ -25,9 +25,10 @@ export function overviewModulesForDisplay(facts: OverviewModule[]): OverviewModu
 export function overviewMeasures(module: OverviewModule): ModuleMeasure[] {
   const { attendance, activities, hours, ksb } = module;
   return [
-    { label: 'Attendance', value: overviewRatio(attendance?.attended, attendance?.total), detail: attendance
-      ? attendance.total ? `${attendance.attended} / ${attendance.total} scheduled sessions attended` : 'No scheduled sessions assigned'
-        : 'No ended sessions yet' },
+    { label: 'Attendance', value: attendance && attendance.total > 0
+      ? Math.round(100 * attendance.attended / attendance.total) : null,
+      detail: attendance && attendance.total > 0
+        ? `${attendance.attended} / ${attendance.total} recorded sessions attended` : 'No recorded attendance yet' },
     { label: 'Activities', value: overviewRatio(activities.completed, activities.total), detail: activities.total
       ? `${activities.completed} / ${activities.total} completed` : 'No activities assigned' },
     { label: 'Hours', value: overviewRatio(hours.actual, hours.planned), detail: hours.actual == null ? 'Recorded hours unavailable'

@@ -6,7 +6,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
 import { curriculumNavItems } from '@/mocks/navigation';
 import {
-  fetchCurriculumScopeLearnerKsbImpact, fetchCurriculumScopeLearnerRoster,
+  fetchCurriculumScopeLearnerKsbImpact, fetchCurriculumScopeLearnerRoster, fetchCurriculumJson,
   saveCurriculumActivityStatus,
   fetchCurriculumActivityStatusHistory, type CurriculumActivityStatusHistory,
   type CurriculumActivityCompletionTime,
@@ -178,6 +178,7 @@ export default function LearnerModuleProgressPage() {
   const enrolmentId = params.get('enrolmentId') || '';
   const [data, setData] = useState<CurriculumScopeLearnerKsbImpactResponse | null>(null);
   const [roster, setRoster] = useState<CurriculumProgrammeAssignedLearner[]>([]);
+  const [weekOrder, setWeekOrder] = useState<string[]>([]);
   const [filter, setFilter] = useState<ActivityFilter>('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [query, setQuery] = useState('');
@@ -194,14 +195,22 @@ export default function LearnerModuleProgressPage() {
   const [retry, setRetry] = useState(0);
   const closeDrawer = useCallback(() => setSelectedActivity(null), []);
   useEffect(() => {
-    setData(null); setRoster([]); setSelectedActivity(null); setCompletionActivity(null); setAttendanceActivity(null); setSaveError(''); setCollapsed(new Set());
+    setData(null); setRoster([]); setWeekOrder([]); setSelectedActivity(null); setCompletionActivity(null); setAttendanceActivity(null); setSaveError(''); setCollapsed(new Set());
     if (!moduleId || (!learnerId && !enrolmentId)) { setLoading(false); return; }
     const controller = new AbortController(); setLoading(true); setError(null);
     Promise.all([
       fetchCurriculumScopeLearnerKsbImpact('module', moduleId, { learnerStatus: 'all', moduleProgress: true }, controller.signal),
       fetchCurriculumScopeLearnerRoster('module', moduleId, { learnerStatus: 'all' }, controller.signal),
-    ]).then(([impact, response]) => {
-      if (!controller.signal.aborted) { setData(impact); setRoster(response.assignedLearners || []); }
+      // Use the same stored sequence as Module Builder, including unnumbered weeks.
+      fetchCurriculumJson<{ weekStructure: Array<{ id: string }> }>(
+        `/curriculum/modules/${encodeURIComponent(moduleId)}/structure/`,
+        { signal: controller.signal, revalidate: true, timeoutMs: 90000 },
+      ),
+    ]).then(([impact, response, structure]) => {
+      if (controller.signal.aborted) return;
+      if (!Array.isArray(structure.weekStructure)) throw new Error('The module week order is unavailable. Please retry.');
+      setData(impact); setRoster(response.assignedLearners || []);
+      setWeekOrder(structure.weekStructure.map(week => week.id));
     }).catch(reason => {
       if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : 'Unable to load learner progress.');
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
@@ -211,7 +220,7 @@ export default function LearnerModuleProgressPage() {
   const profileId = learner ? String(learner.id) : '';
   const otjh = data?.otjhAchievement?.learners.find(row => String(row.learnerId) === profileId);
   const consumption = data?.learnerKsbConsumption?.find(row => String(row.learnerId) === profileId);
-  const activities = useMemo(() => data && profileId ? buildProgressRows(data, profileId) : [], [data, profileId]);
+  const activities = useMemo(() => data && profileId ? buildProgressRows(data, profileId, weekOrder) : [], [data, profileId, weekOrder]);
   const completed = activities.filter(row => row.status === 'completed').length;
   const activityPercent = ratioPercent(completed, activities.length);
   const logHours = activities.every(row => 'logState' in row.activity && row.activity.logState)

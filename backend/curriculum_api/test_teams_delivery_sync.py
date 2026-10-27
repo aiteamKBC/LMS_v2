@@ -216,7 +216,7 @@ class RecordingDeliveryWindowTests(SimpleTestCase):
     def sync_recording(self, artifact):
         def graph(method, path, *_args, **_kwargs):
             self.assertEqual(method, 'GET')
-            return {'value': [artifact] if path.endswith('/recordings') else []}
+            return {'value': [artifact] if path.endswith('/recordings') and artifact is not None else []}
 
         with patch.object(views.schema_gate, 'require_tables'), \
                 patch.object(views, 'authoring_fetch_all', side_effect=self.rows), \
@@ -254,6 +254,20 @@ class RecordingDeliveryWindowTests(SimpleTestCase):
         save = self.sync_recording(recording('rehearsal', created='2026-10-09T08:17:00Z',
                                             end='2026-10-09T08:20:00Z'))
         save.assert_not_called()
+
+    def test_delayed_recording_is_saved_on_a_later_sync_after_an_empty_result(self):
+        first_save = self.sync_recording(None)
+        first_save.assert_not_called()
+
+        artifact = recording('published-later', created='2026-10-09T08:17:00Z',
+                             end='2026-10-09T10:31:00Z')
+        later_save = self.sync_recording(artifact)
+
+        later_save.assert_called_once()
+        occurrence, kind, saved = later_save.call_args.args
+        self.assertEqual((occurrence['id'], kind), ('OCC-1', 'recording'))
+        self.assertEqual(saved['id'], 'published-later')
+        self.assertEqual(saved['lmsOccurrenceId'], 'OCC-1')
 
 
 class ArchiveReuseTests(SimpleTestCase):

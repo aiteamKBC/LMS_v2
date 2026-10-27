@@ -24,15 +24,29 @@ import {
  * 409 (see `tutorConflictMessage`) rather than trusting this to have caught it.
  */
 export interface TutorAvailability {
-  /** Verdict by tutor name, lower-cased for lookup. Empty until the first load. */
+  /** Verdict by tutor key (see `tutorAvailabilityKey`). Empty until the first load. */
   byTutor: Map<string, CurriculumTutorAvailabilityVerdict>;
   /** The dates the slot occupies, for explaining a clash without a second call. */
   sessionDates: string[];
   /** False when the slot books nothing — no verdict here means anything yet. */
   bookable: boolean;
   loading: boolean;
+  /**
+   * The check could not be made. Nobody's availability is known, so a screen
+   * must say so rather than read the silence as "everyone is free".
+   */
+  failed: boolean;
   /** Look one tutor up. Returns null while loading, unknown, or not bookable. */
   verdictFor: (tutor: string) => CurriculumTutorAvailabilityVerdict | null;
+}
+
+/**
+ * The key the save matches a tutor on (`staff_assignment_key` in the backend):
+ * lower-cased, letters and digits only. Looking names up by anything looser
+ * would let a spelling the save treats as the same person read as unchecked.
+ */
+export function tutorAvailabilityKey(name: string): string {
+  return (name || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
 /** Matches the module form's session-plan preview, so the two land together. */
@@ -43,6 +57,7 @@ const EMPTY: TutorAvailability = {
   sessionDates: [],
   bookable: false,
   loading: false,
+  failed: false,
   verdictFor: () => null,
 };
 
@@ -89,18 +104,26 @@ export function useTutorAvailability(
       previewTutorAvailabilityRoster(slotRef.current || {})
         .then(response => {
           if (!live) return;
+          const byTutor = new Map<string, CurriculumTutorAvailabilityVerdict>();
+          response.results.forEach(item => {
+            const name = tutorAvailabilityKey(item.tutor);
+            // The first spelling wins; the backend gives every spelling of one
+            // key the same verdict anyway.
+            if (name && !byTutor.has(name)) byTutor.set(name, item);
+          });
           setState({
-            byTutor: new Map(response.results.map(item => [item.tutor.toLowerCase(), item])),
+            byTutor,
             sessionDates: response.sessionDates,
             bookable: response.bookable,
             loading: false,
+            failed: false,
           });
         })
         .catch(() => {
-          // Advisory only: a failed preview must never block the form. The save
-          // still enforces the rule, so silence here degrades to the old
-          // find-out-on-save behaviour rather than to a broken screen.
-          if (live) setState({ ...EMPTY, loading: false });
+          // Advisory only: a failed preview must never block the form -- the save
+          // still enforces the rule. But it is reported as failed, not as an
+          // empty answer, so no name is shown as free on the strength of it.
+          if (live) setState({ ...EMPTY, loading: false, failed: true });
         });
     }, DEBOUNCE_MS);
     return () => { live = false; clearTimeout(timer); };
@@ -110,7 +133,7 @@ export function useTutorAvailability(
   // this, and a fresh function every render would rebuild it on every keystroke
   // in an unrelated field.
   const verdictFor = useCallback((tutor: string) => {
-    const name = (tutor || '').trim().toLowerCase();
+    const name = tutorAvailabilityKey(tutor);
     if (!name || !state.bookable) return null;
     return state.byTutor.get(name) || null;
   }, [state.bookable, state.byTutor]);

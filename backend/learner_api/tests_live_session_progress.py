@@ -27,6 +27,10 @@ def lecture(**values):
 
 
 class LiveSessionProgressTests(SimpleTestCase):
+    def setUp(self):
+        self.manual = patch('learner_api.live_session_progress.read_manual_live_credits', return_value=({}, [])).start()
+        self.addCleanup(patch.stopall)
+
     def credits(self, components=None, register=None):
         return project_live_credits([component()] if components is None else components,
                                     [lecture()] if register is None else register, now=NOW)
@@ -133,6 +137,38 @@ class LiveSessionProgressTests(SimpleTestCase):
                                                   register=[lecture()])), 1)
             self.assertEqual(read_live_credits(SimpleNamespace(pk=7), components=[component()], register=[]), [])
         register.assert_not_called()
+
+    def test_manual_component_hours_replace_provider_credit_instead_of_adding_to_it(self):
+        credit = {'componentId': 'C1', 'moduleId': 'M1', 'hours': 2.5, 'title': 'Live',
+                  'submittedAt': NOW.isoformat(), 'timeTrackingSource': 'manual_attendance'}
+        self.manual.return_value = ({('C1', 'M1'): (True, NOW)}, [credit])
+        with patch('learner_api.live_session_progress.timezone.now', return_value=NOW):
+            for register in ([lecture()], [], [lecture(attendance_status='absent', attendance_report_id=None, attended_seconds=0)]):
+                credits = read_live_credits(SimpleNamespace(id=7), components=[component()], register=register)
+                self.assertEqual(credits, [credit])
+                progress = supplement_component_progress([], credits)
+                self.assertEqual(progress[0]['reportedTime'], '150 minutes')
+                self.assertEqual(progress[0]['timeTrackingSource'], 'manual_attendance')
+                self.assertNotIn('verifiedSeconds', progress[0])
+
+    def test_manual_hours_top_up_existing_time_once_and_preserve_other_activities(self):
+        credits = [{'componentId': 'C1', 'moduleId': 'M1', 'hours': 2.5}]
+        for recorded, expected in [(0, 2.5), (.5, 2.5), (2, 2.5), (2.5, 2.5), (3, 3)]:
+            records = [{'component_ref': 'C1', 'accepted': True, 'actual_seconds': recorded * 3600}]
+            metrics = {'M1': {'hours': {'actual': recorded + 4}}, 'M2': {'hours': {'actual': 9}}}
+            first = supplement_module_hours(metrics, records, credits * 2)
+            second = supplement_module_hours(metrics, records, credits)
+            self.assertEqual(first, second)
+            self.assertEqual(first['M1']['hours']['actual'], expected + 4)
+            self.assertEqual(first['M2'], metrics['M2'])
+            self.assertEqual(metrics['M1']['hours']['actual'], recorded + 4)
+
+    def test_manual_absence_removes_automatic_credit_but_reset_restores_provider_rule(self):
+        with patch('learner_api.live_session_progress.timezone.now', return_value=NOW):
+            self.manual.return_value = ({('C1', 'M1'): (False, NOW)}, [])
+            self.assertEqual(read_live_credits(SimpleNamespace(id=7), components=[component()], register=[lecture()]), [])
+            self.manual.return_value = ({}, [])
+            self.assertEqual(read_live_credits(SimpleNamespace(id=7), components=[component()], register=[lecture()])[0]['hours'], 2)
 
     def test_canonical_module_percentage_includes_verified_live_completion(self):
         from .module_progress import canonical_module_progress

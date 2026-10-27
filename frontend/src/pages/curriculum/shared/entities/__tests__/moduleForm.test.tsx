@@ -1054,4 +1054,89 @@ describe('ModuleFormDrawer tutor availability', () => {
 
     await waitFor(() => expect(createGroupModuleMock).toHaveBeenCalledTimes(1));
   });
+
+  /** The group heading printed above an option, read back from the open menu. */
+  function headingsInOrder() {
+    return screen.getAllByText(/^(Free in this slot|Already teaching then|Not verified)$/).map(node => node.textContent);
+  }
+
+  it('never shows a name the roster has no answer for as free', async () => {
+    // The reported case: a tutor a module carries but the directory does not,
+    // which the roster used to leave out -- and the picker filed under "free".
+    renderDrawer({
+      lockGroup: true,
+      defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1' },
+      tutorNames: ['Tutor One', 'Tutor Two', 'kentbusinesscollege.org'],
+    });
+    await waitFor(() => expect(previewTutorAvailabilityRosterMock).toHaveBeenCalled());
+
+    await userEvent.click(screen.getByRole('combobox', { name: /tutor/i }));
+
+    expect(screen.getByRole('option', { name: /kentbusinesscollege\.org.*Not covered by the availability check/ })).toBeEnabled();
+    expect(headingsInOrder()).toEqual(['Free in this slot', 'Already teaching then', 'Not verified']);
+  });
+
+  it('shows a module-only tutor as busy, with the clashing module and time, once the roster answers', async () => {
+    previewTutorAvailabilityRosterMock.mockResolvedValue({
+      ...BUSY_ROSTER,
+      results: [
+        ...BUSY_ROSTER.results,
+        {
+          tutor: 'kentbusinesscollege.org',
+          available: false,
+          message: 'kentbusinesscollege.org is already teaching "Test-Replac" at 11:00-13:00 on 02 Sep 2026.',
+          conflicts: [{
+            moduleCatalogueId: 'MOD-REPLAC',
+            moduleName: 'Test-Replac',
+            programme: 'Final Test',
+            cohort: 'Latest Temas Test',
+            group: 'G1',
+            startTime: '11:00',
+            endTime: '13:00',
+            dates: ['2026-09-02'],
+          }],
+        },
+      ],
+    });
+    renderDrawer({
+      lockGroup: true,
+      defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1' },
+      tutorNames: ['Tutor One', 'Tutor Two', 'kentbusinesscollege.org'],
+    });
+    await waitFor(() => expect(previewTutorAvailabilityRosterMock).toHaveBeenCalled());
+
+    await userEvent.click(screen.getByRole('combobox', { name: /tutor/i }));
+
+    expect(screen.getByRole('option', { name: /kentbusinesscollege\.org.*Test-Replac 11:00-13:00.*1 clashes/ })).toBeInTheDocument();
+    expect(screen.queryByText('Not verified')).not.toBeInTheDocument();
+    // One heading per status, however the names interleave alphabetically.
+    expect(headingsInOrder()).toEqual(['Free in this slot', 'Already teaching then']);
+  });
+
+  it('matches a name to its verdict the way the save matches it', async () => {
+    renderDrawer({
+      lockGroup: true,
+      defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1' },
+      tutorNames: ['tutor one.', 'Tutor Two'],
+    });
+    await waitFor(() => expect(previewTutorAvailabilityRosterMock).toHaveBeenCalled());
+
+    await userEvent.click(screen.getByRole('combobox', { name: /tutor/i }));
+
+    expect(screen.getByRole('option', { name: /^tutor one\..*MBA-TESt/ })).toBeInTheDocument();
+    expect(screen.queryByText('Not verified')).not.toBeInTheDocument();
+  });
+
+  it('marks every name unverified when the check fails, and says so', async () => {
+    previewTutorAvailabilityRosterMock.mockRejectedValue(new Error('offline'));
+    renderPlacedDrawer();
+    await waitFor(() => expect(previewTutorAvailabilityRosterMock).toHaveBeenCalled());
+
+    expect(await screen.findByText(/Could not check who is free in this slot/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('combobox', { name: /tutor/i }));
+
+    expect(screen.queryByText('Free in this slot')).not.toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /^Tutor One.*The availability check failed/ })).toBeEnabled();
+    expect(screen.getByRole('option', { name: /^Tutor Two.*The availability check failed/ })).toBeEnabled();
+  });
 });

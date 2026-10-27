@@ -109,6 +109,9 @@ export function meetingScopeIsOpen(settings: Settings): boolean {
 export function liveSessionPlan(module: ModuleCatalogueItem | null, plan: ModuleWeekSessionPlan): ModuleWeekSessionPlan['sessions'] {
   if (!module?.weekStructure?.length) return plan.sessions || [];
   const selected: ModuleWeekSessionPlan['sessions'] = [];
+  // The Teams occurrence each booked session already is. Sent under its own
+  // number, so a week placed elsewhere never moves another week's meeting.
+  const bookedNumbers: Array<number | null> = [];
   const hasSeries = moduleHasBookedSeries((module.weekStructure || []).flatMap(
     week => (week.components || []).filter(component => component.type === 'live-session'),
   ));
@@ -128,10 +131,29 @@ export function liveSessionPlan(module: ModuleCatalogueItem | null, plan: Module
     // in order, so dropping one from the middle without consuming it would pull
     // every later session a slot early.
     candidates.forEach((candidate, index) => {
-      if (liveSessionMeetingScope(liveSessions[index]?.settings, hasSeries) !== 'main') return;
+      const settings = liveSessions[index]?.settings;
+      if (liveSessionMeetingScope(settings, hasSeries) !== 'main') return;
       selected.push(candidate);
+      const booked = Number(settings?.teamsSessionNumber || 0);
+      bookedNumbers.push(bookedOnModuleSeries(settings) && booked > 0 ? booked : null);
     });
     fallbackIndex += candidates.length;
   });
-  return selected;
+  const taken = new Set(bookedNumbers.filter((value): value is number => value !== null));
+  if (!taken.size) return selected;
+  // A session not booked yet keeps the planner's number unless a booked one
+  // already owns it; then it takes the next number no session holds.
+  let next = Math.max(0, ...taken, ...selected.map(session => Number(session.sessionNumber) || 0));
+  return selected.map((session, index) => {
+    const booked = bookedNumbers[index];
+    if (booked !== null) return booked === session.sessionNumber ? session : { ...session, sessionNumber: booked };
+    const planned = Number(session.sessionNumber) || 0;
+    if (planned > 0 && !taken.has(planned)) {
+      taken.add(planned);
+      return session;
+    }
+    next += 1;
+    taken.add(next);
+    return { ...session, sessionNumber: next };
+  });
 }
