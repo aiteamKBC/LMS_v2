@@ -262,6 +262,7 @@ function ReviewInstanceContent({
   const editedFieldsRef = useRef(new Set<string>());
   const progressRequestRef = useRef(false);
   const [checkingSession, setCheckingSession] = useState(false);
+  const [generatingMigratedSummary, setGeneratingMigratedSummary] = useState(false);
   const [migratedIntelligenceRevision, setMigratedIntelligenceRevision] = useState(0);
   const reviewActive = useRef(true);
   useEffect(() => {
@@ -568,7 +569,7 @@ function ReviewInstanceContent({
   };
 
   const handleAnswerChange = (fieldId: string, value: unknown) => {
-    if (formReadOnly || checkingSession) return;
+    if (formReadOnly || (checkingSession && !generatingMigratedSummary)) return;
     if (definition?.migratedForm) editedFieldsRef.current.add(fieldId);
     setAnswers((current) => {
       const next = { ...current, [fieldId]: value };
@@ -879,7 +880,7 @@ function ReviewInstanceContent({
           maxLength={meetingSummaryField.configuration?.migrated === true ? 4000 : undefined}
           value={answers[expandedSummaryFieldId]}
           onChange={(value) => handleAnswerChange(expandedSummaryFieldId, value)}
-          readOnly={formReadOnly || checkingSession}
+          readOnly={formReadOnly || (checkingSession && !generatingMigratedSummary)}
           invalid={showErrors && missingFieldIds.has(expandedSummaryFieldId)}
           draftSaved={summaryDraftSaved}
           onDone={closeExpandedSummary}
@@ -1307,7 +1308,7 @@ function ReviewInstanceContent({
               answers={answers}
               onAnswerChange={handleAnswerChange}
               errors={showErrors ? { missingFieldIds } : undefined}
-              readOnly={formReadOnly || checkingSession}
+              readOnly={formReadOnly || (checkingSession && !generatingMigratedSummary)}
               renderSectionContent={definition.source === 'aptem'
                 ? (section, renderFields) => renderImportedSection(section, answers, renderFields, (field) => (
                   // Retain editable inputs, local continuation/preview controls,
@@ -1326,7 +1327,9 @@ function ReviewInstanceContent({
                   showActions={showMigratedSummaryActions ? true : undefined}
                   teamsAvailable={Boolean(definition.booking?.booked && definition.booking.syncState === 'synced'
                     && !definition.booking.conflict && definition.booking.eventKey)}
-                  busy={busy} unsaved={hasUnsavedMigratedAnswers} onResult={onMigratedSummaryComplete} onBusyChange={setCheckingSession}
+                  busy={busy} unsaved={hasUnsavedMigratedAnswers} onResult={onMigratedSummaryComplete}
+                  onBusyChange={setCheckingSession} onGenerationBusyChange={setGeneratingMigratedSummary}
+                  onApplySuggestion={(text) => handleAnswerChange(field.id, text)}
                 /> : null) :
                 <div className="mb-3 space-y-3">
                   <p className="text-[13px] leading-5 text-foreground-500">

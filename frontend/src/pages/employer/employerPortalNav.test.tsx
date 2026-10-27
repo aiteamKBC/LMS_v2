@@ -21,6 +21,7 @@ function Portal() {
   const navigate = useNavigate();
   return <WorkspaceShell {...shell} pageTitle="Learner">
     <output data-testid="route">{location.pathname}{location.search}</output>
+    <output data-testid="return-to">{(location.state as { employerReturnTo?: string } | null)?.employerReturnTo}</output>
     <Link to="/employers/7/learner/commercial/101?tab=reviews&reviewId=example">Open learner reviews</Link>
     <Link to="/employers/7/learner/commercial/101?tab=documents">Open learner documents</Link>
     <Link to="/employers/7/learner/commercial/101?tab=plan">Open learning plan</Link>
@@ -83,4 +84,14 @@ it.each(['employer', 'staff', 'admin'])('tracks tabs and browser history for %s 
   expectSection('Progress reviews', '/employers/7/reviews');
   fireEvent.click(sidebar.getByRole('link', { name: 'Home' }));
   expectSection('Home', '/employers/7');
+});
+
+it('preserves the staff return destination when switching Employer sections from the sidebar', () => {
+  viewer.role = 'admin';
+  render(<MemoryRouter initialEntries={[{ pathname: '/employers/7', state: { employerReturnTo: '/workspace/admin/employers?search=kent' } }]}><Portal /></MemoryRouter>);
+
+  fireEvent.click(within(screen.getByRole('complementary', { name: 'Employer sidebar' })).getByRole('link', { name: 'My learners' }));
+
+  expect(screen.getByTestId('route')).toHaveTextContent('/employers/7/learners');
+  expect(screen.getByTestId('return-to')).toHaveTextContent('/workspace/admin/employers?search=kent');
 });

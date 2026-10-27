@@ -26,10 +26,12 @@ export function employerPortalNav(employerId: string): SidebarNavItem[] {
  */
 export function useEmployerPortalChrome(employerId: string, employerName?: string) {
   const { auth } = useAuth();
-  const { pathname, search } = useLocation();
+  const { pathname, search, state } = useLocation();
   const root = `/employers/${employerId}`;
   const path = pathname.replace(/\/+$/, '');
   const learnerTab = new URLSearchParams(search).get('tab');
+  const employerReturnTo = (state as { employerReturnTo?: unknown } | null)?.employerReturnTo;
+  const returnState = typeof employerReturnTo === 'string' ? { employerReturnTo } : undefined;
   // A learner's tabs share one pathname. Keep the global menu destinations
   // fixed while selecting the section represented by the current tab.
   const section = path.startsWith(`${root}/learner/`)
@@ -45,7 +47,7 @@ export function useEmployerPortalChrome(employerId: string, employerName?: strin
       appearance: 'learner',
       roleLabel: 'Employer',
       workspaceLabel: 'Employer Workspace',
-      navItems: employerPortalNav(employerId).map(item => ({ ...item, active: item.id === `employer-portal-${section}` })),
+      navItems: employerPortalNav(employerId).map(item => ({ ...item, active: item.id === `employer-portal-${section}`, state: returnState })),
       userName: isEmployerViewer ? auth.account?.displayName || employerName || 'Employer' : 'Enrolment Officer',
       userRole: isEmployerViewer ? 'Employer' : 'Enrolment Officer',
     },

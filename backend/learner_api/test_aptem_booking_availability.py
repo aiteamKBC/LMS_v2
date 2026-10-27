@@ -25,6 +25,10 @@ class AptemBookingAvailabilityTests(SimpleTestCase):
             "learner_api.imported_booking.reserve_imported_booking",
             side_effect=lambda record, event, *args, **kwargs: (self.persist(record, review_event=event), True),
         ))
+        # Availability boundaries do not depend on the review lifecycle; the
+        # overlay transition after a confirmed booking has its own suites.
+        self.enterContext(patch("learner_api.imported_booking.schedule_overlay_for_booking",
+                                return_value=False))
         self.enterContext(patch.object(calendar, "booking_date_restriction", return_value=None))
         self.enterContext(patch.object(calendar, "_mark_imported_review_scheduled"))
         self.enterContext(patch.object(calendar, "_record_enrolment_review"))
