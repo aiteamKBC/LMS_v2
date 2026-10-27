@@ -154,3 +154,33 @@ it("shows only the module's weekly pattern, hiding one-off live sessions", async
   expect(await screen.findByRole("button", { name: "Alex Example 2026-10-06 Lecture 2 · Module A present" })).toBeVisible();
   expect(screen.queryByRole("button", { name: /2026-10-02/ })).not.toBeInTheDocument();
 });
+
+it("shows every lecture day of the month for every learner", async () => {
+  const other = {
+    ...row,
+    index: 1,
+    learner: { ...row.learner, id: "kbc:302", kbcId: "302", name: "Sam Sample", email: "sam@example.invalid" },
+  };
+  mocks.read.mockResolvedValue({ occurrences: [], records: [] });
+  mocks.kbcRead.mockResolvedValue([
+    { recordKey: "live:1", learnerId: "301", sessionDate: "2026-10-09", moduleName: "Risk", lectureName: "Risk Session 1", sessionNumber: 1, attendance: "present", source: "live" },
+    { recordKey: "live:2", learnerId: "302", sessionDate: "2026-10-09", moduleName: "Risk", lectureName: "Risk Session 1", sessionNumber: 1, attendance: "absent", source: "live" },
+    { recordKey: "live:3", learnerId: "301", sessionDate: "2026-10-16", moduleName: "Risk", lectureName: "Risk Session 2", sessionNumber: 2, attendance: "absent", source: "live" },
+  ]);
+  render(<MonthlyGrid rows={[row, other]} lectures={[]} moduleCatalogueId="" groupId="G1" date="2026-10-17"
+    active loading={false} onSaved={vi.fn()} />);
+
+  expect(await screen.findByRole("button", { name: "Alex Example 2026-10-09 Risk Session 1 present" })).toBeVisible();
+  // One square per learner per day, not one per other learner's record.
+  expect(screen.getAllByRole("button", { name: /^Alex Example 2026-10-09/ })).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "Sam Sample 2026-10-09 Risk Session 1 absent" })).toBeVisible();
+  // The 16th is a lecture day for the whole selection: Sam has nothing saved,
+  // so the day shows as unmarked (not editable) and counts in Sam's rate.
+  expect(screen.queryByRole("button", { name: /^Sam Sample 2026-10-16/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("img", { name: "Sam Sample 2026-10-16 no saved attendance unmarked" })).toBeVisible();
+  expect(screen.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Learner", "Fri9", "Fri16", "Month"]);
+  const alexRow = screen.getByText("Alex Example").closest("tr")!;
+  expect(within(alexRow).getByText("50%")).toBeVisible();
+  const samRow = screen.getByText("Sam Sample").closest("tr")!;
+  expect(within(samRow).getByText("0%")).toBeVisible();
+});

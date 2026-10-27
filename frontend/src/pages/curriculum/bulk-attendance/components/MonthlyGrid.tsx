@@ -10,7 +10,7 @@ import {
 } from "@/api/bulkAttendanceLearners";
 import type { AttendanceStatus, Lecture } from "@/types/bulkAttendance";
 import { systemDateParts } from "@/lib/format";
-import { avatarClass, getInitials, getWeekDays } from "@/utils/bulkAttendance";
+import { avatarClass, getInitials } from "@/utils/bulkAttendance";
 import type { AttendanceRow } from "./AttendanceTable";
 
 interface MonthlySession {
@@ -129,6 +129,12 @@ export default function MonthlyGrid({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
+  const today = useMemo(() => {
+    const parts = systemDateParts(new Date());
+    return parts
+      ? `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`
+      : "";
+  }, []);
   const moduleCatalogueIdsKey = moduleCatalogueIds.join(",");
   const learnerIdsKey = rows.map(({ learner }) => learner.kbcId || "").filter(Boolean).join(",");
   const scope = month + ":" + moduleCatalogueId + ":" + groupId + ":" + moduleCatalogueIdsKey + ":" + learnerIdsKey;
@@ -271,18 +277,11 @@ export default function MonthlyGrid({
       left.date.localeCompare(right.date) || left.source.localeCompare(right.source) || left.key.localeCompare(right.key));
   }, [currentResult, lectures, moduleCatalogueId, occurrences, selectedLecture]);
 
-  const weeks = useMemo(() => {
-    const map = new Map<string, Map<string, MonthlySession[]>>();
-    sessions.forEach((session) => {
-      const week = getWeekDays(session.date)[0].iso;
-      const days = map.get(week) ?? new Map<string, MonthlySession[]>();
-      days.set(session.date, [...(days.get(session.date) ?? []), session]);
-      map.set(week, days);
-    });
-    return [...map].sort(([a], [b]) => a.localeCompare(b)).map(([start, days]) => ({
-      start,
-      days: [...days].sort(([a], [b]) => a.localeCompare(b)),
-    }));
+  // One column per lecture day in the month, oldest first.
+  const days = useMemo(() => {
+    const map = new Map<string, MonthlySession[]>();
+    sessions.forEach((session) => map.set(session.date, [...(map.get(session.date) ?? []), session]));
+    return [...map].sort(([a], [b]) => a.localeCompare(b));
   }, [sessions]);
 
   const getSavedRecord = (session: MonthlySession, learnerId: string) =>
@@ -322,12 +321,27 @@ export default function MonthlyGrid({
     return pending[statusKey]?.status ?? saved[statusKey] ?? "unmarked";
   }, [pending, saved]);
 
+  // A scheduled occurrence is a lecture for everyone listed; a saved record
+  // without one (KBC, or a live row whose schedule no longer resolves) is a
+  // lecture only for the learner it belongs to.
+  const appliesTo = useCallback((session: MonthlySession, learnerId: string) =>
+    !isCoveredByLive(session, learnerId)
+      && (Boolean(session.occurrence) || Boolean(getSavedRecord(session, learnerId))),
+  [isCoveredByLive]);
+
   const rates = useMemo(() => Object.fromEntries(rows.map(({ learner }) => {
     const learnerId = learner.kbcId || "";
-    const visibleSessions = sessions.filter((session) => !isCoveredByLive(session, learnerId));
-    const present = visibleSessions.filter((session) => getStatus(session, learnerId) === "present").length;
-    return [learner.id, visibleSessions.length ? Math.round(present / visibleSessions.length * 100) : 0];
-  })), [getStatus, isCoveredByLive, rows, sessions]);
+    // Every lecture day of the selection counts for every learner listed; a
+    // day without the learner's own record counts as one unmarked lecture.
+    let total = 0;
+    let present = 0;
+    days.forEach(([, daySessions]) => {
+      const learnerSessions = daySessions.filter((session) => appliesTo(session, learnerId));
+      total += Math.max(1, learnerSessions.length);
+      present += learnerSessions.filter((session) => getStatus(session, learnerId) === "present").length;
+    });
+    return [learner.id, total ? Math.round(present / total * 100) : 0];
+  })), [appliesTo, days, getStatus, rows]);
 
   const toggle = (session: MonthlySession, learnerId: string) => {
     const savedRecord = getSavedRecord(session, learnerId);
@@ -421,7 +435,7 @@ export default function MonthlyGrid({
             <div>
               <h3 className="text-sm font-semibold text-foreground-950">Monthly overview</h3>
               <p className="mt-0.5 text-xs text-foreground-500">
-                {monthLabel(month)} · Days with saved attendance or live sessions are shown
+                {monthLabel(month)} · Only lecture days are shown · Tap a day to update it
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -441,49 +455,77 @@ export default function MonthlyGrid({
             <p role="status" className="rounded-lg border border-background-300 bg-background-50 p-6 text-sm text-foreground-600">Loading monthly attendance…</p>
           ) : error && !currentResult ? (
             <div role="alert" className="rounded-lg border border-danger-200 bg-background-50 p-6 text-sm text-danger-700">{error} <button type="button" onClick={() => setRetry((value) => value + 1)} className="underline">Retry</button></div>
-          ) : weeks.length === 0 ? (
+          ) : days.length === 0 ? (
             <div className="rounded-lg border border-background-300 bg-background-50 p-6 text-sm text-foreground-600">
               <p>No attendance or live sessions are recorded for this selection in {monthLabel(month)}.</p>
               {error && <p className="mt-2 text-danger-700" role="alert">{error} <button type="button" onClick={() => setRetry((value) => value + 1)} className="underline">Retry</button></p>}
             </div>
-          ) : weeks.map(({ start, days }) => (
-            <div key={start}>
-              <h4 className="mb-2 text-sm font-medium text-foreground-800">Week of {new Date(start + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}</h4>
-              <div className="overflow-x-auto rounded-lg border border-background-300 bg-background-50">
-                <table className="w-full min-w-[880px] border-collapse text-sm">
-                  <thead><tr className="bg-background-100 text-xs uppercase text-foreground-500">
-                    <th className="sticky left-0 z-10 bg-background-100 px-4 py-3 text-left">Learner</th>
-                    {days.map(([day]) => <th key={day} className="min-w-36 px-3 py-3 text-center">{new Date(day + "T12:00:00").toLocaleDateString("en-US", { weekday: "short" })} {day.slice(8)}</th>)}
-                    <th className="px-4 py-3 text-right">Month</th>
-                  </tr></thead>
-                  <tbody>{rows.map(({ learner, index, groupName }) => {
-                    const learnerId = learner.kbcId || "";
-                    return <tr key={learner.id} className="border-t border-background-200 hover:bg-background-100">
-                      <td className="sticky left-0 z-10 bg-background-50 px-4 py-3"><div className="flex items-center gap-3">
-                        <span className={"flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold " + avatarClass(index)}>{getInitials(learner.name)}</span>
-                        <span><span className="block font-medium text-foreground-950">{learner.name}</span><span className="block text-xs text-foreground-500">{groupName}</span></span>
-                      </div></td>
-                      {days.map(([day, daySessions]) => <td key={day} className="px-2 py-2 align-top"><div className="flex flex-col gap-1.5">
-                        {daySessions.filter((session) => !isCoveredByLive(session, learnerId)).map((session) => {
-                          const record = getSavedRecord(session, learnerId);
+          ) : rows.length === 0 ? (
+            <p className="rounded-lg border border-background-300 bg-background-50 p-6 text-center text-sm text-foreground-500">No learners match these filters.</p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-background-300 bg-background-50">
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-background-200 bg-background-100">
+                    <th className="sticky left-0 z-10 bg-background-100 px-5 py-3 text-left font-label text-xs uppercase tracking-wide text-foreground-500">Learner</th>
+                    {days.map(([day]) => {
+                      const isToday = day === today;
+                      return (
+                        <th key={day} className={"px-2 py-3 text-center font-label text-xs uppercase tracking-wide " + (isToday ? "text-primary-700" : "text-foreground-500")}>
+                          <span className="block">{new Date(day + "T12:00:00").toLocaleDateString("en-US", { weekday: "short" })}</span>
+                          <span className={"mt-1 inline-flex h-6 w-6 items-center justify-center rounded-full text-xs " + (isToday ? "bg-primary-500 text-background-50" : "text-foreground-700")}>{Number(day.slice(8))}</span>
+                        </th>
+                      );
+                    })}
+                    <th className="px-5 py-3 text-right font-label text-xs uppercase tracking-wide text-foreground-500">Month</th>
+                  </tr>
+                </thead>
+                <tbody>{rows.map(({ learner, index, groupName }) => {
+                  const learnerId = learner.kbcId || "";
+                  const rate = rates[learner.id];
+                  return <tr key={learner.id} className="border-b border-background-200 last:border-b-0 hover:bg-background-100">
+                    <td className="sticky left-0 z-10 bg-background-50 px-5 py-3"><div className="flex items-center gap-3">
+                      <span className={"flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold " + avatarClass(index)}>{getInitials(learner.name)}</span>
+                      <div className="min-w-0"><p className="truncate text-sm font-medium text-foreground-950">{learner.name}</p><p className="truncate text-xs text-foreground-500">{groupName}</p></div>
+                    </div></td>
+                    {days.map(([day, daySessions]) => {
+                      const learnerSessions = daySessions.filter((session) => appliesTo(session, learnerId));
+                      return <td key={day} className="px-2 py-3 text-center align-middle">
+                        {learnerSessions.length === 0 ? (
+                          <span
+                            role="img"
+                            aria-label={learner.name + " " + day + " no saved attendance unmarked"}
+                            title="No attendance saved for this learner on this lecture day"
+                            className={"mx-auto flex h-8 w-8 items-center justify-center rounded-md border border-dashed border-background-300 bg-background-50 text-sm text-foreground-400" +
+                              (day === today ? " ring-2 ring-primary-300" : "")}
+                          >
+                            <i className="ri-subtract-line" aria-hidden="true" />
+                          </span>
+                        ) : <div className="flex flex-col items-center gap-1">{learnerSessions.map((session) => {
                           const status = getStatus(session, learnerId);
-                          const editable = session.source === "live" || Boolean(record);
-                          return <button key={session.key} type="button" disabled={!editable || saving} onClick={() => toggle(session, learnerId)}
+                          const isPresent = status === "present";
+                          const isAbsent = status === "absent";
+                          return <button key={session.key} type="button" disabled={saving} onClick={() => toggle(session, learnerId)}
                             aria-label={learner.name + " " + day + " " + session.title + " " + status}
-                            className={"flex items-center justify-between gap-2 rounded-md border px-2 py-1 text-left text-xs " +
-                              (status === "present" ? "border-green-200 bg-green-100 text-green-700" : status === "absent" ? "border-red-200 bg-red-100 text-red-700" : "border-background-300 bg-background-100 text-foreground-600") + (!editable ? " cursor-not-allowed opacity-60" : "")}>
-                            <span className="max-w-32 truncate" title={session.title}>{session.title}</span><span aria-hidden="true">{status === "present" ? "✓" : status === "absent" ? "×" : "—"}</span>
+                            title={session.title}
+                            className={"flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border text-sm transition-colors disabled:cursor-not-allowed " +
+                              (isPresent ? "border-green-200 bg-green-100 text-green-700 hover:bg-green-200"
+                                : isAbsent ? "border-red-200 bg-red-100 text-red-700 hover:bg-red-200"
+                                : "border-background-300 bg-background-100 text-foreground-500 hover:bg-background-200") +
+                              (day === today ? " ring-2 ring-primary-300" : "")}>
+                            <i className={isPresent ? "ri-check-line" : isAbsent ? "ri-close-line" : "ri-subtract-line"} aria-hidden="true" />
                           </button>;
-                        })}
-                      </div></td>)}
-                      <td className="px-4 py-3 text-right font-semibold text-foreground-950">{rates[learner.id]}%</td>
-                    </tr>;
-                  })}</tbody>
-                </table>
-                {rows.length === 0 && <p className="p-6 text-center text-sm text-foreground-500">No learners match these filters.</p>}
-              </div>
+                        })}</div>}
+                      </td>;
+                    })}
+                    <td className="px-5 py-3 text-right">
+                      <span className={"text-sm font-semibold " + (rate >= 80 ? "text-green-700" : rate >= 50 ? "text-warning-700" : "text-red-700")}>{rate}%</span>
+                    </td>
+                  </tr>;
+                })}</tbody>
+              </table>
             </div>
-          ))}
+          )}
           {error && currentResult && <p role="alert" className="text-sm text-danger-700">{error}</p>}
         </section>
       )}
