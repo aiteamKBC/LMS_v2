@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { coachingRecordingUrl, coachingEvidenceUrl, invalidateCoachingPdfs, invalidateCoachingDetails, loadCoachingSession, type CoachingMeeting, type CoachingSessionDetails } from '@/api/coachingRecordings';
-import { recordingLabels } from './model';
+import { recordingLabel, recordingLabels } from './model';
 import QualitySuggestion from './QualitySuggestion';
 import SavedMeetingEvidence from './SavedMeetingEvidence';
 import { Download, Play, RefreshCw } from 'lucide-react';
@@ -18,7 +18,7 @@ function recordedSeconds(files: CoachingSessionDetails['media']['recordings']) {
   return total / 1000;
 }
 
-export default function SessionDetails({ eventKey, analysisContext, analysisEventKey, reference, category, onPreviewChange, activeTab, onTabChange }: { eventKey: string; analysisContext?: string; analysisEventKey?: string; reference?: string; category?: CoachingMeeting['category']; onPreviewChange?: (open: boolean) => void; activeTab?: EvidenceTab; onTabChange?: (tab: EvidenceTab) => void }) {
+export default function SessionDetails({ eventKey, analysisContext, analysisEventKey, reference, category, timeZone = 'UTC', onPreviewChange, activeTab, onTabChange }: { eventKey: string; analysisContext?: string; analysisEventKey?: string; reference?: string; category?: CoachingMeeting['category']; timeZone?: string; onPreviewChange?: (open: boolean) => void; activeTab?: EvidenceTab; onTabChange?: (tab: EvidenceTab) => void }) {
   const [data, setData] = useState<CoachingSessionDetails | null>(null);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
@@ -37,6 +37,10 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
   }, [eventKey, revision, reference]);
 
   const attendancePending = data?.attendance.state === 'pending';
+  const clock = new Intl.DateTimeFormat('en-GB', { timeZone, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+  const stamp = (value: string) => clock.format(new Date(value));
+  const starts = (data?.media.recordings ?? []).flatMap(file => file.startsAt && Number.isFinite(Date.parse(file.startsAt)) ? [Date.parse(file.startsAt)] : []);
+  const firstRecording = starts.length ? Math.min(...starts) : null;
   useEffect(() => {
     if (!attendancePending) return;
     const controller = new AbortController();
@@ -65,9 +69,10 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
     {!data && !error && <p role="status" className="mt-3 text-sm">Loading saved recordings and attendance…</p>}
     {error && <p role="alert" className="mt-3 text-sm text-rose-800">{error} <button onClick={refresh} className="font-semibold underline">Retry details</button></p>}
     {data && <>
-      {data.partial && <p role="alert" className="mt-3 text-sm text-amber-900">Some saved evidence could not be checked. Refresh details to try again.</p>}
-      {!data.media.recordings.length && <p className="mt-3 text-xs text-foreground-600">{recordingLabels[data.media.state]}</p>}
-      {data.media.recordings.length > 0 && <p className="mt-3 text-xs text-foreground-600">{data.media.recordings.length} recording {data.media.recordings.length === 1 ? 'part' : 'parts'}{recordedSeconds(data.media.recordings) > 0 && ` · ${durationLabel(recordedSeconds(data.media.recordings))} recorded in total`}. Recording time can be shorter than attendance when recording starts late or stops early.</p>}
+      {data.partial && data.media.check?.state !== 'failed' && <p role="alert" className="mt-3 text-sm text-amber-900">Some saved evidence could not be checked. Refresh details to try again.</p>}
+      {data.media.check?.state === 'failed' && <p role="alert" className="mt-3 text-xs text-amber-900">The latest recording check failed. These are the last saved parts; additional parts could not be checked. Use Refresh calendars to request another check.</p>}
+      {!data.media.recordings.length && <p className="mt-3 text-xs text-foreground-600">{recordingLabel(data.media)}{data.media.check?.state === 'complete' && data.media.check.reason === 'no-recordings-returned' ? '. This does not prove the meeting was not recorded. Use Refresh calendars to request another check.' : ''}</p>}
+      {data.media.recordings.length > 0 && <p className="mt-3 text-xs text-foreground-600">{data.media.recordings.length} recording {data.media.recordings.length === 1 ? 'part' : 'parts'}{recordedSeconds(data.media.recordings) > 0 && ` · ${durationLabel(recordedSeconds(data.media.recordings))} recorded in total`}. All saved parts are listed below. Recording and attendance times are shown in {timeZone}.</p>}
       <ul className="mt-3 space-y-3">{data.media.recordings.map((file, index) => {
         const duration = file.startsAt && file.endsAt ? (Date.parse(file.endsAt) - Date.parse(file.startsAt)) / 1000 : null;
         return <li key={file.id} className="rounded-xl border border-background-200 bg-white p-3 shadow-sm">
@@ -75,6 +80,7 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
             <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${file.state === 'ready' ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{file.state === 'ready' ? 'Ready' : recordingLabels[file.state]}</span></div>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-foreground-500">{duration !== null && duration > 0 && <span>{durationLabel(duration)} recorded</span>}
             {file.source === 'microsoft' && <span>SharePoint recording</span>}</div>
+          {file.startsAt && file.endsAt && duration !== null && duration > 0 && <p className="mt-2 break-words text-[11px] leading-5 text-foreground-600">Microsoft recording times: {stamp(file.startsAt)} – {stamp(file.endsAt)}</p>}
           {file.state === 'ready' && <div className="mt-3 flex flex-wrap gap-2">
             <button aria-label={`Play recording ${index + 1}`} aria-pressed={playing === file.id} className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 px-3 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-50" onClick={() => { setPlaying(file.id); setPlayError(false); }}><Play size={13} />Play</button>
             <a aria-label={`Download recording ${index + 1}`} className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold text-white hover:bg-primary-700" href={coachingRecordingUrl(data.eventKey, file.id, false, reference)} target="_blank" rel="noopener noreferrer"><Download size={13} />Download</a>
@@ -97,7 +103,12 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
           <thead><tr className="border-b border-background-200"><th className="py-2 pr-3">Participant</th><th className="py-2 pr-3">Role</th><th className="py-2 pr-3">Status</th><th className="py-2">Time present</th></tr></thead>
           <tbody>{data.attendance.rows.map((row, index) => <tr key={`${row.email || row.name}:${index}`} className="border-b border-background-100">
             <td className="max-w-40 break-words py-2 pr-3">{row.name || row.displayName || row.email || 'Unidentified participant'}</td><td className="py-2 pr-3">{row.role || '—'}</td>
-            <td className="py-2 pr-3">{row.status || 'pending'}</td><td className="py-2">{row.totalAttendanceSeconds == null ? '—' : `${Math.floor(row.totalAttendanceSeconds / 60)} min ${row.totalAttendanceSeconds % 60} sec`}</td>
+            <td className="py-2 pr-3">{row.status || 'pending'}</td><td className="py-2">
+              <span>{row.totalAttendanceSeconds == null ? '—' : durationLabel(row.totalAttendanceSeconds)}</span>
+              {row.firstJoinedAt && <span className="mt-1 block text-[10px] text-foreground-500">First joined: {stamp(row.firstJoinedAt)}</span>}
+              {row.lastLeftAt && <span className="block text-[10px] text-foreground-500">Last left: {stamp(row.lastLeftAt)}</span>}
+              {firstRecording !== null && row.firstJoinedAt && firstRecording > Date.parse(row.firstJoinedAt) && <span className="mt-1 block text-[10px] text-primary-700">First recording starts {durationLabel(Math.round((firstRecording - Date.parse(row.firstJoinedAt)) / 1000))} after this participant joined.</span>}
+            </td>
           </tr>)}</tbody></table>
         {!data.attendance.rows.length && <p className="mt-2 text-sm">No participant rows are available in the saved report.</p>}
       </div>}

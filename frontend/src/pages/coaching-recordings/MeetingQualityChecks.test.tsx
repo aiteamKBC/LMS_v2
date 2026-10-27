@@ -50,3 +50,17 @@ it('shows a failed read as an error and only retries on request', async () => {
   expect(meetingQualityChecks).toHaveBeenCalledOnce(); fireEvent.click(screen.getByRole('button', { name: 'Retry checks' }));
   await screen.findByText('Learner One'); expect(meetingQualityChecks).toHaveBeenCalledTimes(2);
 });
+it('lists separate forms for the same learner using their saved names without reading document bodies', async () => {
+  vi.mocked(meetingQualityChecks).mockResolvedValue({ reviews: [
+    { ...check, reviewType: 'FORM_MONTHLY_COACHING', formTitle: 'Monthly Coaching Meeting Feedback Form' },
+    { ...check, id: 'review-two', reviewType: 'FORM_SAFEGUARDING', formTitle: 'Safeguarding Feedback Form' },
+  ], nextOffset: null });
+  const open = vi.fn();
+  render(<MeetingQualityChecks meetingId={'a'.repeat(32)} refresh={0} onOpen={open} onPreviewChange={vi.fn()} />);
+  await screen.findByText('Monthly Coaching Meeting Feedback Form');
+  expect(screen.getByText('Safeguarding Feedback Form')).toBeInTheDocument();
+  expect(screen.getAllByText('Learner One')).toHaveLength(2);
+  fireEvent.click(screen.getAllByRole('button', { name: 'Open saved form' })[1]);
+  expect(open).toHaveBeenCalledWith('review-two');
+  expect(attachedQualityPdf).not.toHaveBeenCalled(); expect(meetingQualityChecks).toHaveBeenCalledOnce();
+});

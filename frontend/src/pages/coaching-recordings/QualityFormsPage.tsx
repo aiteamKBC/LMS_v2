@@ -3,14 +3,14 @@ import { ArrowDown, ArrowLeft, ArrowUp, Eye, Plus, Save, Send, Trash2 } from 'lu
 import { Link, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
-import { qualityDefinition, saveQualityDefinition, invalidateQualityReviews, type QualityField, type QualityFieldType, type QualityTemplate, type QualityTemplateState, type QualityReviewType } from '@/api/coachingQualityReviews';
+import { qualityDefinition, createQualityForm, saveQualityDefinition, invalidateQualityReviews, type QualityField, type QualityFieldType, type QualityTemplate, type QualityTemplateState, type QualityReviewType } from '@/api/coachingQualityReviews';
 import QualityModal from './QualityModal';
 import QualityQuestions, { qualityControl } from './QualityQuestions';
 import { blankQualityForm } from './qualityFormModel';
-import QualityTypePicker from './QualityTypePicker';
+import QualityFormCards from './QualityFormCards';
 
 const button = 'inline-flex items-center justify-center gap-2 rounded-lg border border-primary-200 bg-white px-3 py-2 text-sm font-semibold text-primary-700 disabled:opacity-50';
-const fieldLabels: Record<QualityFieldType, string> = { rating: 'Quality rating + evidence', text: 'Short text', textarea: 'Long text', boolean: 'Yes / No', single_choice: 'Single choice', checklist: 'Checklist', date: 'Date', number: 'Number', image: 'Upload image' };
+const fieldLabels: Record<QualityFieldType, string> = { rating: 'Quality rating + evidence', text: 'Short text', textarea: 'Long text', boolean: 'Yes / No', single_choice: 'Single choice', checklist: 'Checklist', date: 'Date', number: 'Number', image: 'Upload image', file: 'Upload evidence file' };
 const identity = (prefix: string) => `${prefix}-${crypto.randomUUID()}`;
 
 function FormPreview({ definition, onClose }: { definition: QualityTemplate; onClose: () => void }) {
@@ -25,7 +25,11 @@ function FormPreview({ definition, onClose }: { definition: QualityTemplate; onC
 
 export default function QualityFormsPage() {
   const [params, setParams] = useSearchParams();
-  const kind: QualityReviewType = params.get('type') === 'PR' ? 'PR' : 'MCM';
+  const rawKind = params.get('type') ?? '';
+  const kind: QualityReviewType = /^(MCM|PR|FORM_[A-Z0-9_]{1,58})$/.test(rawKind) ? rawKind : '';
+  const [newTitle, setNewTitle] = useState('');
+  const [catalogRevision, setCatalogRevision] = useState(0);
+  const newRequest = useRef({ title: '', id: '' });
   const [saved, setSaved] = useState<QualityTemplateState | null>(null), [definition, setDefinition] = useState<QualityTemplate | null>(null);
   const [baseline, setBaseline] = useState(''), [section, setSection] = useState('');
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('');
@@ -35,6 +39,7 @@ export default function QualityFormsPage() {
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
     const controller = new AbortController(); setLoading(true); setError(''); setMessage(''); setDefinition(null); setSaved(null);
+    if (!kind) { setLoading(false); return () => controller.abort(); }
     void qualityDefinition(controller.signal, kind).then(value => {
       if (controller.signal.aborted) return;
       setSaved(value.template); setDefinition(value.template.draft); setBaseline(JSON.stringify(value.template.draft)); setSection(value.template.draft.sections[0].id);
@@ -62,6 +67,15 @@ export default function QualityFormsPage() {
     return () => { window.removeEventListener('beforeunload', warn); window.removeEventListener('popstate', back, true); document.removeEventListener('click', navigate, true); };
   }, [dirty, busy]);
   const update = (value: QualityTemplate) => { setDefinition(value); setError(''); setMessage(''); };
+  const createForm = async () => {
+    if (!newTitle.trim() || busy || (dirty && !window.confirm('Discard unsaved changes before creating a new form?'))) return;
+    const title = newTitle.trim();
+    if (newRequest.current.title !== title) newRequest.current = { title, id: crypto.randomUUID() };
+    setBusy(true); setError('');
+    try { const result = await createQualityForm(title, newRequest.current.id); if (!alive.current) return; setNewTitle(''); setParams({ type: result.reviewType || result.draft.reviewType! }); setReload(n => n + 1); }
+    catch (reason) { if (alive.current) setError(reason instanceof Error ? reason.message : 'The form could not be created.'); }
+    finally { if (alive.current) setBusy(false); }
+  };
   const group = definition?.sections.find(item => item.id === section);
   const changeSection = (changes: Partial<NonNullable<typeof group>>) => { if (definition) update({ ...definition, sections: definition.sections.map(item => item.id === section ? { ...item, ...changes } : item) }); };
   const changeField = (id: string, changes: Partial<QualityField>) => { if (group) changeSection({ criteria: group.criteria.map(item => item.id === id ? { ...item, ...changes } : item) }); };
@@ -75,6 +89,7 @@ export default function QualityFormsPage() {
       const result = await saveQualityDefinition({ ...body, requestId: retry.current.id });
       if (!alive.current) return;
       setSaved(result); setDefinition(result.draft); setBaseline(JSON.stringify(result.draft));
+      setCatalogRevision(n => n + 1);
       setMessage(publish ? `Published · Form version ${result.published.version} is available for new reviews.` : 'Draft saved. Meetings continue to use the published form.');
     } catch (reason) { if (alive.current) setError(reason instanceof Error ? reason.message : 'The definition could not be saved. Your changes are still here.'); }
     finally { if (alive.current) setBusy(false); }
@@ -83,10 +98,13 @@ export default function QualityFormsPage() {
     <main className="mx-auto w-full max-w-[1500px] space-y-5 p-3 sm:p-6">
       <Link to="/curriculum/quality" className="inline-flex items-center gap-2 text-sm font-semibold text-primary-700"><ArrowLeft size={16} />Curriculum quality</Link>
       <section aria-label="Form library" className="space-y-3 rounded-xl border border-background-200 bg-white p-4">
-        <QualityTypePicker value={kind} disabled={busy || loading} onChange={next => {
+        <details key={kind || 'library'} open={!kind}><summary className="cursor-pointer text-sm font-bold text-primary-800"><span>Choose a form</span>{definition && <span className="ml-2 font-normal text-foreground-500">· {definition.title}</span>}</summary><div className="mt-4">
+        <QualityFormCards key={`${reload}:${catalogRevision}`} value={kind} editing disabled={busy || loading} onChange={next => {
           if (next !== kind && (!dirty || window.confirm('Discard the unsaved form definition changes?'))) setParams({ type: next });
         }} />
-        <p className="text-xs text-foreground-500">Edit and publish each type separately. New {kind} reviews use its published questions; saved reviews keep their own form version.</p>
+        </div></details>
+        <p className="text-xs text-foreground-500">Edit and publish each form separately. New reviews use its published questions; saved reviews keep their original form version.</p>
+        <form className="flex flex-wrap items-end gap-3 border-t border-background-200 pt-4" onSubmit={event => { event.preventDefault(); void createForm(); }}><label className="grid min-w-0 flex-1 gap-1 text-xs font-semibold">New form name<input maxLength={160} value={newTitle} onChange={event => setNewTitle(event.target.value)} className={qualityControl} placeholder="e.g. Employer support review" /></label><button className={button} disabled={busy || !newTitle.trim()}><Plus size={15} />Create form type</button></form>
       </section>
       <header className="flex flex-wrap items-start justify-between gap-4"><div><h1 className="text-2xl font-bold">Quality forms</h1><p className="mt-2 max-w-2xl text-sm text-foreground-600">Save changes as a draft, preview them, then publish for new meeting reviews. Existing reviews keep their original questions.</p></div><div className="flex flex-wrap gap-2"><button className={button} disabled={!definition || loading || busy} onClick={() => setPreview(true)}><Eye size={16} />Preview form</button><button className={button} disabled={!definition || loading || busy} onClick={() => void save(false)}><Save size={16} />Save draft</button><button className={`${button} bg-primary-600 text-white`} disabled={!definition || loading || busy} onClick={() => void save(true)}><Send size={16} />Publish form</button></div></header>
       <p role="status" className="text-xs text-foreground-500">{loading ? 'Loading form definition…' : busy ? 'Saving form…' : message || (dirty ? 'Unsaved definition changes' : `Published form version ${saved?.published.version ?? 1} · saved revision ${saved?.revision ?? 0}`)}</p>
@@ -101,6 +119,7 @@ export default function QualityFormsPage() {
               <div className="grid items-center gap-3 sm:grid-cols-2"><label className="grid gap-1 text-xs font-semibold">Question type<select className={qualityControl} value={item.type || 'rating'} onChange={event => { const type = event.target.value as QualityFieldType; changeField(item.id, { type, options: type === 'single_choice' || type === 'checklist' ? item.options?.length ? item.options : ['First option', 'Second option'] : [] }); }}>{Object.entries(fieldLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={item.required !== false} onChange={event => changeField(item.id, { required: event.target.checked })} />Required question</label></div>
               {(item.type === 'single_choice' || item.type === 'checklist') && <label className="grid gap-1 text-xs font-semibold">Options · one per line<textarea className={qualityControl} rows={3} value={(item.options || []).join('\n')} onChange={event => changeField(item.id, { options: event.target.value.split('\n') })} /></label>}
               <label className="grid gap-1 text-xs font-semibold">Help text<input className={qualityControl} maxLength={1000} value={item.help || ''} onChange={event => changeField(item.id, { help: event.target.value })} /></label>
+              {(!item.type || item.type === 'rating') && <details className="rounded-lg bg-background-50 p-3"><summary className="cursor-pointer text-xs font-bold text-primary-700">Rating guidance for this question</summary><label className="mt-3 flex items-center gap-2 text-xs"><input type="checkbox" checked={item.allowNa !== false} onChange={event => changeField(item.id, { allowNa: event.target.checked })} />Allow N/A</label><div className="mt-3 grid gap-3 sm:grid-cols-2">{['gold','green','amber','red','na'].map(rating => <label key={rating} className="grid gap-1 text-xs font-semibold">{rating === 'na' ? 'N/A' : rating[0].toUpperCase() + rating.slice(1)} reference criteria<textarea className={qualityControl} rows={5} maxLength={6000} value={item.descriptors?.[rating as keyof NonNullable<QualityField['descriptors']>] || ''} onChange={event => changeField(item.id, { descriptors: { ...item.descriptors, [rating]: event.target.value } })} /></label>)}</div></details>}
             </article>)}<button className={button} disabled={definition.sections.reduce((sum, row) => sum + row.criteria.length, 0) >= 100} onClick={() => changeSection({ criteria: [...group.criteria, { id: identity('question'), text: 'New question', type: 'text', required: true }] })}><Plus size={15} />Add question</button>
           </section>}
         </div>

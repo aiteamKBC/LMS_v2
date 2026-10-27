@@ -72,7 +72,7 @@ def coaching_linked_meeting(request,identity):
         row['recordingsReference']=calendar_reference(context)
         row['category'],row['categorySource']=category(row,event,lecture_occurrences(start,end))
         row['media']=source_summary(source_details(calendar_record(context)))
-        row['readyToAction']=row['phase']=='ended' and row['media']['readyCount']>0
+        row['readyToAction']=row['phase']=='ended'
         if row['eventKey'] and row['match']=='matched' and row['phase']!='cancelled':
             row['analysisContext']=signing.dumps({**{key:row[key] for key in ('eventKey','startsAt','endsAt','title')},
               'graphEventId':event['id']},salt='coaching-quality-title',compress=True)

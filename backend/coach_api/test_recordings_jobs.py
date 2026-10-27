@@ -18,6 +18,7 @@ from coach_api import recordings_calendar_sync as sync
 from coach_api import recordings_transport as transport
 from coach_api import views
 from coach_api.management.commands import process_coaching_recordings as process
+from coach_api.management.commands import diagnose_coaching_recordings as diagnose
 from django.core.management.base import CommandError
 
 OWNER = 'coach@example.invalid'
@@ -70,6 +71,85 @@ class RecordingJobsTests(unittest.TestCase):
             self.assertTrue(result[0]['pending'])
             self.assertIsNone(result[0]['events'])
         self.assertEqual(CoachingRecordingJob.objects.count(), 1)
+
+    def test_successful_empty_discovery_is_distinct_from_pending_failed_and_no_teams(self):
+        row = self.make(result={'artifacts': []}, state='idle', last_success_at=clock.now())
+        media = jobs.source_summary(row)
+        self.assertEqual(media['check'], {'state': 'complete', 'checkedAt': row.last_success_at.isoformat(), 'reason': 'no-recordings-returned'})
+        self.assertEqual(media['readyCount'], 0)
+        # The thin calendar projection retains this reason without fetching the
+        # saved event body or issuing another provider request.
+        row.result['noTeams'] = True
+        row.save(update_fields=['result'])
+        projected = jobs.evidence_jobs([CONTEXT])
+        self.assertEqual(jobs.source_summary(next(iter(projected.values())))['check']['reason'], 'no-teams-link')
+        row.error_code = 'evidence_unavailable'
+        self.assertEqual(jobs.source_summary(row)['check']['state'], 'failed')
+        self.assertNotIn('reason', jobs.source_summary(row)['check'])
+        row.last_success_at = None
+        row.error_code = ''
+        self.assertEqual(jobs.source_summary(row)['check']['state'], 'pending')
+        self.assertNotIn('reason', jobs.source_summary(row)['check'])
+        self.assertEqual(jobs.source_summary(None)['check'], {'state': 'pending', 'checkedAt': None})
+
+    def test_diagnostic_reads_do_not_enqueue_renew_retries_or_download_evidence(self):
+        context = {'owner': OWNER, 'start': '2026-10-20T00:00:00+00:00', 'end': '2026-10-21T00:00:00+00:00'}
+        row = self.make('calendar', context)
+        jobs.complete(row, {'events': [EVENT]}, seconds=300)
+        evidence = self.make(state='idle', last_success_at=clock.now(), result={'artifacts': []})
+        before = list(CoachingRecordingJob.objects.order_by('key').values())
+        output = StringIO()
+        with patch.object(diagnose, 'source_dsn', return_value='private-source'), \
+                patch.object(diagnose, 'source_counts', return_value={'state': 'available', 'dashboard': {'completed_reports': 0}}) as read:
+            diagnose.Command(stdout=output).handle(coach_email=OWNER, start='2026-10-20', end='2026-10-20', time_zone='UTC')
+        import json
+        result = json.loads(output.getvalue())
+        self.assertEqual(result['calendar']['eventCount'], 1)
+        self.assertEqual(result['recordingChecks'], {'no-recordings-returned': 1})
+        self.assertEqual(result['source']['dashboard']['completed_reports'], 0)
+        self.assertNotIn('private-source', output.getvalue())
+        self.assertEqual(read.call_args.args[2:4], (datetime(2026,10,20,tzinfo=timezone.utc),datetime(2026,10,21,tzinfo=timezone.utc)))
+        self.assertEqual(list(CoachingRecordingJob.objects.order_by('key').values()), before)
+        self.workers.assert_not_called()
+
+    def test_diagnostic_source_failure_is_not_reported_as_an_empty_success(self):
+        output = StringIO()
+        with patch.object(diagnose, 'source_dsn', return_value='private-source'), \
+                patch.object(diagnose, 'source_counts', side_effect=RuntimeError('secret private-source')):
+            diagnose.Command(stdout=output).handle(coach_email=OWNER, start='2026-10-20', end='2026-10-20', time_zone='UTC')
+        import json
+        result = json.loads(output.getvalue())
+        self.assertEqual(result['source'], {'state': 'unavailable', 'errorType': 'RuntimeError'})
+        self.assertNotIn('secret', output.getvalue())
+        self.assertFalse(CoachingRecordingJob.objects.exists())
+        self.workers.assert_not_called()
+
+    def test_diagnostic_source_connection_is_read_only_scoped_and_does_not_return_report_bodies(self):
+        with patch('psycopg.conninfo.conninfo_to_dict', return_value={'host': 'source.example.invalid', 'dbname': 'source'}), \
+                patch('psycopg.connect') as connect:
+            cursor = connect.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+            cursor.fetchone.side_effect = [{'sessions': 4, 'linked': 0, 'completed_reports': 0, 'transcripts': 0},
+                {'sessions': 0, 'completed_reports': 0}]
+            start, end = datetime(2026,10,20,tzinfo=timezone.utc), datetime(2026,10,21,tzinfo=timezone.utc)
+            result = diagnose.source_counts('private-source', OWNER, start, end, start.date(), start.date())
+        self.assertEqual(result['state'], 'available')
+        self.assertEqual(result['dashboard']['linked'], 0)
+        self.assertEqual(connect.call_args.kwargs['options'], '-c default_transaction_read_only=on')
+        reads = cursor.execute.call_args_list
+        self.assertTrue(all(call.args[0].lstrip().startswith(('SELECT', 'SET LOCAL')) for call in reads))
+        self.assertTrue(all(call.args[1][:3] == [OWNER, start, end] for call in reads[1:]))
+        self.assertNotIn('private-source', str(result))
+        self.assertTrue(all(call.args[0].startswith('SELECT count(*) AS sessions') for call in reads[1:]))
+
+    def test_diagnostic_rejects_invalid_scope_before_any_read_or_worker(self):
+        for arguments in ({'start': '2026-10-20', 'end': '2026-10-19'},
+                          {'start': '2026-10-01', 'end': '2026-11-01'},
+                          {'start': '2026-10-20', 'end': '2026-10-20', 'time_zone': 'Unknown/Zone'}):
+            with self.assertRaises(CommandError), patch.object(diagnose, 'source_dsn') as source:
+                diagnose.Command(stdout=StringIO()).handle(**{'coach_email': OWNER, 'time_zone': 'UTC', **arguments})
+            source.assert_not_called()
+        self.assertFalse(CoachingRecordingJob.objects.exists())
+        self.workers.assert_not_called()
 
     def failed_account(self, **changes):
         return self.make('calendar', {'owner': OWNER, 'start': '2026-10-19T00:00:00+00:00', 'end': '2026-10-20T00:00:00+00:00'},

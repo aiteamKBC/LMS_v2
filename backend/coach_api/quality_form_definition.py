@@ -8,10 +8,14 @@ from uuid import UUID
 from .quality_review_template import template, RATINGS, InvalidReview, _text
 from .quality_review_types import review_type
 
-FIELD_TYPES = ('rating', 'text', 'textarea', 'boolean', 'single_choice', 'checklist', 'date', 'number', 'image')
+FIELD_TYPES = ('rating', 'text', 'textarea', 'boolean', 'single_choice', 'checklist', 'date', 'number', 'image', 'file')
 
 
 def default_definition(kind=''):
+    from .quality_feedback_catalog import feedback_definition
+    feedback = feedback_definition(kind)
+    if feedback:
+        return clean_definition(feedback)
     return _initial_definition({**template(), 'version': 1},kind)
 
 
@@ -57,7 +61,7 @@ def clean_definition(value):
             raise InvalidReview('Each section needs a unique identifier, title and at least one question.')
         seen.add(key); fields=[]
         for item in items:
-            if not isinstance(item,dict) or set(item)-{'id','text','type','required','options','help'}:
+            if not isinstance(item,dict) or set(item)-{'id','text','type','required','options','help','allowNa','descriptors'}:
                 raise InvalidReview('A question is invalid.')
             identity = _identifier(item.get('id'))
             kind = item.get('type','rating'); text = _text(item.get('text',''),1200)
@@ -75,13 +79,23 @@ def clean_definition(value):
                 raise InvalidReview('Choice questions need at least two options.')
             if kind not in ('single_choice','checklist') and options:
                 raise InvalidReview('Only choice questions can have options.')
+            extra = {}
+            if 'allowNa' in item:
+                if type(item['allowNa']) is not bool:
+                    raise InvalidReview('Choose whether N/A is allowed for this criterion.')
+                extra['allowNa'] = item['allowNa']
+            if 'descriptors' in item:
+                descriptors = item['descriptors']
+                if not isinstance(descriptors, dict) or set(descriptors)-set(RATINGS):
+                    raise InvalidReview('The criterion rating descriptions are invalid.')
+                extra['descriptors'] = {key:_text(text,6000) for key,text in descriptors.items()}
             fields.append({'id':identity,'text':text,'type':kind,'required':required,
-                           'options':options,'help':_text(item.get('help',''),1000)})
+                           'options':options,'help':_text(item.get('help',''),1000), **extra})
         total += len(fields)
         if total>100:
             raise InvalidReview('Use up to 100 questions in one form.')
         result.append({'id':key,'title':heading,'screenshots':bool(section.get('screenshots',False)), 'criteria':fields})
-    return {'id':template()['id'] + (f'-{review_kind.lower()}' if review_kind else ''),'version':1,'title':title,'ratings':ratings,'sections':result,
+    return {'id':('feedback-' + review_kind.lower()) if review_kind.startswith('FORM_') else template()['id'] + (f'-{review_kind.lower()}' if review_kind else ''),'version':1,'title':title,'ratings':ratings,'sections':result,
             'actionsTitle':_text(value.get('actionsTitle','SMART action plan'),160) or 'SMART action plan',
             **({'reviewType':review_kind} if review_kind else {})}
 
@@ -101,7 +115,7 @@ def image_keys(definition):
 
 
 def clean_answers(value, status, definition):
-    if status not in ('draft','completed') or not isinstance(value,dict) or set(value)-{'header','criteria','actions','images','sources','answers'}:
+    if status not in ('draft','completed') or not isinstance(value,dict) or set(value)-{'header','criteria','actions','images','sources','answers','attachments'}:
         raise InvalidReview('Choose a valid review status and form.')
     header = value.get('header',{})
     header_keys = ('employer','programme','activityDate','startDate','endDate')
@@ -117,7 +131,7 @@ def clean_answers(value, status, definition):
     fields = {item['id']:item for section in definition['sections'] for item in section['criteria']}
     ratings = value.get('criteria',{}); answers = value.get('answers',{})
     rating_ids = {key for key,item in fields.items() if item['type']=='rating'}
-    answer_ids = {key for key,item in fields.items() if item['type'] not in ('rating','image')}
+    answer_ids = {key for key,item in fields.items() if item['type'] not in ('rating','image','file')}
     if not isinstance(ratings,dict) or set(ratings)-rating_ids or not isinstance(answers,dict) or set(answers)-answer_ids:
         raise InvalidReview('The answers do not belong to this saved form version.')
     cleaned_ratings={}; cleaned_answers={}
@@ -132,6 +146,18 @@ def clean_answers(value, status, definition):
         except (ValueError,TypeError,AttributeError): raise InvalidReview('A screenshot identity is invalid.')
     if sum(map(len,cleaned_images.values()))>20:
         raise InvalidReview('Use up to 20 screenshots in one review.')
+    attachments = value.get('attachments', {})
+    attachment_keys = {'evidence'} | {key for key,item in fields.items() if item['type']=='file'}
+    if not isinstance(attachments,dict) or set(attachments)-attachment_keys:
+        raise InvalidReview('An evidence file is assigned to an invalid question.')
+    cleaned_attachments = {}
+    for key, identities in attachments.items():
+        if not isinstance(identities,list) or len(identities)>30:
+            raise InvalidReview('Use up to 30 evidence files in a review.')
+        try: cleaned_attachments[key] = list(dict.fromkeys(str(UUID(identity)) for identity in identities))
+        except (ValueError,TypeError,AttributeError): raise InvalidReview('An evidence file identity is invalid.')
+    if sum(map(len,cleaned_attachments.values()))>30:
+        raise InvalidReview('Use up to 30 evidence files in a review.')
     for key,item in fields.items():
         kind=item['type']; required=status=='completed' and item['required']
         if kind=='rating':
@@ -139,6 +165,8 @@ def clean_answers(value, status, definition):
             if not isinstance(answer,dict) or set(answer)-{'rating','evidence'} or answer.get('rating','') not in ('',*RATINGS):
                 raise InvalidReview('Choose a valid quality rating.')
             rating=answer.get('rating',''); evidence=_text(answer.get('evidence',''),6000)
+            if rating=='na' and item.get('allowNa') is False:
+                raise InvalidReview('N/A is not allowed for this criterion.')
             if required and not rating or status=='completed' and rating not in ('','na') and not evidence:
                 raise InvalidReview('Complete each required rating and explain its evidence.')
             cleaned_ratings[key]={'rating':rating,'evidence':evidence}
@@ -146,6 +174,10 @@ def clean_answers(value, status, definition):
         if kind=='image':
             if required and not cleaned_images.get(key):
                 raise InvalidReview('Attach an image for each required image question.')
+            continue
+        if kind=='file':
+            if required and not cleaned_attachments.get(key):
+                raise InvalidReview('Attach evidence for each required file question.')
             continue
         answer=answers.get(key, [] if kind=='checklist' else None if kind=='boolean' else '')
         if kind=='boolean':
@@ -188,13 +220,14 @@ def clean_answers(value, status, definition):
     if not isinstance(sources,list) or any(key not in ('recording','transcript','ai','portfolio','other') for key in sources):
         raise InvalidReview('Choose valid evidence sources.')
     return {'header':header,'criteria':cleaned_ratings,'answers':cleaned_answers,'actions':plan,
-            'images':cleaned_images,'sources':list(dict.fromkeys(sources))}
+            'images':cleaned_images,'sources':list(dict.fromkeys(sources)),
+            **({'attachments':cleaned_attachments} if 'attachments' in value else {})}
 
 
 def initial_state(kind='', inherited=None):
     definition=default_definition(kind)
     draft=deepcopy(definition)
-    if kind:
+    if kind and not kind.startswith('FORM_'):
         for target, source in ((definition, (inherited or {}).get('published')), (draft, (inherited or {}).get('draft'))):
             if source:
                 target.update(_initial_definition(source,kind))

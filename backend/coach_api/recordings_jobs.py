@@ -90,14 +90,18 @@ def cached_results(rows, field):
         log.warning('Coaching snapshot cache unavailable; reading durable snapshots.')
     missing = [key for key, cache_key in keys.items() if cache_key not in saved]
     if missing:
-        fresh = {keys[row['key']]: row['value'] or [] for row in CoachingRecordingJob.objects.filter(key__in=missing)
-                 .annotate(value=F(f'result__{field}')).values('key', 'value')}
+        if field == 'media':
+            fresh = {keys[row['key']]: {'artifacts': row['result__artifacts'] or [], 'noTeams': row['result__noTeams'] is True}
+                for row in CoachingRecordingJob.objects.filter(key__in=missing).values('key', 'result__artifacts', 'result__noTeams')}
+        else:
+            fresh = {keys[row['key']]: row['value'] or [] for row in CoachingRecordingJob.objects.filter(key__in=missing)
+                     .annotate(value=F(f'result__{field}')).values('key', 'value')}
         saved.update(fresh)
         try:
             cache.set_many(fresh, timeout=300)
         except Exception:
             log.warning('Coaching snapshot cache unavailable; durable snapshots retained.')
-    return {row['key']: saved.get(keys.get(row['key']), []) for row in rows}
+    return {row['key']: saved.get(keys.get(row['key']), {} if field == 'media' else []) for row in rows}
 
 
 def calendar_snapshots(coaches, start, end, *, refresh=False):
@@ -147,10 +151,10 @@ def evidence_jobs(contexts):
         return {}
     # Calendar polling needs file availability, not every participant/report.
     rows = list(CoachingRecordingJob.objects.filter(key__in=keys).values('key', 'state', 'error_code', 'next_run_at', 'last_success_at'))
-    files = cached_results(rows, 'artifacts')
+    files = cached_results(rows, 'media')
     return {calendar_key(keyed[row['key']]): SimpleNamespace(context=keyed[row['key']], state=row['state'],
         error_code=row['error_code'], next_run_at=row['next_run_at'], last_success_at=row['last_success_at'],
-        result={'artifacts': files[row['key']]}) for row in rows}
+        result={'artifacts': files[row['key']].get('artifacts', []), 'noTeams': files[row['key']].get('noTeams', False)}) for row in rows}
 
 
 def source_summary(job):
@@ -166,8 +170,15 @@ def source_summary(job):
     rows = list(files.values())
     ready = sum(row['state'] == 'ready' for row in rows)
     state = 'ready' if ready else 'unavailable' if rows or (job and job.error_code) else 'pending'
+    checked = getattr(job, 'last_success_at', None)
+    check = {'state': 'failed' if job and job.error_code else 'complete' if checked else 'pending',
+             'checkedAt': checked.isoformat() if checked else None}
+    if check['state'] == 'complete' and not rows:
+        # An empty successful provider response is not an unfinished discovery,
+        # nor proof that no recording was ever made. Keep the playback contract.
+        check['reason'] = 'no-teams-link' if job.result.get('noTeams') else 'no-recordings-returned'
     return {'state': state,
-            'readyCount': ready, 'recordings': rows}
+            'readyCount': ready, 'recordings': rows, 'check': check}
 
 
 def source_details(record):
