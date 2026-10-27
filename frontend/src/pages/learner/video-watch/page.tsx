@@ -65,6 +65,10 @@ import { normalizeAuthoredHtml, sanitizeCurriculumHtml } from '@/lib/curriculumH
 import { AuthoredContent } from '@/components/feature/AuthoredContent';
 import { downloadReadingPdf, readingFiles } from './readingDownloads';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
+import { ReadingSurface } from './ReadingSurface';
+import { ReadingAttachmentText } from './ReadingAttachmentText';
+import { PdfReadingText } from './PdfReadingText';
+import { clearReadingHighlights, highlightReadingSelection, ReadingToolsContext, DEFAULT_READING_PREFERENCES, readingStorageKey, readStoredJson, type ReadingAnnotations, type ReadingPreferences, type ReadingColourMode, type ReadingFont } from './readingAccessibility';
 import {
   loadTeamsMeetingArtifacts,
   teamsMeetingArtifactContentUrl,
@@ -1594,27 +1598,6 @@ type AttachmentPreviewState =
   | { status: 'ready'; kind: 'text'; text: string }
   | { status: 'error'; message: string };
 
-type ReadingColourMode = 'paper' | 'cream' | 'monochrome' | 'dark';
-type ReadingFont = 'default' | 'dyslexia' | 'sans';
-
-interface ReadingPreferences {
-  colourMode: ReadingColourMode;
-  font: ReadingFont;
-  fontSize: number;
-  lineHeight: number;
-  letterSpacing: number;
-  ruler: boolean;
-}
-
-const DEFAULT_READING_PREFERENCES: ReadingPreferences = {
-  colourMode: 'paper',
-  font: 'default',
-  fontSize: 16,
-  lineHeight: 1.7,
-  letterSpacing: 0,
-  ruler: false,
-};
-
 /** What to tell the learner when a file request fails. The server's own
  * message ("Learning activities open on 1 October…", "This file is empty…")
  * says what to do; a bare status code does not. */
@@ -1631,40 +1614,6 @@ async function fileRequestError(response: Response): Promise<string> {
   if (response.status === 401) return 'Your session has ended. Sign in again to open this file.';
   if (response.status === 403) return 'You do not have access to this file yet.';
   return `File request failed (${response.status}). Please try again.`;
-}
-
-function readingStorageKey(componentId: string, suffix: string): string {
-  return `kbc-reading:${componentId || 'unknown'}:${suffix}`;
-}
-
-function readStoredJson<T>(key: string, fallback: T): T {
-  try {
-    const value = window.localStorage.getItem(key);
-    return value ? { ...fallback, ...JSON.parse(value) } : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function readingSurfaceStyle(preferences: ReadingPreferences): React.CSSProperties {
-  const colourStyles: Record<ReadingColourMode, React.CSSProperties> = {
-    paper: { backgroundColor: '#ffffff', color: '#1f2937' },
-    cream: { backgroundColor: '#fff7dc', color: '#292524' },
-    monochrome: { backgroundColor: '#ffffff', color: '#000000', filter: 'grayscale(1)' },
-    dark: { backgroundColor: '#111827', color: '#f9fafb' },
-  };
-  const fontFamily = preferences.font === 'dyslexia'
-    ? '"OpenDyslexic", "Comic Sans MS", "Trebuchet MS", sans-serif'
-    : preferences.font === 'sans'
-      ? 'Arial, Helvetica, sans-serif'
-      : 'inherit';
-  return {
-    ...colourStyles[preferences.colourMode],
-    fontFamily,
-    fontSize: `${preferences.fontSize}px`,
-    lineHeight: preferences.lineHeight,
-    letterSpacing: `${preferences.letterSpacing}em`,
-  };
 }
 
 function ReadingAccessibilityToolbar({
@@ -1723,13 +1672,13 @@ function ReadingAccessibilityToolbar({
             <AppIcon className={speaking ? 'ri-stop-circle-line' : 'ri-volume-up-line'} /> {speaking ? 'Stop reading' : 'Read aloud'}
           </button>
         )}
-        {onHighlight && <button type="button" onClick={onHighlight} className="rounded-lg border border-amber-300 bg-amber-100 px-2.5 py-1.5 text-xs font-bold text-amber-900"><AppIcon className="ri-mark-pen-line" /> Highlight selection</button>}
+        {onHighlight && <button type="button" onMouseDown={event => event.preventDefault()} onClick={onHighlight} className="rounded-lg border border-amber-300 bg-amber-100 px-2.5 py-1.5 text-xs font-bold text-amber-900"><AppIcon className="ri-mark-pen-line" /> Highlight selection</button>}
         {onClearHighlights && <button type="button" onClick={onClearHighlights} className="rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-bold text-blue-800">Clear highlights</button>}
         <button type="button" onClick={onSave} className="ml-auto rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">
           <AppIcon className="ri-save-line" /> {saved ? 'Saved' : 'Save changes'}
         </button>
       </div>
-      <p className="mt-2 text-[10px] font-semibold text-blue-700">Preferences are kept on this device. Select text then choose Highlight selection; PDF pages have their own marker.</p>
+      <p className="mt-2 text-[10px] font-semibold text-blue-700">Preferences and highlights are kept on this device. For PDF fonts, spacing and text selection, choose Text reading view. Original PDF keeps its own marker. Focus a reading area and use the arrow keys to move the ruler.</p>
     </div>
   );
 }
@@ -1763,6 +1712,14 @@ function AccessibleReadingMaterial({
   const [preferences, setPreferences] = useState<ReadingPreferences>(() => readStoredJson(readingStorageKey(componentId, 'preferences'), DEFAULT_READING_PREFERENCES));
   const [saved, setSaved] = useState(true);
   const [saveError, setSaveError] = useState('');
+  const [highlightNotice, setHighlightNotice] = useState('');
+  const annotations = useRef(new Map<string, ReadingAnnotations>());
+  const registerAnnotations = useCallback((id: string, actions: ReadingAnnotations | null) => {
+    if (actions) annotations.current.set(id, actions);
+    else annotations.current.delete(id);
+  }, []);
+  const onAnnotationsDirty = useCallback(() => setSaved(false), []);
+  const readingTools = useMemo(() => ({ preferences, register: registerAnnotations, onDirty: onAnnotationsDirty }), [preferences, registerAnnotations, onAnnotationsDirty]);
   const narration = useReadingNarration(`${componentId}:${component.resourceUrl || ''}:${sourceHtml}`);
   const { speaking, stop: stopNarration } = narration;
   const pdfReaders = useRef(new Map<string, PdfPageReader>());
@@ -1772,7 +1729,6 @@ function AccessibleReadingMaterial({
     if (reader) pdfReaders.current.set(id, reader);
     else pdfReaders.current.delete(id);
   }, [stopNarration]);
-  const [rulerY, setRulerY] = useState<number | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const readingBodyRef = useRef<HTMLDivElement | null>(null);
 
@@ -1782,31 +1738,24 @@ function AccessibleReadingMaterial({
 
 
   const highlightSelection = () => {
-    const selection = window.getSelection();
-    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-    if (!range || range.collapsed || !contentRef.current?.contains(range.commonAncestorContainer)) return;
-    const mark = document.createElement('mark');
-    mark.dataset.learnerHighlight = 'true';
-    mark.style.backgroundColor = '#fde047';
-    mark.style.color = '#111827';
-    try {
-      range.surroundContents(mark);
-    } catch {
-      const contents = range.extractContents();
-      mark.appendChild(contents);
-      range.insertNode(mark);
+    setHighlightNotice('');
+    if (highlightReadingSelection(contentRef.current)) {
+      setHtml(contentRef.current!.innerHTML);
+      setSaved(false);
+      return;
     }
-    selection?.removeAllRanges();
-    setHtml(contentRef.current.innerHTML);
-    setSaved(false);
+    if (Array.from(annotations.current.values()).some(actions => actions.highlight())) return;
+    setHighlightNotice('Select some reading text first. For a PDF, use Text reading view or the Original PDF marker.');
   };
 
   const clearHighlights = () => {
     const root = contentRef.current;
-    if (!root) return;
-    root.querySelectorAll('mark[data-learner-highlight]').forEach((mark) => mark.replaceWith(...Array.from(mark.childNodes)));
-    root.normalize();
-    setHtml(root.innerHTML);
+    if (root) {
+      clearReadingHighlights(root);
+      setHtml(root.innerHTML);
+    }
+    annotations.current.forEach(actions => actions.clear());
+    setHighlightNotice('');
     setSaved(false);
   };
 
@@ -1823,11 +1772,12 @@ function AccessibleReadingMaterial({
     }
     try {
       window.localStorage.setItem(readingStorageKey(componentId, 'document'), JSON.stringify({ sourceHtml, html }));
+      annotations.current.forEach(actions => actions.save());
       setSaved(true);
       setSaveError('');
     } catch {
       setSaved(false);
-      setSaveError('Your reading preferences were saved, but your highlights are too large to keep on this device. Use “Download highlighted reading” to keep a copy.');
+      setSaveError('Your reading preferences were saved, but some highlights could not be saved on this device. Storage may be full or blocked. Keep this reading open and try saving again.');
     }
   };
 
@@ -1837,7 +1787,7 @@ function AccessibleReadingMaterial({
       return;
     }
     void narration.read(async () => {
-      const text = Array.from(readingBodyRef.current?.querySelectorAll('[data-reading-text]') || [])
+      const text = Array.from(readingBodyRef.current?.querySelectorAll('[data-reading-text]:not([data-pdf-reading-text])') || [])
         .flatMap(narrationFromHtml);
       const pages = await Promise.all(Array.from(pdfReaders.current.values(), readPage => readPage()));
       return [...text, ...pages.flat()];
@@ -1873,8 +1823,8 @@ function AccessibleReadingMaterial({
       <ReadingAccessibilityToolbar
         preferences={preferences}
         onChange={(next) => { setPreferences(next); setSaved(false); }}
-        onHighlight={component.contentHtml ? highlightSelection : undefined}
-        onClearHighlights={component.contentHtml ? clearHighlights : undefined}
+        onHighlight={highlightSelection}
+        onClearHighlights={clearHighlights}
         onSave={save}
         onRead={readAloud}
         speaking={speaking}
@@ -1891,24 +1841,24 @@ function AccessibleReadingMaterial({
       )}
       {downloadError && <p role="alert" className="mb-3 text-sm text-red-700">{downloadError}</p>}
       {saveError && <p role="alert" className="mb-3 text-sm text-red-700">{saveError}</p>}
+      {highlightNotice && <p role="status" className="mb-3 text-sm text-amber-800">{highlightNotice}</p>}
       {narration.speechError && <p role="alert" className="mb-3 text-sm text-red-700">{narration.speechError}</p>}
       <ReadingPdfNarrationContext.Provider value={registerPdfReader}>
+      <ReadingToolsContext.Provider value={readingTools}>
       <div ref={readingBodyRef}>
       {component.contentHtml && (
-        <div
+        <ReadingSurface
+          preferences={preferences}
+          label="Reading text"
           className="relative overflow-hidden rounded-xl border border-background-200 p-5"
-          style={readingSurfaceStyle(preferences)}
-          onMouseMove={(event) => preferences.ruler && setRulerY(event.nativeEvent.offsetY)}
-          onMouseLeave={() => setRulerY(null)}
         >
-          {preferences.ruler && rulerY != null && <span className="pointer-events-none absolute inset-x-0 z-10 h-8 border-y border-blue-400/50 bg-blue-300/20" style={{ top: Math.max(0, rulerY - 16) }} />}
           <div
             ref={contentRef}
             data-reading-text
             className="curriculum-html relative z-0 max-w-none [&_h1]:font-heading [&_h2]:font-heading [&_h3]:font-heading"
             dangerouslySetInnerHTML={innerHtml}
           />
-        </div>
+        </ReadingSurface>
       )}
       {component.resourceUrl ? (
         <div className={component.contentHtml ? 'mt-4 border-t border-background-200 pt-4' : ''}>
@@ -1937,6 +1887,7 @@ function AccessibleReadingMaterial({
         <LinkedReadingPreview key={file.url} url={file.url} title={file.label} fileName={file.fileName} />
       ))}
       </div>
+      </ReadingToolsContext.Provider>
       </ReadingPdfNarrationContext.Provider>
     </>
   );
@@ -2121,6 +2072,8 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
   /** Fit PDF pages to the available width and show the zoom percentage. */
   pdfTools?: boolean;
 }) {
+  const readingTools = useContext(ReadingToolsContext);
+  readingPreferences = readingPreferences || readingTools?.preferences;
   const media = displayableMediaSource(url, fileName);
   const previewUrl = proxiedMaterialUrl(url);
   const probe = fileProbe(url, fileName);
@@ -2199,7 +2152,7 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
   if (media) return <InlineMediaPreview url={url} title={title} fileName={fileName} onReady={onReady} />;
 
   if (isPdf) {
-    return <PdfCanvasPreview url={previewUrl} title={title} fileName={fileName} readingPreferences={readingPreferences} annotationKey={annotationKey} allowAnnotatedDownload={allowAnnotatedDownload} fitWidth={pdfTools} onReady={onReady} />;
+    return <PdfCanvasPreview key={previewUrl} url={previewUrl} title={title} fileName={fileName} readingPreferences={readingPreferences} annotationKey={annotationKey} allowAnnotatedDownload={allowAnnotatedDownload} fitWidth={pdfTools} onReady={onReady} />;
   }
 
   if (preview?.status === 'loading') {
@@ -2211,8 +2164,10 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
   }
 
   if (preview?.status === 'ready' && preview.kind === 'html') {
+    if (readingPreferences) return <ReadingAttachmentText key={`${previewUrl}:${preview.html}`} sourceHtml={preview.html}
+      storageKey={readingStorageKey(`${annotationKey || url}:${url}`, 'file-document')} preferences={readingPreferences} />;
     return (
-      <div className="max-h-[72vh] overflow-auto rounded-xl border border-background-300 bg-white p-6 shadow-sm" style={readingPreferences ? readingSurfaceStyle(readingPreferences) : undefined}>
+      <div className="max-h-[72vh] overflow-auto rounded-xl border border-background-300 bg-white p-6 shadow-sm">
         <div
           data-reading-text
           className="learner-file-preview max-w-none text-sm leading-relaxed text-foreground-800 [&_h1]:mb-3 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:text-xl [&_h2]:font-bold [&_h3]:mb-2 [&_h3]:mt-3 [&_h3]:text-lg [&_h3]:font-semibold [&_p]:mb-3 [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-background-300 [&_td]:px-3 [&_td]:py-2 [&_th]:border [&_th]:border-background-300 [&_th]:bg-background-100 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left"
@@ -2223,8 +2178,13 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
   }
 
   if (preview?.status === 'ready' && preview.kind === 'text') {
+    if (readingPreferences) {
+      const sourceHtml = `<pre>${preview.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
+      return <ReadingAttachmentText key={`${previewUrl}:${preview.text}`} sourceHtml={sourceHtml}
+        storageKey={readingStorageKey(`${annotationKey || url}:${url}`, 'file-document')} preferences={readingPreferences} />;
+    }
     return (
-      <pre data-reading-text className="max-h-[72vh] overflow-auto whitespace-pre-wrap rounded-xl border border-background-300 bg-white p-6 text-sm leading-relaxed text-foreground-800 shadow-sm" style={readingPreferences ? readingSurfaceStyle(readingPreferences) : undefined}>
+      <pre data-reading-text className="max-h-[72vh] overflow-auto whitespace-pre-wrap rounded-xl border border-background-300 bg-white p-6 text-sm leading-relaxed text-foreground-800 shadow-sm">
         {preview.text}
       </pre>
     );
@@ -2282,9 +2242,29 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
   const narration = useReadingNarration(`${url}:${pageNumber}`);
   const { speaking } = narration;
   const registerPdfReader = useContext(ReadingPdfNarrationContext);
+  const readingTools = useContext(ReadingToolsContext);
+  const registerAnnotations = readingTools?.register;
+  const onAnnotationsDirty = readingTools?.onDirty;
   const pdfReaderId = useId();
-  const [rulerY, setRulerY] = useState<number | null>(null);
+  const [textView, setTextView] = useState(false);
   const preferences = readingPreferences || DEFAULT_READING_PREFERENCES;
+
+  const persistHighlights = useCallback(() => {
+    window.localStorage.setItem(highlightStorageKey, JSON.stringify(highlights));
+    setAnnotationsSaved(true);
+    setExportError(null);
+  }, [highlightStorageKey, highlights]);
+  useEffect(() => {
+    if (!annotationsSaved) onAnnotationsDirty?.();
+  }, [annotationsSaved, highlights, onAnnotationsDirty]);
+  useEffect(() => {
+    registerAnnotations?.(pdfReaderId, {
+      highlight: () => false,
+      clear: () => { setHighlights({}); setAnnotationsSaved(false); },
+      save: persistHighlights,
+    });
+  }, [registerAnnotations, pdfReaderId, persistHighlights]);
+  useEffect(() => () => registerAnnotations?.(pdfReaderId, null), [registerAnnotations, pdfReaderId]);
 
   const currentPageNarration = useCallback(async () => {
     if (status !== 'ready' || !pdf) {
@@ -2418,10 +2398,10 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
 
   const saveHighlights = () => {
     try {
-      window.localStorage.setItem(highlightStorageKey, JSON.stringify(highlights));
-      setAnnotationsSaved(true);
+      persistHighlights();
     } catch {
       setAnnotationsSaved(false);
+      setExportError('Could not save PDF marks on this device. Storage may be full or blocked. Please try again.');
     }
   };
 
@@ -2502,11 +2482,16 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
           <p className="text-xs text-foreground-500">Page {pageNumber} of {pageCount || 1}</p>
         </div>
         <div className={fitWidth ? 'flex flex-wrap items-center gap-2' : 'flex items-center gap-2'}>
+          {readingPreferences && <div className="inline-flex gap-1" role="group" aria-label="PDF reading view">
+            <button type="button" aria-pressed={!textView} onClick={() => setTextView(false)} className="h-9 rounded-lg border border-background-300 bg-white px-3 text-xs font-bold text-foreground-700">Original PDF</button>
+            <button type="button" aria-pressed={textView} onClick={() => setTextView(true)} className="h-9 rounded-lg border border-blue-300 bg-blue-50 px-3 text-xs font-bold text-blue-800">Text reading view</button>
+          </div>}
           <button
             type="button"
             onClick={() => setMarkerActive((value) => !value)}
+            disabled={textView}
             aria-pressed={markerActive}
-            className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-bold ${markerActive ? 'border-amber-400 bg-amber-300 text-amber-950' : 'border-background-300 bg-white text-foreground-700 hover:bg-background-50'}`}
+            className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-40 ${markerActive ? 'border-amber-400 bg-amber-300 text-amber-950' : 'border-background-300 bg-white text-foreground-700 hover:bg-background-50'}`}
           >
             <AppIcon className="ri-mark-pen-line" /> Marker
           </button>
@@ -2519,24 +2504,24 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
           <button
             type="button"
             onClick={() => setScale((value) => Math.max(0.75, value - 0.25))}
-            className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50"
+            className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50 disabled:cursor-not-allowed disabled:opacity-40"
             aria-label="Zoom out"
-            disabled={fitWidth && scale <= 0.75}
+            disabled={textView || (fitWidth && scale <= 0.75)}
           >
             <AppIcon className="ri-subtract-line" />
           </button>
           <button
             type="button"
             onClick={() => setScale((value) => Math.min(2.5, value + 0.25))}
-            className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50"
+            className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50 disabled:cursor-not-allowed disabled:opacity-40"
             aria-label="Zoom in"
-            disabled={fitWidth && scale >= 2.5}
+            disabled={textView || (fitWidth && scale >= 2.5)}
           >
             <AppIcon className="ri-add-line" />
           </button>
           {fitWidth && <>
             <output aria-label="PDF zoom level" className="text-xs font-semibold tabular-nums">{Math.round(scale / 1.25 * 100)}%</output>
-            <button type="button" onClick={() => setScale(1.25)} className="h-9 rounded-lg border border-background-300 bg-white px-3 text-xs font-bold text-foreground-700">Fit width</button>
+            <button type="button" disabled={textView} onClick={() => setScale(1.25)} className="h-9 rounded-lg border border-background-300 bg-white px-3 text-xs font-bold text-foreground-700 disabled:cursor-not-allowed disabled:opacity-40">Fit width</button>
           </>}
           <button
             type="button"
@@ -2556,30 +2541,32 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
           >
             <AppIcon className="ri-arrow-right-s-line" />
           </button>
-          <button type="button" onClick={saveHighlights} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-xs font-bold text-emerald-700">
+          {!textView && <button type="button" onClick={saveHighlights} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-xs font-bold text-emerald-700">
             <AppIcon className="ri-save-line" /> {annotationsSaved ? 'Saved' : 'Save marks'}
-          </button>
-          {allowAnnotatedDownload && (
+          </button>}
+          {allowAnnotatedDownload && !textView && (
             <button type="button" onClick={() => void downloadAnnotatedPdf()} disabled={exporting} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-xs font-bold text-white disabled:opacity-50">
               <AppIcon className={exporting ? 'ri-loader-4-line animate-spin' : 'ri-download-2-line'} /> {exporting ? 'Preparing…' : 'Download highlighted PDF'}
             </button>
           )}
         </div>
       </div>
-      <div
+      {textView && <p className="border-b border-background-200 bg-white px-4 py-2 text-xs text-foreground-600">Use the reading tools above to adjust and highlight this page. Save changes keeps text highlights on this device. Original PDF preserves the page layout, images and marker annotations.</p>}
+      {exportError && <p role="alert" className="p-3 text-sm text-red-700">{exportError}</p>}
+      {narration.speechError && <p role="alert" className="p-3 text-sm text-red-700">{narration.speechError}</p>}
+      {readingPreferences && pdf && <PdfReadingText pdf={pdf} pageNumber={pageNumber} active={textView}
+        storageKey={readingStorageKey(`${annotationKey || url}:${url}`, 'pdf-text-highlights')} preferences={preferences} />}
+      <div hidden={textView}>
+      <ReadingSurface
+        preferences={preferences}
+        label="Original PDF page"
         className="relative max-h-[72vh] overflow-auto p-4"
-        style={{ backgroundColor: preferences.colourMode === 'cream' ? '#fff7dc' : preferences.colourMode === 'dark' ? '#111827' : undefined }}
-        onMouseMove={(event) => preferences.ruler && setRulerY(event.clientY - event.currentTarget.getBoundingClientRect().top + event.currentTarget.scrollTop)}
-        onMouseLeave={() => setRulerY(null)}
       >
-        {exportError && <p role="alert" className="mb-3 text-sm text-red-700">{exportError}</p>}
-        {narration.speechError && <p role="alert" className="mb-3 text-sm text-red-700">{narration.speechError}</p>}
-        {preferences.ruler && rulerY != null && <span className="pointer-events-none absolute inset-x-0 z-20 h-9 border-y border-blue-400/50 bg-blue-300/20" style={{ top: Math.max(0, rulerY - 18) }} />}
         <div className={fitWidth ? 'relative mx-auto' : 'relative mx-auto w-fit max-w-full'} style={fitWidth ? { width: `${scale / 1.25 * 100}%` } : undefined}>
           <canvas
             ref={canvasRef}
             className="block max-w-full rounded-lg bg-white shadow-sm"
-            style={{ filter: preferences.colourMode === 'monochrome' ? 'grayscale(1) contrast(1.15)' : preferences.colourMode === 'dark' ? 'grayscale(1) invert(1)' : undefined }}
+            style={{ filter: preferences.colourMode === 'monochrome' ? 'grayscale(1) contrast(1.15)' : preferences.colourMode === 'dark' ? 'grayscale(1) invert(1)' : preferences.colourMode === 'cream' ? 'sepia(0.25)' : undefined }}
           />
           <svg
             className={`absolute inset-0 h-full w-full rounded-lg ${markerActive ? 'cursor-crosshair touch-none' : 'pointer-events-none'}`}
@@ -2617,6 +2604,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
         {(highlights[pageNumber] || []).length > 0 && (
           <button type="button" onClick={() => { setHighlights((current) => ({ ...current, [pageNumber]: [] })); setAnnotationsSaved(false); }} className="mx-auto mt-3 block text-xs font-bold text-red-600 hover:underline">Clear marks on this page</button>
         )}
+      </ReadingSurface>
       </div>
     </div>
   );
@@ -2788,7 +2776,7 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
             <p className="text-xs text-foreground-400">Read the material, then finish and reflect below.</p>
           </div>
         </div>
-        <AccessibleReadingMaterial component={component} title={title} onReady={onContentReady} />
+        <AccessibleReadingMaterial key={`${component.componentId}:${component.resourceUrl || ''}:${component.contentHtml || ''}`} component={component} title={title} onReady={onContentReady} />
         {component.audioUrl && (
           <div className="mt-4 pt-4 border-t border-background-200">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-2">Audio version</p>

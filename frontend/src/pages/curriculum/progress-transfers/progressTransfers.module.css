@@ -164,14 +164,92 @@
 .matchModule { border: 1px solid #e7def2; border-radius: 12px; overflow: hidden; }
 .matchModule h3 { padding: 14px; background: #f7f3fc; color: #483064; font-size: 15px; font-weight: 650; }
 .matchModule > p { padding: 14px; }
+.sourceWeekLayout { display: grid; grid-template-columns: 225px minmax(0, 1fr); border-top: 1px solid #eee8f5; }
+.sourceWeekSidebar { min-width: 0; padding: 14px 10px; background: #fcfaff; border-right: 1px solid #eee8f5; }
+.sourceWeekIntro { display: grid; gap: 3px; padding: 0 8px 12px; }
+.sourceWeekIntro strong { font-size: 13px; color: #49345e; }
+.sourceWeekIntro span { font-size: 12px; color: #776783; }
+.sourceWeekList { display: grid; align-content: start; gap: 6px; max-height: min(42vh, 440px); overflow-y: auto; overscroll-behavior: contain; padding: 2px; }
+.sourceWeekTab { display: grid; gap: 4px; width: 100%; padding: 10px; border: 1px solid transparent; border-radius: 8px; text-align: left; color: #65517e; background: transparent; cursor: pointer; }
+.sourceWeekTab strong { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.sourceWeekTab > span { font-size: 11px; }
+.sourceWeekTab:hover:not(:disabled) { background: #f5effc; }
+.sourceWeekTab[aria-selected="true"] { background: #eee5fa; border-color: #c6afe6; color: #4c277e; }
+.sourceWeekTab:disabled { opacity: .65; cursor: default; }
+.sourceWeekTab small { width: fit-content; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+.sourceWeekDone { background: #e7f7ef; color: #18734f; }
+.sourceWeekPending { background: #fff3db; color: #80531a; }
+.sourceWeekContent, .sourceWeekPanel { min-width: 0; }
+.sourceWeekHeader { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px; padding: 14px 16px; }
+.sourceWeekHeader > div { min-width: 0; flex: 1 1 200px; }
+.sourceWeekHeader span, .sourceWeekHeader p { color: #776783; font-size: 12px; }
+.sourceWeekHeader h4 { margin: 3px 0; font-weight: 650; color: #49345e; overflow-wrap: anywhere; }
+.sourceWeekHeader button { min-height: 32px; padding: 6px 9px; font-size: 12px; }
+.sourceWeekItems { max-height: min(36vh, 400px); overflow-y: auto; overscroll-behavior: contain; }
+.sourceWeekPanel .matchRow { grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: 16px; }
+.sourceWeekPanel .selectedComponent { flex-wrap: wrap; gap: 4px; }
+.sourceWeekFooter { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px 16px; border-top: 1px solid #eee8f5; }
+.sourceWeekFooter span { color: #776783; font-size: 12px; white-space: nowrap; }
+.sourceWeekMobile { display: none; }
+.sourceWeekTab:focus-visible, .sourceWeekPanel:focus-visible, .sourceWeekMobile select:focus-visible { outline: 2px solid #7446b7; outline-offset: -2px; }
+.matchReview { border: 1px solid #e7def2; border-radius: 10px; overflow: hidden; }
+.matchReview summary { padding: 12px 16px; color: #483064; font-weight: 650; cursor: pointer; }
+.matchReview summary:focus-visible { outline: 2px solid #7446b7; outline-offset: -3px; }
+.matchContext { display: block; margin-top: 4px; color: #776783; font-size: 12px; overflow-wrap: anywhere; }
+.componentCounts { padding: 14px 16px; background: #fcfaff; border-top: 1px solid #eee8f5; }
+.componentCounts h4 { margin: 0 0 10px; color: #49345e; font-size: 14px; font-weight: 650; }
+.componentCounts dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 0 0 10px; }
+.componentCounts dt { font-size: 12px; color: #776783; }
+.componentCounts dd { margin: 3px 0 0; font-size: 20px; line-height: 1.3; font-weight: 700; color: #56378a; }
+.componentCounts p { color: #776783; font-size: 12px; }
 .matchRow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; padding: 16px; border-top: 1px solid #eee8f5; }
 .matchRow > div, .matchRow label { display: grid; align-content: start; gap: 6px; min-width: 0; }
 .matchRow strong { color: #49345e; font-weight: 600; overflow-wrap: anywhere; }
 .matchRow small { font-size: 12px; color: #776783; }
-.matchRow select { width: 100%; min-width: 0; min-height: 42px; padding: 8px; border: 1px solid #d8cae9; border-radius: 8px; background: white; color: #49345e; }
-.matchRow select:focus-visible { outline: 2px solid #7446b7; outline-offset: 2px; }
+.componentChoices { min-width: 0; margin: 0; padding: 0; border: 0; }
+.componentChoices legend { padding: 0; margin-bottom: 8px; color: #65517e; }
+.selectedComponent { display: flex; align-items: center; gap: 10px; }
+.componentChoices .componentTrigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; width: 100%; min-height: 48px; padding: 8px 10px; border: 1px solid #d8cae9; border-radius: 8px; background: #fff; color: #49345e; text-align: left; cursor: pointer; }
+.componentTrigger > span { display: grid; min-width: 0; gap: 2px; }
+.componentTrigger strong, .componentTrigger small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.componentTrigger > svg { flex-shrink: 0; }
+.componentTrigger[aria-expanded="true"] { border-color: #7446b7; }
+.componentTrigger[aria-expanded="true"] > svg { transform: rotate(180deg); }
+.componentTrigger:disabled { opacity: .65; cursor: default; }
+.componentMenu { position: fixed; z-index: 110; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; padding: 8px; border: 1px solid #d8cae9; border-radius: 10px; background: #fff; box-shadow: 0 8px 24px #33234526; }
+.componentMenu > p { padding: 2px 4px 8px; font-size: 12px; color: #776783; }
+.clearMatch { flex-shrink: 0; padding: 5px 0; font-size: 12px; font-weight: 600; color: #633c97; text-decoration: underline; }
+.clearMatch:disabled { color: #8c819a; cursor: default; text-decoration: none; }
+.componentWeeks { display: grid; gap: 8px; }
+.componentWeek { min-width: 0; border: 1px solid #e7def2; border-radius: 8px; overflow: hidden; }
+.componentChoices .weekToggle { display: flex; align-items: center; justify-content: flex-start; gap: 8px; width: 100%; padding: 10px 12px; text-align: left; background: #f7f3fc; color: #49345e; font-size: 13px; font-weight: 600; cursor: pointer; }
+.weekToggle > svg { flex-shrink: 0; transform: rotate(-90deg); }
+.weekToggle[aria-expanded="true"] > svg { transform: rotate(0); }
+.weekToggle > span { display: grid; min-width: 0; gap: 3px; overflow-wrap: anywhere; }
+.weekToggle small { font-weight: 400; }
+.weekToggle:disabled { cursor: default; opacity: .7; }
+.weekOptions { display: grid; gap: 6px; padding: 8px; border-top: 1px solid #e7def2; }
+.matchRow .componentOption { display: flex; align-items: flex-start; gap: 8px; padding: 10px 8px; border: 1px solid transparent; border-radius: 6px; cursor: pointer; }
+.componentOption > input { flex-shrink: 0; margin-top: 4px; accent-color: #7446b7; }
+.componentOption > span { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.componentOption:has(input:checked) { background: #f7f3fc; border-color: #b59bd9; }
+.componentOption:has(input:disabled) { opacity: .65; cursor: default; }
+.componentOption .recommendedMatch { color: #633c97; font-weight: 600; }
+.weekToggle:focus-visible, .clearMatch:focus-visible, .componentOption input:focus-visible, .componentTrigger:focus-visible { outline: 2px solid #7446b7; outline-offset: -2px; }
 
+@media (max-width: 850px) {
+  .sourceWeekLayout { grid-template-columns: minmax(0, 1fr); }
+  .sourceWeekSidebar { display: none; }
+  .sourceWeekMobile { display: grid; min-width: 0; gap: 6px; padding: 12px 16px; background: #fcfaff; border-bottom: 1px solid #eee8f5; }
+  .sourceWeekMobile > span { font-size: 12px; font-weight: 600; color: #49345e; }
+  .sourceWeekMobile select { width: 100%; min-width: 0; padding: 10px; border: 1px solid #d8cae9; border-radius: 8px; color: #49345e; background: #fff; }
+}
 @media (max-width: 640px) {
+  .componentCounts dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sourceWeekPanel .matchRow { grid-template-columns: minmax(0, 1fr); }
+  .sourceWeekItems { max-height: none; }
+  .sourceWeekFooter { padding: 12px; }
+  .sourceWeekFooter button { padding: 8px; font-size: 12px; }
   .matchRow { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .page { gap: 16px; }
   .pageHeader { align-items: flex-start; flex-wrap: wrap; gap: 12px; }
