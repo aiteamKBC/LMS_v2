@@ -96,12 +96,8 @@ def _iso(value):
 
 
 def _learner_feedback_disabled(request):
-    """Local development only for learners; staff preview/reporting stays open.
-
-    Production has no lecture/module exception, even if a deployment still
-    carries the old learner-feedback environment switches.
-    """
-    return not settings.DEBUG and learner_identity(request) is not None
+    """Release availability only; record ownership is checked separately."""
+    return not (settings.DEBUG or settings.LEARNER_FEEDBACK_ENABLED) and learner_identity(request) is not None
 
 
 def _learner_feedback_disabled_response(request, *, form=None, delivery=None):

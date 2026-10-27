@@ -302,8 +302,8 @@ class ModuleFeedbackAccessTests(SimpleTestCase):
             self.assertEqual(feedback._learner_feedback_context('7', delivery_id=4), (None, None, None))
             sync.assert_called_once_with('7')
 
-    @override_settings(DEBUG=True, LEARNER_FEEDBACK_ENABLED=False)
-    def test_owned_module_response_saves_against_the_delivery_and_locked_recipient(self):
+    @override_settings(DEBUG=False, LEARNER_FEEDBACK_ENABLED=True)
+    def test_production_owned_module_response_saves_against_the_delivery_and_locked_recipient(self):
         for phase in modules.MODULE_FORM_TYPES:
             form = SimpleNamespace(form_type=phase, allow_save_continue=True, allow_edit_after_submission=False)
             delivery = SimpleNamespace(id=4)
@@ -337,7 +337,7 @@ class ModuleFeedbackAccessTests(SimpleTestCase):
                 self.assertEqual(response.status, 'completed')
 
     @override_settings(DEBUG=False, LEARNER_FEEDBACK_ENABLED=False, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=False)
-    def test_production_blocks_delivered_module_forms_alongside_lectures(self):
+    def test_explicitly_disabled_release_blocks_module_forms_alongside_lectures(self):
         request = RequestFactory().get('/')
         with mock.patch.object(feedback, 'learner_identity', return_value='7'):
             for phase in modules.MODULE_FORM_TYPES:

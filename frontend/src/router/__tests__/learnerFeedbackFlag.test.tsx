@@ -20,12 +20,12 @@ async function learnerFeedbackRoutes(enabled: boolean) {
 }
 
 describe('learner feedback routes', () => {
-  it('redirects every learner feedback route in production', async () => {
+  it('renders every learner feedback route in production', async () => {
     const routes = await learnerFeedbackRoutes(false);
     expect(routes).toHaveLength(4);
     for (const route of routes) {
-      const element = route.element as ReactElement<{ to?: string; replace?: boolean }>;
-      expect(element.props).toMatchObject({ to: '/workspace/learner', replace: true });
+      const element = route.element as ReactElement<{ to?: string }>;
+      expect(element.props.to).toBeUndefined();
     }
   });
 

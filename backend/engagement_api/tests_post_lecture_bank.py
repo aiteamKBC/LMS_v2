@@ -11,8 +11,8 @@ from . import feedback, feedback_delivery
 
 @override_settings(DEBUG=True)
 class PostLectureBankTests(SimpleTestCase):
-    @override_settings(DEBUG=False, LEARNER_FEEDBACK_ENABLED=True, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=False)
-    def test_production_learner_gate_blocks_lecture_deliveries_too(self):
+    @override_settings(DEBUG=False, LEARNER_FEEDBACK_ENABLED=False, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=False)
+    def test_explicitly_disabled_release_blocks_lecture_deliveries_too(self):
         request = RequestFactory().get('/')
         with mock.patch.object(feedback, 'learner_identity', return_value='7'):
             lecture = SimpleNamespace(form_type='post_lecture')
@@ -26,8 +26,8 @@ class PostLectureBankTests(SimpleTestCase):
                     request, form=form, delivery=delivery,
                 ).status_code, 404)
 
-    @override_settings(DEBUG=False, LEARNER_FEEDBACK_ENABLED=True, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=False)
-    def test_production_learner_cannot_read_or_save_a_non_lecture_form(self):
+    @override_settings(DEBUG=False, LEARNER_FEEDBACK_ENABLED=False, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=False)
+    def test_explicitly_disabled_release_cannot_read_or_save_a_non_lecture_form(self):
         form = SimpleNamespace(form_type='general')
         with (
             mock.patch.object(feedback, 'learner_identity', return_value='7'),
