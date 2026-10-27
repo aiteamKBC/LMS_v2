@@ -35,6 +35,8 @@ with (
             'engagement_api.tests_feedback_analytics',
             'engagement_api.tests_feedback_question_scoring',
             'engagement_api.tests_post_lecture_bank',
+            'engagement_api.tests_feedback_delivery_guard',
+            'curriculum_api.test_post_lecture_feedback_sync',
             'engagement_api.tests_module_feedback',
             'engagement_api.tests_feedback_visibility',
             'engagement_api.tests.FeedbackValidationTests',
