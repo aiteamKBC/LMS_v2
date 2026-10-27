@@ -12,6 +12,19 @@ function Editor({ initial, locked = false }: { initial: FeedbackQuestion; locked
 const question: FeedbackQuestion = { type: 'rating', text: 'Clear?', required: true, helpText: '', config: { min: 1, max: 5, display: 'stars', labels: ['A', 'B', 'C', 'D', 'E'] } };
 
 describe('question analytics settings', () => {
+  it.each(['single_choice', 'multiple_choice', 'dropdown', 'likert'] as const)('requires answer scores for %s even when excluded from overall', async type => {
+    const user = userEvent.setup();
+    render(<Editor initial={{ ...question, type, config: { options: ['A', 'B'] } }} />);
+    expect(screen.getByRole('spinbutton', { name: 'Score for answer 1: A' })).toHaveValue(null);
+    expect(screen.queryByRole('option', { name: /^Not scored$/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('checkbox', { name: 'Include in Overall Score' }));
+    expect(screen.getByText('Needs setup')).toBeVisible();
+    await user.type(screen.getByRole('spinbutton', { name: 'Score for answer 1: A' }), '0');
+    await user.type(screen.getByRole('spinbutton', { name: 'Score for answer 2: B' }), '100');
+    expect(screen.getByText('Ready')).toBeVisible();
+    expect(JSON.parse(screen.getByTestId('config').textContent!).analytics).toMatchObject({ scoring: 'options', includeInOverall: false, optionScores: { A: 0, B: 100 } });
+  });
+
   it('edits importance and scale direction without changing rating config', async () => {
     const user = userEvent.setup();
     render(<Editor initial={question} />);
@@ -25,14 +38,14 @@ describe('question analytics settings', () => {
   it('requires an explicit positive answer for Yes/No and supports negative wording', async () => {
     const user = userEvent.setup();
     render(<Editor initial={{ ...question, type: 'yes_no', config: {} }} />);
-    expect(screen.getByRole('combobox', { name: 'Positive answer' })).toHaveValue('none');
+    expect(screen.getByRole('combobox', { name: 'Positive answer' })).toHaveValue('');
     await user.selectOptions(screen.getByRole('combobox', { name: 'Positive answer' }), 'no');
     expect(JSON.parse(screen.getByTestId('config').textContent!).analytics).toMatchObject({ scoring: 'options', optionScores: { yes: 0, no: 100 } });
   });
   it('offers explicit per-option scores and preserves a real zero', async () => {
     const user = userEvent.setup();
     render(<Editor initial={{ ...question, type: 'single_choice', config: { options: ['Good', 'Poor'] } }} />);
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Question scoring' }), 'options');
+    expect(screen.queryByRole('option', { name: /^Not scored$/ })).not.toBeInTheDocument();
     await user.type(screen.getByRole('spinbutton', { name: 'Score for answer 1: Good' }), '75');
     await user.type(screen.getByRole('spinbutton', { name: 'Score for answer 2: Poor' }), '0');
     expect(JSON.parse(screen.getByTestId('config').textContent!).analytics.optionScores).toEqual({ Good: 75, Poor: 0 });
@@ -40,8 +53,8 @@ describe('question analytics settings', () => {
   it('lets staff assign percentages to multiple-answer options while retaining their labels', async () => {
     const user = userEvent.setup();
     render(<Editor initial={{ ...question, type: 'multiple_choice', config: { options: ['Helpful', 'Unhelpful'] } }} />);
-    expect(screen.getByRole('combobox', { name: 'Question scoring' })).toHaveValue('none');
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Question scoring' }), 'options');
+    expect(screen.getByRole('spinbutton', { name: 'Score for answer 1: Helpful' })).toBeVisible();
+    expect(screen.getByText('Needs setup')).toBeVisible();
     await user.type(screen.getByRole('spinbutton', { name: 'Score for answer 1: Helpful' }), '100');
     await user.type(screen.getByRole('spinbutton', { name: 'Score for answer 2: Unhelpful' }), '0');
     expect(screen.getByText(/average of the selected options/)).toBeVisible();
@@ -50,7 +63,7 @@ describe('question analytics settings', () => {
   it('adds a numeric reporting range without overwriting the answer configuration', async () => {
     const user = userEvent.setup();
     render(<Editor initial={{ ...question, type: 'number', config: { min: -1000, max: 1000 } }} />);
-    expect(screen.getByRole('combobox', { name: 'Question scoring' })).toHaveValue('none');
+    expect(screen.getByRole('combobox', { name: 'Question scoring' })).toHaveValue('');
     await user.selectOptions(screen.getByRole('combobox', { name: 'Question scoring' }), 'lower');
     await user.type(screen.getByRole('spinbutton', { name: 'Scoring minimum' }), '10');
     await user.type(screen.getByRole('spinbutton', { name: 'Scoring maximum' }), '20');

@@ -36,6 +36,7 @@ describe('QuestionBankImport', () => {
       'General,What could we improve?,Written answer,,',
     ].join('\r\n')));
     expect(await screen.findByText(/5 questions across 3 categories/)).toBeVisible();
+    expect(screen.getByText(/2 questions need scoring setup before publishing/)).toBeVisible();
     expect(screen.queryByText('single_choice')).not.toBeInTheDocument();
     expect(screen.getByText('Choose one')).toBeVisible();
     await user.selectOptions(screen.getByRole('combobox', { name: 'Questions per lecture: Teaching' }), '2');

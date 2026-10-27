@@ -37,7 +37,7 @@ class FeedbackVisibilityTests(SimpleTestCase):
 
     @override_settings(DEBUG=False, LEARNER_FEEDBACK_ENABLED=True, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=False)
     def test_production_queue_returns_assigned_forms_for_the_signed_in_learner(self):
-        form = SimpleNamespace(id=4, title='Assigned feedback', description='', due_date=None, form_type='post_lecture')
+        form = SimpleNamespace(id=4, title='Assigned feedback', description='', due_date=None, form_type='post_lecture', created_at=datetime(2026, 10, 26, tzinfo=timezone.utc))
         moment = datetime(2026, 10, 27, tzinfo=timezone.utc)
         delivery = SimpleNamespace(id=21, form=form, module_name='Synthetic module', session_title='Session 1', starts_at=moment)
         recipient = SimpleNamespace(delivery=delivery, delivery_id=21, assigned_at=moment, due_date=None)
@@ -125,8 +125,8 @@ class FeedbackVisibilityTests(SimpleTestCase):
                 self.assertEqual(feedback._learner_feedback_context('61', delivery_id=21, lecture_only=True), (None, None, None))
             pin.assert_not_called()
             sync.assert_not_called()
-            form = SimpleNamespace(form_type='post_lecture', start_date=None)
-            delivery = SimpleNamespace(form=form, available_at=now)
+            form = SimpleNamespace(form_type='post_lecture', start_date=None, created_at=now)
+            delivery = SimpleNamespace(form=form, available_at=now, starts_at=now)
             recipient = SimpleNamespace(delivery=delivery)
             query.get.return_value = recipient
             self.assertEqual(feedback._learner_feedback_context('61', delivery_id=21, lecture_only=True), (form, delivery, recipient))

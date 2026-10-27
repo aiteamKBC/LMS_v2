@@ -30,7 +30,7 @@ from learner_api import evidence_storage
 from learner_api.profile_photo import normalize_photo
 
 from .helpers import json_body, json_error
-from .feedback_delivery import ensure_delivery_questions
+from .feedback_delivery import ensure_delivery_questions, lecture_after_form_creation
 from .feedback_analytics import lecture_analytics_options, question_analytics
 from .feedback_scoring import validate_analytics_settings
 from .module_feedback import MODULE_FORM_TYPES, assigned_active_module_ids, module_delivery_accessible, sync_module_feedback
@@ -405,7 +405,7 @@ def curriculum_scope_options(request):
         return json_error('Curriculum options are temporarily unavailable.', status=503)
 
 
-def _validated_sections(raw_sections, *, form_type=None):
+def _validated_sections(raw_sections, *, form_type=None, require_scores=False):
     if not isinstance(raw_sections, list) or not raw_sections:
         raise ValueError('Add at least one section.')
     cleaned = []
@@ -445,7 +445,10 @@ def _validated_sections(raw_sections, *, form_type=None):
                 if maximum not in (5, 10):
                     raise ValueError('Rating scales must be 1–5 or 1–10.')
                 config = {**config, 'min': 1, 'max': maximum}
-            validate_analytics_settings(kind, config)
+            try:
+                validate_analytics_settings(kind, config, require_complete=require_scores)
+            except ValueError as exc:
+                raise ValueError(f'Question {question_index + 1} in {title}: {exc}') from exc
             clean_questions.append({
                 'type': kind, 'text': text, 'required': bool(raw_question.get('required')),
                 'helpText': str(raw_question.get('helpText') or '').strip(), 'config': config,
@@ -461,7 +464,7 @@ def _validated_sections(raw_sections, *, form_type=None):
 
 
 def _replace_structure(form, raw_sections):
-    sections = _validated_sections(raw_sections, form_type=form.form_type)
+    sections = _validated_sections(raw_sections, form_type=form.form_type, require_scores=form.status == 'published')
     form.sections.all().delete()
     for section_index, section_data in enumerate(sections):
         section = FeedbackSection.objects.create(
@@ -478,6 +481,14 @@ def _replace_structure(form, raw_sections):
             )
             for question_index, q in enumerate(section_data['questions'])
         ])
+
+
+def _validate_published_scoring(form):
+    for question in FeedbackQuestion.objects.filter(section__form=form):
+        try:
+            validate_analytics_settings(question.question_type, question.config or {}, require_complete=True)
+        except ValueError as exc:
+            raise ValueError(f'Complete scoring for "{question.question_text[:100]}": {exc}') from exc
 
 
 def _apply_metadata(form, payload):
@@ -565,6 +576,8 @@ def form_detail(request, pk):
         return json_error('The form type and curriculum scope are locked because a learner has started responding.', status=409)
     try:
         with transaction.atomic():
+            if form.status == 'published' and 'sections' not in payload:
+                _validate_published_scoring(form)
             if form.form_type in VERSIONED_FORM_TYPES and _form_has_history(form):
                 previous = form
                 previous.is_current = False
@@ -656,6 +669,10 @@ def form_status(request, pk):
     if status == 'published':
         if not form.sections.exists() or not FeedbackQuestion.objects.filter(section__form=form).exists():
             return json_error('Add at least one question before publishing.')
+        try:
+            _validate_published_scoring(form)
+        except ValueError as exc:
+            return json_error(str(exc))
         if form.form_type in {'post_lecture', *MODULE_FORM_TYPES}:
             if _post_lecture_publish_conflict(form):
                 target = 'all modules' if form.delivery_scope == 'all_modules' else form.module_name or form.module_catalogue_id
@@ -1067,6 +1084,8 @@ def learner_forms(request):
     accessible_modules = None
     for recipient in recipients:
         delivery, form = recipient.delivery, recipient.delivery.form
+        if form.form_type == 'post_lecture' and not lecture_after_form_creation(form, delivery.starts_at):
+            continue
         if form.form_type in MODULE_FORM_TYPES:
             if accessible_modules is None:
                 accessible_modules = assigned_active_module_ids(learner_id)
@@ -1484,6 +1503,8 @@ def _learner_feedback_context(
         if form.start_date and form.start_date > now:
             return None, None, None
         if form.form_type == 'post_lecture':
+            if not lecture_after_form_creation(form, delivery.starts_at):
+                return None, None, None
             ensure_delivery_questions(delivery)
         return form, delivery, recipient
     try:
