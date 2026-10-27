@@ -5,6 +5,15 @@ export type FeedbackQuestionType = 'short_text' | 'long_text' | 'yes_no' | 'sing
 export interface FeedbackNameAnswer { firstName: string; lastName: string }
 export interface FeedbackPhotoAnswer { uploadId: string; filename: string }
 export type FeedbackAnswerValue = string | number | boolean | string[] | FeedbackNameAnswer | FeedbackPhotoAnswer | null;
+export type FeedbackImportance = 'critical' | 'high' | 'medium' | 'low';
+export interface FeedbackQuestionAnalyticsSettings {
+  importance?: FeedbackImportance;
+  scoring?: 'higher' | 'lower' | 'options' | 'none';
+  includeInOverall?: boolean;
+  optionScores?: Record<string, number>;
+  scoreMin?: number;
+  scoreMax?: number;
+}
 
 export interface FeedbackQuestion {
   id?: number;
@@ -20,6 +29,7 @@ export interface FeedbackQuestion {
     maxLabel?: string;
     display?: 'stars' | 'numbers';
     labels?: string[];
+    analytics?: FeedbackQuestionAnalyticsSettings;
   };
   sortOrder?: number;
   answer?: FeedbackAnswerValue;
@@ -137,6 +147,62 @@ export interface FeedbackAnalyticsData {
   totalAssigned: number; notStarted: number; inProgress: number; completed: number;
   completionRate: number;
   ratingAverages: { questionId: number; question: string; average: number; responses: number; min?: number; max?: number }[];
+  questionMetrics?: FeedbackQuestionMetric[];
+  overallScore?: { score: number | null; scoredQuestions: number; includedQuestions: number };
+  lectures?: FeedbackAnalyticsLecture[];
+  insights?: FeedbackReportInsights;
+}
+
+export interface FeedbackReportInsights {
+  classification?: FeedbackClassificationReport;
+  stars: { average: number | null; answers: number; distribution: { stars: number; count: number }[] };
+  categories: { formId: number; formTitle: string; version: number; category: string; score: number | null; scoredQuestions: number; includedQuestions: number; scoredAnswers: number }[];
+  trend: { month: string; score: number | null; scoredQuestions: number; includedQuestions: number; scoredAnswers: number }[];
+  undatedScoredAnswers: number;
+}
+
+export type FeedbackScoreClass = 'positive' | 'neutral' | 'negative' | 'unscored';
+export interface FeedbackClassCounts { positive: number; neutral: number; negative: number; unscored: number }
+export interface FeedbackClassificationReport extends FeedbackClassCounts {
+  total: number;
+  byType: (FeedbackClassCounts & { formType: FeedbackFormType })[];
+  trend: (FeedbackClassCounts & { month: string })[];
+  responses: { responseId: number; formId: number; formTitle: string; formType: FeedbackFormType; version: number; respondent: string; score: number | null; classification: FeedbackScoreClass; scoredQuestions: number; submittedAt: string | null; contextTitle?: string; groupName?: string }[];
+}
+
+export interface FeedbackDashboardReport extends FeedbackQuestionReport {
+  groups: { id: string; name: string }[];
+  modules?: { id: string; name: string }[];
+  coverage: { assigned: number | null; submitted: number; rate: number | null };
+}
+export interface FeedbackDashboardFilters {
+  formType?: FeedbackFormType; groupId?: string; moduleId?: string; classification?: FeedbackScoreClass;
+  submittedFrom?: string; submittedTo?: string;
+}
+
+export interface FeedbackAnalyticsLecture {
+  deliveryId: number; moduleId: string; moduleName: string; sessionTitle: string;
+  occurrenceKey: string; startsAt: string; cohortName: string; groupName: string;
+  formTitle: string; version: number;
+}
+export interface FeedbackQuestionReport {
+  questionMetrics: FeedbackQuestionMetric[];
+  overallScore: NonNullable<FeedbackAnalyticsData['overallScore']>;
+  selectionPending?: boolean;
+  insights?: FeedbackReportInsights;
+}
+export interface FeedbackAnalyticsFilters { formId?: number; formType?: FeedbackFormType }
+
+export interface FeedbackQuestionMetric {
+  classification?: FeedbackClassCounts;
+  questionId: number; question: string; type: FeedbackQuestionType;
+  formId: number; formTitle: string; version: number; category: string;
+  importance: FeedbackImportance; weight: number; includedInOverall: boolean;
+  assignedCount: number | null; answeredCount: number; answerRate: number | null;
+  score: number | null; scoredResponses: number;
+  status: 'good' | 'watch' | 'needs_attention' | 'no_data' | 'not_scored';
+  averageRating: number | null; scaleMax: number | null;
+  distribution: { label: string; count: number }[];
 }
 
 export interface FeedbackLearnerOption { id: string; name: string; email: string; programme: string; cohort: string }
@@ -236,6 +302,23 @@ export const feedbackApi = {
     if (filters?.formType) params.set('formType', filters.formType);
     const query = params.toString();
     return request<{ analytics: FeedbackAnalyticsData }>(`/analytics/${query ? `?${query}` : ''}`);
+  },
+  questionAnalytics: (filters: FeedbackAnalyticsFilters & { moduleId?: string; deliveryId?: number; submittedFrom?: string; submittedTo?: string }) => {
+    const params = new URLSearchParams();
+    if (filters.formId) params.set('formId', String(filters.formId));
+    if (filters.formType) params.set('formType', filters.formType);
+    if (filters.moduleId) params.set('moduleId', filters.moduleId);
+    if (filters.deliveryId) params.set('deliveryId', String(filters.deliveryId));
+    if (filters.submittedFrom) params.set('submittedFrom', filters.submittedFrom);
+    if (filters.submittedTo) params.set('submittedTo', filters.submittedTo);
+    return request<{ analytics: FeedbackQuestionReport }>(`/analytics/questions/?${params}`);
+  },
+  insightsDashboard: (filters: FeedbackDashboardFilters) => {
+    const params = new URLSearchParams();
+    for (const key of ['formType', 'groupId', 'moduleId', 'classification', 'submittedFrom', 'submittedTo'] as const) {
+      if (filters[key]) params.set(key, filters[key]);
+    }
+    return request<{ analytics: FeedbackDashboardReport }>(`/analytics/insights/?${params}`);
   },
   myForms: (learnerId?: string | number | null) => request<{ forms: LearnerFeedbackListItem[] }>(`/my-forms/${learnerPreviewQuery(learnerId)}`),
   myForm: (id: number, learnerId?: string | number | null) => request<{ form: FeedbackForm }>(`/my-forms/${id}/${learnerPreviewQuery(learnerId)}`),

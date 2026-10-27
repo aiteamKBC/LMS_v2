@@ -20,6 +20,8 @@ import type { ReviewFormResponse } from '@/api/reviewForm';
 import type { LearnerCalendarEvent, LearnerReviewDefinition } from '@/api/learnerCalendar';
 import type { CoachMeetingArtifactsResponse } from '@/pages/coach/shared/calendarEvents';
 import type { ProgressMetric } from '@/api/learnerMetrics';
+import type { DashboardOverviewPayload } from '@/api/dashboardTabs';
+import type { DashboardTrainingPayload } from '@/api/dashboardTraining';
 
 const BASE = '/learner_api/employer-portal';
 
@@ -33,7 +35,7 @@ export type EmployerDashboardMetrics = {
   }>;
 };
 
-export function fetchEmployerDashboardMetrics(employerId: string, signal?: AbortSignal, section?: 'summary' | 'programme') {
+export function fetchEmployerDashboardMetrics(employerId: string, signal?: AbortSignal, section?: 'all' | 'summary' | 'programme' | 'progress' | 'status') {
   return request<EmployerDashboardMetrics>(`${BASE}/${employerId}/dashboard-metrics/${section ? `?section=${section}` : ''}`, { signal });
 }
 
@@ -44,6 +46,12 @@ export type EmployerProgressReviews = {
 
 export function fetchEmployerProgressReviews(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {
   return request<EmployerProgressReviews>(`${BASE}/${employerId}/learner/${kind}/${learnerId}/progress-reviews/`, { signal });
+}
+
+export function fetchEmployerProgressReviewSummary(employerId: string, kind: LearnerKind, learnerId: string,
+  month: string, signal?: AbortSignal) {
+  return request<{ events: LearnerCalendarEvent[] }>(
+    `${BASE}/${employerId}/learner/${kind}/${learnerId}/progress-reviews/?summary_month=${encodeURIComponent(month)}`, { signal });
 }
 
 export function fetchEmployerProgressReview(employerId: string, kind: LearnerKind, learnerId: string, eventKey: string, signal?: AbortSignal) {
@@ -334,6 +342,29 @@ export function fetchEmployerLearnerPlan(
  */
 function overviewPart<T>(employerId: string, kind: string, learnerId: string, part: string, signal?: AbortSignal) {
   return request<T>(`${BASE}/${employerId}/learner/${kind}/${learnerId}/overview/${part}/`, { signal });
+}
+
+/** Existing learner projections, authorized through the employer's own routes. */
+export async function fetchEmployerLearningOverview(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {
+  const data = await overviewPart<DashboardOverviewPayload>(employerId, kind, learnerId, 'dashboard', signal);
+  if (!data?.metrics?.otjh || !data.metrics.ksb || !Array.isArray(data.programme)
+    || !Array.isArray(data.modules) || !Array.isArray(data.hours?.months)) {
+    throw new Error('Could not load learner progress. Please try again.');
+  }
+  return data;
+}
+
+export async function fetchEmployerTraining(employerId: string, kind: LearnerKind, learnerId: string,
+  subject = '', month = '', signal?: AbortSignal) {
+  const query = new URLSearchParams();
+  if (subject) query.set('subject', subject);
+  if (month) query.set('month', month);
+  const data = await request<DashboardTrainingPayload>(`${BASE}/${employerId}/learner/${kind}/${learnerId}/overview/training/${query.size ? `?${query}` : ''}`, { signal });
+  if (!Array.isArray(data?.timeline?.modules) || !Array.isArray(data.timeline.reviews)
+    || (data.selectedModuleId && data.selectedModule?.id !== data.selectedModuleId)) {
+    throw new Error('Could not load the training plan. Please try again.');
+  }
+  return data;
 }
 
 export function fetchEmployerLearnerWeek(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {

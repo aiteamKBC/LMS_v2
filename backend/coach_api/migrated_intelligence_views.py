@@ -185,6 +185,8 @@ def _response(overlay, record, snapshot=None, *, errors=None, status=200):
     artifacts = []
     for item in snapshot['artifacts']:
         artifact = public_coach_meeting_artifact(item)
+        if isinstance(artifact.get('metadata'), dict):
+            artifact['metadata'].pop('_lms_booking_fingerprint', None)
         if item.get('artifact_type') == 'recording':
             # Match the existing imported-party availability contract: metadata
             # is not a playable archive. The local signed URL never enters JSON.
@@ -202,7 +204,9 @@ def _response(overlay, record, snapshot=None, *, errors=None, status=200):
             "scheduledDate": record.scheduled_date.isoformat() if record.scheduled_date else None,
             "scheduledTime": record.scheduled_time.isoformat() if record.scheduled_time else None,
         },
-        "attendance": snapshot["attendance"],
+        "attendance": {**snapshot["attendance"], "reports": [
+            {key: value for key, value in report.items() if key != '_lms_booking_fingerprint'}
+            for report in snapshot["attendance"]["reports"]]},
         "artifacts": artifacts,
         "meetingSummary": summary,
         "summaryBinding": binding,
@@ -264,6 +268,59 @@ def _check_writable(overlay, record, definition):
     if binding.get('status') == 'invalid-binding':
         return JsonResponse({'detail': binding['message'], 'code': 'INVALID_SUMMARY_BINDING'}, status=409)
     return None
+
+
+def _snapshot_for_booking(record, snapshot):
+    """Keep only evidence stamped for this exact local booking revision."""
+    from .migrated_session_scope import booking_fingerprint
+
+    fingerprint = booking_fingerprint(record)
+    artifacts = [row for row in snapshot.get('artifacts', [])
+                 if isinstance(row, dict)
+                 and isinstance(row.get('metadata'), dict)
+                 and (row.get('metadata') or {}).get('_lms_graph_event_id') == record.graph_event_id
+                 and (row.get('metadata') or {}).get('_lms_booking_fingerprint') == fingerprint]
+    reports = [row for row in snapshot.get('attendanceReports', [])
+               if isinstance(row, dict)
+               and row.get('_lms_graph_event_id') == record.graph_event_id
+               and row.get('_lms_booking_fingerprint') == fingerprint]
+    return {**snapshot, 'artifacts': artifacts, 'attendanceReports': reports}
+
+
+def _saved_generation_context(record, snapshot, transcript_reader):
+    """Resolve saved text only when its trusted markers match this booking."""
+    from .migrated_session_scope import scope_snapshot
+
+    if not (snapshot.get('storage') or {}).get('stored'):
+        return None
+    bound = _snapshot_for_booking(record, snapshot)
+    meeting_ids = {
+        (row.get('metadata') or {}).get('_lms_verified_online_meeting_id')
+        for row in bound['artifacts']
+        if (row.get('metadata') or {}).get('_lms_verified_online_meeting_id')
+    }
+    meeting_ids.update(row.get('_lms_verified_online_meeting_id')
+                       for row in bound['attendanceReports']
+                       if row.get('_lms_verified_online_meeting_id'))
+    if len(meeting_ids) != 1:
+        return None
+    meeting_id = next(iter(meeting_ids))
+    selected = scope_snapshot(record, bound, meeting_scoped=True, meeting_id=meeting_id)
+    if selected.get('selectionError'):
+        return None
+    transcript_ids = sorted({row.get('graph_artifact_id') for row in selected['artifacts']
+                             if row.get('artifact_type') == 'transcript'
+                             and row.get('graph_artifact_id')})
+    if not transcript_ids:
+        return None
+    transcript = transcript_reader(record, artifact_ids=transcript_ids)
+    returned_ids = transcript.get('artifactId') if isinstance(transcript, dict) else None
+    if (not transcript or not str(transcript.get('text') or '').strip()
+            or not isinstance(returned_ids, str) or not returned_ids
+            or not set(returned_ids.split(',')) <= set(transcript_ids)):
+        return None
+    return {'snapshot': bound, 'selected': selected, 'meeting_id': meeting_id,
+            'transcript_ids': transcript_ids, 'transcript': transcript}
 
 
 def _checked_lock(request, review_id, basis):
@@ -410,6 +467,10 @@ def migrated_review_check_session(request, review_id):
     from .migrated_session_scope import attendance_reports_for_refresh, snapshot_version, validate_attendance_response
     previous = stored_coach_meeting_snapshot(record)
     expected_version = snapshot_version(previous)
+    saved_generation = None
+    if generate_summary:
+        saved_generation = _saved_generation_context(
+            record, previous, stored_coach_meeting_transcript_for_summary)
     from .actual_session_resolution import review_meeting_target
     from .migrated_session_scope import (meeting_artifacts, meeting_reports,
                                          reconcile_meeting_reports)
@@ -424,10 +485,20 @@ def migrated_review_check_session(request, review_id):
             target.online_meeting_id, trusted_fetch=True)
         return [row['graph_artifact_id'] for row in selected_rows
                 if row.get('artifact_type') == 'transcript']
-    snapshot, error, status_code = fetch_coach_meeting_graph_snapshot(
-        record, target_error_handler=_graph_target_failure, transcript_collection_fetcher=_transcript_collection,
-        attendance_response_validator=validate_attendance_response, independent_resources=True,
-        target_resolver=resolve_imported_target, transcript_content_selector=meeting_transcript_ids)
+    if saved_generation:
+        # A verified saved transcript is sufficient for generation. Avoid all
+        # Graph target resolution and resource refresh on this path.
+        previous = saved_generation['snapshot']
+        snapshot = dict(previous)
+        snapshot['errors'] = []
+        snapshot['resourceErrors'] = {}
+        snapshot['partial'] = False
+        error, status_code = None, 200
+    else:
+        snapshot, error, status_code = fetch_coach_meeting_graph_snapshot(
+            record, target_error_handler=_graph_target_failure, transcript_collection_fetcher=_transcript_collection,
+            attendance_response_validator=validate_attendance_response, independent_resources=True,
+            target_resolver=resolve_imported_target, transcript_content_selector=meeting_transcript_ids)
     if error:
         code = error.get('code')
         if code == 'coach_online_meeting_unresolved':
@@ -442,45 +513,72 @@ def migrated_review_check_session(request, review_id):
     from .imported_review_start import has_start_evidence, start_locked
     errors = list(snapshot.get('errors') or [])
     target = verified_target.get('target')
-    if target is None:
+    if target is None and not saved_generation:
         return JsonResponse({'detail': 'The linked Teams meeting identity is unavailable.',
                              'code': 'MEETING_TARGET_UNVERIFIED'}, status=409)
-    selected_fresh, media_error = meeting_artifacts(record, snapshot, target.online_meeting_id,
-        trusted_fetch=True)
-    selected_reports, report_error = meeting_reports(snapshot,
-        meeting_id=target.online_meeting_id, graph_event_id=record.graph_event_id)
+    meeting_id = saved_generation['meeting_id'] if saved_generation else target.online_meeting_id
+    if saved_generation:
+        selected_fresh = saved_generation['selected']['artifacts']
+        selected_reports = saved_generation['selected']['attendanceReports']
+        media_error = report_error = None
+    else:
+        selected_fresh, media_error = meeting_artifacts(record, snapshot, meeting_id,
+            trusted_fetch=True)
+        selected_reports, report_error = meeting_reports(snapshot,
+            meeting_id=meeting_id, graph_event_id=record.graph_event_id)
     if media_error:
         errors.append('Some Teams resources had conflicting meeting identity and were skipped.')
     if report_error:
         errors.append('Some Teams attendance reports were incomplete and were skipped.')
+    from .migrated_session_scope import booking_fingerprint
     snapshot['artifacts'] = [{**row, 'metadata': {**(row.get('metadata') or {}),
         '_lms_graph_event_id': record.graph_event_id,
-        '_lms_verified_online_meeting_id': target.online_meeting_id}} for row in selected_fresh]
+        '_lms_verified_online_meeting_id': meeting_id,
+        '_lms_booking_fingerprint': booking_fingerprint(record)}} for row in selected_fresh]
     snapshot['attendanceReports'] = [{**row, '_lms_graph_event_id': record.graph_event_id,
-        '_lms_verified_online_meeting_id': target.online_meeting_id} for row in selected_reports]
+        '_lms_verified_online_meeting_id': meeting_id,
+        '_lms_booking_fingerprint': booking_fingerprint(record)} for row in selected_reports]
     snapshot['partial'] = bool(snapshot.get('partial') or media_error or report_error)
     session = None  # Historical booked AI checks retain their existing contract.
 
     # Cached rows belong to this verified meeting only when a previous scoped
     # Graph fetch stamped the same provider meeting and calendar event.
-    fresh = {(row.get('artifact_type'), row.get('graph_artifact_id')) for row in snapshot['artifacts']}
-    cached = [row for row in previous.get('artifacts', [])
+    fresh = set() if saved_generation else {
+        (row.get('artifact_type'), row.get('graph_artifact_id')) for row in snapshot['artifacts']}
+    if saved_generation:
+        cache_source = previous
+    else:
+        cache_source = {**previous, 'artifacts': [row for row in previous.get('artifacts', [])
+            if row.get('artifact_type') != 'transcript'
+            or (not generate_summary
+                or (row.get('metadata') or {}).get('_lms_booking_fingerprint') == booking_fingerprint(record))]}
+    cached = [row for row in cache_source.get('artifacts', [])
               if (row.get('metadata') or {}).get('_lms_graph_event_id') == record.graph_event_id
-              and (row.get('metadata') or {}).get('_lms_verified_online_meeting_id') == target.online_meeting_id
+              and (row.get('metadata') or {}).get('_lms_verified_online_meeting_id') == meeting_id
               and (row.get('artifact_type'), row.get('graph_artifact_id')) not in fresh]
-    old_reports, old_report_error = meeting_reports(previous,
-        meeting_id=target.online_meeting_id, graph_event_id=record.graph_event_id,
-        require_verified=True)
+    if saved_generation:
+        old_reports, old_report_error = [], None
+    else:
+        # Check Session keeps its established verified-report reconciliation;
+        # booking fingerprints gate saved-text reuse, not attendance refresh.
+        old_reports, old_report_error = meeting_reports(previous,
+            meeting_id=meeting_id, graph_event_id=record.graph_event_id,
+            require_verified=True)
     if old_report_error:
         return JsonResponse({'detail': 'Saved attendance evidence is inconsistent. Retry or ask support to inspect it.',
                              'code': 'ATTENDANCE_REPORT_AMBIGUOUS'}, status=409)
     reports, reduced_reports = reconcile_meeting_reports(old_reports, snapshot['attendanceReports'])
+    if not saved_generation:
+        refreshed_report_ids = {row.get('id') for row in snapshot['attendanceReports'] if row.get('id')}
+        reports = [{**row, '_lms_booking_fingerprint': booking_fingerprint(record)}
+                   if row.get('id') in refreshed_report_ids else row for row in reports]
     if reduced_reports:
         errors.append('A Teams attendance report had less evidence than its saved copy; the saved copy was kept.')
         snapshot['partial'] = True
-    selected = scope_snapshot(record, {**snapshot, 'artifacts': [*cached, *snapshot['artifacts']],
-                                       'attendanceReports': reports},
-                              meeting_scoped=True, meeting_id=target.online_meeting_id)
+    selected = (saved_generation['selected'] if saved_generation else
+        scope_snapshot(record, {**snapshot, 'artifacts': [*cached, *snapshot['artifacts']],
+                                'attendanceReports': reports},
+                       meeting_scoped=True, meeting_id=meeting_id))
     if reports and not snapshot['attendanceReports'] and reports == previous.get('attendanceReports'):
         selected['attendanceTracker'] = previous.get('attendanceTracker') or selected['attendanceTracker']
     if selected['selectionError']:
@@ -501,31 +599,52 @@ def migrated_review_check_session(request, review_id):
                             and row.get('graph_artifact_id') in prior_transcripts
                             and (not row.get('transcript_text') or not row.get('transcript_vtt')))]
     token = None
+    outdated_summary = False
     try:
         # All writers use learner -> calendar -> overlay. No provider I/O here.
         with transaction.atomic():
             locked, current_record, error = _checked_lock(request, review_id, basis)
             if error is not None:
                 return error
-            storage = persist_coach_meeting_snapshots(current_record, artifacts=persistable,
-                attendance_reports=selected['attendanceReports'], attendance_tracker=selected['attendanceTracker'],
-                imported_refresh={'snapshot': {**snapshot, 'artifacts': persistable,
-                                               'attendanceReports': selected['attendanceReports']},
-                    'expected_version': expected_version,
-                    'preserve_existing': True, 'start_review': False,
-                    'context': {'overlayId': locked.pk}, 'meeting_id': target.online_meeting_id})
+            if saved_generation:
+                current_saved = _saved_generation_context(
+                    current_record, stored_coach_meeting_snapshot(current_record),
+                    stored_coach_meeting_transcript_for_summary)
+                if (not current_saved
+                        or current_saved['transcript_ids'] != saved_generation['transcript_ids']
+                        or current_saved['transcript'].get('artifactId') != saved_generation['transcript'].get('artifactId')
+                        or current_saved['transcript'].get('text') != saved_generation['transcript'].get('text')):
+                    return JsonResponse({'detail': 'The saved transcript changed during generation. Retry Check Session.',
+                                         'code': 'SUMMARY_SUPERSEDED'}, status=409)
+                saved_generation = current_saved
+                snapshot = dict(current_saved['snapshot'])
+                selected = current_saved['selected']
+                reports = selected['attendanceReports']
+                transcript = current_saved['transcript']
+                saved_snapshot = current_saved['snapshot']
+                saved_selection = current_saved['selected']
+                storage = saved_snapshot.get('storage') or {}
+            else:
+                storage = persist_coach_meeting_snapshots(current_record, artifacts=persistable,
+                    attendance_reports=selected['attendanceReports'], attendance_tracker=selected['attendanceTracker'],
+                    imported_refresh={'snapshot': {**snapshot, 'artifacts': persistable,
+                                                   'attendanceReports': selected['attendanceReports']},
+                        'expected_version': expected_version,
+                        'preserve_existing': True, 'start_review': False,
+                        'context': {'overlayId': locked.pk}, 'meeting_id': meeting_id})
             if not storage.get('stored'):
                 if storage.get('reason') in {'snapshot_superseded', 'snapshot_context_changed'}:
                     return JsonResponse({'detail': 'Meeting evidence changed during Check Session. Retry the check.',
                                          'code': 'BOOKING_CONFLICT'}, status=409)
                 return JsonResponse({'detail': 'Teams snapshot storage is unavailable.', 'code': 'SNAPSHOT_STORAGE_UNAVAILABLE'}, status=503)
-            if has_start_evidence(current_record, snapshot, meeting_id=target.online_meeting_id) and start_locked(
+            if not saved_generation and has_start_evidence(current_record, snapshot, meeting_id=meeting_id) and start_locked(
                     locked, current_record, 'MCM' if current_record.event_type == 'mcr' else 'PR'):
                 # Our own status-only transition is now the basis. All other
                 # booking/template changes still invalidate the provider wait.
                 basis = _check_basis(locked, current_record)
                 record.status = current_record.status
-            transcript = stored_coach_meeting_transcript_for_summary(current_record, artifact_ids=transcript_ids)
+            if not saved_generation:
+                transcript = stored_coach_meeting_transcript_for_summary(current_record, artifact_ids=transcript_ids)
             # A successful segment does not establish that the whole selected
             # call is available. A complete, same-event stored copy may recover
             # an individual content failure; a failed collection cannot prove
@@ -533,7 +652,7 @@ def migrated_review_check_session(request, review_id):
             stored_ids = set((transcript or {}).get('artifactId', '').split(',')) - {''}
             incomplete = bool((snapshot.get('resourceErrors') or {}).get('transcripts')) or (
                 bool(transcript_ids) and stored_ids != set(transcript_ids))
-            if transcript_ids:
+            if transcript_ids and not saved_generation:
                 # A metadata-only provider result cannot silently substitute
                 # old text for the current selected segment and trigger AI.
                 incomplete = incomplete or any(
@@ -543,10 +662,11 @@ def migrated_review_check_session(request, review_id):
                     for row in snapshot.get('artifacts', []))
                 # Text is read by artifact ID. Recheck its saved meeting/event
                 # metadata before treating it as this Review's content.
-                saved_snapshot = stored_coach_meeting_snapshot(current_record)
+                saved_snapshot = _snapshot_for_booking(current_record,
+                    stored_coach_meeting_snapshot(current_record))
                 saved_selection = stored_transcript_selection(current_record,
                     saved_snapshot, meeting_scoped=True,
-                    meeting_id=target.online_meeting_id)
+                    meeting_id=meeting_id)
                 if (saved_selection['code'] is not None or not stored_ids
                         or not stored_ids <= set(saved_selection['artifactIds'])
                         or not stored_ids <= set(transcript_ids)
@@ -586,8 +706,9 @@ def migrated_review_check_session(request, review_id):
                 locked.meeting_intelligence = state
                 locked.save(update_fields=['meeting_intelligence', 'updated_at'])
                 return _response(locked, current_record, errors=errors, status=207 if errors else 200)
-            saved_scope = scope_snapshot(current_record, saved_snapshot, meeting_scoped=True,
-                                         meeting_id=target.online_meeting_id)
+            saved_scope = (saved_selection if saved_generation else
+                scope_snapshot(current_record, saved_snapshot, meeting_scoped=True,
+                               meeting_id=meeting_id))
             if saved_scope['selectionError'] or not stored_ids <= {
                     row.get('graph_artifact_id') for row in saved_scope['artifacts']
                     if row.get('artifact_type') == 'transcript'}:
@@ -595,10 +716,15 @@ def migrated_review_check_session(request, review_id):
                 return JsonResponse({'detail': 'The saved transcript scope changed. Retry Check Session.',
                                      'code': 'SUMMARY_SUPERSEDED'}, status=409)
             prior_state = locked.meeting_intelligence or {}
-            if (prior_state.get('summary') and prior_state.get('source') != 'upload'
-                    and not summary_matches_session(prior_state, current_record, transcript)):
-                errors.append('The stored suggestion cannot be verified for this session. Your saved answers are unchanged.')
-            if not prior_state.get('summary'):
+            prior_summary_matches = bool(prior_state.get('summary')
+                and prior_state.get('source') != 'upload'
+                and summary_matches_session(prior_state, current_record, transcript))
+            outdated_summary = bool(prior_state.get('summary')
+                and prior_state.get('source') != 'upload' and not prior_summary_matches)
+            # An unchanged, verified Teams suggestion is the cache. A changed
+            # source (IDs, text hash, or booking provenance) needs a new lease,
+            # even though an older suggestion is still stored for history.
+            if not prior_summary_matches:
                 try:
                     token = claim(locked)
                 except SummaryInProgress as exc:
@@ -622,15 +748,29 @@ def migrated_review_check_session(request, review_id):
                 # adds or corrects transcript segments. Compare current scoped
                 # content, not the whole resource fingerprint (recordings can change).
                 current_snapshot = stored_coach_meeting_snapshot(current_record)
-                current_selection = scope_snapshot(current_record, current_snapshot,
-                    meeting_scoped=True, meeting_id=target.online_meeting_id)
-                current_ids = {row['graph_artifact_id'] for row in current_selection['artifacts']
-                               if row.get('artifact_type') == 'transcript' and row.get('graph_artifact_id')}
-                current_transcript = stored_coach_meeting_transcript_for_summary(current_record,
-                    artifact_ids=sorted(current_ids))
+                if saved_generation:
+                    current_snapshot = _snapshot_for_booking(current_record, current_snapshot)
+                elif generate_summary:
+                    current_bound = _snapshot_for_booking(current_record, current_snapshot)
+                    current_snapshot = {**current_snapshot, 'artifacts': [row for row in current_snapshot.get('artifacts', [])
+                        if row.get('artifact_type') != 'transcript'] + [row for row in current_bound['artifacts']
+                        if row.get('artifact_type') == 'transcript']}
+                if saved_generation:
+                    current_context = _saved_generation_context(current_record, current_snapshot,
+                        stored_coach_meeting_transcript_for_summary)
+                    current_selection = current_context['selected'] if current_context else {'selectionError': 'TRANSCRIPT_UNAVAILABLE', 'artifacts': []}
+                    current_ids = set(current_context['transcript_ids']) if current_context else set()
+                    current_transcript = current_context['transcript'] if current_context else None
+                else:
+                    current_selection = scope_snapshot(current_record, current_snapshot,
+                        meeting_scoped=True, meeting_id=meeting_id)
+                    current_ids = {row['graph_artifact_id'] for row in current_selection['artifacts']
+                                   if row.get('artifact_type') == 'transcript' and row.get('graph_artifact_id')}
+                    current_transcript = stored_coach_meeting_transcript_for_summary(current_record,
+                        artifact_ids=sorted(current_ids))
                 if (not current_transcript or not transcript
                         or current_selection['selectionError']
-                        or current_ids != set(saved_selection['artifactIds'])
+                        or current_ids != (set(saved_selection['artifactIds']) if not saved_generation else set(transcript_ids))
                         or _transcript_basis(current_selection['artifacts']) != _transcript_basis(saved_scope['artifacts'])
                         or current_transcript['artifactId'] != transcript['artifactId']
                         or current_transcript['text'] != transcript['text']):
@@ -661,6 +801,8 @@ def migrated_review_check_session(request, review_id):
             elif generation_error:
                 state.update(summaryStatus='failed', summaryError='AI summary generation failed. Check Session can retry.')
                 codes.append('AI_SUMMARY_FAILED')
+                if outdated_summary:
+                    errors.append('The previous suggestion is out of date. Your saved answer is unchanged.')
             if (transcript and isinstance(state.get('summary'), dict) and state.get('summaryStatus') == 'ready'
                     and summary_matches_session(state, current_record, transcript)):
                 if binding_state(locked, state).get('fieldKey'):

@@ -1,10 +1,10 @@
 import * as XLSX from 'xlsx';
-import type { FeedbackQuestion, FeedbackQuestionType, FeedbackSection } from '@/api/feedback';
+import type { FeedbackQuestion, FeedbackQuestionAnalyticsSettings, FeedbackQuestionType, FeedbackSection } from '@/api/feedback';
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_ROWS = 1000;
 const REQUIRED_HEADERS = ['Category', 'Question', 'Type'] as const;
-const OPTIONAL_HEADERS = ['Options', 'Required', 'Help text', 'Questions per lecture', 'Scale max', 'Scale display', 'Scale labels', 'Min label', 'Max label'] as const;
+const OPTIONAL_HEADERS = ['Options', 'Required', 'Help text', 'Questions per lecture', 'Scale max', 'Scale display', 'Scale labels', 'Min label', 'Max label', 'Importance', 'Scoring', 'Yes score', 'No score', 'Score min', 'Score max', 'Include in overall score'] as const;
 const CHOICE_TYPES = new Set<FeedbackQuestionType>(['single_choice', 'multiple_choice', 'dropdown', 'likert']);
 export const QUESTION_BANK_TYPES: readonly FeedbackQuestionType[] = [
   'short_text', 'long_text', 'yes_no', 'single_choice', 'multiple_choice',
@@ -51,9 +51,22 @@ const templateRows = [
   ['General', 'What did you find most useful and what could we improve?', 'Written answer'],
 ];
 
-export const POST_LECTURE_BANK_TEMPLATE = templateRows.map(row => row.map(value =>
-  /[",\r\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value,
-).join(',')).join('\r\n');
+const scoringHeaders = ['Importance', 'Scoring', 'Yes score', 'No score', ...Array.from({ length: 6 }, (_, index) => `Option ${index + 1} score`), 'Score min', 'Score max', 'Include in overall score', 'Required', 'Help text', 'Scale max', 'Scale display', 'Scale labels', 'Min label', 'Max label'];
+export const POST_LECTURE_BANK_TEMPLATE = templateRows.map((row, index) => {
+  if (!index) return [...row, ...scoringHeaders];
+  const type = row[2];
+  const choice = ['Choose one', 'Choose several', 'Dropdown list', 'Agreement scale'].includes(type);
+  const options = row.slice(3);
+  const scores = Array.from({ length: 6 }, (_, position) => !options[position] ? ''
+    : type === 'Agreement scale' ? position / (options.length - 1) * 100 : 100);
+  return [...row, ...Array(9 - row.length).fill(''), 'Medium',
+    type === 'Yes / No' || choice ? 'Per answer' : ['5 Stars', 'Number rating', 'Number'].includes(type) ? 'Higher is better' : '',
+    ...(type === 'Yes / No' ? [100, 0] : ['', '']), ...scores,
+    ...(type === 'Number' ? [0, 10] : ['', '']), 'Yes', type === 'Written answer' ? 'No' : 'Yes', '', '', '', '', '', ''];
+}).map(row => row.map(value => {
+  const text = String(value);
+  return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}).join(',')).join('\r\n');
 
 export interface ParsedPostLectureBank {
   sections: FeedbackSection[];
@@ -66,11 +79,62 @@ function headerName(value: unknown) {
   return String(value ?? '').replace(/^\uFEFF/, '').trim().toLowerCase().replaceAll('_', ' ').replace(/\s+/g, ' ');
 }
 
-function requiredValue(value: string, defaultValue: boolean, rowNumber: number) {
+function requiredValue(value: string, defaultValue: boolean, rowNumber: number, label = 'Required') {
   if (!value) return defaultValue;
   if (['yes', 'true', '1'].includes(value.toLowerCase())) return true;
   if (['no', 'false', '0'].includes(value.toLowerCase())) return false;
-  throw new Error(`Row ${rowNumber}: Required must be yes or no.`);
+  throw new Error(`Row ${rowNumber}: ${label} must be yes or no.`);
+}
+
+function analyticsConfig(question: FeedbackQuestion, read: (header: string) => string,
+  number: (header: string, percentage?: boolean) => number | undefined, scoreHeaders: string[], rowNumber: number): FeedbackQuestionAnalyticsSettings | undefined {
+  const analytics: FeedbackQuestionAnalyticsSettings = {};
+  const importance = read('Importance').toLowerCase();
+  if (importance) {
+    if (!['critical', 'high', 'medium', 'low'].includes(importance)) throw new Error(`Row ${rowNumber}: Importance must be Critical, High, Medium or Low.`);
+    analytics.importance = importance as FeedbackQuestionAnalyticsSettings['importance'];
+  }
+  const rawScoring = read('Scoring').toLowerCase();
+  const methods: Record<string, FeedbackQuestionAnalyticsSettings['scoring']> = {
+    'higher is better': 'higher', higher: 'higher', 'lower is better': 'lower', lower: 'lower',
+    'per answer': 'options', options: 'options', 'set a score for each answer': 'options',
+    none: 'none', 'not scored': 'none',
+  };
+  const choice = CHOICE_TYPES.has(question.type) || question.type === 'yes_no';
+  const scorable = choice || question.type === 'rating' || question.type === 'number';
+  if (rawScoring) {
+    const method = methods[rawScoring];
+    if (!method || (scorable && (choice ? method !== 'options' : !['higher', 'lower'].includes(method))) || (!scorable && method !== 'none')) {
+      throw new Error(`Row ${rowNumber}: ${scorable ? choice ? 'use Per answer scoring.' : 'use Higher is better or Lower is better.' : 'this answer type has no automatic score.'}`);
+    }
+    analytics.scoring = method;
+  }
+  const optionScores: Record<string, number> = {};
+  for (const header of scoreHeaders) {
+    const score = number(header, true);
+    if (score === undefined) continue;
+    const index = Number(header.match(/\d+/)![0]);
+    const option = read(`Option ${index}`) || (read('Options') ? question.config.options?.[index - 1] : undefined);
+    if (!CHOICE_TYPES.has(question.type) || !option) throw new Error(`Row ${rowNumber}: ${header} needs a matching choice in Option ${index}.`);
+    optionScores[option] = score;
+  }
+  for (const option of ['yes', 'no'] as const) {
+    const score = number(`${option === 'yes' ? 'Yes' : 'No'} score`, true);
+    if (score === undefined) continue;
+    if (question.type !== 'yes_no') throw new Error(`Row ${rowNumber}: Yes score and No score apply only to Yes / No questions.`);
+    optionScores[option] = score;
+  }
+  if (Object.keys(optionScores).length) { analytics.optionScores = optionScores; analytics.scoring = 'options'; }
+  const min = number('Score min'), max = number('Score max');
+  if (min !== undefined || max !== undefined) {
+    if (question.type !== 'number') throw new Error(`Row ${rowNumber}: Score min and Score max apply only to Number questions.`);
+    if (min !== undefined && max !== undefined && max <= min) throw new Error(`Row ${rowNumber}: Score max must be greater than Score min.`);
+    if (min !== undefined) analytics.scoreMin = min;
+    if (max !== undefined) analytics.scoreMax = max;
+    analytics.scoring ??= 'higher';
+  }
+  if (read('Include in overall score')) analytics.includeInOverall = requiredValue(read('Include in overall score'), true, rowNumber, 'Include in overall score');
+  return Object.keys(analytics).length ? analytics : undefined;
 }
 
 function questionConfig(type: FeedbackQuestionType, originalType: string, read: (header: string) => string, rowNumber: number, optionHeaders: string[]): FeedbackQuestion['config'] {
@@ -109,16 +173,16 @@ export async function parsePostLectureQuestionBank(file: Pick<File, 'name' | 'si
   try {
     const bytes = await file.arrayBuffer();
     workbook = extension === 'csv'
-      ? XLSX.read(new TextDecoder('utf-8').decode(bytes), { type: 'string' })
-      : XLSX.read(bytes, { type: 'array' });
+      ? XLSX.read(new TextDecoder('utf-8').decode(bytes), { type: 'string', cellNF: true })
+      : XLSX.read(bytes, { type: 'array', cellNF: true });
   } catch {
     throw new Error('The spreadsheet could not be read.');
   }
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
   if (!sheet) throw new Error('The spreadsheet is empty.');
-  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, blankrows: false, defval: '' });
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, blankrows: true, defval: '' });
   if (!rows.length) throw new Error('The spreadsheet is empty.');
-  if (rows.length - 1 > MAX_ROWS) throw new Error(`The spreadsheet can contain at most ${MAX_ROWS} question rows.`);
+  if (rows.slice(1).filter(row => row.some(value => String(value ?? '').trim())).length > MAX_ROWS) throw new Error(`The spreadsheet can contain at most ${MAX_ROWS} question rows.`);
   const headers = rows[0].map(headerName);
   const columns = new Map<string, number>();
   for (const header of [...REQUIRED_HEADERS, ...OPTIONAL_HEADERS]) {
@@ -129,7 +193,16 @@ export async function parsePostLectureQuestionBank(file: Pick<File, 'name' | 'si
     if (matches.length) columns.set(header, matches[0]);
   }
   const optionHeaders: string[] = [];
+  const scoreHeaders: string[] = [];
   for (const [index, header] of headers.entries()) {
+    const score = /^option\s*([1-9]\d*)\s+score$/.exec(header);
+    if (score) {
+      const key = `Option ${Number(score[1])} score`;
+      if (columns.has(key)) throw new Error(`The spreadsheet needs exactly one "${key}" column.`);
+      columns.set(key, index);
+      scoreHeaders.push(key);
+      continue;
+    }
     const match = /^option\s*([1-9]\d*)$/.exec(header);
     if (!match) continue;
     const key = `Option ${Number(match[1])}`;
@@ -151,6 +224,20 @@ export async function parsePostLectureQuestionBank(file: Pick<File, 'name' | 'si
     const originalType = typeCode(read('Type'));
     if (!row.some(value => String(value ?? '').trim())) continue;
     const rowNumber = index + 2;
+    const number = (header: string, percentage = false) => {
+      let value = read(header);
+      if (!value) return undefined;
+      const percentText = value.endsWith('%');
+      if (percentText) value = value.slice(0, -1).trim();
+      const cell = columns.has(header) ? sheet[XLSX.utils.encode_cell({ r: index + 1, c: columns.get(header)! })] : undefined;
+      let result = Number(value);
+      if (!/^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(value) || !Number.isFinite(result) || (!percentage && percentText)) {
+        throw new Error(`Row ${rowNumber}: ${header} must be a finite number${percentage ? ' from 0 to 100' : ''}.`);
+      }
+      if (percentage && !percentText && cell?.t === 'n' && /(?:^|[^\\])%/.test(cell.z || '')) result *= 100;
+      if (percentage && (result < 0 || result > 100)) throw new Error(`Row ${rowNumber}: ${header} must be from 0 to 100.`);
+      return result;
+    };
     if (!text || text.length > 2000) throw new Error(`Row ${rowNumber}: question must contain 1–2000 characters.`);
     const type = originalType === 'stars' ? 'rating' : originalType === 'text' ? 'long_text' : originalType;
     if (!QUESTION_BANK_TYPES.includes(type as FeedbackQuestionType)) throw new Error(`Row ${rowNumber}: unsupported Type "${read('Type')}". Use a type from the template.`);
@@ -163,6 +250,8 @@ export async function parsePostLectureQuestionBank(file: Pick<File, 'name' | 'si
       helpText: read('Help text'),
       config: questionConfig(type as FeedbackQuestionType, originalType, read, rowNumber, optionHeaders),
     };
+    const analytics = analyticsConfig(question, read, number, scoreHeaders, rowNumber);
+    if (analytics) question.config.analytics = analytics;
     if (!category) {
       if (type !== 'long_text' || countValue) throw new Error(`Row ${rowNumber}: only a closing text question may have an empty category; leave its draw count empty.`);
       if (closing) throw new Error(`Row ${rowNumber}: include only one closing text question.`);

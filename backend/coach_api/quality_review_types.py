@@ -10,8 +10,8 @@ MCM_TITLE = r'\bmonthly[\s_-]+coaching[\s_-]+(?:meeting|review)\b|\b(?:mcm|mcr)\
 def review_type(value, *, allow_empty=True):
     if value == '' and allow_empty:
         return ''
-    if not isinstance(value, str) or value not in REVIEW_TYPES:
-        raise InvalidReview('Choose MCM or PR (Progress Review).')
+    if not isinstance(value, str) or (value not in REVIEW_TYPES and not re.fullmatch(r'FORM_[A-Z0-9_]{1,58}', value)):
+        raise InvalidReview('Choose a valid quality form.')
     return value
 
 

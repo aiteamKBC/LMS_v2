@@ -18,7 +18,7 @@ export function readQualityLocation(params: URLSearchParams): QualityLocation {
   return { filters: { start, end, timeZone, coachEmail: (params.get('coach') || '').trim().toLowerCase().slice(0, 320),
     status: params.get('status') === 'all' ? '' : ['draft', 'completed'].includes(params.get('status') || '') ? params.get('status')! : 'completed',
     search: (params.get('q') || '').slice(0, 200),
-    reviewType: ['MCM','PR'].includes(params.get('type') || '') ? params.get('type')! : '',
+    reviewType: /^(MCM|PR|FORM_[A-Z0-9_]{1,58})$/.test(params.get('type') || '') ? params.get('type')! : '',
     pdf: ['available','missing'].includes(params.get('pdf') || '') ? params.get('pdf')! : '' },
     review: uuid.test(raw) ? raw.toLowerCase() : '', invalidReview: Boolean(raw && !uuid.test(raw)) };
 }

@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ClipboardCheck, RefreshCw } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { qualityReviews, invalidateQualityReviews, type QualitySummary, type ReviewList } from '@/api/coachingQualityReviews';
+import { qualityReviews, qualityForms, invalidateQualityReviews, type QualitySummary, type ReviewList, type QualityFormCard } from '@/api/coachingQualityReviews';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { CALENDAR_TIME_ZONES } from '@/pages/curriculum/recordings/utils';
@@ -20,6 +20,13 @@ export default function QualityReviewsPage() {
   const { start, end, coachEmail, status, search, timeZone, reviewType = '', pdf = '' } = location;
   const applied = useMemo(() => ({ start, end, coachEmail, status, search, timeZone, reviewType, pdf }), [start, end, coachEmail, status, search, timeZone, reviewType, pdf]);
   const [filters, setFilters] = useState(applied);
+  const [formCards, setFormCards] = useState<QualityFormCard[]>([]), [catalogError, setCatalogError] = useState('');
+  useEffect(() => {
+    const controller = new AbortController(); setCatalogError('');
+    void qualityForms(controller.signal).then(value => { if (!controller.signal.aborted) setFormCards(value.forms); })
+      .catch(reason => { if (!controller.signal.aborted) setCatalogError(reason instanceof Error ? reason.message : 'Form names could not be loaded.'); });
+    return () => controller.abort();
+  }, []);
   const [moreFilters, setMoreFilters] = useState(false);
   const [filterError, setFilterError] = useState('');
   const listKey = JSON.stringify(applied);
@@ -64,13 +71,14 @@ export default function QualityReviewsPage() {
   return <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" workspaceLabel="Curriculum Studio"
     pageTitle="Quality reviews & evidence" pageSubtitle="Saved portfolio sampling reviews by coach, learner and meeting" navItems={curriculumNavItems}>
     <main className="mx-auto w-full max-w-[1600px] space-y-5 p-3 sm:p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3"><Link className="inline-flex items-center gap-2 text-sm font-semibold text-primary-700" to="/curriculum/coaching-recordings"><ArrowLeft size={16} />Coach meetings calendar</Link><Link className={button} to={`/curriculum/quality/forms?type=${reviewType || 'MCM'}`}>Edit quality forms</Link></div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><Link className="inline-flex items-center gap-2 text-sm font-semibold text-primary-700" to="/curriculum/coaching-recordings"><ArrowLeft size={16} />Coach meetings calendar</Link><Link className={button} to={`/curriculum/quality/forms${reviewType ? `?type=${reviewType}` : ''}`}>Edit quality forms</Link></div>
       {invalidReview && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">This saved review link is invalid. <button type="button" className={`${button} ml-2`} onClick={() => setParams(writeQualityLocation(applied))}>Close invalid review link</button></div>}
       <header className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-wider text-primary-600">Quality workspace</p>
         <h1 className="mt-2 text-2xl font-bold text-foreground-950">Quality Checks</h1><p className="mt-2 text-sm text-foreground-600">Open a saved review to see its observations, screenshots and action plan. Completed reviews include a PDF.</p></div>
         <button className={button} disabled={loading} onClick={refresh}><RefreshCw size={15} />Refresh reviews</button></header>
       <section aria-label="Quick review filters" className="space-y-4 rounded-xl border border-background-200 bg-white p-4">
-        <div role="group" aria-label="Quality review type" className="flex flex-wrap items-center gap-2"><span className="mr-2 text-xs font-semibold text-foreground-500">Form type</span>{[['','All types'],['MCM','MCM'],['PR','PR (Progress Review)']].map(([value,label]) => <button key={value} className={`${button} ${reviewType === value ? 'border-primary-500 bg-primary-50 text-primary-900' : ''}`} aria-pressed={reviewType === value} disabled={loading} onClick={() => quick({ reviewType: value })}>{label}</button>)}</div>
+        <label className="grid max-w-xl gap-2 text-xs font-semibold">Quality form<select aria-label="Quality form filter" className={control} value={reviewType} disabled={loading} onChange={event => quick({ reviewType: event.target.value })}><option value="">All forms</option>{formCards.map(card => <option key={card.reviewType} value={card.reviewType}>{card.title}</option>)}{reviewType && !formCards.some(card => card.reviewType === reviewType) && !['MCM','PR'].includes(reviewType) && <option value={reviewType}>Selected saved form</option>}<optgroup label="Previous portfolio reviews"><option value="MCM">MCM · Previous form</option><option value="PR">PR · Previous form</option></optgroup></select></label>
+        {catalogError && <p role="alert" className="text-xs text-amber-900">{catalogError} Saved reviews remain available.</p>}
         <div role="group" aria-label="Review completion" className="flex flex-wrap items-center gap-2"><span className="mr-2 text-xs font-semibold text-foreground-500">Show</span>{[['','All saved reviews'],['completed','Completed'],['draft','Drafts']].map(([value,label]) => <button key={value} className={`${button} ${status === value && !pdf ? 'border-primary-500 bg-primary-50 text-primary-900' : ''}`} aria-pressed={status === value && !pdf} disabled={loading} onClick={() => quick({ status: value, pdf: '' })}>{label}</button>)}<button className={`${button} ${pdf === 'available' ? 'border-primary-500 bg-primary-50 text-primary-900' : ''}`} aria-pressed={pdf === 'available'} disabled={loading} onClick={() => quick({ pdf: 'available', status: '' })}>With PDF</button></div>
       </section>
       <form noValidate onSubmit={apply} className="space-y-4 rounded-xl border border-background-200 bg-white p-4">
@@ -96,7 +104,7 @@ export default function QualityReviewsPage() {
         {!loading && !error && !rows.length && <div className="rounded-xl border border-background-200 bg-white p-8 text-center"><ClipboardCheck className="mx-auto text-primary-500" /><h2 className="mt-3 font-bold">No saved reviews match these filters</h2><p className="mt-2 text-sm text-foreground-600">Start a portfolio sampling review from a meeting in the coach calendar, or choose another period and status.</p></div>}
         {rows.map(row => <article key={row.id} className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-background-200 bg-white p-4 shadow-sm">
           <div className="min-w-0 flex-1 basis-64"><div className="flex flex-wrap items-center gap-2"><h2 className="break-words text-sm font-bold">{row.learnerName}</h2><span className={`rounded-full px-2 py-1 text-xs font-semibold ${row.status === 'completed' ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{row.status === 'completed' ? 'Completed' : 'Draft'}</span></div>
-            <p className="mt-2 break-words text-sm">{row.title}</p><p className="mt-2 text-xs text-foreground-500">{row.coachName} · {meetingDate(row.startsAt, applied.timeZone)} · {row.reviewType || suggestQualityType(row.title) || 'Unclassified'} · Version {row.version} · {row.actionCount} follow-up actions</p><p className="mt-2 text-xs font-semibold text-foreground-600">{row.pdfVersion ? `PDF saved · v${row.pdfVersion}` : row.status === 'completed' ? 'Completed · PDF can be prepared' : 'Draft · Continue the review to complete it'}</p></div>
+            <p className="mt-2 break-words text-sm">{row.title}</p><p className="mt-2 text-xs text-foreground-500">{row.coachName} · {meetingDate(row.startsAt, applied.timeZone)} · {row.formTitle || row.reviewType || suggestQualityType(row.title) || 'Previous form'} · Version {row.version} · {row.actionCount} follow-up actions</p><p className="mt-2 text-xs font-semibold text-foreground-600">{row.pdfVersion ? `PDF saved · v${row.pdfVersion}` : row.status === 'completed' ? 'Completed · PDF can be prepared' : 'Draft · Continue the review to complete it'}</p></div>
           <div className="flex flex-wrap items-center gap-2">{(row.pdfVersion || row.status === 'completed') && <QualityPdfActions key={`${row.id}:${row.status === 'completed' ? row.version : row.pdfVersion}`} reviewId={row.id} version={row.status === 'completed' ? row.version : row.pdfVersion!} />}<Link className={button} aria-label={`Open review for ${row.learnerName}`} to={{ search: writeQualityLocation(applied, row.id).toString() }}><ClipboardCheck size={15} />Open review</Link></div>
         </article>)}
         {next !== null && <button className={button} disabled={loading} onClick={() => setPage({ key: listKey, offset: next })}>Load more reviews</button>}

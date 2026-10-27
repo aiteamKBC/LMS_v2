@@ -6,11 +6,11 @@ afterEach(() => {
 });
 
 describe('learner feedback feature flag', () => {
-  it('is disabled in production builds', async () => {
+  it('releases only Live Sessions Feedback in production builds', async () => {
     vi.stubEnv('DEV', false);
     const { LEARNER_FEEDBACK_ENABLED, LEARNER_POST_LECTURE_FEEDBACK_ENABLED } = await import('./featureFlags');
     expect(LEARNER_FEEDBACK_ENABLED).toBe(false);
-    expect(LEARNER_POST_LECTURE_FEEDBACK_ENABLED).toBe(false);
+    expect(LEARNER_POST_LECTURE_FEEDBACK_ENABLED).toBe(true);
   });
 
   it('is enabled automatically in local development', async () => {
@@ -23,6 +23,6 @@ describe('learner feedback feature flag', () => {
   it.each([false, true])('keeps learner navigation consistent with local mode %s', async development => {
     vi.stubEnv('DEV', development);
     const { learnerNavItems } = await import('@/mocks/navigation');
-    expect(learnerNavItems.some(item => item.id === 'learner-feedback')).toBe(development);
+    expect(learnerNavItems.some(item => item.id === 'learner-feedback')).toBe(true);
   });
 });

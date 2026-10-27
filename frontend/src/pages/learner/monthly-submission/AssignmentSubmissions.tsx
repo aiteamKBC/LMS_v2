@@ -7,15 +7,22 @@ import { formatSystemTimestamp } from '@/lib/format';
 import { AssignmentDownload } from './AssignmentDownload';
 import { AssignmentFeedback } from './AssignmentFeedback';
 import { statusLabels } from './model';
+import { formatSubmissionHours } from './submissionHours';
 import styles from './monthlySubmission.module.css';
 
-export function AssignmentSubmissions({ kind, learnerId, activityId, status, submissionCount, marking, month }: {
+export interface AssignmentSubmissionHistory {
+  kind: LearnerKind; learnerId: string; activityId: string;
+  attempts: SubmissionAttempt[]; loading: boolean; error: string;
+}
+
+export function AssignmentSubmissions({ kind, learnerId, activityId, status, submissionCount, marking, month, onHistoryChange }: {
   kind: LearnerKind; learnerId: string; activityId: string; status: string;
   submissionCount?: number; marking?: ComponentMarking; month?: string;
+  onHistoryChange?: (history: AssignmentSubmissionHistory) => void;
 }) {
   const session = useCaseFileSession();
   const [attempts, setAttempts] = useState<SubmissionAttempt[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(status !== 'todo' && submissionCount !== 0);
   const [error, setError] = useState('');
   const [refresh, setRefresh] = useState(0);
   useEffect(() => {
@@ -34,6 +41,10 @@ export function AssignmentSubmissions({ kind, learnerId, activityId, status, sub
     return () => controller.abort();
   }, [kind, learnerId, activityId, status, submissionCount, refresh, session]);
 
+  useEffect(() => {
+    onHistoryChange?.({ kind, learnerId, activityId, attempts, loading, error });
+  }, [kind, learnerId, activityId, attempts, loading, error, onHistoryChange]);
+
   return <>
     {!attempts.length && <AssignmentFeedback marking={marking} status={status} />}
     {!loading && !error && !attempts.length && ['accepted', 'partial', 'referred', 'returned', 'rejected', 'completed'].includes(status) && <AssignmentDownload kind={kind} learnerId={learnerId} activityId={activityId} month={month} />}
@@ -49,6 +60,7 @@ export function AssignmentSubmissions({ kind, learnerId, activityId, status, sub
           <span className={styles.status} data-status={attempt.status}>{attempt.status === 'rejected' ? 'Rejected' : statusLabels[attempt.status] || attempt.status.replaceAll('_', ' ')}</span>
         </div>
         {attempt.submittedAt && <p className={styles.feedbackReviewer}>Submitted: {formatSystemTimestamp(attempt.submittedAt, { dateStyle: 'medium', timeStyle: 'short' })} (UK time)</p>}
+        <p className={styles.feedbackReviewer}>Actual hours: <strong>{formatSubmissionHours(attempt.actualTimeHours)}</strong></p>
         <details className={styles.submittedAnswer}><summary>View submitted answer</summary><p>{attempt.answer || 'No written answer recorded.'}</p></details>
         <h5>Coach feedback</h5>
         <p className={styles.attemptFeedback}>{attempt.coachFeedback || (['submitted_for_tutor_review', 'pending', 'escalated'].includes(attempt.status)

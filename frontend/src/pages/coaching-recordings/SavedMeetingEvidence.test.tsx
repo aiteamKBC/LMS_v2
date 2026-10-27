@@ -18,6 +18,32 @@ const evidence = (): SavedCoachingEvidence => ({ state: 'matched', source: 'coac
 });
 
 describe('Saved Coaching Session evidence buttons', () => {
+  it('shows the provider recording times and reported join/leave gap in the selected business time zone without extra reads', async () => {
+    vi.mocked(loadCoachingSession).mockResolvedValue({ eventKey: 'event', partial: false,
+      media: { state: 'ready', readyCount: 1, recordings: [{ id: 'one', state: 'ready', source: 'microsoft', startsAt: '2026-10-19T09:04:42Z', endsAt: '2026-10-19T09:12:52Z' }] },
+      attendance: { state: 'available', reportCount: 1, rows: [{ name: 'Synthetic Participant', status: 'attended', totalAttendanceSeconds: 755,
+        firstJoinedAt: '2026-10-19T09:00:00Z', lastLeftAt: '2026-10-19T09:12:35Z' }] } });
+    render(<SessionDetails eventKey="event" timeZone="Africa/Cairo" />);
+    expect(await screen.findByText(/1 recording part · 8 min 10 sec recorded in total/)).toBeInTheDocument();
+    expect(screen.getByText(/Microsoft recording times: 19 Oct, 12:04:42 – 19 Oct, 12:12:52/)).toBeInTheDocument();
+    expect(screen.getByText('12 min 35 sec')).toBeInTheDocument();
+    expect(screen.getByText('First joined: 19 Oct, 12:00:00')).toBeInTheDocument();
+    expect(screen.getByText('Last left: 19 Oct, 12:12:35')).toBeInTheDocument();
+    expect(screen.getByText('First recording starts 4 min 42 sec after this participant joined.')).toBeInTheDocument();
+    expect(loadCoachingSession).toHaveBeenCalledOnce();
+    expect(loadSavedCoachingEvidence).not.toHaveBeenCalled();
+    expect(loadCoachingPdf).not.toHaveBeenCalled();
+  });
+
+  it('keeps saved playable parts visible while warning that a failed check cannot confirm additional parts', async () => {
+    vi.mocked(loadCoachingSession).mockResolvedValue({ eventKey: 'event', partial: true,
+      media: { state: 'ready', readyCount: 1, recordings: [{ id: 'saved', state: 'ready' }], check: { state: 'failed', checkedAt: '2026-10-19T10:00:00Z' } },
+      attendance: { state: 'available', reportCount: 1, rows: [] } });
+    render(<SessionDetails eventKey="event" />);
+    expect(await screen.findByText(/The latest recording check failed/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Play recording 1' })).toBeEnabled();
+    expect(loadCoachingSession).toHaveBeenCalledOnce();
+  });
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
   beforeEach(() => { vi.mocked(loadCoachingPdf).mockReset().mockResolvedValue(new Blob(['%PDF-synthetic'], {type:'application/pdf'})); vi.stubGlobal('URL', class extends URL { static createObjectURL = vi.fn(() => 'blob:verified-pdf'); static revokeObjectURL = vi.fn(); }); vi.mocked(loadSavedCoachingEvidence).mockReset(); vi.mocked(loadCoachingSession).mockReset(); vi.mocked(loadCoachingKeywords).mockReset(); vi.mocked(loadCoachingQuality).mockReset(); });
 

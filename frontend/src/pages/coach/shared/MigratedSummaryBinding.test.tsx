@@ -300,7 +300,7 @@ describe('bound migrated review answers', () => {
     expect(field).toHaveValue('Manual answer');
   });
 
-  it('generates beside the field through the migrated Check Session path and stays editable', async () => {
+  it('preserves edits made while generation is running and exposes explicit replacement', async () => {
     let release!: (value: CoachMeetingArtifactsResponse) => void;
     vi.mocked(api.fetchMigratedReviewIntelligence).mockImplementation(async (_id, _signal, options) => options?.refresh
       ? new Promise(resolve => { release = resolve; }) : result());
@@ -308,13 +308,22 @@ describe('bound migrated review answers', () => {
     const field = await screen.findByRole('textbox', { name: 'Discussion record' });
     fireEvent.click(screen.getByRole('button', { name: 'Generate from Teams' }));
     expect(screen.getByRole('button', { name: 'Generating summary...' })).toBeDisabled();
-    expect(field).toBeDisabled();
-    expect(api.fetchMigratedReviewIntelligence).toHaveBeenLastCalledWith(id, undefined, { refresh: true, generateSummary: true });
-    await act(async () => release({ ...result({ fieldKey: 'recap', state: 'AI_POPULATED_UNEDITED', status: 'populated', suggestionSource: 'teams' }),
-      answerVersion: 'v2', reviewAnswers: { recap: 'Teams summary', other: 'Existing other answer' } }));
-    expect(field).toHaveValue('Teams summary');
+    expect(field).toBeEnabled();
+    fireEvent.change(field, { target: { value: 'Coach edit made during generation' } });
+    expect(api.fetchMigratedReviewIntelligence).toHaveBeenCalledWith(id, undefined, { refresh: true, generateSummary: true });
+    await act(async () => release({ ...result({ fieldKey: 'recap', state: 'COACH_EDITED', status: 'answer-preserved',
+      replacementAvailable: true, suggestionText: 'New Teams suggestion', suggestionSource: 'teams' }),
+      answerVersion: 'v2', reviewAnswers: { recap: 'Old saved answer', other: 'Existing other answer' } }));
+    expect(field).toHaveValue('Coach edit made during generation');
     expect(field).toBeEnabled();
     expect(screen.getByText('Latest AI summary generated from Teams transcript.')).toBeVisible();
+    fireEvent.click(screen.getByText('View latest AI suggestion'));
+    fireEvent.click(screen.getByRole('button', { name: 'Replace answer with updated summary' }));
+    expect(field).toHaveValue('New Teams suggestion');
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(api.saveReviewInstanceAnswers).toHaveBeenCalledWith(id,
+      { recap: 'New Teams suggestion', other: 'Existing other answer' },
+      { answerVersion: 'v2', editedFields: ['recap'] }));
     await waitFor(() => expect(api.fetchMigratedReviewIntelligence).toHaveBeenCalledTimes(3));
     expect(api.fetchMigratedReviewIntelligence).toHaveBeenLastCalledWith(id, expect.any(AbortSignal), { refresh: false });
     expect(api.generateReviewMeetingSummary).not.toHaveBeenCalled();

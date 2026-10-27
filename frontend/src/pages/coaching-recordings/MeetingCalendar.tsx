@@ -2,7 +2,7 @@ import type { CoachingMeeting } from '@/api/coachingRecordings';
 import { useMemo } from 'react';
 import { periodBounds, type Period } from '@/pages/curriculum/recordings/filters';
 import { addDays, formatFullDate, formatMonthLabel, getMonthMatrix, parseIsoDate, WEEKDAY_SHORT } from '@/pages/curriculum/recordings/utils';
-import { meetingDate, meetingPhase, recordingLabels, meetingKey, meetingTitle } from './model';
+import { meetingDate, meetingPhase, recordingLabel, meetingKey, meetingTitle } from './model';
 import MeetingTimeline from './MeetingTimeline';
 
 interface Props {
@@ -60,7 +60,7 @@ export default function MeetingCalendar({ date, period, timeZone, meetings, tota
                   <span className="mt-1 line-clamp-2 break-words font-semibold">{title}</span>
                   <span className="mt-1 block break-words">{coachName(row.coachEmail)}</span>
                   <span className="block break-words">{row.learnerIds.map(learnerName).join(', ') || 'No learner linked'}</span>
-                  <span className="mt-1 block text-foreground-600">{recordingLabels[row.media.state]}</span>
+                  <span className="mt-1 block text-foreground-600">{recordingLabel(row.media)}</span>
                 </button>;
               })}
               {rows.length > cellLimit && <button type="button" className="w-full rounded-lg bg-background-100 px-2 py-2 text-left text-xs font-semibold text-primary-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500" onClick={() => onSelectDay(day)}>+{rows.length - cellLimit} more · View day</button>}

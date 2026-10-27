@@ -106,7 +106,7 @@ class WeeklyHoursProjectionTests(SimpleTestCase):
         owner = {'id': 17, 'enrolment_id': 201, 'learner_type': 'commercial'}
         with patch('learner_api.current_learning.query', return_value=markings):
             expected = canonical_learning.progress_records_with_completion(records, current_records(owner, records))
-        with patch.object(canonical_learning, 'query', side_effect=[records, markings]) as query:
+        with patch.object(canonical_learning, 'query', side_effect=[records, markings, []]) as query:
             actual = canonical_learning.weekly_hour_records(owner)
         modules = [{'id': 'M1', 'title': 'Module'}]
         self.assertEqual(weekly_hours.module_activity_hours(actual, modules),
@@ -121,10 +121,29 @@ class WeeklyHoursProjectionTests(SimpleTestCase):
         self.assertEqual(query.call_args_list[0].args[1], [17, 17])
         self.assertEqual(query.call_args_list[1].args[1][-1], ['A1'])
 
-    def test_hours_without_pending_assignments_need_no_submission_query(self):
+    def test_hours_without_pending_assignments_read_only_standalone_extras(self):
         with patch.object(canonical_learning, 'query', return_value=[]) as query:
-            self.assertEqual(canonical_learning.weekly_hour_records({'id': 17}), [])
-        query.assert_called_once()
+            self.assertEqual(canonical_learning.weekly_hour_records(
+                {'id': 17, 'enrolment_id': 201, 'learner_type': 'commercial'}), [])
+        self.assertEqual(query.call_count, 2)
+        self.assertIn("s.activity_type='extra_activity'", query.call_args_list[1].args[0])
+        self.assertEqual(query.call_args_list[1].args[1], [17, '201', 'commercial'])
+
+    def test_standalone_reviewed_extra_matches_full_hour_projection(self):
+        owner = {'id': 17, 'enrolment_id': 201, 'learner_type': 'commercial'}
+        extra = dict(profile_id=17, id='extra', activity_type='extra_activity', status='accepted',
+                     actual_time_hours='1', activity_month='2026-09',
+                     submitted_at='2026-10-23T13:00:00Z', ksb_codes=[])
+        with patch('learner_api.current_learning.subject_attempt_rows', return_value=[]), \
+             patch('learner_api.current_learning.query', return_value=[extra]):
+            expected = canonical_learning.progress_records_with_completion([], current_records(owner, []))
+        with patch('learner_api.current_learning.subject_attempt_rows', return_value=[]), \
+             patch.object(canonical_learning, 'query', side_effect=[[], [extra]]):
+            result = canonical_learning.weekly_hour_records(owner)
+        self.assertEqual(result, expected)
+        self.assertEqual(result[0]['actual_seconds'], 3600)
+        self.assertEqual(result[0]['reporting_month'], '2026-09')
+        self.assertEqual(result[0]['expected_otjh'], 0)
 
     def test_indexed_activity_hours_preserve_ambiguous_quiz_attribution(self):
         components = [{'id': 'A', 'quiz_id': 4}, {'id': 'B', 'quiz_id': 4}, {'id': 'C', 'quiz_id': 5}]

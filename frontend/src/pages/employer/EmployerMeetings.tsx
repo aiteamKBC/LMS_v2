@@ -1,13 +1,13 @@
-import { CalendarDays, Video } from 'lucide-react';
+import { CalendarDays, UserRound, Video } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { EmployerLearnerCard } from '@/api/employerPortal';
 import { presentReview } from '@/pages/learner/progress-reviews/reviewPresentation';
 import { meetingTimeRange } from '@/pages/learner/reviews/featuredSession';
-import { formatReviewDate, learnerHref, learnerKey, progressReviews, type DashboardReviews } from './employerDashboardData';
+import { formatReviewDate, learnerHref, learnerReviewHref, learnerKey, progressReviews, type DashboardReviews } from './employerDashboardData';
 import styles from './EmployerPortalPage.module.css';
 
-export function EmployerMeetings({ employerId, learners, reviews, today }: {
-  employerId: string; learners: EmployerLearnerCard[]; reviews: DashboardReviews; today: string;
+export function EmployerMeetings({ employerId, learners, reviews, today, returnState }: {
+  employerId: string; learners: EmployerLearnerCard[]; reviews: DashboardReviews; today: string; returnState?: unknown;
 }) {
   const loading = learners.some(learner => !reviews[learnerKey(learner)] || reviews[learnerKey(learner)].status === 'loading');
   const failed = learners.some(learner => reviews[learnerKey(learner)]?.status === 'error');
@@ -24,15 +24,15 @@ export function EmployerMeetings({ employerId, learners, reviews, today }: {
         const syncPending = event.invited === false || Boolean(event.syncState && event.syncState !== 'synced');
         const joinUrl = !syncPending ? presentation.joinUrl : null;
         return <article key={`${learnerKey(learner)}:${event.eventKey}`} className={styles.meetingItem}>
-          <div><Link className={styles.learnerName} to={learnerHref(employerId, learner, 'reviews')}>{learner.name}</Link>
-            <strong>{event.title}{event.occurrenceNumber ? ` #${event.occurrenceNumber}` : ''}</strong>
-            <span>{formatReviewDate(event.scheduledDate)} · {meetingTimeRange(event)}</span>
-            <small>{event.coachName ? `With ${event.coachName}` : 'Coach to be confirmed'}</small>
+          <div><Link className={styles.learnerName} to={learnerHref(employerId, learner, 'reviews')} state={returnState}>{learner.name}</Link>
+            <Link className={styles.reviewTitle} to={learnerReviewHref(employerId, learner, event.eventKey)} state={returnState}>{event.title}{event.occurrenceNumber ? ` #${event.occurrenceNumber}` : ''}</Link>
+            <span className={styles.meetingWhen}><CalendarDays size={14} />{formatReviewDate(event.scheduledDate)} · {meetingTimeRange(event)}</span>
+            <small className={styles.meetingCoach}><UserRound size={13} />{event.coachName ? `With ${event.coachName}` : 'Coach to be confirmed'}</small>
           </div>
           <div className={styles.meetingActions}>
             {joinUrl ? <a className={styles.viewButton} href={joinUrl} target="_blank" rel="noopener noreferrer" aria-label={`Join ${learner.name}: ${event.title}`}><Video size={16} />Join meeting</a>
               : <span className={styles.unavailable}>{syncPending ? 'Invitation not confirmed. Contact your coach.' : 'Meeting link not available yet.'}</span>}
-            <Link className={styles.textButton} to={learnerHref(employerId, learner, 'reviews')}>View reviews</Link>
+            <Link className={`${styles.textButton} ${styles.reviewActionLink}`} to={learnerReviewHref(employerId, learner, event.eventKey)} state={returnState}>View review</Link>
           </div>
         </article>;
       })}

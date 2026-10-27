@@ -18,7 +18,7 @@ from . import quality_review_store as store
 from .quality_review_template import TEMPLATE_ID, InvalidReview
 from .quality_form_definition import clean_answers, definition_for, image_keys
 from .recordings_links import occurrence_id
-from .quality_review_types import review_type, suggest_type, saved_type
+from .quality_review_types import review_type, saved_type
 
 logger=logging.getLogger(__name__)
 
@@ -80,12 +80,15 @@ def context(request, learner_id, kind=None):
     meeting = {'eventId':record.graph_event_id,'startsAt':begin.isoformat(),'endsAt':end.isoformat(),
                'onlineMeetingId':online_identity(job),'title':event.get('subject') or getattr(record,'title','') or 'Coach meeting'}
     meeting['id']=occurrence_id({'owner':owner,'event':record.graph_event_id,'start':begin.isoformat(),'end':end.isoformat()})
-    kind=review_type(request.GET.get('reviewType','') if kind is None else kind) or suggest_type(meeting['title'])
+    kind=review_type(request.GET.get('reviewType','') if kind is None else kind)
     base = {'templateId':TEMPLATE_ID,'coach':coaches.get(owner,{'email':owner,'name':owner}),
             'meeting':meeting,'reviewType':kind,'learner':{'id':str(selected['id']),'name':selected['full_name'],
               'email':str(selected.get('email') or '').strip().casefold()} if selected else None}
     if selected:
-        base['identity'] = store.digest([TEMPLATE_ID,owner,meeting['eventId'],meeting['startsAt'],meeting['endsAt'],str(selected['id'])])
+        identity=[TEMPLATE_ID,owner,meeting['eventId'],meeting['startsAt'],meeting['endsAt'],str(selected['id'])]
+        # Previous MCM/PR reviews retain their identity. New library forms are
+        # independent per form, learner and verified meeting occurrence.
+        base['identity'] = store.digest(identity + ([kind] if kind.startswith('FORM_') else []))
     return {'snapshot':base,'learners':[{'id':str(row['id']),'name':row['full_name']} for row in learners]},None
 
 
@@ -107,7 +110,7 @@ def body(request):
         raise InvalidReview('The save request needs a valid request ID.')
     value['requestId'] = str(UUID(value['requestId']))
     if request.method=='PUT' and (not isinstance(value.get('form'),dict)
-          or set(value['form'])-{'header','criteria','actions','images','sources','answers'}
+          or set(value['form'])-{'header','criteria','actions','images','sources','answers','attachments'}
           or not {'header','criteria','actions','images','sources'} <= set(value['form'])):
         raise InvalidReview('Send the complete saved form when replacing a review.')
     return value
@@ -124,6 +127,10 @@ def selected_definition(saved, kind):
     if saved and (not kind or saved_type(saved)==kind):
         return definition_for(saved)
     state=store.read_template(kind) if kind else store.read_template()
+    if kind.startswith('FORM_') and not state.get('publishedAt'):
+        from .quality_feedback_catalog import default_feedback
+        if not default_feedback(kind):
+            raise InvalidReview('Publish this form before using it for a meeting review.')
     return state['published']
 
 
@@ -137,8 +144,8 @@ def review_context(request):
     selected = value['snapshot']['learner']
     saved = store.read_review(identity=value['snapshot']['identity']) if selected else None
     kind=request.GET.get('reviewType')
-    hint=review_type(request.GET.get('titleType',''))
-    kind=review_type(kind) if kind is not None else (saved_type(saved) if saved else '') or value['snapshot'].get('reviewType','') or hint
+    # New reviews require a deliberate card selection, never a title suggestion.
+    kind=review_type(kind) if kind is not None else (saved_type(saved) if saved else '')
     value['snapshot']['reviewType']=kind
     definition=selected_definition(saved,kind)
     return _response({'template':definition,**value,'review':saved,'observer':request.quality_actor})
@@ -161,7 +168,7 @@ def reviews(request):
             rows,next_offset=store.reviews_for_meeting(identity,offset)
             return _response({'reviews':[{'id':str(row['id']),'learnerId':row['learner_id'],
               'learnerName':row['learner_name'],'status':row['status'],'version':row['version'],
-              'reviewType':row.get('review_type',''),'pdfVersion':row['pdf_version'],'updatedAt':row['updated_at'].isoformat()} for row in rows],'nextOffset':next_offset})
+              'reviewType':row.get('review_type',''),'formTitle':row.get('form_title'),'pdfVersion':row['pdf_version'],'updatedAt':row['updated_at'].isoformat()} for row in rows],'nextOffset':next_offset})
         from zoneinfo import ZoneInfo,ZoneInfoNotFoundError
         try:
             zone=ZoneInfo(request.GET.get('timeZone','Europe/London'))
@@ -183,7 +190,7 @@ def reviews(request):
         return _response({'reviews':[{'id':str(row['id']),'coachEmail':row['coach_email'],'coachName':row['coach_name'],
           'learnerId':row['learner_id'],'learnerName':row['learner_name'],'startsAt':row['starts_at'].isoformat(),
           'status':row['status'],'version':row['version'],'updatedAt':row['updated_at'].isoformat(),
-          'title':row['title'],'reviewType':row.get('review_type',''),'actionCount':row['action_count'],'pdfVersion':row.get('pdf_version')} for row in rows], 'nextOffset':next_offset,'coaches':_coaches()})
+          'title':row['title'],'reviewType':row.get('review_type',''),'formTitle':row.get('form_title'),'actionCount':row['action_count'],'pdfVersion':row.get('pdf_version')} for row in rows], 'nextOffset':next_offset,'coaches':_coaches()})
     value = body(request)
     data,failure = context(request,value.get('learnerId',''),value.get('reviewType'))
     if failure is not None:
@@ -214,6 +221,8 @@ def review_detail(request,review_id):
             raise InvalidReview('The learner for a saved review cannot be changed.')
         # Context is taken from the saved record, never replaced by browser data.
         kind=value.get('reviewType',saved_type(saved))
+        if saved_type(saved).startswith('FORM_') and kind!=saved_type(saved):
+            raise InvalidReview('A saved review keeps its form. Start another review from the meeting to use a different form.')
         definition=selected_definition(saved,kind)
         validate_answers(value,definition)
         snapshot = {key:saved[key] for key in ('templateId','identity','coach','meeting','learner')}
@@ -300,3 +309,57 @@ def review_attachment(request,review_id,version):
     response['X-Content-Type-Options']='nosniff'
     response['X-Frame-Options']='SAMEORIGIN'
     return response
+
+
+@require_http_methods(['GET','POST'])
+@require_access(ACCESS_CURRICULUM)
+@csrf_protect
+@guarded
+def review_evidence_file(request,review_id,file_id=None):
+    saved=store.read_review(review_id=str(review_id))
+    if not saved:
+        return _response({'error':'Save the review before attaching evidence.'},404)
+    if request.method=='GET':
+        evidence=store.evidence_file(str(review_id),str(file_id),preview=request.GET.get('preview')=='1') if file_id else None
+        if not evidence:
+            return _response({'error':'Evidence file not found.'},404)
+        if request.GET.get('preview')=='1':
+            if not evidence['preview']:
+                return _response({'error':'This file has no image preview. Download the original file.'},404)
+            response=HttpResponse(bytes(evidence['preview']),content_type='image/jpeg')
+        else:
+            from django.utils.http import content_disposition_header
+            response=HttpResponse(bytes(evidence['content']),content_type='application/octet-stream')
+            response['Content-Disposition']=content_disposition_header(True,evidence['filename'])
+        response['Cache-Control']='private, no-store'
+        response['X-Content-Type-Options']='nosniff'
+        response['X-Frame-Options']='SAMEORIGIN'
+        return response
+    if file_id is not None:
+        raise InvalidReview('Choose the evidence upload endpoint.')
+    section=request.POST.get('section','evidence')
+    definition=definition_for(saved)
+    allowed={'evidence'} | {item['id'] for group in definition['sections'] for item in group['criteria'] if item['type']=='file'}
+    upload=request.FILES.get('file')
+    if section not in allowed or not upload or not 0<upload.size<=25*1024*1024:
+        raise InvalidReview('Choose an evidence file up to 25 MB for this form.')
+    from pathlib import PurePosixPath
+    import re
+    filename=PurePosixPath(upload.name.replace('\\','/')).name
+    filename=re.sub(r'[\x00-\x1f\x7f]', '', filename)[:200] or 'evidence-file'
+    content=upload.read(25*1024*1024+1)
+    if len(content)!=upload.size:
+        raise InvalidReview('The evidence file could not be read completely.')
+    preview=None
+    from PIL import Image,UnidentifiedImageError
+    try:
+        image=Image.open(BytesIO(content))
+        if image.format in ('JPEG','PNG','WEBP') and image.width*image.height<=16000000 and getattr(image,'n_frames',1)==1:
+            image.load(); image=image.convert('RGB'); image.thumbnail((1400,1400))
+            output=BytesIO(); image.save(output,format='JPEG',quality=80,optimize=True)
+            if len(output.getvalue())<=1048576:
+                preview=output.getvalue()
+    except (ValueError,OSError,UnidentifiedImageError,Image.DecompressionBombError):
+        pass  # Non-image evidence is kept as opaque bytes, never rendered inline.
+    metadata=store.save_evidence(str(review_id),section,filename,content,'application/octet-stream',preview)
+    return _response(metadata,201)

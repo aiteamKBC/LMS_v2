@@ -11,6 +11,7 @@ afterEach(() => { cleanup(); vi.clearAllMocks(); });
 const props = {
   instanceId: 'imported-review:synthetic', editable: true, teamsAvailable: true,
   busy: false, unsaved: false, onResult: vi.fn(), onBusyChange: vi.fn(),
+  onGenerationBusyChange: vi.fn(), onApplySuggestion: vi.fn(),
 };
 
 it('replaces a failed action with authoritative success from another control', async () => {
@@ -94,4 +95,15 @@ it('labels a saved-transcript suggestion provisional without blocking Coach edit
     status: 'populated', generationStatus: 'ready', suggestionSource: 'teams', provisional: true }} />);
   expect(screen.getByText(/Provisional AI summary/)).toHaveTextContent('Review and edit the answer before saving');
   expect(screen.getByRole('button', { name: 'Generate from Teams' })).toBeEnabled();
+});
+
+it('requires an explicit action to apply the latest suggestion', () => {
+  render(<MigratedSummaryActions {...props} binding={{ fieldKey: 'recap', state: 'COACH_EDITED',
+    answer: 'Keep this answer', replacementAvailable: true, suggestionText: 'Updated suggestion' }} />);
+  fireEvent.click(screen.getByText('View latest AI suggestion'));
+  expect(screen.getByRole('textbox', { name: 'Latest AI suggestion' })).toHaveValue('Updated suggestion');
+  expect(screen.getByRole('button', { name: 'Replace answer with updated summary' })).toBeVisible();
+  expect(props.onApplySuggestion).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Replace answer with updated summary' }));
+  expect(props.onApplySuggestion).toHaveBeenCalledExactlyOnceWith('Updated suggestion');
 });

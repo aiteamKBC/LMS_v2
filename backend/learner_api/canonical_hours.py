@@ -1,5 +1,40 @@
 """Small read-only supplement to stored-hour aggregates for current LMS saves."""
-from .current_learning import project_current
+from .current_learning import merge_submissions, project_current
+
+
+def extra_activity_hour_records(owners):
+    """Read standalone extras once, excluding work already in the ledger.
+
+    Enrolment and learner kind jointly own a submission; ledger ownership uses
+    the profile ID. Keep the same lineage exclusions as merge_submissions.
+    No planned time, evidence hydration or historical writes are needed.
+    """
+    from . import canonical_learning as canonical
+
+    owners = {int(owner['id']): owner for owner in owners}
+    result = {owner_id: [] for owner_id in owners}
+    if not owners:
+        return result
+    values = ','.join(['(%s,%s,%s)'] * len(owners))
+    params = [value for owner_id, owner in owners.items()
+              for value in (owner_id, str(owner['enrolment_id']), str(owner.get('learner_type') or ''))]
+    submissions = canonical.query(f'''WITH owners(profile_id,enrolment_id,learner_kind) AS (VALUES {values})
+        SELECT owners.profile_id,s.id,s.component_ref,s.progress_entry_id,s.status,
+            s.actual_time_hours,s.submitted_at,s.activity_type,s.activity_title,s.module_title,s.ksb_codes,
+            s.full_submission->'monthlyAssignment'->>'month' AS activity_month
+        FROM owners JOIN "Learner".learning_reflection_submissions s
+          ON s.learner_id=owners.enrolment_id AND s.learner_kind=owners.learner_kind
+        WHERE s.activity_type='extra_activity' AND s.status<>'draft' AND s.submitted_at IS NOT NULL
+          AND coalesce(s.full_submission->>'submissionOrigin','')<>'imported_legacy'
+          AND NOT EXISTS (SELECT 1 FROM "Learner".learner_progress_entries p
+            WHERE p.learner_id=owners.profile_id AND p.deleted_at IS NULL
+              AND (p.id=s.progress_entry_id OR (nullif(s.component_ref,'') IS NOT NULL AND p.component_ref=s.component_ref)
+                OR p.source_payload->>'original_source_ref'='reflection:' || s.id::text))
+        ORDER BY s.submitted_at,s.id''', params)
+    for record in submissions:
+        result[int(record['profile_id'])].append(record)
+    return {owner_id: [{**row, 'hours_only': True} for row in merge_submissions([], rows)]
+            for owner_id, rows in result.items()}
 
 
 def pending_hour_records(owners):
@@ -7,12 +42,13 @@ def pending_hour_records(owners):
 
     Stored seconds (including zero) remain authoritative. Only direct saves
     without stored seconds or reporting segments can contribute extra hours.
-    Attempts and reflection-only rows cannot introduce additional ledger rows.
+    Standalone extra activities are added separately from their coach decisions.
+    Other attempts and reflection-only rows cannot introduce ledger rows.
     """
     from . import canonical_learning as canonical
 
     owners = {int(owner['id']): owner for owner in owners}
-    result = {owner_id: [] for owner_id in owners}
+    result = extra_activity_hour_records(owners.values())
     if not owners:
         return result
     pending = canonical.query('''SELECT p.id,p.learner_id,p.kind,p.component_ref,
@@ -62,5 +98,5 @@ def pending_hour_records(owners):
         pending_ids = {row['id'] for row in records}
         records += [row for row in context if int(row['learner_id']) == owner_id]
         decisions = markings.get((str(owner['enrolment_id']), str(owner.get('learner_type') or '')), {})
-        result[owner_id] = [row for row in project_current(records, decisions) if row['id'] in pending_ids]
+        result[owner_id].extend(row for row in project_current(records, decisions) if row['id'] in pending_ids)
     return result

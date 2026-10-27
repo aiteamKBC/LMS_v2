@@ -8,7 +8,7 @@ function bindingRevision(instanceId: string, binding: MigratedSummaryBinding) {
 }
 
 export function MigratedSummaryActions({ instanceId, binding, editable, showActions = editable, teamsAvailable, busy, unsaved,
-  onResult, onBusyChange }: {
+  onResult, onBusyChange, onGenerationBusyChange, onApplySuggestion }: {
   instanceId: string;
   binding: MigratedSummaryBinding;
   editable: boolean;
@@ -18,6 +18,8 @@ export function MigratedSummaryActions({ instanceId, binding, editable, showActi
   unsaved: boolean;
   onResult: (result: CoachMeetingArtifactsResponse) => void;
   onBusyChange: (busy: boolean) => void;
+  onGenerationBusyChange: (busy: boolean) => void;
+  onApplySuggestion: (text: string) => void;
 }) {
   const actionHelpId = useId();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -46,6 +48,7 @@ export function MigratedSummaryActions({ instanceId, binding, editable, showActi
     running.current = true;
     setAction(file ? 'upload' : 'teams');
     onBusyChange(true);
+    onGenerationBusyChange(!file);
     try {
       // The field button and Check Session share the dedicated migrated route.
       const result = file ? await uploadMigratedSummaryTranscript(instanceId, file)
@@ -74,6 +77,7 @@ export function MigratedSummaryActions({ instanceId, binding, editable, showActi
       running.current = false;
       setAction(null);
       onBusyChange(false);
+      onGenerationBusyChange(false);
     }
   };
   const message = binding.generationStatus === 'failed'
@@ -127,8 +131,13 @@ export function MigratedSummaryActions({ instanceId, binding, editable, showActi
     {binding.summaryTooLong && binding.status !== 'summary-too-long' && <p role="status" className="text-xs text-amber-800">AI summary is longer than this field allows. Review and shorten it before saving.</p>}
     {editable && binding.suggestionText && (binding.replacementAvailable || binding.status === 'summary-too-long') && <details className="text-xs">
       <summary className="cursor-pointer font-semibold">View latest AI suggestion</summary>
-      <p className="my-2">Copy and edit the suggestion manually if you want to use it. Your saved answer has been kept.</p>
+      <p className="my-2">Review the suggestion. Your current answer has been kept.</p>
       <textarea readOnly aria-label="Latest AI suggestion" value={binding.suggestionText} className="min-h-40 w-full rounded border bg-white p-2" />
+      {binding.replacementAvailable && !binding.summaryTooLong && <button type="button"
+        className="mt-2 rounded-lg border border-primary-300 bg-white px-3 py-2 text-xs font-bold text-primary-700"
+        onClick={() => onApplySuggestion(binding.suggestionText!)}>
+        Replace answer with updated summary
+      </button>}
     </details>}
   </div>;
 }

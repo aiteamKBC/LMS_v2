@@ -2,7 +2,7 @@
 
 The Curriculum workspace opens `/curriculum/coaching-recordings`; the coach workspace opens `/coach/recordings`. Both use the same screen. Curriculum access can select registered LMS coaches; coach access is limited to the signed-in coach. The learner popup reads the selected coach's current LMS caseload, bookings and MCM/PR completion states.
 
-Every Microsoft calendar event keeps its original title, whether or not it matches an LMS booking or learner. **Ready to action** is the initial filter and requires an ended meeting with a verified playable Microsoft recording. **Upcoming** shows future meetings; **All meetings** combines the meeting states. Invitations never prove actual attendance.
+Every Microsoft calendar event keeps its original title, whether or not it matches an LMS booking or learner. **Ready to action** is the initial filter and includes every ended meeting, including lectures, with or without recordings, attendance or AI. Recording availability is displayed separately. Cancelled appointments remain in Cancelled; **Upcoming** shows future meetings; **All meetings** combines the meeting states. Invitations never prove actual attendance.
 
 ## One recording source
 
@@ -197,10 +197,11 @@ The meeting-type filter starts at All types and presents MCM and PR (Progress
 Review) first, followed by Student Support and Other. Calendar collection has no
 meeting-type/title filter: unmatched meetings, non-Teams appointments, all-day
 events and unfamiliar titles are retained. Types and status are separate filters;
-Ready to action still shows ended meetings with playable recordings, while All
-meetings includes the other states. Lectures remain an explicit local display
-toggle. Neither a missing recording nor a missing learner match removes an event
-from the all-status view. Calendar times stay chronological within coach columns.
+Ready to action shows all ended meetings, with or without playable recordings,
+while All meetings includes the other states. Lectures are always included in
+Ready; their local display toggle remains available in other status views.
+Neither a missing recording nor a missing learner match removes an ended event
+from Ready. Calendar times stay chronological within coach columns.
 
 Transcript and AI analysis now offer Preview PDF and Download PDF in the LMS.
 `GET /coach_api/coaching-recordings/pdf` returns actual `application/pdf` bytes
@@ -520,7 +521,98 @@ at HEAD 9422c852: no Pull, Merge, Commit, Push, branch switch or deployment.
 The new discovery rule will be used by normal scoped background recording
 refreshes; no live backfill/sync command was run to validate this code.
 
-Reproducible final commands for the follow-up (repository root unless noted):
+## Deployment diagnosis and hidden meetings (26 October 2026)
+
+The owner's clarified rule makes every ended appointment reviewable in Ready to
+action, including lectures, unknown categories and appointments without recordings
+or attendance. This replaces the earlier playable-recording eligibility rule.
+Upcoming, in-progress and cancelled appointments stay outside Ready. Coach,
+learner, meeting-type and match filters still apply when explicitly selected.
+The summary separates ended meetings from meetings with playable recordings;
+cards say Ended plus their recording state. Pending checks, provider failures,
+completed checks returning no files and entries without a Teams link remain
+distinct. No successful check is inferred from an absent result. Old Ready URLs
+automatically include lectures, and a response-version salt invalidates earlier
+calendar representations. Show all loaded meetings changes the local filter
+without another request. Mini-calendar dots cover only the loaded period; an
+unmarked date is not evidence that the date was checked and found empty.
+
+Media responses retain their existing state/recordings/readyCount contract and
+add optional `check` metadata: pending/complete/failed, checkedAt, and an optional
+no-recordings-returned/no-teams-link reason. A successful empty check is not proof
+that a meeting was never recorded. A failed check never becomes an empty success;
+previous playable files remain available. The media projection is cached against
+the last successful generation, including the no-Teams flag. Warm calendar reads
+still issue one job-state query without selecting the large result JSON. No new
+Microsoft reads, eager AI/PDF reads or browser polling are added by these changes.
+
+Run this **read-only** diagnostic in the deployed backend's own virtualenv and
+environment to distinguish serving configuration/source failures from empty data:
+
+```text
+python manage.py diagnose_coaching_recordings --coach-email coach@example.invalid --start 2026-10-19 --end 2026-10-19 --time-zone Africa/Cairo
+```
+
+Replace the synthetic account and dates. The range is inclusive and limited to
+31 local days. Output contains database target fingerprints, the covering saved
+calendar/index status and count, recording-check counts and Coaching Session
+source counts. `source.state=disabled` means the source URL is absent or test-mode
+flags intentionally disabled source access in that process. `unavailable` means
+the source read failed; it is not a successful zero. `available` with zero
+completed_reports means those scoped source queries returned no completed report.
+Dashboard rows can exist with no linked meeting. Source counts are diagnostics,
+not permission to associate a report by learner/title/date instead of verified
+meeting/occurrence identity. Different deployment target fingerprints warrant
+checking the intended database configuration before any corrective writes.
+
+The command never enqueues jobs, changes retries, contacts Microsoft, downloads
+videos/transcripts, generates AI/PDFs or sends notifications. Its source connection
+enforces transaction read-only mode, bounded connection/statement timeouts and
+coach/date scope. It emits aggregate counts, not learner rows, report bodies,
+connection strings or raw exception messages. An absent/stale calendar index is
+reported as not-indexed, rather than a confirmed empty calendar. Recording checks
+are capped at 1,000 rows with an explicit truncation flag.
+
+Final local validation:
+
+```powershell
+.\backend\.venv\Scripts\python.exe backend/manage.py test coach_api.test_recordings_api coach_api.test_recordings_calendar_media coach_api.test_recordings_calendar_no_db coach_api.test_recordings_categories coach_api.test_recordings_evidence_api coach_api.test_recordings_index coach_api.test_recordings_jobs coach_api.test_recordings_keywords_no_db coach_api.test_recordings_links coach_api.test_recordings_parts coach_api.test_recordings_pdf coach_api.test_recordings_quality coach_api.test_recordings_response_cache coach_api.test_recordings_saved_evidence coach_api.test_recordings_transcripts coach_api.test_recordings_transport coach_api.test_quality_reviews coach_api.test_quality_form_builder coach_api.test_quality_review_types coach_api.test_completion_reminders --settings=config.settings_coaching_recordings_test --noinput
+# PASS: 432 tests. Verified SQLite aliases; providers/network mocked.
+cd frontend
+npx vitest run src/pages/coaching-recordings src/api/coachingQualityReviews.test.ts src/api/coachingRecordings.test.ts src/api/coachingCompletion.test.ts src/pages/notifications/CompletionNotifications.test.tsx src/pages/learner/monthly-submission/AssignmentPdfPreview.test.tsx src/lib/__tests__/coachFetch.test.ts src/router/__tests__/navigation.test.tsx src/router/__tests__/lazyRoute.test.ts --maxWorkers=2 --reporter=dot
+# PASS: 297 tests in 26 files.
+npx eslint src/pages/coaching-recordings src/api/coachingRecordings.ts src/api/coachingRecordings.test.ts --max-warnings 0
+# PASS.
+cd ..
+npm --prefix frontend run type-check
+# PASS.
+npm --prefix frontend run build
+# PASS; dependency/plugin diagnostics remain visible.
+npm --prefix frontend run lint
+# FAIL: 30 errors / 139 warnings in 92 files, all unchanged from task-start HEAD.
+git diff --check
+# PASS.
+```
+
+Tests cover every ended category, including lectures, completed-empty, failed,
+no-Teams and pending entries; only future/in-progress/cancelled entries stay
+outside Ready. Local filters and lecture visibility do not add calendar, session
+or AI calls; old media responses remain valid. Diagnostic tests verify
+read-only source SQL, no retry/job mutations, invalid-scope rejection, private
+error handling and the distinction between source failure and zero reports.
+
+Teams baseline / expanded Teams checks: NOT REQUIRED. No Teams trigger file or
+changed function/contract called by one was edited. Separate live diagnosis used
+GET-only Microsoft calendar/folder reads for the reported coach/day, and read-only
+LMS/Coaching Session metadata/report checks. These are not tests of live Teams
+writes or all coaches/dates. No invitation, recording, source record or tenant
+configuration changed. The serving deployment's environment/commit was not
+accessible for verification. Browser visual inspection was blocked because the
+computer-use inventory had no browsers and the in-app browser was unavailable;
+automated component/DOM tests passed. No Pull, Merge, Push or deployment performed.
+
+Historical commands for the earlier multipart follow-up (408/265 tests; the
+432/297-test validation above supersedes these counts):
 
 ```powershell
 .\backend\.venv\Scripts\python.exe backend/manage.py test coach_api.test_recordings_api coach_api.test_recordings_calendar_media coach_api.test_recordings_calendar_no_db coach_api.test_recordings_categories coach_api.test_recordings_evidence_api coach_api.test_recordings_index coach_api.test_recordings_jobs coach_api.test_recordings_keywords_no_db coach_api.test_recordings_links coach_api.test_recordings_parts coach_api.test_recordings_pdf coach_api.test_recordings_quality coach_api.test_recordings_response_cache coach_api.test_recordings_saved_evidence coach_api.test_recordings_transcripts coach_api.test_recordings_transport coach_api.test_quality_reviews coach_api.test_quality_form_builder coach_api.test_completion_reminders --settings=config.settings_coaching_recordings_test --noinput
@@ -538,6 +630,47 @@ npm --prefix frontend run build
 git diff --check
 # PASS.
 ```
+
+## Recording duration and continuation verification (26 October 2026)
+
+A recording's provider start/end instants measure recorded time, not participant
+attendance or the calendar's planned duration. Details now show each returned
+part's provider times, the participant's first join/last leave when available,
+and the elapsed gap before the first returned recording. These optional fields
+are read from existing attendance intervals and preserve verified duration
+totals. Unknown intervals stay unknown; gaps between visits are not counted as
+attendance. The selected calendar time zone is used for display.
+
+Part selection follows the full chain of verified call/content-correlation IDs
+from a timed occurrence anchor, even if continuation parts introduce another
+identity and provider pages arrive out of order. Reusing the same join URL alone
+never associates another day's files. Deduplication and interval-union recording
+totals remain in place. A failed recheck preserves saved playable parts but marks
+the response partial and says additional parts could not be checked. This does
+not imply that every file ever created is available through the provider.
+
+Read-only metadata verification of the reported coach/day found the same seven
+events in the saved calendar and live Microsoft calendar, and one recording part
+in both saved discovery and live Microsoft recording metadata. The first recording
+timestamp was later than participant entry. No additional part was returned for
+that link at inspection time. This is a scoped result, not proof for other
+coaches/dates or that Microsoft cannot publish another file later. No video was
+downloaded for this check. Three scoped Graph GETs and read-only source/LMS SQL
+were used; no meetings, invitations, attendance, AI or source data were changed.
+
+The display and Ready-filter changes add no network requests. Recording-part
+matching uses metadata already fetched by existing bounded discovery; attendance
+bounds use already saved intervals. Existing finite calendar read cycles, scoped
+caches, lazy evidence/PDF reads and ownership checks remain unchanged. The
+30-second local clock update changes ended eligibility without fetching again.
+
+All work remains local on the existing khaled-is-here branch. No database/schema
+writes, Pull, Merge, Commit, Push, branch switch or deployment were performed.
+Automated final validation uses the commands and 432 backend / 297 frontend
+results above; type-check, scoped ESLint and build pass. A live visual browser
+check remains unavailable in this tool session. No Teams trigger file or shared
+contract consumed by one was edited; Teams baseline/expanded checks are not
+required. The GET-only diagnosis does not validate Teams write behavior.
 
 ## Finite browser calendar refresh cycle (25 October 2026)
 

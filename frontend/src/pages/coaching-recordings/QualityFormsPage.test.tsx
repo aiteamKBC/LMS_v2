@@ -2,19 +2,20 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import QualityFormsPage from './QualityFormsPage';
-import { qualityDefinition, saveQualityDefinition, QualityReviewError, type QualityTemplateState } from '@/api/coachingQualityReviews';
+import { qualityDefinition, qualityForms, saveQualityDefinition, QualityReviewError, type QualityTemplateState } from '@/api/coachingQualityReviews';
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
-vi.mock('@/api/coachingQualityReviews', async () => ({ ...await vi.importActual<typeof import('@/api/coachingQualityReviews')>('@/api/coachingQualityReviews'), qualityDefinition: vi.fn(), saveQualityDefinition: vi.fn() }));
+vi.mock('@/api/coachingQualityReviews', async () => ({ ...await vi.importActual<typeof import('@/api/coachingQualityReviews')>('@/api/coachingQualityReviews'), qualityDefinition: vi.fn(), qualityForms: vi.fn(), saveQualityDefinition: vi.fn() }));
 const state = (): QualityTemplateState => {
   const definition = { id: 'portfolio-sampling-v1', version: 1, title: 'Portfolio Sampling Feedback Form', ratings: { gold: 'High quality', green: 'Effective', amber: 'Weak', red: 'Absent', na: 'Not applicable' }, sections: [{ id: 'progress', title: 'Progress reviews', screenshots: true, criteria: [{ id: 'progress-1', text: 'Original question', type: 'rating' as const, required: true }] }] };
   return { id: definition.id, revision: 0, draft: structuredClone(definition), published: definition, publishedAt: null, updatedAt: null };
 };
 describe('Curriculum quality form authoring', () => {
   beforeEach(() => {
+    vi.mocked(qualityForms).mockReset().mockResolvedValue({ forms: ['MCM','PR'].map(reviewType => ({ reviewType, title: reviewType, group: 'Previous forms', published: true, revision: 0, legacy: true })) });
     vi.mocked(qualityDefinition).mockReset().mockResolvedValue({ template: state(), fieldTypes: ['rating', 'text', 'checklist', 'image'] });
     vi.mocked(saveQualityDefinition).mockReset().mockImplementation(async value => ({ ...state(), revision: 1, draft: value.definition, published: value.publish ? { ...value.definition, version: 2 } : state().published }));
   });
-  const open = () => render(<MemoryRouter><QualityFormsPage /></MemoryRouter>);
+  const open = () => render(<MemoryRouter initialEntries={['/?type=MCM']}><QualityFormsPage /></MemoryRouter>);
   it('starts from the default questions, supports all types and sends no typing requests', async () => {
     open(); const question = await screen.findByRole('textbox', { name: 'Question text' });
     expect(question).toHaveValue('Original question');
@@ -37,6 +38,7 @@ describe('Curriculum quality form authoring', () => {
       render(<MemoryRouter initialEntries={['/?type=PR']}><QualityFormsPage /></MemoryRouter>);
       const question = await screen.findByRole('textbox', { name: 'Question text' }); expect(question).toHaveValue('PR criterion');
       fireEvent.change(question, { target: { value: 'Edited PR criterion' } });
+      fireEvent.click(screen.getByText('Choose a form', { exact: true }));
       fireEvent.click(screen.getByRole('radio', { name: 'MCM' })); expect(qualityDefinition).toHaveBeenCalledOnce();
       expect(question).toHaveValue('Edited PR criterion'); confirm.mockReturnValue(true);
       fireEvent.click(screen.getByRole('radio', { name: 'MCM' }));
