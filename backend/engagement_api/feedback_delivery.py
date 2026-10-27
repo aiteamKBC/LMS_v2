@@ -49,20 +49,26 @@ def _required(value, label):
     return cleaned
 
 
-def _form_for_occurrence(occurrence_key, module_id):
+def lecture_after_form_creation(form, starts_at):
+    """A form cannot be assigned to a lecture that started before it existed."""
+    return starts_at is not None and form.created_at is not None and starts_at >= form.created_at
+
+
+def _form_for_occurrence(occurrence_key, module_id, starts_at):
     """Pin an existing lecture to its original version, otherwise choose one current template."""
     existing = FeedbackDelivery.objects.select_related('form').filter(
         occurrence_key=occurrence_key,
     ).first()
     if existing:
-        return existing.form
+        return existing.form if lecture_after_form_creation(existing.form, starts_at) else None
     available = FeedbackForm.objects.filter(
         form_type='post_lecture', status='published', is_current=True,
     )
-    return (
+    form = (
         available.filter(delivery_scope='module', module_catalogue_id=module_id).order_by('-version', '-id').first()
         or available.filter(delivery_scope='all_modules').order_by('-version', '-id').first()
     )
+    return form if form and lecture_after_form_creation(form, starts_at) else None
 
 
 def _pin_delivery_questions(delivery, form):
@@ -136,6 +142,8 @@ def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=Fa
     cannot expose feedback early. Missing learner IDs are reported to the
     caller and never create orphan recipients. A corrected finalized register
     revokes removed recipients but keeps their historical responses intact.
+    Only lectures starting at or after the matched form version was created
+    qualify; a missing lecture start cannot establish eligibility.
     """
     if not attendance_finalized:
         raise ValueError('Attendance must be finalized before feedback is delivered.')
@@ -152,7 +160,7 @@ def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=Fa
         for item in EnrolmentUser.all_learners.filter(id__in=attendee_ids)
     }
     missing = [learner_id for learner_id in attendee_ids if learner_id not in learners]
-    form = _form_for_occurrence(occurrence_key, module_id)
+    form = _form_for_occurrence(occurrence_key, module_id, occurrence.starts_at)
     forms = [form] if form else []
     available_at = occurrence.ends_at or occurrence.starts_at or timezone.now()
     deliveries = []

@@ -5,6 +5,7 @@ from math import isfinite
 
 IMPORTANCE_WEIGHTS = {'critical': 4, 'high': 3, 'medium': 2, 'low': 1}
 OPTION_TYPES = {'yes_no', 'single_choice', 'dropdown', 'likert', 'multiple_choice'}
+SCORABLE_TYPES = {'rating', 'number', *OPTION_TYPES}
 POSITIVE_SCORE_MIN = 75
 NEUTRAL_SCORE_MIN = 50
 
@@ -22,11 +23,11 @@ def analytics_settings(kind, config):
     return settings
 
 
-def validate_analytics_settings(kind, config):
+def validate_analytics_settings(kind, config, *, require_complete=False):
     """Validate only the additive settings; old question configuration stays intact."""
-    if 'analytics' not in config:
+    if 'analytics' not in config and not require_complete:
         return
-    raw = config['analytics']
+    raw = config.get('analytics', {})
     if not isinstance(raw, dict):
         raise ValueError('Analytics settings must be an object.')
     settings = analytics_settings(kind, config)
@@ -41,20 +42,32 @@ def validate_analytics_settings(kind, config):
         allowed.add('options')
     if not isinstance(settings['scoring'], str) or settings['scoring'] not in allowed:
         raise ValueError('This scoring method is not supported for this question type.')
+    if require_complete and kind in SCORABLE_TYPES and settings['scoring'] == 'none':
+        raise ValueError('Scoring is required for this question before publishing.')
     scores = settings['optionScores']
     if not isinstance(scores, dict):
         raise ValueError('Answer scores must be an object.')
     options = ['yes', 'no'] if kind == 'yes_no' else config.get('options', [])
+    if not isinstance(options, list):
+        raise ValueError('Answer options must be a list.')
     if any(key not in options or type(value) not in (int, float)
            or not isfinite(value) or not 0 <= value <= 100 for key, value in scores.items()):
         raise ValueError('Each answer score must match an option and be between 0 and 100.')
-    if settings['scoring'] == 'options':
-        if len(set(options)) != len(options) or set(scores) != set(options):
+    if require_complete and settings['scoring'] == 'options':
+        if (len(options) < 2 or any(not isinstance(option, str) or not option.strip() for option in options)
+                or len(set(options)) != len(options) or set(scores) != set(options)):
             raise ValueError('Give every distinct answer option a score from 0 to 100.')
     if kind == 'number' and settings['scoring'] in {'higher', 'lower'}:
         minimum, maximum = settings['scoreMin'], settings['scoreMax']
-        if any(type(value) not in (int, float) or not isfinite(value) for value in (minimum, maximum)) or maximum <= minimum:
+        if any(value is not None and (type(value) not in (int, float) or not isfinite(value)) for value in (minimum, maximum)):
+            raise ValueError('Number scoring requires finite minimum and maximum values.')
+        if ((require_complete and (minimum is None or maximum is None))
+                or (minimum is not None and maximum is not None and maximum <= minimum)):
             raise ValueError('Number scoring requires finite minimum and maximum values, with maximum greater than minimum.')
+    if require_complete and kind == 'rating':
+        minimum, maximum = config.get('min', 1), config.get('max', 5)
+        if any(type(value) not in (int, float) or not isfinite(value) for value in (minimum, maximum)) or maximum <= minimum:
+            raise ValueError('Rating scoring requires a valid increasing scale.')
 
 
 def has_answer(value):

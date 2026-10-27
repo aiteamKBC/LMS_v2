@@ -13,7 +13,7 @@ export function scoringReadiness(question: FeedbackQuestion): { state: 'ready' |
   const settings = questionAnalyticsSettings(question);
   const incomplete = (message: string) => ({ state: 'incomplete' as const, label: 'Needs setup', message });
   if (!isScorableQuestion(question)) return { state: 'not_scored', label: 'Not scored', message: 'Written and informational answers are reviewed by a person. They do not lower the score.' };
-  if (settings.scoring === 'none') return { state: 'not_scored', label: 'Not scored', message: 'Choose a scoring method to use this question in score-based reports, or keep it unscored.' };
+  if (settings.scoring === 'none') return incomplete('Scoring is required before publishing. Set answer scores or choose a scoring direction.');
   if (!IMPORTANCE_OPTIONS.some(option => option.value === settings.importance)) return incomplete('Choose a valid question importance.');
   if (['rating', 'number'].includes(question.type)) {
     if (!['higher', 'lower'].includes(settings.scoring)) return incomplete('Choose Higher is better or Lower is better.');

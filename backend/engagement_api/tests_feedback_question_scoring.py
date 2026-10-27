@@ -17,6 +17,7 @@ from .feedback_scoring import (
 )
 from .feedback_classification import response_classifications
 from .feedback_insights import answer_in_period, report_insights, submission_period
+from .tests import _account, _patched
 
 
 def question(identifier=1, kind='rating', config=None, version=1, form_id=4):
@@ -126,7 +127,7 @@ class QuestionScoreTests(SimpleTestCase):
         ]
         for kind, config in cases:
             with self.subTest(kind=kind, config=config), self.assertRaises(ValueError):
-                validate_analytics_settings(kind, config)
+                validate_analytics_settings(kind, config, require_complete=True)
 
     def test_form_validation_round_trips_new_settings_without_changing_bank_quota(self):
         raw = [{'title': 'Teaching', 'questionsPerDelivery': 1, 'questions': [
@@ -136,6 +137,87 @@ class QuestionScoreTests(SimpleTestCase):
         cleaned = feedback._validated_sections(raw, form_type='post_lecture')
         self.assertEqual(cleaned[0]['questionsPerDelivery'], 1)
         self.assertEqual(cleaned[0]['questions'][0]['config']['analytics'], raw[0]['questions'][0]['config']['analytics'])
+
+
+class RequiredScoringTests(SimpleTestCase):
+    def test_drafts_accept_missing_scores_but_every_scorable_type_requires_them_to_publish(self):
+        for kind in ('yes_no', 'single_choice', 'multiple_choice', 'dropdown', 'likert', 'number'):
+            config = {'options': ['A', 'B']}
+            with self.subTest(kind=kind):
+                validate_analytics_settings(kind, config)
+                with self.assertRaisesMessage(ValueError, 'Scoring is required'):
+                    validate_analytics_settings(kind, config, require_complete=True)
+        for kind in ('short_text', 'long_text', 'date', 'name', 'email', 'photo_upload', 'rating'):
+            validate_analytics_settings(kind, {}, require_complete=True)
+
+    def test_partial_option_scores_save_as_draft_and_zero_is_complete(self):
+        config = {'options': ['A', 'B'], 'analytics': {'scoring': 'options', 'optionScores': {'A': 75}, 'includeInOverall': False}}
+        original = deepcopy(config)
+        validate_analytics_settings('multiple_choice', config)
+        self.assertEqual(config, original)
+        with self.assertRaisesMessage(ValueError, 'every distinct answer'):
+            validate_analytics_settings('multiple_choice', config, require_complete=True)
+        config['analytics']['optionScores']['B'] = 0
+        validate_analytics_settings('multiple_choice', config, require_complete=True)
+
+    def test_partial_numeric_range_is_draft_only_and_invalid_numbers_still_fail(self):
+        config = {'analytics': {'scoring': 'higher', 'scoreMin': 0}}
+        validate_analytics_settings('number', config)
+        with self.assertRaisesMessage(ValueError, 'maximum'):
+            validate_analytics_settings('number', config, require_complete=True)
+        config['analytics']['scoreMax'] = 10
+        validate_analytics_settings('number', config, require_complete=True)
+        config['analytics']['scoreMin'] = float('nan')
+        with self.assertRaises(ValueError):
+            validate_analytics_settings('number', config)
+
+    def test_published_structure_is_not_deleted_when_scoring_is_incomplete(self):
+        form = Row(status='published', form_type='general', sections=mock.Mock())
+        sections = [{'title': 'Survey', 'questions': [{'type': 'single_choice', 'text': 'Support?', 'config': {'options': ['A', 'B']}}]}]
+        self.assertEqual(feedback._validated_sections(sections)[0]['questions'][0]['config'], {'options': ['A', 'B']})
+        with self.assertRaisesMessage(ValueError, 'Scoring is required'):
+            feedback._replace_structure(form, sections)
+        form.sections.all.assert_not_called()
+
+    def test_publish_endpoint_rejects_incomplete_scores_without_changing_status_or_dates(self):
+        form = Row(id=4, form_type='general', status='draft', is_current=True,
+                   sections=mock.Mock(), save=mock.Mock(), published_at=None)
+        form.sections.exists.return_value = True
+        questions = mock.MagicMock()
+        questions.exists.return_value = True
+        questions.__iter__.return_value = iter([question(kind='yes_no')])
+        with (
+            _patched(_account(role='staff', subject_type='staff')),
+            mock.patch.object(feedback, '_forms_queryset') as forms,
+            mock.patch.object(feedback.FeedbackQuestion.objects, 'filter', return_value=questions),
+        ):
+            forms.return_value.get.return_value = form
+            response = feedback.form_status(RequestFactory().post('/', json.dumps({'status': 'published'}), content_type='application/json'), 4)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b'Scoring is required', response.content)
+        self.assertEqual(form.status, 'draft')
+        self.assertIsNone(form.published_at)
+        form.save.assert_not_called()
+
+    def test_publish_endpoint_accepts_complete_scores_and_keeps_overall_exclusion(self):
+        form = Row(id=4, form_type='general', status='draft', is_current=True, sections=mock.Mock(), save=mock.Mock(), published_at=None)
+        form.sections.exists.return_value = True
+        item = question(kind='yes_no', config={'analytics': {'scoring': 'options', 'optionScores': {'yes': 75, 'no': 0}, 'includeInOverall': False}})
+        questions = mock.MagicMock()
+        questions.exists.return_value = True
+        questions.__iter__.return_value = iter([item])
+        with (
+            _patched(_account(role='staff', subject_type='staff')),
+            mock.patch.object(feedback, '_forms_queryset') as forms,
+            mock.patch.object(feedback.FeedbackQuestion.objects, 'filter', return_value=questions),
+            mock.patch.object(feedback.transaction, 'atomic'),
+            mock.patch.object(feedback, 'form_dict', return_value={'id': 4, 'status': 'published'}),
+        ):
+            forms.return_value.get.return_value = form
+            response = feedback.form_status(RequestFactory().post('/', json.dumps({'status': 'published'}), content_type='application/json'), 4)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(form.status, 'published')
+        self.assertFalse(item.config['analytics']['includeInOverall'])
 
 
 class QuestionMetricTests(SimpleTestCase):
@@ -438,7 +520,7 @@ class RuleBasedClassificationTests(SimpleTestCase):
             self.assertIsNone(answer_score('number', config, value))
         for lower, upper in [(None, 10), (0, None), (10, 10), (11, 10), (False, 10), (0, float('inf'))]:
             with self.subTest(lower=lower, upper=upper), self.assertRaises(ValueError):
-                validate_analytics_settings('number', {'analytics': {'scoring': 'higher', 'scoreMin': lower, 'scoreMax': upper}})
+                validate_analytics_settings('number', {'analytics': {'scoring': 'higher', 'scoreMin': lower, 'scoreMax': upper}}, require_complete=True)
 
     def test_exact_classification_boundaries_and_unscored_values(self):
         for score, expected in [(0, 'negative'), (49.999, 'negative'), (50, 'neutral'), (74.999, 'neutral'), (75, 'positive'), (100, 'positive'), (None, 'unscored'), (True, 'unscored')]:
