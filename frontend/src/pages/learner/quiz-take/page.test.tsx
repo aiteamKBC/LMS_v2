@@ -383,6 +383,9 @@ describe('quiz requirements loading', () => {
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Reading time (minutes)' }), { target: { value: '2.5' } });
     expect(screen.getByText('07:30')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(mocks.completeReading).not.toHaveBeenCalled();
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('2 minutes and 30 seconds');
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm time' }));
     expect(await screen.findByText(/05:00 added to actual time/)).toBeVisible();
     expect(mocks.completeReading).toHaveBeenCalledWith(1, 'commercial', '501', 2, 'test', 150, 'manual');
   });

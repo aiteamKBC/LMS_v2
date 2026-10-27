@@ -20,6 +20,27 @@ beforeEach(() => {
   vi.mocked(saveLearningReflectionSubmission).mockResolvedValue({ id: 'record', status: 'submitted_for_tutor_review' });
   vi.mocked(checkMonthlyAssignment).mockResolvedValue(['title', 'answer', 'learning', 'evidence', 'ksbs', 'planned', 'declarations', 'hours'].map(key => ({ key, label: key, passed: true })));
 });
+
+it('returns to extra-activity hours without submitting or clearing the draft', async () => {
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({ activityTitle: 'Synthetic workshop', status: 'draft',
+    monthlyAssignment: { ...emptyMonthlyAssignment([], '2026-10'), timeEntries: [{ topic: 'Research', hours: '4.9', date: '2026-10-14' }] },
+  } as StoredLearningReflectionSubmission);
+  vi.mocked(saveLearningReflectionSubmission).mockResolvedValue({ id: 'record', status: 'draft' });
+  render(<MemoryRouter><ExtraActivityForm kind="commercial" learnerId="101" savedId="extra:00000000-0000-4000-8000-000000000001" /></MemoryRouter>);
+  await screen.findByDisplayValue('Synthetic workshop');
+  fireEvent.click(screen.getByRole('button', { name: '4. Quality checks' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Submit extra activity' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Submit extra activity' }));
+  expect(await screen.findByRole('alertdialog')).toHaveTextContent('4 hours and 54 minutes');
+  expect(saveLearningReflectionSubmission).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Edit time' }));
+  expect(await screen.findByLabelText('Hours 1')).toHaveValue(4.9);
+  expect(screen.getByLabelText('Topic 1')).toHaveValue('Research');
+  fireEvent.click(screen.getByRole('button', { name: '1. Activity answer' }));
+  expect(screen.getByLabelText('Activity title')).toHaveValue('Synthetic workshop');
+  expect(saveLearningReflectionSubmission).not.toHaveBeenCalled();
+});
 it('autosaves edits after a pause and saves newer edits made during an in-flight save', async () => {
   vi.useFakeTimers();
   let finishSave!: (value: { id: string; status: string }) => void;
@@ -70,6 +91,8 @@ it.each(['commercial', 'apprenticeship'] as const)('submits four-step extra acti
   fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Submit extra activity' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Submit extra activity' }));
+  expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.some(([value]) => value.submissionMode === 'submit')).toBe(false);
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
   await screen.findByText(/Extra activity submitted/);
   expect(saveLearningReflectionSubmission).toHaveBeenCalledWith(expect.objectContaining({ learnerKind: kind, learnerId: '101', activityType: 'extra_activity', activityTitle: 'Industry workshop', submissionMode: 'submit', activityId: expect.stringMatching(/^extra:/) }));
   expect(screen.getByRole('button', { name: 'Save draft' })).toBeDisabled();
@@ -108,6 +131,8 @@ it.each(['2026-09', '2026-11'])('saves and submits an activity in the selected m
   fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Submit extra activity' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Submit extra activity' }));
+  expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.some(([value]) => value.submissionMode === 'submit')).toBe(false);
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
   await screen.findByText(new RegExp(`Extra activity submitted for ${month}`));
   expect(saveLearningReflectionSubmission).toHaveBeenLastCalledWith(expect.objectContaining({
     submissionMode: 'submit', monthlyAssignment: expect.objectContaining({ month }),

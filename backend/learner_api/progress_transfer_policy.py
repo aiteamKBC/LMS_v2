@@ -74,6 +74,8 @@ def public_item(item):
         result['demoProgress'] = True
     if 'componentMatches' in item:
         result['componentMatches'] = item['componentMatches']
+    if 'componentCounts' in item:
+        result['componentCounts'] = item['componentCounts']
     return result
 
 
