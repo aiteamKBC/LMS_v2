@@ -126,12 +126,12 @@ describe('post-lecture feedback delivery scope', () => {
     await user.type(screen.getByRole('textbox', { name: 'Form Name' }), 'Mixed question bank');
     await user.type(screen.getByRole('textbox', { name: 'Description' }), 'Keep this description.');
     const bytes = new TextEncoder().encode([
-      'Category,Question,Answer type,Option 1,Option 2,Required',
-      'Teaching,Was the explanation clear?,5 Stars,,,yes',
-      'Teaching,Were objectives clear?,Yes / No,,,no',
-      'Resources,Which resource helped?,Choose one,Slides,Workbook,yes',
-      'General,Any comments?,Written answer,,,no',
-    ].join('\r\n'));
+      ['Category', 'Question', 'Answer type', 'Option 1', 'Option 2', 'Required', 'Yes score', 'No score', 'Option 1 score', 'Option 2 score', 'Include in overall score'],
+      ['Teaching', 'Was the explanation clear?', '5 Stars', '', '', 'yes'],
+      ['Teaching', 'Were objectives clear?', 'Yes / No', '', '', 'no', 75, 0, '', '', 'No'],
+      ['Resources', 'Which resource helped?', 'Choose one', 'Slides', 'Workbook', 'yes', '', '', 100, 0, 'Yes'],
+      ['General', 'Any comments?', 'Written answer', '', '', 'no'],
+    ].map(row => row.join(',')).join('\r\n'));
     const file = new File([bytes], 'mixed.csv', { type: 'text/csv' });
     Object.defineProperty(file, 'arrayBuffer', { value: async () => bytes.buffer });
     await user.upload(screen.getByLabelText('Question bank file'), file);
@@ -146,8 +146,8 @@ describe('post-lecture feedback delivery scope', () => {
       title: 'Mixed question bank', description: 'Keep this description.',
       formType: 'post_lecture', deliveryScope: 'all_modules',
       sections: [
-        { title: 'Teaching', questionsPerDelivery: 2, questions: [{ type: 'rating' }, { type: 'yes_no', required: false }] },
-        { title: 'Resources', questionsPerDelivery: 1, questions: [{ type: 'single_choice', config: { options: ['Slides', 'Workbook'] } }] },
+        { title: 'Teaching', questionsPerDelivery: 2, questions: [{ type: 'rating' }, { type: 'yes_no', required: false, config: { analytics: { scoring: 'options', optionScores: { yes: 75, no: 0 }, includeInOverall: false } } }] },
+        { title: 'Resources', questionsPerDelivery: 1, questions: [{ type: 'single_choice', config: { options: ['Slides', 'Workbook'], analytics: { optionScores: { Slides: 100, Workbook: 0 }, includeInOverall: true } } }] },
         { title: 'General comments', questionsPerDelivery: null },
       ],
     });
@@ -263,7 +263,7 @@ describe('post-lecture feedback delivery scope', () => {
       await user.clear(option);
       await user.type(option, answer);
     }
-    expect(screen.getByRole('status')).toHaveTextContent('Learners will answer 3 questions per lecture');
+    expect(screen.getByText('Learners will answer 3 questions per lecture.')).toHaveAttribute('role', 'status');
     expect(createForm).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Preview' }));
     expect(screen.getByText('1/1')).toBeVisible();

@@ -36,11 +36,12 @@ describe('staff score preview matches the backend scoring contract', () => {
     expect(previewClass(49.999)).toBe('negative');
     expect(previewClass(null)).toBe('unscored');
   });
-  it('explains incomplete explicit settings while allowing intentionally unscored questions', () => {
+  it('requires scoring for eligible questions and leaves qualitative answers unscored', () => {
     const item = question('single_choice', { options: ['A', 'B'], analytics: { scoring: 'options', optionScores: { A: 100 } } });
     expect(scoringReadiness(item)).toMatchObject({ state: 'incomplete', message: expect.stringContaining('Blank is not zero') });
     expect(previewQuestionScore(item, 'A')).toBeNull();
-    expect(scoringReadiness({ ...item, config: { ...item.config, analytics: { scoring: 'none' } } }).state).toBe('not_scored');
+    expect(scoringReadiness({ ...item, config: { ...item.config, analytics: { scoring: 'none' } } }).state).toBe('incomplete');
+    expect(scoringReadiness(question('long_text')).state).toBe('not_scored');
     expect(scoringReadiness(question('number', { analytics: { scoring: 'higher', scoreMin: 10, scoreMax: 10 } })).state).toBe('incomplete');
     expect(scoringReadiness(question('rating', { min: 5, max: 1 })).state).toBe('incomplete');
   });

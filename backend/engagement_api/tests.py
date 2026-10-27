@@ -282,16 +282,18 @@ class FeedbackValidationTests(SimpleTestCase):
         self.assertEqual(form.module_catalogue_id, '')
 
     def test_existing_delivery_keeps_the_template_version_used_by_that_lecture(self):
-        historical = SimpleNamespace(id=4, version=1)
+        created_at = datetime(2026, 9, 1, tzinfo=timezone.utc)
+        historical = SimpleNamespace(id=4, version=1, created_at=created_at)
         existing = SimpleNamespace(form=historical)
         with mock.patch.object(feedback_delivery.FeedbackDelivery.objects, 'select_related') as selected:
             selected.return_value.filter.return_value.first.return_value = existing
-            chosen = feedback_delivery._form_for_occurrence('OCC-1', 'MOD-1')
+            chosen = feedback_delivery._form_for_occurrence('OCC-1', 'MOD-1', created_at)
         self.assertIs(chosen, historical)
 
     def test_module_template_overrides_all_modules_template(self):
-        module_form = SimpleNamespace(id=8)
-        global_form = SimpleNamespace(id=7)
+        created_at = datetime(2026, 9, 1, tzinfo=timezone.utc)
+        module_form = SimpleNamespace(id=8, created_at=created_at)
+        global_form = SimpleNamespace(id=7, created_at=created_at)
         module_query = mock.MagicMock()
         module_query.order_by.return_value.first.return_value = module_form
         global_query = mock.MagicMock()
@@ -303,12 +305,13 @@ class FeedbackValidationTests(SimpleTestCase):
             mock.patch.object(feedback_delivery.FeedbackForm.objects, 'filter', return_value=available),
         ):
             selected.return_value.filter.return_value.first.return_value = None
-            chosen = feedback_delivery._form_for_occurrence('OCC-2', 'MOD-1')
+            chosen = feedback_delivery._form_for_occurrence('OCC-2', 'MOD-1', created_at)
         self.assertIs(chosen, module_form)
         self.assertEqual(available.filter.call_count, 1)
 
     def test_all_modules_template_is_used_when_module_has_no_override(self):
-        global_form = SimpleNamespace(id=7)
+        created_at = datetime(2026, 9, 1, tzinfo=timezone.utc)
+        global_form = SimpleNamespace(id=7, created_at=created_at)
         module_query = mock.MagicMock()
         module_query.order_by.return_value.first.return_value = None
         global_query = mock.MagicMock()
@@ -320,7 +323,7 @@ class FeedbackValidationTests(SimpleTestCase):
             mock.patch.object(feedback_delivery.FeedbackForm.objects, 'filter', return_value=available),
         ):
             selected.return_value.filter.return_value.first.return_value = None
-            chosen = feedback_delivery._form_for_occurrence('OCC-3', 'MOD-2')
+            chosen = feedback_delivery._form_for_occurrence('OCC-3', 'MOD-2', created_at)
         self.assertIs(chosen, global_form)
         self.assertEqual(available.filter.call_count, 2)
 
@@ -535,7 +538,7 @@ class FeedbackValidationTests(SimpleTestCase):
     def test_staff_view_as_sees_attendance_recipient_delivery(self):
         form = SimpleNamespace(
             id=19, title='Lecture feedback', description='Tell us about the lecture', form_type='post_lecture',
-            due_date=None,
+            due_date=None, created_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
         )
         delivery = SimpleNamespace(
             id=21, form=form, session_title='Martech - Thur - Session 1',

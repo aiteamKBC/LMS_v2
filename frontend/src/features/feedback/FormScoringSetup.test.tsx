@@ -19,7 +19,8 @@ describe('staff form scoring setup', () => {
     render(<FormScoringSetup sections={[{ ...sections[0], questions: [star, incomplete, { ...star, type: 'long_text', text: 'Any comments?', config: {} }] }]} bank={false} locked={false} onSelect={select} />);
     expect(screen.queryByRole('region', { name: 'Staff scoring simulation' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Review question scoring' }));
-    expect(screen.getByRole('status')).toHaveTextContent('Finish the scoring settings for 1 question');
+    expect(screen.getByRole('status')).toHaveTextContent('Finish scoring for 1 question before publishing');
+    expect(screen.getByRole('status')).toHaveTextContent('You can save an incomplete draft');
     await user.selectOptions(screen.getByRole('combobox', { name: 'Filter scoring readiness' }), 'incomplete');
     expect(screen.getByText('Was support available?')).toBeVisible();
     expect(screen.queryByText('Was the explanation clear?')).not.toBeInTheDocument();
