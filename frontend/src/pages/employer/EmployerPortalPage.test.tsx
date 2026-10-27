@@ -9,16 +9,18 @@ import EmployerPortalPage from './EmployerPortalPage';
 import { londonToday } from './employerDashboardData';
 
 const api = vi.hoisted(() => ({
-  portal: vi.fn(), metrics: vi.fn(), reviews: vi.fn(), attendance: vi.fn(),
+  portal: vi.fn(), metrics: vi.fn(), reviews: vi.fn(), reviewSummary: vi.fn(), attendance: vi.fn(),
 }));
+const session = vi.hoisted(() => ({ role: 'employer' }));
 vi.mock('@/api/employerPortal', () => ({
   fetchEmployerPortal: (...args: unknown[]) => api.portal(...args),
   fetchEmployerDashboardMetrics: (...args: unknown[]) => api.metrics(...args),
   fetchEmployerProgressReviews: (...args: unknown[]) => api.reviews(...args),
+  fetchEmployerProgressReviewSummary: (...args: unknown[]) => api.reviewSummary(...args),
   fetchEmployerLearnerAttendance: (...args: unknown[]) => api.attendance(...args),
 }));
 vi.mock('@/hooks/useAuth', () => ({
-  useAuth: () => ({ auth: { account: { role: 'employer', displayName: 'Test Employer' } } }),
+  useAuth: () => ({ auth: { account: { role: session.role, displayName: 'Test Employer' } } }),
 }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -28,9 +30,11 @@ function CurrentPath() {
   const location = useLocation();
   return <output data-testid="path">{location.pathname}{location.search}</output>;
 }
-function showPage(path = '/employers/8') {
-  return render(<MemoryRouter initialEntries={[path]}><Routes>
+function showPage(path = '/employers/8', state?: unknown) {
+  const entry = new URL(path, 'http://localhost');
+  return render(<MemoryRouter initialEntries={[{ pathname: entry.pathname, search: entry.search, state }]}><Routes>
     <Route path="/employers/:employerId/*" element={<><EmployerPortalPage /><CurrentPath /></>} />
+    <Route path="*" element={<CurrentPath />} />
   </Routes></MemoryRouter>);
 }
 let portal: EmployerPortal;
@@ -44,6 +48,7 @@ const makeReview = (id: string, overrides: Partial<LearnerCalendarEvent> = {}): 
 const table = () => within(screen.getByRole('region', { name: 'Employer learners' }));
 beforeEach(() => {
   vi.clearAllMocks();
+  session.role = 'employer';
   portal = {
     employer: { id: '8', name: 'Test employer', email: 'employer@example.test', employerGroupNames: ['Test org'] },
     outstandingTotal: 2,
@@ -66,10 +71,46 @@ beforeEach(() => {
     makeReview('gateway-' + id, { importedReviewType: 'Gateway Review', title: 'Gateway Review' }),
     makeReview('support-' + id, { importedReviewType: 'Personal Support Plan', title: 'Personal Support Plan' }),
   ], definitions: {} }));
+  api.reviewSummary.mockImplementation(async (...args: unknown[]) => {
+    const implementation = api.reviews.getMockImplementation();
+    return implementation ? implementation(...args) : { events: [] };
+  });
 });
 afterEach(cleanup);
 
 describe('employer home dashboard', () => {
+  it('shows the monthly review count without waiting for full review details', async () => {
+    api.reviews.mockImplementation(() => new Promise(() => undefined));
+    api.reviewSummary.mockResolvedValue({ events: [makeReview('due-this-month')] });
+
+    showPage();
+
+    expect(await screen.findByRole('button', { name: /Reviews due this month: 2/ })).toBeInTheDocument();
+    expect(screen.getAllByText('Loading progress reviews…')).toHaveLength(2);
+  });
+
+  it.each([
+    { source: '/users?type=employer&page=2', label: 'Back to users' },
+    { source: '/workspace/admin/employers?search=kent', label: 'Back to employers' },
+  ])('returns staff to its source page and preserves its filters ($source)', async ({ source, label }) => {
+    session.role = 'admin';
+    showPage('/employers/8', { employerReturnTo: source });
+    await screen.findByRole('link', { name: label });
+
+    fireEvent.click(screen.getByRole('link', { name: label }));
+
+    expect(screen.getByTestId('path')).toHaveTextContent(source);
+  });
+
+  it('uses the users directory as a safe fallback for a direct Employer link', async () => {
+    session.role = 'admin';
+    showPage('/employers/8', { employerReturnTo: 'https://example.com' });
+
+    fireEvent.click(await screen.findByRole('link', { name: 'Back to users' }));
+
+    expect(screen.getByTestId('path')).toHaveTextContent('/users');
+  });
+
   it.each(['/employers/8', '/employers/8/reviews'])('uses APTEM marker-only current steps independently per learner on %s', async path => {
     const dates = ['2026-10-26', '2027-03-30', '2027-06-29', '2027-09-29'];
     api.reviews.mockImplementation(async (_employer, _kind, id) => ({ events: dates.map((date, index) =>
@@ -175,11 +216,12 @@ describe('employer home dashboard', () => {
   });
 
   it.each([
+    { actual: 5, planned: 370, percent: 1.35, text: '1.35%', bar: '1.35' },
     { actual: 0, planned: 100, percent: 0, text: '0%', bar: '0' },
     { actual: 125, planned: 100, percent: 125, text: '125%', bar: '100' },
     { actual: 12.5, planned: null, percent: null, text: 'Not available', bar: null },
     { actual: 0, planned: 0, percent: null, text: 'Not available', bar: null },
-  ])('distinguishes zero, missing plans and OTJ above target ($actual / $planned)', async ({ actual, planned, percent, text, bar }) => {
+  ])('matches learner My Progress display for OTJ ($actual / $planned)', async ({ actual, planned, percent, text, bar }) => {
     metrics.learners['11'].otjh = { actual, planned, percent };
     showPage('/employers/8/learners');
     await screen.findByRole('progressbar', { name: 'Alex Learner attendance' });
@@ -212,18 +254,36 @@ describe('employer home dashboard', () => {
     expect(table().queryByRole('progressbar')).not.toBeInTheDocument();
   });
 
-  it('shows saved hours and status while programme and one attendance register are still loading', async () => {
-    api.metrics.mockImplementation((_employer, _signal, section) => section === 'summary'
-      ? Promise.resolve(structuredClone(metrics)) : new Promise(() => undefined));
-    api.attendance.mockImplementation((_employer, _kind, id) => id === '11'
-      ? new Promise(() => undefined) : Promise.resolve({ attendance: metrics.learners[id].attendance }));
+  it('loads risk status separately from OTJ/programme while attendance loads independently', async () => {
     showPage();
     expect(await screen.findByRole('progressbar', { name: 'Alex Learner OTJ progress' })).toHaveAttribute('aria-valuenow', '45');
     expect(screen.getByRole('progressbar', { name: 'Morgan Learner attendance' })).toHaveAttribute('aria-valuenow', '67');
-    const row = within(table().getByRole('link', { name: 'View Alex Learner' }).closest('tr')!);
-    expect(row.getAllByRole('cell')[4]).toHaveTextContent('Loading…');
-    expect(within(screen.getByRole('region', { name: 'Learner summary' })).getByText('Saved learner OTJ status')).toBeVisible();
+    expect(within(screen.getByRole('region', { name: 'Progress by programme' })).getByText('Data Analysis')).toBeVisible();
+    expect(api.metrics).toHaveBeenCalledTimes(3);
+    expect(api.metrics).toHaveBeenCalledWith('8', expect.any(AbortSignal), 'status');
+    expect(api.metrics).toHaveBeenCalledWith('8', expect.any(AbortSignal), 'summary');
+    expect(api.metrics).toHaveBeenCalledWith('8', expect.any(AbortSignal), 'programme');
+    expect(api.attendance).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows table OTJ progress while the separate module progress calculation is still pending', async () => {
+    api.metrics.mockImplementation((_employer, _signal, section) => section === 'programme'
+      ? new Promise(() => undefined) : Promise.resolve(structuredClone(metrics)));
+
+    showPage();
+
+    expect(await screen.findByRole('progressbar', { name: 'Alex Learner OTJ progress' })).toHaveAttribute('aria-valuenow', '45');
     expect(within(screen.getByRole('region', { name: 'Progress by programme' })).getAllByText('Loading…')).toHaveLength(2);
+  });
+
+  it('shows Needs attention as soon as the saved status returns, without waiting for progress', async () => {
+    metrics.learners['11'].risk = 'at-risk';
+    api.metrics.mockImplementation((_employer, _signal, section) => section === 'status'
+      ? Promise.resolve(structuredClone(metrics)) : new Promise(() => undefined));
+    showPage();
+    expect(await screen.findByText('Saved learner OTJ status')).toBeVisible();
+    expect(screen.getByRole('button', { name: /Needs attention: 1\. Saved learner OTJ status/ })).toBeVisible();
+    expect(screen.getAllByText('Loading…').length).toBeGreaterThan(0);
   });
 
   it('isolates attendance failures and retries without hiding saved progress or the other learner', async () => {

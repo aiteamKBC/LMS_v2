@@ -7,8 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { fetchEmployerLearnerPlan, fetchEmployerLearnerWeek, fetchEmployerLearnerSchedule, fetchEmployerLearnerHours, fetchEmployerLearnerAttendance } from '@/api/employerPortal';
-import type { LearnerDetail } from '@/api/learnerDetail';
+import { fetchEmployerLearnerPlan, fetchEmployerLearningOverview, fetchEmployerTraining } from '@/api/employerPortal';
+import { dashboardOverviewFixture } from '@/test/dashboardOverviewFixture';
 
 const mocks = vi.hoisted(() => ({
   useAuth: vi.fn(),
@@ -34,6 +34,8 @@ vi.mock('@/hooks/useToast', () => ({
 vi.mock('@/api/employerPortal', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/api/employerPortal')>(),
   // The Overview tab's learner-dashboard reads; never settling keeps them out of the way.
+  fetchEmployerLearningOverview: vi.fn(() => new Promise(() => undefined)),
+  fetchEmployerTraining: vi.fn(() => new Promise(() => undefined)),
   fetchEmployerLearnerWeek: vi.fn(() => new Promise(() => undefined)),
   fetchEmployerLearnerSchedule: vi.fn(() => new Promise(() => undefined)),
   fetchEmployerLearnerHours: vi.fn(() => new Promise(() => undefined)),
@@ -242,92 +244,34 @@ describe('EmployerLearnerPage content and review signing', () => {
     expect(screen.getByRole('heading', { name: 'All employer learners' })).toBeVisible();
   });
 
-  it('adds the timeline above the existing learning plan while keeping progress in Overview', async () => {
+  it('uses the learner projections for Overview and Learning plan without the legacy full-plan read', async () => {
     mocks.fetchEmployerLearner.mockResolvedValue(detail([]));
-    vi.mocked(fetchEmployerLearnerWeek).mockResolvedValueOnce({
-      weekStart: '2026-10-05', weekEnd: '2026-10-11', timezone: 'Europe/London', modules: [], deadlines: [],
-      undatedActivities: 0, expectedHours: 0, missingExpectedHours: 0,
-      otjh: { actual: 0, historical: 0, new: 0, undatedHistoricalRows: 0 },
-      planSubjects: [],
-      metrics: {
-        migrated: false,
-        programme: { completed: 4, total: 8, percent: 50, status: 'ready' },
-        ksb: { completed: 2, total: 4, percent: 50, status: 'ready' },
-        otjh: { historical: 0, new: 11, actual: 11, completed_actual: 11, planned: 74 },
-      },
+    vi.mocked(fetchEmployerLearningOverview).mockResolvedValueOnce(dashboardOverviewFixture());
+    vi.mocked(fetchEmployerTraining).mockResolvedValueOnce({
+      timeline: { start: '2026-09', end: '2026-11', modules: [], reviews: [], coachName: 'Coach' },
+      selectedModule: null, selectedModuleId: null,
     });
-    vi.mocked(fetchEmployerLearnerSchedule).mockResolvedValueOnce({
-      months: {}, actual: [], actualAvailable: true, modules: [], moduleLinks: {}, sessions: [], reviews: [],
-      coach: { name: 'Coach', bookingUrl: null }, contractStatus: 'ready', generatedAt: '',
-    });
-    vi.mocked(fetchEmployerLearnerHours).mockResolvedValueOnce({ months: [] } as Awaited<ReturnType<typeof fetchEmployerLearnerHours>>);
-    // The attendance register, not the timetable: no timetabled session is marked attended here.
-    vi.mocked(fetchEmployerLearnerAttendance).mockResolvedValueOnce({
-      attendance: { sessions: 6, present: 1, absent: 5, late: 0, attendanceRate: 17 },
-    });
-    vi.mocked(fetchEmployerLearnerPlan).mockResolvedValueOnce({
-      name: 'Lee Learner', modules: ['Existing module'], ksbs: [],
-      week: [{ module: 'Existing module', week: 'Existing week' }],
-      components: [{ module: 'Existing module', week: 'Existing week', component: 'Existing reading',
-        componentId: 'reading-1', type: 'reading', expectedOtjh: 2, contentHtml: '<p>Saved lesson</p>' }],
-    } as unknown as LearnerDetail);
-
     renderPage();
     const learnerBanner = within(await screen.findByRole('banner', { name: 'Learner programme' }));
     expect(learnerBanner.getByRole('heading', { level: 1, name: 'Lee Learner' })).toBeVisible();
-    expect(learnerBanner.getByRole('button', { name: 'All learners' })).toBeVisible();
-    const employment = learnerBanner.getByRole('region', { name: 'Employer and Organization' });
-    expect(employment).toHaveTextContent('Test Employer');
-    expect(employment).toHaveTextContent('Test Organization');
-    expect(learnerBanner.queryByRole('button', { name: 'Continue learning' })).not.toBeInTheDocument();
-    expect(learnerBanner.queryByRole('button', { name: "Learner's Map" })).not.toBeInTheDocument();
-    const programmeProgress = await screen.findByRole('region', { name: 'Programme module progress' });
-    expect(programmeProgress).toBeVisible();
-    expect(programmeProgress.closest('.learner-dashboard')).not.toBeNull();
-    expect(programmeProgress.closest('.employer-learner-dashboard')).not.toBeNull();
-    const wholeProgramme = screen.getByRole('region', { name: 'Whole programme progress' });
-    expect(wholeProgramme).toBeVisible();
-    expect(within(wholeProgramme).getAllByRole('img')).toHaveLength(4);
-    expect(within(wholeProgramme).getByRole('img', { name: /^Attendance:/ })).toBeVisible();
-    expect(within(wholeProgramme).getByRole('img', { name: 'Activities: 50%' })).toBeVisible();
-    expect(within(wholeProgramme).getByRole('img', { name: /^Hours:/ })).toBeVisible();
-    expect(within(wholeProgramme).getByRole('img', { name: 'KSBs: 50%' })).toBeVisible();
-    expect(within(wholeProgramme).getByText('4 / 8')).toBeVisible();
-    expect(await within(wholeProgramme).findByText('1 / 6')).toBeVisible();
-    expect(fetchEmployerLearnerAttendance).toHaveBeenCalledWith('7', 'commercial', '499', expect.any(AbortSignal));
-    expect(wholeProgramme.parentElement).toBe(programmeProgress.parentElement);
-    expect(wholeProgramme.compareDocumentPosition(programmeProgress) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    const otjChart = screen.getByRole('region', { name: 'Off-the-job hours by month' });
-    expect(otjChart).toBeVisible();
-    expect(otjChart.parentElement).toBe(programmeProgress.parentElement);
-    expect(programmeProgress.compareDocumentPosition(otjChart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.queryByRole('region', { name: 'Module timeline' })).not.toBeInTheDocument();
-    expect(fetchEmployerLearnerPlan).not.toHaveBeenCalled();
+    expect(learnerBanner.getByRole('region', { name: 'Employer and Organization' })).toHaveTextContent('Test Organization');
+    expect(await screen.findByRole('region', { name: 'Programme module progress' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Whole programme progress' })).not.toBeInTheDocument();
+    expect(screen.getByText('40.00 h')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Module (Current plan): 50% overall progress' })).toBeVisible();
 
     await userEvent.click(screen.getByRole('button', { name: 'Learning plan' }));
-    expect(screen.getByRole('banner', { name: 'Learner programme' })).toBeVisible();
-    const timeline = await screen.findByRole('region', { name: 'Module timeline' });
-    const overview = screen.getByRole('region', { name: 'Module overview' });
-    expect(overview).toBeVisible();
-    expect(timeline.parentElement?.parentElement).toHaveClass(/trainingCards/);
-    expect(timeline.compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    const module = await screen.findByRole('button', { name: /Existing module/ });
-    expect(module).toBeVisible();
-    expect(timeline.compareDocumentPosition(module) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    await userEvent.click(screen.getByRole('button', { name: /Existing week/ }));
-    expect(screen.getByText('Existing reading', { selector: 'p' })).toBeVisible();
-    expect(fetchEmployerLearnerPlan).toHaveBeenCalledWith('7', 'commercial', '499');
+    expect(await screen.findByRole('region', { name: 'Module timeline' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Module overview' })).toBeVisible();
+    expect(fetchEmployerTraining).toHaveBeenCalledWith('7', 'commercial', '499', '', '', expect.any(AbortSignal));
+    expect(fetchEmployerLearnerPlan).not.toHaveBeenCalled();
     expect(screen.queryByRole('region', { name: 'Programme module progress' })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Overview' }));
     expect(await screen.findByRole('region', { name: 'Programme module progress' })).toBeVisible();
-    expect(screen.getByRole('region', { name: 'Off-the-job hours by month' })).toBeVisible();
-    expect(screen.queryByText('Existing reading')).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Module timeline' })).not.toBeInTheDocument();
-
     await userEvent.click(screen.getByRole('button', { name: 'Monthly logs' }));
     expect(await screen.findByText('No monthly logs yet')).toBeVisible();
-    expect(screen.queryByRole('region', { name: 'Off-the-job hours by month' })).not.toBeInTheDocument();
   });
 
   it('marks the Documents tab with a red dot while anything is unsigned', async () => {

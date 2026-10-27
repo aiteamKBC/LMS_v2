@@ -101,13 +101,21 @@ class MigratedPreviousTests(TestCase):
         self.assertEqual(self.load()[1]["summaryText"], "")
 
     def test_stored_transcript_is_from_verified_booking_and_is_bounded(self):
-        self.booking.return_value = SimpleNamespace(owner_email=OWNER, event_type="mcr")
+        from datetime import date, time
+        self.booking.return_value = SimpleNamespace(owner_email=OWNER, event_type="mcr",
+            graph_event_id='graph-prior', scheduled_date=date(2026, 9, 20),
+            scheduled_time=time(10), duration_minutes=60)
         self.transcript.return_value = {"text": "abcdefgh"}
-        with patch.object(views, "COACH_MEETING_SUMMARY_TRANSCRIPT_CHARS", 5):
+        artifacts = [{'artifact_type': 'transcript', 'graph_artifact_id': 'verified-transcript',
+            'metadata': {'_lms_graph_event_id': 'graph-prior',
+                '_lms_verified_online_meeting_id': 'prior-meeting'}}]
+        with patch.object(views, 'stored_coach_meeting_snapshot', return_value={'artifacts': artifacts}), \
+                patch.object(views, "COACH_MEETING_SUMMARY_TRANSCRIPT_CHARS", 5):
             _, data = self.load()
         self.assertEqual(data["transcriptText"], "abcde")
         self.assertTrue(data["transcriptTruncated"])
-        self.transcript.assert_called_once_with(self.booking.return_value)
+        self.transcript.assert_called_once_with(self.booking.return_value,
+            artifact_ids=['verified-transcript'])
 
     def test_previous_transcript_excludes_other_calls_and_preserves_form_answer(self):
         from datetime import date, time
@@ -118,9 +126,16 @@ class MigratedPreviousTests(TestCase):
             scheduled_date=date(2026, 9, 20), scheduled_time=time(10), duration_minutes=60)
         self.booking.return_value = record
         self.transcript.side_effect = scoped_transcript_reader
-        artifacts = [dict(artifact_type='transcript', graph_artifact_id=key, call_id=call,
-            created_datetime=at, metadata={'_lms_graph_event_id': 'graph-current'}) for key, call, at in
-            [('current', 'one', '2026-09-20T10:05:00Z'), ('old', 'two', '2026-08-20T10:05:00Z')]]
+        artifacts = [
+            dict(artifact_type='transcript', graph_artifact_id='current', call_id='one',
+                created_datetime='2026-09-20T10:05:00Z', metadata={
+                    '_lms_graph_event_id': 'graph-current',
+                    '_lms_verified_online_meeting_id': 'previous-meeting'}),
+            dict(artifact_type='transcript', graph_artifact_id='other-review', call_id='two',
+                created_datetime='2026-08-20T10:05:00Z', metadata={
+                    '_lms_graph_event_id': 'another-calendar-event',
+                    '_lms_verified_online_meeting_id': 'another-meeting'}),
+        ]
         with override_settings(TIME_ZONE='UTC'), patch.object(views, 'stored_coach_meeting_snapshot', return_value={'artifacts': artifacts}), \
                 patch.object(views, 'coach_meeting_snapshot_tables_ready', return_value=True), \
                 patch.object(views, 'coach_meeting_artifact_transcript_columns_ready', return_value=True), \
@@ -129,8 +144,9 @@ class MigratedPreviousTests(TestCase):
             cursor.fetchall.return_value = [('current', 'Only the previous booked call')]
             _, data = self.load()
             self.assertEqual(data['transcriptText'], 'Only the previous booked call')
-            self.assertNotIn('old', cursor.execute.call_args.args[1])
-            artifacts[1]['created_datetime'] = '2026-09-20T10:10:00Z'
+            self.assertEqual(cursor.execute.call_args.args[1],
+                [self.overlay.event_key, 'graph-current', 'current'])
+            artifacts[1]['metadata']['_lms_graph_event_id'] = 'graph-current'
             cursor.execute.reset_mock()
             _, ambiguous = self.load()
             self.assertFalse(ambiguous['transcriptAvailable'])
@@ -138,6 +154,70 @@ class MigratedPreviousTests(TestCase):
             cursor.execute.assert_not_called()
         self.overlay.refresh_from_db()
         self.assertEqual(self.overlay.answers['recap'], 'Final coach-edited summary.')
+
+    def test_verified_previous_transcript_outside_booking_window_is_available(self):
+        from datetime import date, time
+        from .models import CoachCalendarEvent
+
+        for actual_time in ('2026-09-19T10:05:00Z', '2026-09-21T10:05:00Z'):
+            with self.subTest(actual_time=actual_time):
+                record = CoachCalendarEvent(id=7, owner_email=OWNER, event_key=self.overlay.event_key,
+                    learner_id=42, event_type='mcr', graph_event_id='graph-current',
+                    scheduled_date=date(2026, 9, 20), scheduled_time=time(10), duration_minutes=60)
+                self.booking.return_value = record
+                self.transcript.side_effect = scoped_transcript_reader
+                artifacts = [dict(artifact_type='transcript', graph_artifact_id='previous-call-transcript',
+                    call_id='previous-call', created_datetime=actual_time, end_datetime=actual_time,
+                    metadata={'meetingId': 'verified-previous-meeting',
+                        '_lms_graph_event_id': 'graph-current',
+                        '_lms_verified_online_meeting_id': 'verified-previous-meeting'})]
+                cursor = MagicMock()
+                cursor.fetchall.return_value = [('previous-call-transcript', 'Saved prior session text')]
+                with patch.object(views, 'stored_coach_meeting_snapshot', return_value={'artifacts': artifacts}), \
+                        patch.object(views, 'coach_meeting_snapshot_tables_ready', return_value=True), \
+                        patch.object(views, 'coach_meeting_artifact_transcript_columns_ready', return_value=True), \
+                        patch.object(views, 'connections') as connections:
+                    connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
+                    _, data = self.load()
+
+                self.assertTrue(data['transcriptAvailable'])
+                self.assertEqual(data['transcriptText'], 'Saved prior session text')
+                self.assertIn('previous-call-transcript', cursor.execute.call_args.args[1])
+                self.assertEqual(self.overlay.answers['recap'], 'Final coach-edited summary.')
+
+    def test_verified_previous_transcripts_keep_stable_order_and_identity(self):
+        from datetime import date, time
+        from .models import CoachCalendarEvent
+
+        record = CoachCalendarEvent(id=7, owner_email=OWNER, event_key=self.overlay.event_key,
+            learner_id=42, event_type='mcr', graph_event_id='graph-current',
+            scheduled_date=date(2026, 9, 20), scheduled_time=time(10), duration_minutes=60)
+        self.booking.return_value = record
+        self.transcript.side_effect = scoped_transcript_reader
+        artifacts = [
+            dict(artifact_type='transcript', graph_artifact_id='segment-b', call_id='call-b',
+                created_datetime='2026-09-21T10:05:00Z', metadata={
+                    '_lms_graph_event_id': 'graph-current',
+                    '_lms_verified_online_meeting_id': 'previous-meeting'}),
+            dict(artifact_type='transcript', graph_artifact_id='segment-a', call_id='call-a',
+                created_datetime='2026-09-19T10:05:00Z', metadata={
+                    '_lms_graph_event_id': 'graph-current',
+                    '_lms_verified_online_meeting_id': 'previous-meeting'}),
+        ]
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            ('segment-a', 'Earlier saved segment'), ('segment-b', 'Later saved segment')]
+        with patch.object(views, 'stored_coach_meeting_snapshot', return_value={'artifacts': artifacts}), \
+                patch.object(views, 'coach_meeting_snapshot_tables_ready', return_value=True), \
+                patch.object(views, 'coach_meeting_artifact_transcript_columns_ready', return_value=True), \
+                patch.object(views, 'connections') as connections:
+            connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
+            _, data = self.load()
+
+        self.assertTrue(data['transcriptAvailable'])
+        self.assertEqual(data['transcriptText'], 'Earlier saved segment\n\nLater saved segment')
+        self.assertEqual(cursor.execute.call_args.args[1][-2:], ['segment-a', 'segment-b'])
+        self.assertIn('ORDER BY COALESCE(created_datetime, end_datetime)', cursor.execute.call_args.args[0])
 
     def test_historical_source_wins_over_local_answers(self):
         self.prior[1].update(status="completed", sections=[{
