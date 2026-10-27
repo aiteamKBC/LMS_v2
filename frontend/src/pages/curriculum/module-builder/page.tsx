@@ -13,18 +13,16 @@ import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 import { formatHoursMinutes } from '@/lib/format';
 import { curriculumNavItems } from '@/mocks/navigation';
-import { applyCurriculumLearnerAssignments, fetchLearnerAssignments, unassignCurriculumLearners, type LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
+import { fetchLearnerAssignments, unassignCurriculumLearners, type LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
 import {
   curriculumErrorMessage,
   fetchCurriculumHolidays,
   fetchCurriculumKsbSets,
   fetchCurriculumDeliveryScope,
-  fetchCurriculumScopeLearnerRoster,
   fetchCurriculumScopeLearnerKsbImpact,
   fetchCurriculumStandards,
   fetchCurriculumTeamsMeetingSummaries,
   fetchCurriculumTutors,
-  curriculumLearnerAssignmentId,
   type CurriculumCohort,
   type CurriculumGroup,
   type CurriculumHoliday,
@@ -572,7 +570,7 @@ async function showDuplicateModuleSwal(
   const destination = await Swal.fire({
     title: `Duplicate ${module.title}`,
     html: `
-      <p style="margin:0 0 12px;text-align:left">Choose where the new module will run. The current learners of the selected Group will be assigned, and future Group learners will inherit it.</p>
+      <p style="margin:0 0 12px;text-align:left">Choose where the new module will run. The new module starts with no learners; assign them on it afterwards.</p>
       <p style="margin:0 0 12px;text-align:left">Progress, submissions, attendance and files are never copied.</p>
       <label style="display:block;text-align:left;font-weight:700;margin:10px 0 4px">Programme</label>
       <select id="duplicate-programme" class="swal2-select" style="display:flex;width:100%;margin:0">${programmeOptions}</select>
@@ -624,9 +622,14 @@ async function showDuplicateModuleSwal(
   });
   if (!destination.isConfirmed || !destination.value) return null;
   const selected = destination.value as DuplicateDestination;
+  // Independent is the default: a copy usually runs for another group, and a
+  // shared join link would put that group in the original's sessions. Sharing
+  // stays a deliberate choice for groups that really attend together -- it is
+  // the only path that credits both groups' attendance and shows both the
+  // recording.
   const teams = await Swal.fire({
     title: 'Teams meeting and dates',
-    html: '<p style="margin:0 0 12px;text-align:left">Choose whether the duplicate shares the original Teams meeting.</p><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-shared" type="radio" name="duplicate-teams" value="shared" checked> Share the same Teams meeting and record</label><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-independent" type="radio" name="duplicate-teams" value="independent"> Create an independent Teams meeting later</label><div id="duplicate-start-date-wrap" style="display:none;text-align:left;margin-top:12px"><label style="font-weight:700">Start Date</label><input id="duplicate-start-date" type="date" class="swal2-input" style="width:100%;margin:4px 0"></div>',
+    html: '<p style="margin:0 0 12px;text-align:left">By default the new module has no Teams meeting link; create its own meeting from the new module once it is set up. Share the original meeting only when both groups attend the same sessions together.</p><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-independent" type="radio" name="duplicate-teams" value="independent" checked> Independent: no meeting link, create its own meeting later</label><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-shared" type="radio" name="duplicate-teams" value="shared"> Share the same Teams meeting (both groups attend together)</label><div id="duplicate-start-date-wrap" style="text-align:left;margin-top:12px"><label style="font-weight:700">Start Date</label><input id="duplicate-start-date" type="date" class="swal2-input" style="width:100%;margin:4px 0"></div>',
     icon: 'question',
     width: 560,
     showCancelButton: true,
@@ -639,18 +642,21 @@ async function showDuplicateModuleSwal(
     didOpen: () => {
       const popup = Swal.getPopup();
       const independent = popup?.querySelector<HTMLInputElement>('#duplicate-teams-independent');
+      const shared = popup?.querySelector<HTMLInputElement>('#duplicate-teams-shared');
       const wrap = popup?.querySelector<HTMLElement>('#duplicate-start-date-wrap');
-      independent?.addEventListener('change', () => { if (wrap) wrap.style.display = independent.checked ? 'block' : 'none'; });
+      const sync = () => { if (wrap) wrap.style.display = independent?.checked ? 'block' : 'none'; };
+      independent?.addEventListener('change', sync);
+      shared?.addEventListener('change', sync);
     },
     preConfirm: () => {
       const popup = Swal.getPopup();
       const independent = popup?.querySelector<HTMLInputElement>('#duplicate-teams-independent')?.checked;
       const startDate = popup?.querySelector<HTMLInputElement>('#duplicate-start-date')?.value || '';
       if (independent && !startDate) {
-        Swal.showValidationMessage('Choose the Start Date for the independent module.');
+        Swal.showValidationMessage('Choose the Start Date for the new module.');
         return false;
       }
-      return { teamsCopyMode: independent ? 'independent' : 'shared', startDate };
+      return { teamsCopyMode: independent ? 'independent' : 'shared', startDate: independent ? startDate : '' };
     },
   });
   if (!teams.isConfirmed || !teams.value) return null;
@@ -658,7 +664,7 @@ async function showDuplicateModuleSwal(
   if (teamsValue.teamsCopyMode === 'shared') {
     const accepted = await showCurriculumConfirm({
       title: 'Share the Teams meeting?',
-      text: 'The original and duplicate will use the same meeting identity. Links, attendees, invitations, attendance, recordings and later meeting changes can affect both modules.',
+      text: 'Both groups will join the same meeting on the original dates. Links, attendees, invitations, attendance, recordings and later meeting changes affect both modules. Choose this only when the two groups attend together.',
       icon: 'warning',
       confirmButtonText: 'Yes, share the meeting',
       cancelButtonText: 'Go back',
@@ -2686,14 +2692,6 @@ export default function ModuleBuilder() {
       if (dialog.teamsCopyMode === 'shared' && source.endDate && dialog.cohort.endDate && source.endDate > dialog.cohort.endDate) {
         throw new Error('The original dates end after the selected Cohort. Choose an independent Teams meeting or a Cohort that contains the original dates.');
       }
-      const roster = await fetchCurriculumScopeLearnerRoster('group', dialog.group.id, { learnerStatus: 'active' });
-      // The scope roster is sourced from LearnerProfile rows.  Assignment
-      // endpoints write the enrolment record, so always prefer the explicit
-      // bridge id; falling back to the profile id keeps old environments
-      // readable while they are being backfilled.
-      const learnerIds = roster.assignedLearners
-        .map(curriculumLearnerAssignmentId)
-        .filter(Boolean);
       let ksbSource: DuplicateKsbSource | undefined;
       if (!sameProgramme) {
         const [allKsbSets, allStandards] = await Promise.all([
@@ -2703,8 +2701,12 @@ export default function ModuleBuilder() {
         ksbSource = duplicateTargetKsbSource(dialog.programme, allKsbSets, allStandards)
           || { sourceType: '', sourceId: '', programmeId: curriculumProgrammeId(dialog.programme), programmeName: dialog.programme.name, entries: [] };
       }
+      // A copy starts with no learners. The original's learners already meet
+      // this content on the original; inheriting or re-assigning them put the
+      // same module on their plan twice, doubling progress and hours. The
+      // manual roster holds only learners someone assigns to the copy later.
       const duplicate = await duplicateModuleStructure(source, {
-        learnerRosterMode: 'inherited',
+        learnerRosterMode: 'manual',
         teamsCopyMode: dialog.teamsCopyMode,
         keepDates: dialog.teamsCopyMode === 'shared',
         startDate: dialog.startDate,
@@ -2728,52 +2730,13 @@ export default function ModuleBuilder() {
             }
           : undefined,
       });
-      const moduleTarget: LearnerAssignmentTarget = { scope: 'module', id: duplicate.catalogueId, name: duplicate.title };
-      const applyAssignments = async (ids: string[]) => applyCurriculumLearnerAssignments(moduleTarget, { add: ids, remove: [] });
-      const assignment = learnerIds.length
-        ? await applyAssignments(learnerIds)
-        : { added: [], removed: [], failed: [], failureMessage: null, abandoned: false, changedCount: 0, moduleCount: 1 };
       const report = duplicate.ksbRemapReport as KsbRemapReport | null | undefined;
       const ksbMessage = report && report.unmatched?.length
         ? ` ${report.matchedCount} KSBs matched; ${report.unmatched.length} need review in the saved remap report.`
         : '';
-      if (assignment.failed.length) {
-        const failed = [...assignment.failed];
-        const retryAssignments = async (failedIds: string[]) => {
-          // Re-read the Group before retrying.  This also upgrades failures
-          // from an older bundle that sent profile ids to the enrolment ids
-          // now accepted by the assignment endpoint.
-          const latestRoster = await fetchCurriculumScopeLearnerRoster(
-            'group', dialog.group.id, { learnerStatus: 'active' },
-          );
-          const wanted = new Set(failedIds.map(String));
-          const retryIds = latestRoster.assignedLearners
-            .filter(learner => wanted.has(String(learner.id)) || wanted.has(String(learner.enrolmentId)))
-            .map(curriculumLearnerAssignmentId);
-          if (!retryIds.length) {
-            throw new Error('No active learners from the selected Group are available to retry.');
-          }
-          return applyAssignments([...new Set(retryIds)]);
-        };
-        setActionMessage(`Module created, but ${failed.length} learner assignment${failed.length === 1 ? '' : 's'} failed.${assignment.failureMessage ? ` ${assignment.failureMessage}` : ''}`);
-        setActionMessageRetry(() => () => {
-          void retryAssignments(failed).then(retry => {
-            if (retry.failed.length) {
-              setActionMessage(`Retry completed with ${retry.failed.length} learner assignment failure${retry.failed.length === 1 ? '' : 's'}.`);
-              setActionMessageRetry(() => () => {
-                void retryAssignments(retry.failed).catch(error => setActionMessage(error instanceof Error ? error.message : 'Unable to retry learner assignments.'));
-              });
-            } else {
-              setActionMessage(null);
-              setActionMessageRetry(null);
-              void reload({ silent: true });
-            }
-          }).catch(error => setActionMessage(error instanceof Error ? error.message : 'Unable to retry learner assignments.'));
-        });
-      }
       setNoticeAlert({
         title: 'Module duplicated',
-        message: `${duplicate.title} was created in ${dialog.programme.name} / ${dialog.cohort.name} / ${dialog.group.name}. ${assignment.added.length} active Group learner${assignment.added.length === 1 ? '' : 's'} assigned.${ksbMessage}`,
+        message: `${duplicate.title} was created in ${dialog.programme.name} / ${dialog.cohort.name} / ${dialog.group.name} with no learners. Use Assign learners on the new module to add them.${ksbMessage}`,
       });
       reload();
       await finishLoadingProgress(setDuplicatingModuleComplete);
