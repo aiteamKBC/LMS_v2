@@ -219,7 +219,7 @@ describe('restored monthly coaching list', () => {
     mount();
     const row = within((await screen.findByText('History Learner')).closest('tr')!);
     const headers = screen.getAllByRole('columnheader').map(header => header.textContent);
-    expect(headers.indexOf('Last MCM')).toBeLessThan(headers.indexOf('Date & time'));
+    expect(headers.indexOf('Last MCM')).toBeLessThan(headers.indexOf('Scheduled for (UK time)'));
     expect(row.getByLabelText('Last MCM: 01 Aug 2026; 44 days ago')).toHaveAttribute('data-tone', 'critical');
   });
 
@@ -403,7 +403,7 @@ describe('restored monthly coaching list', () => {
     await screen.findByText('Scheduled Learner');
     const table = screen.getByRole('table');
     expect(within(table).getAllByRole('columnheader').map(header => header.textContent)).toEqual([
-      'Learner', 'Programme', 'Cohort', 'Last MCM', 'Date & time', 'Status', 'Actions',
+      'Learner', 'Programme', 'Cohort', 'Last MCM', 'Scheduled for (UK time)', 'Completed on', 'Status', 'Actions',
     ]);
     const scheduledRow = within(screen.getByText('Scheduled Learner').closest('tr')!);
     expect(scheduledRow.getByText('scheduled@example.com')).toBeVisible();
@@ -668,4 +668,18 @@ describe('restored monthly coaching list', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Schedule' }));
     expect(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByRole('combobox', { name: 'MCM meeting' })).toHaveValue(expectedValue);
   });
+});
+
+
+it('shows the MCM row completion separately from its appointment', async () => {
+  fetchEvents.mockResolvedValue({ events: [meeting(80, {
+    learner: 'Date Example', learnerId: '80', status: 'completed', scheduledDate: '2026-09-10', scheduledTime: '23:00',
+    reviewCompletedAt: '2026-09-11T07:00:00Z',
+  })] });
+  mount();
+  const row = within((await screen.findByText('Date Example')).closest('tr')!);
+  const headers = screen.getAllByRole('columnheader').map(header => header.textContent);
+  expect(row.getAllByRole('cell')[headers.indexOf('Completed on')]).toHaveTextContent('11 Sept 2026');
+  expect(row.getByText('23:00 - 00:00 (+1 day)')).toBeVisible();
+  expect(row.getByLabelText('Last MCM: 11 Sept 2026; 3 days ago')).toBeVisible();
 });
