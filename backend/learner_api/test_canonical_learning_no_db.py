@@ -513,6 +513,28 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertEqual([r['reporting_month'] for r in result], ['2026-10', '2026-10', '2026-09'])
         self.assertEqual(self.scope['metrics_from_records'](result, {})['otjh']['actual'], .6667)
 
+    def test_extra_activity_is_separate_actual_after_review_without_planned_hours(self):
+        from .test_current_learning_no_db import adapter as current_adapter
+        merge = current_adapter()['merge_submissions']
+        assignment = {'id': 1, 'accepted': True, 'actual_seconds': 3600,
+                      'component_ref': 'assignment', 'expected_otjh': 2, 'ksbs': []}
+        extra = {'id': 'extra', 'activity_type': 'extra_activity', 'actual_time_hours': '1',
+                 'activity_month': '2026-09', 'submitted_at': '2026-10-23T13:00:00Z', 'ksb_codes': []}
+        for status, actual in [('draft', 1), ('submitted_for_tutor_review', 1),
+                               ('accepted', 2), ('partial', 2), ('referred', 1), ('rejected', 1)]:
+            with self.subTest(status=status):
+                projected = merge([assignment], [{**extra, 'status': status}])
+                records = self.scope['progress_records_with_completion']([assignment], projected)
+                metrics = self.scope['metrics_from_records'](records, {'2026-09': 2})
+                hours = metrics['otjh']
+                self.assertEqual(hours['actual'], actual)
+                self.assertEqual(hours['planned'], 2)
+                self.assertEqual(assignment['actual_seconds'], 3600)
+                self.assertEqual(metrics['programme']['total'], 1)
+                if status == 'accepted':
+                    self.assertEqual(records[-1]['reporting_month'], '2026-09')
+                    self.assertEqual(records[-1]['expected_otjh'], 0)
+
     def test_single_reader_retains_distinct_accepted_rows_sharing_a_source_key(self):
         first = {'id': 1, 'canonical_activity_key': 'shared', 'accepted': True,
                  'actual_seconds': 1800, 'reporting_month': '2026-08'}

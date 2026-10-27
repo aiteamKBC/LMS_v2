@@ -50,6 +50,7 @@ from coach_api.cache.learners import (
     release_caseload_lock,
 )
 from coach_api.models import CoachAbsenceReport, CoachAttendanceSourceAdjustment, CoachCalendarEvent, CoachCalendarSequence, CoachDashboardSnapshot, CoachManualAttendance, ImportedReviewInstance
+from coach_api import imported_booking_state
 from coach_api.migrated_reviews import (
     EDITABLE_STATUSES as MIGRATED_EDITABLE_STATUSES,
     booking_event_type as migrated_booking_event_type,
@@ -7264,7 +7265,7 @@ def serialize_coach_meeting_artifact(artifact_type: str, artifact: dict) -> dict
 
 
 def public_coach_meeting_artifact(artifact: dict) -> dict:
-    return {
+    public = {
         key: value
         for key, value in artifact.items()
         if key not in {
@@ -7275,6 +7276,11 @@ def public_coach_meeting_artifact(artifact: dict) -> dict:
             "transcript_fetch_error",
         }
     }
+    metadata = public.get("metadata")
+    if isinstance(metadata, dict) and "_lms_booking_fingerprint" in metadata:
+        public["metadata"] = {key: value for key, value in metadata.items()
+                               if key != "_lms_booking_fingerprint"}
+    return public
 
 
 def coach_meeting_attendance_seconds(record: dict) -> int:
@@ -8021,7 +8027,9 @@ def stored_coach_meeting_snapshot(record: CoachCalendarEvent, *, database=None, 
                 "absentCount": max(parse_int(row[5], 0), 0),
                 "records": report_records,
                 **({'_lms_verified_online_meeting_id': metadata['_lms_verified_online_meeting_id'],
-                    '_lms_graph_event_id': record.graph_event_id}
+                    '_lms_graph_event_id': record.graph_event_id,
+                    **({'_lms_booking_fingerprint': metadata['_lms_booking_fingerprint']}
+                       if metadata.get('_lms_booking_fingerprint') else {})}
                    if isinstance(metadata, dict) and metadata.get('_lms_verified_online_meeting_id') else {}),
             }
         )
@@ -15978,13 +15986,11 @@ def coach_review_instance_adopt_booking(request, instance_id):
                     "code": "ANSWER_CONFLICT",
                 }, status=409)
             calendar = booking_for_overlay(overlay, lock=True)
-            if (not calendar or calendar.owner_email.casefold() != owner_email
+            if (not calendar
                     or calendar.event_key != (current.get("booking") or {}).get("eventKey")
-                    or calendar.event_type != migrated_booking_event_type(family)
-                    or calendar.status not in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_IN_PROGRESS}
-                    or calendar.sync_state != CoachCalendarEvent.SYNC_SYNCED
-                    or not calendar.graph_event_id or not calendar_record_has_launch_url(calendar)
-                    or calendar.scheduled_date is None or calendar.scheduled_time is None):
+                    or not imported_booking_state.verified_meeting(
+                        calendar, owner_email=owner_email,
+                        event_type=migrated_booking_event_type(family))):
                 return JsonResponse({"detail": "A verified, synced meeting with a date and time is required.",
                                      "code": "BOOKING_CONFLICT"}, status=409)
             if getattr(settings, 'APTEM_MEETING_OWNERSHIP_ENABLED', False):
@@ -16072,10 +16078,14 @@ def coach_review_instance_book(request, instance_id):
             # Re-resolve the durable source link after taking the learner lock;
             # the definition's earlier booking preview may now be stale.
             record = booking_for_imported_review(learner, source_review, lock=True)
-            if record:
-                if (record.owner_email.casefold() != owner_email
-                    or record.event_type != event_type):
-                    return coach_error(request, code="BOOKING_CONFLICT", message="This imported review has an inconsistent calendar link.", status=409)
+            if record and (record.owner_email.casefold() != owner_email
+                           or record.event_type != event_type):
+                return coach_error(request, code="BOOKING_CONFLICT", message="This imported review has an inconsistent calendar link.", status=409)
+            # An abandoned attempt can leave a row that never reserved a slot.
+            # Reserving it is this booking, not a second appointment, so it
+            # takes the reservation path instead of the "already booked" one.
+            placeholder = imported_booking_state.unreserved_placeholder(record)
+            if record and not placeholder:
                 if record.status != CoachCalendarEvent.STATUS_SCHEDULED:
                     return coach_error(request, code="BOOKING_CONFLICT", message="This booking is no longer in a schedulable state.", status=409)
                 if (record.scheduled_date, record.scheduled_time, record.duration_minutes) != (scheduled_date, scheduled_time, duration_minutes):
@@ -16085,22 +16095,35 @@ def coach_review_instance_book(request, instance_id):
             else:
                 if england_non_delivery_reason(scheduled_date):
                     return coach_error(request, code="BOOKING_CONFLICT", message=england_non_delivery_reason(scheduled_date), status=409)
-                ensure_coach_booking_available(owner_email, scheduled_date, scheduled_time, duration_minutes)
+                ensure_coach_booking_available(owner_email, scheduled_date, scheduled_time, duration_minutes,
+                                               **({"exclude_record_id": record.pk} if placeholder else {}))
                 ensure_learner_calendar_available(
                     learner_id=learner_id, learner_email=clean_text(base_event.get("email")),
                     scheduled_date=scheduled_date, scheduled_time=scheduled_time,
                     duration_minutes=duration_minutes,
+                    **({"exclude_record_id": record.pk} if placeholder else {}),
                 )
-                record = CoachCalendarEvent.objects.create(
-                    event_key=instance_id, idempotency_key=instance_id,
-                    owner_email=owner_email, owner_name=owner_name,
-                    learner_id=learner_id, learner_name=clean_text(base_event.get("learner")),
-                    learner_email=clean_text(base_event.get("email")), event_type=event_type,
+                reserved = dict(
+                    owner_name=owner_name,
+                    learner_name=clean_text(base_event.get("learner")),
+                    learner_email=clean_text(base_event.get("email")),
                     sequence=int(base_event.get("sequence") or 1), target_date=target_date,
                     scheduled_date=scheduled_date, scheduled_time=scheduled_time,
                     duration_minutes=duration_minutes, status=CoachCalendarEvent.STATUS_SCHEDULED,
                     sync_state=CoachCalendarEvent.SYNC_PENDING,
                 )
+                if placeholder:
+                    for field, value in reserved.items():
+                        setattr(record, field, value)
+                    if not clean_text(record.idempotency_key):
+                        record.idempotency_key = record.event_key
+                    record.save(update_fields=[*reserved, "idempotency_key", "updated_at"])
+                else:
+                    record = CoachCalendarEvent.objects.create(
+                        event_key=instance_id, idempotency_key=instance_id,
+                        owner_email=owner_email, learner_id=learner_id,
+                        event_type=event_type, **reserved,
+                    )
     except (LearnerCalendarConflict, ReviewIdentityConflict) as exc:
         return coach_error(request, code="BOOKING_CONFLICT", message=str(exc), status=409)
     except IntegrityError:

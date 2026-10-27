@@ -25,12 +25,54 @@ def expected_booking(payload):
     return slot
 
 
+def schedule_overlay_for_booking(record_id, event):
+    """Put the owned working copy on the meeting Graph has just confirmed.
+
+    The Coach booking endpoint ends with this same transition; without it here
+    a learner-booked Review stays not-scheduled while its calendar row is
+    booked, and the Start/Submit gates -- which read the lifecycle, not the
+    calendar -- hide actions the booking has already earned.
+
+    Runs after the Graph call, never during it, and takes the established
+    learner -> calendar -> overlay lock order. Booking state only: an overlay
+    that is started, submitted, signed or completed is left untouched.
+    """
+    from coach_api import views, imported_booking_state
+    from coach_api.migrated_reviews import booking_event_type, review_family
+    from coach_api.review_sources import linked_booking, linked_overlay, ReviewIdentityConflict
+
+    event_type = booking_event_type(review_family(event.get("importedReviewType")))
+    if not event_type:
+        return False
+    with transaction.atomic():
+        views.lock_learner_calendar(event["learnerId"])
+        record = CoachCalendarEvent.objects.select_for_update().get(pk=record_id)
+        overlays = list(ImportedReviewInstance.objects.select_for_update().filter(
+            learner_id=event["learnerId"],
+        ).filter(Q(source_review_id=event["reviewId"]) | Q(event_key=event["eventKey"])))
+        try:
+            overlay = linked_overlay(event, overlays)
+            if overlay is None or linked_booking(event, [record], overlay) is None:
+                return False
+        except ReviewIdentityConflict:
+            return False
+        return imported_booking_state.schedule_for_verified_meeting(
+            overlay, record, owner_email=record.owner_email, event_type=event_type,
+        )
+
+
 def reserve_imported_booking(candidate, event, expected_slot, *, notes=None, expected_notes=None):
     """Re-read identity/lifecycle and compare the caller's snapshot under locks.
 
     Only the requested slot and explicitly supplied notes may change. Returning
     False means an already-synced slot needs no Graph request (including a retry
     or a notes-only edit). No source review, answer or signature is written.
+
+    A candidate with no primary key is this Review's first local appointment:
+    the row is created here, inside the same transaction and learner lock that
+    validates it, so a refused attempt commits nothing for the next booking to
+    find. A row a concurrent request created first is adopted and revalidated
+    rather than duplicated.
     """
     from coach_api import views
     from coach_api.migrated_reviews import initial_local_status, review_family, booking_event_type
@@ -48,7 +90,16 @@ def reserve_imported_booking(candidate, event, expected_slot, *, notes=None, exp
             raise conflict("This imported meeting needs ownership reconciliation.") from None
     with transaction.atomic():
         views.lock_learner_calendar(candidate.learner_id)
-        record = CoachCalendarEvent.objects.select_for_update().get(pk=candidate.pk)
+        if candidate.pk is None:
+            record, _created = CoachCalendarEvent.objects.get_or_create(
+                event_key=candidate.event_key,
+                defaults={name: getattr(candidate, name) for name in (
+                    "owner_email", "owner_name", "learner_id", "learner_name", "learner_email",
+                    "event_type", "sequence", "target_date",
+                )},
+            )
+        else:
+            record = CoachCalendarEvent.objects.select_for_update().get(pk=candidate.pk)
         overlays = list(ImportedReviewInstance.objects.select_for_update().filter(
             learner_id=event["learnerId"],
         ).filter(Q(source_review_id=event["reviewId"]) | Q(event_key=event["eventKey"])))

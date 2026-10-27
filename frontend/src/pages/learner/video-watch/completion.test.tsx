@@ -43,9 +43,12 @@ vi.mock('@/hooks/useMyLearner', () => ({ rememberLearner: vi.fn() }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: session.account }, isInitialized: session.isInitialized }) }));
 vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true, outsideWorkingHours: session.outsideWorkingHours, holidays: session.holidays, holidayCalendarReady: session.holidayCalendarReady, currentTimeLabel: 'Sunday, 14:02 BST' }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children, pageSubtitle }: { children: ReactNode; pageSubtitle: string }) => <main><p>{pageSubtitle}</p>{children}</main> }));
-vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: ({ questionFiles }: {
+vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: ({ questionFiles, onSubmitProgress }: {
   questionFiles?: { url: string; fileName: string }[];
-}) => <div>{questionFiles?.map(file => <span key={file.url} data-testid="assignment-instruction" data-url={file.url}>{file.fileName}</span>)}</div> }));
+  onSubmitProgress: (answers: { assignmentAnswer: string; whatYouLearned: string; businessImpact: string; timeTakenSeconds: number; timeEntrySource: 'input' }) => Promise<void>;
+}) => <div>{questionFiles?.map(file => <span key={file.url} data-testid="assignment-instruction" data-url={file.url}>{file.fileName}</span>)}
+  <button onClick={() => void onSubmitProgress({ assignmentAnswer: 'Work', whatYouLearned: 'Learning', businessImpact: 'Impact', timeTakenSeconds: 3600, timeEntrySource: 'input' })}>Submit synthetic assignment</button>
+</div> }));
 vi.mock('@/components/feature/SessionResults', () => ({
   SessionResults: ({ onRecordingWatchTimeChange, recordingDate, recordingsOnly }: {
     onRecordingWatchTimeChange?: (seconds: number) => void; recordingDate?: string; recordingsOnly?: boolean;
@@ -157,6 +160,18 @@ it.each(['commercial', 'apprenticeship'])('passes every instruction file to the 
   const instructions = await screen.findAllByTestId('assignment-instruction');
   expect(instructions.map(file => file.getAttribute('data-url'))).toEqual(files.map(file => file.url));
   expect(screen.queryByText('unrelated.pdf')).toBeNull();
+});
+
+it.each(['commercial', 'apprenticeship'])('submits %s assignment input hours separately from planned hours and the page timer', async kind => {
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [
+    { ...first, type: 'assignment', component: 'Assignment', expectedOtjh: 2 },
+  ] } as LearnerDetail);
+  mount('C1', kind);
+  await waitFor(() => expect(startTimeTracking).toHaveBeenCalled());
+  fireEvent.click(await screen.findByRole('button', { name: 'Submit synthetic assignment' }));
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({
+    timeTakenSeconds: 3600, timeEntrySource: 'input', reportedTime: '60 minutes', plannedOtjh: '2h',
+  })));
 });
 
 it('keeps direct audio tied to real playback events', () => {

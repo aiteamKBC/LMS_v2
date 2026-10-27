@@ -1,4 +1,5 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Video } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
@@ -25,13 +26,21 @@ type Props = {
 export function EmployerProgressReviewsTab({ employerId, kind, learnerId, employerName, onReviewChanged }: Props) {
   const client = useQueryClient();
   const listKey = ['employer-progress-reviews', employerId, kind, learnerId];
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [params, setParams] = useSearchParams();
+  const selectedKey = params.get('reviewId');
   const list = useQuery({
     queryKey: listKey,
     queryFn: ({ signal }) => fetchEmployerProgressReviews(employerId, kind, learnerId, signal),
   });
+  const selectedEventIsKnown = Boolean(selectedKey && list.data?.events.some(event => event.eventKey === selectedKey));
+  useEffect(() => {
+    if (!selectedKey || list.isPending || list.isError || selectedEventIsKnown) return;
+    const next = new URLSearchParams(params);
+    next.delete('reviewId');
+    setParams(next, { replace: true });
+  }, [selectedKey, list.isPending, list.isError, selectedEventIsKnown, params, setParams]);
   const detail = useQuery({
-    queryKey: [...listKey, selectedKey], enabled: !!selectedKey,
+    queryKey: [...listKey, selectedKey], enabled: selectedEventIsKnown,
     queryFn: async ({ signal }) => {
       const value = await fetchEmployerProgressReview(employerId, kind, learnerId, selectedKey!, signal);
       return value.event.migratedForm
@@ -83,9 +92,20 @@ export function EmployerProgressReviewsTab({ employerId, kind, learnerId, employ
     await refresh();
   };
   const errorMessage = (error: Error | null) => error?.message || 'Could not load progress reviews. Please try again.';
+  const closeReview = () => {
+    const next = new URLSearchParams(params);
+    next.delete('reviewId');
+    setParams(next, { replace: true });
+  };
+  const openReview = (eventKey: string) => {
+    const next = new URLSearchParams(params);
+    next.set('tab', 'reviews');
+    next.set('reviewId', eventKey);
+    setParams(next);
+  };
 
-  if (selectedKey) return <section className={`${styles.home} space-y-4`} aria-label="Employer progress review">
-    <button type="button" className={styles.secondaryButton} onClick={() => setSelectedKey(null)}><ArrowLeft size={19} aria-hidden="true" />Back to reviews</button>
+  if (selectedKey && (selectedEventIsKnown || list.isPending)) return <section className={`${styles.home} space-y-4`} aria-label="Employer progress review">
+    <button type="button" className={styles.secondaryButton} onClick={closeReview}><ArrowLeft size={19} aria-hidden="true" />Back to reviews</button>
     {!detail.isPending && !detail.isError && meeting?.joinUrl && !meeting.past && <a className={styles.primaryButton} href={meeting.joinUrl} target="_blank" rel="noopener noreferrer"><Video size={19} aria-hidden="true" />Join meeting</a>}
     {!detail.isPending && !detail.isError && recordingKey && review && <CoachMeetingArtifactsPanel
       event={{ ...review, eventKey: recordingKey }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl}
@@ -109,6 +129,6 @@ export function EmployerProgressReviewsTab({ employerId, kind, learnerId, employ
       learner={{ kind, id: learnerId }} lineManager={employerName} today={today}
       timeZone="Europe/London" loading={list.isPending} error={list.isError ? errorMessage(list.error) : ''}
       busy={false} canAct viewerRole="employer" titleOf={event => `${event.title}${event.occurrenceNumber != null ? ` #${event.occurrenceNumber}` : ''}`}
-      onOpenReview={event => setSelectedKey(event.eventKey)} onSchedule={() => undefined} onAttend={() => undefined} onReport={() => undefined} />
+      onOpenReview={event => openReview(event.eventKey)} onSchedule={() => undefined} onAttend={() => undefined} onReport={() => undefined} />
   </div>;
 }

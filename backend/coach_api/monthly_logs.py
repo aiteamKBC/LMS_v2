@@ -6,6 +6,7 @@ from django.middleware.csrf import get_token
 from django.utils import timezone
 
 from learner_api import canonical_learning as canonical
+from learner_api.canonical_hours import extra_activity_hour_records
 from learner_api import monthly_logs as logs
 from old_otjh.repository import query
 from old_otjh.service import ServiceError, coach_actor, normalize
@@ -44,6 +45,16 @@ def project_year(learner, year):
           FILTER (WHERE accepted IS TRUE),0) / 3600.0 AS accepted_hours
         FROM "Learner".learner_progress_entries
         WHERE learner_id=%s AND deleted_at IS NULL GROUP BY reporting_month''', [owner['id']])
+    # Extras have no planned component/progress save. Review controls their
+    # actual contribution, independently of any assignment in the same month.
+    by_month = {row['month']: dict(row) for row in activities}
+    for extra in extra_activity_hour_records([owner])[owner['id']]:
+        month = extra['reporting_month']
+        row = by_month.setdefault(month, {'month': month, 'activities': 0, 'accepted_hours': 0})
+        row['activities'] += 1
+        if extra['accepted']:
+            row['accepted_hours'] = float(row['accepted_hours']) + canonical.recorded_seconds(extra) / 3600
+    activities = list(by_month.values())
     targets = canonical.targets_for(owner)
     signs = query('''SELECT report_month AS month,
         bool_or(signer_role='learner') AS learner_signed,

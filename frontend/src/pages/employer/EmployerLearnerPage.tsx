@@ -1,26 +1,21 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useAuth } from '@/hooks/useAuth';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { LoaderCircle } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { PageContainer } from '@/components/ui/PageContainer';
 import {
   fetchEmployerLearner,
-  fetchEmployerLearnerAttendance,
   fetchEmployerLearnerPlan,
-  type EmployerLearnerAttendance,
   type EmployerLearnerDetail,
   type EmployerOwnedItem,
 } from '@/api/employerPortal';
 import type { LearnerKind } from '@/api/extendedIlr';
 import { btnSecondary } from '@/pages/users/components/ui';
 import type { LearnerDetail } from '@/api/learnerDetail';
-import { LearnerPlanBody } from '@/components/feature/RealLearnerPlanView';
 import { KsbProgressBody } from '@/components/feature/RealKsbView';
-import { DashboardTrainingPlan } from '@/pages/workspace/learner/DashboardTrainingPlan';
-import type { DashboardPlanState } from '@/pages/workspace/learner/useDashboardPlan';
-import type { ProgrammeProgressSnapshot } from '@/pages/learner/training-plan-timeline/ProgressCharts';
+import { EmployerLearningOverview, EmployerTrainingPlan } from './EmployerLearning';
 import { EmployerLearnerHeader } from './EmployerLearnerOverview';
-import { useEmployerDashboardPlan } from './useEmployerDashboardPlan';
 import { SignModal } from './EmployerDocumentRows';
 import { EmployerDocumentPreview } from './EmployerDocumentPreview';
 import { useEmployerSigning } from './useEmployerSigning';
@@ -35,7 +30,7 @@ import { EmployerProgressReviewsTab } from './EmployerProgressReviewsTab';
 // One learner, as their employer sees them.
 //
 // Styled as the learner workspace. Overview keeps the dashboard header and progress;
-// Learning plan adds the module timeline and overview above the full plan. The documents needing this
+// Learning plan uses the same module timeline and overview. The documents needing this
 // employer's signature have their own tab, badged from every tab while any are
 // outstanding. Unsigned documents are pinned above signed ones. The rows and
 // sign-off dialog are shared with All documents (EmployerDocumentRows).
@@ -43,7 +38,7 @@ import { EmployerProgressReviewsTab } from './EmployerProgressReviewsTab';
 
 /**
  * The page is one learner seen six ways. Overview is the learner's own
- * dashboard header and progress; Learning plan includes the timeline and full plan;
+ * dashboard header and progress; Learning plan includes the timeline and module overview;
  * Assignments is what they have handed
  * in; Documents is the employer's own business — the signing queue; the other
  * progress tabs are the learner's workspace
@@ -63,53 +58,15 @@ const TABS: { key: TabKey; label: string; icon: string }[] = [
 ];
 
 /** The tabs that read the learner's workspace payload (fetched on first use). */
-const PLAN_TABS: TabKey[] = ['plan', 'ksbs'];
-
-const progressPercent = (completed: number, total: number) => total > 0
-  ? Math.min(100, Math.round(completed / total * 10_000) / 100)
-  : null;
-
-/**
- * Build the same whole-programme series the coach overview charts. Attendance
- * is the learner's attendance register, as on their dashboard and the coach
- * case file — not the timetable: a class with no register entry is neither
- * attended nor missed.
- */
-function employerProgrammeSnapshot(plan: DashboardPlanState, attendance: EmployerLearnerAttendance | null): ProgrammeProgressSnapshot {
-  const metrics = plan.week.data?.metrics;
-  const subjects = plan.subjects || plan.data?.planSubjects || [];
-  const activitiesCompleted = metrics?.programme.status === 'ready'
-    ? metrics.programme.completed
-    : subjects.reduce((total, subject) => total + subject.completed, 0);
-  const activitiesTotal = metrics?.programme.status === 'ready'
-    ? metrics.programme.total
-    : subjects.reduce((total, subject) => total + subject.total, 0);
-  const activitiesPercent = metrics?.programme.status === 'ready'
-    ? metrics.programme.percent
-    : activitiesCompleted != null && activitiesTotal != null
-      ? progressPercent(activitiesCompleted, activitiesTotal)
-      : null;
-  const ksbRows = subjects.map(subject => subject.ksbProgress).filter((row): row is { completed: number; total: number } => !!row);
-  const ksbCompleted = ksbRows.reduce((total, row) => total + row.completed, 0);
-  const ksbTotal = ksbRows.reduce((total, row) => total + row.total, 0);
-  const ksbAvailable = metrics ? metrics.ksb.status === 'ready' : ksbRows.length > 0;
-  const ksb = metrics?.ksb.status === 'ready' ? metrics.ksb.percent
-    : ksbAvailable ? progressPercent(ksbCompleted, ksbTotal) : null;
-  return {
-    overall: metrics?.programme.status === 'ready' ? metrics.programme.percent : activitiesPercent,
-    activitiesCompleted,
-    activitiesTotal,
-    activitiesPercent,
-    otjhActual: metrics?.otjh.completed_actual ?? metrics?.otjh.actual ?? plan.otjh.actual,
-    otjhTarget: metrics?.otjh.planned ?? plan.otjh.planned,
-    ksb,
-    ksbAvailable,
-    attendancePresent: attendance?.present ?? null,
-    attendanceTotal: attendance?.sessions ?? null,
-  };
-}
+const PLAN_TABS: TabKey[] = ['ksbs'];
 
 export default function EmployerLearnerPage() {
+  const { employerId, kind, learnerId } = useParams();
+  const { auth } = useAuth();
+  return <EmployerLearnerContent key={`${auth.account?.id}:${employerId}:${kind}:${learnerId}`} />;
+}
+
+function EmployerLearnerContent() {
   const { employerId = '', kind: kindParam = 'apprenticeship', learnerId = '' } = useParams();
   // The URL segment is a plain string; the document APIs want the narrowed union.
   const kind: LearnerKind = kindParam === 'commercial' ? 'commercial' : 'apprenticeship';
@@ -125,31 +82,11 @@ export default function EmployerLearnerPage() {
     else next.set('tab', nextTab);
     setParams(next);
   };
-  // The learner's own workspace payload, behind Learning plan and KSB progress. Fetched
-  // once, on first use: an employer who only came to sign a document never pays
-  // for it, and both tabs read the same object afterwards.
+  // The KSB observer uses the read-only full-plan compatibility payload.
+  // Overview and Learning plan use the current learner dashboard projections.
   const [plan, setPlan] = useState<LearnerDetail | null>(null);
   const [planLoading, setPlanLoading] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
-  // The learner dashboard's Overview header and Learning plan timeline. Waits
-  // for the learner record, whose ownership check it shares.
-  const dashboardPlan = useEmployerDashboardPlan(employerId, kind, learnerId, !!data);
-  const [attendance, setAttendance] = useState<EmployerLearnerAttendance | null>(null);
-  const learnerLoaded = !!data;
-  const progressSnapshot = employerProgrammeSnapshot(dashboardPlan, attendance);
-
-  // Like the plan, waits for the learner record whose ownership check it shares.
-  useEffect(() => {
-    setAttendance(null);
-    if (!learnerLoaded) return undefined;
-    const controller = new AbortController();
-    fetchEmployerLearnerAttendance(employerId, kind, learnerId, controller.signal)
-      .then(result => setAttendance(result.attendance))
-      // The ring reads "Attendance unavailable" rather than a wrong 0.
-      .catch(() => undefined);
-    return () => controller.abort();
-  }, [employerId, kind, learnerId, learnerLoaded]);
-
   const load = () => {
     setLoading(true);
     setError(null);
@@ -161,20 +98,20 @@ export default function EmployerLearnerPage() {
 
   useEffect(load, [employerId, kind, learnerId]);
 
-  const loadPlan = () => {
+  const loadPlan = useCallback(() => {
     setPlanLoading(true);
     setPlanError(null);
     fetchEmployerLearnerPlan(employerId, kind, learnerId)
       .then(setPlan)
       .catch((e: Error) => setPlanError(e.message))
       .finally(() => setPlanLoading(false));
-  };
+  }, [employerId, kind, learnerId]);
 
   // Only when a progress tab is actually opened, and only once per learner.
   useEffect(() => {
     if (!PLAN_TABS.includes(tab) || plan || planLoading || planError) return;
     loadPlan();
-  }, [tab, plan, planLoading, planError]);
+  }, [tab, plan, planLoading, planError, loadPlan]);
 
   // A different learner invalidates whatever plan is held.
   useEffect(() => {
@@ -235,7 +172,6 @@ export default function EmployerLearnerPage() {
               employerId={employerId}
               kind={kind}
               learner={learner}
-              plan={dashboardPlan}
               onBack={backToLearners}
             />
 
@@ -268,45 +204,11 @@ export default function EmployerLearnerPage() {
               ))}
             </nav>
 
-            {/* Read-only by construction: no activity, module or calendar
-                links, and the portal serves the plan without meeting links. */}
-            {tab === 'overview' && (
-              <div className="learner-dashboard employer-learner-dashboard">
-                <DashboardTrainingPlan
-                  key={`overview:${kind}:${learnerId}`}
-                  kind={kind}
-                  learnerId={learnerId}
-                  plan={dashboardPlan}
-                  programmeStartDate={dashboardPlan.data?.programmeStartDate ?? learner.startDate}
-                  programmeEndDate={dashboardPlan.data?.programmeEndDate ?? learner.endDate}
-                  canOpenActivities={false}
-                  canOpenCalendar={false}
-                  canOpenRewards={false}
-                  showRewards={false}
-                  activityOverviewOnly
-                  overviewOnly
-                  wholeProgrammeRings
-                  programmeSnapshot={progressSnapshot}
-                />
-              </div>
-            )}
+            {tab === 'overview' && <EmployerLearningOverview key={`${employerId}:${kind}:${learnerId}`}
+              employerId={employerId} kind={kind} learnerId={learnerId} />}
 
-            {tab === 'plan' && (
-              <DashboardTrainingPlan
-                key={`plan:${kind}:${learnerId}`}
-                kind={kind}
-                learnerId={learnerId}
-                plan={dashboardPlan}
-                programmeStartDate={dashboardPlan.data?.programmeStartDate ?? learner.startDate}
-                programmeEndDate={dashboardPlan.data?.programmeEndDate ?? learner.endDate}
-                canOpenActivities={false}
-                canOpenCalendar={false}
-                canOpenRewards={false}
-                showRewards={false}
-                cardsOnly
-                trainingOnly
-              />
-            )}
+            {tab === 'plan' && <EmployerTrainingPlan key={`${employerId}:${kind}:${learnerId}`}
+              employerId={employerId} kind={kind} learnerId={learnerId} />}
 
             {tab === 'assignments' && (
               <EmployerAssignmentsTab employerId={employerId} kind={kind} learnerId={learnerId} learnerName={learner.name || 'this learner'} />
@@ -340,19 +242,6 @@ export default function EmployerLearnerPage() {
                 <p className="text-red-600 text-[13px] mb-3"><i className="ri-error-warning-line mr-1.5" />{planError}</p>
                 <button className={btnSecondary} onClick={loadPlan}><i className="ri-refresh-line" />Retry</button>
               </div>
-            )}
-
-            {/* Omitting kind/learnerId keeps the full plan read-only: no
-                start/open/upload actions, with all recorded outcomes retained. */}
-            {tab === 'plan' && !planError && (
-              <LearnerPlanBody
-                real={plan}
-                loading={planPending}
-                loadError={null}
-                pageLabel="Learning plan"
-                showHero={false}
-                note={`${learner.name || 'This learner'}'s training plan as they see it — modules, weeks and every component, with recorded quiz results.`}
-              />
             )}
 
             {tab === 'otjh' && (

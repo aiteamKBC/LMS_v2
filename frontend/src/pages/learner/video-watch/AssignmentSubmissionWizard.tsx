@@ -39,6 +39,11 @@ export type AssignmentAnswers = {
   assignmentTopicId?: string;
 };
 
+export type AssignmentCompletion = AssignmentAnswers & {
+  timeTakenSeconds: number;
+  timeEntrySource: 'timer' | 'input';
+};
+
 const EMPTY_ANSWERS: AssignmentAnswers = {
   assignmentAnswer: '',
   whatYouLearned: '',
@@ -118,7 +123,7 @@ export function AssignmentSubmissionForm({
   submittingProgress: boolean;
   onEvidenceChanged: (files: EvidenceRecord[]) => void;
   onRestoreTime: (seconds: number, source: 'timer' | 'input') => void;
-  onSubmitProgress: (answers: AssignmentAnswers) => Promise<void>;
+  onSubmitProgress: (answers: AssignmentCompletion) => Promise<void>;
   historicalReadOnly?: boolean;
   resolveEvidenceUrl?: (file: EvidenceRecord) => Promise<string>;
   renderEvidencePreview?: (file: EvidenceRecord, url: string) => ReactNode;
@@ -465,7 +470,8 @@ export function AssignmentSubmissionForm({
         return;
       }
       setSavedTimeSeconds(claimedSeconds);
-      await onSubmitProgress({ ...answers, ...(assignmentTopicId ? { assignmentTopicId } : {}) });
+      await onSubmitProgress({ ...answers, ...(assignmentTopicId ? { assignmentTopicId } : {}),
+        timeTakenSeconds: claimedSeconds, timeEntrySource: detailedSeconds !== null ? 'input' : timeSource });
       setStatus('submitted_for_tutor_review');
       try {
         const saved = await loadLearningReflectionSubmission({ learnerKind: kind, learnerId, activityType: 'assignment', activityId: componentId, ...(assignmentTopicId ? { assignmentTopicId } : {}) });

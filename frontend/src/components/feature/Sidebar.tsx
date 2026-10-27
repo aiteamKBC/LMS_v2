@@ -100,6 +100,8 @@ export interface SidebarNavItem {
   icon: string;
   /** Leaf destination. Navigation groups intentionally omit it. */
   href?: string;
+  /** Optional router state forwarded when opening this destination. */
+  state?: unknown;
   /** Optional page-resolved selection for destinations with query-string tabs. */
   active?: boolean;
   /**
@@ -294,7 +296,7 @@ function NavItemLink({ item, className, children, ...rest }: {
     );
   }
   return (
-    <Link to={item.href ?? '#'} {...externalLinkProps(item)} className={className} {...rest}>
+    <Link to={item.href ?? '#'} state={item.state} {...externalLinkProps(item)} className={className} {...rest}>
       {children}
     </Link>
   );
