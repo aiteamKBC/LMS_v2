@@ -469,11 +469,10 @@ PERFORMANCE_DIAGNOSTIC_ACCOUNT_IDS = frozenset(
 )
 PERFORMANCE_SAMPLE_RETENTION_DAYS = int(os.environ.get('PERFORMANCE_SAMPLE_RETENTION_DAYS', '14'))
 
-# Released for learners in production and local development. The release
-# setting is independent of DEBUG and supersedes the old environment switches.
-# Publication, assignment, ownership and date checks remain in the feedback API.
+# Release Live Sessions Feedback for learners in production; other types stay
+# local-only. Publication, ownership, assignment and dates are still enforced.
 LEARNER_FEEDBACK_ENABLED = True
-LEARNER_NON_LECTURE_FEEDBACK_ENABLED = LEARNER_FEEDBACK_ENABLED
+LEARNER_NON_LECTURE_FEEDBACK_ENABLED = False
 
 ROOT_URLCONF = 'config.urls'
 

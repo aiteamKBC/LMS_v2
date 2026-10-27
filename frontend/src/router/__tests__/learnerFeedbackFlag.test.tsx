@@ -20,12 +20,16 @@ async function learnerFeedbackRoutes(enabled: boolean) {
 }
 
 describe('learner feedback routes', () => {
-  it('renders every learner feedback route in production', async () => {
+  it('releases the queue and owned delivery routes while keeping other feedback routes closed in production', async () => {
     const routes = await learnerFeedbackRoutes(false);
     expect(routes).toHaveLength(4);
     for (const route of routes) {
-      const element = route.element as ReactElement<{ to?: string }>;
-      expect(element.props.to).toBeUndefined();
+      const element = route.element as ReactElement<{ to?: string; replace?: boolean }>;
+      if (route.path === '/learner/feedback' || route.path === '/learner/feedback/delivery/:deliveryId') {
+        expect(element.props.to).toBeUndefined();
+      } else {
+        expect(element.props).toMatchObject({ to: '/workspace/learner', replace: true });
+      }
     }
   });
 

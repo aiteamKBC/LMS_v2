@@ -22,10 +22,10 @@ export const CHAT_ENABLED = false;
 /**
  * Learner feedback workspace.
  *
- * Learners can access assigned feedback in production and local development.
- * The API still enforces ownership, publication and availability dates.
+ * All feedback types are available during local development. Production
+ * releases Live Sessions Feedback only; the API enforces the same scope.
  */
-export const LEARNER_FEEDBACK_ENABLED = true;
+export const LEARNER_FEEDBACK_ENABLED = import.meta.env.DEV;
 
-/** Lecture deliveries follow the same visibility as other learner feedback. */
-export const LEARNER_POST_LECTURE_FEEDBACK_ENABLED = LEARNER_FEEDBACK_ENABLED;
+/** Release assigned Live Sessions Feedback in production as well as locally. */
+export const LEARNER_POST_LECTURE_FEEDBACK_ENABLED = true;

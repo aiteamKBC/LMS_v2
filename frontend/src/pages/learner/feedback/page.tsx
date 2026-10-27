@@ -44,7 +44,7 @@ export default function LearnerFeedbackPage() {
   const account = auth.account;
   const isLearner = account?.role === 'learner' && account.subjectType === 'learner';
   const limitedFeedback = !LEARNER_FEEDBACK_ENABLED && isLearner;
-  const availableCategories = limitedFeedback ? CATEGORIES.filter(category => ['lecture', 'mid-module', 'end-module'].includes(category.id)) : CATEGORIES;
+  const availableCategories = limitedFeedback ? CATEGORIES.filter(category => category.id === 'lecture') : CATEGORIES;
   const activeCategory = availableCategories.find(category => category.id === requestedCategory) || null;
   const learnerId = isLearner ? String(account.subjectId) : resolved.id;
   const learnerKind = isLearner ? account.learnerType || 'apprenticeship' : resolved.kind;

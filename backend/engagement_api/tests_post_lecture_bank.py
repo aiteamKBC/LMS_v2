@@ -42,6 +42,45 @@ class PostLectureBankTests(SimpleTestCase):
         self.assertEqual(detail.status_code, 404)
         self.assertEqual(save.status_code, 404)
 
+    def test_each_new_occurrence_draws_exact_category_quotas_and_retains_the_fixed_closing_question(self):
+        def question(identifier, category):
+            return feedback.FeedbackQuestion(id=identifier, question_text=f'{category} {identifier}', sort_order=identifier)
+
+        teaching = [question(identifier, 'Teaching') for identifier in range(1, 5)]
+        practice = [question(identifier, 'Practice') for identifier in range(5, 10)]
+        closing = question(10, 'Comments')
+        sections = [
+            SimpleNamespace(questions_per_delivery=1, questions=mock.Mock(all=mock.Mock(return_value=teaching))),
+            SimpleNamespace(questions_per_delivery=2, questions=mock.Mock(all=mock.Mock(return_value=practice))),
+            SimpleNamespace(questions_per_delivery=None, questions=mock.Mock(all=mock.Mock(return_value=[closing]))),
+        ]
+        form = SimpleNamespace(template_key='synthetic-bank', sections=mock.Mock())
+        form.sections.prefetch_related.return_value.all.return_value = sections
+        previous_query = mock.Mock()
+        recent = previous_query.exclude.return_value.order_by.return_value
+        recent.first.return_value = None
+        saved_sets = []
+        with (
+            mock.patch.object(feedback_delivery.FeedbackDelivery.objects, 'filter', return_value=previous_query),
+            mock.patch.object(feedback_delivery.FeedbackDeliveryQuestion.objects, 'bulk_create') as create,
+        ):
+            for identifier in (101, 102):
+                delivery = feedback.FeedbackDelivery(id=identifier, module_catalogue_id='module-1', available_at=datetime(2026, 10, identifier - 100, tzinfo=timezone.utc))
+                delivery.save = mock.Mock()
+                feedback_delivery._pin_delivery_questions(delivery, form)
+                selected = create.call_args.args[0]
+                selected_ids = {item.question.id for item in selected}
+                self.assertEqual(len(selected), 4)
+                self.assertEqual(len(selected_ids.intersection(range(1, 5))), 1)
+                self.assertEqual(len(selected_ids.intersection(range(5, 10))), 2)
+                self.assertIn(10, selected_ids)
+                self.assertTrue(delivery.question_set_pinned)
+                saved_sets.append(selected_ids)
+                previous = SimpleNamespace(selected_questions=mock.Mock())
+                previous.selected_questions.select_related.return_value.all.return_value = selected
+                recent.first.return_value = previous
+        self.assertEqual(saved_sets[0].intersection(saved_sets[1]), {10})
+
     def test_existing_deliveries_keep_their_original_full_question_set(self):
         self.assertIsNone(feedback._selected_delivery_question_ids(
             SimpleNamespace(question_set_pinned=False),
