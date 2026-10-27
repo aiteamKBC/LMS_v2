@@ -1,0 +1,22 @@
+.plot {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  contain: inline-size;
+}
+
+/* Chart measurements must not resize their own host or create scrollbars. */
+.canvas {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.categoryViewport {
+  max-height: 288px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}

@@ -404,7 +404,7 @@ class MonthlyDraftPersistenceTests(SimpleTestCase):
     def test_progress_and_final_submission_share_transaction(self, connection_mock, atomic, lineage, checks):
         from .monthly_assignment import complete_saved_assignment
         cursor = connection_mock.__getitem__.return_value.cursor.return_value.__enter__.return_value
-        cursor.fetchone.return_value = ("submission-1", "draft", {"monthlyAssignment": {"claims": [{"code": "K1"}]}})
+        cursor.fetchone.return_value = ("submission-1", "draft", {"actualTimeHours": "1", "monthlyAssignment": {"claims": [{"code": "K1"}]}})
         save = MagicMock()
         record = {}
         complete_saved_assignment("commercial", "1", "C1", record, save)
@@ -421,7 +421,7 @@ class MonthlyDraftPersistenceTests(SimpleTestCase):
     def test_failed_progress_never_marks_assignment_submitted(self, connection_mock, atomic, checks):
         from .monthly_assignment import complete_saved_assignment
         cursor = connection_mock.__getitem__.return_value.cursor.return_value.__enter__.return_value
-        cursor.fetchone.return_value = ("submission-1", "draft", {"monthlyAssignment": {"claims": []}})
+        cursor.fetchone.return_value = ("submission-1", "draft", {"actualTimeHours": "1", "monthlyAssignment": {"claims": []}})
         with self.assertRaisesRegex(ValueError, "Progress failed"):
             complete_saved_assignment("commercial", "1", "C1", {}, MagicMock(side_effect=ValueError("Progress failed")))
         self.assertEqual(cursor.execute.call_count, 2)

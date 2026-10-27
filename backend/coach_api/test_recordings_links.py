@@ -89,6 +89,8 @@ class LinkedEndpointTests(SimpleTestCase):
         response=self.get();self.assertEqual(response.status_code,200)
         value=json.loads(response.content)
         self.assertEqual(value['meeting']['meetingId'],links.meeting_id(OWNER,EVENT))
+        self.assertTrue(value['meeting']['readyToAction'])
+        self.assertEqual(value['meeting']['media']['readyCount'],0)
         self.assertEqual(read_reference(value['meeting']['recordingsReference'])['event'],'event-one')
         self.assertEqual(value['learners'],[{'id':'1','name':'Synthetic Learner'}])
         self.assertEqual(self.lookup.call_args.args[1],[OWNER])

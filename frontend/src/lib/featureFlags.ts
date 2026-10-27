@@ -22,11 +22,10 @@ export const CHAT_ENABLED = false;
 /**
  * Learner feedback workspace.
  *
- * Local Vite development exposes learner feedback for testing.
- * Production keeps every learner feedback entry point and deep link disabled
- * until the feature is explicitly approved for release.
+ * All feedback types are available during local development. Production
+ * releases Live Sessions Feedback only; the API enforces the same scope.
  */
 export const LEARNER_FEEDBACK_ENABLED = import.meta.env.DEV;
 
-/** Lecture deliveries follow the same local-only visibility as other feedback. */
-export const LEARNER_POST_LECTURE_FEEDBACK_ENABLED = LEARNER_FEEDBACK_ENABLED;
+/** Release assigned Live Sessions Feedback in production as well as locally. */
+export const LEARNER_POST_LECTURE_FEEDBACK_ENABLED = true;

@@ -8,9 +8,9 @@ from unittest.mock import MagicMock, patch
 from django.test import SimpleTestCase
 from old_otjh.service import ServiceError
 
-from .progress_transfer_matching import build_review, module_review, validate_decisions, manual_completion, target_fingerprint
+from .progress_transfer_matching import build_review, module_review, validate_decisions, manual_completion, target_fingerprint, component_counts
 from .replacement_learning import project_approved_learning
-from .progress_transfer_policy import credited_percent
+from .progress_transfer_policy import credited_percent, public_item
 from . import progress_transfer as api
 from .tests_my_learning_no_db import component, native, metadata
 from .tests_progress_transfer_no_db import item, saved
@@ -30,6 +30,70 @@ def context():
 
 
 class TransferMatchingReviewTests(SimpleTestCase):
+    def test_counts_include_existing_completion_once_and_exclude_retired_or_foreign_components(self):
+        data = context()
+        data[3]['componentProgress'] = [{'componentId': ident, 'kind': 'component'}
+                                       for ident in ['AUTO', 'AUTO', 'FOREIGN', 'RETIRED']]
+        data[3]['quizAttempts'] = [{'componentId': 'QUIZ', 'passed': False}]
+        before = deepcopy(data)
+        snapshot = item(completedSourceActivities=['material:7', 'material:8'])
+        module, _, _ = module_review(snapshot, data)
+        self.assertEqual(module['completedTargetIds'], ['AUTO'])
+        self.assertEqual(component_counts(module, ['AUTO', 'AUTO', 'MANUAL', 'FOREIGN', 'RETIRED']),
+                         {'total': 3, 'matched': 2, 'completed': 2, 'remaining': 1})
+        self.assertEqual(data, before)
+        token = build_review('R1', [snapshot], data)['reviewToken']
+        data[3]['quizAttempts'].append({'componentId': 'QUIZ', 'passed': True})
+        updated = build_review('R1', [snapshot], data)
+        self.assertNotEqual(updated['reviewToken'], token)
+        self.assertEqual(component_counts(updated['modules'][0], ['AUTO', 'MANUAL']),
+                         {'total': 3, 'matched': 2, 'completed': 3, 'remaining': 0})
+
+    def test_saved_counts_are_exposed_without_reconstructing_history_or_inventing_missing_counts(self):
+        self.assertNotIn('componentCounts', public_item(item()))
+        counts = {'total': 0, 'matched': 0, 'completed': 0, 'remaining': 0}
+        self.assertEqual(component_counts({'targets': [], 'completedTargetIds': []}, []), counts)
+        snapshot = item(componentCounts=counts)
+        self.assertEqual(public_item(snapshot)['componentCounts'], counts)
+        self.assertEqual((public_item(snapshot)['percent'], public_item(snapshot)['hours']), (40, 2))
+
+    def test_review_uses_frozen_completed_names_without_loading_document_or_question_content(self):
+        data = context()
+        pending = saved(modules=[item(completedSourceActivities=['material:7', 'material:8'])])
+        request_id = pending['items'][0]['requestId']
+        cursor = MagicMock(); cursor.fetchone.return_value = (7, 'commercial')
+        connection = MagicMock(); connection.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(api, 'connections', {'enrolment': connection}), \
+                patch.object(api.store, 'read_state', return_value=pending), \
+                patch.object(api, 'source_owner', return_value=(SimpleNamespace(pk=7), {'id': 9})), \
+                patch.object(api, 'with_planned_hours', side_effect=lambda c, _: c), \
+                patch('learner_api.my_learning.load_context', return_value=data), \
+                patch('learner_api.progress_transfer_content.content_review', side_effect=AssertionError('Content not needed')) as content:
+            result = api.review_request(request_id)
+        self.assertEqual(result, build_review(request_id, pending['items'], data))
+        self.assertEqual([s['title'] for s in result['modules'][0]['sources']], ['Completed reading', 'Unmatched reading'])
+        content.assert_not_called()
+        self.assertTrue(all(call.args[0].startswith('SELECT') for call in cursor.execute.call_args_list))
+
+    def test_started_and_untouched_old_components_are_excluded_and_new_content_remains(self):
+        data = list(context())
+        data[6] = {('50', 'material:7')}
+        data[7] = {('50', 'material:8')}
+        before = deepcopy(data)
+        # Compatibility path for pending snapshots predating completedSourceActivities.
+        review, matches, _ = module_review(item(), data)
+        self.assertEqual([source['sourceActivityRef'] for source in review['sources']], ['material:7'])
+        snapshot = item(status='approved', completedSourceActivities=['material:7'], matchedComponents=matches)
+        projected = project_approved_learning(data[3]['components'], data[9]['replacement_settings'], [snapshot])
+        self.assertEqual([c['componentId'] for c in projected], [c['componentId'] for c in data[3]['components']])
+        for component_row, original in zip(projected, data[3]['components']):
+            self.assertEqual({k: v for k, v in component_row.items() if k != 'previousLearning'}, original)
+            if component_row['componentId'] != 'AUTO':
+                self.assertNotIn('previousLearning', component_row)
+        self.assertEqual(credited_percent(snapshot, ['AUTO'], 10), 40)
+        self.assertEqual(credited_percent(snapshot, ['AUTO', 'MANUAL'], 10), 50)
+        self.assertEqual(data, before)
+
     def test_authored_hours_read_is_limited_to_request_destinations_and_keeps_actual_hours(self):
         data = context()
         before = deepcopy(data)
@@ -152,7 +216,10 @@ class TransferMatchingReviewTests(SimpleTestCase):
         self.assertEqual(set(snapshot['matchedComponents']), {'AUTO', 'MANUAL'})
         self.assertTrue(snapshot['matchedComponents']['MANUAL']['manualMatch'])
         self.assertEqual(snapshot['componentMatches'][1]['plannedHours'], 1.5)
+        self.assertEqual(snapshot['componentCounts'], {'total': 3, 'matched': 2, 'completed': 2, 'remaining': 1})
         self.assertEqual(write.args[1][1:], [request_id, 7, 'M1'])
+        self.assertEqual([call.args[0].split()[1] for call in cursor.execute.call_args_list
+                          if call.args[0].startswith('UPDATE')], [api.store.ITEMS, api.store.REQUESTS])
 
     def test_approval_uses_the_same_verified_reading_type_as_review(self):
         from .progress_transfer_content import verified_source_types

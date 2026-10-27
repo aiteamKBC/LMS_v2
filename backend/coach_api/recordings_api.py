@@ -303,7 +303,7 @@ def coaching_recordings_calendar(request):
         boundary = max((stamp.timestamp() for events, _ in calendar_pages for event in events or [] if isinstance(event, dict)
                         for key in ('start', 'end') if isinstance(event.get(key), dict)
                         if (stamp := _event_instant(event[key])) and stamp <= now), default=0)
-        fingerprint = [start, end, zone_name, chosen, learner_id, sorted(grants), coaches, learners, lectures,
+        fingerprint = ['ready-all-ended-v2', start, end, zone_name, chosen, learner_id, sorted(grants), coaches, learners, lectures,
             {owner: sorted(rows, key=lambda row: row['event_key']) for owner, rows in bookings.items()},
             stamps, errors, pending_calendars, pending_evidence, initial_calendars, initial_evidence,
             boundary, int(now.timestamp()) // 1800,
@@ -364,7 +364,9 @@ def coaching_recordings_calendar(request):
             row['media'] = source_summary(discovery)
             if discovery and discovery.error_code and not any(item.get('coachEmail') == email and item['code'] == 'recordings_incomplete' for item in errors):
                 errors.append({'coachEmail': email, 'code': 'recordings_incomplete'})
-            row['readyToAction'] = row['phase'] == 'ended' and (row['match'] == 'matched' or bool(row.get('recordingsReference'))) and row['media']['readyCount'] > 0
+            # Ready means the appointment can be reviewed after its end time.
+            # Missing media, attendance, AI or booking links must not hide it.
+            row['readyToAction'] = row['phase'] == 'ended'
         if any(row['media']['state'] in {'unavailable', 'missing', 'failed'}
                or any(file['state'] in {'unavailable', 'missing', 'failed'} for file in row['media']['recordings']) for row in visible):
             errors.append({'coachEmail': email, 'code': 'recordings_incomplete'})
@@ -525,7 +527,7 @@ def coaching_recording_session(request):
                 attendance['state'] = 'unavailable'
             return _response({'eventKey': record.event_key, 'reference': record.recording_reference,
                               'media': media, 'attendance': attendance, **({'evidence': evidence} if part == 'all' else {}),
-                              'partial': attendance['state'] == 'unavailable' or media['state'] == 'unavailable'})
+                              'partial': attendance['state'] == 'unavailable' or media['state'] == 'unavailable' or media.get('check', {}).get('state') == 'failed'})
         except Exception:
             return _response({'error': 'Saved calendar meeting evidence could not be loaded.', 'code': 'session_unavailable'}, 503)
     from .views import stored_coach_meeting_snapshot, build_coach_meeting_attendance_tracker
@@ -556,7 +558,7 @@ def coaching_recording_session(request):
                                      'syncedAt': (snapshot.get('storage') or {}).get('syncedAt')}
     evidence, attendance = _with_saved_evidence(request, record, job, attendance, part=part)
     return _response({'eventKey': record.event_key, 'media': media, 'attendance': attendance, **({'evidence': evidence} if part == 'all' else {}),
-                      'partial': attendance['state'] == 'unavailable' or media['state'] == 'unavailable'})
+                      'partial': attendance['state'] == 'unavailable' or media['state'] == 'unavailable' or media.get('check', {}).get('state') == 'failed'})
 
 
 @require_GET

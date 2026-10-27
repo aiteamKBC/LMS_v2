@@ -66,8 +66,19 @@ def attendance_rows(reports):
             person['_records'].append({**row, 'total_attendance_seconds': row.get('totalAttendanceSeconds') or 0})
     result = []
     for person in groups.values():
-        seconds = evidence_seconds(person.pop('_records'))
-        result.append({**person, 'totalAttendanceSeconds': seconds, 'status': 'attended' if seconds > 0 else 'pending'})
+        records = person.pop('_records')
+        seconds = evidence_seconds(records)
+        visits = []
+        for record in records:
+            for visit in record.get('intervals') or []:
+                if not isinstance(visit, dict):
+                    continue
+                joined, left = _instant(visit.get('joinDateTime')), _instant(visit.get('leaveDateTime'))
+                if joined and left and left >= joined:
+                    visits.append((joined, left))
+        result.append({**person, 'totalAttendanceSeconds': seconds, 'status': 'attended' if seconds > 0 else 'pending',
+            'firstJoinedAt': min(joined for joined, _ in visits).isoformat() if visits else None,
+            'lastLeftAt': max(left for _, left in visits).isoformat() if visits else None})
     return result
 
 

@@ -2,22 +2,36 @@
 
 ## Scope and entry points
 
-Curriculum users can edit separate **MCM** and **PR (Progress Review)** quality
-forms, publish each for new reviews, and assess any coach calendar meeting.
-The defaults come from **Quality 2 / Portfolio Sampling Feedback Form**: MCM has
-eight sections / 15 criteria and excludes the Progress reviews section; PR has
-eight sections / 14 criteria and excludes Monthly Coaching Meetings. Both retain
-the seven common sections, rating descriptors, supporting screenshots and SMART
-action plan. Historical reviews retain their original definition, including the
-older shared nine-section / 17-criterion form. Questions support rating plus
-evidence, short/long text, yes/no, single choice, checklist, date, number and image.
+Curriculum users choose a feedback form manually from a searchable library of
+fourteen cards, then assess the selected learner and meeting. A meeting title
+does not select a form, and choosing a form never changes the calendar meeting
+category. The supplied Word forms are converted to native UI definitions; no
+Word document is produced. Full criterion-specific Gold/Green/Amber/Red guidance,
+N/A availability, session context and action-plan fields are retained.
 
-- Form authoring: `/curriculum/quality/forms?type=MCM` or `?type=PR`, also linked
+The library includes Progress Review, Commitment, First Session, Gateway,
+Information, Monthly Coaching Meeting, Teaching, Barriers to Learning, British
+Values, CIAG, EPA, Marking and Feedback, Safeguarding and Target Setting.
+The owner approved adding the missing Gateway assessment-methods criterion,
+merging Teaching's duplicate assessment/feedback criterion, and correcting the
+Target Setting reference heading. The defaults contain 91 judgement criteria.
+
+Every template can be edited and published independently. Users can create custom
+form types and add, remove, reorder or change questions, sections, options, help,
+criterion rating guidance and N/A availability. Question types include rating plus
+evidence, short/long text, yes/no, single choice, checklist, date, number, image
+and original evidence-file upload. Historical shared/MCM/PR reviews and their
+original definitions remain supported; those previous templates are available
+in the editor's Previous forms group rather than selected for new reviews.
+
+- Form authoring: `/curriculum/quality/forms` (library), or `?type=FORM_SAFEGUARDING`, also linked
   from Curriculum Quality, the calendar, saved checks and the selected meeting form.
 - Meetings: `/curriculum/coaching-recordings`, with **Quality Check** in each drawer.
 - Saved checks: `/curriculum/coaching-recordings/reviews`, linked as **Quality Checks**.
 
-Every review is for one learner and one coach meeting occurrence. If the meeting
+Every review is for one form, one learner and one coach meeting occurrence.
+Different forms for the same learner/meeting have independent UUIDs, versions and
+PDFs. Reopening the same form resumes its saved review. If the meeting
 has no linked learner, the reviewer selects a learner from that coach's current
 caseload. New reviews are supported for every category and phase, including
 upcoming, in-progress and cancelled meetings. Completion and PDF are allowed at
@@ -47,6 +61,7 @@ no AI request, copies no video and introduces no Azure store.
 | Review UUID / current saved version | `lms_quality.review.id` / `version` |
 | Immutable review snapshots | `lms_quality.revision` (`review_id`, `version`) |
 | Normalized evidence screenshots | `lms_quality.image` (`review_id`, `section`, `id`) |
+| Original evidence files and optional image thumbnails | `lms_quality.evidence_file` (`review_id`, `section`, `id`) |
 | Stored completed PDF bytes | `lms_quality.document.content` (`review_id`, `version`) |
 | PDF name and integrity hash | `lms_quality.document.filename` / `digest` |
 
@@ -68,11 +83,11 @@ that source cache must leave lms_quality intact.
 Reviewed installation/check command, run from backend:
 
 ```powershell
-python manage.py apply_coaching_quality_schema --schema-version 2 --expected-project fragrant-mountain-14750513 --expected-branch br-dry-sun-awo6g12b
+python manage.py apply_coaching_quality_schema --schema-version 3 --expected-project fragrant-mountain-14750513 --expected-branch br-dry-sun-awo6g12b
 ```
 
 Without `--apply`, this is an installation check. `--apply` runs the reviewed
-additive v1/v2 SQL against the verified intended target. Application releases still
+additive v1/v2/v3 SQL against the verified intended target. Application releases still
 require the project's normal review and merged-main deployment process. Schema
 installation does not deploy frontend or backend source. No destructive rollback
 is needed for these additive tables; retain them and their records when reverting
@@ -129,8 +144,13 @@ not public URLs and another site's cookie does not authenticate an LMS request.
 
 | Method | Suffix | Result |
 | --- | --- | --- |
+| GET | `/forms` | Published form-library card metadata; `?editing=1` also includes drafts and previous templates |
+| POST | `/forms` | Create a custom draft from `{title, requestId}`; publish in the editor before use |
 | GET | `/form` | Authoring draft, published definition, revision and field types |
 | PUT | `/form` | Explicit draft save or publish, optimistic revision and idempotent request UUID |
+| POST | `/reviews/<uuid>/files` | Multipart `section` (default `evidence`) and original `file`, up to 25 MiB |
+| GET | `/reviews/<uuid>/files/<file-uuid>` | Authenticated original bytes, forced attachment download |
+| GET | `/reviews/<uuid>/files/<file-uuid>?preview=1` | Normalized JPEG thumbnail only, when available |
 | GET | `/context?eventKey=...&reference=...&learnerId=...` | Authorized meeting, coach caseload, applicable definition and existing review |
 | POST | `/reviews?eventKey=...&reference=...` | New review for selected coach caseload learner; completed saves include document state |
 | GET | `/reviews?meetingId=<32-hex-occurrence-id>&offset=0` | Up to 30 metadata rows and nextOffset; no calendar scan or form/image/PDF bodies |
@@ -264,6 +284,11 @@ user explicitly saves a form. The schema was applied; application code remains
 local on `khaled-is-here`, HEAD `9422c852`, with no Git mutation or deployment.
 
 ## Separate MCM / PR forms and simpler filters - 25 October 2026
+
+Historical implementation below. The fourteen-card feedback library and separate
+form identities described in the 26 October section supersede title suggestions
+and same-review type switching for new library forms. Legacy MCM/PR records,
+versions and documents are preserved.
 
 ### Selection and review history
 
@@ -405,3 +430,153 @@ file or shared Teams contract was edited. Live Teams: NOT RUN. The five unrelate
 teammate changes and earlier calendar/recording work were preserved by hash.
 The Git index remains empty on khaled-is-here, HEAD 9422c852. No Pull, Merge,
 Commit, Push, branch/worktree change or deployment was performed.
+
+## Feedback library and original evidence - 26 October 2026
+
+### Selection, editing and identity
+
+The main **Quality Check** action opens the searchable fourteen-card library.
+There is no MCM/PR restriction, title-based recommendation or preselection. The
+selected form is a quality-review type only, not a Microsoft/booking/calendar
+category. A reviewer can save Monthly Coaching Meeting and Safeguarding reviews
+for the same learner and occurrence independently. Each one appears in the
+meeting's saved-check list and the Quality Checks page, with its own PDF actions.
+The page filters by any published form, including custom forms. Previous MCM/PR
+filters remain available for historical records.
+
+Default definitions are in `coach_api/quality_feedback_defaults.json`, loaded
+without source writes. Built-in IDs are `FORM_PROGRESS_REVIEW`, `FORM_COMMITMENT`,
+`FORM_FIRST_SESSION`, `FORM_GATEWAY`, `FORM_INFORMATION`,
+`FORM_MONTHLY_COACHING`, `FORM_TEACHING`, `FORM_BARRIERS`,
+`FORM_BRITISH_VALUES`, `FORM_CIAG`, `FORM_EPA`, `FORM_MARKING_FEEDBACK`,
+`FORM_SAFEGUARDING` and `FORM_TARGET_SETTING`. The published form catalog contains
+only lightweight card metadata. Full questions/guidance load on selection.
+
+Form authoring is `/curriculum/quality/forms`. Create form type makes a custom
+draft with a stable `FORM_CUSTOM_<UUID hex>` identity; retrying the same creation
+request UUID does not create another template. Custom drafts become selectable
+only after publication. Publishing a built-in/custom draft affects new reviews;
+existing reviews continue to use their frozen definition and saved answers.
+Editing titles or wording never changes a form's stable identity. Arbitrary
+valid new form IDs are supported by the shared API and filters; they do not
+require adding another MCM/PR switch statement.
+
+New form identities include the selected form ID in the server-computed
+learner/coach/event/occurrence identity hash. A different form creates another
+review rather than overwriting the first one. Existing legacy hashes are not
+rewritten. A saved library review cannot be changed into another form through
+PUT; use the meeting's new-review/card action instead. Its original meeting,
+learner, definition and historical PDFs remain intact.
+
+### Original evidence and PDF lifecycle
+
+The general evidence uploader accepts original files of any format: images,
+PDF/Office, spreadsheets, audio, video, archives and other opaque files. Limits
+are 25 MiB per file, 30 retained files and 100 MiB per review, including versions.
+The backend enforces these limits, verifies review/question ownership and
+deduplicates identical bytes within a review/key. A duplicate upload returns the
+original stored filename/metadata. Image questions and the previous normalized
+screenshot endpoint remain supported alongside the new file question type.
+
+`form.attachments` maps `evidence` or a file-question ID to saved file UUIDs.
+`review.evidenceFiles` contains the server-verified metadata for referenced files.
+The first upload saves a draft to establish ownership. Uploads run sequentially;
+a failure stops the remaining batch and leaves notes and already attached files
+visible. Completion requires all required question/file answers and validates
+ratings, allowed N/A choices, evidence and action rows on the server.
+
+Original bytes live once in `lms_quality.evidence_file.content`. Decodable
+JPEG/PNG/WebP files receive an optional normalized thumbnail in `preview`.
+All originals download with `Content-Disposition: attachment`, octet-stream and
+nosniff; only normalized JPEG thumbnails render inline. Other uploaded formats
+are not executed or embedded inline. Removing a reference from a new review
+version does not delete the original bytes or older version's evidence.
+
+Completing and saving prepares one branded, immutable PDF per saved version.
+It includes answers, judgements, selected rating guidance, action plan, images
+and an original-file inventory. Other formats remain original downloadable files;
+they are not falsely presented as converted PDF pages. The same review/PDF is
+listed under the meeting and on Quality Checks, without copying it into two
+stores. Preview uses the responsive PDF popup; Download reuses its bytes.
+
+### Coaching Session handoff
+
+These existing authenticated LMS routes are the integration entry points:
+
+```text
+GET /coach_api/coaching-recordings/quality/reviews?meetingId=<32-hex-meeting-ID>
+GET /coach_api/coaching-recordings/quality/reviews/<review-UUID>
+GET /coach_api/coaching-recordings/quality/reviews/<review-UUID>/documents/<version>
+GET /coach_api/coaching-recordings/quality/reviews/<review-UUID>/files/<file-UUID>
+```
+
+List rows include `reviewType`, `formTitle`, learner, status, version and saved
+PDF version. `meetingId` is the stable `meeting=` value from the calendar URL,
+also stored at `lms_quality.review.payload.meeting.id`. The saved JSON contains
+the exact selected definition, form answers and evidence UUIDs. The source AI
+application's cache does not own these records and must not rebuild/delete them.
+
+The Coaching Session maintainer can instead read the same canonical schema in
+New era, as previously agreed. Their backend must enforce the signed-in coach's
+ownership (`review.coach_email`) and use the selected immutable revision when
+showing historical evidence/PDFs. Do not use the browser's supplied coach email
+as proof of ownership or make Curriculum endpoints public. No separate write or
+second quality-review store is needed, and no Coaching Session source code was
+changed by this task.
+
+### Schema and requests
+
+The additive `coaching_quality_v3.sql` was applied to verified project
+`fragrant-mountain-14750513`, branch `br-dry-sun-awo6g12b`, database `neondb` on
+26 October. Only `lms_quality.evidence_file` and its index were added, with an
+advisory transaction lock, target guards and bounded lock/statement timeouts.
+The read-only post-check verified all ten columns and an empty evidence table;
+existing review/revision/document counts stayed 1/1/0. No learner evidence was
+uploaded and no source meeting, attendance, transcript, AI or session cache was
+modified. Retain this additive table and its records on application rollback;
+do not drop historical evidence. The reviewed installation command now supports
+`--schema-version 3` for other intended environments.
+
+Catalog/context reads use scoped cache keys and shared in-flight reads. Search,
+typing and section navigation add no requests. Selection fetches the chosen
+definition; saving/publishing invalidates affected read caches. There is no new
+polling or automatic Graph/AI work. Calendar/sidebar lists load metadata only.
+PDF preparation reads file metadata and thumbnails, not original videos/Office
+files; thumbnails likewise do not select the original large byte column. Original
+bytes load only on explicit download. The existing finite calendar read cycle
+and Ready-to-action behavior remain unchanged.
+
+### Validation
+
+Run from the repository root, with verified isolated SQLite settings and mocked
+external providers:
+
+```powershell
+.\backend\.venv\Scripts\python.exe backend/manage.py test coach_api.test_recordings_api coach_api.test_recordings_calendar_media coach_api.test_recordings_calendar_no_db coach_api.test_recordings_categories coach_api.test_recordings_evidence_api coach_api.test_recordings_index coach_api.test_recordings_jobs coach_api.test_recordings_keywords_no_db coach_api.test_recordings_links coach_api.test_recordings_parts coach_api.test_recordings_pdf coach_api.test_recordings_quality coach_api.test_recordings_response_cache coach_api.test_recordings_saved_evidence coach_api.test_recordings_transcripts coach_api.test_recordings_transport coach_api.test_quality_reviews coach_api.test_quality_form_builder coach_api.test_quality_review_types coach_api.test_quality_feedback_library coach_api.test_completion_reminders --settings=config.settings_coaching_recordings_test --noinput
+# PASS: 443 tests.
+npm --prefix frontend run type-check
+cd frontend
+npx vitest run src/pages/coaching-recordings src/api/coachingQualityReviews.test.ts src/api/coachingRecordings.test.ts src/api/coachingCompletion.test.ts src/pages/notifications/CompletionNotifications.test.tsx src/pages/learner/monthly-submission/AssignmentPdfPreview.test.tsx src/lib/__tests__/coachFetch.test.ts src/router/__tests__/navigation.test.tsx src/router/__tests__/lazyRoute.test.ts --maxWorkers=2 --reporter=dot
+# PASS: 306 tests / 27 files.
+npx eslint src/pages/coaching-recordings src/api/coachingQualityReviews.ts src/api/coachingQualityReviews.test.ts src/api/coachingRecordings.ts src/api/coachingRecordings.test.ts --max-warnings 0
+cd ..
+npm --prefix frontend run build
+git diff --check
+```
+
+The type-check, scoped ESLint, build and diff check pass. Project-wide lint has
+the previously verified 30 errors / 139 warnings in unchanged files; it has not
+been labelled green. Teams baseline / expanded Teams checks: NOT REQUIRED, no
+trigger file or imported Teams contract changed. Live Teams writes: NOT RUN.
+
+Synthetic Playwright verified fourteen cards, deliberate selection, mixed-file
+uploads, completion, actual PDF.js preview, download reusing one PDF read, mobile
+390px layout without horizontal overflow, and editing/publishing full criterion
+guidance. There were zero page errors and no real API requests. The generated
+five-page synthetic PDF was visually checked, including KBC branding, colours,
+answers, action plan, a supporting image and a non-image file entry. These checks
+do not claim live learner saves or deployment validation.
+
+All source changes stay local on khaled-is-here at task-start HEAD 4b08a703.
+Earlier calendar/recording changes are preserved. No Commit, Push, Pull, Merge,
+branch/worktree switch or deployment was performed.

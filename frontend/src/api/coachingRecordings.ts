@@ -9,6 +9,8 @@ export interface CoachingMedia {
   readyCount: number;
   recordings: { id: string; state: RecordingState; startsAt?: string | null; endsAt?: string | null;
     source?: 'microsoft' | null }[];
+  check?: { state: 'pending' | 'complete' | 'failed'; checkedAt: string | null;
+    reason?: 'no-teams-link' | 'no-recordings-returned' };
 }
 export interface CoachingSessionDetails {
   eventKey: string;
@@ -21,7 +23,8 @@ export interface CoachingSessionDetails {
     reportCount: number;
     syncedAt?: string | null;
     source?: 'coaching-session';
-    rows: { name?: string; displayName?: string; email?: string; role?: string; status?: string; totalAttendanceSeconds?: number; expected?: boolean }[];
+    rows: { name?: string; displayName?: string; email?: string; role?: string; status?: string; totalAttendanceSeconds?: number; expected?: boolean;
+      firstJoinedAt?: string | null; lastLeftAt?: string | null }[];
   };
 }
 
@@ -160,6 +163,9 @@ export async function loadCoachLearners(query: CoachLearnersQuery, signal?: Abor
 function isMedia(value: unknown): value is CoachingMedia {
   const states = ['ready', 'pending', 'failed', 'missing', 'unavailable', 'unlinked'];
   return object(value) && states.includes(String(value.state)) && Array.isArray(value.recordings)
+    && (value.check === undefined || (object(value.check) && ['pending', 'complete', 'failed'].includes(String(value.check.state))
+      && optionalInstant(value.check.checkedAt)
+      && (value.check.reason === undefined || ['no-teams-link', 'no-recordings-returned'].includes(String(value.check.reason)))))
     && value.recordings.every(row => object(row) && typeof row.id === 'string' && states.includes(String(row.state))
       && (row.source === undefined || [null, 'microsoft'].includes(row.source as string | null)))
     && value.readyCount === value.recordings.filter(row => row.state === 'ready').length;
@@ -483,6 +489,8 @@ export async function loadCoachingSession(eventKey: string, signal?: AbortSignal
       || !['available', 'pending', 'unavailable'].includes(String(data.attendance.state))
       || !Array.isArray(data.attendance.rows) || !data.attendance.rows.every(row => object(row)
         && ['name', 'displayName', 'email', 'role', 'status'].every(key => row[key] == null || typeof row[key] === 'string')
+        && (row.firstJoinedAt === undefined || optionalInstant(row.firstJoinedAt)) && (row.lastLeftAt === undefined || optionalInstant(row.lastLeftAt))
+        && (!row.firstJoinedAt || !row.lastLeftAt || Date.parse(String(row.lastLeftAt)) >= Date.parse(String(row.firstJoinedAt)))
         && (row.totalAttendanceSeconds == null || (typeof row.totalAttendanceSeconds === 'number' && row.totalAttendanceSeconds >= 0)))) {
     sessionReads.invalidate(url); throw new Error('Recordings and attendance could not be loaded. Please retry.');
   }

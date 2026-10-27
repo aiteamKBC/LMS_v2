@@ -1,0 +1,1787 @@
+[
+  {
+    "reviewType": "FORM_PROGRESS_REVIEW",
+    "title": "1-1 Progress Review Feedback Form",
+    "group": "Session forms",
+    "source": "1-1 Progress Review Session Feedback Form.docx",
+    "sections": [
+      {
+        "id": "context",
+        "title": "Session context",
+        "screenshots": false,
+        "criteria": [
+          {
+            "id": "session-context",
+            "text": "Context",
+            "type": "textarea",
+            "required": true,
+            "options": [],
+            "help": "Set the scene. What did you see as you joined the session? What was the learner doing? How had the session been prepared? Did the context have any impact on the learner or session?"
+          }
+        ]
+      },
+      {
+        "id": "observation",
+        "title": "Observation judgement and feedback",
+        "screenshots": true,
+        "criteria": [
+          {
+            "id": "criterion-1",
+            "text": "Preparation, structure and purpose",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The review is highly purposeful, personalised and clearly prepared using current learner information. Previous actions, progress, submissions, attendance, OTJH, KSB development and relevant risks are understood before the meeting. The discussion is well structured but flexible enough to respond to emerging issues. All parties understand the purpose of the review and the learner leaves with clear priorities.",
+              "green": "The review is appropriately prepared and structured. Relevant progress information is available and the discussion covers the learner's main priorities. The learner and employer understand what needs to happen next.",
+              "amber": "Some preparation is evident, but important information is missing, outdated or not used effectively. The review becomes largely procedural and some significant issues are not explored sufficiently.",
+              "red": "The review is poorly prepared or lacks clear structure and purpose. Significant information about the learner's progress is unknown or overlooked and the meeting does not provide meaningful direction."
+            }
+          },
+          {
+            "id": "criterion-2",
+            "text": "Progress Review Presentation and Communication",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The coach delivers a highly effective, personalised and accurate presentation that clearly summarises the learner’s learning since the previous review, progress against the apprenticeship, development of relevant KSBs and the impact of learning in the workplace. Information is current, evidence-based and presented in a clear, accessible way for both learner and employer. The presentation is used to stimulate meaningful three-way discussion, with the learner encouraged to reflect on their development and the employer invited to validate progress and workplace impact. Strengths, gaps, risks and priorities are clearly identified and lead naturally into agreed actions.",
+              "green": "The coach delivers a clear and personalised presentation covering the learner’s learning, overall progress, relevant KSB development and workplace application. Information is current and sufficiently accurate. The learner and employer are given opportunities to comment, clarify and contribute, and the presentation supports discussion of next steps.",
+              "amber": "A presentation is delivered but it is partially complete, overly generic, outdated or predominantly descriptive. One or more important areas — learning, progress, KSBs or workplace impact — receive insufficient attention. The presentation is largely delivered to the learner and employer rather than being used to generate meaningful discussion or reflection.",
+              "red": "The required presentation is absent, substantially incomplete or contains significant inaccuracies. There is little meaningful summary of the learner’s learning, progress, KSB development or workplace impact. The learner and employer are not sufficiently informed about progress and the presentation does not support effective review or action planning."
+            }
+          },
+          {
+            "id": "criterion-3",
+            "text": "Learner voice, ownership and reflection",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The learner is central to the review and does most of the meaningful reflection. They evaluate their progress, achievements, challenges and development and can explain what has changed since the previous review. The coach uses effective questioning to deepen reflection rather than providing answers for the learner. The learner takes ownership of agreed actions.",
+              "green": "The learner actively contributes and reflects on their progress, strengths and areas for improvement. Their views influence priorities and actions.",
+              "amber": "The learner contributes but is largely responding to coach-led questions. Reflection is superficial and the learner has limited ownership of decisions or actions.",
+              "red": "The review is predominantly a conversation between the coach and employer or a coach-led administrative exercise. The learner has little meaningful voice or ownership."
+            }
+          },
+          {
+            "id": "criterion-4",
+            "text": "Progress and KSB development",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "Progress is evaluated comprehensively against the apprenticeship learning plan, relevant KSBs and the learner's starting point. The learner can articulate how their knowledge, skills and behaviours have developed and provide meaningful evidence. Progress is challenged where necessary. Where the learner is ahead, further stretch is identified; where behind, the causes are identified and a robust recovery plan is agreed.",
+              "green": "Progress against the programme and KSB development is clearly reviewed. Strengths and gaps are identified and appropriate actions agreed. Where progress is below expectations, this is recognised and addressed.",
+              "amber": "Progress is discussed but primarily through completion percentages or activity status. KSB development, progress from starting points or reasons for underperformance receive insufficient exploration.",
+              "red": "The learner's progress is not meaningfully evaluated. Significant underperformance or gaps are overlooked and there is no effective plan for improvement."
+            }
+          },
+          {
+            "id": "criterion-5",
+            "text": "Application of learning and workplace impact",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The learner provides specific examples of applying new knowledge, skills and behaviours at work and evaluates the difference this has made to their performance, confidence, responsibilities, colleagues, customers or organisation. The employer validates and extends this discussion. Future opportunities to apply learning are identified.",
+              "green": "Clear examples are discussed of the learner applying apprenticeship learning within their job role. The learner and employer can identify positive development or workplace benefit.",
+              "amber": "Workplace application is discussed but examples are generic, superficial or predominantly prompted by the coach. The impact of learning is not sufficiently explored.",
+              "red": "Meaningful connections between apprenticeship learning and workplace practice are absent. The learner is unable to explain how learning is being applied."
+            }
+          },
+          {
+            "id": "criterion-6",
+            "text": "SMART target setting and review",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "Previous targets are meaningfully reviewed and their impact evaluated. New targets are personalised, challenging and co-created with the learner and employer where appropriate. They are genuinely SMART, address the learner's most important priorities and clearly develop KSBs, progress, workplace performance or EPA readiness. The learner understands why each target matters and what successful completion looks like.",
+              "green": "Previous targets are reviewed and clear SMART targets are agreed and recorded. Targets are relevant to the learner's progress and the learner understands what must be achieved and by when.",
+              "amber": "Targets exist but are vague, mainly task-completion based, insufficiently measurable or not focused on the learner's main priorities. Previous targets may be recorded as complete without evaluating their impact.",
+              "red": "Meaningful targets are absent, previous actions are not reviewed, or repeated missed targets result in no further intervention. The learner leaves without clear expectations for what must happen next."
+            }
+          },
+          {
+            "id": "criterion-7",
+            "text": "Employer engagement and accountability",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The employer plays an active and informed role throughout the review. They provide meaningful evidence about the learner's workplace performance and KSB development, identify opportunities for further application and challenge, confirm protected OTJH arrangements and take ownership of relevant actions. There is clear evidence of an effective three-way partnership.",
+              "green": "The employer participates effectively, contributes to discussion of progress and agrees appropriate workplace support or actions.",
+              "amber": "The employer is present but their contribution is limited, or employer involvement outside the meeting is inconsistent. Opportunities for the employer to support progress are not fully developed.",
+              "red": "The employer does not participate and there is little evidence of meaningful employer involvement in the apprenticeship. Repeated absence or lack of support is not challenged or escalated."
+            }
+          },
+          {
+            "id": "criterion-8",
+            "text": "Engagement, attendance, submissions and programme expectations",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "Engagement is systematically reviewed, including attendance, submissions, planned learning activity, engagement between meetings and any overdue work. Patterns and underlying causes are explored rather than simply recorded. Strong performance is recognised; concerns lead to proportionate intervention involving the learner and employer. Clear actions and timescales are agreed.",
+              "green": "Attendance, submissions and engagement are reviewed and any outstanding activity is appropriately addressed. Clear completion dates and actions are agreed and recorded.",
+              "amber": "Engagement information is discussed but significant patterns or missed activity receive insufficient challenge. Deadlines may simply be moved without understanding why they were missed.",
+              "red": "Significant non-engagement, poor attendance or missed activity is overlooked, normalised or repeatedly rescheduled without effective intervention."
+            }
+          },
+          {
+            "id": "criterion-9",
+            "text": "Off-the-job learning and employer protected time",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The quantity, quality and impact of OTJ learning are meaningfully reviewed. The learner explains what they have learned and how they have applied it rather than simply reporting hours. The employer confirms that agreed protected time is genuinely being provided. Any shortfall or access issue is identified promptly and clear corrective action is agreed.",
+              "green": "OTJ learning is reviewed appropriately and the learner is receiving the protected time agreed with their employer. Progress and any shortfalls are understood and addressed.",
+              "amber": "OTJ activity or hours are checked, but discussion is largely administrative and there is limited consideration of learning impact or whether protected time is working in practice. Concerns may not result in clear action.",
+              "red": "OTJ learning is not meaningfully reviewed, significant shortfalls are ignored, or the learner reports they are not receiving protected learning time and no effective intervention follows."
+            }
+          },
+          {
+            "id": "criterion-10",
+            "text": "EPA knowledge and preparation",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "EPA preparation is personalised and appropriate to the learner's programme stage. The learner confidently explains their EPA methods, gateway requirements and grading expectations where applicable. Current KSB development and evidence are explicitly connected to EPA and specific readiness gaps/actions are identified.",
+              "green": "The learner understands the principal EPA requirements and the coach appropriately connects current progress and learning to future assessment.",
+              "amber": "EPA is mentioned, but understanding is superficial, generic or uncertain. The learner cannot confidently explain some important requirements or how current learning contributes to EPA.",
+              "red": "EPA is not appropriately discussed, information is inaccurate, or the learner demonstrates significant uncertainty about what will be required."
+            }
+          },
+          {
+            "id": "criterion-11",
+            "text": "Careers advice and progression",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "Highly personalised careers discussion connects the learner's apprenticeship, KSB development and workplace performance to longer-term ambitions. Progression opportunities such as increased responsibility, promotion, further learning, professional membership or future roles are explored. Relevant actions are agreed and the employer contributes where appropriate.",
+              "green": "Relevant careers and progression discussion takes place and the learner understands how the apprenticeship supports their future development. Appropriate opportunities or next steps are identified.",
+              "amber": "Careers are mentioned but discussion is generic, superficial or not sufficiently connected to the learner's aspirations and development.",
+              "red": "No meaningful careers/progression discussion occurs where it would reasonably be expected or the learner cannot explain how the apprenticeship contributes to their longer-term development."
+            }
+          },
+          {
+            "id": "criterion-12",
+            "text": "Development of English",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": true,
+            "descriptors": {
+              "gold": "The learner can identify specific improvements in English relevant to their occupation, such as professional writing, communication, presentation, critical reading or technical vocabulary. Development needs are identified using appropriate evidence and linked to future workplace/programme expectations.",
+              "green": "Relevant English development is reviewed and the learner can identify how their skills are improving through their programme and work.",
+              "amber": "English development is mentioned but discussion is superficial or obvious development needs are not sufficiently addressed.",
+              "red": "Relevant English development is not reviewed and significant identified needs are ignored."
+            }
+          },
+          {
+            "id": "criterion-13",
+            "text": "Development of maths",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": true,
+            "descriptors": {
+              "gold": "The learner can identify specific ways their mathematical skills have developed and are being applied occupationally. Development needs are explored and relevant actions agreed.",
+              "green": "Relevant mathematical development and workplace application are appropriately reviewed.",
+              "amber": "Maths development receives limited discussion or relevant opportunities to explore progress are missed.",
+              "red": "Significant or relevant mathematics development needs are ignored."
+            }
+          },
+          {
+            "id": "criterion-14",
+            "text": "Personal development, safeguarding and wider curriculum",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": true,
+            "descriptors": {
+              "gold": "Relevant personal-development themes are explored naturally and meaningfully. The coach uses effective questioning to test and deepen the learner's understanding of areas such as safeguarding, Prevent, British values, EDI, health and safety, wellbeing or current risks. The learner can explain how the issue applies within their work or wider life.",
+              "green": "Relevant wider-development topics are discussed appropriately and the learner demonstrates secure understanding.",
+              "amber": "Topics are covered superficially, become a checklist exercise, or the learner's weak understanding is not sufficiently explored.",
+              "red": "Relevant opportunities are consistently missed, significant gaps in learner understanding remain unaddressed or incorrect/inappropriate information is given."
+            }
+          },
+          {
+            "id": "criterion-15",
+            "text": "Inclusion, wellbeing and barriers to progress",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": true,
+            "descriptors": {
+              "gold": "The learner is appropriately invited to discuss barriers, wellbeing or support needs. Existing adjustments/support are reviewed for impact rather than simply confirmed as present. Emerging needs are identified early and appropriate actions/referrals are agreed. High expectations remain in place while reasonable adjustments remove barriers to participation and progress.",
+              "green": "Known support needs and barriers are appropriately reviewed and effective support is in place. New concerns are recognised and acted upon.",
+              "amber": "Support is discussed but its effectiveness is not sufficiently evaluated, or emerging barriers receive insufficient exploration or follow-up.",
+              "red": "Significant support needs, wellbeing concerns or barriers are overlooked or appropriate action is not taken."
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "reviewType": "FORM_COMMITMENT",
+    "title": "Commitment Session Feedback Form",
+    "group": "Session forms",
+    "source": "Commitment Session Feedback Form.docx",
+    "sections": [
+      {
+        "id": "context",
+        "title": "Session context",
+        "screenshots": false,
+        "criteria": [
+          {
+            "id": "session-context",
+            "text": "Context",
+            "type": "textarea",
+            "required": true,
+            "options": [],
+            "help": "Set the scene. What did you see as you joined the session? What was the learner doing? How had the session been prepared? Did the context have any impact on the learner or session?"
+          }
+        ]
+      },
+      {
+        "id": "observation",
+        "title": "Observation judgement and feedback",
+        "screenshots": true,
+        "criteria": [
+          {
+            "id": "criterion-1",
+            "text": "Preparation, structure and informed commitment",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The session is highly prepared and personalised. Relevant learner, employer, eligibility and initial-assessment information has been reviewed in advance. The coach explains the purpose clearly and ensures the learner and employer make an informed commitment rather than simply completing paperwork. Questions and uncertainties are fully resolved before agreements are confirmed.",
+              "green": "The session is well prepared and structured. Required information is available and the learner and employer understand the purpose of the session and what they are agreeing to.",
+              "amber": "Some preparation is evident but information is incomplete, being established during the meeting or insufficiently explained. The session is overly administrative.",
+              "red": "The session is poorly prepared or important information is unavailable. Agreements are progressed despite significant unanswered questions or uncertainty."
+            }
+          },
+          {
+            "id": "criterion-2",
+            "text": "Learner eligibility and employment status",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "All learner eligibility requirements have been robustly checked and evidenced before commitment, including relevant identity/residency requirements, employment status, sufficient employment duration and any other factors affecting eligibility. Unusual circumstances are appropriately investigated and documented.",
+              "green": "All relevant eligibility and employment requirements have been checked, evidenced and confirmed before the apprenticeship starts.",
+              "amber": "Most eligibility information is available but one or more items require clarification or supporting evidence before funding can safely be claimed.",
+              "red": "Eligibility cannot be confirmed, required evidence is absent or significant concerns are ignored and the learner is progressed regardless."
+            }
+          },
+          {
+            "id": "criterion-3",
+            "text": "Programme and job-role suitability",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The coach meaningfully explores the learner's actual job duties, responsibilities and development needs with the learner and employer. There is compelling evidence that the selected standard is at the appropriate level, substantially aligns with the job role and will develop significant new KSBs. Any suitability concerns are challenged before enrolment.",
+              "green": "The learner's job role and selected standard are clearly aligned and sufficient opportunities exist to develop and apply the required KSBs.",
+              "amber": "Broad alignment exists but aspects of the role, level or opportunities to develop particular KSBs require further clarification.",
+              "red": "There is insufficient connection between the learner's job and the apprenticeship, or insufficient opportunity to develop occupational competence. The learner should not be enrolled on the proposed standard."
+            }
+          },
+          {
+            "id": "criterion-4",
+            "text": "Recognition of prior learning and initial assessment",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "Prior learning, qualifications, training and relevant occupational experience are robustly explored and triangulated with the learner and employer. The skills scan/initial assessment is meaningful rather than procedural. Any prior learning is clearly reflected in the individual programme, planned duration/content and price where applicable. The rationale is fully documented.",
+              "green": "Relevant prior learning and experience have been appropriately assessed, discussed and documented. Any required programme adjustment is identified and justified.",
+              "amber": "Initial assessment/skills scan has been completed but discussion or justification is superficial. Potential prior learning may not have been sufficiently investigated or reflected in programme planning.",
+              "red": "Prior learning has not been appropriately assessed, or evidence suggests significant learning the learner already possesses has not been taken into account."
+            }
+          },
+          {
+            "id": "criterion-5",
+            "text": "Learning support, inclusion and reasonable adjustments",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": true,
+            "descriptors": {
+              "gold": "Potential learning needs and barriers are sensitively and thoroughly explored. Appropriate support and reasonable adjustments are identified at the earliest point and incorporated into programme planning. The learner understands available support and appropriate consent is considered where information may need to be shared.",
+              "green": "Learning-support needs and potential barriers are appropriately assessed and required support or referral arrangements are identified.",
+              "amber": "Support needs have been considered but discussion is superficial or some required follow-up remains outstanding.",
+              "red": "Known or evident learning needs/barriers are overlooked, appropriate support is not considered or sensitive information is handled inappropriately."
+            }
+          },
+          {
+            "id": "criterion-6",
+            "text": "English and maths requirements",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The learner's prior English and maths attainment has been accurately established and the correct requirements for their age and programme are clearly explained. Where further English/maths development or qualifications are required or agreed, the learner and employer understand what will be studied, assessment expectations and how this supports occupational and career development. Appropriate support arrangements are confirmed.",
+              "green": "Correct English and maths requirements have been identified, explained and appropriately reflected in programme planning.",
+              "amber": "English/maths status has been checked but aspects of the requirements, evidence, assessment or planned support remain unclear.",
+              "red": "English/maths requirements have been inaccurately interpreted, required evidence is missing or mandatory requirements are not appropriately incorporated into the programme."
+            }
+          },
+          {
+            "id": "criterion-7",
+            "text": "Programme expectations and responsibilities",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The respective responsibilities of the learner, employer and KBC are clearly explained and actively discussed. The learner and employer can independently explain expectations around attendance, engagement, submissions, monthly coaching presentations, progress reviews, workplace application, off-the-job learning, feedback and EPA preparation. Practical arrangements for meeting these expectations are explored.",
+              "green": "All key programme expectations and responsibilities are clearly explained and understood by the learner and employer.",
+              "amber": "Most expectations are covered but understanding is not sufficiently checked or some important requirements remain unclear.",
+              "red": "Significant programme expectations are omitted, minimised or misunderstood."
+            }
+          },
+          {
+            "id": "criterion-8",
+            "text": "Employer engagement and commitment",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The employer actively participates and demonstrates clear commitment to the apprenticeship. They understand and accept responsibility for protected learning time, appropriate supervision, workplace opportunities to develop/apply KSBs, attendance/input at progress reviews and support through EPA. Specific workplace opportunities are identified.",
+              "green": "The employer actively participates and clearly understands and accepts their responsibilities throughout the programme.",
+              "amber": "The employer participates but understanding or practical commitment to one or more responsibilities is unclear.",
+              "red": "The employer does not meaningfully participate, does not understand their responsibilities or cannot provide the conditions required for the apprenticeship."
+            }
+          },
+          {
+            "id": "criterion-9",
+            "text": "Off-the-job training and protected learning time",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The planned off-the-job requirement and delivery model are clearly explained and individually agreed. Learner and employer understand what eligible off-the-job training is, what does not count, how it will be evidenced and that it should normally take place within paid working hours. A credible practical plan exists for releasing the learner and applying learning in the workplace.",
+              "green": "Off-the-job requirements, planned hours, protected time and recording/evidence expectations are accurately explained and agreed by learner and employer.",
+              "amber": "Off-the-job requirements are discussed but understanding is incomplete or practical arrangements for protected time remain uncertain.",
+              "red": "Off-the-job requirements are inaccurate or not agreed, the employer cannot or will not release the learner appropriately, or the learner is expected routinely to complete required training in their own unpaid time."
+            }
+          },
+          {
+            "id": "criterion-10",
+            "text": "Training plan and agreement",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The training plan is genuinely personalised from the initial assessment and accurately reflects programme content, off-the-job training, roles/responsibilities, progress review arrangements and relevant support. The learner and employer have meaningfully contributed rather than simply being asked to sign. The apprenticeship agreement is complete, accurate and consistent with programme details.",
+              "green": "The required training plan and apprenticeship agreement are accurate, complete and appropriately agreed/signed, with the learner and employer understanding their content.",
+              "amber": "Documents are substantially complete but contain minor omissions, inconsistencies or areas requiring clarification before the programme can safely proceed.",
+              "red": "Mandatory agreements are missing, materially inaccurate or incomplete, required agreements/signatures are absent, or parties are being asked to sign documents they do not understand."
+            }
+          },
+          {
+            "id": "criterion-11",
+            "text": "Funding, price and employer contribution",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "Funding arrangements and price are accurately explained to the employer. Any employer contribution is clearly identified from the outset and the agreed price reflects relevant prior learning where applicable. No inappropriate financial contribution is requested from the learner.",
+              "green": "Funding and pricing arrangements are accurately confirmed and the employer clearly understands any contribution for which they are responsible.",
+              "amber": "Broad funding arrangements are understood but some clarification of price, contribution or funding route remains outstanding.",
+              "red": "Funding/price information is materially inaccurate, the employer has not been appropriately informed of required contributions, or the learner is inappropriately expected to contribute to funded apprenticeship training/assessment."
+            }
+          },
+          {
+            "id": "criterion-12",
+            "text": "Initial session bookings and next steps",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "All relevant initial sessions and activities are agreed and booked collaboratively with the learner. The learner and employer understand what happens next, key dates, who they will work with and what they need to prepare before the first learning activities.",
+              "green": "All relevant initial sessions/meetings are booked and the learner understands the next steps.",
+              "amber": "Most arrangements are made but one or more relevant activities remain outstanding or next steps are not entirely clear.",
+              "red": "Required initial arrangements are not made and the learner leaves unclear about what happens next."
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "reviewType": "FORM_FIRST_SESSION",
+    "title": "First Session Feedback Form",
+    "group": "Session forms",
+    "source": "First Session Feedback Form (1).docx",
+    "sections": [
+      {
+        "id": "context",
+        "title": "Session context",
+        "screenshots": false,
+        "criteria": [
+          {
+            "id": "session-context",
+            "text": "Context",
+            "type": "textarea",
+            "required": true,
+            "options": [],
+            "help": "Set the scene. What did you see as you joined the session? What was the learner doing? How had the session been prepared? Did the context have any impact on the learner or session?"
+          }
+        ]
+      },
+      {
+        "id": "observation",
+        "title": "Observation judgement and feedback",
+        "screenshots": true,
+        "criteria": [
+          {
+            "id": "criterion-1",
+            "text": "Welcome and session purpose",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The learner and employer, where present, are warmly welcomed and quickly understand the purpose of the session. The coach builds rapport, relates the session to the learner's role and starting point, invites questions and checks that the learner knows what the session will enable them to do.",
+              "green": "The learner is welcomed and the purpose of the session is clearly explained. The learner is put at ease, engaged in the session and given opportunities to ask questions.",
+              "amber": "A basic welcome and introduction are provided, but rapport, purpose or learner involvement are limited. The learner's understanding of what the session is for is not fully checked.",
+              "red": "There is no meaningful welcome or explanation of purpose. The learner appears unclear, disengaged or unsure what the session is intended to achieve."
+            }
+          },
+          {
+            "id": "criterion-2",
+            "text": "Apprenticeship rhythm and expectations",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The weekly, monthly and review-cycle rhythm is explained clearly and linked to the learner's own programme. The learner can independently explain expectations for live learning, protected learning, monthly submissions, coaching presentations, maintaining evidence, progress reviews, gateway and EPA, and understands the respective responsibilities of the learner, employer and KBC.",
+              "green": "The apprenticeship rhythm and key expectations are explained accurately. The learner demonstrates a secure understanding of the main weekly, monthly and review-cycle requirements and the responsibilities of the learner, employer and KBC.",
+              "amber": "Most expectations are covered, but the explanation is generic or incomplete. The learner is uncertain about some recurring activities, timescales or responsibilities.",
+              "red": "Significant programme expectations are omitted or inaccurately explained. The learner does not understand how the apprenticeship operates or what ongoing engagement is required."
+            }
+          },
+          {
+            "id": "criterion-3",
+            "text": "Systems and communication access",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The coach explains the purpose of APTEM, LMS, Microsoft Teams, WhatsApp, email and the timetable and checks that the learner can access the relevant systems. The learner demonstrates key navigation and understands which communication route to use, including expectations for professional and confidential online communication.",
+              "green": "The main systems and communication routes are explained accurately, their different purposes are clear and the learner's access is checked. The learner knows where to find learning, messages, dates and formal apprenticeship records.",
+              "amber": "Systems are introduced, but access or understanding is not consistently checked. The learner remains unclear about the purpose of one or more platforms or communication routes.",
+              "red": "Key systems or communication routes are not covered, access barriers are left unresolved or inaccurate information is given about where learning and apprenticeship records are held."
+            }
+          },
+          {
+            "id": "criterion-4",
+            "text": "Monthly submissions and evidence",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The coach clearly demonstrates where the KBC monthly template is located, the submission deadline and how LMS activity, reflection, APTEM records, off-the-job learning and KSB evidence connect. The learner can explain what a strong submission contains: learning in their own words, workplace application, evidence or impact and clear next steps, and knows how to seek help before a deadline is missed.",
+              "green": "The monthly submission process, template, deadline, reflection and evidence expectations are clearly explained. The learner understands what must be completed, where it is submitted and the need to link learning to workplace application.",
+              "amber": "The template or deadline is mentioned, but expectations for quality, reflection, evidence, workplace application or the distinction between LMS activity and the formal apprenticeship record are not fully clear.",
+              "red": "Monthly submission requirements are not meaningfully covered or are inaccurately explained. The learner is unclear about what to submit, where to submit it or when it is due."
+            }
+          },
+          {
+            "id": "criterion-5",
+            "text": "Coaching, reviews and employer involvement",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The coach explains the purpose and rhythm of monthly coaching and regular three-way progress reviews. The learner understands that they must prepare their coaching presentation, bring current KSB evidence and complete actions. Employer responsibilities for protected learning time, workplace opportunities, feedback and progress-review attendance are made explicit and understood.",
+              "green": "Monthly coaching, progress reviews and the employer's role are explained clearly. The learner understands how to prepare for these meetings and the employer's expected contribution to progress and workplace development.",
+              "amber": "Coaching and progress reviews are mentioned, but their purpose, preparation expectations, frequency or employer responsibilities are not fully understood.",
+              "red": "Coaching, progress reviews or employer involvement are not meaningfully explained, leaving the learner or employer unaware of important programme responsibilities."
+            }
+          },
+          {
+            "id": "criterion-6",
+            "text": "KSBs and workplace application",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "Knowledge, skills and behaviours are explained as the basis of occupational competence. The coach uses the learner's role to generate a meaningful example showing how learning can demonstrate KSBs, be applied in the workplace and create evidence of impact. The learner can explain how KSBs connect learning, reflection, workplace evidence and EPA.",
+              "green": "KSBs are clearly explained and linked to learning, workplace application, evidence and EPA. The learner can identify a relevant workplace example that could demonstrate development.",
+              "amber": "KSBs are mentioned but remain abstract or generic. The learner has limited understanding of how to evidence them through their work or connect them to current learning.",
+              "red": "KSBs are not meaningfully covered or the learner cannot explain how apprenticeship learning relates to occupational competence or workplace evidence."
+            }
+          },
+          {
+            "id": "criterion-7",
+            "text": "First learning activity and reflection",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "A genuine programme-relevant learning activity is delivered and understanding is checked through questioning or application. The coach links the learning to the learner's role and supports the learner to identify practical workplace relevance. The first reflection is clearly explained and the learner can produce learner-written evidence and explain where and how it will be submitted.",
+              "green": "A relevant first learning activity is delivered, linked to the learner's role and followed by a clear reflection task. The learner can explain what they have learned and knows where and how to submit the first evidence.",
+              "amber": "A learning topic is introduced, but teaching, checking of understanding, workplace application or reflection instructions are limited. The learner needs significant prompting to explain what they have learned.",
+              "red": "No meaningful first learning activity takes place, or the learner is not given clear reflection and submission instructions for their first learning evidence."
+            }
+          },
+          {
+            "id": "criterion-8",
+            "text": "Attendance and catch-up expectations",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The 100% attendance and active-engagement expectation is explained clearly across live teaching, coaching and progress reviews. The learner can explain what to do if absence is unavoidable, who to notify, how catch-up is agreed and why watching a recording alone does not evidence learning. Catch-up expectations are linked to KSBs, activity completion and reflection.",
+              "green": "Attendance, active participation and the process for unavoidable absence are clearly explained. The learner understands the need to communicate early and complete agreed catch-up learning and evidence.",
+              "amber": "Attendance expectations are stated, but communication, active participation or catch-up requirements are not fully explained or understood.",
+              "red": "Attendance and catch-up expectations are not covered or are presented inaccurately, for example implying that watching a recording alone is sufficient evidence of learning."
+            }
+          },
+          {
+            "id": "criterion-9",
+            "text": "Off-the-job learning and protected time",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The coach clearly explains that off-the-job learning develops new knowledge, skills or behaviours and is distinct from normal productive duties. The planned 7-8 hours per week is presented as a guide within the individual training plan, to be completed in normal paid working hours. Learner and employer understand how time will be protected, recorded, applied and evidenced, and any practical barriers are addressed.",
+              "green": "Protected off-the-job learning, paid working time, recording requirements and employer responsibility are explained accurately. The learner understands the purpose of the time and how it supports learning and workplace application.",
+              "amber": "The hours are mentioned, but what counts as off-the-job learning, protected paid time, recording expectations or the employer's role are not fully clear. Practical arrangements may remain uncertain.",
+              "red": "Off-the-job learning is not meaningfully covered or is inaccurately described. The learner or employer does not understand the entitlement to protected learning time or how it should be recorded."
+            }
+          },
+          {
+            "id": "criterion-10",
+            "text": "English, maths, inclusion and barriers",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The coach uses available initial-assessment, diagnostic and inclusion information to personalise the discussion. The learner is given a safe opportunity to identify learning needs, workload issues or other barriers. Ongoing English and maths development, available support and any agreed adjustments are explained clearly, with appropriate actions identified where needed.",
+              "green": "English, maths and inclusion support are clearly explained. The learner is given an appropriate opportunity to disclose barriers or support needs and understands how to access help.",
+              "amber": "Support is mentioned but the discussion is generic, previous assessment information is not used effectively or the learner's understanding and potential barriers are not fully explored.",
+              "red": "English, maths, inclusion or barriers to learning are not appropriately considered, or an evident support need is ignored or left without appropriate action."
+            }
+          },
+          {
+            "id": "criterion-11",
+            "text": "Safeguarding, Prevent and British values",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "Safeguarding, Prevent, British values and safe online conduct are explained accurately and in a way that is relevant to learning and work. The learner can explain how to raise a concern, when to use the KBC safeguarding route, what to do in immediate danger and why confidentiality cannot always be promised. Professional and confidential use of online groups is reinforced.",
+              "green": "The core safeguarding route, Prevent, British values and expectations for safe professional online conduct are explained accurately. The learner demonstrates appropriate understanding of how to report a concern.",
+              "amber": "The topics are covered mainly as information, but the reporting route, practical application or learner understanding is not fully checked. Some elements remain unclear.",
+              "red": "Significant safeguarding or Prevent information is omitted or inaccurate, the learner does not know how to report a concern, or unsafe/inappropriate online expectations are left unaddressed."
+            }
+          },
+          {
+            "id": "criterion-12",
+            "text": "Gateway, EPA and high grades",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "Gateway is explained as a formal readiness point requiring learning, evidence, records and employer/KBC confirmation. The learner can explain the EPA journey and the programme-specific assessment methods, understands how current KSB evidence and engagement build readiness, and knows what stronger performance or the highest available grade will require.",
+              "green": "Gateway and the programme-specific EPA assessment methods are explained accurately. The learner demonstrates an appropriate understanding of readiness, what assessment will involve and the available grades.",
+              "amber": "EPA is introduced, but the learner remains unclear about important aspects of gateway, assessment methods, preparation or grading expectations.",
+              "red": "Gateway or EPA is not covered, or materially inaccurate information is given that leaves the learner unprepared for the assessment journey."
+            }
+          },
+          {
+            "id": "criterion-13",
+            "text": "Next steps, bookings and readiness",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "Before the session ends, the coach confirms access, key dates, the monthly template and first deadline, the first reflection and off-the-job record, coaching and progress-review bookings, protected learning arrangements, support needs and safeguarding contact. Any outstanding action has a clear owner and deadline. The learner and employer can confidently state what they need to do next and are ready for the first live learning session.",
+              "green": "Relevant next steps and bookings are confirmed. The learner understands their first deadline, key meetings, immediate actions and who to contact for support.",
+              "amber": "Some actions or bookings remain incomplete, or ownership and deadlines are unclear. The learner has a partial understanding of what they need to do next.",
+              "red": "The session closes without clear next steps, required bookings or ownership of outstanding actions, leaving the learner insufficiently prepared for the first live learning session."
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "reviewType": "FORM_GATEWAY",
+    "title": "Gateway Review Feedback Form",
+    "group": "Session forms",
+    "source": "Gateway Review Feedback Form.docx",
+    "sections": [
+      {
+        "id": "context",
+        "title": "Session context",
+        "screenshots": false,
+        "criteria": [
+          {
+            "id": "session-context",
+            "text": "Context",
+            "type": "textarea",
+            "required": true,
+            "options": [],
+            "help": "Set the scene. What did you see as you joined the session? What was the learner doing? How had the session been prepared? Did the context have any impact on the learner or session?"
+          }
+        ]
+      },
+      {
+        "id": "observation",
+        "title": "Observation judgement and feedback",
+        "screenshots": true,
+        "criteria": [
+          {
+            "id": "criterion-1",
+            "text": "Preparation, structure and purpose",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The gateway review is highly prepared, personalised and evidence-led. The coach has reviewed the learner's programme status, KSB development, EPA requirements, relevant evidence, outstanding actions, adjustments and documentation in advance. The learner and employer understand the purpose of gateway and the meeting is used to make a robust readiness decision rather than simply complete administration.",
+              "green": "The review is appropriately prepared and structured. Relevant information is available, the key gateway requirements are covered and the learner and employer understand the purpose and intended outcome.",
+              "amber": "Some preparation is evident, but important information is missing, incomplete or being established during the meeting. The review is predominantly administrative and readiness is not explored in sufficient depth.",
+              "red": "The meeting is poorly prepared or lacks clear purpose. Significant gateway requirements are unknown, incomplete or overlooked and the learner cannot be confidently judged ready for EPA."
+            }
+          },
+          {
+            "id": "criterion-2",
+            "text": "Gateway readiness and occupational competence",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "There is compelling, triangulated evidence from the learner, coach, employer and programme records that the learner has developed the required occupational knowledge, skills and behaviours and is ready to undertake EPA. Strengths and any remaining risks are explicitly considered. The gateway decision is evidence-based and all parties can explain why the learner is ready.",
+              "green": "Appropriate evidence confirms that the learner has met the relevant programme and gateway requirements and is ready to progress to EPA. The learner, employer and coach agree with and understand the readiness decision.",
+              "amber": "Most requirements appear to be met but there are unresolved gaps, weak evidence or uncertainty about aspects of readiness. Further action is required before progression can be confidently confirmed.",
+              "red": "Significant requirements remain incomplete or there is insufficient evidence that the learner is occupationally ready. Gateway progression would be premature or inappropriate."
+            }
+          },
+          {
+            "id": "criterion-3",
+            "text": "Learner knowledge of EPA assessment methods",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The learner can independently and confidently explain each EPA assessment method relevant to their standard, what they will be expected to demonstrate, how KSBs are assessed and what strong performance looks like. They can describe how they have prepared and identify their own strengths and remaining development needs.",
+              "green": "The learner accurately explains the principal EPA assessment methods and understands what they will be expected to do during each.",
+              "amber": "The learner has a broad awareness of the EPA methods but cannot confidently explain important details, expectations or how they should prepare. Significant prompting is required.",
+              "red": "The learner has little or inaccurate understanding of their EPA assessment methods and is not adequately prepared to undertake them."
+            }
+          },
+          {
+            "id": "criterion-4",
+            "text": "EPA process, logistics and responsibilities",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The learner confidently understands the full journey from gateway through EPA, including relevant timescales, assessment arrangements, preparation expectations, permitted resources/conditions where applicable, communication with the EPAO, results and what happens following assessment. They know what they personally need to do and who to contact if they have a problem.",
+              "green": "The learner understands the main EPA process, expected sequence, relevant assessment arrangements and their responsibilities after gateway.",
+              "amber": "The learner understands parts of the process but has significant uncertainty about timings, responsibilities, assessment arrangements or what happens next.",
+              "red": "The learner does not understand the EPA process or has been given materially inaccurate information that could affect their assessment."
+            }
+          },
+          {
+            "id": "criterion-5",
+            "text": "EPA preparation and grade ambition",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "There is strong evidence of sustained and personalised EPA preparation. The learner has practised relevant assessment methods such as professional discussion, presentation, questioning, project/report discussion or assessment-style activities as appropriate. Feedback has been used to improve performance. The learner understands the relevant grading expectations and can explain what they need to demonstrate to achieve the highest grade available to them.",
+              "green": "Appropriate EPA preparation has taken place and the learner has practised relevant assessment activities. They understand the expected standard and how to prepare effectively.",
+              "amber": "Some preparation has occurred, but practice is limited, generic or insufficiently aligned to the learner's actual EPA methods. The learner remains uncertain about expected performance.",
+              "red": "Little or no meaningful EPA practice has taken place and the learner is entering gateway without adequate preparation for their assessment methods."
+            }
+          },
+          {
+            "id": "criterion-6",
+            "text": "Portfolio, project and assessment evidence readiness",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": true,
+            "descriptors": {
+              "gold": "All required assessment evidence is complete, appropriately selected, organised and quality assured. The learner understands their evidence and can confidently explain how it demonstrates their development and supports relevant EPA assessment methods. Any limitations have been identified and resolved before gateway.",
+              "green": "Required evidence is complete and appropriately prepared for EPA. The learner understands what has been submitted/provided and how it will be used.",
+              "amber": "Evidence is largely complete but there are gaps, quality concerns or uncertainty about how particular evidence supports assessment. Further action is required before readiness is secure.",
+              "red": "Significant required evidence is missing, unsuitable, poorly understood or not ready for submission/use within EPA."
+            }
+          },
+          {
+            "id": "criterion-7",
+            "text": "Employer engagement and gateway decision",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The employer is an active partner in the gateway decision. They provide specific evidence of the learner's occupational competence, workplace performance and KSB application and clearly confirm why they believe the learner is ready for EPA. They understand their responsibilities during the EPA period and any ongoing support required.",
+              "green": "The employer actively contributes to the review, confirms the learner's readiness and demonstrates an appropriate understanding of gateway and EPA.",
+              "amber": "Employer involvement is limited or largely passive. They provide little evidence to validate occupational competence or demonstrate incomplete understanding of what happens after gateway.",
+              "red": "There is insufficient meaningful employer involvement in the gateway decision, or the employer cannot confirm the learner's occupational readiness."
+            }
+          },
+          {
+            "id": "criterion-8",
+            "text": "Gateway documentation and compliance",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "All required gateway documentation and supporting evidence have been completed accurately and in advance. Information is consistent with programme records and relevant requirements. Dates, declarations/signatures and supporting evidence are complete and there is a clear audit trail demonstrating why gateway has been approved.",
+              "green": "All required gateway documentation is complete, accurate and compliant before the learner progresses to EPA. Any minor administrative issues identified during the meeting are immediately resolved and do not affect readiness.",
+              "amber": "Documentation contains omissions, inconsistencies or inaccuracies requiring correction before gateway can be confirmed. The underlying learner readiness may be secure, but the audit trail is not yet complete.",
+              "red": "Significant mandatory documentation or evidence is missing or inaccurate and gateway cannot appropriately be approved."
+            }
+          },
+          {
+            "id": "criterion-9",
+            "text": "Reasonable adjustments and accessibility",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": true,
+            "descriptors": {
+              "gold": "Required reasonable adjustments/access arrangements have been identified early, appropriately evidenced and progressed through the relevant process before gateway. The learner understands what has been requested/agreed and how arrangements will operate during each relevant EPA method. The coach has checked that arrangements meet the learner's current needs and no avoidable barriers remain.",
+              "green": "Relevant adjustment requirements have been identified and appropriately progressed. The learner understands the arrangements and is confident about how they will be supported during EPA.",
+              "amber": "An adjustment need has been identified but arrangements remain incomplete or are being addressed late. The learner is uncertain about what support will be available.",
+              "red": "A known or evident accessibility need has not been appropriately addressed, creating a material risk that the learner will be disadvantaged during EPA."
+            }
+          },
+          {
+            "id": "criterion-10",
+            "text": "Learner confidence, ownership and readiness",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The learner demonstrates strong ownership of their EPA journey. They reflect realistically on their readiness, confidently articulate strengths and development areas and know exactly what they will do between gateway and each assessment. Their confidence is based on preparation and evidence rather than reassurance alone.",
+              "green": "The learner demonstrates appropriate confidence and ownership and understands their preparation priorities and responsibilities.",
+              "amber": "The learner is hesitant or dependent on the coach to explain their readiness and next steps. Confidence or ownership is not yet secure.",
+              "red": "The learner demonstrates significant uncertainty, anxiety arising from inadequate preparation, or lack of understanding about what happens next and this is not adequately addressed."
+            }
+          },
+          {
+            "id": "criterion-11",
+            "text": "Progression and careers beyond EPA",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The learner reflects on how the apprenticeship has developed their occupational competence and considers clear next steps beyond EPA, such as increased responsibility, promotion, professional development, further learning or future career goals. Where appropriate, the employer identifies progression opportunities. Clear next steps are agreed.",
+              "green": "Appropriate progression and career-development opportunities are discussed and the learner understands potential next steps following completion.",
+              "amber": "Progression is briefly mentioned but discussion is generic or does not meaningfully relate to the learner's aspirations.",
+              "red": "No meaningful progression discussion takes place despite an appropriate opportunity at the end of the learner journey."
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "reviewType": "FORM_INFORMATION",
+    "title": "Information Session Feedback Form",
+    "group": "Session forms",
+    "source": "Information Session Feedback Form.docx",
+    "sections": [
+      {
+        "id": "context",
+        "title": "Session context",
+        "screenshots": false,
+        "criteria": [
+          {
+            "id": "session-context",
+            "text": "Context",
+            "type": "textarea",
+            "required": true,
+            "options": [],
+            "help": "Set the scene. What did you see as you joined the session? What was the learner doing? How had the session been prepared? Did the context have any impact on the learner or session?"
+          }
+        ]
+      },
+      {
+        "id": "observation",
+        "title": "Observation judgement and feedback",
+        "screenshots": true,
+        "criteria": [
+          {
+            "id": "criterion-1",
+            "text": "Preparation, structure and professional delivery",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The session is highly organised, confident and engaging. Information is logically sequenced, appropriately paced and tailored to the learner/employer context. The presenter uses the slides as a framework rather than reading from them and adapts explanations in response to questions or learner needs.",
+              "green": "The session is well organised and clearly structured. Information is delivered accurately and at an appropriate pace, with opportunities for questions.",
+              "amber": "The session has some structure but delivery is overly scripted, rushed, generic or unclear in places. Important information may not be sufficiently explained.",
+              "red": "The session lacks clear structure or professionalism. Significant content is missed, unclear or delivered in a way that prevents the learner/employer from understanding the programme."
+            }
+          },
+          {
+            "id": "criterion-2",
+            "text": "Understanding of how the apprenticeship works",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The presenter clearly explains how employment, learning, KSB development, workplace application, reflection, evidence, coaching, progress reviews, gateway and EPA fit together. The learner can explain the apprenticeship journey in their own words and understands that it is work-based professional development rather than a passive course.",
+              "green": "The apprenticeship journey is explained accurately and the learner demonstrates appropriate understanding of how learning, workplace activity and assessment fit together.",
+              "amber": "The overall process is explained but some aspects remain unclear or overly generic. The learner has only a partial understanding of how the apprenticeship operates.",
+              "red": "The apprenticeship model is inaccurately explained or the learner leaves with significant misconceptions about what participation involves."
+            }
+          },
+          {
+            "id": "criterion-3",
+            "text": "Programme and role suitability / informed choice",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The presenter actively explores the learner's current role, responsibilities, development needs and ambitions and uses this to help them judge which programme, if any, is most appropriate. Potential gaps in role suitability are identified honestly and no pressure is applied to enrol.",
+              "green": "The different programmes and their requirements are clearly explained and the learner is encouraged to consider whether their role and aspirations align with the chosen standard.",
+              "amber": "Programme information is provided but role fit is explored only superficially. The learner may understand the programme but is not fully supported to judge whether it is right for them.",
+              "red": "Programme suitability is not meaningfully considered or the learner is encouraged towards a programme despite evident concerns about role relevance or suitability."
+            }
+          },
+          {
+            "id": "criterion-4",
+            "text": "Learner expectations and commitment",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "Expectations are explained clearly, positively and realistically. The learner understands the requirements around attendance, engagement, submissions, monthly coaching presentations, progress reviews, OTJ recording and responding to feedback. The presenter checks that the learner has considered how they will meet these expectations in practice.",
+              "green": "KBC's main learner expectations are clearly explained and the learner demonstrates appropriate understanding of what will be required.",
+              "amber": "Expectations are mentioned but some are insufficiently explained or the learner's understanding/commitment is not checked.",
+              "red": "Significant expectations are omitted, inaccurately described or minimised, leaving the learner unprepared for the level of commitment required."
+            }
+          },
+          {
+            "id": "criterion-5",
+            "text": "Employer responsibilities and engagement",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "Employer responsibilities are clearly explained and actively explored with the employer/learner. There is meaningful discussion about how protected learning time will work, who the line manager will be, what workplace opportunities are available and how the employer will participate in progress reviews and development. Potential employer barriers are identified before enrolment.",
+              "green": "Employer responsibilities are clearly explained and the learner/employer demonstrates appropriate understanding of the support required.",
+              "amber": "Employer expectations are covered but discussion is largely informational and there is limited confirmation that the employer can actually meet them.",
+              "red": "Employer responsibilities are poorly explained or significant concerns about employer support are overlooked."
+            }
+          },
+          {
+            "id": "criterion-6",
+            "text": "Off-the-job learning and protected learning time",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "OTJ learning is explained clearly using examples relevant to the learner's role. The difference between normal productive work and eligible new learning is understood. The learner and employer consider realistically how protected time will be scheduled and any risks to achieving this are explored.",
+              "green": "OTJ learning, protected paid time and recording expectations are clearly explained and understood.",
+              "amber": "OTJ requirements are mentioned but explanation is overly focused on hours or lacks clarity around what counts, employer responsibility or protected time.",
+              "red": "OTJ requirements are inaccurately described, omitted or presented in a way that could lead the learner/employer to believe learning should routinely be completed outside paid working hours."
+            }
+          },
+          {
+            "id": "criterion-7",
+            "text": "Funding and eligibility information",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "Funding is explained accurately, clearly and in plain language. The presenter distinguishes indicative information from confirmed entitlement, avoids making guarantees and clearly explains that eligibility, prior learning, role suitability and live funding rules must be checked before enrolment.",
+              "green": "Funding information is accurate and the learner/employer understands that final eligibility and funding arrangements must be confirmed by KBC.",
+              "amber": "Broadly correct information is provided but explanations are unclear, overly technical or could reasonably create misunderstanding about costs or eligibility.",
+              "red": "Materially inaccurate funding information is provided, guarantees are made before eligibility is confirmed, or the learner/employer could be misled about financial responsibility."
+            }
+          },
+          {
+            "id": "criterion-8",
+            "text": "Interaction, questioning and checking understanding",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The session is genuinely two-way. Effective open and probing questions are used throughout to check understanding, explore circumstances and encourage the learner/employer to consider the realities of the apprenticeship. Misunderstandings are identified and corrected.",
+              "green": "The learner/employer is encouraged to participate and appropriate questions are used to check understanding. Questions are answered accurately.",
+              "amber": "Opportunities for questions are provided but interaction is limited or mostly occurs at the end. Understanding is assumed rather than consistently checked.",
+              "red": "The session is almost entirely one-way, meaningful questions are discouraged or the presenter fails to identify clear misunderstanding."
+            }
+          },
+          {
+            "id": "criterion-9",
+            "text": "Support, inclusion and potential barriers",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The presenter creates an inclusive environment and appropriately invites the learner to identify support needs or barriers that could affect participation. Relevant KBC support is explained and the learner understands how and when to seek help. Where concerns arise, appropriate next steps are identified without lowering expectations.",
+              "green": "Available support and the importance of raising barriers early are clearly explained. The learner knows how to access help.",
+              "amber": "Support is mentioned but discussion is generic or the learner is not meaningfully encouraged to identify potential barriers.",
+              "red": "Support needs/barriers are ignored, inappropriate assumptions are made or information about available support is materially inaccurate."
+            }
+          },
+          {
+            "id": "criterion-10",
+            "text": "Readiness to proceed and next steps",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The session ends with a meaningful readiness check rather than a sales close. The learner/employer reflect honestly on role fit, protected learning time, attendance, submissions and employer commitment. Any areas where the answer is not yet 'yes' are clearly identified and actions are agreed before progression. The learner understands the next stage and can make an informed decision.",
+              "green": "The readiness questions are discussed and the learner/employer understands the next steps and what must be confirmed before enrolment.",
+              "amber": "The readiness check is completed superficially or treated mainly as a checklist. Potential concerns are identified but not sufficiently explored.",
+              "red": "The session moves towards application/enrolment without appropriately checking readiness, or significant concerns are ignored."
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "reviewType": "FORM_MONTHLY_COACHING",
+    "title": "Monthly Coaching Meeting Feedback Form",
+    "group": "Session forms",
+    "source": "Monthly Coaching Meeting Session Feedback Form.docx",
+    "sections": [
+      {
+        "id": "context",
+        "title": "Session context",
+        "screenshots": false,
+        "criteria": [
+          {
+            "id": "session-context",
+            "text": "Context",
+            "type": "textarea",
+            "required": true,
+            "options": [],
+            "help": "Set the scene. What did you see as you joined the session? What was the learner doing? How had the session been prepared? Did the context have any impact on the learner or session?"
+          }
+        ]
+      },
+      {
+        "id": "observation",
+        "title": "Observation judgement and feedback",
+        "screenshots": true,
+        "criteria": [
+          {
+            "id": "criterion-1",
+            "text": "Preparation, structure and learner ownership",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The meeting is highly personalised and clearly prepared using current learner information. The purpose and structure are clear, but the learner takes significant ownership of the meeting. Previous actions, progress, submissions, OTJH and identified priorities inform the discussion. The coach responds flexibly to the learner's needs while ensuring all important areas are addressed.",
+              "green": "The meeting is appropriately prepared and structured. Relevant learner information is available, previous actions are reviewed and the learner is actively involved in the discussion.",
+              "amber": "Some preparation is evident, but the meeting is overly procedural, important information is missing or the coach directs most of the discussion. Previous actions are not consistently followed through.",
+              "red": "The meeting is poorly prepared or lacks clear purpose and structure. Important learner information is not known or used and the learner has little meaningful involvement."
+            }
+          },
+          {
+            "id": "criterion-2",
+            "text": "Learner monthly presentation and reflection",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The learner delivers a confident, well-prepared and reflective presentation that clearly summarises what they have learned during the month, the submission(s) they have completed, relevant KSB development and how they have applied their learning in the workplace. They provide specific examples and evaluate the impact of their learning on their performance, confidence, responsibilities, colleagues or organisation. They can respond confidently to probing questions and identify their own strengths and development priorities.",
+              "green": "The learner delivers the required presentation and clearly explains their monthly learning, submission(s), relevant KSB development and workplace application. Specific examples are provided and the learner demonstrates a secure understanding of their progress.",
+              "amber": "A presentation is delivered but it is incomplete, overly descriptive or insufficiently reflective. One or more required areas — monthly learning, submission, KSBs or workplace application — is weak or absent. The learner relies heavily on prompts from the coach and has limited ability to explain the impact of their learning.",
+              "red": "The learner has not prepared/delivered the required presentation, or it provides little meaningful evidence of learning, submission progress, KSB development or workplace application. The learner is unable to explain what they have learned or how this has contributed to their development."
+            }
+          },
+          {
+            "id": "criterion-3",
+            "text": "Submission, feedback and portfolio progress",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The learner's submission activity is reviewed meaningfully against expectations. The learner reflects on the quality of their work and demonstrates how they have acted on previous feedback. Relevant KSB evidence is considered and the learner understands how to strengthen future submissions. Any missed or late work is explored and effective action agreed.",
+              "green": "Submission progress is clearly reviewed. The learner understands feedback received, what they did well and what they need to improve. Outstanding submissions are identified and realistic actions agreed.",
+              "amber": "Submission status is checked but discussion focuses mainly on whether work has been completed. Feedback, quality, KSB evidence or improvement receive limited exploration. Missed deadlines may simply be moved.",
+              "red": "Submission progress is not meaningfully reviewed, significant missed work is ignored or the learner is unclear about what they need to submit and how to improve."
+            }
+          },
+          {
+            "id": "criterion-4",
+            "text": "Progress and KSB development",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The learner evaluates their progress from their starting point and can clearly explain how their knowledge, skills and behaviours have developed. Specific evidence is used to demonstrate progress. Areas requiring stretch or improvement are identified and the learner understands their next developmental priorities.",
+              "green": "Progress and KSB development are clearly reviewed. The learner can identify strengths, areas of improvement and appropriate next steps.",
+              "amber": "Progress is discussed but largely through completion percentages or activity status. Development of knowledge, skills and behaviours is insufficiently explored",
+              "red": "Progress and KSB development are not meaningfully reviewed or significant lack of progress is overlooked."
+            }
+          },
+          {
+            "id": "criterion-5",
+            "text": "Workplace application and impact",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The learner provides specific examples of applying their learning and evaluates its impact on their workplace performance, confidence, responsibility, team, customers or organisation. The coach uses probing questions to deepen the learner's understanding and identify further opportunities for application.",
+              "green": "The learner provides relevant examples of applying learning within their role and can explain the benefit or difference this has made.",
+              "amber": "Workplace application is discussed but examples are generic, superficial or heavily prompted. The impact of applying learning is not sufficiently explored.",
+              "red": "The learner cannot meaningfully connect their apprenticeship learning to their workplace practice and the coach does not address this."
+            }
+          },
+          {
+            "id": "criterion-6",
+            "text": "SMART target setting and previous-target review",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "Previous targets are meaningfully reviewed and their impact evaluated. New targets are personalised, challenging and co-created with the learner. They are genuinely SMART and clearly support KSB development, submissions, workplace application, engagement or EPA readiness. The learner understands why each target matters and what successful completion looks like.",
+              "green": "Previous targets are reviewed and appropriate SMART targets are agreed. They are clear, measurable, relevant and time-bound and the learner understands what they must achieve.",
+              "amber": "Targets exist but are vague, task-based, insufficiently measurable or not focused on the learner's priority development needs. Previous targets may be marked complete without considering impact.",
+              "red": "Meaningful targets are absent, previous targets are not reviewed or repeatedly missed targets result in no effective intervention."
+            }
+          },
+          {
+            "id": "criterion-7",
+            "text": "Off-the-job learning and protected learning time",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "OTJ learning is current and accurately recorded, but discussion goes beyond hours. The learner reflects on what they have learned, how it has developed their KSBs and how it benefits their workplace performance. Planned versus actual OTJ activity is reviewed and any gaps addressed. The learner confirms they are receiving the protected learning time agreed by their employer.",
+              "green": "OTJ activity is appropriately recorded and reviewed. The learner can explain the learning undertaken and relevant workplace benefit. Any shortfalls are identified and appropriate action agreed.",
+              "amber": "OTJ is mainly discussed as a compliance/number-of-hours exercise. Records may be incomplete or the learner struggles to explain the learning gained. Shortfalls or access to protected time receive insufficient attention.",
+              "red": "OTJ activity is significantly incomplete or inaccurate, the learner is not making expected progress, or concerns about protected learning time are ignored."
+            }
+          },
+          {
+            "id": "criterion-8",
+            "text": "Engagement, attendance and barriers to progress",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The coach and learner meaningfully evaluate attendance, engagement, submission behaviour and outstanding activity. Patterns and underlying causes are identified rather than simply recorded. Strong engagement is recognised and concerns lead to appropriate, timely intervention and clear recovery actions.",
+              "green": "Engagement and any outstanding activity are appropriately reviewed. Concerns are challenged and clear actions and deadlines are agreed",
+              "amber": "Engagement is checked but underlying causes are insufficiently explored. Missed activities or deadlines may simply be rescheduled without addressing the reason",
+              "red": "Significant non-engagement, poor attendance or repeatedly missed activity is overlooked, normalised or continually rescheduled without intervention"
+            }
+          },
+          {
+            "id": "criterion-9",
+            "text": "EPA knowledge and preparation",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "EPA preparation is personalised and appropriate to the learner's stage. Current learning, KSB evidence and submissions are explicitly linked to their specific EPA assessment methods and grading expectations. The learner can confidently explain their EPA and practises relevant EPA skills where appropriate. Readiness gaps are identified and acted upon.",
+              "green": "The learner demonstrates an appropriate understanding of their EPA and the coach makes clear links between current learning/KSB development and future assessment.",
+              "amber": "EPA is mentioned but the learner's understanding is limited or generic. Links between current activity and EPA are weak or insufficiently explored.",
+              "red": "EPA is not meaningfully addressed where appropriate, inaccurate information is provided or the learner demonstrates significant uncertainty about what they will be required to do."
+            }
+          },
+          {
+            "id": "criterion-10",
+            "text": "Careers and professional development",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The learner's developing KSBs and workplace impact are explicitly connected to their longer-term career ambitions. The learner reflects on how the apprenticeship is increasing their capability and opportunities. Relevant progression, increased responsibility, professional development or future roles are explored and clear next steps identified where appropriate.",
+              "green": "Relevant career and professional development discussion takes place and the learner understands how their apprenticeship supports their future progression.",
+              "amber": "Careers are mentioned but discussion is generic or insufficiently connected to the learner's aspirations and current development.",
+              "red": "Meaningful careers/progression discussion is absent over time or the learner cannot explain how their apprenticeship contributes to their future development."
+            }
+          },
+          {
+            "id": "criterion-11",
+            "text": "Inclusion, wellbeing and support",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The learner is actively given a safe opportunity to discuss workload, confidence, wellbeing and any barriers to participation or progress. Existing adjustments/support are reviewed for their effectiveness. Emerging needs are identified early and appropriate support, referral or intervention is agreed while maintaining ambitious expectations.",
+              "green": "Relevant wellbeing, support needs and barriers are appropriately explored and effective support/actions are in place where required.",
+              "amber": "The learner is asked about support/barriers but discussion is superficial or existing support is not reviewed for its effectiveness. Emerging concerns receive insufficient follow-up.",
+              "red": "Significant barriers, wellbeing concerns or support needs are overlooked or no appropriate action is taken."
+            }
+          },
+          {
+            "id": "criterion-12",
+            "text": "Wider development: English, maths, safeguarding, British values and EDI",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": true,
+            "descriptors": {
+              "gold": "The coach naturally uses relevant opportunities to develop and check the learner's English, maths and wider personal-development knowledge. Discussion is personalised and vocationally relevant. Effective questioning deepens understanding rather than simply checking whether a topic has been covered.",
+              "green": "Relevant English, maths and wider-development opportunities are appropriately reviewed and the learner demonstrates suitable development/understanding.",
+              "amber": "Discussion is superficial, generic or checklist-driven, or relevant opportunities to develop the learner are missed.",
+              "red": "Significant identified development needs or gaps in understanding are repeatedly ignored or inaccurate/inappropriate information is provided."
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "reviewType": "FORM_TEACHING",
+    "title": "Teaching Session Feedback Form",
+    "group": "Session forms",
+    "source": "Teaching Session Feedback Form.docx",
+    "sections": [
+      {
+        "id": "context",
+        "title": "Session context",
+        "screenshots": false,
+        "criteria": [
+          {
+            "id": "session-context",
+            "text": "Context",
+            "type": "textarea",
+            "required": true,
+            "options": [],
+            "help": "Set the scene. What did you see as you joined the session? What was the learner doing? How had the session been prepared? Did the context have any impact on the learner or session?"
+          }
+        ]
+      },
+      {
+        "id": "observation",
+        "title": "Observation judgement and feedback",
+        "screenshots": true,
+        "criteria": [
+          {
+            "id": "criterion-1",
+            "text": "Plan and structure",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The session is exceptionally well structured and purposefully sequenced, building clearly on learners' prior knowledge and towards future learning. Intended learning is clear and ambitious. Activities, pace and resources are adapted responsively as the session develops. Learners make demonstrable progress and can explain what they have learned and why it matters.",
+              "green": "The session has a clear structure and appropriate sequence. Learning objectives are understood and activities support learners to make good progress. Pace and resources are appropriate and learners can identify what they have learned.",
+              "amber": "The session has been planned, but sequencing, pace or purpose is inconsistent. Learning objectives may be unclear or activities do not always contribute effectively to them. Some learners make progress, but opportunities to consolidate or deepen learning are missed.",
+              "red": "The session lacks sufficient structure, sequence or purpose. Learners are unclear about what they are expected to learn and activities do not support meaningful progress. Poor pacing or organisation significantly limits learning."
+            }
+          },
+          {
+            "id": "criterion-2",
+            "text": "Subject expertise and vocational relevance",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The tutor demonstrates authoritative and current subject knowledge and uses highly relevant workplace and industry examples to deepen learning. Learners are challenged to analyse, apply and evaluate concepts rather than simply recall information.",
+              "green": "Subject knowledge is secure and accurate. Appropriate vocational examples help learners understand how the content relates to their programme and workplace.",
+              "amber": "Subject knowledge is generally accurate but teaching relies heavily on presentation of information. Workplace relevance is limited, generic or not sufficiently explored.",
+              "red": "Significant gaps or inaccuracies in subject knowledge are evident, or learning lacks meaningful connection to the learner's programme or occupational context."
+            }
+          },
+          {
+            "id": "criterion-3",
+            "text": "Learner engagement, participation and challenge",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "Learners are highly engaged and actively contribute to their learning through discussion, questioning, problem-solving, collaboration or practical application. Challenge is ambitious and appropriately adapted. Learners think deeply, justify their responses and increasingly work independently.",
+              "green": "Learners participate well and remain engaged. Activities and questioning provide appropriate challenge and learners are encouraged to contribute, think and apply their learning.",
+              "amber": "Engagement is inconsistent. Learning may be overly tutor-led or dependent on passive listening. Some learners contribute while others participate minimally. Challenge is inconsistent or insufficient.",
+              "red": "Learners are predominantly passive or disengaged. There is little meaningful participation or challenge and teaching does not sufficiently stimulate thinking, independence or learning."
+            }
+          },
+          {
+            "id": "criterion-4",
+            "text": "Adaptive and inclusive teaching",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "Teaching is highly responsive to individual starting points, abilities and identified needs. The tutor uses learner information effectively and makes purposeful adaptations while maintaining high expectations. Learners requiring additional support are fully included without unnecessary dependence, while more confident learners are appropriately stretched. Barriers are anticipated and effectively removed.",
+              "green": "Teaching appropriately considers different starting points and known learner needs. Suitable adaptations, support and challenge enable learners to participate and make progress.",
+              "amber": "Some adaptation is evident but is inconsistent. Individual needs, starting points or barriers are not always sufficiently considered and some learners receive too little support or challenge.",
+              "red": "Teaching does not adequately respond to learner needs, starting points or identified barriers. Learners may be disadvantaged, excluded from aspects of learning or insufficiently challenged."
+            }
+          },
+          {
+            "id": "criterion-5",
+            "text": "Assessment for learning and feedback",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "A purposeful range of assessment strategies is used throughout the session to establish what learners know, understand and can do. Questioning probes understanding rather than simply checking recall. Misconceptions are identified and corrected promptly. Feedback is specific and developmental and learners act upon it. The tutor adapts teaching in response to assessment information.",
+              "green": "Appropriate assessment methods are regularly used to check understanding and progress. Questioning is effective, misconceptions are addressed and learners receive useful feedback that supports improvement.",
+              "amber": "Assessment takes place but is inconsistent, superficial or focused mainly on task completion. Some learners' understanding is not sufficiently checked, misconceptions may remain and feedback lacks sufficient precision.",
+              "red": "There is little reliable assessment of learning. The tutor cannot establish whether learners understand the content, significant misconceptions are left unaddressed or meaningful feedback is absent."
+            }
+          },
+          {
+            "id": "criterion-6",
+            "text": "KSB development and workplace application",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "Learning is explicitly and meaningfully connected to relevant KSBs and their application in the workplace. Learners are challenged to explain how they have used, or could use, the learning within their role and what impact this could have. Learners can articulate how the session contributes to their occupational competence.",
+              "green": "Relevant links are made between the learning, programme KSBs and workplace practice. Learners understand how the learning relates to their role and apprenticeship.",
+              "amber": "Workplace or KSB links are mentioned but are generic, superficial or largely tutor-led. Learners have limited opportunity to apply learning to their own occupational context.",
+              "red": "There is little or no meaningful connection between the teaching, apprenticeship KSBs and workplace practice. Learners cannot explain the occupational relevance of the learning."
+            }
+          },
+          {
+            "id": "criterion-7",
+            "text": "Development of English",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "Relevant English skills are deliberately and naturally developed through the vocational curriculum. Learners strengthen areas such as professional communication, technical vocabulary, written accuracy, presentation, questioning, discussion or critical reading. Errors or development needs are addressed sensitively and learners improve as a result.",
+              "green": "Relevant opportunities are used effectively to develop learners' English skills within the vocational context. Appropriate terminology and professional communication are reinforced.",
+              "amber": "Some English development occurs, but obvious opportunities to develop or reinforce relevant skills are missed or insufficiently explored.",
+              "red": "Meaningful opportunities to develop English are consistently missed, or learners' significant errors are left unaddressed where intervention would have supported their development."
+            }
+          },
+          {
+            "id": "criterion-8",
+            "text": "Development of maths",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": true,
+            "descriptors": {
+              "gold": "Where relevant, maths is naturally embedded within the occupational curriculum and learners develop confidence in applying mathematical concepts to realistic workplace situations. Learners are challenged to explain their reasoning and apply calculations accurately.",
+              "green": "Relevant opportunities are used effectively to develop and reinforce mathematical skills within the occupational context.",
+              "amber": "Some appropriate maths development occurs, but relevant opportunities are missed or insufficiently explored.",
+              "red": "Clear and relevant opportunities to develop mathematical understanding are consistently missed or significant errors are not appropriately addressed."
+            }
+          },
+          {
+            "id": "criterion-9",
+            "text": "Personal development, safeguarding and wider curriculum",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": true,
+            "descriptors": {
+              "gold": "Relevant naturally occurring opportunities are skilfully used to deepen learners' understanding of safeguarding, Prevent, British values, equality, diversity and inclusion, health and safety and/or wider personal development. Discussion is vocationally relevant, encourages reflection and helps learners understand how these issues apply to their work and wider lives.",
+              "green": "Relevant naturally occurring opportunities are appropriately used to reinforce one or more wider development themes. Information is accurate, contextualised and meaningful to learners.",
+              "amber": "Discussion is superficial, tokenistic or insufficiently connected to the vocational context, or appropriate opportunities to reinforce learners' understanding are missed.",
+              "red": "Significant and clearly relevant opportunities are consistently missed, information provided is inaccurate/inappropriate, or teaching undermines rather than supports learners' understanding of these areas."
+            }
+          },
+          {
+            "id": "criterion-10",
+            "text": "EPA preparation",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": true,
+            "descriptors": {
+              "gold": "EPA preparation is embedded naturally and is appropriate to learners' stage of programme. The tutor explicitly connects learning and KSB development to relevant EPA assessment methods and, where appropriate, grading requirements. Learners practise the types of thinking, communication or application they will need for EPA and can explain how the session contributes to their readiness.",
+              "green": "Appropriate links are made between current learning and EPA. Learners understand how the knowledge or skills developed will contribute to their assessment and preparation.",
+              "amber": "EPA is mentioned but connections to the session, assessment methods or expected standards are limited or generic. Learners have limited understanding of how the learning supports their EPA readiness.",
+              "red": "Meaningful EPA preparation is absent where it would reasonably be expected, or information given about EPA is inaccurate. Learners demonstrate significant uncertainty about how their learning connects to assessment."
+            }
+          },
+          {
+            "id": "criterion-11",
+            "text": "Careers and progression",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": true,
+            "descriptors": {
+              "gold": "Teaching makes meaningful and personalised connections between curriculum content, occupational development and future career opportunities. Learners understand how developing particular KSBs could increase their workplace impact, responsibilities and progression opportunities.",
+              "green": "Relevant links are made between learning, occupational competence and career/professional development.",
+              "amber": "Career links are generic, superficial or largely implicit. Relevant opportunities to help learners recognise the career value of their learning are missed.",
+              "red": "Clear opportunities to connect learning with occupational or career development are consistently missed, or inappropriate/inaccurate careers information is provided."
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "reviewType": "FORM_BARRIERS",
+    "title": "Barriers to Learning Feedback Form",
+    "group": "Themed observations",
+    "source": "Themed Session Feedback Form (Barriers to Learning).docx",
+    "sections": [
+      {
+        "id": "context",
+        "title": "Session context",
+        "screenshots": false,
+        "criteria": [
+          {
+            "id": "session-context",
+            "text": "Context",
+            "type": "textarea",
+            "required": true,
+            "options": [],
+            "help": "Set the scene. What did you see as you joined the session? What was the learner doing? How had the session been prepared? Did the context have any impact on the learner or session?"
+          }
+        ]
+      },
+      {
+        "id": "observation",
+        "title": "Observation judgement and feedback",
+        "screenshots": true,
+        "criteria": [
+          {
+            "id": "criterion-1",
+            "text": "Barriers to Learning",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "The learner is given a safe and appropriate opportunity to discuss any barriers affecting participation, progress, confidence or wellbeing. The coach or tutor uses sensitive, purposeful questioning to identify underlying causes rather than simply record the issue. Existing support and reasonable adjustments are reviewed for their actual impact and are adapted where necessary. Emerging needs are identified early, appropriate referrals or specialist support are arranged promptly, and the employer is involved where appropriate and with due regard to confidentiality and consent. High expectations are maintained while barriers are removed, with clear actions, ownership and follow-up showing improved participation and progress.",
+              "green": "Relevant barriers, support needs and wellbeing issues are appropriately explored. The learner knows how to access support and suitable adjustments, referrals or actions are in place where required. Existing support is reviewed and concerns are followed up so that the learner can continue to participate and make progress.",
+              "amber": "Barriers or support needs are acknowledged but exploration is superficial, delayed or overly dependent on the learner raising the issue themselves. Existing support or adjustments are not sufficiently reviewed for effectiveness, follow-up is incomplete, or responsibilities and timescales are unclear. The barrier continues to affect participation or progress without a sufficiently robust response.",
+              "red": "Significant barriers, wellbeing concerns or support needs are overlooked, minimised or not acted upon. Required support or reasonable adjustments are absent or inappropriate, confidentiality or sensitive information is handled poorly, or expectations are inappropriately lowered rather than barriers being addressed. There is no effective follow-up and the learner’s participation, progress or safety is adversely affected."
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "reviewType": "FORM_BRITISH_VALUES",
+    "title": "British Values Feedback Form",
+    "group": "Themed observations",
+    "source": "Themed Session Feedback Form (British Values).docx",
+    "sections": [
+      {
+        "id": "context",
+        "title": "Session context",
+        "screenshots": false,
+        "criteria": [
+          {
+            "id": "session-context",
+            "text": "Context",
+            "type": "textarea",
+            "required": true,
+            "options": [],
+            "help": "Set the scene. What did you see as you joined the session? What was the learner doing? How had the session been prepared? Did the context have any impact on the learner or session?"
+          }
+        ]
+      },
+      {
+        "id": "observation",
+        "title": "Observation judgement and feedback",
+        "screenshots": true,
+        "criteria": [
+          {
+            "id": "criterion-1",
+            "text": "British Values",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "British values are explored naturally, meaningfully and in a way that is relevant to the learner’s occupation and wider life. The learner can confidently explain democracy, the rule of law, individual liberty, mutual respect and tolerance of those with different faiths and beliefs, and can give specific examples of how these principles apply within their workplace, professional relationships or decision-making. Effective questioning deepens understanding, encourages reflection and appropriately explores issues such as respectful challenge, equality, inclusion and the consequences of behaviour that undermines these values.",
+              "green": "British values are discussed accurately and appropriately. The learner can explain the main principles and give relevant examples of how one or more apply within their workplace or wider life. The coach or tutor checks understanding and reinforces respectful, inclusive and lawful behaviour.",
+              "amber": "British values are mentioned but discussion is generic, superficial or mainly based on naming the values. The learner can recall some terminology but has limited understanding of how the values apply to their workplace, apprenticeship or wider life. Questioning does not sufficiently test understanding or correct uncertainty and misconceptions.",
+              "red": "British values are not meaningfully addressed where appropriate, or information is inaccurate or inappropriate. The learner cannot explain the principles or their relevance, significant misconceptions remain unchallenged, or discriminatory, intolerant or unlawful attitudes or comments are not appropriately addressed or escalated."
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "reviewType": "FORM_CIAG",
+    "title": "CIAG Feedback Form",
+    "group": "Themed observations",
+    "source": "Themed Session Feedback Form (CIAG).docx",
+    "sections": [
+      {
+        "id": "context",
+        "title": "Session context",
+        "screenshots": false,
+        "criteria": [
+          {
+            "id": "session-context",
+            "text": "Context",
+            "type": "textarea",
+            "required": true,
+            "options": [],
+            "help": "Set the scene. What did you see as you joined the session? What was the learner doing? How had the session been prepared? Did the context have any impact on the learner or session?"
+          }
+        ]
+      },
+      {
+        "id": "observation",
+        "title": "Observation judgement and feedback",
+        "screenshots": true,
+        "criteria": [
+          {
+            "id": "criterion-1",
+            "text": "Careers Advice and Guidance",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": true,
+            "descriptors": {
+              "gold": "Highly effective, personalised careers guidance is embedded naturally throughout the session. The coach makes explicit links between the apprenticeship, KSB development, the learner’s current role and their longer-term career ambitions. The learner is encouraged to reflect on how their developing knowledge, skills and behaviours are increasing their workplace impact and future opportunities. There is evidence of meaningful discussion about progression such as increased responsibility, promotion, further study, professional membership, salary progression or future roles. Where appropriate, the employer is involved in supporting progression. Clear career-related actions or next steps are agreed and the learner can confidently explain how the apprenticeship is supporting their career development.",
+              "green": "Effective careers guidance is evident and relevant to the learner. The coach discusses the learner’s current role, aspirations and potential progression and makes appropriate links to their apprenticeship learning/KSBs. The learner understands how the programme can support their future development and some appropriate next steps or opportunities are identified. Careers discussion is personalised rather than generic, although it may not be explored in the same depth or have the measurable impact expected at Gold.",
+              "amber": "Careers guidance is present but limited, generic or insufficiently personalised. The coach may ask about aspirations or mention future opportunities, but there is little exploration of how the learner's current learning, KSB development or workplace experience supports progression. Opportunities, actions or next steps are unclear or not recorded. The learner has only a limited understanding of how the apprenticeship connects to their longer-term career development.",
+              "red": "Careers advice and guidance is absent or ineffective. There is no meaningful discussion of the learner’s career aspirations, progression or future development, or information provided is inaccurate/inappropriate. There is no connection between apprenticeship learning and future career opportunities. The learner is unable to explain how the programme supports their career development and no relevant progression actions or opportunities are identified."
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "reviewType": "FORM_EPA",
+    "title": "EPA Feedback Form",
+    "group": "Themed observations",
+    "source": "Themed Session Feedback Form (EPA).docx",
+    "sections": [
+      {
+        "id": "context",
+        "title": "Session context",
+        "screenshots": false,
+        "criteria": [
+          {
+            "id": "session-context",
+            "text": "Context",
+            "type": "textarea",
+            "required": true,
+            "options": [],
+            "help": "Set the scene. What did you see as you joined the session? What was the learner doing? How had the session been prepared? Did the context have any impact on the learner or session?"
+          }
+        ]
+      },
+      {
+        "id": "observation",
+        "title": "Observation judgement and feedback",
+        "screenshots": true,
+        "criteria": [
+          {
+            "id": "criterion-1",
+            "text": "EPA Preparation",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": true,
+            "descriptors": {
+              "gold": "EPA preparation is highly effective and personalised. The coach makes explicit links between current learning/KSB development and the learner’s specific EPA assessment methods and grading requirements. The learner can confidently explain what their EPA involves, what happens at gateway, the assessment methods they will undertake and what is required to achieve a high grade/distinction where applicable.",
+              "green": "Effective EPA preparation is evident and appropriate to the learner’s stage of programme. The coach discusses the learner’s specific EPA requirements and makes clear links between learning, KSBs, evidence and EPA assessment methods. The learner understands the main assessment methods, gateway requirements and expected standards.",
+              "amber": "EPA preparation is present but limited, generic or insufficiently developed. EPA may be mentioned and the learner may know broadly what happens, but they cannot confidently explain all relevant assessment methods, gateway expectations or grading requirements. Links between current learning/KSBs and EPA are weak.",
+              "red": "EPA preparation is absent, inaccurate or ineffective. The learner has little or no understanding of their EPA, gateway requirements, assessment methods or grading expectations. The coach does not connect current learning or KSB development to EPA."
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "reviewType": "FORM_MARKING_FEEDBACK",
+    "title": "Marking and Feedback Feedback Form",
+    "group": "Themed observations",
+    "source": "Themed Session Feedback Form (Marking and Feedback).docx",
+    "sections": [
+      {
+        "id": "context",
+        "title": "Session context",
+        "screenshots": false,
+        "criteria": [
+          {
+            "id": "session-context",
+            "text": "Context",
+            "type": "textarea",
+            "required": true,
+            "options": [],
+            "help": "Set the scene. What did you see as you joined the session? What was the learner doing? How had the session been prepared? Did the context have any impact on the learner or session?"
+          }
+        ]
+      },
+      {
+        "id": "observation",
+        "title": "Observation judgement and feedback",
+        "screenshots": true,
+        "criteria": [
+          {
+            "id": "criterion-1",
+            "text": "Marking and Feedback",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "Marking and feedback are timely, highly personalised and clearly developmental. Feedback accurately identifies what the learner has done well and what they need to do to improve, with specific challenge and guidance that moves learning forward. Relevant KSBs are accepted only where there is sufficient, defensible evidence and the learner is helped to understand how to strengthen weaker evidence. Feedback makes meaningful links to workplace application and impact, EPA readiness and higher-grade performance where appropriate, and relevant English, maths or professional/career development opportunities are identified. There is clear evidence that the learner understands the feedback, acts on it and improves subsequent work as a result.",
+              "green": "Marking is completed within the expected timeframe and feedback is clear, accurate and useful. Strengths and areas for improvement are identified, relevant KSBs are appropriately recognised and the learner understands what they need to do next. Feedback supports improved future work and makes appropriate links to the apprenticeship and workplace where relevant.",
+              "amber": "Marking or feedback is inconsistent in timeliness, quality or developmental value. Comments may be generic, overly focused on task completion or lack sufficient challenge and specificity. KSBs may be over-accepted, under-accepted or insufficiently justified. The learner receives limited guidance on how to improve, or there is little evidence that previous feedback is being understood and acted upon.",
+              "red": "Marking or feedback is absent, significantly late, materially inaccurate or fails to support learning. Feedback provides little meaningful guidance for improvement, important errors or gaps are overlooked, or KSBs are accepted without defensible evidence. The learner is unclear about the quality of their work or what they need to do next and there is no effective intervention to improve the position."
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "reviewType": "FORM_SAFEGUARDING",
+    "title": "Safeguarding Feedback Form",
+    "group": "Themed observations",
+    "source": "Themed Session Feedback Form (Safeguarding).docx",
+    "sections": [
+      {
+        "id": "context",
+        "title": "Session context",
+        "screenshots": false,
+        "criteria": [
+          {
+            "id": "session-context",
+            "text": "Context",
+            "type": "textarea",
+            "required": true,
+            "options": [],
+            "help": "Set the scene. What did you see as you joined the session? What was the learner doing? How had the session been prepared? Did the context have any impact on the learner or session?"
+          }
+        ]
+      },
+      {
+        "id": "observation",
+        "title": "Observation judgement and feedback",
+        "screenshots": true,
+        "criteria": [
+          {
+            "id": "criterion-1",
+            "text": "Safeguarding",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": false,
+            "descriptors": {
+              "gold": "Safeguarding is embedded naturally and meaningfully rather than treated as a compliance check. The coach or tutor uses relevant questioning or scenarios to test and deepen the learner’s understanding of how to recognise concerns, keep themselves and others safe and respond appropriately. The learner can confidently explain KBC’s safeguarding reporting route, who they would contact, what to do if someone is in immediate danger and why confidentiality cannot always be promised. Discussion is personalised to the learner’s workplace, online activity or current risks where appropriate. Any concern or emerging risk is recognised promptly, recorded through the correct safeguarding process and acted upon appropriately.",
+              "green": "Safeguarding is discussed accurately and appropriately. The learner demonstrates secure understanding of how to recognise and report a concern, knows who to contact at KBC and understands what action to take in an emergency. Relevant workplace or personal context is considered where appropriate and any identified concern is followed up correctly.",
+              "amber": "Safeguarding is mentioned but discussion is largely generic, superficial or checklist-driven. The learner has some awareness but is uncertain about the reporting route, when to seek help, what to do in an emergency or how safeguarding applies to their own context. Opportunities to test understanding or explore relevant risks are missed, or follow-up actions are not sufficiently clear.",
+              "red": "Safeguarding is absent, materially inaccurate or ineffective. The learner does not know how to raise a concern or has significant misconceptions about safeguarding or confidentiality. Relevant risks or disclosures are overlooked, minimised or handled inappropriately, or required safeguarding action is not taken through the correct process."
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "reviewType": "FORM_TARGET_SETTING",
+    "title": "Target Setting Feedback Form",
+    "group": "Themed observations",
+    "source": "Themed Session Feedback Form (Target Setting).docx",
+    "sections": [
+      {
+        "id": "context",
+        "title": "Session context",
+        "screenshots": false,
+        "criteria": [
+          {
+            "id": "session-context",
+            "text": "Context",
+            "type": "textarea",
+            "required": true,
+            "options": [],
+            "help": "Set the scene. What did you see as you joined the session? What was the learner doing? How had the session been prepared? Did the context have any impact on the learner or session?"
+          }
+        ]
+      },
+      {
+        "id": "observation",
+        "title": "Observation judgement and feedback",
+        "screenshots": true,
+        "criteria": [
+          {
+            "id": "criterion-1",
+            "text": "Target Setting",
+            "type": "rating",
+            "required": true,
+            "options": [],
+            "help": "",
+            "allowNa": true,
+            "descriptors": {
+              "gold": "Highly effective, personalised SMART targets are co-created with the learner and employer where appropriate. Targets are specific, measurable, achievable, relevant and time-bound, with clear success measures and deadlines. They directly address the learner’s current priorities, such as KSB development, portfolio progress, OTJH, submissions, attendance, workplace application, EPA readiness or identified barriers. The learner understands why each target matters and can explain what successful completion will look like. Previous targets are meaningfully reviewed before new ones are agreed, with progress, impact and any barriers explored. Where appropriate, the employer contributes to targets and supports workplace-based actions. Targets are sufficiently challenging and result in clear next steps that accelerate progress.",
+              "green": "Effective SMART targets are agreed and appropriate to the learner’s needs and stage of programme. Targets are clear, measurable and time-bound and are relevant to current learning, progress or development. Previous targets are reviewed and new actions are agreed. The learner understands what they need to do and by when. Targets support progress, although the level of challenge, personalisation, employer involvement or exploration of impact may not be as strong as Gold.",
+              "amber": "Targets are present but are not consistently SMART or sufficiently purposeful. Actions may be vague, overly broad, activity-based rather than outcome-focused, or lack clear measures or deadlines. Targets may not address the learner’s most important progress issues or may be generic across learners. Previous targets may be marked as complete without meaningful discussion of impact. The learner has limited ownership of the targets or is unclear about exactly what successful completion looks like.",
+              "red": "Target setting is absent, ineffective or does not support learner progress. No meaningful targets are agreed, or targets are so vague that progress cannot be measured. Previous targets are not reviewed, missed actions are ignored, or repeated non-completion does not result in further intervention. Targets do not address significant concerns such as lack of progress, missed submissions, OTJH shortfalls, poor attendance or EPA readiness. The learner is unclear about what they need to do next or when it should be completed."
+            }
+          }
+        ]
+      }
+    ]
+  }
+]

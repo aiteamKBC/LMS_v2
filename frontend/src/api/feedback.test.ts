@@ -79,4 +79,29 @@ describe('feedback API write protection', () => {
     expect(fetchMock).toHaveBeenNthCalledWith(2, '/engagement_api/feedback/my-deliveries/21/?learnerId=125', expect.objectContaining({ credentials: 'include' }));
     expect(fetchMock).toHaveBeenNthCalledWith(3, '/engagement_api/feedback/my-review-deliveries/71/?learnerId=125', expect.objectContaining({ credentials: 'include' }));
   });
+
+  it('loads lecture question results through a separate read-only reporting endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ analytics: { questionMetrics: [] } }) });
+    vi.stubGlobal('fetch', fetchMock);
+    await feedbackApi.questionAnalytics({ formId: 20, formType: 'post_lecture', moduleId: 'MOD A', deliveryId: 31 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith('/engagement_api/feedback/analytics/questions/?formId=20&formType=post_lecture&moduleId=MOD+A&deliveryId=31', expect.objectContaining({ credentials: 'include' }));
+    expect(fetchMock.mock.calls[0][1].method).toBeUndefined();
+  });
+
+  it('combines submission dates with form and lecture scope on the read-only reporting request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ analytics: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+    await feedbackApi.questionAnalytics({ formId: 20, deliveryId: 31, submittedFrom: '2026-10-01', submittedTo: '2026-10-25' });
+    expect(fetchMock).toHaveBeenCalledWith('/engagement_api/feedback/analytics/questions/?formId=20&deliveryId=31&submittedFrom=2026-10-01&submittedTo=2026-10-25', expect.objectContaining({ credentials: 'include' }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the independent insights request read-only and encodes all selected scope filters', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ analytics: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+    await feedbackApi.insightsDashboard({ formType: 'post_lecture', groupId: 'Group & One', moduleId: 'Module / One', classification: 'negative', submittedFrom: '2026-09-01', submittedTo: '2026-10-26' });
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith('/engagement_api/feedback/analytics/insights/?formType=post_lecture&groupId=Group+%26+One&moduleId=Module+%2F+One&classification=negative&submittedFrom=2026-09-01&submittedTo=2026-10-26', expect.objectContaining({ credentials: 'include' }));
+    expect(fetchMock.mock.calls[0][1].method).toBeUndefined();
+  });
 });

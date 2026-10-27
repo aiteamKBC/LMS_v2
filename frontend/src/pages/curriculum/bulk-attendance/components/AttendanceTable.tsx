@@ -1,6 +1,9 @@
+import { useState } from "react";
 import type { AttendanceStatus, Learner } from "@/types/bulkAttendance";
 import { avatarClass, formatShortDate, getInitials } from "@/utils/bulkAttendance";
 import LearnerStatusBadge from "./LearnerStatusBadge";
+import { HighlightPicker } from "./HighlightControls";
+import { highlightColor, highlightKey, type LearnerHighlight, type LearnerHighlights } from "./highlights";
 
 export interface AttendanceRow {
   learner: Learner;
@@ -42,6 +45,9 @@ interface AttendanceTableProps {
   onToggleSelectAll: () => void;
   onOpenHistory: (row: AttendanceRow) => void;
   onToggleRecord?: (record: EditableRecord) => void;
+  /** Browser-only learner highlights; the row button shows only with onHighlightChange. */
+  highlights?: LearnerHighlights;
+  onHighlightChange?: (key: string, next: LearnerHighlight | null) => void;
 }
 
 function formatBadgeDate(iso: string): string {
@@ -80,7 +86,10 @@ export default function AttendanceTable({
   onToggleSelectAll,
   onOpenHistory,
   onToggleRecord,
+  highlights,
+  onHighlightChange,
 }: AttendanceTableProps) {
+  const [openHighlightFor, setOpenHighlightFor] = useState<string | null>(null);
   const allSelected =
     rows.length > 0 && rows.every((row) => selectedIds.includes(row.learner.id));
 
@@ -105,6 +114,9 @@ export default function AttendanceTable({
         </span>
         <span className="w-36 whitespace-nowrap font-label text-xs uppercase tracking-wide text-foreground-500">
           Status
+        </span>
+        <span className="w-36 whitespace-nowrap font-label text-xs uppercase tracking-wide text-foreground-500">
+          Attendance mode
         </span>
         <span className="w-56 whitespace-nowrap font-label text-xs uppercase tracking-wide text-foreground-500">
           Last 4 lectures
@@ -139,11 +151,22 @@ export default function AttendanceTable({
           const selected = selectedIds.includes(learner.id);
           const info = lectureInfo[learner.id];
           const recent = info?.recent ?? [];
+          const key = highlightKey(learner);
+          const highlight = highlights?.[key];
+          const color = highlightColor(highlight);
+          const pickerOpen = Boolean(onHighlightChange) && openHighlightFor === key;
           return (
             <div
               key={learner.id}
-              className={`flex flex-col gap-3 border-b border-background-200 px-5 py-4 transition-colors last:border-b-0 md:flex-row md:items-center md:gap-4 ${
-                selected ? "bg-primary-50" : "hover:bg-background-100"
+              className={`border-b border-l-4 border-b-background-200 last:border-b-0 ${
+                color ? color.row : "border-l-transparent"
+              }`}
+            >
+            <div
+              className={`flex flex-col gap-3 px-5 py-4 transition-colors md:flex-row md:items-center md:gap-4 ${
+                // A highlight fills the whole row, even when it is selected;
+                // the checkbox still shows the selection.
+                color ? "" : selected ? "bg-primary-50" : "hover:bg-background-100"
               }`}
             >
               <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -187,6 +210,21 @@ export default function AttendanceTable({
                   Status
                 </span>
                 <LearnerStatusBadge status={learner.status} />
+              </div>
+
+              <div className="flex items-center gap-2 md:block md:w-36">
+                <span className="font-label text-xs uppercase tracking-wide text-foreground-500 md:hidden">
+                  Attendance mode
+                </span>
+                {learner.attendanceMode === "lazy" ? (
+                  <span className="inline-flex rounded-full border border-primary-200 bg-primary-50 px-2.5 py-1 text-xs font-medium text-primary-700">
+                    Recorded
+                  </span>
+                ) : (
+                  <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+                    Live Sessions
+                  </span>
+                )}
               </div>
 
               <div className="flex items-start gap-2 md:w-56">
@@ -270,7 +308,21 @@ export default function AttendanceTable({
                 </span>
               </div>
 
-              <div className="md:w-40 md:text-right">
+              <div className="flex items-center gap-2 md:w-40 md:justify-end">
+                {onHighlightChange && (
+                  <button
+                    type="button"
+                    onClick={() => setOpenHighlightFor(pickerOpen ? null : key)}
+                    aria-expanded={pickerOpen}
+                    aria-label={`Highlight ${learner.name}`}
+                    title={highlight?.note || "Highlight learner"}
+                    className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full border border-background-300 bg-background-50 text-foreground-600 transition-colors hover:border-primary-300 hover:text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400"
+                  >
+                    {color
+                      ? <span aria-hidden="true" className={`h-3 w-3 rounded-full ${color.swatch}`} />
+                      : <i className="ri-mark-pen-line" />}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => onOpenHistory({ learner, index, groupName, cohortName })}
@@ -281,6 +333,27 @@ export default function AttendanceTable({
                   View details
                 </button>
               </div>
+            </div>
+            {pickerOpen && onHighlightChange && (
+              <div
+                className="flex flex-col gap-2 border-t border-background-200 px-5 py-3 md:flex-row md:items-center md:justify-end md:gap-3"
+                onKeyDown={(event) => { if (event.key === "Escape") setOpenHighlightFor(null); }}
+              >
+                <span className="text-xs text-foreground-500 md:mr-auto">Saved automatically in this browser only</span>
+                <HighlightPicker
+                  learnerName={learner.name}
+                  highlight={highlight}
+                  onChange={(next) => onHighlightChange(key, next)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setOpenHighlightFor(null)}
+                  className="self-start text-xs font-medium text-primary-700 underline md:self-auto"
+                >
+                  Done
+                </button>
+              </div>
+            )}
             </div>
           );
         })

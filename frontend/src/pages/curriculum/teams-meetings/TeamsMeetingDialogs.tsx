@@ -16,6 +16,8 @@ import { pendingInvitations } from './attendeeComparison';
 import { emailList } from '../module-builder/EmailChipsInput';
 import { forwardScheduleEmail } from './forwardScheduleEmail';
 import { updateProgressSteps } from './updateProgress';
+import { reviewDateLabel } from './calendarTime';
+import { offScheduleRunSentence } from './offScheduleRuns';
 import { createPortal } from 'react-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { formatSystemTimestamp } from '@/lib/format';
@@ -836,9 +838,18 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     if (!occurrence) return null;
                     const attended = occurrence.participant_count || occurrence.attendance?.length || 0;
                     const artifacts = occurrence.artifacts || [];
-                    if (!attended && !artifacts.length) return null;
+                    // A call on this link that was not this session (the link tried
+                    // early, another day's use) is said, with both dates, even before
+                    // the session runs: Teams lists it as the meeting being held then.
+                    const offSchedule = occurrence.off_schedule_runs || [];
+                    if (!attended && !artifacts.length && !offSchedule.length) return null;
                     return (
                       <>
+                        {offSchedule.map(run => (
+                          <span key={`${run.runStartUtc}-${run.runEndUtc}`} role="note" className="basis-full font-semibold text-amber-800">
+                            {offScheduleRunSentence(run, iso => reviewDateLabel(iso, detail?.series.timeZoneIana || 'Europe/London'))}
+                          </span>
+                        ))}
                         {Boolean(attended) && (
                           <span className="font-semibold text-foreground-600">{attended} attended</span>
                         )}

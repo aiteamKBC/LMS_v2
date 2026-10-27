@@ -3,8 +3,8 @@ import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import QualityReviewDialog from './QualityReviewDialog';
-import { qualityContext, qualityReview, saveQualityReview, uploadQualityImage, QualityReviewError, type QualityContext, type QualityReview } from '@/api/coachingQualityReviews';
-vi.mock('@/api/coachingQualityReviews', async () => ({ ...await vi.importActual<typeof import('@/api/coachingQualityReviews')>('@/api/coachingQualityReviews'), qualityContext: vi.fn(), qualityReview: vi.fn(), saveQualityReview: vi.fn(), uploadQualityImage: vi.fn() }));
+import { qualityContext, qualityForms, qualityReview, saveQualityReview, uploadQualityImage, QualityReviewError, type QualityContext, type QualityReview } from '@/api/coachingQualityReviews';
+vi.mock('@/api/coachingQualityReviews', async () => ({ ...await vi.importActual<typeof import('@/api/coachingQualityReviews')>('@/api/coachingQualityReviews'), qualityContext: vi.fn(), qualityForms: vi.fn(), qualityReview: vi.fn(), saveQualityReview: vi.fn(), uploadQualityImage: vi.fn() }));
 vi.mock('@/pages/learner/monthly-submission/AssignmentPdfPreview', () => ({ AssignmentPdfPreview: () => <div>PDF preview</div> }));
 const render = (element: ReactNode) => renderUi(<MemoryRouter>{element}</MemoryRouter>);
 const context = (): QualityContext => ({ template: { id: 'portfolio-sampling-v1', title: 'Portfolio Sampling Feedback Form', ratings: { gold: 'High quality', green: 'Effective', amber: 'Weak', red: 'Absent', na: 'Not applicable' },
@@ -12,8 +12,10 @@ const context = (): QualityContext => ({ template: { id: 'portfolio-sampling-v1'
   learners: [{ id: '1', name: 'Learner One' }, { id: '2', name: 'Learner Two' }], review: null,
   observer: { id: 'staff:1', name: 'Reviewer', email: 'reviewer@example.invalid' }, snapshot: { coach: { email: 'coach@example.invalid', name: 'Coach One' },
     learner: { id: '1', name: 'Learner One' }, meeting: { eventId: 'event', title: 'Synthetic MCM meeting', startsAt: '2026-10-20T10:00:00Z', endsAt: '2026-10-20T11:00:00Z' } } });
+const choose = async (kind = 'MCM') => { fireEvent.click(await screen.findByRole('radio', { name: kind })); await screen.findByRole('radio', { name: 'Green' }); };
 describe('Quality review form', () => {
   beforeEach(() => {
+    vi.mocked(qualityForms).mockReset().mockResolvedValue({ forms: ['MCM','PR'].map(reviewType => ({ reviewType, title: reviewType, group: 'Forms', published: true, revision: 0, legacy: false })) });
     vi.mocked(qualityContext).mockReset().mockResolvedValue(context());
     vi.mocked(qualityReview).mockReset();
     vi.mocked(uploadQualityImage).mockReset().mockResolvedValue({ id: 'saved-image' });
@@ -22,10 +24,11 @@ describe('Quality review form', () => {
   });
   it('opens one scoped read, starts with blank ratings and saves only on an explicit action', async () => {
     render(<QualityReviewDialog initialLearnerId="1" eventKey="event" reference="signed" onClose={vi.fn()} />);
+    await choose();
     await screen.findByRole('radio', { name: 'Green' });
-    expect(qualityContext).toHaveBeenCalledWith('event', 'signed', '1', expect.any(AbortSignal), undefined, undefined);
+    expect(qualityContext).toHaveBeenCalledWith('event', 'signed', '1', expect.any(AbortSignal), undefined);
     expect(saveQualityReview).not.toHaveBeenCalled();
-    expect(screen.getByRole('radio', { name: 'MCM' })).toBeChecked();
+    expect(screen.getByRole('link', { name: 'Edit form template' })).toHaveAttribute('href', '/curriculum/quality/forms?type=MCM');
     expect(screen.getAllByRole('radio').filter(radio => !['MCM','PR'].includes(radio.getAttribute('aria-label') || '')).every(radio => !(radio as HTMLInputElement).checked)).toBe(true);
     fireEvent.click(screen.getByRole('radio', { name: 'Green' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Evidence observed and impact on the learner' }), { target: { value: 'Observed evidence at video 04:20.' } });
@@ -37,6 +40,7 @@ describe('Quality review form', () => {
   });
   it('blocks completion without ratings and evidence, then completes the saved record', async () => {
     render(<QualityReviewDialog initialLearnerId="1" onClose={vi.fn()} />);
+    await choose();
     await screen.findByRole('radio', { name: 'Green' });
     fireEvent.click(screen.getByRole('button', { name: 'Complete review' }));
     expect(screen.getByRole('alert')).toHaveTextContent('Choose a rating');
@@ -55,17 +59,19 @@ describe('Quality review form', () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     try {
       render(<QualityReviewDialog initialLearnerId="1" eventKey="event" reference="signed" onClose={vi.fn()} />);
+    await choose();
       await screen.findByText('MCM only question');
       fireEvent.change(screen.getByRole('textbox', { name: 'Evidence observed and impact on the learner' }), { target: { value: 'Keep the MCM note' } });
-      fireEvent.click(screen.getByRole('radio', { name: 'PR' }));
-      expect(qualityContext).toHaveBeenCalledOnce();
+      fireEvent.click(screen.getByRole('button', { name: 'Choose another form' }));
+      fireEvent.click(await screen.findByRole('radio', { name: 'PR' }));
+      expect(qualityContext).toHaveBeenCalledTimes(2);
       expect(screen.getByRole('textbox', { name: 'Evidence observed and impact on the learner' })).toHaveValue('Keep the MCM note');
       confirm.mockReturnValue(true); fireEvent.click(screen.getByRole('radio', { name: 'PR' }));
       await screen.findByText('PR only question');
-      expect(screen.getByRole('radio', { name: 'PR' })).toBeChecked();
+      expect(screen.getByRole('link', { name: 'Edit form template' })).toHaveAttribute('href', '/curriculum/quality/forms?type=PR');
       expect(screen.getByRole('textbox', { name: 'Evidence observed and impact on the learner' })).toHaveValue('');
-      expect(screen.getByRole('link', { name: 'Edit PR form' })).toHaveAttribute('href', '/curriculum/quality/forms?type=PR');
-      expect(saveQualityReview).not.toHaveBeenCalled(); expect(qualityContext).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole('link', { name: 'Edit form template' })).toHaveAttribute('href', '/curriculum/quality/forms?type=PR');
+      expect(saveQualityReview).not.toHaveBeenCalled(); expect(qualityContext).toHaveBeenCalledTimes(3);
       fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
       await screen.findByText('Draft · Version 1 saved');
       expect(vi.mocked(saveQualityReview).mock.calls[0][0]).toMatchObject({ reviewType: 'PR', learnerId: '1' });
@@ -75,12 +81,12 @@ describe('Quality review form', () => {
     const value = context(); value.snapshot.meeting.title = 'EPA readiness'; value.snapshot.reviewType = '';
     vi.mocked(qualityContext).mockResolvedValue(value);
     render(<QualityReviewDialog initialLearnerId="1" onClose={vi.fn()} />);
-    await screen.findByText(/This title does not identify MCM or PR/);
+    await screen.findByRole('radio', { name: 'PR' });
     expect(screen.getByRole('button', { name: 'Complete review' })).toBeDisabled();
     expect(screen.queryByRole('radio', { name: 'Green' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('radio', { name: 'PR' }));
     await screen.findByRole('radio', { name: 'Green' });
-    expect(screen.getByRole('radio', { name: 'PR' })).toBeChecked(); expect(saveQualityReview).not.toHaveBeenCalled();
+    expect(screen.getByRole('link', { name: 'Edit form template' })).toHaveAttribute('href', '/curriculum/quality/forms?type=PR'); expect(saveQualityReview).not.toHaveBeenCalled();
   });
   it('keeps a saved manual type ahead of the original title suggestion', async () => {
     const value = context(); value.snapshot.reviewType = 'PR';
@@ -89,26 +95,29 @@ describe('Quality review form', () => {
       reviewer: value.observer } as QualityReview;
     vi.mocked(qualityContext).mockResolvedValue(value);
     render(<QualityReviewDialog initialLearnerId="1" initialReviewType="MCM" onClose={vi.fn()} />);
+    await choose('PR');
     await screen.findByRole('radio', { name: 'Green' });
-    expect(screen.getByRole('radio', { name: 'PR' })).toBeChecked(); expect(qualityContext).toHaveBeenCalledOnce();
+    expect(screen.getByRole('link', { name: 'Edit form template' })).toHaveAttribute('href', '/curriculum/quality/forms?type=PR'); expect(qualityContext).toHaveBeenCalledTimes(2);
   });
-  it('reclassifies a saved review through its own ID and keeps the save version', async () => {
+  it('opens the original saved form through its ID and keeps its type and save version', async () => {
     const value = context();
     const saved = { ...value.snapshot, id: 'saved-review', version: 2, reviewType: 'MCM', learner: { id: '1', name: 'Learner One' }, status: 'draft',
       form: { header: { employer: '', programme: '', activityDate: '', startDate: '', endDate: '' }, criteria: {}, images: {}, sources: [], actions: [] }, reviewer: value.observer } as QualityReview;
     vi.mocked(qualityReview).mockImplementation(async (_id, _signal, kind) => ({ review: saved, reviewType: kind || 'MCM', template: { ...value.template, reviewType: kind || 'MCM' } }));
     render(<QualityReviewDialog reviewId={saved.id} onClose={vi.fn()} />);
-    await screen.findByRole('radio', { name: 'Green' }); fireEvent.click(screen.getByRole('radio', { name: 'PR' }));
-    await waitFor(() => expect(qualityReview).toHaveBeenCalledTimes(2));
+    await screen.findByRole('radio', { name: 'Green' });
+    expect(screen.queryByRole('button', { name: 'Choose another form' })).not.toBeInTheDocument();
+    await waitFor(() => expect(qualityReview).toHaveBeenCalledOnce());
     await waitFor(() => expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
     await waitFor(() => expect(saveQualityReview).toHaveBeenCalledOnce());
-    expect(vi.mocked(saveQualityReview).mock.calls[0][0]).toMatchObject({ reviewType: 'PR', expectedVersion: 2 });
+    expect(vi.mocked(saveQualityReview).mock.calls[0][0]).toMatchObject({ reviewType: 'MCM', expectedVersion: 2 });
     expect(vi.mocked(saveQualityReview).mock.calls[0][1]).toBe(saved.id);
   });
   it('retains edits on a save conflict and reuses a request ID on an unchanged retry', async () => {
     vi.mocked(saveQualityReview).mockRejectedValue(new QualityReviewError('A newer saved version exists.', 409));
     render(<QualityReviewDialog initialLearnerId="1" onClose={vi.fn()} />);
+    await choose();
     const evidence = await screen.findByRole('textbox', { name: 'Evidence observed and impact on the learner' });
     fireEvent.change(evidence, { target: { value: 'Keep this observation.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
@@ -125,10 +134,11 @@ describe('Quality review form', () => {
     const close = vi.fn(), confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const dirty = vi.fn(), busy = vi.fn();
     render(<QualityReviewDialog initialLearnerId="1" onClose={close} onDirtyChange={dirty} onBusyChange={busy} />);
+    await choose();
     const evidence = await screen.findByRole('textbox', { name: 'Evidence observed and impact on the learner' });
     fireEvent.change(evidence, { target: { value: 'Unsaved note' } });
     expect(dirty).toHaveBeenLastCalledWith(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Close Portfolio sampling review' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close Quality Check' }));
     expect(close).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
     expect(evidence).toBeDisabled();
@@ -142,6 +152,7 @@ describe('Quality review form', () => {
   });
   it('attaches an image to the saved learner review and includes it in the next save', async () => {
     render(<QualityReviewDialog initialLearnerId="1" onClose={vi.fn()} />);
+    await choose();
     await screen.findByRole('radio', { name: 'Green' });
     expect(screen.getByLabelText('Attach image: Progress reviews screenshots')).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Save draft' })); await screen.findByText('Draft · Version 1 saved');

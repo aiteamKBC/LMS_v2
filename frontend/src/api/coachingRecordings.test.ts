@@ -22,6 +22,30 @@ const roster = (): CoachLearners => ({ ...query, coach: { email: 'coach@example.
 describe('Coaching calendar client', () => {
   beforeEach(() => { clearAllCachedResources(); vi.mocked(learningFetch).mockReset(); vi.mocked(coachFetch).mockReset(); });
 
+  it('accepts completed empty recording checks while rejecting invalid check metadata', async () => {
+    const payload = { eventKey: 'one', media: { state: 'pending', readyCount: 0, recordings: [],
+      check: { state: 'complete', checkedAt: '2026-10-20T09:00:00Z', reason: 'no-recordings-returned' } },
+      attendance: { state: 'pending', reportCount: 0, rows: [] }, partial: false };
+    vi.mocked(learningFetch).mockResolvedValueOnce(response(payload));
+    expect((await loadCoachingSession('one')).media.check?.reason).toBe('no-recordings-returned');
+    vi.mocked(learningFetch).mockResolvedValueOnce(response({ ...payload, eventKey: 'two', media: { ...payload.media,
+      check: { state: 'complete', checkedAt: 'invalid', reason: 'fabricated-ready' } } }));
+    await expect(loadCoachingSession('two')).rejects.toThrow('could not be loaded');
+  });
+
+  it('accepts actual attendance visit bounds and rejects inverted or invalid dates', async () => {
+    const participant = { name: 'Synthetic Participant', totalAttendanceSeconds: 755, firstJoinedAt: '2026-10-19T09:00:00Z', lastLeftAt: '2026-10-19T09:12:35Z' };
+    const payload = { eventKey: 'event', media: { state: 'pending', readyCount: 0, recordings: [] }, partial: false,
+      attendance: { state: 'available', reportCount: 1, rows: [participant] } };
+    vi.mocked(learningFetch).mockResolvedValueOnce(response(payload));
+    expect((await loadCoachingSession('event')).attendance.rows[0].firstJoinedAt).toBe(participant.firstJoinedAt);
+    for (const firstJoinedAt of ['bad-time', '2026-10-19T10:00:00Z']) {
+      invalidateCoachingDetails();
+      vi.mocked(learningFetch).mockResolvedValueOnce(response({ ...payload, attendance: { ...payload.attendance, rows: [{ ...participant, firstJoinedAt }] } }));
+      await expect(loadCoachingSession('event')).rejects.toThrow('could not be loaded');
+    }
+  });
+
   it('accepts verified optional Aptem completion states and rejects an unknown state', async () => {
     const evidence = { state: 'matched', source: 'coaching-session', transcript: null, analyses: [],
       completion: { source: 'aptem', state: 'awaiting-signature', checkedAt: '2026-10-24T12:00:00Z' } };

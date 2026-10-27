@@ -548,7 +548,7 @@ class CoachingRecordingsApiTests(SimpleTestCase):
         row = data['meetings'][0]
         self.assertEqual(row['title'], 'Internal planning and coaching')
         self.assertEqual((row['eventKey'], row['learnerIds'], row['media']['state'], row['readyToAction']),
-                         (None, [], 'pending', False))
+                         (None, [], 'pending', True))
         self.assertEqual(api.read_reference(row['recordingsReference'])['owner'], OWNER)
 
     def test_any_calendar_meeting_can_be_ready_and_open_saved_attendance_without_a_native_booking(self):
@@ -570,6 +570,67 @@ class CoachingRecordingsApiTests(SimpleTestCase):
         self.assertTrue(detail['eventKey'].startswith('coach-calendar:'))
         self.assertEqual(detail['attendance'], attendance)
         self.assertIsNone(saved.call_args.args[0].learner_id)
+        self.graph.assert_not_called()
+
+    def test_every_category_with_verified_recording_opens_attendance_in_ready_without_booking_or_ai_dependency(self):
+        self.graph.return_value = [{**meeting(), 'subject': 'Synthetic calendar appointment', 'attendees': []}]
+        self.sources.side_effect = lambda contexts: {api.calendar_key(ctx): source_job(ctx) for ctx in contexts}
+        attendance = {'state': 'available', 'reportCount': 1, 'rows': [{'name': 'Synthetic Participant', 'status': 'attended', 'totalAttendanceSeconds': 755}]}
+        for kind in ('MCM', 'PR', 'SUPPORT', 'OTHER', 'LECTURE'):
+            with self.subTest(category=kind), patch.object(api, 'category', return_value=(kind, 'calendar-title')), \
+                    patch.object(api, 'datetime', wraps=datetime) as clock, \
+                    patch.object(api, 'saved_calendar_attendance', return_value=attendance):
+                clock.now.return_value = datetime(2026, 10, 21, tzinfo=timezone.utc)
+                self.graph.reset_mock()
+                response, data = self.get()
+                self.assertEqual(response.status_code, 200)
+                row = data['meetings'][0]
+                self.assertEqual(row['category'], kind)
+                self.assertTrue(row['readyToAction'])
+                self.assertIsNone(row['eventKey'])
+                self.source_details.return_value = source_job()
+                self.graph.reset_mock()
+                response = api.coaching_recording_session(self.factory.get('/session', {'reference': row['recordingsReference'], 'part': 'attendance'}))
+                detail = json.loads(response.content)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(detail['media']['readyCount'], 1)
+                self.assertEqual(detail['attendance'], attendance)
+                self.graph.assert_not_called()
+                self.saved_evidence.assert_not_called()
+                self.attendance_queue.assert_not_called()
+
+    def test_all_ended_categories_are_ready_even_before_recording_or_attendance_discovery(self):
+        self.graph.return_value = [{**meeting(), 'subject': 'Synthetic calendar appointment', 'attendees': []}]
+        for kind in ('MCM', 'PR', 'SUPPORT', 'OTHER', 'LECTURE'):
+            with self.subTest(category=kind), patch.object(api, 'category', return_value=(kind, 'calendar-title')), \
+                    patch.object(api, 'datetime', wraps=datetime) as clock:
+                clock.now.return_value = datetime(2026, 10, 21, tzinfo=timezone.utc)
+                response, data = self.get()
+                self.assertEqual(response.status_code, 200)
+                row = data['meetings'][0]
+                self.assertEqual(row['category'], kind)
+                self.assertEqual(row['phase'], 'ended')
+                self.assertTrue(row['readyToAction'])
+                self.assertEqual(row['media']['readyCount'], 0)
+                self.assertEqual(row['media']['state'], 'pending')
+                self.assertIsNone(row['eventKey'])
+                self.saved_evidence.assert_not_called()
+                self.attendance_queue.assert_not_called()
+
+    def test_a_failed_recheck_retains_ready_parts_but_never_claims_complete_evidence(self):
+        saved = source_job()
+        saved.error_code = 'evidence_unavailable'
+        self.source_details.return_value = saved
+        attendance = {'state': 'available', 'reportCount': 1, 'rows': []}
+        reference = api.calendar_reference(api.event_context(OWNER, meeting()))
+        with patch.object(api, 'saved_calendar_attendance', return_value=attendance):
+            response = api.coaching_recording_session(self.factory.get('/session', {'reference': reference, 'part': 'attendance'}))
+        detail = json.loads(response.content)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(detail['partial'])
+        self.assertEqual(detail['media']['check']['state'], 'failed')
+        self.assertEqual(detail['media']['readyCount'], 1)
+        self.assertEqual(detail['attendance']['state'], 'available')
         self.graph.assert_not_called()
 
     def test_calendar_reference_rechecks_owner_grants_and_cannot_be_used_for_another_event_key(self):
@@ -926,7 +987,7 @@ class CoachingRecordingsApiTests(SimpleTestCase):
             self.account.role = 'staff'
             self.assertEqual(view(self.factory.post('/coach_api/coaching-recordings/session')).status_code, 405)
 
-    def test_ended_matched_meeting_requires_verified_microsoft_source_to_be_ready(self):
+    def test_ended_meeting_stays_ready_for_review_when_microsoft_recording_is_unavailable(self):
         self.bookings.return_value = [{'event_key': 'mcr:1', 'owner_email': OWNER, 'learner_id': 1,
             'event_type': 'mcr', 'graph_event_id': 'event-1', 'meeting_link': '',
             'scheduled_date': date(2026, 10, 20), 'scheduled_time': time(10),
@@ -940,7 +1001,8 @@ class CoachingRecordingsApiTests(SimpleTestCase):
         self.sources.return_value = {api.calendar_key(context): source_job(context, available=False)}
         response, data = self.get()
         self.assertEqual(response.status_code, 207)
-        self.assertFalse(data['meetings'][0]['readyToAction'])
+        self.assertTrue(data['meetings'][0]['readyToAction'])
+        self.assertEqual(data['meetings'][0]['media']['readyCount'], 0)
         self.assertEqual(data['errors'][0]['code'], 'recordings_incomplete')
 
 

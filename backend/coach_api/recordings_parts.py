@@ -13,16 +13,37 @@ def occurrence_parts(rows, window, *, anchors=()):
     if len(window)!=2 or not all(window) or window[1]<=window[0]:
         raise ValueError('Invalid occurrence interval.')
     rows=list(rows)
-    timed=[row for row in [*anchors,*rows] if in_session_window(
-        row.get('createdDateTime'),row.get('endDateTime'),window) is True]
-    calls={row['callId'] for row in timed if row.get('callId')}
-    correlations={row['contentCorrelationId'] for row in timed if row.get('contentCorrelationId')}
+    # A continuation can introduce another correlation/call identity for its
+    # next part. Follow that verified chain to closure, independently of provider
+    # page order. A reused onlineMeeting/join URL never supplies an anchor.
+    valid=[row for row in [*anchors,*rows] if row.get('id')
+        and (first:=_instant(row.get('createdDateTime'))) is not None
+        and (last:=_instant(row.get('endDateTime'))) is not None and last>first]
+    links={}; pending=[]
+    for index,row in enumerate(valid):
+        for field in ('callId','contentCorrelationId'):
+            if row.get(field):
+                links.setdefault((field,row[field]),[]).append(index)
+        if in_session_window(row['createdDateTime'],row['endDateTime'],window) is True:
+            pending.append(index)
+    visited=set(); identities=set()
+    while pending:
+        index=pending.pop()
+        if index in visited:
+            continue
+        visited.add(index)
+        for field in ('callId','contentCorrelationId'):
+            if valid[index].get(field):
+                identity=(field,valid[index][field])
+                if identity not in identities:
+                    identities.add(identity)
+                    pending.extend(links.get(identity,[]))
     found={}; seen=set()
     for row in rows:
         first,last=_instant(row.get('createdDateTime')),_instant(row.get('endDateTime'))
         if not row.get('id') or not first or not last or last<=first:
             continue
-        linked=(row.get('callId') in calls or row.get('contentCorrelationId') in correlations)
+        linked=any((field,row.get(field)) in identities for field in ('callId','contentCorrelationId') if row.get(field))
         if in_session_window(row.get('createdDateTime'),row.get('endDateTime'),window) is True or linked:
             identity=(row.get('contentCorrelationId') or row['id'],first,last)
             if identity in seen:
@@ -31,7 +52,7 @@ def occurrence_parts(rows, window, *, anchors=()):
             previous=found.get(row['id'])
             if not previous or last>_instant(previous['endDateTime']):
                 found[row['id']]=row
-    return sorted(found.values(),key=lambda row:(row.get('createdDateTime') or '',row['id']))
+    return sorted(found.values(),key=lambda row:(_instant(row['createdDateTime']),row['id']))
 
 
 def artifact_metadata(artifact):

@@ -177,6 +177,7 @@ function toBulkData(
 
   const moduleById = new Map(modules.map((module) => [module.id, module]));
   const lectures: Lecture[] = sessions.map((session) => {
+    const numberedSession = /-session-(\d+)$/.exec(String(session.id));
     const aliases = [
       session.moduleCatalogueId,
       session.moduleId,
@@ -196,6 +197,7 @@ function toBulkData(
     return {
       id: String(session.id),
       name: session.title,
+      sessionNumber: numberedSession ? Number(numberedSession[1]) : session.week,
       moduleId: mappedModuleId ?? aliases[0] ?? "",
       moduleCatalogueId: mappedModule?.rosterId || (session.moduleCatalogueId ? String(session.moduleCatalogueId) : undefined),
       moduleName: session.module || curriculumModuleName,
@@ -239,7 +241,11 @@ function toBulkData(
   const learners: Learner[] = directory.map((learner) => {
     // Only an unambiguous email match may supply curriculum placement. KBC
     // IDs and curriculum learner IDs belong to different databases.
-    const matches = learner.email ? placementsByEmail.get(normalize(learner.email)) ?? [] : [];
+    // The LMS email covers learners whose KBC directory email differs.
+    const matches = [learner.email, learner.lmsEmail ?? ""]
+      .map(normalize)
+      .filter(Boolean)
+      .flatMap((email) => placementsByEmail.get(email) ?? []);
     const memberships = [...new Map(matches.map((item) => [
       `${item.programmeId}:${item.cohortId}:${item.groupId}`,
       item,
@@ -261,6 +267,7 @@ function toBulkData(
       curriculumId: placement?.id,
       name: learner.name || learner.email,
       email: learner.email,
+      lmsEmail: learner.lmsEmail,
       programme: learner.programme,
       group: learner.group,
       programmeId,
@@ -268,6 +275,7 @@ function toBulkData(
       groupId: placement?.groupId || group?.id || "",
       endDate: placement?.endDate || cohortById.get(cohortId)?.endDate || learner.endDate,
       status: learner.status || learner.kbcStatus || "",
+        attendanceMode: learner.attendanceMode === "lazy" ? "lazy" : "live",
     };
   });
 

@@ -1515,6 +1515,8 @@ def _apply_cohort_schedule(detail, source):
 
 from .point_structure import POINT_SETTINGS_SQL, point_projection
 from .audio_alternative import AUDIO_ALTERNATIVE_SETTINGS_SQL, audio_alternative_projection
+from .linked_recordings import (LINK_KEY, LINK_MODULE_KEY, LINKED_RECORDING_SETTINGS_SQL, MODULE_KEY,
+                                read_remote_sessions, remote_links, resolve_linked_recordings)
 
 
 def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, compact=False,
@@ -1663,7 +1665,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     f"ELSE ({settings_sql}) END")
 
             # Presentation metadata survives all compact/identity paths.
-            settings_sql = f"({settings_sql}) || {POINT_SETTINGS_SQL} || {AUDIO_ALTERNATIVE_SETTINGS_SQL}"
+            settings_sql = f"({settings_sql}) || {POINT_SETTINGS_SQL} || {AUDIO_ALTERNATIVE_SETTINGS_SQL} || {LINKED_RECORDING_SETTINGS_SQL}"
 
             detail_columns = (f"CASE WHEN coalesce(btrim(live_sessions_link,'{strip_chars}'),'')<>'' THEN 'content' END AS live_sessions_link, display_order, NULL AS ksb_mappings, "
                               "false AS reflection_required, NULL AS \"Reflection_Question\", false AS tutor_validation_required") if identities_only else (
@@ -2118,6 +2120,10 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             "recordingSeriesId": recording_series_id or None,
             "recordingSessionNumber": recording_session_number if has_recording_source else None,
             "recordingDate": recording_date or None,
+            # Read by resolve_linked_recordings below; not sent to the client.
+            MODULE_KEY: _s(_mid),
+            LINK_KEY: _s(settings.get(LINK_KEY)) if normalised_type == "recording_placeholder" else "",
+            LINK_MODULE_KEY: _s(settings.get(LINK_MODULE_KEY)) if normalised_type == "recording_placeholder" else "",
             "sessionDate": _s(settings.get("sessionDate")) or None,
             "sessionTime": _s(settings.get("sessionTime")) or None,
             "sessionDateTimeUtc": _s(settings.get("sessionDateTimeUtc")) or None,
@@ -2133,6 +2139,20 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 "timeUnit": linked_quiz["timeUnit"],
             } if linked_quiz else None),
         })
+
+    # A session recording linked to a live session plays that session's
+    # recording, or folds into it entirely (see linked_recordings). Sessions in
+    # another group's module are read by id; if that read fails the recording
+    # simply stays unresolved rather than failing the learner's whole plan.
+    remote_sessions = {}
+    linked_elsewhere = remote_links(comps_by_week)
+    if linked_elsewhere:
+        try:
+            with connections["enrolment"].cursor() as cur:
+                remote_sessions = read_remote_sessions(cur, linked_elsewhere)
+        except DatabaseError as exc:
+            logger.warning("Could not read linked live sessions for session recordings: %s", exc)
+    comps_by_week = resolve_linked_recordings(comps_by_week, remote_sessions)
 
     # Distinct snapshot module ids in first-seen order, plus any legacy
     # (id-less) module titles that must still pass through.

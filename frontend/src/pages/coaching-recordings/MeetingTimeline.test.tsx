@@ -15,7 +15,15 @@ describe('Busy coach timeline', () => {
   it('shows recording availability on a short appointment as well as in its details', () => {
     render(<MeetingTimeline {...props} meetings={[{ ...row(0), endsAt: '2026-10-22T09:30:00Z' }]} />);
     const card = screen.getByRole('button', { name: 'View Original meeting 0 on 2026-10-22' });
-    expect(within(card).getByText('Recording available')).not.toHaveClass('sr-only');
+    expect(within(card).getByText('Ended · Recording available')).not.toHaveClass('sr-only');
+  });
+  it('shows an ended appointment without a recording and distinguishes completed discovery from pending checks', () => {
+    render(<MeetingTimeline {...props} meetings={[
+      { ...row(0), media: { state: 'pending', readyCount: 0, recordings: [], check: { state: 'complete', checkedAt: '2026-10-23T11:00:00Z', reason: 'no-recordings-returned' } } },
+      { ...row(1), media: { state: 'pending', readyCount: 0, recordings: [] } },
+    ]} />);
+    expect(screen.getByText('Ended · No recording returned at last check')).toBeInTheDocument();
+    expect(screen.getByText('Ended · Recording check pending')).toBeInTheDocument();
   });
   it('keeps 23 simultaneous calendars in named coach lanes with local paging and intact occurrence identities', () => {
     const meetings = Array.from({ length: 23 }, (_, index) => row(index));

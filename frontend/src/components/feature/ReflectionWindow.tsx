@@ -8,6 +8,7 @@ import {
   type StoredLearningReflectionSubmission,
 } from '@/api/reflectionSubmission';
 import { useReflectionAutosave } from './useReflectionAutosave';
+import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
 
 export function formatClock(totalSeconds: number): string {
   const safeSeconds = Number.isFinite(totalSeconds)
@@ -116,6 +117,7 @@ function ReflectionWindowForm({
   plannedHours: plannedHoursProp,
   actualTimeUnit = 'hours',
   selectedTimeSeconds,
+  selectedTimeSource,
   noun = 'quiz',
   submitting,
   submitError,
@@ -157,6 +159,7 @@ function ReflectionWindowForm({
   actualTimeUnit?: 'hours' | 'minutes';
   /** Timer/Input duration already selected on the activity completion screen. */
   selectedTimeSeconds?: number;
+  selectedTimeSource?: 'timer' | 'input';
   noun?: string;
   submitting: boolean;
   submitError: string | null;
@@ -236,6 +239,8 @@ function ReflectionWindowForm({
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimeoutRef = useRef<number | null>(null);
   const submissionInFlightRef = useRef(false);
+  const { confirmTime, timeConfirmation } = useManualTimeConfirmation();
+  const timeInputRef = useRef<HTMLInputElement>(null);
 
   const draftKey = learnerKind && learnerId && evidenceSectionRef
     ? `reflection-draft:${learnerKind}:${learnerId}:${noun}:${evidenceSectionRef}` : null;
@@ -535,6 +540,13 @@ function ReflectionWindowForm({
     };
 
     submissionInFlightRef.current = true;
+    if (mode === 'submit' && (timeEdited || selectedTimeSource === 'input' || !usesClock)
+      && !await confirmTime(selectedSeconds ?? Math.round(Number(actualTimeHours()) * 3600))) {
+      submissionInFlightRef.current = false;
+      setTab('otjh');
+      requestAnimationFrame(() => timeInputRef.current?.focus());
+      return;
+    }
     if (mode === 'submit') autosave.pause();
     setReflectionSaving(true);
     setReflectionSaveError('');
@@ -709,6 +721,7 @@ function ReflectionWindowForm({
     <div>
       <Field label={usesClock ? 'Selected activity time' : `Actual time spent (${inMinutes ? 'minutes' : 'hours'})`}>
         <input
+          ref={timeInputRef}
           type={usesClock ? 'text' : 'number'}
           min={usesClock ? undefined : '0'}
           step={usesClock ? undefined : inMinutes ? '1' : '0.25'}
@@ -732,6 +745,7 @@ function ReflectionWindowForm({
 
   return (
     <div className="w-full bg-[#f7fbff] rounded-2xl border border-[#bcc6d1] shadow-xl overflow-hidden">
+      {timeConfirmation}
       <div className="p-5 md:px-8 md:pt-7 md:pb-5">
         <div className="flex items-start justify-between gap-4">
           <div>
