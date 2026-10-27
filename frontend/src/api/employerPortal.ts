@@ -111,6 +111,8 @@ export interface EmployerLearnerCard {
   /** Documents this employer can sign right now but hasn't. */
   outstandingCount: number;
   documentsTotal: number;
+  /** Student Home's canonical OTJ hours and percentage, included in the list response. */
+  otjhProgress: { actual: number | null; planned: number | null; percent: number | null } | null;
 }
 
 /** A review awaiting (or carrying) the employer's signature. */
@@ -203,6 +205,11 @@ export interface EmployerLearnerDetail {
     onboardingStatus: string;
     startDate: string;
     endDate: string;
+    /** The dates recorded against the learner, as their own dashboard header
+     *  shows them. Distinct from startDate/endDate above, which are the
+     *  enrolment's Start_date/End_date columns. */
+    learnerStartDate?: string;
+    learnerEndDate?: string;
     isActive: boolean;
   };
   performance: EmployerPerformance;

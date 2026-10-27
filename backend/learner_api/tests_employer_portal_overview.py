@@ -435,29 +435,51 @@ class EmployerPortalOverviewTests(SimpleTestCase):
 
 
 class EmployerPortalLearnerDetailTests(SimpleTestCase):
-    def test_returns_the_learners_organization_for_the_dashboard_header(self):
-        learner = SimpleNamespace(
+    def detail(self, **fields):
+        columns = dict(
             pk=101, employer_id=9, username="Lee Learner", email="", phone_number="",
             programme="Programme", cohort="Cohort", employer="Test Employer",
             organization="Test Organization", programme_status="Active", onboarding_status="",
             start_date="2026-08-03", end_date="2027-08-02",
+            learner_start_date="2026-10-01", learner_end_date="2027-10-25",
         )
+        columns.update(fields)
+        learner = SimpleNamespace(**columns)
         employer = SimpleNamespace(pk=9, full_name="Employer User")
         request = RequestFactory().get("/learner/")
         account = SimpleNamespace(role="employer", subject_id=9)
-        with mock.patch("login.permissions.authenticate_request", return_value=account), \
-                mock.patch.object(employer_portal, "_employer_or_404", return_value=(employer, None)), \
-                mock.patch.object(employer_portal, "SOURCE_MODELS", {"commercial": _model(learner)}), \
-                mock.patch.object(employer_portal, "_review_signing_rows", return_value=[]), \
-                mock.patch.object(employer_portal, "_document_signing_rows", return_value=[]), \
-                mock.patch.object(employer_portal, "_performance", return_value={}), \
-                mock.patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "1"}):
-            response = employer_portal.employer_portal_learner(
+        with mock.patch("login.permissions.authenticate_request", return_value=account),                 mock.patch.object(employer_portal, "_employer_or_404", return_value=(employer, None)),                 mock.patch.object(employer_portal, "SOURCE_MODELS", {"commercial": _model(learner)}),                 mock.patch.object(employer_portal, "_review_signing_rows", return_value=[]),                 mock.patch.object(employer_portal, "_document_signing_rows", return_value=[]),                 mock.patch.object(employer_portal, "_performance", return_value={}),                 mock.patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "1"}):
+            return employer_portal.employer_portal_learner(
                 request, employer_id=9, kind="commercial", learner_id=101,
             )
 
+    def test_returns_the_learners_organization_for_the_dashboard_header(self):
+        response = self.detail()
+
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.content)["learner"]["organization"], "Test Organization")
+
+    def test_returns_the_recorded_learner_dates_the_learners_own_header_shows(self):
+        """Learner_start_date / Learner_end_date, beside the enrolment columns.
+
+        The learner's own dashboard header (dashboard_header.header_identity)
+        reads these two columns, so the employer's copy of that header has to
+        receive them. Start_date / End_date are a different pair of columns and
+        are empty for most learners.
+        """
+        learner = json.loads(self.detail().content)["learner"]
+
+        self.assertEqual(learner["learnerStartDate"], "2026-10-01")
+        self.assertEqual(learner["learnerEndDate"], "2027-10-25")
+        self.assertEqual(learner["startDate"], "2026-08-03")
+        self.assertEqual(learner["endDate"], "2027-08-02")
+
+    def test_unrecorded_learner_dates_come_back_empty(self):
+        learner = json.loads(
+            self.detail(learner_start_date=None, learner_end_date=None).content)["learner"]
+
+        self.assertEqual(learner["learnerStartDate"], "")
+        self.assertEqual(learner["learnerEndDate"], "")
 
 
 class EmployerPortalDocumentsTests(SimpleTestCase):

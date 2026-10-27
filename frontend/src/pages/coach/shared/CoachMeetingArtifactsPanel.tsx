@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { ReviewAttendanceEditor } from './ReviewAttendanceEditor';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { cn } from '@/lib/cn';
 import {
@@ -506,7 +507,7 @@ function transcriptPreviewText(raw: string) {
   return visible.join('\n').replace(/\n{3,}/g, '\n\n').trim() || raw.trim() || 'Transcript content is empty.';
 }
 
-function AttendanceTracker({ attendance }: { attendance: CoachMeetingAttendanceSummary | null }) {
+function AttendanceTracker({ attendance, controls }: { attendance: CoachMeetingAttendanceSummary | null; controls?: (row: CoachMeetingAttendanceTrackerRow) => ReactNode }) {
   const records = attendance?.records || [];
   const hasReport = Boolean(attendance?.reportCount);
   const trackerRows = attendance?.tracker?.length ? attendance.tracker : actualRecordsAsTracker(records);
@@ -560,6 +561,8 @@ function AttendanceTracker({ attendance }: { attendance: CoachMeetingAttendanceS
         </p>
       ) : null}
 
+      {attendance?.linkWarning && <p role="alert" className="mt-2 rounded-md bg-amber-50 p-2 text-xs text-amber-900">{attendance.linkWarning}</p>}
+
       {hasReport && records.length === 0 ? (
         <p className="mt-2 rounded-md border border-background-200 bg-white px-3 py-2 text-[12px] text-foreground-500">
           Teams returned an attendance report, but no attendee rows were included.
@@ -569,10 +572,11 @@ function AttendanceTracker({ attendance }: { attendance: CoachMeetingAttendanceS
       {trackerRows.length > 0 ? (
         <div className="mt-2 overflow-hidden rounded-md border border-background-200 bg-white">
           {trackerRows.slice(0, 12).map((row, index) => (
-            <div key={`${row.expected ? 'expected' : 'actual'}-${row.id}-${index}`} className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-2 border-b border-background-100 px-3 py-2 last:border-b-0">
-              <div className="min-w-0">
+            <div key={`${row.expected ? 'expected' : 'actual'}-${row.id}-${index}`} className="grid grid-cols-[auto_1fr_auto] items-center gap-2 border-b border-background-100 px-3 py-2 last:border-b-0 sm:grid-cols-[1fr_auto_auto_auto]">
+              <div className="col-span-full min-w-0 sm:col-span-1">
                 <p className="truncate text-[12px] font-semibold text-foreground-800">{row.displayName || row.name || row.email || 'Unknown attendee'}</p>
                 {row.email ? <p className="truncate text-[11px] text-foreground-400">{row.email}</p> : null}
+                {row.coachVerification && <p className="break-words text-[11px] text-emerald-700">Linked Teams account: {row.linkedEmail || row.actualDisplayName}</p>}
               </div>
               <span className="rounded-full bg-background-100 px-2 py-1 text-[11px] font-bold text-foreground-600">
                 {row.expected ? roleLabel(row.role) : `Extra ${roleLabel(row.role)}`}
@@ -581,9 +585,10 @@ function AttendanceTracker({ attendance }: { attendance: CoachMeetingAttendanceS
                 'rounded-full px-2 py-1 text-[11px] font-bold',
                 trackerStatusClass(row.status),
               )}>
-                {trackerStatusLabel(row.status)}
+                {row.coachVerification ? 'Present · Coach verified' : trackerStatusLabel(row.status)}
               </span>
               <span className="text-[11px] font-semibold text-foreground-500">{durationLabel(row.totalAttendanceSeconds)}</span>
+              {controls?.(row)}
             </div>
           ))}
           {trackerRows.length > 12 ? (
@@ -643,6 +648,7 @@ export function CoachMeetingArtifactsPanel({
   onArtifactsLoaded,
   storedOnly = false,
   preserveResourcesOnRefreshError = false,
+  attendanceLinkKey,
 }: {
   event: CoachMeetingArtifactEvent;
   className?: string;
@@ -664,6 +670,8 @@ export function CoachMeetingArtifactsPanel({
   storedOnly?: boolean;
   /** Imported checks only; callers must remount on source/booking/access changes. */
   preserveResourcesOnRefreshError?: boolean;
+  /** Explicit Coach-only entry point; never enabled by Learner/Employer reuse. */
+  attendanceLinkKey?: string;
 }) {
   const eventKey = event.eventKey || '';
   const hasTeamsLink = hasTeamsMeeting || Boolean(event.meetingLink || event.graphWebLink);
@@ -806,7 +814,11 @@ export function CoachMeetingArtifactsPanel({
         </div>
       ) : null}
 
-      {state.status === 'ready' && showAttendance ? <AttendanceTracker attendance={attendance} /> : null}
+      {state.status === 'ready' && showAttendance ? attendanceLinkKey
+        ? <ReviewAttendanceEditor key={attendanceLinkKey} eventKey={attendanceLinkKey} attendance={attendance}>
+          {(value, controls) => <AttendanceTracker attendance={value} controls={controls} />}
+        </ReviewAttendanceEditor>
+        : <AttendanceTracker attendance={attendance} /> : null}
 
       {state.status === 'ready' && supportsMeetingSummary && showMeetingSummary && !savedResources ? (
         <MeetingSummaryCard

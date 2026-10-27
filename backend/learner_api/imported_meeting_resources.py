@@ -67,7 +67,8 @@ def stored_resources(record, *, include_attendance=False):
         "resourceMode": "stored",
     }
     if include_attendance:
-        payload["attendance"] = snapshot["attendance"]
+        from coach_api.review_attendance_links import attendance_for_display
+        payload["attendance"] = attendance_for_display(record, snapshot["attendance"])
     response = JsonResponse(payload, status=207 if snapshot["partial"] else 200)
     response["Cache-Control"] = "private, no-store"
     return response

@@ -16,7 +16,7 @@ LEARNER_RECORD = calendar._learner_calendar_record
 class ImportedMeetingResourceTests(SimpleTestCase):
     def setUp(self):
         self.account = SimpleNamespace(role="learner", subject_id=71)
-        self.record = SimpleNamespace(event_key="calendar:71", status="scheduled",
+        self.record = SimpleNamespace(event_key="calendar:71", status="scheduled", event_type="mcr",
                                       _imported_review_event={"reviewSource": "aptem", "reviewId": "901"})
         self.snapshot = {
             "artifacts": [{"artifact_type": "recording", "graph_artifact_id": "rec-1"},
@@ -31,6 +31,7 @@ class ImportedMeetingResourceTests(SimpleTestCase):
         self.rows = [{"id": "imported-review:901", "eventKey": "imported-review:901",
                       "calendarEventKey": self.record.event_key}]
         self.start(patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "1"}))
+        self.start(patch('coach_api.review_attendance_links.saved_links', return_value=[]))
         self.start(patch("login.permissions.authenticate_request", side_effect=lambda request: self.account))
         self.reader = self.start(patch.object(calendar, "_learner_calendar_record", return_value=self.record))
         self.start(patch.object(employer_portal, "SOURCE_MODELS", {"commercial": self.model, "apprenticeship": self.model}))

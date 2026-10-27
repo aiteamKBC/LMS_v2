@@ -1,10 +1,11 @@
+import { occupiesBookingSlot } from '@/pages/learner/reviews/meetingBooking';
 import { loadAssignmentTopicStates, type AssignmentTopicState } from '@/api/assignmentTopics';
 import { BookingDatePicker } from './BookingDatePicker';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
-import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, type LearnerCalendarResponse } from '@/api/learnerCalendar';
+import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, fetchLearnerMeetingArtifacts, fetchReviewSlots, learnerMeetingArtifactContentUrl, type LearnerCalendarResponse } from '@/api/learnerCalendar';
 import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
 import { mcmBookingDateRestrictionMessage } from '../reviews/bookingDates';
 
@@ -27,6 +28,7 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
   const [slotKey, setSlotKey] = useState('');
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
+  const [duration, setDuration] = useState(60);
   const [availableTimes, setAvailableTimes] = useState<string[]>([]);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [availabilityError, setAvailabilityError] = useState('');
@@ -37,6 +39,7 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
   const latest = useRef({ kind, learnerId, month, assignmentId, topicId, onSelect });
   latest.current = { kind, learnerId, month, assignmentId, topicId, onSelect };
   const [reload, setReload] = useState(0);
+  const [availabilityRetry, setAvailabilityRetry] = useState(0);
   // MCM appointments run from the 20th through the following 5th, subject to
   // the server's weekday, UK bank-holiday and past-date rules.
   const today = calendar?.bookingCalendar?.today || new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/London' });
@@ -51,18 +54,19 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
     selectableDates.push(value);
   }
   const events = calendar?.events || [];
-  const booked = events.filter(e => e.source === 'mcr' && ['scheduled', 'in-progress', 'completed', 'awaiting-signature'].includes(e.status) && e.scheduledDate);
+  const booked = events.filter(e => e.source === 'mcr' && (occupiesBookingSlot(e)
+    || (['scheduled', 'in-progress', 'completed', 'awaiting-signature'].includes(e.status) && e.scheduledDate)));
   // Learners with imported Aptem MCMs get no Curriculum MCMs on their coach's
   // timetable, so only their Aptem MCMs can be booked here.
   const aptemSourced = importedMcms.some(review => review.aptemReviewId);
   const slots: { key: string; label: string; eventKey?: string; reviewId?: string }[] = aptemSourced
     ? importedMcms.filter(review => review.aptemReviewId && !review.completedDate && !CLOSED_REVIEW_STATUSES.includes(review.status)
         // Every imported MCM is also a calendar event; only a linked booking takes it.
-        && !events.some(e => e.reviewId === review.id && e.calendarEventKey && e.status !== 'cancelled'))
+        && !events.some(e => e.reviewId === review.id && e.calendarEventKey && occupiesBookingSlot(e)))
       .sort((a, b) => (a.plannedDate || '').localeCompare(b.plannedDate || ''))
       .map(review => ({ key: `imported-review:${review.id}`, reviewId: review.id,
         label: `MCM ${(review.plannedDate || '').slice(0, 7)} | Aptem plan ${review.plannedDate}` }))
-    : events.filter(e => e.source === 'mcr' && e.status === 'not-scheduled')
+    : events.filter(e => e.source === 'mcr' && e.status === 'not-scheduled' && !occupiesBookingSlot(e))
       .sort((a, b) => (a.targetDate || a.date || '').localeCompare(b.targetDate || b.date || ''))
       .map(e => ({ key: e.eventKey, eventKey: e.eventKey, label: `MCM ${(e.targetDate || e.date || '').slice(0, 7)} | ${e.coachName}` }));
   const slot = slots.find(e => e.key === slotKey);
@@ -77,7 +81,7 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
   }, [shared, meetingKey]);
   useEffect(() => {
     let active = true;
-    setLoading(true); setTopicStates([]); setBookedHere(''); setCalendar(null); setImportedMcms([]); setSlotKey(''); setDate(''); setError(''); setNotice('');
+    setLoading(true); setTopicStates([]); setBookedHere(''); setCalendar(null); setImportedMcms([]); setSlotKey(''); setDate(''); setDuration(60); setError(''); setNotice('');
     Promise.all([
       fetchLearnerCalendarEvents(kind, learnerId, { force: true }),
       fetchReviewHistory(kind, learnerId, 'monthly-coaching'),
@@ -108,17 +112,12 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
     if (!date || dateError) { setAvailabilityLoading(false); return; }
     const controller = new AbortController();
     setAvailabilityLoading(true);
-    const query = new URLSearchParams({ date, timezoneOffsetMinutes: String(bookingOffset) });
-    fetch(`/learner_api/calendar/${kind}/${learnerId}/coach-availability/?${query}`, { signal: controller.signal })
-      .then(async response => {
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || 'Could not load coach availability.');
-        if (!controller.signal.aborted) setAvailableTimes(result.times || []);
-      })
+    fetchReviewSlots(kind, learnerId, date, duration, { signal: controller.signal })
+      .then(times => { if (!controller.signal.aborted) setAvailableTimes(times); })
       .catch(error => { if (!controller.signal.aborted) setAvailabilityError(error.message || 'Could not load coach availability.'); })
       .finally(() => { if (!controller.signal.aborted) setAvailabilityLoading(false); });
     return () => controller.abort();
-  }, [date, dateError, bookingOffset, kind, learnerId, reload]);
+  }, [date, dateError, bookingOffset, kind, learnerId, duration, reload, availabilityRetry]);
   const book = async () => {
     if (disabled || topicBooked || booking.current || (needsSlot && !slot) || !date || !time || dateError || availabilityLoading || !availableTimes.includes(time)) return;
     booking.current = true; setBusy(true); setError(''); setNotice('');
@@ -128,7 +127,7 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
       if (!mounted.current || Object.keys(identity).some(k => identity[k as keyof typeof identity] !== latest.current[k as keyof typeof identity])) return;
       const result = await bookLearnerCalendarSession(kind, learnerId, {
         sessionType: 'mcr', bookingContext: 'monthly-assignment', eventKey: slot?.eventKey, ...(slot?.reviewId ? { reviewId: slot.reviewId } : {}), assignmentMonth: month, scheduledDate: date, scheduledTime: time,
-        durationMinutes: 60, timezoneOffsetMinutes: bookingOffset, notes: `Monthly assignment: ${title}`,
+        durationMinutes: duration, timezoneOffsetMinutes: bookingOffset, notes: `Monthly assignment: ${title}`,
       });
       if (!mounted.current || Object.keys(identity).some(k => identity[k as keyof typeof identity] !== latest.current[k as keyof typeof identity])) return;
       setCalendar(current => current ? { ...current, events: [...current.events.filter(e => e.eventKey !== result.event.eventKey), result.event] } : current);
@@ -157,10 +156,11 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
           {aptemSourced && !slots.length && <p role="status" className="text-sm text-slate-600">No open Monthly Coaching Meeting is left in your programme plan. Contact your coach to arrange it.</p>}
           <p className="text-sm leading-6 text-slate-600">Choose an upcoming weekday from the 20th of a month through the 5th of the following month. Available times come from your coach's calendar and working hours, shown in UK time (Europe/London). Availability is checked again when you book.</p>
           <div className="grid gap-4 sm:grid-cols-2"><BookingDatePicker value={date} onChange={setDate} dates={selectableDates} /><label>Time<select className={input} value={time} disabled={availabilityLoading || !availableTimes.length} onChange={e => setTime(e.target.value)}><option value="">{availabilityLoading ? 'Loading available times...' : 'Select an available time'}</option>{availableTimes.map(value => <option key={value} value={value}>{value}</option>)}</select></label></div>
-          {availabilityError && <p role="alert" className="text-sm text-red-700">{availabilityError}</p>}
-          {date && !dateError && !availabilityLoading && !availabilityError && !availableTimes.length && <p className="text-sm text-slate-600">Your coach has no available 60-minute appointments on this date. Choose another date.</p>}
+          <label className="block">Duration<select className={input} value={duration} onChange={e => { setDuration(Number(e.target.value)); setTime(''); }}>{[30, 45, 60, 90, 120].map(minutes => <option key={minutes} value={minutes}>{minutes === 60 ? '1 hour' : `${minutes} minutes`}</option>)}</select></label>
+          {availabilityError && <p role="alert" className="text-sm text-red-700">{availabilityError} <button type="button" onClick={() => setAvailabilityRetry(value => value + 1)} className="underline">Retry availability</button></p>}
+          {date && !dateError && !availabilityLoading && !availabilityError && !availableTimes.length && <p className="text-sm text-slate-600">Your coach has no available {duration}-minute appointments on this date. Choose another date or duration.</p>}
           {dateError && <p role="alert" className="text-sm text-red-700">{dateError}</p>}
-          <button type="button" className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-40" disabled={(needsSlot && !slot) || !date || !time || Boolean(dateError) || availabilityLoading || !availableTimes.includes(time)} onClick={() => void book()}>{busy && <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />}{busy ? 'Booking MCM...' : 'Book 60-minute MCM'}</button>
+          <button type="button" className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-40" disabled={(needsSlot && !slot) || !date || !time || Boolean(dateError) || availabilityLoading || !availableTimes.includes(time)} onClick={() => void book()}>{busy && <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />}{busy ? 'Booking MCM...' : `Book ${duration}-minute MCM`}</button>
         </>
       </fieldset>}
       <button type="button" disabled={busy} className="text-sm font-medium text-blue-700 underline" onClick={() => setReload(n => n + 1)}>Refresh meetings</button>
