@@ -9851,6 +9851,7 @@ def collect_live_session_events(
             weeks_by_module.setdefault(module_catalogue_id, []).append(week)
     component_links_by_week: dict[str, str] = {}
     live_component_week_ids_by_module: dict[str, set[str]] = {}
+    learner_live_components = []
     # columns= is load-bearing, not an optimisation: curriculum.components is
     # ~18k rows / 39MB (mostly settings_json) on a remote database -- a plain
     # select * here alone accounts for the "Timetable is taking too long to
@@ -9859,12 +9860,14 @@ def collect_live_session_events(
         AUTHORING_COMPONENTS_TABLE,
         ensure_tables=False,
         columns=[
-            "type", "module_catalogue_id", "week_id", "live_sessions_link",
+            "id", "type", "module_catalogue_id", "week_id", "live_sessions_link",
             "deleted_at", "is_programme_deleted", "library_state",
         ],
     )):
         if clean_text(component.get("type")).lower() != "live_session":
             continue
+        if learner_module_ids and component.get("module_catalogue_id") in learner_module_ids:
+            learner_live_components.append(component)
         week_id = clean_text(component.get("week_id"))
         module_id = clean_text(component.get("module_catalogue_id"))
         if module_id and week_id:
@@ -9872,6 +9875,14 @@ def collect_live_session_events(
         meeting_link = clean_text(component.get("live_sessions_link"))
         if week_id and meeting_link:
             component_links_by_week[week_id] = meeting_link
+    shared_calendar_slots = {}
+    if learner_live_components:
+        # Learner assignments may point at a shared module whose Teams records
+        # belong to another module. Use the same card-to-occurrence resolver as
+        # My Learning; a matching ordinal alone can select the wrong meeting.
+        from learner_api.calendar_shared_delivery import read_shared_calendar_slots
+
+        shared_calendar_slots = read_shared_calendar_slots(learner_module_ids, learner_live_components)
     holidays_by_cohort_id: dict[str, list[dict]] = {}
     active_series_by_module: dict[str, dict] = {}
     occurrences_by_series_and_number: dict[tuple[str, int], dict] = {}
@@ -9980,6 +9991,7 @@ def collect_live_session_events(
         live_week_ids = live_component_week_ids_by_module.get(module_catalogue_id) or set()
         has_authored_live_components = bool(live_week_ids)
         planned_live_sessions = []
+        planned_week_counts = {}
         for session in plan["sessions"]:
             week_index = (session["sessionNumber"] - 1) // delivery_days
             week = ordered_weeks[week_index] if week_index < len(ordered_weeks) else None
@@ -9993,31 +10005,34 @@ def collect_live_session_events(
             if has_authored_live_components and week_id not in live_week_ids:
                 continue
             planned_live_sessions.append((session, week, week_id))
+            planned_week_counts[week_id] = planned_week_counts.get(week_id, 0) + 1
 
         for occurrence_number, (session, week, week_id) in enumerate(planned_live_sessions, start=1):
             session_for_event = {**session, "sessionNumber": occurrence_number}
             tracked_occurrence = occurrences_by_series_and_number.get(
                 (tracked_series_id, occurrence_number)
             )
-            tracked_start = (tracked_occurrence or {}).get("scheduled_start")
-            effective_date = tracked_start.date() if isinstance(tracked_start, datetime) else date.fromisoformat(session["date"])
-            if not include_past and effective_date < today:
-                continue
-            events.append(
-                build_live_session_calendar_event(
-                    row,
-                    session_for_event,
-                    programme=programme,
-                    cohort=cohort["name"],
-                    group=group["name"],
-                    owner_email=owner_email or clean_text(tracked_series.get("organizer_email")),
-                    owner_name=owner_name,
-                    week_title=clean_text(week.get("title")) if week else None,
-                    tracked_series=tracked_series,
-                    tracked_occurrence=tracked_occurrence,
-                    component_meeting_link=week_id and component_links_by_week.get(week_id, ""),
-                )
+            event = build_live_session_calendar_event(
+                row,
+                session_for_event,
+                programme=programme,
+                cohort=cohort["name"],
+                group=group["name"],
+                owner_email=owner_email or clean_text(tracked_series.get("organizer_email")),
+                owner_name=owner_name,
+                week_title=clean_text(week.get("title")) if week else None,
+                tracked_series=tracked_series,
+                tracked_occurrence=tracked_occurrence,
+                component_meeting_link=week_id and component_links_by_week.get(week_id, ""),
             )
+            shared_slot = shared_calendar_slots.get(week_id)
+            if shared_slot and not tracked_series_id and planned_week_counts[week_id] == 1:
+                from learner_api.calendar_shared_delivery import apply_shared_calendar_slot
+
+                event = apply_shared_calendar_slot(event, shared_slot)
+            if not include_past and date.fromisoformat(event["date"]) < today:
+                continue
+            events.append(event)
 
     if start_date or end_date:
         events = [

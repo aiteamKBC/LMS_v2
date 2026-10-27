@@ -25,6 +25,32 @@ const view = (props: Partial<Parameters<typeof ReflectionWindow>[0]> = {}) => re
 );
 const openOtjh = () => fireEvent.click(screen.getByRole('button', { name: 'OTJH' }));
 
+it.each(['commercial', 'apprenticeship'] as const)('lets a %s learner review 49 hours and submit 4.9 without losing reflection text', async learnerKind => {
+  mocks.load.mockResolvedValue({ status: 'draft', actualTimeHours: '49', learningReflection: 'Learning '.repeat(100),
+    applicationType: 'apply_now', applicationText: 'Apply this learning at work.', selectedBenefits: ['Improved productivity'],
+    benefitExplanation: 'Help the team with everyday work.', dateCompleted: '2026-10-14', completedDuringPaidHours: 'yes',
+    otjhConfirmed: true, signedDeclaration: true });
+  mocks.save.mockResolvedValue({ status: 'draft' });
+  const onSubmit = vi.fn();
+  view({ learnerKind, noun: 'video', onSubmit });
+  openOtjh();
+  await waitFor(() => expect(screen.getByLabelText('Actual time spent (hours)')).toHaveValue(49));
+  fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  expect(await screen.findByRole('alertdialog')).toHaveTextContent('49 hours and 0 minutes');
+  expect(mocks.save.mock.calls.some(([payload]) => payload.submissionMode === 'submit')).toBe(false);
+  fireEvent.click(screen.getByRole('button', { name: 'Edit time' }));
+  await waitFor(() => expect(screen.getByLabelText('Actual time spent (hours)')).toHaveValue(49));
+  fireEvent.change(screen.getByLabelText('Actual time spent (hours)'), { target: { value: '4.9' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  expect(await screen.findByRole('alertdialog')).toHaveTextContent('4 hours and 54 minutes');
+  expect(onSubmit).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm time' }));
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ timeTakenSeconds: 17640 })));
+  expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ submissionMode: 'submit', actualTimeHours: '4.9', learningReflection: 'Learning '.repeat(100).trim() }));
+});
+
 it('asks quizzes for minutes and presets the planned minutes', async () => {
   mocks.load.mockResolvedValue(null);
   view({ actualTimeUnit: 'minutes' });
@@ -98,6 +124,8 @@ it.each([['00:05:00', 300], ['02:30:00', 9000]])('saves corrected time %s from t
   fireEvent.change(screen.getByLabelText('Selected activity time'), { target: { value: clock } });
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
   fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  expect(onSubmit).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
   await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
     reportedTime: `${seconds / 60} minutes`, timeTakenSeconds: seconds, timeEntrySource: 'input',
   })));

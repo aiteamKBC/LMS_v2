@@ -1,4 +1,5 @@
 import { archiveTimingDraft, timingSessionExpired } from '@/lib/timingRecovery';
+import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { observeRewardInterval, flushRewardObservations, clearRewardObservations } from '@/lib/rewardTracking';
 import { createPortal } from 'react-dom';
@@ -1166,6 +1167,7 @@ function QuizReadingPanel({ quizId, attemptNumber, kind, learnerId, quizTimeSeco
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [finishing, setFinishing] = useState(false);
+  const { confirmTime, timeConfirmation } = useManualTimeConfirmation();
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [confirmationReadingSeconds, setConfirmationReadingSeconds] = useState(0);
   const [showTimeConfirmation, setShowTimeConfirmation] = useState(false);
@@ -1258,6 +1260,10 @@ function QuizReadingPanel({ quizId, attemptNumber, kind, learnerId, quizTimeSeco
     setFinishing(true);
     setConfirmationError(null);
     try {
+      if (timeEntryMode === 'manual' && !await confirmTime(claimedSeconds)) {
+        requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[aria-label="Reading time (minutes)"]')?.focus());
+        return;
+      }
       if (tracking.persistent) {
         trackingRef.current = await checkpointTimeTracking(tracking, 'component', `quiz-reading:${quizId}:${attemptNumber}`,
           kind, learnerId, elapsedSeconds);
@@ -1284,6 +1290,7 @@ function QuizReadingPanel({ quizId, attemptNumber, kind, learnerId, quizTimeSeco
 
   return (
     <section className="overflow-hidden rounded-2xl border border-primary-200 bg-background-50 card-premium">
+      {timeConfirmation}
       <div className="flex flex-col gap-4 bg-gradient-to-r from-primary-50 to-violet-50 p-5 sm:flex-row sm:items-center sm:justify-between md:p-6">
         <div className="flex items-start gap-3">
           <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary-600 text-white shadow-sm">

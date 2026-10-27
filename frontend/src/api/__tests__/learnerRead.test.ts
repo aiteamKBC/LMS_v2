@@ -21,6 +21,19 @@ beforeEach(() => { clearAllCachedResources(); vi.stubGlobal('fetch', vi.fn()); }
 afterEach(() => { clearAllCachedResources(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('learner data transport', () => {
+  it.each([
+    '/learner_api/dashboard/commercial/125/training/',
+    '/learner_api/dashboard/apprenticeship/125/monthly/',
+    '/learner_api/calendar/commercial/125/first-session/',
+  ])('keeps the existing deadline for %s', async url => {
+    vi.useFakeTimers();
+    vi.mocked(fetch).mockReturnValueOnce(new Promise(() => {}));
+    const failed = expect(readLearnerJson(url)).rejects.toMatchObject({ code: 'timeout' });
+    await vi.advanceTimersByTimeAsync(LEARNER_READ_TIMEOUT_MS);
+    await failed;
+    expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(true);
+  });
+
   it.each(['commercial/125/', 'apprenticeship/125/', 'commercial/125/modules/current%3AM1/', 'commercial/125/upcoming/'])(
     'lets My Learning %s finish after connection checkout and still bounds a stuck request', async path => {
       vi.useFakeTimers();

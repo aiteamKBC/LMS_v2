@@ -30,6 +30,7 @@ def target_fingerprint(component, settings):
 
 
 def module_review(item, context):
+    from .my_learning import native_done
     native, definitions, done, metadata = context[3], context[5], context[6], context[9]
     components = [{k: v for k, v in c.items() if k != 'previousLearning'}
                   for c in [*native['components'], *native.get('retiredQuizComponents', [])]
@@ -58,8 +59,22 @@ def module_review(item, context):
                 'plannedHours': c.get('expectedOtjh'),
                 'fingerprint': target_fingerprint(c, metadata['replacement_settings'].get(c['componentId']))}
                for c in components if c.get('componentId') and not c.get('retired')]
+    target_ids = {target['componentId'] for target in targets}
+    # native_done caches its facts; keep this read-only review from mutating context.
+    completion_context = dict(native)
+    completed_ids = sorted({c['componentId'] for c in components
+                            if c.get('componentId') in target_ids and native_done(c, completion_context)})
     return {'moduleId': item['moduleId'], 'courseRef': item['courseRef'], 'title': item['newTitle'],
-            'sources': sources, 'targets': targets}, matches, components
+            'sources': sources, 'targets': targets, 'completedTargetIds': completed_ids}, matches, components
+
+
+def component_counts(module, matched_ids):
+    """Count active destination components once, without changing module credit."""
+    target_ids = {target['componentId'] for target in module['targets']}
+    matched = target_ids.intersection(matched_ids)
+    completed = target_ids.intersection(module['completedTargetIds']) | matched
+    return {'total': len(target_ids), 'matched': len(matched), 'completed': len(completed),
+            'remaining': len(target_ids - completed)}
 
 
 def build_review(request_id, items, context):

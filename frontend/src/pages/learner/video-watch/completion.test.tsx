@@ -444,6 +444,8 @@ it('lets the learner finish configured reflection content without a reflection',
   fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '20' } });
   fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
   fireEvent.click(await screen.findByRole('button', { name: 'No, finish without reflection' }));
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
 
   await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith(
     'C1', 'apprenticeship', '1', expect.objectContaining({ feedback: '', ksbs: [], skipReflection: true }),
@@ -453,6 +455,27 @@ it('lets the learner finish configured reflection content without a reflection',
   expect(screen.queryByRole('button', { name: 'Confirm' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: /Next activity:/ }));
   expect(screen.getByTestId('location')).toHaveTextContent('/C2');
+});
+
+it('returns to manual time when editing a skipped-reflection completion', async () => {
+  session.outsideWorkingHours = false;
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [{ ...first, reflectionRequired: true }] } as unknown as LearnerDetail);
+  mount();
+  fireEvent.change(await screen.findByLabelText('Hours spent'), { target: { value: '49' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'No, finish without reflection' }));
+  expect(await screen.findByRole('alertdialog')).toHaveTextContent('49 hours and 0 minutes');
+  fireEvent.click(screen.getByRole('button', { name: 'Edit time' }));
+  await waitFor(() => expect(screen.getByLabelText('Hours spent')).toHaveFocus());
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText('Hours spent'), { target: { value: '4' } });
+  fireEvent.change(screen.getByLabelText('Minutes spent'), { target: { value: '54' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'No, finish without reflection' }));
+  expect(await screen.findByRole('alertdialog')).toHaveTextContent('4 hours and 54 minutes');
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm time' }));
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledExactlyOnceWith('C1', 'apprenticeship', '1',
+    expect.objectContaining({ timeTakenSeconds: 17640, timeEntrySource: 'input', skipReflection: true })));
 });
 
 it('keeps reflection optional for tutor-validated activities', async () => {
@@ -493,8 +516,9 @@ it('guards a double No click from creating duplicate completion requests', async
   const noButton = await screen.findByRole('button', { name: 'No, finish without reflection' });
   fireEvent.click(noButton);
   fireEvent.click(noButton);
-
-  expect(submitComponentProgress).toHaveBeenCalledTimes(1);
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledTimes(1));
   resolveCompletion?.({ record: { componentId: 'C1', timeTaken: '00:20' } } as Awaited<ReturnType<typeof submitComponentProgress>>);
 });
 
@@ -860,6 +884,7 @@ it('offers recovery inside the reflection popup and preserves the entered durati
   fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
   const dialog = await screen.findByRole('dialog', { name: 'Do you want to complete a reflection?' });
   fireEvent.click(within(dialog).getByRole('button', { name: 'No, finish without reflection' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
   fireEvent.click(await within(dialog).findByRole('button', { name: 'Restore saved time' }));
   await screen.findByText(/Your time has been restored/);
   fireEvent.click(within(dialog).getByRole('button', { name: 'No, finish without reflection' }));
@@ -965,6 +990,8 @@ it.each(['commercial', 'apprenticeship'])('uses the final lower reflection time 
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
   fireEvent.change(screen.getByLabelText('Selected activity time'), { target: { value: '00:15:00' } });
   fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
   await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({
     timeTakenSeconds: 900, reportedTime: '15 minutes', timeEntrySource: 'input',
   })));

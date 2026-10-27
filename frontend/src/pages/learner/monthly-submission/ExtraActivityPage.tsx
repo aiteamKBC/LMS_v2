@@ -15,6 +15,7 @@ import { MonthlyAnswerField, MonthlyAssignmentSteps } from '../video-watch/Month
 import { AssignmentAiCheckContext } from '../video-watch/AssignmentAiCheckContext';
 import { assignmentTimeHours } from '../video-watch/AssignmentTimeEntries';
 import { useLearningStatements } from '@/hooks/useLearningStatements';
+import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
 import { ExtraActivities } from './ExtraActivities';
 import styles from './monthlySubmission.module.css';
 
@@ -51,6 +52,7 @@ export function ExtraActivityForm({ kind, learnerId, savedId }: { kind: LearnerK
   const [savedVersion, setSavedVersion] = useState(0);
   const [evidenceVersion, setEvidenceVersion] = useState(0);
   const requestRunning = useRef(false);
+  const { confirmTime, timeConfirmation } = useManualTimeConfirmation();
   const locked = ['accepted', 'submitted_for_tutor_review'].includes(status);
   const disabled = locked || busy || loading || loadFailed;
   const validMonth = /^(?!0000)\d{4}-(0[1-9]|1[0-2])$/.test(monthly.month);
@@ -123,6 +125,10 @@ export function ExtraActivityForm({ kind, learnerId, savedId }: { kind: LearnerK
     setError('');
     try {
       if (mode === 'submit' && !await runChecks()) return false;
+      if (mode === 'submit' && !await confirmTime(Math.round(assignmentTimeHours(monthly.timeEntries) * 3600))) {
+        setStep(2);
+        return false;
+      }
       const result = await saveLearningReflectionSubmission(payload(mode));
       setStatus(result.status); setAttempts(result.submissionAttempts || attempts);
       if (savingSnapshot === latest.current) { setDirty(false); setSaveState('saved'); }
@@ -141,6 +147,7 @@ export function ExtraActivityForm({ kind, learnerId, savedId }: { kind: LearnerK
   const nav = roleNavMap.learner;
   return <WorkspaceShell role="learner" roleLabel={nav.label} navItems={nav.items} workspaceLabel={nav.workspaceLabel} pageTitle="Extra activity" pageSubtitle="Record additional learning and supporting evidence" userName={real?.name || 'Learner'} userRole="Learner">
     <main className={`page-container ${styles.extraPage}`}>
+      {timeConfirmation}
       <Link to={`/learner/monthly-submission/${kind}/${learnerId}`} onClick={event => { if (dirty && !window.confirm('Leave without saving your changes?')) event.preventDefault(); }}>Back to monthly submission</Link>
       <header className={styles.extraHeader}><div><p className={styles.eyebrow}>Monthly learning</p><h1>Extra activity</h1>
       <p>Record your learning, add evidence and claim your KSBs and hours.</p><p>Choose the month this activity belongs to. Your submission date is recorded separately.</p></div>
