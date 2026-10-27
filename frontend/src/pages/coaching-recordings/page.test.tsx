@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import { loadCoachingCalendar, loadCoachingSession, loadSavedCoachingEvidence, loadCoachLearners, type CoachingCalendar, type CoachingSessionDetails } from '@/api/coachingRecordings';
 import CoachingRecordingsPage from './page';
-import { filterMeetings, meetingDate, meetingPhase } from './model';
+import { filterMeetings, hasPlayableRecording, meetingDate, meetingPhase } from './model';
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div> }));
 vi.mock('@/api/coachingRecordings', async () => ({
@@ -31,6 +31,45 @@ const details = (): CoachingSessionDetails => ({ eventKey: 'mcr:1', media: fixtu
   attendance: { state: 'available', reportCount: 1, rows: [{ name: 'Verified Participant', status: 'attended', role: 'learner', totalAttendanceSeconds: 600 }] } });
 
 describe('Coaching recordings calendar', () => {
+  it('keeps ended MCM, PR, Support and Other ready regardless of native booking or AI availability', async () => {
+    const data = fixture();
+    data.meetings = (['MCM', 'PR', 'SUPPORT', 'OTHER', 'LECTURE'] as const).map((category, index) => ({ ...data.meetings[0], category,
+      calendarEventId: `ready-${index}`, title: `Ready ${category} appointment`, family: null, eventKey: null,
+      match: 'external', recordingsReference: `signed-${index}` }));
+    vi.mocked(loadCoachingCalendar).mockResolvedValue(data);
+    mount();
+    for (const category of ['MCM', 'PR', 'SUPPORT', 'OTHER', 'LECTURE']) {
+      expect(await screen.findByRole('button', { name: `View Ready ${category} appointment on 2026-10-20` })).toBeInTheDocument();
+    }
+    expect(loadCoachingCalendar).toHaveBeenCalledOnce();
+    expect(loadCoachingSession).not.toHaveBeenCalled();
+    expect(loadSavedCoachingEvidence).not.toHaveBeenCalled();
+  });
+  it('shows all ended meetings with separate empty, failed and no-Teams states, without extra reads', async () => {
+    const data = fixture();
+    const original = data.meetings[0];
+    data.meetings.push(
+      { ...original, calendarEventId: 'empty', title: 'No returned video', media: { state: 'pending', readyCount: 0, recordings: [], check: { state: 'complete', checkedAt: '2026-10-20T11:00:00Z', reason: 'no-recordings-returned' } } },
+      { ...original, calendarEventId: 'offline', title: 'Failed recording check', media: { state: 'unavailable', readyCount: 0, recordings: [], check: { state: 'failed', checkedAt: null } } },
+      { ...original, calendarEventId: 'leave', title: 'Calendar appointment', media: { state: 'pending', readyCount: 0, recordings: [], check: { state: 'complete', checkedAt: '2026-10-20T11:00:00Z', reason: 'no-teams-link' } } },
+    );
+    vi.mocked(loadCoachingCalendar).mockResolvedValue(data);
+    mount();
+    const notice = within(await screen.findByRole('region', { name: 'Ready to action summary' }));
+    expect(notice.getByText('4 ended meetings · 1 with playable recordings')).toBeInTheDocument();
+    for (const label of ['1 · Recording available', '1 · No recording returned at last check', '1 · Recording check failed', '1 · No Teams link on this calendar entry']) {
+      expect(notice.getByText(label)).toBeInTheDocument();
+    }
+    for (const title of ['No returned video', 'Failed recording check', 'Calendar appointment']) {
+      expect(screen.getByRole('button', { name: `View ${title} on 2026-10-20` })).toBeInTheDocument();
+    }
+    expect(screen.queryByRole('button', { name: 'View Progress Review on 2026-10-20' })).not.toBeInTheDocument();
+    fireEvent.click(notice.getByRole('button', { name: 'Show all loaded meetings' }));
+    expect(screen.getByRole('button', { name: 'View Progress Review on 2026-10-20' })).toBeInTheDocument();
+    expect(loadCoachingCalendar).toHaveBeenCalledOnce();
+    expect(loadSavedCoachingEvidence).not.toHaveBeenCalled();
+    expect(loadCoachingSession).not.toHaveBeenCalled();
+  });
   it.each(['MCM', 'PR', 'OTHER'] as const)('passes the %s meeting category into the evidence drawer while keeping transcript lookup available', async category => {
     const data = fixture();
     data.meetings[0] = { ...data.meetings[0], category, title: 'Synthetic calendar meeting', recordingsReference: 'signed-reference' };
@@ -73,10 +112,11 @@ describe('Coaching recordings calendar', () => {
     const types = screen.getByRole('combobox', { name: 'Meeting type' });
     expect(types).toHaveValue('all');
     expect(within(types).getAllByRole('option').map(option => option.textContent)).toEqual([
-      'All types', 'MCM', 'PR (Progress Review)', 'Student Support', 'Other',
+      'All types', 'MCM', 'PR (Progress Review)', 'Student Support', 'Other', 'Lectures / subjects',
     ]);
     expect(within(types).getByRole('group', { name: 'MCM & PR' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'All meetings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Hide lectures / subjects' }));
     const calendar = within(screen.getByRole('region', { name: 'Coach meeting calendar' }));
     const titles = data.meetings.slice(0, 5).map(row => row.title!);
     for (const title of titles) expect(calendar.getByRole('button', { name: `View ${title} on 2026-10-20` })).toBeInTheDocument();
@@ -95,15 +135,19 @@ describe('Coaching recordings calendar', () => {
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(1);
   });
 
-  it('hides curriculum lectures by default and toggles them locally alongside coaching categories', async () => {
+  it('includes lectures in Ready automatically and preserves the optional lecture toggle in other filters', async () => {
     const data = fixture();
     data.meetings[0].category = 'MCM';
     data.meetings.push({ ...data.meetings[0], calendarEventId: 'lecture', eventKey: null, category: 'LECTURE', title: 'Synthetic subject lecture' });
     vi.mocked(loadCoachingCalendar).mockResolvedValue(data);
     mount();
     await screen.findByRole('button', { name: /^View Monthly Coaching Meeting on / });
-    expect(screen.queryByRole('button', { name: /^View Synthetic subject lecture on / })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^View Synthetic subject lecture on / })).toBeInTheDocument();
+    expect(screen.getByText('Lectures included in Ready to action')).toBeInTheDocument();
     const count = vi.mocked(loadCoachingCalendar).mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'All meetings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Hide lectures / subjects' }));
+    expect(screen.queryByRole('button', { name: /^View Synthetic subject lecture on / })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Show lectures / subjects' }));
     expect(await screen.findByRole('button', { name: /^View Synthetic subject lecture on / })).toBeInTheDocument();
     expect(vi.mocked(loadCoachingCalendar)).toHaveBeenCalledTimes(count);
@@ -250,7 +294,7 @@ describe('Coaching recordings calendar', () => {
     expect(screen.queryByRole('heading', { name: 'Progress Review' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Ready to action', pressed: true })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Lecture recordings' })).toHaveAttribute('href', '/curriculum/recordings');
-    expect(within(screen.getByRole('region', { name: 'Coaching meetings' })).getByText('Recording available')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Coaching meetings' })).getByText('Ended · Recording available')).toBeInTheDocument();
   });
 
   it('opens learners only for one selected coach and returns to all of the chosen learner meetings', async () => {
@@ -388,13 +432,14 @@ describe('Coaching recordings calendar', () => {
     expect(screen.getByRole('button', { name: 'Ready to action', pressed: true })).toBeInTheDocument();
   });
 
-  it('makes loaded meetings discoverable when Ready to action has no results without changing its default', async () => {
+  it('keeps an ended appointment in Ready even when the source has no recording', async () => {
     const data = fixture();
     data.meetings[0].media = { state: 'pending', readyCount: 0, recordings: [] };
     data.meetings[0].readyToAction = false;
     vi.mocked(loadCoachingCalendar).mockResolvedValueOnce(data);
     mount();
-    expect(await screen.findByText(/There are 2 meetings loaded across all statuses/)).toBeInTheDocument();
+    expect(await screen.findByText('1 ended meeting · 0 with playable recordings')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Monthly Coaching Meeting' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Ready to action', pressed: true })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Show all loaded meetings' }));
     expect(screen.getByRole('heading', { name: 'Monthly Coaching Meeting' })).toBeInTheDocument();
@@ -460,13 +505,18 @@ describe('Coaching recordings calendar', () => {
     expect(meetingPhase({ ...upcoming, phase: 'cancelled' }, Date.parse('2026-10-29T10:00:00Z'))).toBe('cancelled');
   });
 
-  it('does not call pending, cancelled, future or unmatched recordings ready', () => {
+  it('separates all ended review appointments from playable recordings and excludes future/cancelled appointments', () => {
     const row = fixture().meetings[0];
     for (const changed of [
-      { ...row, media: { state: 'pending' as const, readyCount: 0, recordings: [] } },
-      { ...row, phase: 'cancelled' as const }, { ...row, match: 'candidate' as const },
+      { ...row, phase: 'cancelled' as const },
       { ...row, startsAt: '2026-10-28T09:00:00Z', endsAt: '2026-10-28T10:00:00Z' },
     ]) expect(filterMeetings([changed], 'ready', 'all', 'all', Date.now())).toEqual([]);
+    for (const changed of [{ ...row, media: { state: 'pending' as const, readyCount: 0, recordings: [] } },
+      { ...row, match: 'candidate' as const }]) {
+      expect(filterMeetings([changed], 'ready', 'all', 'all', Date.now())).toEqual([changed]);
+    }
+    expect(hasPlayableRecording({ ...row, media: { state: 'pending', readyCount: 0, recordings: [] } }, Date.now())).toBe(false);
+    expect(hasPlayableRecording(row, Date.now())).toBe(true);
   });
 
   it('loads saved attendance and exposes protected playback and download paths', async () => {
@@ -571,7 +621,7 @@ describe('Coaching recordings calendar', () => {
     data.sync = { pending: true, pendingCalendars: 0, pendingEvidence: 10, lastSuccessfulAt: null, directoryHash: 'one', directoryUnchanged: false };
     vi.mocked(loadCoachingCalendar).mockResolvedValueOnce(data);
     mount();
-    expect(await screen.findByText(/Recording checks are still running/)).toBeInTheDocument();
+    expect(await screen.findByText(/Initial recording checks are still pending/)).toBeInTheDocument();
     expect(screen.queryByText(/Loading the remaining/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Show all loaded meetings' }));
     expect(screen.getByRole('region', { name: 'Coaching meetings' }).querySelectorAll('article')).toHaveLength(2);

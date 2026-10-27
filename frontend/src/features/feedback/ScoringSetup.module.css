@@ -1,0 +1,64 @@
+.panel { min-width: 0; border: 1px solid #e5dcf6; background: white; border-radius: 14px; overflow: hidden; }
+.header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; padding: 20px; background: #faf8ff; border-bottom: 1px solid #eee8f7; }
+.header h2 { color: #38265f; margin: 0; font-size: 16px; font-weight: 750; }
+.help { color: #827591; font-size: 11px; line-height: 1.7; margin: 6px 0 0; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.button { border: 1px solid #ddd1ef; border-radius: 8px; padding: 9px 13px; font-size: 11px; font-weight: 650; background: white; color: #6e3eb4; }
+.primary { background: #6530b3; border-color: #6530b3; color: white !important; }
+.button:disabled { opacity: .4; cursor: default; }
+.stats { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; padding: 16px 20px; }
+.stat { padding: 12px 14px; border: 1px solid #ece6f6; background: #fdfcff; border-radius: 10px; font-size: 11px; color: #7b6e8b; }
+.stat strong { display: block; color: #3a255c; font-size: 24px; margin-bottom: 3px; }
+.body { padding: 16px 20px 20px; border-top: 1px solid #f0ebf7; min-width: 0; }
+.filters { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+.filters label { min-width: 0; flex: 1; color: #514563; font-size: 11px; font-weight: 650; }
+.field { width: 100%; margin-top: 5px; border: 1px solid #e1d8ec; background: white; border-radius: 8px; color: #392853; padding: 9px 11px; font-size: 12px; }
+.list { margin: 0; padding: 0; list-style: none; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 13px 0; border-bottom: 1px solid #f0ebf5; }
+.rowText { flex: 1; min-width: 120px; }
+.rowText strong { color: #3d3156; font-size: 12px; font-weight: 650; overflow-wrap: anywhere; }
+.rowText small { display: block; margin-top: 3px; color: #9b8faa; font-size: 10px; line-height: 1.5; }
+.badge { display: inline-flex; align-items: center; border-radius: 6px; padding: 4px 7px; font-size: 10px; font-weight: 650; line-height: 1.5; white-space: nowrap; }
+.positive,.ready { background: #eaf7f0; color: #168254; }
+.negative,.incomplete { background: #fff0f3; color: #c93662; }
+.neutral { background: #fff7e4; color: #996d15; }
+.unscored,.not_scored { background: #f0edf5; color: #80718f; }
+.pager { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; font-size: 11px; color: #9889a6; margin-top: 14px; }
+.notice { border: 1px solid #f2d1dc; background: #fff5f8; border-radius: 8px; padding: 10px; font-size: 11px; line-height: 1.6; color: #b13762; }
+.preview { border-top: 1px solid #ece5f7; padding: 20px; min-width: 0; background: #fdfcff; }
+.preview h3 { color: #3a265d; font-weight: 750; font-size: 14px; margin: 0; }
+.result { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 15px; border: 1px solid #e2d6f7; border-radius: 12px; padding: 16px; background: #f6f1ff; margin: 14px 0; }
+.result strong { font-size: 28px; color: #542792; line-height: 1.4; display: block; }
+.result p { color: #8c77a3; margin: 4px 0 0; font-size: 11px; }
+.result h4 { font-size: 11px; font-weight: 650; color: #6d4c95; margin: 0; }
+.categories { display: flex; flex-direction: column; gap: 10px; }
+.category { border: 1px solid #e6def1; border-radius: 10px; background: white; overflow: hidden; }
+.category summary { cursor: pointer; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; padding: 13px 15px; color: #5b3b7d; background: #faf8ff; font-size: 12px; font-weight: 650; }
+.category summary::before { content: '▸'; }
+.category[open] summary::before { content: '▾'; }
+.category summary span { flex: 1; min-width: 0; }
+.category summary small { font-size: 10px; font-weight: 500; color: #9f8ab2; }
+.sampleList { max-height: 420px; overflow-y: auto; padding: 0 15px; }
+.sampleQuestion { padding: 14px 0; border-bottom: 1px solid #f0ebf5; }
+.sampleTitle { display: flex; align-items: flex-start; gap: 9px; font-size: 12px; font-weight: 650; line-height: 1.6; color: #423155; }
+.sampleTitle input { flex-shrink: 0; margin-top: 4px; accent-color: #743ab6; }
+.sampleInputs { padding-left: 22px; margin-top: 10px; }
+.sampleInputs > label { font-size: 11px; color: #776086; display: block; }
+.sampleNote { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 11px; color: #9b88ac; margin-top: 9px; }
+.options { border: 0; padding: 0; margin: 0; }
+.options legend { font-size: 11px; color: #8c759f; margin-bottom: 5px; }
+.options label { display: flex; align-items: center; gap: 8px; padding: 5px 0; color: #513d66; font-size: 12px; }
+.options input { accent-color: #743ab6; }
+.breakdown { margin-top: 15px; color: #785d94; font-size: 11px; }
+.breakdown summary { cursor: pointer; }
+.table { margin-top: 10px; max-height: 250px; overflow: auto; }
+.table table { min-width: 500px; width: 100%; text-align: left; font-size: 11px; border-collapse: collapse; }
+.table th,.table td { padding: 8px; border-bottom: 1px solid #ede7f5; }
+.optionScore { display: grid; grid-template-columns: minmax(0,1fr) 76px; gap: 8px; align-items: start; font-size: 12px; }
+.optionScore > span { padding-top: 10px; overflow-wrap: anywhere; }
+.optionScore small { grid-column: 1 / -1; display: flex; justify-content: flex-end; margin-top: -4px; }
+.scale { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 5px; list-style: none; margin: 8px 0 0; padding: 0; }
+.scale li { border: 1px solid #e5ddef; background: white; padding: 7px 2px; border-radius: 7px; text-align: center; color: #795b95; font-size: 9px; line-height: 1.7; }
+.scale li strong { display: block; font-size: 13px; color: #4b2d69; }
+.panel button:focus-visible,.panel input:focus-visible,.panel select:focus-visible,.panel summary:focus-visible { outline: 2px solid #9569c9; outline-offset: 2px; }
+@media(max-width:600px) { .header,.body,.preview { padding: 15px; } .stats { gap: 7px; padding: 12px 15px; } .stat { padding: 10px; font-size: 10px; } .stat strong { font-size: 20px; } .filters { flex-direction: column; } .row { gap: 8px; } }

@@ -43,9 +43,12 @@ vi.mock('@/hooks/useMyLearner', () => ({ rememberLearner: vi.fn() }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: session.account }, isInitialized: session.isInitialized }) }));
 vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true, outsideWorkingHours: session.outsideWorkingHours, holidays: session.holidays, holidayCalendarReady: session.holidayCalendarReady, currentTimeLabel: 'Sunday, 14:02 BST' }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children, pageSubtitle }: { children: ReactNode; pageSubtitle: string }) => <main><p>{pageSubtitle}</p>{children}</main> }));
-vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: ({ questionFiles }: {
+vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: ({ questionFiles, onSubmitProgress }: {
   questionFiles?: { url: string; fileName: string }[];
-}) => <div>{questionFiles?.map(file => <span key={file.url} data-testid="assignment-instruction" data-url={file.url}>{file.fileName}</span>)}</div> }));
+  onSubmitProgress: (answers: { assignmentAnswer: string; whatYouLearned: string; businessImpact: string; timeTakenSeconds: number; timeEntrySource: 'input' }) => Promise<void>;
+}) => <div>{questionFiles?.map(file => <span key={file.url} data-testid="assignment-instruction" data-url={file.url}>{file.fileName}</span>)}
+  <button onClick={() => void onSubmitProgress({ assignmentAnswer: 'Work', whatYouLearned: 'Learning', businessImpact: 'Impact', timeTakenSeconds: 3600, timeEntrySource: 'input' })}>Submit synthetic assignment</button>
+</div> }));
 vi.mock('@/components/feature/SessionResults', () => ({
   SessionResults: ({ onRecordingWatchTimeChange, recordingDate, recordingsOnly }: {
     onRecordingWatchTimeChange?: (seconds: number) => void; recordingDate?: string; recordingsOnly?: boolean;
@@ -157,6 +160,18 @@ it.each(['commercial', 'apprenticeship'])('passes every instruction file to the 
   const instructions = await screen.findAllByTestId('assignment-instruction');
   expect(instructions.map(file => file.getAttribute('data-url'))).toEqual(files.map(file => file.url));
   expect(screen.queryByText('unrelated.pdf')).toBeNull();
+});
+
+it.each(['commercial', 'apprenticeship'])('submits %s assignment input hours separately from planned hours and the page timer', async kind => {
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [
+    { ...first, type: 'assignment', component: 'Assignment', expectedOtjh: 2 },
+  ] } as LearnerDetail);
+  mount('C1', kind);
+  await waitFor(() => expect(startTimeTracking).toHaveBeenCalled());
+  fireEvent.click(await screen.findByRole('button', { name: 'Submit synthetic assignment' }));
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({
+    timeTakenSeconds: 3600, timeEntrySource: 'input', reportedTime: '60 minutes', plannedOtjh: '2h',
+  })));
 });
 
 it('keeps direct audio tied to real playback events', () => {
@@ -429,6 +444,8 @@ it('lets the learner finish configured reflection content without a reflection',
   fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '20' } });
   fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
   fireEvent.click(await screen.findByRole('button', { name: 'No, finish without reflection' }));
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
 
   await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith(
     'C1', 'apprenticeship', '1', expect.objectContaining({ feedback: '', ksbs: [], skipReflection: true }),
@@ -438,6 +455,27 @@ it('lets the learner finish configured reflection content without a reflection',
   expect(screen.queryByRole('button', { name: 'Confirm' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: /Next activity:/ }));
   expect(screen.getByTestId('location')).toHaveTextContent('/C2');
+});
+
+it('returns to manual time when editing a skipped-reflection completion', async () => {
+  session.outsideWorkingHours = false;
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [{ ...first, reflectionRequired: true }] } as unknown as LearnerDetail);
+  mount();
+  fireEvent.change(await screen.findByLabelText('Hours spent'), { target: { value: '49' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'No, finish without reflection' }));
+  expect(await screen.findByRole('alertdialog')).toHaveTextContent('49 hours and 0 minutes');
+  fireEvent.click(screen.getByRole('button', { name: 'Edit time' }));
+  await waitFor(() => expect(screen.getByLabelText('Hours spent')).toHaveFocus());
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText('Hours spent'), { target: { value: '4' } });
+  fireEvent.change(screen.getByLabelText('Minutes spent'), { target: { value: '54' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'No, finish without reflection' }));
+  expect(await screen.findByRole('alertdialog')).toHaveTextContent('4 hours and 54 minutes');
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm time' }));
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledExactlyOnceWith('C1', 'apprenticeship', '1',
+    expect.objectContaining({ timeTakenSeconds: 17640, timeEntrySource: 'input', skipReflection: true })));
 });
 
 it('keeps reflection optional for tutor-validated activities', async () => {
@@ -478,8 +516,9 @@ it('guards a double No click from creating duplicate completion requests', async
   const noButton = await screen.findByRole('button', { name: 'No, finish without reflection' });
   fireEvent.click(noButton);
   fireEvent.click(noButton);
-
-  expect(submitComponentProgress).toHaveBeenCalledTimes(1);
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledTimes(1));
   resolveCompletion?.({ record: { componentId: 'C1', timeTaken: '00:20' } } as Awaited<ReturnType<typeof submitComponentProgress>>);
 });
 
@@ -845,6 +884,7 @@ it('offers recovery inside the reflection popup and preserves the entered durati
   fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
   const dialog = await screen.findByRole('dialog', { name: 'Do you want to complete a reflection?' });
   fireEvent.click(within(dialog).getByRole('button', { name: 'No, finish without reflection' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
   fireEvent.click(await within(dialog).findByRole('button', { name: 'Restore saved time' }));
   await screen.findByText(/Your time has been restored/);
   fireEvent.click(within(dialog).getByRole('button', { name: 'No, finish without reflection' }));
@@ -950,6 +990,8 @@ it.each(['commercial', 'apprenticeship'])('uses the final lower reflection time 
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
   fireEvent.change(screen.getByLabelText('Selected activity time'), { target: { value: '00:15:00' } });
   fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
   await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({
     timeTakenSeconds: 900, reportedTime: '15 minutes', timeEntrySource: 'input',
   })));

@@ -1,4 +1,4 @@
-"""Source-only acceptance for the two Coach migration histories."""
+"""Source-only acceptance for the independent Coach migration histories."""
 from django.conf import settings
 from django.db.migrations.autodetector import MigrationAutodetector
 from django.db.migrations.loader import MigrationLoader
@@ -15,6 +15,8 @@ HISTORICAL = [('coach_api', name) for name in (
 MERGE = ('coach_api', '0031_merge_coaching_features')
 CLAIM = ('coach_api', '0032_aptem_actual_session_claim_integrity')
 OWNER = ('coach_api', '0033_aptem_imported_meeting_ownership')
+PROFILE_LINKS = ('coach_api', '0027_attendance_profile_links')
+HEAD = ('coach_api', '0034_merge_attendance_profile_links')
 
 
 class CoachMigrationGraphTests(SimpleTestCase):
@@ -28,8 +30,10 @@ class CoachMigrationGraphTests(SimpleTestCase):
 
     def test_one_merge_leaf_preserves_both_original_lineages(self):
         loader = self.loader()
-        self.assertEqual(loader.graph.leaf_nodes('coach_api'), [OWNER])
+        self.assertEqual(loader.graph.leaf_nodes('coach_api'), [HEAD])
         self.assertNotIn('coach_api', loader.detect_conflicts())
+        self.assertEqual(set(loader.disk_migrations[HEAD].dependencies), {PROFILE_LINKS, OWNER})
+        self.assertEqual(loader.disk_migrations[HEAD].operations, [])
         self.assertEqual(loader.disk_migrations[OWNER].dependencies, [CLAIM])
         self.assertEqual(loader.disk_migrations[CLAIM].dependencies, [MERGE])
         self.assertEqual(set(loader.disk_migrations[MERGE].dependencies), {CURRENT[-1], HISTORICAL[-1]})
@@ -68,5 +72,43 @@ class CoachMigrationGraphTests(SimpleTestCase):
                 ('historical-applied', HISTORICAL, [*CURRENT, MERGE, CLAIM, OWNER])):
             with self.subTest(path=label):
                 pending = [key for key in full if key not in ancestor_nodes and key not in applied]
+                self.assertEqual(set(pending), set(expected))
+                self.assertEqual(len(pending), len(set(pending)))
+
+    def test_attendance_links_and_existing_features_commute(self):
+        loader = self.loader()
+        existing = [*CURRENT, *HISTORICAL, MERGE, CLAIM, OWNER]
+        base = loader.disk_migrations[PROFILE_LINKS].dependencies
+        expected = loader.project_state(nodes=[HEAD])
+        for order in ([PROFILE_LINKS, *existing, HEAD], [*existing, PROFILE_LINKS, HEAD]):
+            with self.subTest(first=order[0]):
+                state = loader.project_state(nodes=base)
+                for key in order:
+                    state = loader.disk_migrations[key].mutate_state(state)
+                delta = MigrationAutodetector(state, expected,
+                    NonInteractiveMigrationQuestioner(specified_apps={'coach_api'})).changes(
+                        graph=loader.graph, trim_to_apps={'coach_api'})
+                self.assertNotIn('coach_api', delta)
+                for model in ('coachmanualattendance', 'coachattendancesourceadjustment'):
+                    field = state.models[('coach_api', model)].fields['learner_profile_link']
+                    self.assertEqual(field.db_column, 'learner_profile_link_id')
+                    self.assertTrue(field.null)
+
+    def test_targeted_attendance_upgrade_keeps_other_features_out_of_scope(self):
+        loader = self.loader()
+        plan = set(loader.graph.forwards_plan(PROFILE_LINKS))
+        self.assertIn(ANCESTOR, plan)
+        self.assertIn(PROFILE_LINKS, plan)
+        self.assertFalse(plan.intersection([*CURRENT, *HISTORICAL, MERGE, CLAIM, OWNER, HEAD]))
+
+    def test_merging_an_applied_coach_branch_only_adds_missing_migrations(self):
+        loader = self.loader()
+        ancestors = set(loader.graph.forwards_plan(ANCESTOR))
+        existing = [*CURRENT, *HISTORICAL, MERGE, CLAIM, OWNER]
+        full = [key for key in loader.graph.forwards_plan(HEAD) if key[0] == 'coach_api']
+        for applied, expected in ((existing, [PROFILE_LINKS, HEAD]),
+                                  ([PROFILE_LINKS], [*existing, HEAD])):
+            with self.subTest(applied=applied):
+                pending = [key for key in full if key not in ancestors and key not in applied]
                 self.assertEqual(set(pending), set(expected))
                 self.assertEqual(len(pending), len(set(pending)))

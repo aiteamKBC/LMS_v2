@@ -33,7 +33,34 @@ def quality_form(request):
     request_id=str(UUID(value['requestId']))
     definition=clean_definition(value['definition'])
     if kind != definition.get('reviewType',''):
-        raise InvalidReview('The form type does not match the selected MCM or PR editor.')
+        raise InvalidReview('The form does not match the selected library card.')
     saved=store.save_template(definition,expected=value['expectedRevision'],request_id=request_id,
                               actor=request.quality_actor['id'],publish=value['publish'])
     return _response({'template':saved,'fieldTypes':list(FIELD_TYPES)})
+
+
+@require_http_methods(['GET','POST'])
+@require_access(ACCESS_CURRICULUM)
+@csrf_protect
+@guarded
+def quality_forms(request):
+    if request.method=='GET':
+        return _response({'forms':store.form_catalog(editing=request.GET.get('editing')=='1')})
+    if len(request.body)>1000:
+        raise InvalidReview('The form title is too long.')
+    try: value=json.loads(request.body)
+    except (ValueError,UnicodeDecodeError): raise InvalidReview('Enter a form title.')
+    if not isinstance(value,dict) or set(value)!={'title','requestId'}:
+        raise InvalidReview('Enter the title and save identifier for the new form.')
+    from .quality_review_template import _text
+    from .quality_feedback_catalog import new_definition
+    title=_text(value['title'],160)
+    if not title:
+        raise InvalidReview('Enter a form title.')
+    request_id=str(UUID(value['requestId']))
+    # The request identifier also gives retries the same stable form identity.
+    kind='FORM_CUSTOM_'+UUID(request_id).hex.upper()
+    definition=clean_definition(new_definition(kind,title))
+    saved=store.save_template(definition,expected=0,request_id=request_id,
+        actor=request.quality_actor['id'],publish=False)
+    return _response({'template':saved},201)

@@ -37,7 +37,7 @@ describe('learner feedback categories', () => {
 
   it.each([['mid_module', 'mid-module', 'Mid-module Feedback'], ['end_module', 'end-module', 'End-module Feedback']] as const)(
     'opens %s through its owned delivery and preserves its category', async (formType, category, title) => {
-      flags.fullFeedbackEnabled = false;
+      flags.fullFeedbackEnabled = true;
       vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [{ ...lecture, formType, title, sessionTitle: title }] });
       const user = userEvent.setup();
       render(<MemoryRouter initialEntries={['/learner/feedback']}><LearnerFeedbackPage /><Location /></MemoryRouter>);
@@ -49,20 +49,24 @@ describe('learner feedback categories', () => {
     },
   );
 
-  it('exposes lecture and module categories in production while keeping other categories closed', async () => {
+  it('exposes only Live Sessions in production while keeping all other categories closed', async () => {
     flags.fullFeedbackEnabled = false;
     vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [
       lecture,
+      { ...lecture, id: 7, formType: 'mid_module', title: 'Module midpoint' },
+      { ...lecture, id: 8, formType: 'end_module', title: 'Module end' },
       { ...lecture, id: 6, deliveryId: null, eventRecipientId: 40, formType: 'post_event', title: 'Event feedback' },
     ] });
     const user = userEvent.setup();
     render(<MemoryRouter initialEntries={['/learner/feedback?category=event']}><LearnerFeedbackPage /><Location /></MemoryRouter>);
     await user.click(await screen.findByRole('button', { name: /All feedback types/ }));
-    expect(screen.getByRole('option', { name: /Lecture Feedback/ })).toBeVisible();
-    expect(screen.getByRole('option', { name: /Mid-module Feedback/ })).toBeVisible();
-    expect(screen.getByRole('option', { name: /End-module Feedback/ })).toBeVisible();
+    expect(screen.getByRole('option', { name: /Live Sessions Feedback/ })).toBeVisible();
+    expect(screen.queryByRole('option', { name: /Mid-module Feedback/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /End-module Feedback/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('option', { name: /Event Feedback/ })).not.toBeInTheDocument();
     expect(screen.queryByText('Event feedback')).not.toBeInTheDocument();
+    expect(screen.queryByText('Module midpoint')).not.toBeInTheDocument();
+    expect(screen.queryByText('Module end')).not.toBeInTheDocument();
   });
 
   it('shows a unified request list with type, search, status filters and summary', async () => {
@@ -82,7 +86,7 @@ describe('learner feedback categories', () => {
 
     await user.click(typeFilter);
     expect(screen.getByRole('option', { name: /Event Feedback/ })).toBeVisible();
-    await user.click(screen.getByRole('option', { name: /Lecture Feedback/ }));
+    await user.click(screen.getByRole('option', { name: /Live Sessions Feedback/ }));
     expect(screen.getByText('/learner/feedback?category=lecture')).toBeVisible();
     const requests = screen.getByRole('region', { name: 'All feedback requests' });
     expect(within(requests).getByText('Data Foundations — Lecture 2')).toBeVisible();

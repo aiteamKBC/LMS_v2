@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { FeedbackSection } from '@/api/feedback';
 import { parsePostLectureQuestionBank, POST_LECTURE_BANK_TEMPLATE, questionBankAnswerLabel, type ParsedPostLectureBank } from './postLectureQuestionBank';
+import { scoringQuestions } from './scorePreview';
 
 export function QuestionBankImport({ locked, onApply }: { locked: boolean; onApply: (sections: FeedbackSection[]) => void }) {
   const [preview, setPreview] = useState<ParsedPostLectureBank | null>(null);
@@ -20,13 +21,14 @@ export function QuestionBankImport({ locked, onApply }: { locked: boolean; onApp
   } : null;
   const configuredSections = [...categories.filter(section => section.questions.length), ...(fixedClosing ? [fixedClosing] : [])];
   const perLecture = configuredSections.reduce((count, section) => count + (section.questionsPerDelivery ?? section.questions.length), 0);
+  const incompleteScores = scoringQuestions(configuredSections).filter(entry => entry.readiness.state === 'incomplete').length;
   const writtenQuestions = preview?.sections.slice(0, preview.categoryCount).flatMap((section, sectionIndex) => section.questions.flatMap((question, questionIndex) => question.type === 'long_text' ? [{ key: `${sectionIndex}:${questionIndex}`, text: question.text, category: section.title }] : [])) || [];
 
   function downloadTemplate() {
     const url = URL.createObjectURL(new Blob(['\uFEFF', POST_LECTURE_BANK_TEMPLATE], { type: 'text/csv;charset=utf-8' }));
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'post-lecture-question-bank-template.csv';
+    link.download = 'live-sessions-feedback-question-bank-template.csv';
     link.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }
@@ -65,9 +67,11 @@ export function QuestionBankImport({ locked, onApply }: { locked: boolean; onApp
   return <section aria-label="Question bank import" className="rounded-xl border border-primary-100 bg-white p-4 md:col-span-2">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><h3 className="text-sm font-semibold text-foreground-900">Upload question bank</h3><p className="mt-1 text-xs text-foreground-500">Download the template, fill in your questions, then upload it here.</p></div>
-      <a href={`${import.meta.env.BASE_URL}templates/post-lecture-question-bank.xlsx`} download className="rounded-lg border border-primary-200 px-3 py-2 text-xs font-semibold text-primary-700">Download Excel template</a>
+      <a href={`${import.meta.env.BASE_URL}templates/post-lecture-question-bank.xlsx`} download="live-sessions-feedback-question-bank.xlsx" className="rounded-lg border border-primary-200 px-3 py-2 text-xs font-semibold text-primary-700">Download Excel template</a>
     </div>
     <p className="mt-3 text-xs leading-5 text-foreground-600">Fill in <strong>Category</strong>, <strong>Question</strong> and <strong>Answer type</strong>. Choose the answer type from the Excel dropdown. For choice questions, fill in <strong>Option 1</strong>, <strong>Option 2</strong>, and so on. Leave those columns empty for stars or written answers.</p>
+    <p className="mt-2 text-xs leading-5 text-foreground-500">Set <strong>Option 1 score</strong>, <strong>Option 2 score</strong>, and so on from 0 to 100. For Yes / No, use <strong>Yes score</strong> and <strong>No score</strong>. For Number, set <strong>Score min</strong>, <strong>Score max</strong> and <strong>Scoring</strong> (Higher is better or Lower is better). Stars use their scale automatically. Blank scores need setup before publishing; 0 is a real score.</p>
+    <p className="mt-2 text-xs leading-5 text-foreground-500">Optional: Importance defaults to Medium. Include in overall score can be Yes or No; excluded questions still need their own scores. The template also supports Required, Help text and rating labels. Written answers have no automatic score. Draw counts are still chosen once per category below.</p>
     <details className="mt-3 rounded-lg bg-background-50 p-3 text-xs text-foreground-600">
       <summary className="cursor-pointer font-semibold text-primary-700">Using an existing file?</summary>
       <p className="mt-2 leading-5">Previous Excel and CSV formats are still supported. You do not need a Questions per lecture column; choose the numbers after uploading.</p>
@@ -91,6 +95,7 @@ export function QuestionBankImport({ locked, onApply }: { locked: boolean; onApp
       </div>)}</div>
       {fixedClosing && <p className="rounded-lg bg-white p-3 text-xs text-foreground-700"><span className="font-semibold">Fixed closing question:</span> {fixedClosing.questions[0].text}</p>}
       <p aria-live="polite" className="text-sm font-semibold text-primary-800">Each lecture: {perLecture} questions</p>
+      {incompleteScores > 0 && <p role="status" className="text-xs text-amber-800">{incompleteScores} {incompleteScores === 1 ? 'question needs' : 'questions need'} scoring setup before publishing. You can add this bank and finish its scores in the editor.</p>}
       <div className="flex flex-wrap items-center gap-3"><button type="button" disabled={locked} onClick={apply} className="rounded-lg bg-primary-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">Replace draft questions with this bank</button><button type="button" onClick={() => setPreview(null)} className="rounded-lg border border-foreground-200 bg-white px-3 py-2 text-xs font-semibold text-foreground-600">Cancel import</button></div>
       <p className="text-xs text-foreground-500">Applying this bank replaces the current draft questions. Save the form separately; previous lecture responses stay unchanged.</p>
     </div>}

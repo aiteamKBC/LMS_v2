@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CoachingMeeting } from '@/api/coachingRecordings';
 import { addDays, formatCompactDate, formatHourLabel } from '@/pages/curriculum/recordings/utils';
-import { meetingDate, meetingPhase, recordingLabels, meetingKey, meetingTitle } from './model';
+import { meetingDate, meetingPhase, recordingLabel, meetingKey, meetingTitle } from './model';
 
 interface Props {
   start: string; end: string; timeZone: string; meetings: CoachingMeeting[]; now: number;
@@ -103,7 +103,7 @@ export default function MeetingTimeline({ start, end, timeZone, meetings, now, s
                 <span className="block truncate tabular-nums text-primary-800">{clock(row.startsAt)}–{clock(row.endsAt)}{meetingDate(row.startsAt, timeZone) < day ? ' · Continues' : ''}</span>
                 <span className={compact || owner ? 'sr-only' : 'mt-0.5 block truncate text-foreground-700'}>{coachName(row.coachEmail)}</span>
                 <span className={compact ? 'sr-only' : 'block truncate text-foreground-500'}>{people.slice(0, 2).join(', ') || 'No learner linked'}{people.length > 2 ? ` +${people.length - 2} more` : ''}</span>
-                <span className={`block truncate ${compact ? 'text-[10px] leading-3' : 'mt-0.5'} ${row.media.readyCount > 0 ? 'text-emerald-700' : 'text-foreground-500'}`}>{phase === 'upcoming' ? 'Upcoming' : phase === 'in-progress' ? 'In progress' : phase === 'cancelled' ? 'Cancelled' : recordingLabels[row.media.state]}</span>
+                <span className={`block truncate ${compact ? 'text-[10px] leading-3' : 'mt-0.5'} ${row.media.readyCount > 0 ? 'text-emerald-700' : 'text-foreground-500'}`}>{phase === 'upcoming' ? 'Upcoming' : phase === 'in-progress' ? 'In progress' : phase === 'cancelled' ? 'Cancelled' : `Ended · ${recordingLabel(row.media)}`}</span>
               </button>
             </article>;
           })}

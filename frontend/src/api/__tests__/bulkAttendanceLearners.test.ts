@@ -1,10 +1,12 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import {
   fetchBulkAttendanceKbcHistory,
+  fetchBulkAttendanceKbcMonthRecords,
   fetchBulkAttendanceKbcRecent,
   fetchBulkAttendanceDayLearners,
   fetchBulkAttendanceLearners,
   fetchBulkAttendanceLiveDayRecords,
+  fetchBulkAttendanceLiveMonthRecords,
   BulkAttendanceSaveError,
   createBulkAttendanceLiveDay,
   saveBulkAttendanceChanges,
@@ -56,13 +58,16 @@ it('fetches the complete KBC history for one learner only when requested', async
   vi.stubGlobal('fetch', fetch);
   const controller = new AbortController();
 
-  await expect(fetchBulkAttendanceKbcHistory('42', controller.signal, { source: 'all' })).resolves.toEqual({ records, warnings });
+  await expect(fetchBulkAttendanceKbcHistory('42', controller.signal, {
+    source: 'all', email: 'alex@example.invalid',
+  })).resolves.toEqual({ records, warnings });
   const [url, options] = fetch.mock.calls[0] as [string, RequestInit];
   const query = new URL(url, 'https://lms.example.invalid').searchParams;
   expect(url).toContain('/curriculum_api/curriculum/bulk-attendance/kbc-history/');
   expect(query.get('learner_id')).toBe('42');
-  expect([...query.keys()]).toEqual(['learner_id', 'source']);
+  expect([...query.keys()]).toEqual(['learner_id', 'source', 'learner_email']);
   expect(query.get('source')).toBe('all');
+  expect(query.get('learner_email')).toBe('alex@example.invalid');
   expect(options).toEqual(expect.objectContaining({ credentials: 'include', signal: controller.signal }));
 });
 
@@ -151,6 +156,90 @@ it('reads saved live-session attendance for the chosen module and date', async (
   expect(query.get('date')).toBe('2026-10-17');
   expect(query.get('module_catalogue_id')).toBe('module-1');
   expect(options).toEqual(expect.objectContaining({ credentials: 'include', signal: controller.signal }));
+});
+
+it('reads a module month with distinct live occurrences', async () => {
+  const payload = {
+    occurrences: [
+      { id: 'occ-1', date: '2026-10-17', sessionNumber: 1, moduleCatalogueId: 'module-1', moduleTitle: 'Module A' },
+      { id: 'occ-2', date: '2026-10-17', sessionNumber: 2, moduleCatalogueId: 'module-1', moduleTitle: 'Module A' },
+    ],
+    records: [{ recordKey: 'live:7', occurrenceId: 'occ-2', moduleCatalogueId: 'module-1', learnerId: '42', attendance: 'absent' }],
+  };
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload)));
+  vi.stubGlobal('fetch', fetch);
+  const controller = new AbortController();
+  await expect(fetchBulkAttendanceLiveMonthRecords('2026-10', 'module-1', controller.signal))
+    .resolves.toEqual(payload);
+  const [url, options] = fetch.mock.calls[0] as [string, RequestInit];
+  const query = new URL(url, 'https://lms.example.invalid').searchParams;
+  expect(query.get('month')).toBe('2026-10');
+  expect(query.get('module_catalogue_id')).toBe('module-1');
+  expect(options).toEqual(expect.objectContaining({ credentials: 'include', signal: controller.signal }));
+});
+
+it('reads KBC attendance records for a month and selected learners', async () => {
+  const records = [{
+    recordKey: 'kbc-1', learnerId: '42', sessionDate: '2026-10-12',
+    moduleName: 'Project Controls', lectureName: 'Lecture 1', sessionNumber: 1,
+    attendance: 'present', source: 'kbc',
+  }];
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ records })));
+  vi.stubGlobal('fetch', fetch);
+  const controller = new AbortController();
+
+  await expect(fetchBulkAttendanceKbcMonthRecords('2026-10', ['42', '42'], controller.signal))
+    .resolves.toEqual(records);
+  const [url, options] = fetch.mock.calls[0] as [string, RequestInit];
+  const query = new URL(url, 'https://lms.example.invalid').searchParams;
+  expect(query.get('month')).toBe('2026-10');
+  expect(query.get('learner_ids')).toBe('42');
+  expect(options).toEqual(expect.objectContaining({ credentials: 'include', signal: controller.signal }));
+});
+
+it('normalizes timestamp-shaped KBC dates returned by the monthly reader', async () => {
+  const record = {
+    recordKey: 'kbc-2', learnerId: '42', sessionDate: '2026-10-12 00:00:00+00',
+    moduleName: 'Project Controls', lectureName: 'Lecture 2', sessionNumber: 2,
+    attendance: 'absent' as const, source: 'kbc' as const,
+  };
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ records: [record] }))));
+
+  await expect(fetchBulkAttendanceKbcMonthRecords('2026-10', ['42']))
+    .resolves.toEqual([{ ...record, sessionDate: '2026-10-12' }]);
+});
+
+it('reads a group month without requiring a module selection', async () => {
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ occurrences: [], records: [] })));
+  vi.stubGlobal('fetch', fetch);
+  const controller = new AbortController();
+  await expect(fetchBulkAttendanceLiveMonthRecords('2026-10', '', controller.signal, 'group-1'))
+    .resolves.toEqual({ occurrences: [], records: [] });
+  const [url, options] = fetch.mock.calls[0] as [string, RequestInit];
+  const query = new URL(url, 'https://lms.example.invalid').searchParams;
+  expect(query.get('month')).toBe('2026-10');
+  expect(query.get('module_catalogue_id')).toBeNull();
+  expect(query.get('group_id')).toBe('group-1');
+  expect(options).toEqual(expect.objectContaining({ credentials: 'include', signal: controller.signal }));
+});
+
+it('includes the module ids resolved by the group filter', async () => {
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ occurrences: [], records: [] })));
+  vi.stubGlobal('fetch', fetch);
+  await expect(fetchBulkAttendanceLiveMonthRecords(
+    '2026-10', '', undefined, 'group-1', ['module-1', 'module-2', 'module-1'],
+  )).resolves.toEqual({ occurrences: [], records: [] });
+  const [url] = fetch.mock.calls[0] as [string, RequestInit];
+  const query = new URL(url, 'https://lms.example.invalid').searchParams;
+  expect(query.get('module_catalogue_ids')).toBe('module-1,module-2');
+});
+
+it('keeps a failed monthly read visible instead of treating it as an empty month', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ error: 'Register unavailable' }), { status: 503 }),
+  ));
+  await expect(fetchBulkAttendanceLiveMonthRecords('2026-10', 'module-1'))
+    .rejects.toThrow('Register unavailable');
 });
 
 it('does not make a request when a learner has no KBC identifier', async () => {

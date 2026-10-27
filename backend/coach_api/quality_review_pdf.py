@@ -31,7 +31,7 @@ def _utc(value):
     return datetime.fromisoformat(value.replace('Z','+00:00')).astimezone(timezone.utc).strftime('%d %b %Y %H:%M UTC')
 
 
-def _render(review, images):
+def _render(review, images, attachments=()):
     _fonts()
     definition=definition_for(review)
     data=clean_answers(review['form'],'completed',definition)
@@ -45,7 +45,7 @@ def _render(review, images):
     story=[brand,Spacer(1,12),_p(definition['title'],size=19,bold=True,space=10),
       _p(f'Completed review - saved version {review["version"]} | Form version {definition["version"]}',size=9,bold=True)]
     header=data['header']
-    details=[('Quality review type',saved_type(review) or 'Not classified'),('Coach / tutor observed',review['coach']['name']),('Observer',review['reviewer']['name']),
+    details=[('Quality form',definition['title']), *([('Quality review type',saved_type(review) or 'Not classified')] if not saved_type(review).startswith('FORM_') else []),('Coach / tutor observed',review['coach']['name']),('Observer',review['reviewer']['name']),
       ('Learner / cohort',review['learner']['name']),('Employer',header['employer']),
       ('Programme / standard',header['programme']),('Activity date',header['activityDate']),
       ('Start date',header['startDate']),('Planned end date',header['endDate']),
@@ -59,7 +59,7 @@ def _render(review, images):
     counts=Counter(value['rating'] for value in data['criteria'].values())
     story += [_p(' | '.join(f'{LABELS[key]}: {counts[key]}' for key in LABELS),bold=True),
       _p('Evidence relied on (declared by reviewer): '+(', '.join(SOURCES[key] for key in data['sources']) or 'Not recorded'),size=8),
-      _p('The meeting is an evidence source. Judgements cover the learner experience across the apprenticeship.',size=8,color=MUTED)]
+      _p('Judgements and evidence are recorded by the reviewer for this observation.',size=8,color=MUTED)]
     story.append(_title('Rating descriptors'))
     story.extend(_p(f'{LABELS[key]} - {description}',size=7.5) for key,description in definition['ratings'].items())
     story.append(Spacer(1,10))
@@ -71,6 +71,16 @@ def _render(review, images):
             picture.drawWidth=picture.imageWidth*scale;picture.drawHeight=picture.imageHeight*scale
             picture.hAlign='LEFT'
             story.extend([picture,Spacer(1,10)])
+    def evidence_files(key):
+        for file in attachments:
+            if file['section']!=key:
+                continue
+            story.append(_p(file['filename']+' | '+str(round(file['size']/1024,1))+' KB | Original file saved with this review',size=8,bold=True))
+            if file.get('preview'):
+                picture=Image(BytesIO(bytes(file['preview'])))
+                scale=min(WIDTH/picture.imageWidth,150*mm/picture.imageHeight,1)
+                picture.drawWidth=picture.imageWidth*scale;picture.drawHeight=picture.imageHeight*scale
+                picture.hAlign='LEFT';story.extend([picture,Spacer(1,10)])
     for section in definition['sections']:
         story.append(_title(section['title']))
         for index,item in enumerate(section['criteria'],1):
@@ -79,6 +89,10 @@ def _render(review, images):
             if item['type']=='image':
                 story.append(heading);pictures(item['id'])
                 if not data['images'].get(item['id']):story.append(_p('No image attached.',size=8.5))
+                continue
+            if item['type']=='file':
+                story.append(heading);evidence_files(item['id'])
+                if not data.get('attachments',{}).get(item['id']):story.append(_p('No evidence file attached.',size=8.5))
                 continue
             if item['type']!='rating':
                 answer=data['answers'].get(item['id'])
@@ -95,7 +109,14 @@ def _render(review, images):
             evidence_label.spaceBefore=5
             story += [heading,badge,evidence_label,
               _p(answer['evidence'] or 'Not applicable - no additional evidence recorded.',size=8.5),Spacer(1,10)]
+            description=(item.get('descriptors') or {}).get(answer['rating'])
+            if description:
+                story.extend([_p('Selected rating - reference criteria',size=7,bold=True,color=MUTED),_p(description,size=8),Spacer(1,8)])
         pictures(section['id'])
+    if attachments:
+        story.append(_title('Evidence attachments'))
+        story.append(_p('Original files remain available in the saved meeting review. Image previews are included below; other files are listed without changing their original format.',size=8,color=MUTED))
+        evidence_files('evidence')
     story.append(_title(definition['actionsTitle']))
     if not data['actions']:
         story.append(_p('No follow-up actions were recorded by the reviewer.',size=8.5))
@@ -120,7 +141,8 @@ def review_pdf(review):
         raise store.ReviewConflict('Complete and save this review before exporting its PDF.')
     def load():
         images=store.read_images(review['id'],review['form']['images'])
-        return _render(review,images)
+        attachments=store.read_evidence(review['id'],review['form'].get('attachments',{})) if review['form'].get('attachments') else []
+        return _render(review,images,attachments)
     from .recordings_saved_evidence import source_dsn
     return recent_read('quality-review-pdf',[store.digest(source_dsn()),review['id'],review['version'],store.digest(definition_for(review)),2],load,timeout=600)
 

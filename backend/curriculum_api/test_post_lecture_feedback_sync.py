@@ -24,4 +24,4 @@ class PostLectureFeedbackResultHookTests(SimpleTestCase):
         ):
             process_session_results.sync_post_lecture_feedback('LIVE-1')
 
-        self.assertIn('Post-lecture feedback sync failed for LIVE-1', logs.output[0])
+        self.assertIn('Live Sessions Feedback sync failed for LIVE-1', logs.output[0])

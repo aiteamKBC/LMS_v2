@@ -33,7 +33,7 @@ export default function CoachMiniCalendar({ date, timeZone, meetingDates, onSele
       <button type="button" aria-label="Today in mini calendar" onClick={() => onSelectDay(todayIso(timeZone))} className="rounded-md px-4 py-1.5 text-xs font-semibold text-primary-700 hover:bg-primary-50">Today</button>
       <button type="button" className={nav} aria-label="Next day" onClick={() => onSelectDay(addDays(date, 1))}><ChevronRight size={16} /></button>
     </div>
-    <p className="mt-3 text-[11px] leading-relaxed text-foreground-500">Dots mark dates with meetings in the loaded results. Choose any date to check its meetings.</p>
+    <p className="mt-3 text-[11px] leading-relaxed text-foreground-500">Dots mark meetings in the loaded period only. A date without a dot may not have been checked. Choose a date or Month view to check it.</p>
     <div className="mt-4 space-y-2 border-t border-background-200 pt-4 text-xs text-foreground-600">
       <p className="mb-3 text-[10px] font-bold uppercase tracking-wider text-foreground-400">Meeting status</p>
       {[['bg-emerald-500', 'Recording available'], ['bg-primary-400', 'Upcoming / in progress'], ['bg-amber-400', 'Recording pending'], ['bg-rose-400', 'Cancelled']].map(([color, label]) =>

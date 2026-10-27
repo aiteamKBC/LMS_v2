@@ -67,5 +67,6 @@ def submission_attempts(payload, status, submitted_at=None, feedback=None, revie
             'submittedAt': entry.get('submittedAt'), 'reviewedAt': entry.get('reviewedAt'),
             'reviewedBy': entry.get('reviewedBy', ''), 'coachFeedback': entry.get('coachFeedback', ''),
             'answer': content.get('assignmentAnswer') or content.get('learningReflection') or '',
+            'actualTimeHours': content.get('actualTimeHours'),
         })
     return result

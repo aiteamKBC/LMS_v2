@@ -2,16 +2,16 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import QualityReviewsPage from './QualityReviewsPage';
-import { qualityReviews, type QualitySummary } from '@/api/coachingQualityReviews';
+import { qualityReviews, qualityForms, type QualitySummary } from '@/api/coachingQualityReviews';
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
-vi.mock('@/api/coachingQualityReviews', async () => ({ ...await vi.importActual<typeof import('@/api/coachingQualityReviews')>('@/api/coachingQualityReviews'), qualityReviews: vi.fn() }));
+vi.mock('@/api/coachingQualityReviews', async () => ({ ...await vi.importActual<typeof import('@/api/coachingQualityReviews')>('@/api/coachingQualityReviews'), qualityReviews: vi.fn(), qualityForms: vi.fn() }));
 vi.mock('./QualityReviewDialog', () => ({ default: ({ reviewId, onDirtyChange, onClose }: { reviewId: string; onDirtyChange: (dirty: boolean) => void; onClose: () => void }) => <div role="dialog">Saved form {reviewId}<button onClick={() => onDirtyChange(true)}>Edit saved form</button><button onClick={onClose}>Close saved form</button></div> }));
 const uuid = (id: string) => `00000000-0000-4000-8000-${id.padStart(12, '0')}`;
 const row = (id: string): QualitySummary => ({ id: uuid(id), coachEmail: 'coach@example.invalid', coachName: 'Synthetic Coach', learnerId: id, learnerName: `Learner ${id}`, startsAt: '2026-10-20T09:00:00Z',
   status: 'completed', version: 2, updatedAt: '2026-10-20T12:00:00Z', title: 'Synthetic MCM', actionCount: 1 });
 const data = { reviews: [row('1')], coaches: [{ email: 'coach@example.invalid', name: 'Synthetic Coach' }], nextOffset: null };
 describe('Saved quality reviews dashboard', () => {
-  beforeEach(() => { vi.mocked(qualityReviews).mockReset().mockResolvedValue(data); });
+  beforeEach(() => { vi.mocked(qualityForms).mockReset().mockResolvedValue({ forms: [] }); vi.mocked(qualityReviews).mockReset().mockResolvedValue(data); });
   function History() { const location = useLocation(), navigate = useNavigate(); return <><output aria-label="Current review URL">{location.search}</output><button onClick={() => navigate(-1)}>History back</button><button onClick={() => navigate(1)}>History forward</button></>; }
   const open = (url = '/') => render(<MemoryRouter initialEntries={[url]}><History /><QualityReviewsPage /></MemoryRouter>);
   it('loads summaries once and only applies filters on submit', async () => {
@@ -39,7 +39,7 @@ describe('Saved quality reviews dashboard', () => {
   });
   it('applies one-click type, completion and PDF filters and restores them in the URL', async () => {
     open(); await screen.findByText('Learner 1');
-    fireEvent.click(screen.getByRole('button', { name: 'PR (Progress Review)' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Quality form filter' }), { target: { value: 'PR' } });
     await waitFor(() => expect(qualityReviews).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getByRole('button', { name: 'With PDF' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'With PDF' }));
@@ -56,7 +56,7 @@ describe('Saved quality reviews dashboard', () => {
   it('restores type and PDF filters on refresh and resets the search without loading PDF bytes', async () => {
     open('/?type=MCM&pdf=available&status=all&q=Somebody'); await screen.findByText('Learner 1');
     expect(vi.mocked(qualityReviews).mock.calls[0][0]).toMatchObject({ reviewType: 'MCM', pdf: 'available', status: '', search: 'Somebody' });
-    expect(screen.getByRole('button', { name: 'MCM' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('combobox', { name: 'Quality form filter' })).toHaveValue('MCM');
     fireEvent.click(screen.getByRole('button', { name: 'Reset filters' }));
     await waitFor(() => expect(qualityReviews).toHaveBeenCalledTimes(2));
     expect(vi.mocked(qualityReviews).mock.lastCall?.[0]).toMatchObject({ reviewType: '', pdf: '', coachEmail: '', search: '', status: '' });
@@ -65,7 +65,7 @@ describe('Saved quality reviews dashboard', () => {
     open(); await screen.findByText('Learner 1');
     fireEvent.change(screen.getByRole('searchbox', { name: 'Learner or meeting' }), { target: { value: 'Typed learner' } });
     expect(qualityReviews).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByRole('button', { name: 'MCM' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Quality form filter' }), { target: { value: 'MCM' } });
     await waitFor(() => expect(qualityReviews).toHaveBeenCalledTimes(2));
     expect(vi.mocked(qualityReviews).mock.lastCall?.[0]).toMatchObject({ search: 'Typed learner', reviewType: 'MCM' });
   });

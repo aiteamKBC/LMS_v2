@@ -4,9 +4,11 @@ import { createCachedResource } from './cachedRequest';
 import { withCallerSignal } from './learnerRead';
 
 export type Rating = '' | 'gold' | 'green' | 'amber' | 'red' | 'na';
-export type QualityReviewType = 'MCM' | 'PR';
-export type QualityFieldType = 'rating' | 'text' | 'textarea' | 'boolean' | 'single_choice' | 'checklist' | 'date' | 'number' | 'image';
-export interface QualityField { id: string; text: string; type?: QualityFieldType; required?: boolean; options?: string[]; help?: string }
+export type QualityReviewType = string;
+export type QualityFieldType = 'rating' | 'text' | 'textarea' | 'boolean' | 'single_choice' | 'checklist' | 'date' | 'number' | 'image' | 'file';
+export interface QualityField { id: string; text: string; type?: QualityFieldType; required?: boolean; options?: string[]; help?: string; allowNa?: boolean; descriptors?: Partial<Record<Exclude<Rating, ''>, string>> }
+export interface QualityFormCard { reviewType: string; title: string; group: string; published: boolean; revision: number; legacy: boolean }
+export interface QualityEvidenceFile { id: string; section: string; filename: string; size: number; contentType: string; hasPreview: boolean }
 export type QualityAnswer = string | number | boolean | null | string[];
 export interface QualityTemplate {
   id: string; title: string; version?: number; actionsTitle?: string; reviewType?: QualityReviewType; ratings: Record<Exclude<Rating, ''>, string>;
@@ -19,6 +21,7 @@ export interface QualityForm {
   actions: { action: string; outcome: string; supportedBy: string; dueDate: string }[];
   images: Record<string, string[]>; sources: string[];
   answers?: Record<string, QualityAnswer>;
+  attachments?: Record<string, string[]>;
 }
 export interface QualityReview {
   id: string; version: number; templateId: string; identity: string; reviewType?: QualityReviewType | ''; status: 'draft' | 'completed'; form: QualityForm;
@@ -26,6 +29,7 @@ export interface QualityReview {
   meeting: { eventId: string; onlineMeetingId?: string; startsAt: string; endsAt: string; title: string };
   reviewer: { id: string; name: string; email: string }; updatedAt: string; updatedBy: string;
   definition?: QualityTemplate;
+  evidenceFiles?: QualityEvidenceFile[];
   document?: { state: 'ready' | 'failed'; version: number; message?: string } | null;
 }
 export interface QualityContext {
@@ -36,10 +40,10 @@ export interface QualityContext {
 export interface QualitySummary {
   id: string; coachEmail: string; coachName: string; learnerId: string; learnerName: string;
   startsAt: string; status: 'draft' | 'completed'; version: number; updatedAt: string; title: string; actionCount: number;
-  pdfVersion?: number | null; reviewType?: QualityReviewType | '';
+  pdfVersion?: number | null; reviewType?: QualityReviewType | ''; formTitle?: string | null;
 }
 export interface ReviewList { reviews: QualitySummary[]; coaches: { email: string; name: string }[]; nextOffset: number | null }
-export interface MeetingQualityCheck { id: string; learnerId: string; learnerName: string; reviewType?: QualityReviewType | ''; status: string; version: number; pdfVersion: number | null; updatedAt: string }
+export interface MeetingQualityCheck { id: string; learnerId: string; learnerName: string; reviewType?: QualityReviewType | ''; formTitle?: string | null; status: string; version: number; pdfVersion: number | null; updatedAt: string }
 const base = '/coach_api/coaching-recordings/quality';
 export class QualityReviewError extends Error {
   status: number;
@@ -63,6 +67,18 @@ export function invalidateQualityReviews() { reads.invalidate(); }
 async function read<T>(url: string, signal?: AbortSignal): Promise<T> {
   return await withCallerSignal(reads.read(url), signal) as T;
 }
+export function qualityForms(signal?: AbortSignal, editing = false) {
+  return read<{ forms: QualityFormCard[] }>(`${base}/forms${editing ? '?editing=1' : ''}`, signal);
+}
+export async function createQualityForm(title: string, requestId: string) {
+  const result = await request<{ template: QualityTemplateState }>(`${base}/forms`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, requestId }) });
+  reads.invalidate(); return result.template;
+}
+export function uploadQualityEvidence(reviewId: string, section: string, file: File) {
+  const data = new FormData(); data.set('section', section); data.set('file', file);
+  return request<QualityEvidenceFile>(`${base}/reviews/${encodeURIComponent(reviewId)}/files`, { method: 'POST', body: data });
+}
+export const qualityEvidenceFileUrl = (reviewId: string, id: string, preview = false) => `${base}/reviews/${encodeURIComponent(reviewId)}/files/${encodeURIComponent(id)}${preview ? '?preview=1' : ''}`;
 export function qualityDefinition(signal?: AbortSignal, reviewType?: QualityReviewType) {
   return read<{ template: QualityTemplateState; fieldTypes: QualityFieldType[] }>(`${base}/form${reviewType ? `?reviewType=${reviewType}` : ''}`, signal);
 }

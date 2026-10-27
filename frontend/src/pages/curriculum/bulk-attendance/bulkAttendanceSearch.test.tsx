@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   addLiveDay: vi.fn(),
   liveDayRecords: vi.fn(),
+  liveMonthRecords: vi.fn(),
+  kbcMonthRecords: vi.fn(),
 }));
 
 vi.mock('@/lib/curriculumApi', () => ({
@@ -32,6 +34,8 @@ vi.mock('@/api/bulkAttendanceLearners', () => ({
   saveBulkAttendanceChanges: mocks.save,
   createBulkAttendanceLiveDay: mocks.addLiveDay,
   fetchBulkAttendanceLiveDayRecords: mocks.liveDayRecords,
+  fetchBulkAttendanceLiveMonthRecords: mocks.liveMonthRecords,
+  fetchBulkAttendanceKbcMonthRecords: mocks.kbcMonthRecords,
   BulkAttendanceSaveError: class extends Error {
     saved: string[];
     constructor(message: string, saved: string[] = []) {
@@ -54,7 +58,7 @@ const overview = {
 
 const directory: BulkAttendanceDirectoryLearner[] = [
   { id: '301', name: 'Alex Example', email: 'alex@example.invalid', programme: 'Engineering', group: '', endDate: '2099-01-01', status: 'Active' },
-  { id: '302', name: 'Morgan Sample', email: 'morgan@example.invalid', programme: '', group: '', endDate: '2099-01-01', status: 'Onboarding' },
+  { id: '302', name: 'Morgan Sample', email: 'morgan@example.invalid', programme: '', group: '', endDate: '2099-01-01', status: 'Onboarding', attendanceMode: 'lazy' },
   // Past its end date but still Active: end dates no longer archive anyone.
   { id: '303', name: 'Riley Past', email: 'riley@example.invalid', programme: '', group: '', endDate: '2020-01-01', status: 'Delivery' },
   { id: '304', name: 'Casey Done', email: 'casey@example.invalid', programme: '', group: '', endDate: '2099-01-01', status: 'Completed' },
@@ -77,6 +81,8 @@ beforeEach(() => {
   mocks.save.mockResolvedValue(['live:7']);
   mocks.addLiveDay.mockResolvedValue({ created: 1, updated: 0 });
   mocks.liveDayRecords.mockResolvedValue([]);
+  mocks.liveMonthRecords.mockResolvedValue({ occurrences: [], records: [] });
+  mocks.kbcMonthRecords.mockResolvedValue([]);
 });
 
 it('filters by saved day membership outside Last 4 while keeping complete history', async () => {
@@ -99,7 +105,7 @@ it('filters by saved day membership outside Last 4 while keeping complete histor
   fireEvent.click(screen.getByRole('button', { name: 'View details for Alex Example' }));
   expect(await screen.findByText('Historical lecture')).toBeVisible();
   expect(screen.getByText('Recent lecture')).toBeVisible();
-  expect(mocks.kbcHistory).toHaveBeenCalledWith('301', expect.any(AbortSignal), { source: 'all' });
+  expect(mocks.kbcHistory).toHaveBeenCalledWith('301', expect.any(AbortSignal), { source: 'all', email: 'alex@example.invalid' });
 });
 
 it('ignores an old date response and keeps empty days empty with a usable add-day action', async () => {
@@ -167,8 +173,11 @@ it('archives only Completed, EnteredEpa and Withdrawn learners and shows every s
   expect(screen.getByText('Onboarding')).toBeVisible();
   const header = screen.getByText('Last 4 lectures').parentElement as HTMLElement;
   expect(within(header).getByText('Status')).toBeInTheDocument();
+  expect(within(header).getByText('Attendance mode')).toBeInTheDocument();
   expect(within(header).queryByText('Attendance')).not.toBeInTheDocument();
   expect(within(header).queryByText('Lecture')).not.toBeInTheDocument();
+  expect(screen.getByText('Recorded')).toBeVisible();
+  expect(screen.getAllByText('Live Sessions').length).toBeGreaterThan(0);
   expect(screen.queryByText('Select session')).not.toBeInTheDocument();
   const actionsButton = screen.getByRole('button', { name: 'Actions' });
   expect(actionsButton).toBeVisible();
@@ -183,6 +192,17 @@ it('archives only Completed, EnteredEpa and Withdrawn learners and shows every s
   }
   expect(screen.queryByRole('button', { name: /Restore/ })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /Archive learners/ })).not.toBeInTheDocument();
+});
+
+it('filters the register by attendance mode', async () => {
+  render(<AttendancePage />);
+  await screen.findByRole('button', { name: 'Alex Example' });
+
+  fireEvent.click(screen.getByRole('button', { name: /Attendance mode.*All modes/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Recorded' }));
+
+  expect(screen.getByRole('button', { name: 'Morgan Sample' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Alex Example' })).not.toBeInTheDocument();
 });
 
 it('filters the register by group using that group\'s roster', async () => {
@@ -219,6 +239,27 @@ it('filters the register by group using that group\'s roster', async () => {
   fireEvent.click(screen.getByRole('button', { name: /^Group\s*All Groups$/ }));
   expect(screen.getByRole('button', { name: 'Group A' })).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Group B' })).not.toBeInTheDocument();
+});
+
+it('matches a roster learner whose LMS email differs from the KBC directory email', async () => {
+  mocks.overview.mockResolvedValue({ ...overview, groups: [{ id: 'G1', name: 'Group A', cohortId: 'C1' }] });
+  mocks.directory.mockResolvedValue({ learners: [
+    ...directory.filter((learner) => learner.id !== '302'),
+    { ...directory[1], email: 'morgan.personal@example.invalid', lmsEmail: 'morgan@example.invalid' },
+  ], warnings: [] });
+  mocks.roster.mockImplementation(async (scope: string, identifier: string) => (
+    scope === 'group' && identifier === 'G1'
+      ? { assignedLearners: [{ id: 9, email: 'morgan@example.invalid', cohort: 'Autumn', group: 'Group A', cohortId: 'C1', groupId: 'G1' }] }
+      : { assignedLearners: [] }
+  ));
+
+  render(<AttendancePage />);
+  await screen.findByRole('button', { name: 'Alex Example' });
+  fireEvent.click(screen.getByRole('button', { name: /^Group\s*All Groups$/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Group A' }));
+
+  expect(await screen.findByRole('button', { name: 'Morgan Sample' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Alex Example' })).not.toBeInTheDocument();
 });
 
 it('starts without a date filter and shows the full active roster', async () => {
@@ -435,14 +476,22 @@ it('adds attendance through the live-session register only after a lecture is se
   }));
 });
 
-it('persists weekly register changes to the live-session attendance register', async () => {
+it('shows each session in a month and saves the selected occurrence', async () => {
   mocks.overview.mockResolvedValue({
     ...overview,
     modules: [{ id: 'M1', moduleCatalogueId: 'MC1', name: 'Module A', programmeId: 'P1', cohortId: 'C1' }],
   });
   mocks.sessions.mockResolvedValue([
-    { id: 'S1', title: 'Lecture A', moduleId: 'M1', moduleCatalogueId: 'MC1', date: '2026-10-17' },
+    { id: 'S1', title: 'Lecture A', moduleId: 'M1', moduleCatalogueId: 'MC1', date: '2026-10-17', week: 1 },
+    { id: 'S2', title: 'Lecture B', moduleId: 'M1', moduleCatalogueId: 'MC1', date: '2026-10-17', week: 2 },
   ]);
+  mocks.liveMonthRecords.mockResolvedValue({
+    occurrences: [
+      { id: 'occ-1', date: '2026-10-17', sessionNumber: 1, moduleCatalogueId: 'MC1', moduleTitle: 'Module A' },
+      { id: 'occ-2', date: '2026-10-17', sessionNumber: 2, moduleCatalogueId: 'MC1', moduleTitle: 'Module A' },
+    ],
+    records: [{ recordKey: 'live:1', occurrenceId: 'occ-1', moduleCatalogueId: 'MC1', learnerId: '301', attendance: 'present' }],
+  });
   mocks.roster.mockImplementation(async (scope: string, identifier: string) => (
     scope === 'module' && identifier === 'MC1'
       ? { assignedLearners: [{ id: 8, email: 'alex@example.invalid', cohort: 'Autumn', cohortId: 'C1' }] }
@@ -451,6 +500,10 @@ it('persists weekly register changes to the live-session attendance register', a
 
   const { container } = render(<AttendancePage />);
   await screen.findByRole('button', { name: 'Alex Example' });
+  fireEvent.click(screen.getByRole('button', { name: 'Monthly' }));
+  expect(screen.getByText('Choose a Module or Group to view monthly attendance.')).toBeVisible();
+  expect(mocks.liveMonthRecords).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Daily' }));
   fireEvent.change(container.querySelector('input[type="date"]')!, { target: { value: '2026-10-17' } });
   fireEvent.click(screen.getByRole('button', { name: /^Module\s*All Modules$/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Module A' }));
@@ -458,16 +511,52 @@ it('persists weekly register changes to the live-session attendance register', a
     'module', 'MC1', { learnerStatus: 'all' }, expect.any(AbortSignal), { timeoutMs: 60000, compact: true },
   ));
 
-  fireEvent.click(screen.getByRole('button', { name: 'Weekly' }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Alex Example 2026-10-17 unmarked' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Monthly' }));
+  expect(await screen.findByRole('button', { name: 'Alex Example 2026-10-17 Lecture 1 · Lecture A present' })).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Alex Example 2026-10-17 Lecture 2 · Lecture B unmarked' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Daily' }));
+  expect(screen.getByRole('region', { name: 'Unsaved monthly attendance' })).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Monthly' }));
   await act(async () => {
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    fireEvent.click(within(screen.getByRole('region', { name: 'Unsaved monthly attendance' }))
+      .getByRole('button', { name: 'Save changes' }));
   });
 
   await waitFor(() => expect(mocks.addLiveDay).toHaveBeenCalledWith({
-    learnerIds: ['301'], moduleCatalogueId: 'MC1', date: '2026-10-17', attendance: 'present',
+    learnerIds: ['301'], moduleCatalogueId: 'MC1', date: '2026-10-17',
+    occurrenceId: 'occ-2', attendance: 'present',
   }));
-  expect(screen.queryByRole('button', { name: 'Save changes' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: 'Unsaved monthly attendance' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Alex Example 2026-10-17 Lecture 2 · Lecture B present' })).toBeVisible();
+  mocks.liveMonthRecords.mockResolvedValue({ occurrences: [], records: [] });
+  fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
+  await waitFor(() => expect(mocks.liveMonthRecords).toHaveBeenCalledWith(
+    '2026-11', 'MC1', expect.any(AbortSignal), '', ['MC1'],
+  ));
+  expect(await screen.findByText('No attendance or live sessions are recorded for this selection in November 2026.')).toBeVisible();
+});
+
+it('loads the monthly register for a group when it has no module selected', async () => {
+  mocks.overview.mockResolvedValue({
+    ...overview,
+    groups: [{ id: 'G1', name: 'Group A', cohortId: 'C1', programmeId: 'P1' }],
+  });
+  mocks.roster.mockImplementation(async (scope: string, identifier: string) => (
+    scope === 'group' && identifier === 'G1'
+      ? { assignedLearners: [{ id: 8, email: 'alex@example.invalid', cohort: 'Autumn', group: 'Group A', cohortId: 'C1', groupId: 'G1' }] }
+      : { assignedLearners: [] }
+  ));
+
+  render(<AttendancePage />);
+  await screen.findByRole('button', { name: 'Alex Example' });
+  fireEvent.click(screen.getByRole('button', { name: 'Monthly' }));
+  fireEvent.click(screen.getByRole('button', { name: /^Group\s*All Groups$/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Group A' }));
+
+  await waitFor(() => expect(mocks.liveMonthRecords).toHaveBeenCalledWith(
+    expect.any(String), '', expect.any(AbortSignal), 'G1', [],
+  ));
+  expect(await screen.findByText(/No attendance or live sessions are recorded for this selection/)).toBeVisible();
 });
 
 it('loads each filter roster once and reuses it when the filter is chosen again', async () => {
@@ -567,7 +656,7 @@ it('opens View details when a learner is chosen in the learner directory', async
     fireEvent.click(entry);
   });
   expect(await screen.findByRole('dialog', { name: 'Morgan Sample' })).toBeVisible();
-  await waitFor(() => expect(mocks.kbcHistory).toHaveBeenCalledWith('302', expect.any(AbortSignal), { source: 'all' }));
+  await waitFor(() => expect(mocks.kbcHistory).toHaveBeenCalledWith('302', expect.any(AbortSignal), { source: 'all', email: 'morgan@example.invalid' }));
 });
 
 it("shows the same four saved KBC and live records as history despite a different curriculum schedule", async () => {
@@ -850,7 +939,7 @@ it('loads every KBC attendance record only after View details is pressed', async
   });
 
   expect(await screen.findByRole('dialog', { name: 'Alex Example' })).toBeVisible();
-  await waitFor(() => expect(mocks.kbcHistory).toHaveBeenCalledWith('301', expect.any(AbortSignal), { source: 'all' }));
+  await waitFor(() => expect(mocks.kbcHistory).toHaveBeenCalledWith('301', expect.any(AbortSignal), { source: 'all', email: 'alex@example.invalid' }));
   const dialog = screen.getByRole('dialog', { name: 'Alex Example' });
   expect(await within(dialog).findByText('Lecture 1: Kickoff')).toBeVisible();
   expect(within(dialog).getByText('Lecture 2: Checkpoint')).toBeVisible();

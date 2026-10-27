@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from django.conf import settings
 from django.http import JsonResponse
 from .assignment_attempts import preserve_attempts, submission_attempts
+from .extra_activity_month import valid_activity_month
 if not settings.configured:
     settings.configure(DEFAULT_CHARSET='utf-8')
 ROOT = Path(__file__).parent
@@ -37,6 +38,7 @@ class ExtraActivityTests(unittest.TestCase):
         self.now = datetime(2026, 9, 30, 23, 30, tzinfo=utc.utc)
         self.scope = dict(__package__='learner_api', json=json, math=math, calendar=calendar, urlparse=urlparse, uuid=uuid, UUID=uuid.UUID,
             date=date, timedelta=timedelta, ZoneInfo=ZoneInfo, timezone=SimpleNamespace(now=lambda: self.now),
+            valid_activity_month=valid_activity_month,
             JsonResponse=JsonResponse, connections={'enrolment': self.connection}, DatabaseError=RuntimeError,
             booking_date_restriction=lambda day, **_: day.weekday() >= 5,
             available_ksb_codes=lambda _: {'K1'}, approved_evidence_ids=lambda _: {'file-1'},
@@ -47,12 +49,13 @@ class ExtraActivityTests(unittest.TestCase):
         self.payload = {'learnerKind': 'commercial', 'learnerId': '101', 'activityType': 'extra_activity',
             'activityId': 'extra:00000000-0000-4000-8000-000000000001', 'activityTitle': 'Workshop',
             'assignmentAnswer': ' '.join(['learning'] * 120), 'whatYouLearned': sentence, 'actualTimeHours': '2',
-            'monthlyAssignment': {'month': '2000-01', 'understood': sentence, 'gainedSkills': sentence,
+            'monthlyAssignment': {'month': '2026-10', 'understood': sentence, 'gainedSkills': sentence,
                 'claims': [{'code': 'K1', 'explanation': sentence, 'evidenceIds': []}],
                 'timeEntries': [{'topic': 'Workshop', 'hours': '2', 'date': '2026-10-01'}],
                 'plannedReviewed': True, 'newKnowledge': True, 'newSkills': True, 'sharingConsent': True}}
 
-    def test_month_is_actual_uk_submission_month_and_only_eight_checks_apply(self):
+    def test_missing_month_defaults_to_current_uk_month_and_only_eight_checks_apply(self):
+        del self.payload['monthlyAssignment']['month']
         checks = self.scope['extra_activity_checks'](self.payload)
         self.assertEqual(len(checks), 8)
         self.assertTrue(all(c['passed'] for c in checks))
@@ -60,7 +63,30 @@ class ExtraActivityTests(unittest.TestCase):
         prepared = self.scope['prepare_extra_activity'](self.payload)
         self.assertEqual(prepared['monthlyAssignment']['month'], '2026-10')
         self.assertEqual(prepared['dateCompleted'], '2026-10-01')
-        self.assertEqual(self.payload['monthlyAssignment']['month'], '2000-01')
+        self.assertNotIn('month', self.payload['monthlyAssignment'])
+
+    def test_selected_past_and_future_months_are_preserved_for_both_learner_types(self):
+        for kind in ('commercial', 'apprenticeship'):
+            for month, day in [('2026-09', '2026-09-29'), ('2026-11', '2026-11-02'), ('2025-12', '2025-12-01')]:
+                with self.subTest(kind=kind, month=month):
+                    self.payload['learnerKind'] = kind
+                    self.payload['monthlyAssignment']['month'] = month
+                    self.payload['monthlyAssignment']['timeEntries'][0]['date'] = day
+                    prepared = self.scope['prepare_extra_activity'](self.payload)
+                    self.assertEqual(prepared['monthlyAssignment']['month'], month)
+                    self.assertEqual(prepared['dateCompleted'], '2026-10-01')
+                    self.assertTrue(all(check['passed'] for check in self.scope['extra_activity_checks'](self.payload)))
+
+    def test_invalid_month_is_rejected_instead_of_silently_changing_the_claim(self):
+        for month in ('', None, '2026-13', '2026-1', '0000-01', '2026-09-29', 202609):
+            with self.subTest(month=month), self.assertRaisesRegex(ValueError, 'activity month'):
+                self.scope['prepare_extra_activity']({**self.payload, 'monthlyAssignment': {'month': month}})
+
+    def test_dates_must_still_belong_to_selected_month(self):
+        self.payload['monthlyAssignment']['month'] = '2026-09'
+        checks = {check['key']: check['passed'] for check in self.scope['extra_activity_checks'](self.payload)}
+        self.assertFalse(checks['hours'])
+        self.assertEqual(self.payload['monthlyAssignment']['timeEntries'][0]['hours'], '2')
 
     def test_invalid_identity_and_unowned_claims_cannot_pass(self):
         with self.assertRaises(ValueError):
@@ -75,7 +101,7 @@ class ExtraActivityTests(unittest.TestCase):
         self.cur.fetchall.return_value = [
             ('extra:1', 'Workshop', 'submitted_for_tutor_review', self.now, data, None, None, None),
             ('extra:2', 'Draft', 'draft', self.now, data, None, None, None),
-            ('extra:3', 'September', 'accepted', self.now - timedelta(days=1), data, 'Accepted', 'Coach', self.now),
+            ('extra:3', 'September', 'accepted', self.now, {**self.payload, 'monthlyAssignment': {'month': '2026-09'}}, 'Accepted', 'Coach', self.now),
         ]
         for kind in ('commercial', 'apprenticeship'):
             response = self.scope['list_extra_activities'](SimpleNamespace(GET={'learnerKind': kind, 'learnerId': '101', 'month': '2026-10'}))
@@ -84,13 +110,33 @@ class ExtraActivityTests(unittest.TestCase):
             self.assertEqual(activities[0]['status'], 'submitted_for_tutor_review')
             self.assertEqual(self.cur.execute.call_args.args[1], [kind, '101'])
 
+    def test_selected_month_filters_history_without_changing_submission_timestamp(self):
+        self.payload['monthlyAssignment']['month'] = '2026-09'
+        self.cur.fetchall.return_value = [
+            ('extra:1', 'September work', 'accepted', self.now, self.payload, None, None, None),
+            ('extra:2', 'Legacy October', 'accepted', self.now, {}, None, None, None),
+        ]
+        request = SimpleNamespace(GET={'learnerKind': 'apprenticeship', 'learnerId': '101', 'month': '2026-09'})
+        activities = json.loads(self.scope['list_extra_activities'](request).content)['activities']
+        self.assertEqual(len(activities), 1)
+        self.assertEqual(activities[0]['month'], '2026-09')
+        self.assertEqual(activities[0]['submittedAt'], self.now.isoformat())
+        request.GET['month'] = '2026-10'
+        legacy = json.loads(self.scope['list_extra_activities'](request).content)['activities']
+        self.assertEqual([row['title'] for row in legacy], ['Legacy October'])
+
     def test_submit_checks_and_preserves_rejected_history_and_blocks_pending_overwrite(self):
         extra = ModuleType('learner_api.extra_activities'); extra.__dict__.update(self.scope)
         monthly = ModuleType('learner_api.monthly_assignment'); monthly.assignment_checks = self.scope['assignment_checks']
+        access = ModuleType('learner_api.programme_access'); access.submission_refusal = lambda _: None
         self.scope.update(VALID_KINDS={'commercial', 'apprenticeship'}, transaction=SimpleNamespace(atomic=lambda **_: nullcontext()),
-            _reflection_lineage=lambda *_: {}, preserve_attempts=preserve_attempts, submission_attempts=submission_attempts)
-        load('reflection_submissions.py', {'_submit_reflection', '_error', '_text', '_dict', '_list'}, self.scope)
-        with patch.dict('sys.modules', {'learner_api.extra_activities': extra, 'learner_api.monthly_assignment': monthly}):
+            _reflection_lineage=lambda *_: {}, preserve_attempts=preserve_attempts, submission_attempts=submission_attempts,
+            SUBMISSION_AUDIT_SQL='id', record_submission_row=MagicMock())
+        load('reflection_submissions.py', {'_submit_reflection', '_error', '_text', '_dict', '_list', '_activity_title'}, self.scope)
+        with patch.dict('sys.modules', {'learner_api.extra_activities': extra, 'learner_api.monthly_assignment': monthly,
+                                      'learner_api.programme_access': access}):
+            self.payload['monthlyAssignment']['month'] = '2026-09'
+            self.payload['monthlyAssignment']['timeEntries'][0]['date'] = '2026-09-29'
             self.cur.fetchone.side_effect = [('rejected', self.payload, 'Add evidence', 'Coach', None, None), ('saved-1',)]
             request = SimpleNamespace(method='POST', body=json.dumps({**self.payload, 'submissionMode': 'submit'}).encode())
             response = self.scope['_submit_reflection'](request)
@@ -98,6 +144,8 @@ class ExtraActivityTests(unittest.TestCase):
             attempts = json.loads(response.content)['submissionAttempts']
             self.assertEqual([a['status'] for a in attempts], ['rejected', 'submitted_for_tutor_review'])
             self.assertEqual(attempts[0]['coachFeedback'], 'Add evidence')
+            saved_payload = json.loads(self.cur.execute.call_args.args[1][30])
+            self.assertEqual(saved_payload['monthlyAssignment']['month'], '2026-09')
             self.cur.fetchone.side_effect = [('submitted_for_tutor_review', self.payload, None, None, None, None)]
             response = self.scope['_submit_reflection'](request)
             self.assertEqual(response.status_code, 409)

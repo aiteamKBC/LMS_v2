@@ -4,10 +4,13 @@ import { reviewCategory } from '@/lib/reviewCategory';
 
 export type Loadable<T> = { status: 'loading' | 'ready' | 'error'; data?: T; error?: string };
 export type DashboardReviews = Record<string, Loadable<LearnerCalendarEvent[]>>;
+export type DashboardReviewSummaries = Record<string, Loadable<LearnerCalendarEvent[]>>;
 export type DashboardAttendance = Record<string, Loadable<EmployerLearnerAttendance | null>>;
 export const learnerKey = (learner: EmployerLearnerCard) => `${learner.kind}:${learner.id}`;
 export const learnerHref = (employerId: string, learner: EmployerLearnerCard, tab?: string) =>
   `/employers/${employerId}/learner/${learner.kind}/${learner.id}${tab ? `?tab=${tab}` : ''}`;
+export const learnerReviewHref = (employerId: string, learner: EmployerLearnerCard, eventKey: string) =>
+  `${learnerHref(employerId, learner, 'reviews')}&reviewId=${encodeURIComponent(eventKey)}`;
 export const londonToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
 
 export function greeting(now = new Date()) {

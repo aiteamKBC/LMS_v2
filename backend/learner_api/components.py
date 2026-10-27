@@ -437,7 +437,9 @@ def submit_component_progress(request, component_id):
     try:
         if monthly_submission:
             from .monthly_assignment import complete_saved_assignment
-            complete_saved_assignment(kind, learner_id, component_id, record, lambda: save_progress_record(active, record, activity), assignment_topic=assignment_topic)
+            complete_saved_assignment(kind, learner_id, component_id, record,
+                lambda: save_progress_record(active, record, {**activity, "detail": record["reportedTime"]}),
+                assignment_topic=assignment_topic)
         else:
             save_progress_record(active, record, activity)
     except ComponentReferenceError as exc:
@@ -478,7 +480,7 @@ def submit_component_progress(request, component_id):
                 "plannedOtjh": payload.get("plannedOtjh", reported_time),
                 # The marking schema stores decimal hours. ``timeTaken`` above
                 # remains the learner-facing MM:SS clock value.
-                "actualTimeHours": tracking["claimedSeconds"] / 3600,
+                "actualTimeHours": record["claimedSeconds"] / 3600,
                 "progressEntryId": None,
             },
         )

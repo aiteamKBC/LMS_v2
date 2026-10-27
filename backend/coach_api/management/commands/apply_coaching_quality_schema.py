@@ -11,7 +11,7 @@ class Command(BaseCommand):
         parser.add_argument('--expected-project',required=True)
         parser.add_argument('--expected-branch',required=True)
         parser.add_argument('--apply',action='store_true')
-        parser.add_argument('--schema-version',type=int,choices=(1,2),default=2)
+        parser.add_argument('--schema-version',type=int,choices=(1,2,3),default=3)
 
     def handle(self,*args,**options):
         try:

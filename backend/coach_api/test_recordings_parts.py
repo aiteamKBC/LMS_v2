@@ -6,6 +6,23 @@ from .recordings_parts import occurrence_parts,evidence_metadata,merge_transcrip
 
 
 class RecordingPartsTests(SimpleTestCase):
+    def test_every_verified_continuation_is_retained_across_a_chain_in_any_provider_order(self):
+        window=('2026-10-19T09:00:00Z','2026-10-19T10:00:00Z')
+        first={'id':'first','createdDateTime':window[0],'endDateTime':'2026-10-19T09:05:00Z','callId':'physical-one','contentCorrelationId':'one'}
+        second={'id':'second','createdDateTime':'2026-10-19T10:00:00Z','endDateTime':'2026-10-19T10:05:00Z','callId':'physical-one','contentCorrelationId':'two'}
+        third={'id':'third','createdDateTime':'2026-10-19T10:06:00Z','endDateTime':'2026-10-19T10:10:00Z','callId':'physical-two','contentCorrelationId':'two'}
+        foreign={**third,'id':'different-occurrence','callId':'different-call','contentCorrelationId':'different-correlation','onlineMeetingId':'reused-link'}
+        for rows in ([third,foreign,second,first],[first,second,third,foreign],[second,third,first,first]):
+            self.assertEqual([row['id'] for row in occurrence_parts(rows,window)],['first','second','third'])
+        self.assertEqual(occurrence_parts([second,third,foreign],window),[])
+        self.assertEqual([row['id'] for row in occurrence_parts([third,second],window,anchors=[first])],['second','third'])
+
+    def test_invalid_artifact_cannot_anchor_a_different_occurrence_by_its_call_id(self):
+        window=('2026-10-19T09:00:00Z','2026-10-19T10:00:00Z')
+        anchor={'createdDateTime':window[0],'endDateTime':window[1],'callId':'call'}
+        future={'id':'future','createdDateTime':window[1],'endDateTime':'2026-10-19T10:10:00Z','callId':'call'}
+        self.assertEqual(occurrence_parts([anchor,future],window),[])
+
     def test_reconnections_and_parts_are_ordered_deduplicated_and_call_scoped(self):
         start=datetime(2026,10,23,12,tzinfo=timezone.utc);end=start+timedelta(hours=1)
         def row(identity,begin,last,call):

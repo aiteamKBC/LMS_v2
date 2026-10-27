@@ -4,6 +4,7 @@ import json
 import uuid
 import unittest
 from contextlib import nullcontext
+from collections import defaultdict
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +18,43 @@ if not settings.configured:
 
 
 class AttemptHistoryTests(unittest.TestCase):
+    def test_each_attempt_reports_its_own_saved_hours_without_changing_history(self):
+        old = {'assignmentAnswer': 'Original answer', 'actualTimeHours': '0.5', 'plannedOtjh': '2'}
+        new = {'assignmentAnswer': 'Revised answer', 'actualTimeHours': '1.25', 'plannedOtjh': '2'}
+        preserve_attempts(new, old, 'rejected')
+        before = json.dumps(new, sort_keys=True)
+        rows = submission_attempts(new, 'accepted')
+        self.assertEqual([row['actualTimeHours'] for row in rows], ['0.5', '1.25'])
+        self.assertEqual(json.dumps(new, sort_keys=True), before)
+        new['actualTimeHours'] = '4'
+        self.assertEqual([row['actualTimeHours'] for row in submission_attempts(new, 'draft')], ['0.5'])
+
+    def test_missing_hours_do_not_fall_back_to_planned_hours(self):
+        row = submission_attempts({'plannedOtjh': '8'}, 'accepted')[0]
+        self.assertIsNone(row['actualTimeHours'])
+        for value in ('0', 0, '10:32', '01:30:00', None):
+            with self.subTest(value=value):
+                row = submission_attempts({'actualTimeHours': value}, 'accepted')[0]
+                self.assertEqual(row['actualTimeHours'], value)
+
+    def test_coach_marking_response_keeps_actual_hours_for_each_attempt(self):
+        source = Path(__file__).parents[1] / 'coach_api' / 'views.py'
+        node = next(n for n in ast.parse(source.read_text(encoding='utf-8')).body
+                    if isinstance(n, ast.FunctionDef) and n.name == 'serialize_marking_submission')
+        scope = {'parse_json_value': lambda value, default: value or default, 'MARKING_OVERDUE_DAYS': 7}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), 'exec'), scope)
+        stored = {'actualTimeHours': '1', 'assignmentAnswer': 'Revised work'}
+        preserve_attempts(stored, {'actualTimeHours': '0.5', 'assignmentAnswer': 'Original work'}, 'rejected')
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind):
+                row = defaultdict(lambda: None, learner_id='101', learner_kind=kind,
+                                  learner_name='Example Learner', activity_type='assignment',
+                                  status='accepted', full_submission=stored, actual_time_hours='1', planned_otjh='2')
+                result = scope['serialize_marking_submission'](row, now=date(2026, 10, 1))
+                self.assertEqual([attempt['actualTimeHours'] for attempt in result['submissionAttempts']], ['0.5', '1'])
+                self.assertEqual(result['actualTimeHours'], '1')
+                self.assertEqual(result['plannedOtjh'], '2')
+
     def test_status_list_counts_submitted_attempts_but_not_draft_saves(self):
         source = Path(__file__).with_name('reflection_submissions.py')
         tree = ast.parse(source.read_text(encoding='utf-8'))

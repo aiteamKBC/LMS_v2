@@ -508,7 +508,7 @@ class FlashCardView(models.Model):
 class FeedbackForm(models.Model):
     STATUS_CHOICES = [('draft', 'Draft'), ('published', 'Published'), ('closed', 'Closed')]
     TYPE_CHOICES = [
-        ('general', 'General'), ('post_lecture', 'Post-lecture'),
+        ('general', 'General'), ('post_lecture', 'Live Sessions Feedback'),
         ('post_event', 'Post-event'), ('event_rsvp', 'Event RSVP'),
         ('post_mcm_review', 'MCM Feedback'),
         ('post_progress_review', 'Progress Review Feedback'),

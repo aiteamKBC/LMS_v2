@@ -26,7 +26,7 @@ describe('QuestionBankImport', () => {
     render(<QuestionBankImport locked={false} onApply={onApply} />);
     const template = screen.getByRole('link', { name: 'Download Excel template' });
     expect(template).toHaveAttribute('href', '/templates/post-lecture-question-bank.xlsx');
-    expect(template).toHaveAttribute('download');
+    expect(template).toHaveAttribute('download', 'live-sessions-feedback-question-bank.xlsx');
     await user.upload(screen.getByLabelText('Question bank file'), csvFile([
       'Category,Question,Answer type,Option 1,Option 2',
       'Teaching,How clear was the explanation?,5 Stars,,',
@@ -36,6 +36,7 @@ describe('QuestionBankImport', () => {
       'General,What could we improve?,Written answer,,',
     ].join('\r\n')));
     expect(await screen.findByText(/5 questions across 3 categories/)).toBeVisible();
+    expect(screen.getByText(/2 questions need scoring setup before publishing/)).toBeVisible();
     expect(screen.queryByText('single_choice')).not.toBeInTheDocument();
     expect(screen.getByText('Choose one')).toBeVisible();
     await user.selectOptions(screen.getByRole('combobox', { name: 'Questions per lecture: Teaching' }), '2');
