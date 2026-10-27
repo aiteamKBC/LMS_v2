@@ -5,12 +5,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone as datetime_timezone
 from secrets import SystemRandom
 
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
 from learner_api.models import EnrolmentUser
 
 from .models import FeedbackDelivery, FeedbackDeliveryQuestion, FeedbackDeliveryRecipient, FeedbackForm, FeedbackResponse
+from .feedback_delivery_guard import audit, is_creation_guard_rejection, rejected_form_id, tag_transaction
 
 
 _random = SystemRandom()
@@ -60,15 +61,20 @@ def _form_for_occurrence(occurrence_key, module_id, starts_at):
         occurrence_key=occurrence_key,
     ).first()
     if existing:
-        return existing.form if lecture_after_form_creation(existing.form, starts_at) else None
-    available = FeedbackForm.objects.filter(
-        form_type='post_lecture', status='published', is_current=True,
-    )
-    form = (
-        available.filter(delivery_scope='module', module_catalogue_id=module_id).order_by('-version', '-id').first()
-        or available.filter(delivery_scope='all_modules').order_by('-version', '-id').first()
-    )
-    return form if form and lecture_after_form_creation(form, starts_at) else None
+        form = existing.form
+    else:
+        available = FeedbackForm.objects.filter(
+            form_type='post_lecture', status='published', is_current=True,
+        )
+        form = (
+            available.filter(delivery_scope='module', module_catalogue_id=module_id).order_by('-version', '-id').first()
+            or available.filter(delivery_scope='all_modules').order_by('-version', '-id').first()
+        )
+    if form and not lecture_after_form_creation(form, starts_at):
+        audit('skipped', occurrence_key=occurrence_key, form=form, starts_at=starts_at,
+              reason='before_form_creation' if starts_at is not None else 'missing_lecture_start')
+        return None
+    return form
 
 
 def _pin_delivery_questions(delivery, form):
@@ -168,6 +174,8 @@ def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=Fa
     revoked_count = 0
     with transaction.atomic():
         for form in forms:
+            tag_transaction(connection)
+            audit('write_attempt', occurrence_key=occurrence_key, form=form, starts_at=occurrence.starts_at)
             delivery, created = FeedbackDelivery.objects.update_or_create(
                 occurrence_key=occurrence_key,
                 defaults={
@@ -210,6 +218,9 @@ def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=Fa
                     },
                 )
                 recipient_count += 1
+    if forms:
+        audit('created' if created else 'reconciled', occurrence_key=occurrence_key, form=form,
+              starts_at=occurrence.starts_at, delivery_id=delivery.id)
     return {
         'deliveryIds': deliveries,
         'formsMatched': len(forms),
@@ -305,38 +316,52 @@ def sync_post_lecture_feedback_from_attendance(*, live_session_ids=None, occurre
         ))
 
     results = []
+    rejected = 0
     for occurrence_id, bucket in grouped.items():
         row = bucket['row']
         title = str(row['module_title'] or '').strip()
         if row['session_number']:
             title = f'{title} - Session {row["session_number"]}'
-        results.append(sync_post_lecture_feedback(
-            LectureOccurrence(
-                key=occurrence_id,
-                module_catalogue_id=row['module_catalogue_id'],
-                programme_id=row['programme_id'],
-                programme_name=row['programme_name'],
-                cohort_id=row['cohort_id'],
-                cohort_name=row['cohort_name'],
-                group_id=row['group_id'],
-                group_name=row['group_name'],
-                module_name=row['module_title'],
-                title=title,
-                starts_at=_aware_utc(row['scheduled_start']),
-                ends_at=_aware_utc(row['session_end']),
-                attendance_source='curriculum.live_session_learner_attendance',
-                attendance_reference=str(row['attendance_report_id'] or '').strip(),
-            ),
-            bucket['attendees'],
-            attendance_finalized=True,
-        ))
+        try:
+            result = sync_post_lecture_feedback(
+                LectureOccurrence(
+                    key=occurrence_id,
+                    module_catalogue_id=row['module_catalogue_id'],
+                    programme_id=row['programme_id'],
+                    programme_name=row['programme_name'],
+                    cohort_id=row['cohort_id'],
+                    cohort_name=row['cohort_name'],
+                    group_id=row['group_id'],
+                    group_name=row['group_name'],
+                    module_name=row['module_title'],
+                    title=title,
+                    starts_at=_aware_utc(row['scheduled_start']),
+                    ends_at=_aware_utc(row['session_end']),
+                    attendance_source='curriculum.live_session_learner_attendance',
+                    attendance_reference=str(row['attendance_report_id'] or '').strip(),
+                ),
+                bucket['attendees'],
+                attendance_finalized=True,
+            )
+        except IntegrityError as error:
+            # sync_post_lecture_feedback's atomic block has already rolled back.
+            # Catch only our named check; unrelated integrity failures stay errors.
+            if not is_creation_guard_rejection(error):
+                raise
+            rejected += 1
+            audit('database_rejected', occurrence_key=occurrence_id,
+                  form_id=rejected_form_id(error), starts_at=_aware_utc(row['scheduled_start']),
+                  reason='lecture_creation_guard')
+            continue
+        results.append(result)
 
     return {
         'rowsScanned': len(rows),
-        'occurrencesProcessed': len(results),
+        'occurrencesProcessed': len(results) + rejected,
         'formsMatched': sum(item['formsMatched'] for item in results),
         'recipientsMatched': sum(item['recipientsMatched'] for item in results),
         'recipientsRevoked': sum(item['recipientsRevoked'] for item in results),
         'unmatchedPresentAttendees': unmatched,
         'deliveryIds': [delivery_id for item in results for delivery_id in item['deliveryIds']],
+        'creationGuardRejected': rejected,
     }
