@@ -97,7 +97,7 @@ def _pin_delivery_questions(delivery, form):
             questions = chosen
         selected.extend(sorted(questions, key=lambda question: (question.sort_order, question.id)))
     if not selected:
-        raise ValueError('Post-lecture feedback needs at least one question.')
+        raise ValueError('Live Sessions Feedback needs at least one question.')
     FeedbackDeliveryQuestion.objects.bulk_create([
         FeedbackDeliveryQuestion(delivery=delivery, question=question, sort_order=index)
         for index, question in enumerate(selected)

@@ -4,7 +4,7 @@ import type { FeedbackQuestion, FeedbackQuestionType, FeedbackSection } from '@/
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_ROWS = 1000;
 const REQUIRED_HEADERS = ['Category', 'Question', 'Type'] as const;
-const OPTIONAL_HEADERS = ['Options', 'Required', 'Help text', 'Questions per lecture', 'Scale max', 'Scale display', 'Scale labels', 'Min label', 'Max label'] as const;
+const OPTIONAL_HEADERS = ['Options', 'Required', 'Help text', 'Questions per lecture', 'Scale max', 'Scale display', 'Scale labels', 'Min label', 'Max label', 'Importance'] as const;
 const CHOICE_TYPES = new Set<FeedbackQuestionType>(['single_choice', 'multiple_choice', 'dropdown', 'likert']);
 export const QUESTION_BANK_TYPES: readonly FeedbackQuestionType[] = [
   'short_text', 'long_text', 'yes_no', 'single_choice', 'multiple_choice',
@@ -51,7 +51,7 @@ const templateRows = [
   ['General', 'What did you find most useful and what could we improve?', 'Written answer'],
 ];
 
-export const POST_LECTURE_BANK_TEMPLATE = templateRows.map(row => row.map(value =>
+export const POST_LECTURE_BANK_TEMPLATE = templateRows.map((row, index) => [...row, ...Array(9 - row.length).fill(''), index ? 'Medium' : 'Importance'].map(value =>
   /[",\r\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value,
 ).join(',')).join('\r\n');
 
@@ -163,6 +163,11 @@ export async function parsePostLectureQuestionBank(file: Pick<File, 'name' | 'si
       helpText: read('Help text'),
       config: questionConfig(type as FeedbackQuestionType, originalType, read, rowNumber, optionHeaders),
     };
+    const importance = read('Importance').toLowerCase();
+    if (importance) {
+      if (!['critical', 'high', 'medium', 'low'].includes(importance)) throw new Error(`Row ${rowNumber}: Importance must be Critical, High, Medium or Low.`);
+      question.config.analytics = { importance: importance as 'critical' | 'high' | 'medium' | 'low' };
+    }
     if (!category) {
       if (type !== 'long_text' || countValue) throw new Error(`Row ${rowNumber}: only a closing text question may have an empty category; leave its draw count empty.`);
       if (closing) throw new Error(`Row ${rowNumber}: include only one closing text question.`);

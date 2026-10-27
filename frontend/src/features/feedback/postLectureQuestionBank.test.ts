@@ -25,6 +25,25 @@ function spreadsheet(rows: unknown[][], name = 'bank.xlsx') {
 }
 
 describe('post-lecture question bank import', () => {
+  it('imports optional importance without changing question counts, types or rating labels', async () => {
+    const parsed = await parsePostLectureQuestionBank(spreadsheet([
+      ['Category', 'Question', 'Type', 'Importance', 'Scale labels'],
+      ['Teaching', 'Clear?', 'stars', 'Critical', 'Low | Basic | Moderate | Good | Great'],
+      ['Teaching', 'Supported?', 'yes_no', 'high'],
+      ['Resources', 'Useful?', 'stars', ''],
+    ]));
+    expect(parsed.sections.map(section => section.questionsPerDelivery)).toEqual([1, 1]);
+    expect(parsed.sections[0].questions[0].config).toMatchObject({ display: 'stars', labels: ['Low', 'Basic', 'Moderate', 'Good', 'Great'], analytics: { importance: 'critical' } });
+    expect(parsed.sections[0].questions[1].config.analytics).toEqual({ importance: 'high' });
+    expect(parsed.sections[1].questions[0].config.analytics).toBeUndefined();
+  });
+
+  it('rejects invalid importance instead of silently assigning a weight', async () => {
+    await expect(parsePostLectureQuestionBank(spreadsheet([
+      ['Category', 'Question', 'Type', 'Importance'], ['Teaching', 'Clear?', 'stars', 'Urgent'],
+    ]))).rejects.toThrow(/Importance must be Critical, High, Medium or Low/);
+  });
+
   it('creates grouped five-star banks and a fixed final text question', async () => {
     const parsed = await parsePostLectureQuestionBank(spreadsheet(validRows));
     expect(parsed.questionCount).toBe(6);
@@ -105,6 +124,9 @@ describe('post-lecture question bank import', () => {
     expect(choices!.join(',').length).toBeLessThanOrEqual(255);
     expect(document.querySelector('pane')?.getAttribute('xSplit')).toBe('2');
     expect(document.querySelector('pane')?.getAttribute('ySplit')).toBe('1');
+    const importance = Array.from(document.querySelectorAll('dataValidation')).find(item => item.getAttribute('sqref') === 'J2:J1001');
+    expect(importance?.querySelector('formula1')?.textContent).toBe('"Critical,High,Medium,Low"');
+    expect(parsed.sections[0].questions[0].config.analytics?.importance).toBe('medium');
   });
 
   it('accepts a legacy count once per category and permits drawing the entire category', async () => {

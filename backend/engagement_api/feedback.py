@@ -2,7 +2,7 @@
 
 The route happens to be mounted by engagement_api, while form validation,
 assignment and response ownership are kept independent from any frontend page.
-General-form structural edits are locked after use. Post-lecture templates use
+General-form structural edits are locked after use. Live Sessions Feedback templates use
 immutable versions so future lectures can use edits without changing history.
 """
 from __future__ import annotations
@@ -31,6 +31,8 @@ from learner_api.profile_photo import normalize_photo
 
 from .helpers import json_body, json_error
 from .feedback_delivery import ensure_delivery_questions
+from .feedback_analytics import lecture_analytics_options, question_analytics
+from .feedback_scoring import validate_analytics_settings
 from .module_feedback import MODULE_FORM_TYPES, assigned_active_module_ids, module_delivery_accessible, sync_module_feedback
 from .models import (
     FeedbackAnswer, FeedbackAssignment, FeedbackDelivery, FeedbackDeliveryRecipient,
@@ -94,16 +96,19 @@ def _iso(value):
 
 
 def _learner_feedback_disabled(request):
-    """Local development only for learners; staff preview/reporting stays open.
+    """Release availability only; record ownership is checked separately."""
+    return not (settings.DEBUG or settings.LEARNER_FEEDBACK_ENABLED) and learner_identity(request) is not None
 
-    Production has no lecture/module exception, even if a deployment still
-    carries the old learner-feedback environment switches.
-    """
-    return not settings.DEBUG and learner_identity(request) is not None
+
+def _learner_feedback_lecture_only(request):
+    return (not settings.DEBUG and not settings.LEARNER_NON_LECTURE_FEEDBACK_ENABLED
+            and learner_identity(request) is not None)
 
 
 def _learner_feedback_disabled_response(request, *, form=None, delivery=None):
-    if _learner_feedback_disabled(request):
+    if (_learner_feedback_disabled(request)
+            or (_learner_feedback_lecture_only(request) and form is not None
+                and (form.form_type != 'post_lecture' or delivery is None))):
         return json_error('Feedback is not available.', status=404)
     return None
 
@@ -416,7 +421,7 @@ def _validated_sections(raw_sections, *, form_type=None):
             draw_count = None
         if draw_count is not None:
             if form_type != 'post_lecture':
-                raise ValueError('Random question selection is available only for Post-lecture feedback.')
+                raise ValueError('Random question selection is available only for Live Sessions Feedback.')
             if type(draw_count) is not int or draw_count < 1 or draw_count > len(questions):
                 raise ValueError(f'{title} must draw between 1 and {len(questions)} questions.')
         clean_questions = []
@@ -440,6 +445,7 @@ def _validated_sections(raw_sections, *, form_type=None):
                 if maximum not in (5, 10):
                     raise ValueError('Rating scales must be 1–5 or 1–10.')
                 config = {**config, 'min': 1, 'max': maximum}
+            validate_analytics_settings(kind, config)
             clean_questions.append({
                 'type': kind, 'text': text, 'required': bool(raw_question.get('required')),
                 'helpText': str(raw_question.get('helpText') or '').strip(), 'config': config,
@@ -877,6 +883,84 @@ def analytics(request):
         'inProgress': in_progress, 'completed': completed,
         'completionRate': round((completed / assigned * 100), 1) if assigned else 0,
         'ratingAverages': ratings,
+        **question_analytics(family_ids),
+        'lectures': lecture_analytics_options(family_ids),
+    }})
+
+
+@require_staff
+def insights_dashboard(request):
+    """Independent, read-only insights. Never sync attendance or initialize a draw."""
+    if request.method != 'GET':
+        return json_error('Method not allowed.', status=405)
+    from .feedback_analytics import dashboard_groups, dashboard_modules
+    from .feedback_insights import submission_period
+    kind = request.GET.get('formType')
+    classification = request.GET.get('classification')
+    group = request.GET.get('groupId')
+    module = request.GET.get('moduleId')
+    if kind and kind not in FORM_TYPES:
+        return json_error('Unknown feedback form type.', status=400)
+    if classification and classification not in {'positive', 'neutral', 'negative', 'unscored'}:
+        return json_error('Unknown response classification.', status=400)
+    if group and (len(group) > 255 or any(ord(character) < 32 for character in group)):
+        return json_error('Invalid feedback group.', status=400)
+    if module and (len(module) > 255 or any(ord(character) < 32 for character in module)):
+        return json_error('Invalid feedback module.', status=400)
+    try:
+        period = submission_period(request.GET.get('submittedFrom'), request.GET.get('submittedTo'))
+    except ValueError as error:
+        return json_error(str(error), status=400)
+    family_ids = list(FeedbackForm.objects.filter(form_type=kind).values_list('id', flat=True)) if kind else None
+    return JsonResponse({'analytics': {
+        **question_analytics(family_ids, group_id=group, classification=classification, dashboard=True,
+                             **({'module_id': module} if module else {}), **period),
+        'groups': dashboard_groups(family_ids),
+        'modules': dashboard_modules(family_ids, group_id=group),
+    }})
+
+
+@require_staff
+def question_analytics_detail(request):
+    """Table-only reporting filters: deliberately no sync or write helpers."""
+    if request.method != 'GET':
+        return json_error('Method not allowed.', status=405)
+    from .feedback_insights import submission_period
+    try:
+        period = submission_period(request.GET.get('submittedFrom'), request.GET.get('submittedTo'))
+    except ValueError as error:
+        return json_error(str(error), status=400)
+    form_type = request.GET.get('formType')
+    if form_type and form_type not in FORM_TYPES:
+        return json_error('Unknown feedback form type.', status=400)
+    identifiers = {}
+    for name in ('formId', 'deliveryId'):
+        raw = request.GET.get(name)
+        if raw:
+            if not raw.isascii() or not raw.isdecimal() or len(raw) > 19 or not 0 < int(raw) <= 9223372036854775807:
+                return json_error(f'{name} must be a positive record ID.', status=400)
+            identifiers[name] = int(raw)
+    forms = _forms_queryset(current_only=True)
+    if form_type:
+        forms = forms.filter(form_type=form_type)
+    family_ids = None
+    if identifiers.get('formId'):
+        selected = forms.filter(pk=identifiers['formId']).first()
+        if selected is None:
+            return json_error('Feedback form not found.', status=404)
+        family_ids = (FeedbackForm.objects.filter(template_key=selected.template_key).values_list('id', flat=True)
+                      if selected.form_type in {'post_lecture', *MODULE_FORM_TYPES} else [selected.id])
+    elif form_type:
+        family_ids = FeedbackForm.objects.filter(template_key__in=forms.values_list('template_key', flat=True)).values_list('id', flat=True)
+    lectures = lecture_analytics_options(family_ids)
+    module_id = request.GET.get('moduleId')
+    available = [lecture for lecture in lectures if not module_id or lecture['moduleId'] == module_id]
+    delivery_id = identifiers.get('deliveryId')
+    if delivery_id is not None and not any(lecture['deliveryId'] == delivery_id for lecture in available):
+        return json_error('Lecture not found in the selected feedback scope.', status=404)
+    delivery_ids = [delivery_id] if delivery_id is not None else [lecture['deliveryId'] for lecture in available] if module_id else None
+    return JsonResponse({'analytics': {
+        **question_analytics(family_ids, delivery_ids=delivery_ids, **period),
     }})
 
 
@@ -927,7 +1011,7 @@ def _sync_review_feedback_deliveries(learner_id):
 
 
 def learner_forms(request):
-    lecture_only = _learner_feedback_disabled(request)
+    lecture_only = _learner_feedback_lecture_only(request)
     learner_id, error = learner_read_scope(request)
     if error:
         return error
@@ -935,13 +1019,13 @@ def learner_forms(request):
         return json_error('Method not allowed.', status=405)
     if not learner_id:
         return json_error('Choose a learner to preview feedback.', status=400)
-    if lecture_only:
+    if _learner_feedback_disabled(request):
         return JsonResponse({'forms': []})
     learner_id = str(learner_id)
     now = timezone.now()
     items = []
-    sync_module_feedback(learner_id)
     if not lecture_only:
+        sync_module_feedback(learner_id)
         _sync_review_feedback_deliveries(learner_id)
         forms = _forms_queryset().filter(status='published', form_type='general').filter(
             Q(assignments__target_type='all_learners') |
@@ -968,7 +1052,8 @@ def learner_forms(request):
     recipients = list(FeedbackDeliveryRecipient.objects.select_related('delivery__form').filter(
         learner_id=learner_id, revoked_at__isnull=True,
         delivery__status='open',
-        delivery__form__status='published', delivery__form__form_type__in=['post_lecture', *MODULE_FORM_TYPES],
+        delivery__form__status='published',
+        delivery__form__form_type__in=['post_lecture'] if lecture_only else ['post_lecture', *MODULE_FORM_TYPES],
     ).filter(
         (Q(delivery__form__start_date__isnull=True) | Q(delivery__form__start_date__lte=now))
         & (Q(delivery__form__form_type='post_lecture', delivery__available_at__lte=now)
@@ -1345,8 +1430,10 @@ def form_recipients(request, pk):
 
 def _learner_feedback_context(
     learner_id, *, form_id=None, delivery_id=None, event_recipient_id=None,
-    review_delivery_id=None,
+    review_delivery_id=None, lecture_only=False,
 ):
+    if lecture_only and (delivery_id is None or event_recipient_id is not None or review_delivery_id is not None):
+        return None, None, None
     now = timezone.now()
     if review_delivery_id is not None:
         try:
@@ -1378,10 +1465,13 @@ def _learner_feedback_context(
                 delivery_id=delivery_id, learner_id=learner_id, revoked_at__isnull=True,
                 delivery__status='open',
                 delivery__form__status='published',
+                **({'delivery__form__form_type': 'post_lecture'} if lecture_only else {}),
             )
         except FeedbackDeliveryRecipient.DoesNotExist:
             return None, None, None
         form, delivery = recipient.delivery.form, recipient.delivery
+        if lecture_only and form.form_type != 'post_lecture':
+            return None, None, None
         if form.form_type in MODULE_FORM_TYPES and not module_delivery_accessible(delivery, learner_id):
             return None, None, None
         if form.form_type in MODULE_FORM_TYPES:
@@ -1425,7 +1515,7 @@ def learner_form_detail(request, pk=None, delivery_id=None, event_recipient_id=N
     learner_id = str(learner_id)
     form, delivery, recipient = _learner_feedback_context(
         learner_id, form_id=pk, delivery_id=delivery_id, event_recipient_id=event_recipient_id,
-        review_delivery_id=review_delivery_id,
+        review_delivery_id=review_delivery_id, lecture_only=_learner_feedback_lecture_only(request),
     )
     if form is None:
         return json_error('Feedback form not found.', status=404)
@@ -1529,7 +1619,7 @@ def learner_response_save(request, pk=None, delivery_id=None, event_recipient_id
         return disabled
     form, delivery, recipient = _learner_feedback_context(
         learner_id, form_id=pk, delivery_id=delivery_id, event_recipient_id=event_recipient_id,
-        review_delivery_id=review_delivery_id,
+        review_delivery_id=review_delivery_id, lecture_only=_learner_feedback_lecture_only(request),
     )
     if form is None:
         return json_error('Feedback form not found.', status=404)
@@ -1624,7 +1714,7 @@ def learner_photo_upload(request, pk=None, question_id=None, delivery_id=None, r
         return disabled
     form, delivery, recipient = _learner_feedback_context(
         learner_id, form_id=pk, delivery_id=delivery_id,
-        review_delivery_id=review_delivery_id,
+        review_delivery_id=review_delivery_id, lecture_only=_learner_feedback_lecture_only(request),
     )
     if form is None:
         return json_error('Feedback form not found.', status=404)
