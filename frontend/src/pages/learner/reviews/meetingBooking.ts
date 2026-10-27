@@ -5,6 +5,16 @@ export function isAptemReview(session: Partial<LearnerCalendarEvent>) {
   return session.reviewSource === 'aptem' || Boolean(session.importedReview || session.reviewId);
 }
 
+/** Prefer the server's canonical booking state; retain compatibility with old payloads. */
+export function occupiesBookingSlot(session: Partial<LearnerCalendarEvent>): boolean {
+  if (!session.scheduledDate || !session.scheduledTime) return false;
+  if (typeof session.bookingReserved === 'boolean') return session.bookingReserved;
+  if ((session.bookingStatus || session.status) === 'cancelled' || session.syncState === 'cancelled') return false;
+  return ['scheduled', 'in-progress', 'awaiting-signature', 'completed'].includes(session.bookingStatus || session.status || '')
+    || ['syncing', 'reconciliation'].includes(session.syncState || '')
+    || Boolean(session.calendarEventKey && session.meetingLink);
+}
+
 export function aptemBookingSnapshot(session: Partial<LearnerCalendarEvent>): ExpectedReviewBooking | undefined {
   if (!isAptemReview(session) || !session.scheduledDate || !session.scheduledTime) return undefined;
   return {

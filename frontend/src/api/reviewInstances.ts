@@ -1,3 +1,4 @@
+import type { BookingCalendarRules } from './learnerCalendar';
 /**
  * Client for the Curriculum-driven Review instance API (see
  * backend/curriculum_api/review_instances.py + coach_api's
@@ -200,10 +201,12 @@ export interface ReviewInstanceFormDefinition {
   canInitialize?: boolean;
   sourceStatus?: string;
   localStatus?: string | null;
+  bookingCalendar?: BookingCalendarRules;
   booking?: {
     /** Aptem PSP appointments do not require an editable review form. */
     formRequired?: boolean;
     status?: string;
+    reserved?: boolean;
     booked: boolean;
     conflict: boolean;
     canAttach?: boolean;
@@ -629,6 +632,19 @@ export async function fetchLearnerAdditionReviewTemplates(learnerId: number | st
     { signal },
   );
   return readJsonResponse<{ learnerId: number; programmeId: string | null; templates: LearnerAdditionReviewTemplate[]; reviewSource: 'curriculum' | 'aptem' | 'conflict' | 'unavailable'; canAddReview: boolean; detail?: string; code?: string }>(response);
+}
+
+export async function fetchCoachReviewSlots(
+  learnerId: number | string,
+  date: string,
+  durationMinutes: number,
+  options: { excludeEventKey?: string; signal?: AbortSignal } = {},
+): Promise<string[]> {
+  const query = new URLSearchParams({ learnerId: String(learnerId), date, durationMinutes: String(durationMinutes) });
+  if (options.excludeEventKey) query.set('excludeEventKey', options.excludeEventKey);
+  const response = await coachFetch(`/coach_api/coach/reviews/availability?${query}`, { signal: options.signal });
+  const result = await readJsonResponse<{ times?: string[] }>(response);
+  return Array.isArray(result.times) ? result.times : [];
 }
 
 /**

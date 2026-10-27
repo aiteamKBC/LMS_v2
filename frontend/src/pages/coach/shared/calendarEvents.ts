@@ -192,6 +192,8 @@ export interface CoachMeetingExpectedAttendee {
 }
 
 export interface CoachMeetingAttendanceTrackerRow {
+  coachVerification?: { id: number; confirmedBy: string; confirmedAt: string; reason: string };
+  linkedEmail?: string;
   id: string;
   role: 'coach' | 'learner' | 'employer' | 'attendee' | string;
   name: string;
@@ -218,6 +220,7 @@ export interface CoachMeetingAttendanceReport {
 }
 
 export interface CoachMeetingAttendanceSummary {
+  linkWarning?: string;
   reports: CoachMeetingAttendanceReport[];
   records: CoachMeetingAttendanceRecord[];
   expectedAttendees?: CoachMeetingExpectedAttendee[];

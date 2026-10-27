@@ -206,6 +206,45 @@ describe('EmployerLearnerPage content and review signing', () => {
     vi.unstubAllGlobals();
   });
 
+  // The learner's own dashboard header reads Learner_start_date /
+  // Learner_end_date with no programme-plan fallback. The employer header must
+  // show those same two dates, not the enrolment's Start_date / End_date
+  // columns and not the schedule's programme plan (which never settles here).
+  it('shows the dates recorded against the learner in the header', async () => {
+    const base = detail([]);
+    mocks.fetchEmployerLearner.mockResolvedValue({
+      ...base,
+      learner: {
+        ...base.learner,
+        startDate: '2020-01-01',
+        endDate: '2020-12-31',
+        learnerStartDate: '2026-10-01',
+        learnerEndDate: '2027-10-25',
+      },
+    });
+
+    renderPage();
+
+    const facts = await screen.findByLabelText('Programme details');
+    expect(facts).toHaveTextContent('Start date1 October 2026');
+    expect(facts).toHaveTextContent('End date25 October 2027');
+    expect(facts).not.toHaveTextContent('2020');
+  });
+
+  it('leaves the header dates empty when the learner has none recorded', async () => {
+    const base = detail([]);
+    mocks.fetchEmployerLearner.mockResolvedValue({
+      ...base,
+      learner: { ...base.learner, startDate: '2020-01-01', endDate: '2020-12-31' },
+    });
+
+    renderPage();
+
+    const facts = await screen.findByLabelText('Programme details');
+    expect(facts).toHaveTextContent('Start date--');
+    expect(facts).toHaveTextContent('End date--');
+  });
+
   // The signing queue has its own tab.
   async function openDocuments() {
     renderPage();

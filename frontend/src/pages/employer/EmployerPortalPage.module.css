@@ -161,7 +161,7 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 .viewButton { display: inline-flex; justify-content: center; align-items: center; gap: 5px; min-height: 33px; padding: 7px 10px; border: 1px solid #dac9ff; border-radius: 8px; color: var(--purple); font-size: 10px; font-weight: 650; white-space: nowrap; text-decoration: none; }
 .pagination { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 6px 16px 13px; color: var(--muted); }
 .pagination button { display: grid; place-items: center; width: 30px; height: 30px; color: var(--purple); background: var(--surface); border: 1px solid var(--line); border-radius: 7px; }
-.chartsGrid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.1fr) minmax(0, .85fr); gap: 13px; }
+.chartsGrid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.1fr); gap: 13px; }
 .chartsGrid .panelHeader { padding: 13px 14px; }
 .chartsGrid .panelHeader h2 { gap: 8px; font-size: 12px; }
 :global(#employer-dashboard) .chartsGrid .panelHeader h2 { font-size: 12px; }
@@ -180,10 +180,6 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 .programmeHeading button { min-width: 0; border: 0; background: transparent; padding: 0; color: var(--ink); font-weight: 650; text-align: left; }
 .programmes .progressTrack { height: 16px; }
 .programmes .caption { display: block; margin-top: 6px; }
-.engagementEmpty { display: flex; min-height: 190px; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 18px 16px 25px; text-align: center; color: var(--muted); }
-.engagementEmpty svg { color: #c6b0eb; }
-.engagementEmpty strong { font-size: 12px; color: #79639d; }
-.engagementEmpty p { max-width: 170px; font-size: 11px; line-height: 1.6; }
 .actionsPanel { border-color: #f6e2eb; }
 .actionsPanel .panelHeader h2, .actionsPanel .panelHeader h2 svg { color: #f43779; }
 .actionList { display: flex; flex-direction: column; gap: 9px; padding: 0 12px 12px; }
@@ -252,9 +248,6 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
   .heroMessage img { width: 108px; }
   .heroMessage p { font-size: 12px; }
   .chartsGrid { grid-template-columns: 1fr 1fr; }
-  .chartsGrid > :last-child { grid-column: 1 / -1; }
-  .engagementEmpty { min-height: 95px; flex-direction: row; text-align: left; padding: 12px 20px; }
-  .engagementEmpty p { max-width: none; }
 }
 @media (max-width: 1250px) {
   .dashboardGrid { grid-template-columns: minmax(0, 1fr); }
@@ -267,9 +260,7 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
   .statLabel { font-size: 10px; }
   .statCopy small { font-size: 10px; }
   .heroMessage { display: none; }
-  .chartsGrid { grid-template-columns: 1.35fr 1fr .85fr; }
-  .chartsGrid > :last-child { grid-column: auto; }
-  .engagementEmpty { min-height: 190px; flex-direction: column; text-align: center; }
+  .chartsGrid { grid-template-columns: 1.35fr 1fr; }
 }
 @media (max-width: 850px) {
   .page { padding: 13px; gap: 16px; }
@@ -278,8 +269,6 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
   .statCard { min-height: 100px; }
   .statArrow { display: grid; }
   .chartsGrid { grid-template-columns: 1fr 1fr; }
-  .chartsGrid > :last-child { grid-column: 1 / -1; }
-  .engagementEmpty { min-height: 110px; }
   .filters { gap: 9px; }
 }
 @media (max-width: 600px) {
@@ -301,7 +290,6 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
   .clearButton { grid-column: 1 / -1; grid-row: auto; min-height: 38px; }
   .filterLabel select { height: 40px; }
   .sideColumn, .chartsGrid { grid-template-columns: minmax(0, 1fr); }
-  .chartsGrid > :last-child { grid-column: auto; }
   .donutContent { gap: 22px; padding-top: 22px; }
   .donut { width: 120px; height: 120px; flex-basis: 120px; }
   .legend { flex-basis: 130px; }
@@ -346,7 +334,6 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 @container (max-width: 760px) {
   .statsGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .chartsGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .chartsGrid > :last-child { grid-column: 1 / -1; }
   .panelHeader { align-items: flex-start; flex-wrap: wrap; }
   .panelHeaderActions { width: 100%; justify-content: space-between; }
   .panelNameFilter { width: min(100%, 260px); }
@@ -356,7 +343,6 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
   .searchBox, .clearButton { grid-column: 1 / -1; }
   .clearButton { grid-row: auto; }
   .sideColumn, .chartsGrid { grid-template-columns: minmax(0, 1fr); }
-  .chartsGrid > :last-child { grid-column: auto; }
 }
 @container (max-width: 1300px) {
   .page[data-view='reviews'] .filters { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -449,12 +435,11 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 .page[data-view='home'] .progressCell strong { font-size: 14px; }
 .page[data-view='home'] :is(.reviewCell a, .reviewCell small, .statusBadge, .statusHelp, .viewButton, .unavailable, .caption) { font-size: 13px; }
 .page[data-view='home'] .viewButton { min-height: 38px; padding: 9px 12px; border-radius: 9px; }
-.page[data-view='home'] .chartsGrid { flex: 1 0 auto; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.1fr) minmax(0, .85fr); gap: 16px; }
-.page[data-view='home'] .chartsGrid > :last-child { grid-column: auto; }
+.page[data-view='home'] .chartsGrid { flex: 1 0 auto; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.1fr); gap: 16px; }
 :global(#employer-dashboard)[data-view='home'] .chartsGrid .panelHeader h2 { font-size: 16px; }
 .page[data-view='home'] .chartsGrid .panelHeader { padding: 16px; }
 .page[data-view='home'] .chartCaption { padding: 12px 18px 0; font-size: 13px; }
-.page[data-view='home'] :is(.donutContent, .programmes, .engagementEmpty) { flex: 1; }
+.page[data-view='home'] :is(.donutContent, .programmes) { flex: 1; }
 .page[data-view='home'] .donutContent { gap: 20px; padding: 24px 18px; }
 .page[data-view='home'] .donut { width: 142px; height: 142px; flex-basis: 142px; }
 .page[data-view='home'] .donut > div { width: 106px; height: 106px; }
@@ -463,9 +448,6 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 .page[data-view='home'] .programmes { justify-content: center; gap: 28px; padding: 24px 20px; max-height: none; }
 .page[data-view='home'] .programmeHeading { font-size: 14px; line-height: 1.5; }
 .page[data-view='home'] .programmes .progressTrack { height: 12px; }
-.page[data-view='home'] .engagementEmpty { flex-direction: column; text-align: center; gap: 12px; padding: 24px 18px; }
-.page[data-view='home'] .engagementEmpty strong { font-size: 15px; }
-.page[data-view='home'] .engagementEmpty p { font-size: 14px; max-width: 240px; }
 .page[data-view='home'] .actionList { padding: 14px; }
 .page[data-view='home'] .noActions { padding: 12px; border-radius: 10px; background: color-mix(in srgb, #009b71 7%, var(--surface)); font-size: 14px; }
 .page[data-view='home'] .actionItem { padding: 15px 12px; }
@@ -518,9 +500,6 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
   .page[data-view='home'] .sideColumn { align-items: stretch; }
   .page[data-view='home'] .hero { min-height: 138px; padding: 24px; }
   .page[data-view='home'] .chartsGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .page[data-view='home'] .chartsGrid > :last-child { grid-column: 1 / -1; }
-  .page[data-view='home'] .engagementEmpty { min-height: 90px; flex-direction: row; text-align: left; padding: 16px 20px; }
-  .page[data-view='home'] .engagementEmpty p { max-width: none; }
 }
 @media (max-width: 850px) {
   .page[data-view='home'] { padding: 16px; gap: 16px; }
@@ -535,8 +514,6 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
   .page[data-view='home'] .statCopy small { font-size: 13px; }
   .page[data-view='home'] .filters { padding: 12px; }
   .page[data-view='home'] .chartsGrid { grid-template-columns: minmax(0, 1fr); }
-  .page[data-view='home'] .chartsGrid > :last-child { grid-column: auto; }
-  .page[data-view='home'] .engagementEmpty { flex-direction: column; text-align: center; }
   .page[data-view='home'] .panelHeader { padding: 16px; }
   :global(#employer-dashboard)[data-view='home'] .panelHeader h2 { font-size: 16px; }
 }
@@ -642,3 +619,57 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 .page :is(.learnerName, .reviewTitle, .journeyLink, .backButton, .reviewCell a, .programmeHeading button, .textButton:not(.reviewActionLink)):active { color: var(--link-press); }
 /* The resting purple is too dark to lift off the dark surface. */
 :global([data-theme='dark']) .page { --link-ink: #c3a4ff; --link-press: #e2d3ff; }
+/* The records behind a summary card (EmployerStatDialog). The dialog is
+   portalled to document.body, so it carries its own tokens rather than
+   inheriting the page's. */
+.statDialog {
+  --ink: #27106c;
+  --muted: #7565a9;
+  --purple: #7937ef;
+  --line: #e5ddfa;
+  --surface: #fff;
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(70vh, 620px);
+  padding: 0;
+  margin: auto;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  box-shadow: 0 24px 60px -20px #1c0b4f59;
+}
+.statDialog::backdrop { background: #1b0b4a5c; backdrop-filter: blur(2px); }
+.statDialog button { cursor: pointer; font: inherit; }
+.statDialog :is(h2, p) { margin: 0; }
+.statDialog :is(button):focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
+.statDialogHeader { display: flex; align-items: flex-start; gap: 12px; padding: 18px 20px 14px; border-bottom: 1px solid var(--line); }
+.statDialogHeader > div { flex: 1; min-width: 0; }
+.statDialogHeader h2 { font-size: 16px; font-weight: 700; color: var(--ink); }
+.statDialogHeader p { margin-top: 3px; color: var(--muted); font-size: 12px; }
+.statDialogHeader button { display: grid; place-items: center; width: 32px; height: 32px; flex-shrink: 0; border: 1px solid var(--line); border-radius: 50%; background: var(--surface); color: var(--muted); }
+.statDialogHeader button:hover { border-color: var(--purple); color: var(--purple); }
+.statDialogList { display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto; padding: 14px 20px; margin: 0; list-style: none; }
+.statDialogList li { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 11px; background: linear-gradient(130deg, var(--surface), #faf7ff); }
+.statDialogRow { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.statDialogRow strong { font-size: 13px; font-weight: 650; }
+.statDialogRow small { color: var(--muted); font-size: 11px; }
+.statDialogSide { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.statDialogMeta { flex-shrink: 0; color: var(--purple); font-size: 11px; font-weight: 650; text-align: right; }
+.statDialog .viewButton { min-height: 34px; gap: 6px; padding: 7px 11px; font-size: 11px; }
+.statDialog .reviewActionLink { border-color: color-mix(in srgb, var(--purple) 22%, transparent) !important; background: var(--surface); white-space: nowrap; }
+.statDialog .unavailable { max-width: 150px; text-align: right; }
+.statDialogEmpty { padding: 28px 20px; color: var(--muted); text-align: center; }
+.statDialogFooter { display: flex; justify-content: flex-end; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
+.statDialogFooter .clearButton { min-height: 40px; }
+:global([data-theme='dark']) .statDialog { --ink: #ede5ff; --muted: #b8acd0; --line: #3c3459; --surface: #211c36; }
+:global([data-theme='dark']) .statDialogList li { background: #2a2340; }
+@media (max-width: 600px) {
+  .statDialog { width: calc(100vw - 20px); font-size: 12px; }
+  .statDialogList li { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .statDialogSide { width: 100%; flex-wrap: wrap; justify-content: flex-start; }
+  .statDialogMeta { text-align: left; }
+  .statDialog .unavailable { max-width: none; text-align: left; }
+}
+

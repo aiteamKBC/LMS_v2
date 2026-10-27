@@ -608,6 +608,34 @@ class CoachAttendanceSourceAdjustment(models.Model):
         ]
 
 
+class ReviewAttendanceLink(models.Model):
+    """Audited, reversible identity correction; original Teams evidence is immutable."""
+
+    calendar_event_id = models.BigIntegerField(db_index=True)
+    learner_id = models.IntegerField()
+    target_role = models.CharField(max_length=16, default='learner')
+    target_key = models.CharField(max_length=64, default='learner')
+    target_name = models.CharField(max_length=255, blank=True, default='')
+    session_key = models.CharField(max_length=64)
+    participant_key = models.CharField(max_length=64)
+    evidence = models.JSONField()
+    reason = models.CharField(max_length=500)
+    confirmed_by = models.EmailField(max_length=255)
+    confirmed_at = models.DateTimeField(auto_now_add=True)
+    revoked_by = models.EmailField(max_length=255, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoke_reason = models.CharField(max_length=500, blank=True)
+
+    class Meta:
+        db_table = _table_name('coach_test_review_attendance_link', 'Coach"."review_attendance_link')
+        constraints = [
+            models.UniqueConstraint(fields=['calendar_event_id', 'session_key', 'target_key'],
+                condition=models.Q(revoked_at__isnull=True), name='review_att_link_active_target'),
+            models.UniqueConstraint(fields=['calendar_event_id', 'session_key', 'participant_key'],
+                condition=models.Q(revoked_at__isnull=True), name='review_att_link_active_person'),
+        ]
+
+
 class CoachCalendarColorPreference(models.Model):
     """Per-coach timetable colours: one row per category default or per
     single-event override. Never read by the timetable event builders in

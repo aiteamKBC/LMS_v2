@@ -199,6 +199,7 @@ function MigratedMeetingIntelligenceContent({
         allowContentAccess={!viewAs}
         onArtifactsLoaded={onArtifactsLoaded}
         preserveResourcesOnRefreshError
+        attendanceLinkKey={!viewAs && !checkBlocked ? instanceId : undefined}
       />
     </section>
   );

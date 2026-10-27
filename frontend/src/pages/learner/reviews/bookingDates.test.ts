@@ -3,6 +3,20 @@ import { bookingDateRestrictionMessage, firstAvailableBookingDate, mcmBookingDat
 
 afterEach(() => vi.useRealTimers());
 
+it('returns no suggestion beyond the published calendar horizon', () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-01T09:00:00Z'));
+  const rules = { division: 'england-and-wales' as const, today: '2026-10-01', coveredYears: [2026], bankHolidays: [] };
+  expect(firstAvailableBookingDate('2027-02-28', rules, true)).toBe('');
+  expect(firstAvailableBookingDate('2026-10-01', { ...rules, coveredYears: [] })).toBe('');
+});
+
+it('skips a holiday and then the closed MCM window rather than merely choosing Monday', () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-01T09:00:00Z'));
+  const rules = { division: 'england-and-wales' as const, today: '2026-10-01', coveredYears: [2026],
+    bankHolidays: [{ date: '2026-10-05', title: 'Synthetic holiday' }] };
+  expect(firstAvailableBookingDate('2026-10-04', rules, true)).toBe('2026-10-20');
+});
+
 it.each(['2026-04', '2026-10', '2027-02', '2028-02', '2026-12'])('uses fixed inclusive MCM boundaries in %s', month => {
   expect(mcmBookingDateRestrictionMessage(`${month}-19`)).toContain('20th');
   expect(mcmBookingDateRestrictionMessage(`${month}-20`)).toBe('');

@@ -6158,6 +6158,7 @@ def build_catchup_calendar_event(
         )
     )
 
+    from .booking_reservations import review_occupies_slot
     return {
         "eventKey": record.event_key,
         "id": record.event_key,
@@ -6192,6 +6193,7 @@ def build_catchup_calendar_event(
         "timeLabel": time_label,
         "isTimeEstimated": is_time_estimated,
         "priority": generated_event_priority(record.status, target_date, display_date),
+        "bookingReserved": review_occupies_slot(record),
         "status": record.status,
         "sourceStatus": schedule_status_label(record.status),
         "rawPlanned": target_date.isoformat(),
@@ -6539,8 +6541,10 @@ def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None,
     graph_web_link = clean_text(record.graph_web_link) if meeting_visible else ""
     meeting_provider = clean_text(record.meeting_provider) if meeting_visible else ""
 
+    from .booking_reservations import review_occupies_slot
     event.update(
         {
+            "bookingReserved": review_occupies_slot(record),
             "id": base_event["eventKey"],
             "date": display_date.isoformat(),
             "year": display_date.year,
@@ -8970,6 +8974,7 @@ def coach_meeting_write_error(request, record):
 @coach_access_required
 @require_http_methods(["GET", "POST"])
 def coach_timetable_event_artifacts(request, event_key):
+    from .review_attendance_links import attendance_for_display
     owner_email = authenticated_coach_email(request)
     record = coach_meeting_artifact_record(owner_email, event_key)
     if not record:
@@ -9042,7 +9047,7 @@ def coach_timetable_event_artifacts(request, event_key):
                 "scheduledDate": record.scheduled_date.isoformat() if record.scheduled_date else None,
                 "scheduledTime": format_time_value(record.scheduled_time),
             },
-            "attendance": snapshot["attendance"],
+            "attendance": attendance_for_display(record, snapshot["attendance"]),
             "artifacts": [public_coach_meeting_artifact(artifact) for artifact in snapshot["artifacts"]],
             "meetingSummary": meeting_summary,
             "errors": snapshot["errors"],
@@ -10803,6 +10808,7 @@ def find_learner_calendar_conflict(
     exclude_record_id: int | None = None,
 ) -> CoachCalendarEvent | None:
     """Return an existing LMS session whose local time overlaps this slot."""
+    from .booking_reservations import OCCUPANCY_FIELDS, calendar_record_occupies_slot
     requested_start = datetime.combine(scheduled_date, scheduled_time)
     requested_end = requested_start + timedelta(minutes=duration_minutes)
     identity = Q(learner_id=learner_id)
@@ -10816,19 +10822,15 @@ def find_learner_calendar_conflict(
         identity,
         scheduled_date__range=(scheduled_date - timedelta(days=1), requested_end.date()),
         scheduled_time__isnull=False,
-        status__in=(
-            CoachCalendarEvent.STATUS_NOT_SCHEDULED,
-            CoachCalendarEvent.STATUS_SCHEDULED,
-            CoachCalendarEvent.STATUS_IN_PROGRESS,
-            CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
-        ),
     )
     if exclude_record_id is not None:
         candidates = candidates.exclude(pk=exclude_record_id)
 
     for existing in candidates.only(
-        "id", "event_type", "sequence", "scheduled_date", "scheduled_time", "duration_minutes"
+        "id", "sequence", *OCCUPANCY_FIELDS
     ):
+        if not calendar_record_occupies_slot(existing):
+            continue
         existing_start = datetime.combine(existing.scheduled_date, existing.scheduled_time)
         existing_end = existing_start + timedelta(
             minutes=existing.duration_minutes or TIMETABLE_DEFAULT_DURATION_MINUTES
@@ -11601,9 +11603,39 @@ def coach_timetable_schedule_event(request):
     if not isinstance(target_date, date):
         return JsonResponse({"detail": "Target date is missing for this event."}, status=400)
 
+    review_booking = (base_event.get("reviewSource") == "aptem"
+                      or clean_text(base_event.get("source")).lower() in {"mcr", "progress-review", "review"})
+    if review_booking:
+        if payload.get("durationMinutes") in (None, ""):
+            return JsonResponse({"detail": "durationMinutes is required for Review bookings."}, status=400)
+        try:
+            from .booking_hours import validate_review_time_precision
+            validate_review_time_precision(payload.get("scheduledTime"))
+        except ValueError as exc:
+            return coach_error(request, code="INVALID_REVIEW_TIME", message=str(exc), status=400)
+
     learner_rows = fetch_owner_active_learner_profiles(owner_email)
     learner_map = build_learner_profile_map(learner_rows)
     base_learner = learner_map.get(int(base_event["learnerId"]))
+    current_review_booking = None
+    review_slot_is_replay = False
+    if review_booking:
+        current_review_booking = CoachCalendarEvent.objects.filter(
+            event_key=event_key, owner_email__iexact=owner_email,
+            learner_id=int(base_event["learnerId"]),
+        ).first()
+        review_slot_is_replay = bool(current_review_booking
+                                     and current_review_booking.status == CoachCalendarEvent.STATUS_SCHEDULED
+                                     and (current_review_booking.scheduled_date,
+                                          current_review_booking.scheduled_time,
+                                          current_review_booking.duration_minutes)
+                                     == (scheduled_date, scheduled_time, duration_minutes))
+        if not review_slot_is_replay:
+            try:
+                from .booking_hours import validate_review_interval
+                validate_review_interval(scheduled_date, scheduled_time, duration_minutes)
+            except ValueError as exc:
+                return coach_error(request, code="INVALID_REVIEW_TIME", message=str(exc), status=400)
     if base_event.get("reviewSource") != "aptem" and base_event.get("source") in {"mcr", "progress-review", "review"}:
         existing = CoachCalendarEvent.objects.filter(
             event_key=event_key, owner_email__iexact=owner_email,
@@ -11614,10 +11646,24 @@ def coach_timetable_schedule_event(request):
             if not policy["canAddReview"]:
                 return JsonResponse(policy, status=409)
 
-    if base_learner and coach_learner_personal_calendar_conflicts(
-        base_learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes
+    if base_learner and not review_slot_is_replay and coach_learner_personal_calendar_conflicts(
+        base_learner, scheduled_date, scheduled_time, duration_minutes,
+        timezone_offset_minutes, exclude_record=current_review_booking,
+        **({"business_time_zone": "Europe/London"} if review_booking else {}),
     ):
         return JsonResponse({"detail": "This learner is busy at that time. Choose another time."}, status=409)
+    if review_booking and not review_slot_is_replay:
+        try:
+            from .booking_availability import ensure_coach_review_slot_available
+            ensure_coach_review_slot_available(owner_email, scheduled_date, scheduled_time,
+                                               duration_minutes, record=current_review_booking)
+        except LearnerCalendarConflict as exc:
+            return JsonResponse({"detail": str(exc)}, status=409)
+        except Exception as exc:
+            from .booking_availability import CoachAvailabilityUnavailable
+            if isinstance(exc, CoachAvailabilityUnavailable):
+                return coach_error(request, code="AVAILABILITY_UNAVAILABLE", message=str(exc), status=503)
+            raise
 
     record, _ = CoachCalendarEvent.objects.get_or_create(
         event_key=event_key,
@@ -15655,7 +15701,11 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
             and calendar.status in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_IN_PROGRESS}
         )
         from .migrated_rescheduling import can_reschedule
+        from learner_api.booking_calendar import booking_calendar_payload
+        definition["bookingCalendar"] = booking_calendar_payload()
+        from .booking_reservations import review_occupies_slot
         definition["booking"] = {
+            "reserved": bool(association_valid and review_occupies_slot(calendar)),
             "booked": booked,
             "conflict": booking_conflict or bool(calendar and not association_valid),
             "canReschedule": bool(
@@ -15687,6 +15737,8 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         }
     from .personal_support_booking import is_personal_support_plan, booking_state
     if is_personal_support_plan(review.get("type")):
+        from learner_api.booking_calendar import booking_calendar_payload
+        definition["bookingCalendar"] = booking_calendar_payload()
         _calendar, definition["booking"] = booking_state(
             canonical_owner, learner, review, saved_instance, preview_only=preview_only,
         )
@@ -15940,7 +15992,7 @@ def coach_review_instance_book(request, instance_id):
         validator = ObjectValidator(payload)
         scheduled_date = validator.iso_date("scheduledDate", required=True)
         scheduled_time = validator.clock_time("scheduledTime", required=True)
-        duration_minutes = validator.integer("durationMinutes", default=TIMETABLE_DEFAULT_DURATION_MINUTES, minimum=15, maximum=480)
+        duration_minutes = validator.integer("durationMinutes", required=True, minimum=15, maximum=480)
         timezone_offset_minutes = validator.integer("timezoneOffsetMinutes", default=0, minimum=-840, maximum=840)
         if scheduled_date and scheduled_date < date.today():
             validator.error("scheduledDate", "Choose today or a future date.")
@@ -15957,13 +16009,38 @@ def coach_review_instance_book(request, instance_id):
     learner = next((row for row in fetch_caseload_dashboard_profiles(owner_email) if int(getattr(row, "id", 0) or 0) == learner_id), None)
     if learner is None:
         return coach_error(request, code="MISSING_LEARNER", message="The learner could not be resolved.", status=409)
-    if coach_learner_personal_calendar_conflicts(learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes):
+    from .booking_hours import validate_review_interval
+    current_booking = definition.get("booking") or {}
+    same_persisted_slot = bool(
+        current_booking.get("booked")
+        and (current_booking.get("scheduledDate"), current_booking.get("scheduledTime"),
+             current_booking.get("durationMinutes")) == (scheduled_date.isoformat(), scheduled_time.strftime("%H:%M"), duration_minutes)
+    )
+    if not same_persisted_slot:
+        try:
+            validate_review_interval(scheduled_date, scheduled_time, duration_minutes)
+        except ValueError as exc:
+            return coach_error(request, code="INVALID_REVIEW_TIME", message=str(exc), status=400)
+    if not same_persisted_slot and coach_learner_personal_calendar_conflicts(
+        learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes,
+        exclude_record=(definition.get("booking", {}).get("eventKey") and CoachCalendarEvent.objects.filter(
+            event_key=definition["booking"]["eventKey"], owner_email__iexact=owner_email,
+            learner_id=learner_id, event_type=event_type,
+        ).first()),
+        business_time_zone="Europe/London",
+    ):
         return coach_error(request, code="BOOKING_CONFLICT", message="This learner is busy at that time.", status=409)
     target_date = parse_schedule_date(definition["instance"]["targetDate"])
     if not target_date:
         return coach_error(request, code="BOOKING_CONFLICT", message="This review has no valid target date.", status=409)
     from .review_sources import booking_for_imported_review, ReviewIdentityConflict
     try:
+        record_preview = booking_for_imported_review(learner, source_review)
+        placeholder_preview = imported_booking_state.unreserved_placeholder(record_preview)
+        if not same_persisted_slot:
+            from .booking_availability import ensure_coach_review_slot_available
+            ensure_coach_review_slot_available(owner_email, scheduled_date, scheduled_time,
+                                               duration_minutes, record=record_preview if placeholder_preview else None)
         with transaction.atomic():
             lock_learner_calendar(learner_id)
             # Re-resolve the durable source link after taking the learner lock;
@@ -16015,11 +16092,14 @@ def coach_review_instance_book(request, instance_id):
                         owner_email=owner_email, learner_id=learner_id,
                         event_type=event_type, **reserved,
                     )
-    except (LearnerCalendarConflict, ReviewIdentityConflict) as exc:
-        return coach_error(request, code="BOOKING_CONFLICT", message=str(exc), status=409)
     except IntegrityError:
         return coach_error(request, code="BOOKING_CONFLICT", message="A concurrent booking won. Reload this review.", status=409)
-    except Exception:
+    except (LearnerCalendarConflict, ReviewIdentityConflict) as exc:
+        return coach_error(request, code="BOOKING_CONFLICT", message=str(exc), status=409)
+    except Exception as exc:
+        from .booking_availability import CoachAvailabilityUnavailable
+        if isinstance(exc, CoachAvailabilityUnavailable):
+            return coach_error(request, code="AVAILABILITY_UNAVAILABLE", message=str(exc), status=503)
         logger.exception("migrated_review_calendar_reservation_failed")
         return coach_error(request, code="CALENDAR_CREATE_FAILED", message="The calendar operation could not be completed. Reload before retrying.", status=500)
     try:
@@ -16037,6 +16117,65 @@ def coach_review_instance_book(request, instance_id):
             saved.status = ImportedReviewInstance.STATUS_SCHEDULED
             saved.save(update_fields=["status", "updated_at"])
     return JsonResponse(_imported_review_definition(owner_email, instance_id))
+
+
+@coach_access_required
+@require_GET
+def coach_review_availability(request):
+    """Return verified London-time Review slots for a coach and caseload learner."""
+    owner_email = authenticated_coach_email(request).strip().casefold()
+    try:
+        validator = ObjectValidator(request.GET)
+        learner_id = validator.integer("learnerId", required=True, minimum=1)
+        day = validator.iso_date("date", required=True)
+        duration = validator.integer("durationMinutes", required=True, minimum=15, maximum=480)
+        validator.check()
+        from .booking_hours import validate_review_duration
+        duration = validate_review_duration(duration)
+    except ValidationError as exc:
+        return validation_error_response(exc)
+    except ValueError as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+
+    learner = next((row for row in fetch_caseload_dashboard_profiles(owner_email)
+                    if int(getattr(row, "id", 0) or 0) == learner_id), None)
+    if learner is None:
+        return coach_error(request, code="MISSING_LEARNER",
+                           message="The learner is no longer assigned to this coach.", status=404)
+
+    exclude_key = clean_text(request.GET.get("excludeEventKey"))
+    exclude_record_id = None
+    exclude_record = None
+    if exclude_key:
+        record = CoachCalendarEvent.objects.filter(
+            event_key=exclude_key, owner_email__iexact=owner_email, learner_id=learner_id,
+            event_type__in={"mcr", "progress-review", "review"},
+        ).first()
+        if not record:
+            return coach_error(request, code="BOOKING_CONFLICT",
+                               message="The current Review booking could not be verified. Refresh and retry.",
+                               status=409)
+        exclude_record_id = record.pk
+        exclude_record = record
+
+    try:
+        from learner_api.coach_availability import free_slots, uk_offset_minutes
+        times = free_slots(owner_email, day, uk_offset_minutes(day), duration=duration,
+                           review_hours=True, exclude_event_key=exclude_key,
+                           exclude_record_id=exclude_record_id,
+                           review_self_record=exclude_record)
+    except Exception as exc:
+        from learner_api.coach_availability import AvailabilityUnavailable
+        if isinstance(exc, AvailabilityUnavailable):
+            return coach_error(request, code="AVAILABILITY_UNAVAILABLE", message=str(exc), status=503)
+        logger.exception("coach_review_availability_failed")
+        return coach_error(request, code="AVAILABILITY_UNAVAILABLE",
+                           message="Could not check the coach calendar. Please retry before booking.",
+                           status=503)
+    response = JsonResponse({"date": day.isoformat(), "durationMinutes": duration,
+                             "timeZone": "Europe/London", "times": times})
+    response["Cache-Control"] = "private, no-store"
+    return response
 
 
 @coach_access_required

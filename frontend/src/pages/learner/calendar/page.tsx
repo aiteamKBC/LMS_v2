@@ -22,6 +22,7 @@ import {
   fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers,
   fetchCalendarConnections, startCalendarOAuth, connectCredentialCalendar,
   disconnectPersonalCalendar, fetchPersonalCalendarAvailability,
+  fetchReviewSlots,
   ukOffsetForDate,
   type LearnerCalendarEvent, type BookableSessionType, type PersonalCalendarConnection,
   type PersonalCalendarProvider, type CalendarBusySlot, type BookingCalendarRules,
@@ -631,8 +632,13 @@ function LearnerCalendarBody() {
   const [visibleBusySlots, setVisibleBusySlots] = useState<CalendarBusySlot[]>([]);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [availabilityUnconfirmed, setAvailabilityUnconfirmed] = useState(false);
+  const [reviewCoachSlots, setReviewCoachSlots] = useState<string[]>([]);
+  const [reviewCoachAvailabilityLoading, setReviewCoachAvailabilityLoading] = useState(false);
+  const [reviewCoachAvailabilityError, setReviewCoachAvailabilityError] = useState('');
+  const [reviewCoachAvailabilityRevision, setReviewCoachAvailabilityRevision] = useState(0);
   const aptemBooking = Boolean(rescheduleEvent?.bookingReviewId || rescheduleEvent?.importedReview
     || bookingSourceEvent?.bookingReviewId || bookingSourceEvent?.importedReview);
+  const reviewSlotBooking = ['mcr', 'progress-review', 'review'].includes(bookType);
   const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const handledFocusEventRef = useRef<string | null>(null);
 
@@ -851,7 +857,7 @@ function LearnerCalendarBody() {
     setBookType(sourceEvent?.bookingSessionType || 'catch-up');
     setBookDate(firstAvailableBookingDate(date || bookingToday, bookingCalendar, sourceEvent?.bookingSessionType === 'mcr'));
     setBookTime('09:00');
-    setBookDuration(String(sourceEvent?.durationMinutes || 60));
+    setBookDuration(['mcr', 'progress-review', 'review'].includes(sourceEvent?.bookingSessionType || '') ? '60' : String(sourceEvent?.durationMinutes || 60));
     setBookNotes('');
     setOtherSessionType('');
     setBookError(null);
@@ -995,6 +1001,38 @@ function LearnerCalendarBody() {
 
   useEffect(() => {
     let cancelled = false;
+    setReviewCoachSlots([]);
+    setReviewCoachAvailabilityError('');
+    if (!showBookModal || !reviewSlotBooking || !parseBookingDay(bookDate) || bookDateRestriction) {
+      setReviewCoachAvailabilityLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    // mapCoachEvent carries the persisted calendar key on eventKey.
+    const currentEventKey = rescheduleEvent?.eventKey;
+    setReviewCoachAvailabilityLoading(true);
+    void fetchReviewSlots(myLearner.kind, myLearner.id, bookDate, Number(bookDuration), {
+      excludeEventKey: currentEventKey,
+      signal: controller.signal,
+    }).then(times => {
+      if (cancelled) return;
+      setReviewCoachSlots(times);
+      setBookTime(current => times.includes(current) ? current : '');
+    }).catch(error => {
+      if (cancelled) return;
+      setReviewCoachAvailabilityError(error instanceof Error
+        ? error.message : 'Coach availability could not be confirmed. Retry before booking.');
+      setBookTime('');
+    }).finally(() => {
+      if (!cancelled) setReviewCoachAvailabilityLoading(false);
+    });
+    return () => { cancelled = true; controller.abort(); };
+  }, [showBookModal, reviewSlotBooking, bookDate, bookDuration, bookDateRestriction,
+    myLearner.kind, myLearner.id, rescheduleEvent?.eventKey,
+    reviewCoachAvailabilityRevision]);
+
+  useEffect(() => {
+    let cancelled = false;
     const writeVersion = calendarWriteVersionRef.current;
     fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true })
       .then((res) => {
@@ -1021,10 +1059,10 @@ function LearnerCalendarBody() {
 
   const selectedSlotConflicts = useMemo(() => {
     if (!bookDate || !bookTime) return false;
-    const start = aptemBooking ? bookingInstant(bookDate, bookTime) : new Date(`${bookDate}T${bookTime}:00`).getTime();
+    const start = aptemBooking || reviewSlotBooking ? bookingInstant(bookDate, bookTime) : new Date(`${bookDate}T${bookTime}:00`).getTime();
     const end = start + parseInt(bookDuration || '60') * 60_000;
     const rescheduledStart = rescheduleEvent?.isoDate && !rescheduleEvent.timeToBeConfirmed
-      ? aptemBooking
+      ? aptemBooking || reviewSlotBooking
         ? bookingInstant(rescheduleEvent.isoDate, rescheduleEvent.time.split('\u2013')[0].trim())
         : new Date(`${rescheduleEvent.isoDate}T${rescheduleEvent.time.split('\u2013')[0].trim()}:00`).getTime()
       : null;
@@ -1037,21 +1075,46 @@ function LearnerCalendarBody() {
       if (slotStart === rescheduledStart && slotEnd === rescheduledEnd) return false;
       return start < slotEnd && end > slotStart;
     });
-  }, [bookDate, bookTime, bookDuration, busySlots, rescheduleEvent, aptemBooking]);
+  }, [bookDate, bookTime, bookDuration, busySlots, rescheduleEvent, aptemBooking, reviewSlotBooking]);
+
+  const availableReviewTimes = useMemo(() => reviewCoachSlots.filter(slot => {
+    const start = bookingInstant(bookDate, slot);
+    const end = start + Number(bookDuration) * 60_000;
+    const ownStart = rescheduleEvent?.isoDate && !rescheduleEvent.timeToBeConfirmed
+      ? bookingInstant(rescheduleEvent.isoDate, rescheduleEvent.time.split('–')[0].trim()) : null;
+    const ownEnd = ownStart === null ? null
+      : ownStart + (rescheduleEvent?.durationMinutes || 60) * 60_000;
+    const personalConflict = busySlots.some(other => {
+      const otherStart = Date.parse(other.start), otherEnd = Date.parse(other.end);
+      if (ownStart === otherStart && ownEnd === otherEnd) return false;
+      return Number.isFinite(otherStart) && Number.isFinite(otherEnd) && start < otherEnd && end > otherStart;
+    });
+    const lmsConflict = myEvents.some(event => {
+      if (!event.isoDate || event.timeToBeConfirmed || event.id === rescheduleEvent?.id
+          || event.id === bookingSourceEvent?.id || event.bookingStatus === 'cancelled'
+          || !event.bookingSessionType) return false;
+      const range = getEventTimeRange(event.time);
+      const eventStart = bookingInstant(event.isoDate, `${String(Math.floor(range.start / 60)).padStart(2, '0')}:${String(range.start % 60).padStart(2, '0')}`);
+      const eventEnd = eventStart + (event.durationMinutes || Math.max(range.end - range.start, 60)) * 60_000;
+      return start < eventEnd && end > eventStart;
+    });
+    return !personalConflict && !lmsConflict;
+  }), [reviewCoachSlots, bookDate, bookDuration, rescheduleEvent, busySlots, myEvents, bookingSourceEvent?.id]);
 
   const selectedLmsConflict = useMemo(() => {
     if (!bookDate || !bookTime) return null;
-    const requestedStart = new Date(`${bookDate}T${bookTime}:00`).getTime();
+    const requestedStart = reviewSlotBooking ? bookingInstant(bookDate, bookTime) : new Date(`${bookDate}T${bookTime}:00`).getTime();
     const requestedEnd = requestedStart + parseInt(bookDuration || '60') * 60_000;
     return myEvents.find((event) => {
       if (!event.isoDate || event.timeToBeConfirmed || event.id === rescheduleEvent?.id || event.id === bookingSourceEvent?.id) return false;
       const range = getEventTimeRange(event.time);
-      const dayStart = new Date(`${event.isoDate}T00:00:00`).getTime();
-      const existingStart = dayStart + range.start * 60_000;
-      const existingEnd = dayStart + (range.end <= range.start ? range.end + 1440 : range.end) * 60_000;
+      const existingStart = reviewSlotBooking
+        ? bookingInstant(event.isoDate, `${String(Math.floor(range.start / 60)).padStart(2, '0')}:${String(range.start % 60).padStart(2, '0')}`)
+        : new Date(`${event.isoDate}T00:00:00`).getTime() + range.start * 60_000;
+      const existingEnd = existingStart + (event.durationMinutes || Math.max(range.end - range.start, 60)) * 60_000;
       return requestedStart < existingEnd && requestedEnd > existingStart;
     }) || null;
-  }, [bookDate, bookTime, bookDuration, bookingSourceEvent?.id, myEvents, rescheduleEvent?.id]);
+  }, [bookDate, bookTime, bookDuration, bookingSourceEvent?.id, myEvents, rescheduleEvent?.id, reviewSlotBooking]);
 
   const sameWeekSession = useMemo(() => {
     if (rescheduleEvent?.reviewTemplateId || bookingSourceEvent?.reviewTemplateId) return null;
@@ -1105,6 +1168,14 @@ function LearnerCalendarBody() {
 
   const handleBookSession = async () => {
     if (bookSubmitting) return;
+    if (reviewSlotBooking && (reviewCoachAvailabilityLoading || reviewCoachAvailabilityError
+      || !availableReviewTimes.includes(bookTime)
+      || (calendarConnections.length > 0 && (availabilityLoading || availabilityUnconfirmed)))) {
+      setBookError(reviewCoachAvailabilityError || (availabilityUnconfirmed
+        ? 'Personal calendar availability could not be confirmed. Retry before booking.'
+        : 'Choose a currently available UK Review time.'));
+      return;
+    }
     const restrictedDate = bookDateRestriction;
     if (restrictedDate) {
       setBookError(restrictedDate);
@@ -1152,7 +1223,7 @@ function LearnerCalendarBody() {
             scheduledDate: bookDate,
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
-            timezoneOffsetMinutes: aptemBooking ? ukOffsetForDate(bookDate) : new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
+            timezoneOffsetMinutes: aptemBooking || reviewSlotBooking ? ukOffsetForDate(bookDate) : new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
             ...(rescheduleEvent.bookingSnapshot ? {
               expectedBooking: rescheduleEvent.bookingSnapshot,
               notes: bookNotes.trim(),
@@ -1169,7 +1240,7 @@ function LearnerCalendarBody() {
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
             notes: requestNotes || undefined,
-            timezoneOffsetMinutes: aptemBooking ? ukOffsetForDate(bookDate) : new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
+            timezoneOffsetMinutes: aptemBooking || reviewSlotBooking ? ukOffsetForDate(bookDate) : new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
           });
       // A read started before this save must not restore the old appointment.
       calendarWriteVersionRef.current += 1;
@@ -1434,9 +1505,22 @@ function LearnerCalendarBody() {
                 {bookType === 'other' && <div className="mt-3"><label htmlFor="other-session-type" className="text-xs font-semibold text-foreground-500">Other <span className="text-red-400">*</span></label><input id="other-session-type" type="text" value={otherSessionType} onChange={(e) => { setOtherSessionType(e.target.value); setBookError(null); }} maxLength={100} placeholder="Write the session type you need" className="mt-1.5 w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>}
               </div>}
               <div className="grid grid-cols-2 gap-3">
-                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Date <span className="text-red-400">*</span></label><input aria-label="Date" type="date" value={bookDate} min={bookingToday} onChange={(e) => setBookDate(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
-                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Time <span className="text-red-400">*</span></label><input aria-label="Time" type="time" value={bookTime} onChange={(e) => setBookTime(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
+                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Date <span className="text-red-400">*</span></label><input aria-label="Date" type="date" value={bookDate} min={bookingToday} onChange={(e) => { setBookDate(e.target.value); if (reviewSlotBooking) setBookTime(''); }} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
+                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">{reviewSlotBooking ? 'Time (UK time · Europe/London)' : 'Time'} <span className="text-red-400">*</span></label>{reviewSlotBooking ? (
+                  <select aria-label="Time (UK time, Europe/London)" value={bookTime}
+                    disabled={reviewCoachAvailabilityLoading || Boolean(reviewCoachAvailabilityError)
+                      || (calendarConnections.length > 0 && (availabilityLoading || availabilityUnconfirmed))
+                      || !availableReviewTimes.length}
+                    onChange={event => setBookTime(event.target.value)}
+                    className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all">
+                    <option value="">{reviewCoachAvailabilityLoading ? 'Checking available UK times…' : 'Select an available time'}</option>
+                    {availableReviewTimes.map(time => <option key={time} value={time}>{time}</option>)}
+                  </select>
+                ) : <input aria-label="Time" type="time" value={bookTime} onChange={(e) => setBookTime(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" />}</div>
               </div>
+              {reviewSlotBooking && reviewCoachAvailabilityLoading && <p role="status" className="text-xs text-foreground-500">Checking coach availability for this date and duration…</p>}
+              {reviewSlotBooking && reviewCoachAvailabilityError && <p role="alert" className="text-xs text-red-700">{reviewCoachAvailabilityError} <button type="button" className="font-semibold underline" onClick={() => setReviewCoachAvailabilityRevision(value => value + 1)}>Retry availability</button></p>}
+              {reviewSlotBooking && !reviewCoachAvailabilityLoading && !reviewCoachAvailabilityError && !bookDateRestriction && !availableReviewTimes.length && <p role="status" className="text-xs text-foreground-500">No available Review times for this date and duration.</p>}
               {bookDateRestriction && (
                 <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
                   <AppIcon className="ri-calendar-close-line mt-0.5 shrink-0" />
@@ -1504,11 +1588,12 @@ function LearnerCalendarBody() {
               )}
               <div>
                 <label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Duration</label>
-                <select aria-label="Duration" value={bookDuration} disabled={Boolean(bookingSourceEvent?.bookingReviewId && bookType === 'mcr')} onChange={(e) => setBookDuration(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all cursor-pointer">
-                  {![30, 45, 60].includes(Number(bookDuration)) && <option value={bookDuration}>{bookDuration} minutes</option>}
+                <select aria-label="Duration" value={bookDuration} disabled={bookSubmitting} onChange={(e) => { setBookDuration(e.target.value); if (reviewSlotBooking) setBookTime(''); }} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all cursor-pointer">
+                  {!(reviewSlotBooking ? [30, 45, 60, 90, 120] : [30, 45, 60]).includes(Number(bookDuration)) && <option value={bookDuration}>{bookDuration} minutes</option>}
                   <option value="30">30 minutes</option>
                   <option value="45">45 minutes</option>
                   <option value="60">1 hour</option>
+                  {reviewSlotBooking && <><option value="90">1.5 hours</option><option value="120">2 hours</option></>}
                 </select>
               </div>
               {(!rescheduleEvent || rescheduleEvent.bookingSnapshot) && <div>
@@ -1530,7 +1615,7 @@ function LearnerCalendarBody() {
             </div>
             <div className="flex gap-2 mt-5">
               <button onClick={() => setShowBookModal(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
-              <button onClick={handleBookSession} disabled={bookSubmitting || availabilityLoading || selectedSlotConflicts || Boolean(sameWeekSession) || Boolean(selectedLmsConflict) || Boolean(bookDateRestriction) || !bookDate || !bookTime} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+              <button onClick={handleBookSession} disabled={bookSubmitting || availabilityLoading || selectedSlotConflicts || Boolean(sameWeekSession) || Boolean(selectedLmsConflict) || Boolean(bookDateRestriction) || !bookDate || !bookTime || (reviewSlotBooking && (reviewCoachAvailabilityLoading || Boolean(reviewCoachAvailabilityError) || !availableReviewTimes.includes(bookTime) || (calendarConnections.length > 0 && availabilityUnconfirmed)))} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
                 {bookSubmitting ? <><AppIcon className="ri-loader-4-line animate-spin mr-1"></AppIcon>{rescheduleEvent ? 'Rescheduling...' : bookingSourceEvent || !genericBookingNeedsApproval ? 'Booking...' : 'Sending...'}</> : <><AppIcon className={rescheduleEvent || bookingSourceEvent ? 'ri-calendar-check-line mr-1' : 'ri-check-line mr-1'}></AppIcon>{rescheduleEvent ? 'Save New Time' : bookingSourceEvent || !genericBookingNeedsApproval ? 'Book Session' : 'Send Request'}</>}
               </button>
             </div>

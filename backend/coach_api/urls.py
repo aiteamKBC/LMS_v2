@@ -10,6 +10,7 @@ from .quality_form_api import quality_form
 from .recordings_link_api import coaching_linked_meeting
 from .completion_api import completion_notifications
 from .bulk_attendance import coach_bulk_attendance
+from .review_attendance_links import review_attendance_links
 from .attendance_loading import coach_attendance_options, coach_attendance_group, coach_attendance_session, coach_attendance_sessions, coach_attendance_context
 from . import personal_learning
 from . import monthly_logs
@@ -55,6 +56,7 @@ from .views import (
     coach_marking_queue,
     coach_imported_review_history,
     coach_monthly_activity,
+    coach_review_availability,
     coach_review_instance_answers,
     coach_review_instance_complete,
     coach_review_instance_progress,
@@ -176,12 +178,14 @@ urlpatterns = [
     path('coach/timetable/events/action', coach_timetable_event_action, name='coach-timetable-event-action'),
     path('coach/timetable/events/<str:event_key>/reminder', coach_meeting_reminder, name='coach-meeting-reminder'),
     path('coach/timetable/events/<str:event_key>/artifacts', coach_timetable_event_artifacts, name='coach-timetable-event-artifacts'),
+    path('coach/review-attendance/<str:event_key>/links', review_attendance_links, name='coach-review-attendance-links'),
     path('coach/timetable/events/<str:event_key>/artifacts/<str:artifact_type>/<str:artifact_id>/content', coach_timetable_event_artifact_content, name='coach-timetable-event-artifact-content'),
     path('coach/timetable/events/<str:event_key>/summary', coach_timetable_event_summary, name='coach-timetable-event-summary'),
     # Curriculum-driven Review instances: opening a scheduled MCM/Progress
     # Review, saving its answers, signing and completing it -- the question
     # set/signature rules were resolved by Curriculum, not hard-coded here.
     path('coach/reviews/open', coach_review_instance_for_event, name='coach-review-instance-open'),
+    path('coach/reviews/availability', coach_review_availability, name='coach-review-availability'),
     path('coach/reviews/learners/<int:learner_id>/aptem-reconciliation-preview',
          coach_aptem_review_reconciliation_preview, name='coach-aptem-review-reconciliation-preview'),
     # Learner-specific additional Reviews (coach "Create session" -> Review):

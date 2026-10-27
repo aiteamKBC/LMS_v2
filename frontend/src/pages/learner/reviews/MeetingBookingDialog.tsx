@@ -6,11 +6,11 @@ import type { LearnerKind } from '@/api/learnerDetail';
 import type { MeetingAttendance } from '@/api/meetingAttendance';
 import {
   bookLearnerCalendarSession, fetchCalendarConnections, fetchLearnerCalendarEvents, fetchPersonalCalendarAvailability,
-  rescheduleLearnerCalendarSession, ukOffsetForDate, type BookingCalendarRules, type BookSessionResponse,
+  fetchReviewSlots, rescheduleLearnerCalendarSession, ukOffsetForDate, type BookingCalendarRules, type BookSessionResponse,
   type CalendarBusySlot, type LearnerCalendarEvent, type PersonalCalendarConnection,
 } from '@/api/learnerCalendar';
 import { bookingDateRestrictionMessage, bookingInstant, bookingToday, firstAvailableBookingDate, mcmBookingDateRestrictionMessage, parseBookingDay } from './bookingDates';
-import { aptemBookingSnapshot, editableBookingNotes, isAptemReview } from './meetingBooking';
+import { aptemBookingSnapshot, editableBookingNotes, isAptemReview, occupiesBookingSlot } from './meetingBooking';
 import styles from './meetingBooking.module.css';
 
 /** A list card supplies identity and optional initial values. The dialog
@@ -37,10 +37,8 @@ function overlaps(start: number, end: number, otherStart: number, otherEnd: numb
 }
 
 function hasExistingBooking(session: MeetingBookingSession, attendance?: MeetingAttendance) {
-  const reservedImported = isAptemReview(session) && session.bookingStatus === 'scheduled'
-    && ['scheduled', 'not-scheduled'].includes(session.status || '');
-  return Boolean(session.scheduledDate && (session.status === 'scheduled' || reservedImported)
-    && (session.calendarEventKey || attendance?.calendarEventKey || !session.eventKey.startsWith('imported-review:')));
+  return occupiesBookingSlot(session)
+    && Boolean(session.calendarEventKey || attendance?.calendarEventKey || !session.eventKey.startsWith('imported-review:'));
 }
 
 /** Keeps a failure inside the booking form from taking the whole page down
@@ -102,15 +100,18 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [revision, setRevision] = useState(0);
-  const [date, setDate] = useState(session.scheduledDate || firstAvailableBookingDate(session.targetDate || session.date, rules, session.source === 'mcr'));
+  const [date, setDate] = useState(hasExistingBooking(session, attendance) ? session.scheduledDate! : firstAvailableBookingDate(session.scheduledDate || session.targetDate || session.date, rules, session.source === 'mcr'));
   const [time, setTime] = useState(session.scheduledTime || '09:00');
-  const [duration, setDuration] = useState(String(session.durationMinutes || 60));
+  const [duration, setDuration] = useState(String(hasExistingBooking(session, attendance) ? session.durationMinutes || 60 : 60));
   const [notes, setNotes] = useState(editableBookingNotes(session));
   const [calendarEvents, setCalendarEvents] = useState<LearnerCalendarEvent[]>([]);
   const [connections, setConnections] = useState<PersonalCalendarConnection[]>([]);
   const [busySlots, setBusySlots] = useState<CalendarBusySlot[]>([]);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [availabilityError, setAvailabilityError] = useState('');
+  const [coachSlots, setCoachSlots] = useState<string[]>([]);
+  const [coachAvailabilityLoading, setCoachAvailabilityLoading] = useState(false);
+  const [coachAvailabilityError, setCoachAvailabilityError] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const submitting = useRef(false);
@@ -118,11 +119,11 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
   const mounted = useRef(false);
   const monthly = session.source === 'mcr';
   const curriculumReview = session.source === 'review';
+  const reviewBooking = monthly || curriculumReview || session.source === 'progress-review';
   const meetingType = monthly ? 'monthly coaching' : curriculumReview ? 'review' : 'progress review';
   const rescheduling = Boolean(target && hasExistingBooking(target, attendance));
   const isExisting = target ? rescheduling : hasExistingBooking(session, attendance);
-  const durationLocked = Boolean(session.importedReview?.id && monthly);
-  const dateRestriction = bookingDateRestrictionMessage(date, calendarRules) || (monthly ? mcmBookingDateRestrictionMessage(date) : '');
+  const dateRestriction = (!date && !loading ? 'No permitted date is available in the supported booking calendar. Choose a supported date or contact your programme team.' : '') || bookingDateRestrictionMessage(date, calendarRules) || (monthly ? mcmBookingDateRestrictionMessage(date) : '');
 
   useEffect(() => {
     mounted.current = true;
@@ -169,9 +170,9 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
       setCalendarRules(nextRules);
       setCalendarEvents(calendar.events);
       setConnections(Array.isArray(calendarConnections?.connections) ? calendarConnections.connections : []);
-      if (!edited.current.date) setDate(resolved.scheduledDate || firstAvailableBookingDate(resolved.targetDate || resolved.date, nextRules, resolved.source === 'mcr'));
+      if (!edited.current.date) setDate(hasExistingBooking(resolved, attendance) ? resolved.scheduledDate! : firstAvailableBookingDate(resolved.scheduledDate || resolved.targetDate || resolved.date, nextRules, resolved.source === 'mcr'));
       if (!edited.current.time) setTime(resolved.scheduledTime || '09:00');
-      if (!edited.current.duration) setDuration(String(resolved.durationMinutes || 60));
+      if (!edited.current.duration) setDuration(String(hasExistingBooking(resolved, attendance) ? resolved.durationMinutes || 60 : 60));
       if (!edited.current.notes) setNotes(editableBookingNotes(resolved));
     }).catch(reason => {
       if (!cancelled) setLoadError(reason instanceof Error ? reason.message : 'Could not load this booking. Please try again.');
@@ -211,9 +212,39 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
     return () => { cancelled = true; };
   }, [connections.length, date, learner.kind, learner.id]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setCoachSlots([]);
+    setCoachAvailabilityError('');
+    if (!reviewBooking || !target || !parseBookingDay(date) || dateRestriction) {
+      setCoachAvailabilityLoading(false);
+      return;
+    }
+    const requestedDuration = Number(duration);
+    const eventKey = rescheduling
+      ? target.calendarEventKey || attendance?.calendarEventKey || target.eventKey
+      : undefined;
+    const controller = new AbortController();
+    setCoachAvailabilityLoading(true);
+    void fetchReviewSlots(learner.kind, learner.id, date, requestedDuration, {
+      excludeEventKey: eventKey, signal: controller.signal,
+    }).then(times => {
+      if (!cancelled) {
+        setCoachSlots(times);
+        setTime(current => times.includes(current) ? current : '');
+      }
+    }).catch(reason => {
+      if (!cancelled) setCoachAvailabilityError(reason instanceof Error
+        ? reason.message : 'Coach availability could not be confirmed. Retry before booking.');
+    }).finally(() => {
+      if (!cancelled) setCoachAvailabilityLoading(false);
+    });
+    return () => { cancelled = true; controller.abort(); };
+  }, [reviewBooking, target, date, dateRestriction, duration, rescheduling, session, attendance, monthly, learner.kind, learner.id, revision]);
+
   const requested = bookingBounds(date, time, Number(duration));
   const lmsConflict = requested ? calendarEvents.find(event => {
-    if (event.eventKey === target?.eventKey || event.id === target?.id || event.status === 'cancelled' || !event.scheduledDate || !event.scheduledTime) return false;
+    if (event.eventKey === target?.eventKey || event.id === target?.id || !occupiesBookingSlot(event) || !event.scheduledDate || !event.scheduledTime) return false;
     const existing = bookingBounds(event.scheduledDate, event.scheduledTime, event.durationMinutes || 60);
     return existing ? overlaps(requested.start, requested.end, existing.start, existing.end) : false;
   }) : null;
@@ -227,12 +258,30 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
     return Number.isFinite(start) && Number.isFinite(end) && overlaps(requested.start, requested.end, start, end);
   }) : null;
   const bookingConflict = lmsConflict || personalConflict;
+  const reviewAvailabilityTimes = coachSlots.filter(slot => {
+    const interval = bookingBounds(date, slot, Number(duration));
+    if (!interval) return false;
+    const learnerCalendarConflict = calendarEvents.some(event => {
+      if (event.eventKey === target?.eventKey || event.id === target?.id || !occupiesBookingSlot(event) || !event.scheduledDate || !event.scheduledTime) return false;
+      const existing = bookingBounds(event.scheduledDate, event.scheduledTime, event.durationMinutes || 60);
+      return existing ? overlaps(interval.start, interval.end, existing.start, existing.end) : false;
+    });
+    const connectedCalendarConflict = busySlots.some(other => {
+      const start = Date.parse(other.start), end = Date.parse(other.end);
+      if (currentBooking && start === currentBooking.start && end === currentBooking.end) return false;
+      return Number.isFinite(start) && Number.isFinite(end) && overlaps(interval.start, interval.end, start, end);
+    });
+    return !learnerCalendarConflict && !connectedCalendarConflict;
+  });
 
   function close() { if (!submitting.current) onClose(); }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (submitting.current || loading || availabilityLoading || loadError || bookingConflict || !target || !date || !time) return;
+    if (submitting.current || loading || availabilityLoading || coachAvailabilityLoading || loadError
+      || (reviewBooking && (coachAvailabilityError || !reviewAvailabilityTimes.includes(time)))
+      || (reviewBooking && connections.length > 0 && availabilityError)
+      || bookingConflict || !target || !date || !time) return;
     if (dateRestriction) { setError(dateRestriction); return; }
     submitting.current = true;
     setSaving(true);
@@ -247,7 +296,7 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
       const input = {
         scheduledDate: date,
         scheduledTime: time,
-        durationMinutes: !update && reviewId && monthly ? 60 : Number(duration) || 60,
+        durationMinutes: Number(duration) || 60,
         notes: update && imported ? notes.trim() : notes.trim() || undefined,
         timezoneOffsetMinutes: ukOffsetForDate(date),
       };
@@ -273,7 +322,10 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
   const plannedDate = session.targetDate || session.date;
   const sessionLabel = `${monthly ? 'Monthly Coaching Meeting' : curriculumReview ? (session.reviewTypeName || session.title || 'Review') : 'Progress Review'}${plannedDate ? ` · ${new Date(`${plannedDate}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}`;
   const calendarHref = `/learner/calendar?kind=${encodeURIComponent(learner.kind)}&learner=${encodeURIComponent(learner.id)}&connect=calendar`;
-  const canSubmit = !loading && !saving && !availabilityLoading && !loadError && !dateRestriction && !bookingConflict && Boolean(target && date && time);
+  const canSubmit = !loading && !saving && !availabilityLoading && !coachAvailabilityLoading && !loadError
+    && (!reviewBooking || (!coachAvailabilityError && reviewAvailabilityTimes.includes(time)
+      && !(connections.length > 0 && availabilityError)))
+    && !dateRestriction && !bookingConflict && Boolean(target && date && time);
   return createPortal(<dialog ref={dialog} aria-labelledby={titleId} aria-describedby={descriptionId} className={styles.dialog}
     onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === event.currentTarget) close(); }}>
     <form onSubmit={submit} aria-busy={loading || saving}>
@@ -286,9 +338,13 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
       <label className={styles.session}>Session<select aria-label="Session" value={session.id} onChange={() => undefined} disabled={saving}>
         <option value={session.id}>{sessionLabel}</option>
       </select></label>
+      {rescheduling && target && <p role="note" className={styles.description}>Current booking: {target.scheduledDate} at {target.scheduledTime} UK time · {target.durationMinutes || 60} minutes. Select an available replacement below.</p>}
       <div className={styles.fields}>
-        <label>Date<input aria-label="Day" type="date" required min={bookingToday()} value={date} disabled={saving || Boolean(loadError)} onChange={event => { edited.current.date = true; setDate(event.target.value); setError(''); }} /></label>
-        <label>Time<input type="time" required value={time} disabled={saving || Boolean(loadError)} onChange={event => { edited.current.time = true; setTime(event.target.value); setError(''); }} /></label>
+        <label>Date<input aria-label="Day" type="date" required min={bookingToday()} value={date} disabled={saving || Boolean(loadError)} onChange={event => { edited.current.date = true; setDate(event.target.value); setTime(''); setError(''); }} /></label>
+        {reviewBooking ? <label>Time (UK time · Europe/London)<select aria-label="Time" required value={time} disabled={saving || Boolean(loadError) || coachAvailabilityLoading || Boolean(coachAvailabilityError) || Boolean(connections.length && availabilityError) || !reviewAvailabilityTimes.length} onChange={event => { edited.current.time = true; setTime(event.target.value); setError(''); }}>
+          <option value="">{coachAvailabilityLoading ? 'Checking coach availability…' : 'Select an available time'}</option>
+          {reviewAvailabilityTimes.map(value => <option key={value} value={value}>{value}</option>)}
+        </select></label> : <label>Time<input type="time" required value={time} disabled={saving || Boolean(loadError)} onChange={event => { edited.current.time = true; setTime(event.target.value); setError(''); }} /></label>}
       </div>
       <p className={styles.description}>All booking times are UK time (Europe/London), including daylight saving time.</p>
       <div className={`${styles.calendarCheck} ${bookingConflict ? styles.calendarConflict : ''}`}>
@@ -307,7 +363,7 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
         </div>
       </div>
       <label className={styles.duration}>Duration
-        <select aria-label="Duration" value={duration} disabled={durationLocked || saving || Boolean(loadError)} onChange={event => { edited.current.duration = true; setDuration(event.target.value); setError(''); }}>
+        <select aria-label="Duration" value={duration} disabled={saving || Boolean(loadError)} onChange={event => { edited.current.duration = true; setDuration(event.target.value); setTime(''); setError(''); }}>
           {[30, 45, 60, 90, 120].map(minutes => <option key={minutes} value={minutes}>{minutes < 60 ? `${minutes} minutes` : minutes === 60 ? '1 hour' : `${minutes / 60} hours`}</option>)}
           {![30, 45, 60, 90, 120].includes(Number(duration)) && <option value={duration}>{duration} minutes</option>}
         </select>
@@ -317,6 +373,10 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
         <small>{notes.length}/500</small>
       </label>
       {loadError && <p role="alert" className={styles.error}>{loadError} <button type="button" onClick={() => setRevision(value => value + 1)}>Try again</button></p>}
+      {coachAvailabilityLoading && <p role="status">Checking coach availability for this date and duration…</p>}
+      {coachAvailabilityError && <p role="alert" className={styles.error}>{coachAvailabilityError} <button type="button" onClick={() => setRevision(value => value + 1)}>Retry availability</button></p>}
+      {!coachAvailabilityLoading && !coachAvailabilityError && reviewBooking && target && date && !dateRestriction && !reviewAvailabilityTimes.length && <p role="status">No available Review times remain on this date. Choose another date.</p>}
+      {availabilityError && connections.length > 0 && reviewBooking && <p role="alert" className={styles.error}>{availabilityError} <button type="button" onClick={() => setRevision(value => value + 1)}>Retry calendar check</button></p>}
       {!loading && !loadError && (error || dateRestriction || availabilityError) && <p role="alert" className={styles.error}>{error || dateRestriction || availabilityError}</p>}
       {error.toLowerCase().includes('refresh') && isAptemReview(target || session) && <button type="button" disabled={saving || loading}
         onClick={() => { setError(''); setRevision(value => value + 1); }}>Refresh booking</button>}
