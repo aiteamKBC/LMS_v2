@@ -89,6 +89,33 @@ class SelectedActivityTimeTests(SimpleTestCase):
                         self.assertEqual(queue.call_args.kwargs["context"]["actualTimeHours"], 2400 / 3600)
                         self.assertEqual(queue.call_args.kwargs["context"]["plannedOtjh"], "14 hours")
 
+    def test_assignment_completion_uses_saved_input_for_progress_and_marking(self):
+        for kind in ("commercial", "apprenticeship"):
+            for hours in ("1", "0.1", "0.25", "3.5"):
+                with self.subTest(kind=kind, hours=hours), ExitStack() as stack:
+                    stack.enter_context(patch("learner_api.assignment_settings.monthly_assignment_required", return_value=True))
+                    stack.enter_context(patch.object(components, "_assignment_form_ready", return_value=True))
+                    connection = stack.enter_context(patch("learner_api.monthly_assignment.connections"))
+                    stack.enter_context(patch("learner_api.monthly_assignment.transaction.atomic"))
+                    stack.enter_context(patch("learner_api.monthly_assignment.assignment_checks", return_value=[{"passed": True}]))
+                    stack.enter_context(patch("learner_api.reflection_submissions._reflection_lineage", return_value={"progress_entry_id": 123}))
+                    cursor = connection.__getitem__.return_value.cursor.return_value.__enter__.return_value
+                    cursor.fetchone.return_value = ("saved", "draft", {
+                        "actualTimeHours": hours, "plannedOtjh": "2",
+                        "monthlyAssignment": {"claims": [{"code": "K1"}],
+                            "timeEntries": [{"topic": "Research", "date": "2026-01-15", "hours": hours}]},
+                    })
+                    response, save, queue = self.submit(kind=kind, component_type="assignment",
+                        selected=720, source="timer", session_seconds=720, planned="2 hours")
+                    seconds = round(float(hours) * 3600)
+                    record = self.assert_selected_duration(response, save, seconds, 720)
+                    self.assertTrue(record["timeTrackingSource"].endswith(":input"))
+                    self.assertEqual(queue.call_args.kwargs["context"]["actualTimeHours"], float(hours))
+                    self.assertEqual(queue.call_args.kwargs["context"]["plannedOtjh"], "2 hours")
+                    saved_payload = json.loads(cursor.execute.call_args.args[1][0])
+                    self.assertEqual(saved_payload["plannedOtjh"], "2")
+                    self.assertEqual(saved_payload["actualTimeHours"], hours)
+
     def test_timer_choice_wins_over_a_different_reported_or_planned_time(self):
         for media in ("video", "component"):
             with self.subTest(media=media):

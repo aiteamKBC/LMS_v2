@@ -300,7 +300,9 @@ describe('monthly assignment drafts', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Submit assignment' }));
     await screen.findByText('Submission preview');
     expect(props.onSubmitProgress).toHaveBeenCalledOnce();
+    expect(props.onSubmitProgress).toHaveBeenCalledWith(expect.objectContaining({ timeTakenSeconds: 12600, timeEntrySource: 'input' }));
     expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.at(-1)?.[0].actualTimeHours).toBe('3.5');
+    expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.at(-1)?.[0].plannedOtjh).toBe('2');
     expect(props.onRestoreTime).toHaveBeenCalledWith(12600, 'input');
     expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.every(([payload]) => payload.submissionMode === 'draft')).toBe(true);
     expect(sessionStorage.getItem('monthly-assignment-draft:commercial:1:COMP-1')).toBeNull();

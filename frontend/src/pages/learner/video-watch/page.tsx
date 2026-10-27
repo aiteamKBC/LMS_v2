@@ -55,7 +55,7 @@ import { componentRoute } from './componentRoute';
 import { ActivityElapsedTimer } from './ActivityElapsedTimer';
 import manualTimeStyles from './ActivityManualTimeInput.module.css';
 import layoutStyles from './ComponentActivityLayout.module.css';
-import { AssignmentSubmissionWizard, type AssignmentAnswers } from './AssignmentSubmissionWizard';
+import { AssignmentSubmissionWizard, type AssignmentCompletion } from './AssignmentSubmissionWizard';
 import { AssignmentBriefPanel } from './AssignmentBriefSections';
 import { useSavedAssignmentAccess } from './useSavedAssignmentAccess';
 import { absoluteDocUrl, resolveDocEmbed } from '@/lib/docEmbed';
@@ -258,7 +258,7 @@ export default function ComponentViewPage() {
   const [correctionError, setCorrectionError] = useState('');
   // The reflection the learner already gave, replayed with their declared
   // instant so Final Submit does not ask for it again.
-  const lastReflectionRef = useRef<{ ksbs: string[]; feedback: string; reportedTime: string; assignmentTopicId?: string; timeTakenSeconds?: number; timeEntrySource?: 'input' }>({
+  const lastReflectionRef = useRef<{ ksbs: string[]; feedback: string; reportedTime: string; assignmentTopicId?: string; timeTakenSeconds?: number; timeEntrySource?: 'timer' | 'input' }>({
     ksbs: [], feedback: '', reportedTime: '',
   });
   const [submitting, setSubmitting] = useState(false);
@@ -721,7 +721,7 @@ export default function ComponentViewPage() {
   };
 
   const finalizeSubmit = async (
-    reflection: { ksbs: string[]; feedback: string; reportedTime: string; assignmentTopicId?: string; timeTakenSeconds?: number; timeEntrySource?: 'input' },
+    reflection: { ksbs: string[]; feedback: string; reportedTime: string; assignmentTopicId?: string; timeTakenSeconds?: number; timeEntrySource?: 'timer' | 'input' },
     options: { rethrow?: boolean; skipReflection?: boolean; declaredCompletedAt?: string } = {},
   ) => {
     if (!component || !componentId || !kind || !id || completionInFlightRef.current || !canUseComponent) return;
@@ -1192,12 +1192,14 @@ export default function ComponentViewPage() {
                       if (source === 'input') { setManualTimeSeconds(seconds); setTimeSource('input'); }
                       else setWallElapsed(current => Math.max(current, seconds));
                     }}
-                    onSubmitProgress={async (answers: AssignmentAnswers) => {
+                    onSubmitProgress={async (answers: AssignmentCompletion) => {
                       await finalizeSubmit({
                         assignmentTopicId: answers.assignmentTopicId,
                         ksbs: (component.ksbMappings || []).map(mapping => mapping.code),
                         feedback: `${answers.whatYouLearned}\n\nBusiness impact:\n${answers.businessImpact}`,
-                        reportedTime: `${submittedTimeSeconds / 60} minutes`,
+                        reportedTime: `${answers.timeTakenSeconds / 60} minutes`,
+                        timeTakenSeconds: answers.timeTakenSeconds,
+                        timeEntrySource: answers.timeEntrySource,
                       }, { rethrow: true });
                     }}
                   />
