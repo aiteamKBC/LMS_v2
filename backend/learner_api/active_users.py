@@ -1467,26 +1467,45 @@ def _coerce_ksb_items(value):
 
 
 def _resolve_programme_id(programme="", training_plan=None):
+    # A plan can hold modules owned by other programmes (a shared Safeguarding
+    # module, say). Taking the alphabetically first owner then resolved a
+    # Project Controls learner to Marketing Manager and served them marketing
+    # KSBs, so the owner matching the learner's own programme wins; the first
+    # owner is only a last resort when the programme itself cannot be resolved.
+    programme = _s(programme)
     module_ids = _plan_module_ids(training_plan)
+    snapshot_ids = []
     if module_ids:
         try:
             with connections["enrolment"].cursor() as cursor:
                 cursor.execute(
-                    "SELECT DISTINCT programme_id FROM curriculum.modules "
-                    "WHERE module_catalogue_id = ANY(%s) AND programme_id IS NOT NULL AND programme_id <> '' "
-                    "ORDER BY programme_id LIMIT 1",
+                    "SELECT DISTINCT module.programme_id, "
+                    "       COALESCE(programme.name, module.programme_name, '') "
+                    "FROM curriculum.modules module "
+                    "LEFT JOIN curriculum.programmes programme "
+                    "       ON programme.programme_id = module.programme_id "
+                    "WHERE module.module_catalogue_id = ANY(%s) "
+                    "  AND module.programme_id IS NOT NULL AND module.programme_id <> '' "
+                    "ORDER BY module.programme_id",
                     [module_ids],
                 )
-                row = cursor.fetchone()
+                rows = cursor.fetchall()
         except DatabaseError as exc:
             logger.warning("Could not resolve programme id from module snapshot for %s: %s", module_ids, exc)
         else:
-            if row and _s(row[0]):
-                return _s(row[0])
+            snapshot_ids = [_s(programme_id) for programme_id, _name in rows if _s(programme_id)]
+            if len(set(snapshot_ids)) == 1 or not programme:
+                return snapshot_ids[0] if snapshot_ids else ""
+            wanted = programme.lower()
+            for programme_id, name in rows:
+                name = _s(name).lower()
+                if _s(programme_id).lower() == wanted or (
+                    name and (wanted == name or wanted.startswith(f"{name} "))
+                ):
+                    return _s(programme_id)
 
-    programme = _s(programme)
     if not programme:
-        return ""
+        return snapshot_ids[0] if snapshot_ids else ""
     try:
         with connections["enrolment"].cursor() as cursor:
             cursor.execute(
@@ -1501,8 +1520,10 @@ def _resolve_programme_id(programme="", training_plan=None):
             row = cursor.fetchone()
     except DatabaseError as exc:
         logger.warning("Could not resolve programme id for %s: %s", programme, exc)
-        return ""
-    return _s(row[0]) if row else ""
+        return snapshot_ids[0] if snapshot_ids else ""
+    if row and _s(row[0]):
+        return _s(row[0])
+    return snapshot_ids[0] if snapshot_ids else ""
 
 
 def _resolve_linkable_programme_id(programme="", training_plan=None):
