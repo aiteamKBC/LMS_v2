@@ -300,7 +300,7 @@ export default function CurriculumRecordingsPage() {
                   onClick={() => chooseFilter(value)} className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${agendaFilter === value ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-200 text-foreground-700'}`}>
                   {agendaLabel(value)} ({filterCounts[value]})
                 </button>)}
-                <span className="text-xs text-foreground-500">{allDateSearch ? 'Counts across all search dates' : `Counts in selected ${periodName}`}; select one filter</span>
+                <span className={styles.statusHint}>{allDateSearch ? 'Counts across all search dates' : `Counts in selected ${periodName}`}; select one filter</span>
               </div>
                 </div>
                 <div className="mt-3 lg:hidden">
@@ -314,7 +314,7 @@ export default function CurriculumRecordingsPage() {
                 </div>
                 <div className={`${styles.agendaBody} ${expandedCalendar ? "flex min-h-0 flex-1 flex-col" : ""}`}>
                   {library.calendarAvailable !== false && <>
-                    <p role="status" className="mb-3 text-xs text-foreground-600">{resultLectures.length} lectures{allDateSearch ? ' across all dates' : ` in selected ${periodName}`}{query.trim() ? ` matching "${query.trim()}"` : ''}</p>
+                    <p role="status" className={styles.agendaCount}>{resultLectures.length} lectures{allDateSearch ? ' across all dates' : ` in selected ${periodName}`}{query.trim() ? ` matching "${query.trim()}"` : ''}</p>
                     {!allDateSearch && period === 'day' ? <DayAgenda lectures={resultLectures} selectedLectureId={selectedLectureId} onSelectLecture={lecture => setSelectedLectureId(lecture.id)} onClearFilters={clearFilters} /> : !allDateSearch && period !== 'month' ? <CalendarTimeline startDate={bounds.start} endDate={bounds.end} lectures={resultLectures}
                       selectedLectureId={selectedLectureId} onSelectLecture={lecture => setSelectedLectureId(lecture.id)} expanded={expandedCalendar}
                       emptyMessage={searchPool.length ? 'No lectures match your filters' : 'No linked LMS meetings in this period'} /> : resultDates.length ? resultDates.map(date => <section key={date} className="mb-4" aria-label={`Lectures on ${date}`}>
