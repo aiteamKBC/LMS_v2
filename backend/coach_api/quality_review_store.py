@@ -70,9 +70,12 @@ def save_review(snapshot, *, expected, request_id, actor):
             allowed = {(str(row['id']),row['section']) for row in images}
             if any((identity,section) not in allowed for section,values in snapshot['form']['images'].items() for identity in values):
                 raise ReviewConflict('A screenshot does not belong to this review and section.')
+        attachments = read_evidence_rows(connection, review_id, snapshot['form'].get('attachments', {}))
         from datetime import datetime, timezone
         saved = {**snapshot, 'id':review_id, 'version':expected+1,
                  'updatedBy':actor, 'updatedAt':datetime.now(timezone.utc).isoformat()}
+        if 'attachments' in snapshot['form']:
+            saved['evidenceFiles'] = [{key:row[key] for key in ('id','section','filename','size','contentType','hasPreview')} for row in attachments]
         params = [saved['coach']['email'],saved['learner']['id'],saved['learner']['name'],
                   saved['meeting']['startsAt'],saved['meeting']['endsAt'],saved['status'],saved['version'],Jsonb(saved),actor]
         if current:
@@ -113,7 +116,7 @@ def list_reviews(start,end,coach='',status='',offset=0,search='',review_type='',
         params.extend([term,term])
     with connect() as connection:
         rows = connection.execute('''SELECT id,coach_email,learner_id,learner_name,starts_at,status,version,updated_at,
-          payload->'meeting'->>'title' AS title,payload->'coach'->>'name' AS coach_name,
+          payload->'meeting'->>'title' AS title,payload->'coach'->>'name' AS coach_name,payload->'definition'->>'title' AS form_title,
           jsonb_array_length(payload->'form'->'actions') AS action_count,'''+type_sql()+''' AS review_type,
           (SELECT max(d.version) FROM lms_quality.document d WHERE d.review_id=lms_quality.review.id) AS pdf_version
           FROM lms_quality.review WHERE ''' + where + ' ORDER BY starts_at DESC,id LIMIT 31 OFFSET %s', [*params,offset]).fetchall()
@@ -162,6 +165,11 @@ def _template_state(connection, kind=''):
     row=connection.execute('SELECT payload FROM lms_quality.form_template WHERE id=%s',[key]).fetchone()
     if row:
         return _payload(row)
+    if kind.startswith('FORM_'):
+        from .quality_feedback_catalog import feedback_definition
+        from .quality_review_template import InvalidReview
+        if not feedback_definition(kind):
+            raise InvalidReview('This quality form is not available. Choose a form from the library.')
     inherited=None
     if kind:
         inherited=_payload(connection.execute('SELECT payload FROM lms_quality.form_template WHERE id=%s',[initial_state()['id']]).fetchone())
@@ -187,7 +195,11 @@ def save_template(definition, *, expected, request_id, actor, publish=False):
                 raise ReviewConflict('This form save identifier was used for another change.')
             return _payload(replay)
         row=connection.execute('SELECT payload FROM lms_quality.form_template WHERE id=%s',[key]).fetchone()
-        current=_payload(row) or _template_state(connection,definition.get('reviewType',''))
+        from .quality_feedback_catalog import default_feedback
+        kind=definition.get('reviewType','')
+        current=_payload(row) or ({'id':key,'revision':0,'draft':deepcopy(definition),'published':deepcopy(definition),
+            'publishedAt':None,'updatedAt':None,'reviewType':kind}
+            if kind.startswith('FORM_') and not default_feedback(kind) else _template_state(connection,kind))
         if current['revision']!=expected:
             raise ReviewConflict('The form changed in another window. Reload it before saving.')
         stamp=datetime.now(timezone.utc).isoformat()
@@ -243,8 +255,83 @@ def save_document(review, content):
 def reviews_for_meeting(identity, offset=0):
     from .quality_review_types import type_sql
     with connect() as connection:
-        rows=connection.execute('''SELECT r.id,r.learner_id,r.learner_name,r.status,r.version,r.updated_at,'''+type_sql('r')+''' AS review_type,
+        rows=connection.execute('''SELECT r.id,r.learner_id,r.learner_name,r.status,r.version,r.updated_at,r.payload->'definition'->>'title' AS form_title,'''+type_sql('r')+''' AS review_type,
           (SELECT max(d.version) FROM lms_quality.document d WHERE d.review_id=r.id) AS pdf_version
           FROM lms_quality.review r WHERE r.payload->'meeting'->>'id'=%s
           ORDER BY r.learner_name,r.id LIMIT 31 OFFSET %s''',[identity,offset]).fetchall()
     return rows[:30],offset+30 if len(rows)>30 else None
+
+
+def form_catalog(*, editing=False):
+    from .quality_feedback_catalog import default_summaries
+    entries = {row['reviewType']:row for row in default_summaries()}
+    if editing:
+        entries.update({kind:{'reviewType':kind,'title':kind+' · Previous portfolio form','group':'Previous forms',
+            'published':True,'revision':0,'legacy':True} for kind in ('MCM','PR')})
+    with connect() as connection:
+        rows = connection.execute('''SELECT payload->>'reviewType' AS kind,
+            payload->'draft'->>'title' AS draft_title,payload->'published'->>'title' AS title,
+            revision,payload->>'publishedAt' AS published_at FROM lms_quality.form_template
+            WHERE payload->>'reviewType' IS NOT NULL ORDER BY id LIMIT 501''').fetchall()
+    if len(rows)>500:
+        raise ReviewUnavailable('The form library is too large to load. Contact an administrator.')
+    for row in rows:
+        kind=row['kind']
+        if kind in ('MCM','PR') and not editing:
+            continue
+        builtin=entries.get(kind)
+        published=bool(row['published_at']) or bool(builtin and builtin['published'])
+        if not editing and not published:
+            continue
+        entries[kind]={**(builtin or {'reviewType':kind,'group':'Custom forms','legacy':False}),
+            'title':row['draft_title'] if editing else row['title'], 'published':published,'revision':row['revision']}
+    return list(entries.values())
+
+
+def read_evidence_rows(connection, review_id, sections, *, preview=False):
+    identities=[identity for values in sections.values() for identity in values]
+    if not identities:
+        return []
+    columns=',preview' if preview else ''
+    rows=connection.execute('''SELECT id,section,filename,size,content_type,
+        (preview IS NOT NULL) AS has_preview'''+columns+''' FROM lms_quality.evidence_file
+        WHERE review_id=%s AND id=ANY(%s::uuid[])''',[review_id,identities]).fetchall()
+    found={str(row['id']):row for row in rows}
+    if any(identity not in found or found[identity]['section']!=section for section,values in sections.items() for identity in values):
+        raise ReviewConflict('An evidence file does not belong to this review and question.')
+    return [{**found[identity],'id':identity,'contentType':found[identity]['content_type'],
+        'hasPreview':found[identity]['has_preview']} for identity in dict.fromkeys(identities)]
+
+
+def read_evidence(review_id, sections):
+    with connect() as connection:
+        return read_evidence_rows(connection, review_id, sections, preview=True)
+
+
+def save_evidence(review_id, section, filename, content, content_type, preview=None):
+    value_hash=sha256(content).hexdigest()
+    with connect(write=True) as connection:
+        if not connection.execute('SELECT id FROM lms_quality.review WHERE id=%s FOR UPDATE',[review_id]).fetchone():
+            raise ReviewConflict('Save a draft before attaching evidence.')
+        existing=connection.execute('SELECT id,filename,size,content_type,(preview IS NOT NULL) AS has_preview FROM lms_quality.evidence_file WHERE review_id=%s AND section=%s AND digest=%s',
+            [review_id,section,value_hash]).fetchone()
+        if existing:
+            return {'id':str(existing['id']),'section':section,'filename':existing['filename'],'size':existing['size'],
+                'contentType':existing['content_type'],'hasPreview':bool(existing['has_preview'])}
+        totals=connection.execute('SELECT count(*) AS total,coalesce(sum(size),0) AS bytes FROM lms_quality.evidence_file WHERE review_id=%s',[review_id]).fetchone()
+        if totals['total']>=30 or totals['bytes']+len(content)>100*1024*1024:
+            raise ReviewConflict('Use up to 30 evidence files and 100 MB per review, including saved versions.')
+        identity=str(uuid.uuid4())
+        connection.execute('''INSERT INTO lms_quality.evidence_file
+            (id,review_id,section,filename,content_type,size,digest,content,preview)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+            [identity,review_id,section,filename,content_type,len(content),value_hash,content,preview])
+        return {'id':identity,'section':section,'filename':filename,'size':len(content),
+            'contentType':content_type,'hasPreview':bool(preview)}
+
+
+def evidence_file(review_id, identity, *, preview=False):
+    with connect() as connection:
+        columns='filename,preview' if preview else 'filename,content_type,size,content'
+        return connection.execute('SELECT '+columns+' FROM lms_quality.evidence_file WHERE review_id=%s AND id=%s',
+            [review_id,identity]).fetchone()

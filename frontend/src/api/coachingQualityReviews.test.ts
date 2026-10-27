@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { learningFetch } from '@/lib/personalLearning';
 import { coachFetch } from '@/lib/coachFetch';
 import { clearAllCachedResources } from './cachedRequest';
-import { qualityContext, qualityDefinition, qualityReview, saveQualityDefinition, qualityPdf, saveQualityReview, QualityReviewError, type QualityReview, type QualityForm, type QualityTemplate } from './coachingQualityReviews';
+import { qualityContext, qualityForms, createQualityForm, qualityDefinition, qualityReview, saveQualityDefinition, uploadQualityEvidence, qualityEvidenceFileUrl, qualityPdf, saveQualityReview, QualityReviewError, type QualityReview, type QualityForm, type QualityTemplate } from './coachingQualityReviews';
 vi.mock('@/lib/personalLearning', () => ({ learningFetch: vi.fn() }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn() }));
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
@@ -58,5 +58,25 @@ describe('Quality review request limits', () => {
     const blobs = await Promise.all([qualityPdf(review), qualityPdf(review)]);
     expect(blobs[0]).toBe(blobs[1]); expect(learningFetch).toHaveBeenCalledOnce();
     await qualityPdf({ ...review, version: 2 }); expect(learningFetch).toHaveBeenCalledTimes(2);
+  });
+  it('shares form-library reads, separates the editor catalog and invalidates on custom form creation', async () => {
+    vi.mocked(learningFetch).mockImplementation(async () => response({ forms: [] }));
+    await Promise.all([qualityForms(), qualityForms()]); expect(learningFetch).toHaveBeenCalledOnce();
+    await qualityForms(undefined, true); expect(learningFetch).toHaveBeenCalledTimes(2);
+    vi.mocked(coachFetch).mockResolvedValue(response({ template: { reviewType: 'FORM_CUSTOM_TEST' } }, 201));
+    await createQualityForm('Custom form', 'stable-save-id');
+    expect(coachFetch).toHaveBeenCalledWith(expect.stringContaining('/quality/forms'), expect.objectContaining({ method: 'POST', body: JSON.stringify({ title: 'Custom form', requestId: 'stable-save-id' }) }));
+    await qualityForms(); expect(learningFetch).toHaveBeenCalledTimes(3);
+  });
+  it('uploads original file bytes via multipart CSRF transport and scopes download URLs to the review', async () => {
+    vi.mocked(coachFetch).mockResolvedValue(response({ id: 'evidence' }, 201));
+    const file = new File(['original bytes'], 'evidence.zip', { type: 'application/zip' });
+    await uploadQualityEvidence('review/one', 'evidence', file);
+    const [url, init] = vi.mocked(coachFetch).mock.calls[0];
+    expect(url).toContain('/reviews/review%2Fone/files'); expect(init?.method).toBe('POST');
+    const body = init?.body as FormData;
+    expect(body.get('section')).toBe('evidence'); expect(body.get('file')).toBe(file);
+    expect(qualityEvidenceFileUrl('review/one', 'file/id', true)).toContain('/review%2Fone/files/file%2Fid?preview=1');
+    expect(learningFetch).not.toHaveBeenCalled();
   });
 });

@@ -68,10 +68,30 @@ class CalendarEvidenceTests(SimpleTestCase):
         original['records'].append({'id': 'zero', 'displayName': 'Reported with no duration', 'totalAttendanceSeconds': 0})
         rows = media.attendance_rows([original, original])
         self.assertEqual(rows[0]['totalAttendanceSeconds'], 180)
+        self.assertEqual(rows[0]['firstJoinedAt'], '2026-10-20T09:00:00+00:00')
+        self.assertEqual(rows[0]['lastLeftAt'], '2026-10-20T09:03:00+00:00')
         self.assertEqual(rows[0]['status'], 'attended')
         self.assertFalse(rows[0]['expected'])
         self.assertEqual(rows[1]['status'], 'pending')
+        self.assertIsNone(rows[1]['firstJoinedAt'])
+        self.assertIsNone(rows[1]['lastLeftAt'])
         self.assertNotIn('absent', {row['status'] for row in rows})
+
+    def test_displayed_join_bounds_use_valid_visits_without_inventing_times_for_duration_only_records(self):
+        original = report()
+        original['records'][0]['totalAttendanceSeconds'] = 755
+        rows = media.attendance_rows([original])
+        self.assertEqual(rows[0]['totalAttendanceSeconds'], 755)
+        self.assertIsNone(rows[0]['firstJoinedAt'])
+        original['records'][0]['intervals'] = [
+            {'joinDateTime':'bad','leaveDateTime':END},
+            {'joinDateTime':END,'leaveDateTime':START},
+            {'joinDateTime':'2026-10-20T09:00:00Z','leaveDateTime':'2026-10-20T09:01:00Z'},
+            {'joinDateTime':'2026-10-20T09:03:00Z','leaveDateTime':'2026-10-20T09:04:00Z'},None]
+        rows = media.attendance_rows([original])
+        self.assertEqual(rows[0]['totalAttendanceSeconds'], 120)
+        self.assertEqual(rows[0]['firstJoinedAt'], '2026-10-20T09:00:00+00:00')
+        self.assertEqual(rows[0]['lastLeftAt'], '2026-10-20T09:04:00+00:00')
 
     def test_anonymous_people_are_not_merged_just_because_their_display_names_match(self):
         original = report()

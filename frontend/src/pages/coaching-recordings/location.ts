@@ -16,10 +16,11 @@ export function readLocation(params: URLSearchParams): CoachingLocation {
   catch { zone = TIME_ZONE_LABEL; }
   const date = params.get('date') ?? '';
   const validDate = validDay(date);
-  const lectures = params.get('lectures') === '1';
+  const phase = member(params.get('status'), ['ready', 'attention', 'ended', 'upcoming', 'in-progress', 'cancelled', 'all'], 'ready');
+  const lectures = phase === 'ready' || params.get('lectures') === '1';
   return { date: validDate ? date : todayIso(zone), period: member(params.get('view'), ['day', 'week', 'month'], 'day'), zone,
     coach: (params.get('coach') ?? '').slice(0, 320), learner: /^\d+$/.test(params.get('learner') ?? '') ? params.get('learner')! : '',
-    phase: member(params.get('status'), ['ready', 'attention', 'ended', 'upcoming', 'in-progress', 'cancelled', 'all'], 'ready'),
+    phase,
     family: member(params.get('type'), lectures ? ['all', 'MCM', 'PR', 'SUPPORT', 'OTHER', 'LECTURE'] : ['all', 'MCM', 'PR', 'SUPPORT', 'OTHER'], 'all'),
     match: member(params.get('match'), ['all', 'matched', 'review'], 'all'), lectures,
     meeting: (params.get('meeting') ?? '').slice(0, 128), occurrenceDate: validDay(params.get('on') ?? '') ? params.get('on')! : validDate ? date : todayIso(zone),

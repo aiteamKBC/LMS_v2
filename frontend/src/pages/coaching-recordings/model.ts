@@ -1,4 +1,4 @@
-import type { CoachingCalendar, CoachingMeeting, RecordingState } from '@/api/coachingRecordings';
+import type { CoachingCalendar, CoachingMeeting, CoachingMedia, RecordingState } from '@/api/coachingRecordings';
 
 export function initialChecksPending(sync: CoachingCalendar['sync']): boolean {
   if (!sync) return false;
@@ -13,9 +13,29 @@ export const meetingCategory = (row: CoachingMeeting) => row.category ?? row.fam
 export const categoryLabels = { MCM: 'MCM', PR: 'PR (Progress Review)', SUPPORT: 'Student Support', OTHER: 'Other', LECTURE: 'Lecture / subject' };
 
 export const recordingLabels: Record<RecordingState, string> = {
-  ready: 'Recording available', pending: 'Checking for recordings', failed: 'Recording check failed',
+  ready: 'Recording available', pending: 'Recording check pending', failed: 'Recording check failed',
   missing: 'Saved recording missing or incomplete', unavailable: 'Recording availability could not be checked', unlinked: 'Session match needs review',
 };
+
+export function recordingLabel(media: CoachingMedia): string {
+  if (media.readyCount > 0) return recordingLabels.ready;
+  if (media.check?.state === 'failed') return recordingLabels.failed;
+  if (media.check?.state === 'complete' && !media.recordings.length) {
+    return media.check.reason === 'no-teams-link' ? 'No Teams link on this calendar entry' : 'No recording returned at last check';
+  }
+  return recordingLabels[media.state];
+}
+
+export function hiddenReadyReasons(meetings: CoachingMeeting[], now: number): [string, number][] {
+  const counts = new Map<string, number>();
+  for (const row of meetings) {
+    const phase = meetingPhase(row, now);
+    if (phase === 'ended') continue;
+    const label = phase === 'cancelled' ? 'Cancelled' : 'Upcoming / in progress';
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return [...counts];
+}
 
 export function calendarErrorLabel(code: string) {
   const labels: Record<string, string> = {
@@ -50,9 +70,12 @@ export function meetingPhase(meeting: CoachingMeeting, now: number): CoachingMee
   if (Date.parse(meeting.endsAt) <= now) return 'ended';
   return Date.parse(meeting.startsAt) > now ? 'upcoming' : 'in-progress';
 }
+export function hasPlayableRecording(meeting: CoachingMeeting, now: number): boolean {
+  return meetingPhase(meeting, now) === 'ended' && meeting.media.readyCount > 0;
+}
 export function filterMeetings(meetings: CoachingMeeting[], phase: MeetingFilter, match: MatchFilter, family: string, now: number) {
   return meetings.filter(row => (phase === 'all'
-    || (phase === 'ready' ? meetingPhase(row, now) === 'ended' && (row.match === 'matched' || Boolean(row.recordingsReference)) && row.media.readyCount > 0
+    || (phase === 'ready' ? meetingPhase(row, now) === 'ended'
       : phase === 'attention' ? meetingPhase(row, now) !== 'cancelled' && (row.match !== 'matched' || (meetingPhase(row, now) === 'ended' && !row.media.readyCount))
         : phase === 'cancelled' ? meetingPhase(row, now) === 'cancelled' || Boolean(row.cancellationSources?.length) : meetingPhase(row, now) === phase))
     && (match === 'all' || (match === 'matched' ? row.match === 'matched' : row.match !== 'matched'))

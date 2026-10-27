@@ -6,7 +6,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { coachNavItems, curriculumNavItems } from '@/mocks/navigation';
 import { addDays, CALENDAR_TIME_ZONES, formatFullDate, parseIsoDate, todayIso } from '@/pages/curriculum/recordings/utils';
 import { periodBounds, type Period } from '@/pages/curriculum/recordings/filters';
-import { filterMeetings, initialChecksPending, meetingDate, meetingKey, meetingCategory, categoryLabels, type MatchFilter, type MeetingFilter } from './model';
+import { filterMeetings, hasPlayableRecording, hiddenReadyReasons, initialChecksPending, meetingDate, meetingKey, meetingCategory, recordingLabel, categoryLabels, type MatchFilter, type MeetingFilter } from './model';
 import MeetingDetailsDrawer from './MeetingDetailsDrawer';
 import CoachMiniCalendar from './CoachMiniCalendar';
 import MeetingCalendar from './MeetingCalendar';
@@ -165,6 +165,12 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
     && (!learner || row.learnerIds.includes(learner)) && (showLectures || meetingCategory(row) !== 'LECTURE'));
   const visible = filterMeetings(scopedMeetings, phase, match, family, now);
   const allMatching = filterMeetings(scopedMeetings, 'all', match, family, now);
+  const hiddenReasons = phase === 'ready' ? hiddenReadyReasons(allMatching, now) : [];
+  const recordingStates = new Map<string, number>();
+  if (phase === 'ready') for (const row of visible) {
+    const label = recordingLabel(row.media);
+    recordingStates.set(label, (recordingStates.get(label) ?? 0) + 1);
+  }
   const cancellations = (phase === 'cancelled' || phase === 'all') && match !== 'matched'
     ? (data?.cancelledBookings ?? []).filter(row => (!learner || row.learnerId === learner) && (!coach || row.coachEmail === coach) && (family === 'all' || family === row.family)
       && !visible.some(meeting => meeting.eventKey === row.eventKey && meeting.cancellationSources?.includes('lms'))) : [];
@@ -225,7 +231,7 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
           <p className="mt-1 text-sm text-foreground-600">See every meeting on a coach's calendar by its original title. Filter by coach, learner, date or status.</p></div>
         <div className="flex flex-wrap gap-2">
           {workspace === 'curriculum' && <Link className={`${control} inline-flex items-center gap-2 font-semibold text-primary-700`} to="/curriculum/coaching-recordings/reviews">Quality Checks</Link>}
-          {workspace === 'curriculum' && <Link className={`${control} inline-flex items-center gap-2 font-semibold text-primary-700`} to="/curriculum/quality/forms?type=MCM">Edit quality forms</Link>}
+          {workspace === 'curriculum' && <Link className={`${control} inline-flex items-center gap-2 font-semibold text-primary-700`} to="/curriculum/quality/forms">Edit quality forms</Link>}
           <button type="button" className={`${control} inline-flex items-center gap-2 disabled:opacity-50`} disabled={loading || refreshing} onClick={() => setRevision(value => value + 1)}><RefreshCw aria-hidden="true" size={16} />Refresh calendars</button>
         </div>
       </div>
@@ -256,8 +262,9 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
           <optgroup label="Other meetings"><option value="SUPPORT">{categoryLabels.SUPPORT}</option><option value="OTHER">{categoryLabels.OTHER}</option></optgroup>
           {showLectures && <option value="LECTURE">Lectures / subjects</option>}
         </select></label>
-        <button type="button" aria-pressed={showLectures} className={`${control} ${showLectures ? 'border-primary-300 bg-primary-50 text-primary-800' : ''}`}
-          onClick={() => navigate({ lectures: !showLectures, family: family === 'LECTURE' ? 'all' : family })}>{showLectures ? 'Hide lectures / subjects' : 'Show lectures / subjects'}</button>
+        {phase === 'ready' ? <p className="max-w-full rounded-lg bg-primary-50 px-3 py-2 text-xs font-medium text-primary-800">Lectures included in Ready to action</p>
+          : <button type="button" aria-pressed={showLectures} className={`${control} ${showLectures ? 'border-primary-300 bg-primary-50 text-primary-800' : ''}`}
+            onClick={() => navigate({ lectures: !showLectures, family: family === 'LECTURE' ? 'all' : family })}>{showLectures ? 'Hide lectures / subjects' : 'Show lectures / subjects'}</button>}
         <label className="grid gap-1 text-xs font-semibold">Match<select aria-label="LMS match" value={match} className={control} onChange={event => setMatch(event.target.value as MatchFilter)}>
           <option value="all">All matches</option><option value="matched">Matched to LMS</option><option value="review">Needs matching review</option>
         </select></label>
@@ -284,7 +291,7 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
       <div className="mt-4 flex flex-wrap gap-2" aria-label="Meeting summary">
         {[
           { label: 'Meetings in this period', count: scopedMeetings.length, icon: CalendarDays },
-          { label: 'Ready recordings', count: filterMeetings(scopedMeetings, 'ready', 'all', 'all', now).length, icon: Video },
+          { label: 'Meetings with recordings', count: scopedMeetings.filter(row => hasPlayableRecording(row, now)).length, icon: Video },
           { label: 'Upcoming meetings', count: filterMeetings(scopedMeetings, 'upcoming', 'all', 'all', now).length, icon: CalendarDays },
           { label: 'Coach calendars checked', count: data?.coverage.checkedCoachEmails.length ?? 0, icon: Users },
         ].map(({ label, count, icon: Icon }) => <div key={label} className="flex items-center gap-2 rounded-full border border-background-200 bg-white px-3 py-2 text-xs">
@@ -309,14 +316,21 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
           </div>
           <button type="button" className="text-xs font-semibold text-primary-700 underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500" onClick={() => { setSelectedSession(null); setShowSyncDetails(true); }}>Sync & booking details</button>
         </section>
-        {!loading && !visible.length && phase === 'ready' && allMatching.length > 0 && <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary-200 bg-primary-50 p-4 text-sm">
-          <p>{preparing ? updatesPaused ? 'Some recording checks are still pending.' : 'Recording checks are still running.' : `No meetings match ${filterLabels[phase]}.`} There are {allMatching.length} meetings loaded across all statuses{data.partial ? '; some calendars are still unavailable' : ''}.</p>
-          <button className={control} onClick={() => setPhase('all')}>Show all loaded meetings</button>
-        </div>}
+        {!loading && phase === 'ready' && <section aria-label="Ready to action summary" className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary-200 bg-primary-50 p-4 text-sm">
+          <div className="min-w-0">
+            <p className="font-semibold">{visible.length} ended {visible.length === 1 ? 'meeting' : 'meetings'} · {visible.filter(row => hasPlayableRecording(row, now)).length} with playable recordings</p>
+            <p className="mt-1 text-xs text-foreground-600">Ready to action includes all ended meetings and lectures, with or without a recording. Attendance and AI are checked when you open a meeting.</p>
+            <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-foreground-700">{[...recordingStates].map(([label, count]) => <li key={label}>{count} · {label}</li>)}</ul>
+            {hiddenReasons.length > 0 && <p className="mt-2 text-xs text-foreground-600">Outside Ready to action: {hiddenReasons.map(([label, count]) => `${count} ${label.toLowerCase()}`).join(' · ')}.</p>}
+            {preparing && <p className="mt-1 text-xs">{updatesPaused ? 'Some recording checks are still pending.' : 'Initial recording checks are still pending.'}</p>}
+            {data.partial && <p className="mt-1 text-xs text-amber-900">Some calendar or recording checks failed. Loaded counts may be incomplete; see Sync & booking details.</p>}
+          </div>
+          {hiddenReasons.length > 0 && <button className={control} onClick={() => setPhase('all')}>Show all loaded meetings</button>}
+        </section>}
         <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
           <div className="hidden lg:block"><CoachMiniCalendar date={date} timeZone={zone} meetingDates={meetingDates} onSelectDay={selectDay} /></div>
           <section aria-label="Coaching meetings" className="min-w-0 space-y-4">
-            {!loading && !preparing && !visible.length && !cancellations.length && <p className="rounded-xl border border-background-200 bg-white p-6 text-sm text-foreground-600">{data.partial ? 'No meetings loaded for these filters. Some calendars or recordings could not be checked.' : phase === 'ready' ? 'No ready recordings match these filters. Choose Ended or Needs attention to review the remaining sessions.' : 'No meetings match these filters in the selected period.'}</p>}
+            {!loading && !preparing && !visible.length && !cancellations.length && <p className="rounded-xl border border-background-200 bg-white p-6 text-sm text-foreground-600">{data.partial ? 'No meetings loaded for these filters. Some calendars or recordings could not be checked.' : phase === 'ready' ? 'No ended meetings match these filters in the selected period.' : 'No meetings match these filters in the selected period.'}</p>}
             <MeetingCalendar date={date} period={period} timeZone={zone} meetings={period === 'day' ? visible : visible.slice(0, agendaLimit)} totalMeetings={visible.length} now={now}
               selected={activeKey} coachName={coachName} learnerName={learnerName} onSelectDay={selectDay} onSelectMeeting={selectMeeting} />
             {period !== 'day' && visible.length > agendaLimit && <button className={control} onClick={() => setAgendaLimit(value => value + 30)}>Show more meetings ({visible.length - agendaLimit} remaining)</button>}
