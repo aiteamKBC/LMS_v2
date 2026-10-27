@@ -17,6 +17,7 @@ class MonthlyLogsProjectionTests(SimpleTestCase):
     def setUp(self):
         self.learner = {'id': 7, 'name': 'Synthetic learner', 'programme': 'Programme',
                         '_canonical_profile': {'id': 70, 'enrolment_id': 7, 'programme_id': 'P'}}
+        self.extra_read = self.enterContext(patch.object(logs, 'extra_activity_hour_records', return_value={70: []}))
 
     def project(self, count):
         activities = [{'month': f'2026-{index:02}', 'activities': 2, 'accepted_hours': 1.5}
@@ -28,6 +29,7 @@ class MonthlyLogsProjectionTests(SimpleTestCase):
              patch.object(canonical, 'entries_for', side_effect=AssertionError('Heavy entries hydration')), \
              patch.object(canonical, 'rows_for', side_effect=AssertionError('Heavy document hydration')):
             result = logs.project_year(self.learner, 2026)
+        self.extra_read.assert_called_with([self.learner['_canonical_profile']])
         self.assertEqual(reads.call_count + targets.call_count, 3)
         self.assertEqual(targets.call_args.args, (self.learner['_canonical_profile'],))
         for call in reads.call_args_list:
@@ -36,9 +38,10 @@ class MonthlyLogsProjectionTests(SimpleTestCase):
             self.assertIn('GROUP BY', call.args[0])
         return result
 
-    def test_one_and_twelve_months_use_three_projection_reads(self):
+    def test_one_and_twelve_months_use_three_projection_reads_and_one_extra_read(self):
         self.assertEqual(len(self.project(1)['months']), 1)
         self.assertEqual(len(self.project(12)['months']), 12)
+        self.assertEqual(self.extra_read.call_count, 2)
 
     def test_compact_values_match_existing_month_and_metrics_rules(self):
         result = self.project(12)

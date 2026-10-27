@@ -8,6 +8,7 @@ from old_otjh.repository import query
 from .active_users import completed_hours_value_from_progress
 from .progress_rules import progress_counts_as_achieved
 from .retake_timing import native_choices, measured_choice
+from .extra_activity_month import valid_activity_month
 
 
 def instant(value):
@@ -251,13 +252,17 @@ def merge_submissions(records, submissions):
         codes = s.get('ksb_codes') or []
         if isinstance(codes, str):
             codes = json.loads(codes)
+        selected_month = s.get('activity_month') if s['activity_type'] == 'extra_activity' else None
+        month = selected_month if valid_activity_month(selected_month) else at.strftime('%Y-%m')
         result.append({'id': f"reflection:{s['id']}", 'component_title': s.get('activity_title'),
             'component_ref': s.get('component_ref'), 'module_title': s.get('module_title'),
             'kind': s['activity_type'], 'accepted': accepted, 'completed': accepted,
             'actual_seconds': actual_time_seconds(s.get('actual_time_hours')),
-            'reporting_month': at.strftime('%Y-%m'), 'reporting_started_at': at,
+            'reporting_month': month, 'reporting_started_at': at,
             'activity_status': s.get('status'), 'ksbs': codes, 'sources': [], 'segments': [],
             'source_payload': {'original_source_ref': f"reflection:{s['id']}"}})
+        if s['activity_type'] == 'extra_activity':
+            result[-1].update(actual_basis='extra_activity_input', expected_otjh=0)
     return result
 
 
@@ -279,6 +284,7 @@ def attempts_relation_exists():
 def current_records(owner, records):
     submissions = query('''SELECT id,component_ref,progress_entry_id,status,actual_time_hours,
         submitted_at,activity_type,activity_title,module_title,ksb_codes,
+        full_submission #>> '{monthlyAssignment,month}' AS activity_month,
         full_submission->>'submissionOrigin' = 'imported_legacy' AS imported
         FROM "Learner".learning_reflection_submissions
         WHERE learner_id=%s AND learner_kind=%s AND activity_type IN ('assignment','extra_activity')
@@ -328,6 +334,7 @@ def current_records_bulk(owners, records_by_learner_id):
     params = [value for pair in identity_pairs for value in pair]
     submissions = query(f'''SELECT learner_id,learner_kind,id,component_ref,progress_entry_id,
         status,actual_time_hours,submitted_at,activity_type,activity_title,module_title,ksb_codes,
+        full_submission #>> '{{monthlyAssignment,month}}' AS activity_month,
         full_submission->>'submissionOrigin' = 'imported_legacy' AS imported
         FROM "Learner".learning_reflection_submissions
         WHERE (learner_id,learner_kind) IN ({placeholders})
