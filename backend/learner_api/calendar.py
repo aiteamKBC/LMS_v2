@@ -1924,7 +1924,19 @@ def learner_calendar_book(request, kind, pk):
                         meeting_ownership.require_synced_owner(existing, aptem_target)
                     except meeting_ownership.MeetingOwnershipError:
                         return _error("This imported meeting needs ownership reconciliation.", 409)
-                return JsonResponse({"event": aptem_target, "warning": _friendly_sync_warning(existing.last_graph_sync_error)})
+                # The reservation branch below ends with this same transition.
+                # Answering a replay from the appointment that already exists
+                # must not leave the form unscheduled instead. Lifecycle only:
+                # the row, its schedule, its Teams meeting and its sync state
+                # are untouched, and no Graph request is made. The resolved
+                # event was shaped before the transition, so a promotion
+                # reshapes it through the same serializer the booking path uses.
+                from .imported_booking import schedule_overlay_for_booking
+                scheduled_now = schedule_overlay_for_booking(existing.pk, aptem_target)
+                return JsonResponse({
+                    "event": _booking_response_event(existing, aptem_target) if scheduled_now else aptem_target,
+                    "warning": _friendly_sync_warning(existing.last_graph_sync_error),
+                })
     # Generic MCM/PR requests still resolve to an official Curriculum
     # occurrence before they use the direct scheduling flow below.
     direct_cycle_request = session_type in {"mcr", "progress-review"} and not _s(payload.get("eventKey")) and not assignment_month
@@ -2068,22 +2080,30 @@ def learner_calendar_book(request, kind, pk):
                                                 exclude_record_id=existing_booking.pk if existing_booking else None)
                 ensure_coach_outlook_available(owner_email, scheduled_date, scheduled_time, duration_minutes, record=existing_booking)
 
-            record, created = CoachCalendarEvent.objects.get_or_create(
-                event_key=event_key,
-                defaults={
-                    "owner_email": owner_email,
-                    "owner_name": owner_name or _s(mirror.coach_name) or "Coach",
-                    "learner_id": int(mirror.id),
-                    "learner_name": _s(base_event.get("learner")) or learner_name,
-                    "learner_email": _s(base_event.get("email")) or learner_email,
-                    "event_type": session_type,
-                    "sequence": int(base_event.get("sequence") or 1),
-                    "target_date": target_date,
-                },
-            )
             if aptem_target is not None:
-                from .imported_booking import booking_slot, reserve_imported_booking
+                # An Aptem row is created inside the reservation's own
+                # transaction and learner lock, so an attempt refused there
+                # leaves no reservation-less placeholder for the next booking
+                # to trip over. Everything below still fills this candidate in.
+                from .imported_booking import (booking_slot, reserve_imported_booking,
+                                               schedule_overlay_for_booking)
+                created = existing_booking is None
+                record = existing_booking or CoachCalendarEvent(event_key=event_key)
                 imported_expected_slot = booking_slot(record)
+            else:
+                record, created = CoachCalendarEvent.objects.get_or_create(
+                    event_key=event_key,
+                    defaults={
+                        "owner_email": owner_email,
+                        "owner_name": owner_name or _s(mirror.coach_name) or "Coach",
+                        "learner_id": int(mirror.id),
+                        "learner_name": _s(base_event.get("learner")) or learner_name,
+                        "learner_email": _s(base_event.get("email")) or learner_email,
+                        "event_type": session_type,
+                        "sequence": int(base_event.get("sequence") or 1),
+                        "target_date": target_date,
+                    },
+                )
             if aptem_target is not None and not created:
                 from coach_api.review_sources import linked_booking
                 if linked_booking(aptem_target, [record]) is None or record.owner_email.casefold() != owner_email.casefold():
@@ -2094,6 +2114,7 @@ def learner_calendar_book(request, kind, pk):
                     # Replay the existing operation. An unreserved placeholder
                     # left by a busy slot may instead retry at another time.
                     record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
+                    schedule_overlay_for_booking(record.pk, aptem_target)
                     return JsonResponse({"event": _booking_response_event(record, aptem_target),
                                          "warning": _friendly_sync_warning(warning)})
             review_template_id = _s(base_event.get('reviewTemplateId'))
@@ -2140,6 +2161,11 @@ def learner_calendar_book(request, kind, pk):
             warning = ""
             if needs_sync:
                 record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
+            if aptem_target is not None:
+                # The Coach booking endpoint ends with the same transition.
+                # Without it the learner's own booking would leave the form
+                # not-scheduled and hide Start/Submit behind an extra step.
+                schedule_overlay_for_booking(record.pk, aptem_target)
         except (ReviewTemplateUnavailableError, ReviewCreationBlocked) as exc:
             return _error(str(exc), 409, code=getattr(exc, "code", None))
         except LearnerCalendarConflict as exc:

@@ -1,7 +1,7 @@
 import { WorkspaceMetricContent } from '@/components/ui/WorkspaceMetricContent';
 import { useMemo, useRef, useState, useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { AdminPageHeader } from '@/pages/admin/_shared/AdminPage';
@@ -346,6 +346,7 @@ export function matches(row: DirectoryRow, f: UsersFilter): boolean {
 
 export default function UsersListPage() {
   const { isAdmin } = useAuth();
+  const location = useLocation();
   const navigate = useNavigate();
   const { state: query, setValues: setQueryValues, reset: resetQuery } = useListQueryState(DIRECTORY_QUERY_DEFAULTS);
   const applied = useMemo<UsersFilter>(() => ({
@@ -854,7 +855,7 @@ export default function UsersListPage() {
                   const openInPlace = isStaff
                     ? () => openStaffEdit(row)
                     : isEmployer
-                      ? () => navigate(`/employers/${row.id}`)
+                      ? () => navigate(`/employers/${row.id}`, { state: { employerReturnTo: `${location.pathname}${location.search}${location.hash}` } })
                       : null;
                   return (
                   <tr key={`${row.source ?? 'apprenticeship'}-${row.id}`} className={`border-b border-foreground-100 hover:bg-primary-50/30 transition-smooth ${i % 2 === 1 ? 'bg-background-100/20' : ''}`}>

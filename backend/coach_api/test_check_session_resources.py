@@ -42,6 +42,8 @@ class CheckSessionResourceTests(SimpleTestCase):
                      'storage':{'stored':True},'partial':False,'errors':[]}
         self.collections={kind:{'value':[]} for kind in ('attendanceReports','transcripts','recordings')}
         self.details={}; self.bodies={}; self.paths=[]; self.writes=[]; self.target_failure=None; self.ai_hook=None
+        self.ai_summary = 'Synthetic OLD transcript recap'; self.ai_failure = None
+        self.claim_error = None; self.lease_owned = True
         self.transcript_reads=[]; self.archive_url=''
 
     def add_artifact(self, kind='transcript', key='t1', *, call='one', body='Opening and agreed actions', **times):
@@ -114,13 +116,16 @@ class CheckSessionResourceTests(SimpleTestCase):
             archive=p('coach_api.recording_archive.archived_recording_url',side_effect=lambda *a,**k:self.archive_url)
             p('coach_api.reconciliation_links.active_links')
             p('coach_api.review_sources.booking_for_overlay',return_value=self.record)
-            p('coach_api.migrated_intelligence_views.claim',return_value='synthetic-lease')
-            p('coach_api.migrated_intelligence_views.owns',return_value=True)
+            claim = p('coach_api.migrated_intelligence_views.claim',return_value='synthetic-lease')
+            if self.claim_error:
+                claim.side_effect = self.claim_error
+            p('coach_api.migrated_intelligence_views.owns',return_value=self.lease_owned)
             p('coach_api.migrated_intelligence_views.release')
             def ai(*args):
                 self.ai_input = args[1]
                 if self.ai_hook: self.ai_hook()
-                return ({'overview':'Synthetic OLD transcript recap'},'fake-model')
+                if self.ai_failure: raise self.ai_failure
+                return ({'overview':self.ai_summary},'fake-model')
             provider=p('coach_api.views.openai_meeting_summary',side_effect=ai)
             response=inspect.unwrap(action.migrated_review_check_session)(RequestFactory().post('/',
                 data=json.dumps({'generateSummary': generate}), content_type='application/json'),KEY)
@@ -130,6 +135,321 @@ class CheckSessionResourceTests(SimpleTestCase):
         return response.status_code
 
     def after_end(self): self.record.duration_minutes=45
+
+    def add_saved_verified_transcript(self, *, meeting_id='synthetic-meeting', booking=None,
+                                      artifact_id='saved-transcript', body='Previously saved decision'):
+        from .migrated_session_scope import booking_fingerprint
+
+        binding = booking or booking_fingerprint(self.record)
+        self.stored['artifacts'] = [{
+            'artifact_type': 'transcript', 'graph_artifact_id': artifact_id, 'id': artifact_id,
+            'call_id': 'saved-call', 'created_datetime': '2026-10-24T10:00:00Z',
+            'end_datetime': '2026-10-24T10:30:00Z', 'transcript_text': body,
+            'transcript_vtt': 'WEBVTT\n\n00:00.000 --> 00:01.000\n' + body,
+            'metadata': {'meetingId': meeting_id, '_lms_graph_event_id': self.record.graph_event_id,
+                         '_lms_verified_online_meeting_id': meeting_id,
+                         '_lms_booking_fingerprint': binding},
+        }]
+
+    def append_saved_verified_transcript(self, *, artifact_id, body, created='2026-10-25T11:00:00Z'):
+        from .migrated_session_scope import booking_fingerprint
+
+        metadata = {'meetingId': 'synthetic-meeting', '_lms_graph_event_id': self.record.graph_event_id,
+                    '_lms_verified_online_meeting_id': 'synthetic-meeting',
+                    '_lms_booking_fingerprint': booking_fingerprint(self.record)}
+        self.stored['artifacts'].append({
+            'artifact_type': 'transcript', 'graph_artifact_id': artifact_id, 'id': artifact_id,
+            'call_id': f'call-{artifact_id}', 'created_datetime': created,
+            'end_datetime': '2026-10-25T11:30:00Z', 'transcript_text': body,
+            'transcript_vtt': 'WEBVTT\n\n00:00.000 --> 00:01.000\n' + body,
+            'metadata': metadata,
+        })
+
+    def test_explicit_regeneration_uses_all_saved_verified_transcripts(self):
+        self.add_saved_verified_transcript(artifact_id='transcript-a', body='Original transcript A')
+        status = self.call(generate=True)
+        self.assertEqual(status, 200, self.payload)
+        first_answer = self.overlay.answers['summary']
+        self.append_saved_verified_transcript(artifact_id='transcript-b', body='Added transcript B',
+                                              created='2026-10-25T11:20:00Z')
+        self.ai_summary = 'Updated combined summary'
+        self.target_failure = TimeoutError('Synthetic Graph timeout')
+
+        status = self.call(generate=True)
+
+        self.assertEqual(status, 200)
+        self.assertEqual(self.ai_calls, 1)
+        self.assertEqual(self.ai_input, 'Original transcript A\n\nAdded transcript B')
+        self.assertEqual(self.overlay.answers['summary'], first_answer)
+        self.assertEqual(self.payload['summaryBinding']['suggestionText'], 'Updated combined summary')
+        self.assertTrue(self.payload['summaryBinding']['replacementAvailable'])
+        self.assertEqual(self.paths, [])
+
+    def test_changed_text_with_same_artifact_id_regenerates_without_overwriting_answer(self):
+        self.add_saved_verified_transcript(artifact_id='same-transcript', body='Original words')
+        self.assertEqual(self.call(generate=True), 200)
+        saved_answer = self.overlay.answers['summary']
+        self.stored['artifacts'][0]['transcript_text'] = 'Corrected words in same artifact'
+        self.ai_summary = 'Summary of corrected words'
+        self.target_failure = TimeoutError('Synthetic Graph timeout')
+
+        self.assertEqual(self.call(generate=True), 200)
+
+        self.assertEqual(self.ai_calls, 1)
+        self.assertEqual(self.ai_input, 'Corrected words in same artifact')
+        self.assertEqual(self.overlay.answers['summary'], saved_answer)
+        self.assertEqual(self.payload['summaryBinding']['suggestionText'], 'Summary of corrected words')
+
+    def test_removed_verified_source_invalidates_suggestion(self):
+        self.add_saved_verified_transcript(artifact_id='removed-a', body='Transcript A')
+        self.append_saved_verified_transcript(artifact_id='remaining-b', body='Transcript B')
+        self.assertEqual(self.call(generate=True), 200)
+        saved_answer = self.overlay.answers['summary']
+        self.stored['artifacts'] = [self.stored['artifacts'][1]]
+        self.ai_summary = 'Summary of remaining transcript'
+
+        self.assertEqual(self.call(generate=True), 200)
+
+        self.assertEqual(self.ai_calls, 1)
+        self.assertEqual(self.ai_input, 'Transcript B')
+        self.assertEqual(self.overlay.answers['summary'], saved_answer)
+        self.assertEqual(self.payload['summaryBinding']['suggestionText'], 'Summary of remaining transcript')
+
+    def test_unchanged_verified_source_reuses_suggestion_without_ai_call(self):
+        self.add_saved_verified_transcript(artifact_id='unchanged-transcript', body='Stable transcript')
+        self.assertEqual(self.call(generate=True), 200)
+        saved_answer = self.overlay.answers['summary']
+        self.target_failure = TimeoutError('Synthetic Graph timeout')
+
+        self.assertEqual(self.call(generate=True), 200)
+
+        self.assertEqual(self.ai_calls, 0)
+        self.assertEqual(self.overlay.answers['summary'], saved_answer)
+        self.assertEqual(self.payload['summaryBinding']['suggestionText'], 'Synthetic OLD transcript recap')
+        self.assertEqual(self.paths, [])
+
+    def test_regeneration_preserves_manually_edited_and_cleared_answers(self):
+        for answer, binding_state in (('Coach-approved wording', 'COACH_EDITED'), ('', 'COACH_CLEARED')):
+            with self.subTest(binding_state=binding_state):
+                self.add_saved_verified_transcript(artifact_id=f'first-{binding_state}', body='Transcript A')
+                self.assertEqual(self.call(generate=True), 200)
+                self.overlay.answers = {'summary': answer}
+                self.overlay.meeting_intelligence['summaryBinding'] = {
+                    'fieldKey': 'summary', 'state': binding_state, 'status': 'answer-preserved'}
+                self.append_saved_verified_transcript(artifact_id=f'second-{binding_state}', body='Transcript B')
+                self.ai_summary = 'New suggestion for both transcripts'
+
+                self.assertEqual(self.call(generate=True), 200)
+
+                self.assertEqual(self.ai_calls, 1)
+                self.assertEqual(self.ai_input, 'Transcript A\n\nTranscript B')
+                self.assertEqual(self.overlay.answers['summary'], answer)
+                self.assertEqual(self.payload['summaryBinding']['suggestionText'], 'New suggestion for both transcripts')
+                self.stored['artifacts'] = []
+                self.overlay.meeting_intelligence = {}
+
+    def test_failed_regeneration_preserves_answer_hides_stale_suggestion_and_can_retry(self):
+        self.add_saved_verified_transcript(artifact_id='retry-a', body='Transcript A')
+        self.assertEqual(self.call(generate=True), 200)
+        saved_answer = self.overlay.answers['summary']
+        self.append_saved_verified_transcript(artifact_id='retry-b', body='Transcript B')
+        self.ai_failure = RuntimeError('Synthetic provider failure')
+
+        self.assertIn(self.call(generate=True), (200, 207))
+
+        self.assertEqual(self.overlay.answers['summary'], saved_answer)
+        self.assertNotIn('suggestionText', self.payload['summaryBinding'])
+        self.assertEqual(self.payload['summaryBinding']['generationStatus'], 'unavailable')
+        self.ai_failure = None
+        self.ai_summary = 'Retry suggestion'
+
+        self.assertEqual(self.call(generate=True), 200)
+
+        self.assertEqual(self.ai_calls, 1)
+        self.assertEqual(self.ai_input, 'Transcript A\n\nTranscript B')
+        self.assertEqual(self.overlay.answers['summary'], saved_answer)
+        self.assertEqual(self.payload['summaryBinding']['suggestionText'], 'Retry suggestion')
+
+    def test_duplicate_regeneration_keeps_the_existing_lease_guard(self):
+        from .migrated_summary_attempts import SummaryInProgress
+
+        self.add_saved_verified_transcript(artifact_id='lease-a', body='Transcript A')
+        self.assertEqual(self.call(generate=True), 200)
+        saved_answer = self.overlay.answers['summary']
+        self.append_saved_verified_transcript(artifact_id='lease-b', body='Transcript B')
+        self.claim_error = SummaryInProgress('A summary is already being generated.')
+
+        self.assertEqual(self.call(generate=True), 409)
+
+        self.assertEqual(self.payload['code'], 'SUMMARY_IN_PROGRESS')
+        self.assertEqual(self.ai_calls, 0)
+        self.assertEqual(self.overlay.answers['summary'], saved_answer)
+
+    def test_lost_lease_discards_regenerated_result(self):
+        self.add_saved_verified_transcript(artifact_id='lease-stale-a', body='Transcript A')
+        self.assertEqual(self.call(generate=True), 200)
+        saved_answer = self.overlay.answers['summary']
+        self.append_saved_verified_transcript(artifact_id='lease-stale-b', body='Transcript B')
+        self.lease_owned = False
+
+        self.assertEqual(self.call(generate=True), 409)
+
+        self.assertEqual(self.payload['code'], 'SUMMARY_SUPERSEDED')
+        self.assertEqual(self.ai_calls, 1)
+        self.assertEqual(self.overlay.answers['summary'], saved_answer)
+
+    def test_source_change_during_regeneration_discards_stale_ai_result(self):
+        self.add_saved_verified_transcript(artifact_id='changing-a', body='Transcript A')
+        self.assertEqual(self.call(generate=True), 200)
+        saved_answer = self.overlay.answers['summary']
+        self.append_saved_verified_transcript(artifact_id='changing-b', body='Transcript B')
+        self.ai_hook = lambda: self.stored['artifacts'][-1].update(transcript_text='Changed during AI call')
+
+        self.assertEqual(self.call(generate=True), 409)
+
+        self.assertEqual(self.overlay.answers['summary'], saved_answer)
+        self.assertEqual(self.payload['code'], 'SUMMARY_SUPERSEDED')
+        from coach_api.migrated_summary_generation import summary_binding_response
+        with patch('coach_api.review_sources.booking_for_overlay', return_value=self.record), \
+             patch.object(views, 'stored_coach_meeting_snapshot', return_value=deepcopy(self.stored)), \
+             patch.object(views, 'stored_coach_meeting_transcript_for_summary', side_effect=self.transcript):
+            binding = summary_binding_response(self.overlay)
+        self.assertNotIn('suggestionText', binding)
+
+    def test_generate_uses_current_verified_saved_transcript_during_graph_timeout(self):
+        self.add_saved_verified_transcript()
+        self.target_failure = TimeoutError('Synthetic Graph timeout')
+
+        self.assertEqual(self.call(generate=True), 200)
+
+        self.assertEqual(self.paths, [], 'Saved-text generation must not invoke Graph refresh or target resolution')
+        self.assertEqual(self.ai_calls, 1)
+        self.assertEqual(self.ai_input, 'Previously saved decision')
+        self.assertEqual(self.payload['intelligence']['meetingEndStatus'], 'pending')
+        self.assertTrue(self.payload['summaryBinding']['provisional'])
+        self.assertNotIn('_lms_booking_fingerprint', self.payload['artifacts'][0]['metadata'])
+
+    def test_booking_fingerprint_is_not_exposed_by_shared_artifact_serializer(self):
+        artifact = {'id': 'synthetic', 'metadata': {'source': 'teams',
+            '_lms_booking_fingerprint': 'synthetic-binding'}}
+
+        self.assertEqual(views.public_coach_meeting_artifact(artifact),
+                         {'id': 'synthetic', 'metadata': {'source': 'teams'}})
+
+    def test_changed_booking_binding_does_not_reuse_saved_transcript(self):
+        self.add_saved_verified_transcript()
+        self.record.meeting_link = 'https://example.invalid/changed-teams-meeting'
+        self.target_failure = TimeoutError('Synthetic Graph timeout')
+
+        self.assertEqual(self.call(generate=True), 504)
+
+        self.assertEqual(self.ai_calls, 0)
+        self.assertEqual(self.paths, [])
+
+    def test_changed_learner_binding_does_not_reuse_saved_transcript(self):
+        self.add_saved_verified_transcript()
+        self.record.learner_id += 1
+        self.target_failure = TimeoutError('Synthetic Graph timeout')
+
+        self.assertEqual(self.call(generate=True), 504)
+
+        self.assertEqual(self.ai_calls, 0)
+        self.assertEqual(self.paths, [])
+
+    def test_saved_transcript_from_another_graph_event_does_not_reach_ai(self):
+        self.add_saved_verified_transcript()
+        self.stored['artifacts'][0]['metadata']['_lms_graph_event_id'] = 'another-event'
+        self.target_failure = TimeoutError('Synthetic Graph timeout')
+
+        self.assertEqual(self.call(generate=True), 504)
+
+        self.assertEqual(self.ai_calls, 0)
+        self.assertEqual(self.paths, [])
+
+    def test_unverified_saved_transcript_keeps_the_existing_graph_retrieval_path(self):
+        self.add_saved_verified_transcript()
+        self.stored['artifacts'][0]['metadata'].pop('_lms_booking_fingerprint')
+        self.add_artifact(body='Freshly retrieved transcript')
+
+        self.assertEqual(self.call(generate=True), 200)
+
+        self.assertGreater(len(self.paths), 0)
+        self.assertEqual(self.ai_input, 'Freshly retrieved transcript')
+
+    def test_empty_saved_transcript_uses_the_existing_graph_retrieval_path(self):
+        self.add_saved_verified_transcript(body='')
+        self.add_artifact(body='Freshly retrieved transcript')
+
+        self.assertEqual(self.call(generate=True), 207)
+
+        self.assertGreater(len(self.paths), 0)
+        self.assertEqual(self.ai_input, 'Freshly retrieved transcript')
+
+    def test_saved_transcript_still_requires_current_coach_authorization(self):
+        from django.http import JsonResponse
+
+        self.add_saved_verified_transcript()
+        with patch('coach_api.migrated_intelligence_views._check_writable',
+                   return_value=JsonResponse({'detail': 'Forbidden.'}, status=403)):
+            self.assertEqual(self.call(generate=True), 403)
+
+        self.assertEqual(self.ai_calls, 0)
+        self.assertEqual(self.paths, [])
+        self.assertEqual(self.transcript_reads, [])
+
+    def test_saved_transcripts_for_one_bound_meeting_are_combined_deterministically(self):
+        self.add_saved_verified_transcript(artifact_id='segment-b', body='Second segment')
+        first = deepcopy(self.stored['artifacts'][0])
+        first.update(graph_artifact_id='segment-a', id='segment-a', transcript_text='First segment',
+                     created_datetime='2026-10-24T09:00:00Z')
+        self.stored['artifacts'].append(first)
+
+        self.assertEqual(self.call(generate=True), 200)
+
+        self.assertEqual(self.paths, [])
+        self.assertEqual(self.ai_input, 'First segment\n\nSecond segment')
+
+    def test_saved_verified_transcript_outside_booking_window_remains_eligible(self):
+        self.record.scheduled_date = date(2026, 10, 20)
+        self.add_saved_verified_transcript()
+
+        self.assertEqual(self.call(generate=True), 200)
+
+        self.assertEqual(self.paths, [])
+        self.assertEqual(self.ai_input, 'Previously saved decision')
+
+    def test_saved_generation_preserves_current_booking_attendance_in_response(self):
+        from .migrated_session_scope import booking_fingerprint
+
+        self.add_saved_verified_transcript()
+        self.stored['attendanceReports'] = [{
+            'id': 'saved-report', 'meetingStartDateTime': '2026-10-24T09:55:00Z',
+            'meetingEndDateTime': '2026-10-24T10:35:00Z', 'totalParticipantCount': 1,
+            'attendedCount': 1, 'absentCount': 0, 'records': [],
+            '_lms_graph_event_id': self.record.graph_event_id,
+            '_lms_verified_online_meeting_id': 'synthetic-meeting',
+            '_lms_booking_fingerprint': booking_fingerprint(self.record),
+        }]
+        self.target_failure = TimeoutError('Synthetic Graph timeout')
+
+        self.assertEqual(self.call(generate=True), 200)
+
+        self.assertEqual(self.paths, [])
+        self.assertEqual(self.payload['attendance']['reportCount'], 1)
+        self.assertNotIn('_lms_booking_fingerprint', self.payload['attendance']['reports'][0])
+
+    def test_conflicting_verified_meeting_ids_do_not_reach_ai(self):
+        self.add_saved_verified_transcript()
+        conflicting = deepcopy(self.stored['artifacts'][0])
+        conflicting['graph_artifact_id'] = 'other-meeting-transcript'
+        conflicting['metadata']['_lms_verified_online_meeting_id'] = 'other-meeting'
+        self.stored['artifacts'].append(conflicting)
+        self.target_failure = TimeoutError('Synthetic Graph timeout')
+
+        self.assertEqual(self.call(generate=True), 504)
+
+        self.assertEqual(self.ai_calls, 0)
+        self.assertEqual(self.paths, [])
 
     def test_early_empty_is_checked_pending_without_ai_or_answers(self):
         self.assertEqual(self.call(), 200)
@@ -176,8 +496,15 @@ class CheckSessionResourceTests(SimpleTestCase):
         self.assertEqual(self.call(), 200); self.assertEqual(self.ai_calls, 1)
         self.assertTrue(self.payload['summaryBinding']['provisional'])
         self.add_report()
-        self.assertEqual(self.call(), 200); self.assertEqual(self.ai_calls, 0)
+        # Generate from Teams reuses its booking-bound transcript without a
+        # Graph refresh. Check Session remains the explicit synchronization path.
+        self.paths = []
+        self.assertEqual(self.call(generate=True), 200); self.assertEqual(self.ai_calls, 0)
+        self.assertEqual(self.paths, [])
+        self.assertEqual(self.payload['intelligence']['meetingEndStatus'], 'pending')
+        self.assertEqual(self.call(generate=False), 200); self.assertEqual(self.ai_calls, 0)
         self.assertEqual(self.payload['intelligence']['meetingEndStatus'], 'attendance-confirmed')
+        self.assertTrue(self.stored['attendanceReports'][0]['_lms_booking_fingerprint'])
         answers = deepcopy(self.overlay.answers)
         self.assertEqual(self.call(), 200); self.assertEqual(self.ai_calls, 0)
         self.assertEqual(self.overlay.answers, answers)

@@ -101,6 +101,9 @@ class McmBookingWindowTests(unittest.TestCase):
         imported_booking.booking_slot = lambda record: (record.scheduled_date, record.scheduled_time, record.duration_minutes)
         imported_booking.reserve_imported_booking = Mock(side_effect=lambda record, event, *_args, **_kwargs:
             (self.coach.persist_calendar_sync_reservation(record, review_event=event), True))
+        # Booking-window rules do not depend on the review lifecycle; the
+        # overlay transition after a confirmed booking has its own suites.
+        imported_booking.schedule_overlay_for_booking = Mock(return_value=False)
         modules = patch.dict(sys.modules, {
             'coach_api': types.ModuleType('coach_api'), 'coach_api.views': self.coach,
             'coach_api.booking_availability': availability,
@@ -132,7 +135,12 @@ class McmBookingWindowTests(unittest.TestCase):
                        _mark_imported_review_scheduled=Mock(), _friendly_sync_warning=lambda value: value,
                        _follow_first_session_start_date=Mock(), _record_enrolment_review=Mock(),
                        _booking_response_event=lambda record, *_: {'eventKey': record.event_key},
-                       CoachCalendarEvent=types.SimpleNamespace(objects=self.manager, STATUS_AWAITING_SIGNATURE='awaiting-signature',
+                       # An Aptem booking now builds an unsaved candidate and
+                       # lets the reservation commit it under its own lock, so
+                       # the stub has to be constructible as well as queryable.
+                       CoachCalendarEvent=Mock(
+                           side_effect=lambda **_fields: self.record,
+                           objects=self.manager, STATUS_AWAITING_SIGNATURE='awaiting-signature',
                            STATUS_COMPLETED='completed', STATUS_SCHEDULED='scheduled', SYNC_SYNCED='synced'))
         load(ROOT / 'calendar.py', {'BOOKABLE_TYPES', 'ONBOARDING_REVIEW_TYPES', 'COACH_APPROVAL_TYPES',
                                     '_error', 'learner_calendar_book', 'learner_calendar_reschedule'}, self.ns)
