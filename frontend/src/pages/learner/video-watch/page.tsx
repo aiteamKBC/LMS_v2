@@ -1,4 +1,6 @@
 import { archiveTimingDraft, timingSessionExpired } from '@/lib/timingRecovery';
+import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
+import { ManualTimeSummary } from '@/components/feature/ManualTimeConfirmation';
 import { startActivityClock } from '@/lib/activityClock';
 import { fetchAttachmentResource, fetchPdfResource } from '@/api/pdfResource';
 import { observeRewardInterval, flushRewardObservations, clearRewardObservations } from '@/lib/rewardTracking';
@@ -251,6 +253,9 @@ export default function ComponentViewPage() {
   const elapsedRef = useRef(wallElapsed);
   elapsedRef.current = wallElapsed;
   const [manualTimeSeconds, setManualTimeSeconds] = useState<number | null>(null);
+  const { confirmTime, timeConfirmation } = useManualTimeConfirmation();
+  const confirmedManualTime = useRef<number | null>(null);
+  useEffect(() => { confirmedManualTime.current = null; }, [manualTimeSeconds, componentId, kind, id]);
   const [recordingWatchSeconds, setRecordingWatchSeconds] = useState(0);
   const [timeSource, setTimeSource] = useState<TimeSource>('timer');
   // Opened only by a server refusal of the Finish click; null while learning.
@@ -709,6 +714,7 @@ export default function ComponentViewPage() {
       return;
     }
     if (manualTimeMissing) return;
+    if (timeSource === 'input') confirmedManualTime.current = submittedTimeSeconds;
     if (phase === 'time-entry' && component.reflectionRequired !== false) {
       setPhase('reflection-choice');
       return;
@@ -717,15 +723,15 @@ export default function ComponentViewPage() {
       ksbs: (component.ksbMappings || []).map(mapping => mapping.code),
       feedback: '',
       reportedTime: `${submittedTimeSeconds / 60} minutes`,
-    });
+    }, { manualTimeConfirmed: true });
   };
 
   const finalizeSubmit = async (
     reflection: { ksbs: string[]; feedback: string; reportedTime: string; assignmentTopicId?: string; timeTakenSeconds?: number; timeEntrySource?: 'timer' | 'input' },
-    options: { rethrow?: boolean; skipReflection?: boolean; declaredCompletedAt?: string } = {},
+    options: { rethrow?: boolean; skipReflection?: boolean; declaredCompletedAt?: string; manualTimeConfirmed?: boolean } = {},
   ) => {
     if (!component || !componentId || !kind || !id || completionInFlightRef.current || !canUseComponent) return;
-    // Nothing is checked here. The learner presses Finish whenever they like;
+    // Working-time rules stay on the server. The learner can press Finish anytime;
     // the server judges the instant and refuses with a 409 that has written
     // nothing, which opens the correction dialog below.
     const declared = options.declaredCompletedAt ?? null;
@@ -737,6 +743,13 @@ export default function ComponentViewPage() {
     setSubmitError(null);
     setRefreshError(null);
     try {
+      if (finalTimeSource === 'input' && !options.manualTimeConfirmed && confirmedManualTime.current !== finalTimeSeconds
+        && !await confirmTime(finalTimeSeconds)) {
+        setPhase('consume');
+        requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[aria-label="Hours spent"]')?.focus());
+        return;
+      }
+      if (finalTimeSource === 'input') confirmedManualTime.current = finalTimeSeconds;
       let tracking = trackingSessionRef.current || await trackingPromiseRef.current;
       if (!tracking) throw new Error('Activity timing did not start. Reopen the activity and try again.');
       if (tracking.persistent || !canResumeActivityTimer({ session: tracking, elapsedSeconds: elapsedRef.current }, tracking.countingMode)) {
@@ -818,7 +831,7 @@ export default function ComponentViewPage() {
   };
 
   const submitDeclared = (declaredAt: string) => {
-    void finalizeSubmit(lastReflectionRef.current, { declaredCompletedAt: declaredAt });
+    void finalizeSubmit(lastReflectionRef.current, { declaredCompletedAt: declaredAt, manualTimeConfirmed: true });
   };
 
   const activityHeading = component && (
@@ -900,9 +913,10 @@ export default function ComponentViewPage() {
               autoKsbs={component.ksbMappings ?? []}
               elapsedSeconds={elapsedSeconds}
               selectedTimeSeconds={submittedTimeSeconds}
+              selectedTimeSource={timeSource}
               submitting={submitting}
               submitError={submitError}
-              onSubmit={finalizeSubmit}
+              onSubmit={result => finalizeSubmit(result, { manualTimeConfirmed: true })}
               activityTitle={pageTitle}
               weekLabel={weekTitle}
               moduleLabel={moduleTitle}
@@ -1200,7 +1214,7 @@ export default function ComponentViewPage() {
                         reportedTime: `${answers.timeTakenSeconds / 60} minutes`,
                         timeTakenSeconds: answers.timeTakenSeconds,
                         timeEntrySource: answers.timeEntrySource,
-                      }, { rethrow: true });
+                      }, { rethrow: true, manualTimeConfirmed: true });
                     }}
                   />
                 </div>
@@ -1248,6 +1262,7 @@ export default function ComponentViewPage() {
             />
           </div>
         )}
+        {timeConfirmation}
         {(phase === 'confirm' || phase === 'time-entry') && (
           <CompletionConfirmPopup
             title={pageTitle}
@@ -1357,8 +1372,6 @@ function CompletionConfirmPopup({
   const selectedTimeLabel = keepPreviousTime && previousTimeLabel ? previousTimeLabel : selectedSource === 'input'
     ? inputLabel || '--:--:--'
     : timerLabel;
-  const hours = Math.floor((inputSeconds ?? 0) / 3600);
-  const minutes = Math.floor(((inputSeconds ?? 0) % 3600) / 60);
   const confirmSelectedTime = () => {
     if (!reviewingManualTime && !keepPreviousTime && selectedSource === 'input' && inputSeconds != null && inputSeconds > 0) {
       setReviewingManualTime(true);
@@ -1396,9 +1409,8 @@ function CompletionConfirmPopup({
         {!reviewingManualTime && timeEntryHint && <p className="mt-3 text-sm font-medium text-foreground-700">{timeEntryHint}</p>}
 
         {reviewingManualTime ? (
-          <div id={timeReviewId} className="mt-5 space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-left text-foreground-900">
-            <p>You entered <strong>{hours} {hours === 1 ? 'hour' : 'hours'} and {minutes} {minutes === 1 ? 'minute' : 'minutes'}</strong>.</p>
-            <p className="text-sm">Please check the hours and minutes before continuing. If you meant minutes, select Edit time and enter the value in the Minutes field.</p>
+          <div id={timeReviewId} className="mt-5">
+            <ManualTimeSummary seconds={inputSeconds ?? 0} />
           </div>
         ) : <div className="mt-5 space-y-3 rounded-xl border border-background-300 bg-background-50 p-4 text-left">
           <div className="flex items-center justify-between gap-3 border-b border-background-300 pb-3">
