@@ -26,6 +26,7 @@ import { ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTim
 import ProgressReviewCompletionModal from '../shared/ProgressReviewCompletionModal';
 import { reviewInstancePath, reviewInstanceRouteState } from '../shared/reviewInstanceNavigation';
 import { ReviewAge } from '../shared/ReviewAge';
+import { ReviewCompletedDate, ReviewScheduledDate } from '../shared/ReviewDates';
 import { ReviewIdentityNotice } from '../shared/ReviewIdentityNotice';
 import ImportedReviewBookingDialog from '../shared/ImportedReviewBookingDialog';
 import type { CoachReviewGenerationIssue } from '../shared/calendarEvents';
@@ -37,7 +38,6 @@ import {
   eventPeriodLabel,
   fetchCoachCalendarEvents,
   formatDateLabel,
-  formatTimeRangeLabel,
   isAtRiskProgressReview,
   isAwaitingSignatureEvent,
   isDueSoonEvent,
@@ -1410,8 +1410,8 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
             <div className={styles.tableScroll} role="region" aria-label={`${otherReviews ? 'Reviews' : 'Progress reviews'} table; scroll horizontally on smaller screens`} tabIndex={0}>
               <table className={`${styles.table} ${styles.prTable}`}>
                 <caption className="sr-only">{otherReviews ? 'Reviews' : 'Progress reviews'} for {selectedMonthLabel}</caption>
-                <colgroup><col /><col /><col /><col /><col /><col /></colgroup>
-                <thead><tr><th scope="col">Learner</th><th scope="col">Programme</th><th scope="col">{otherReviews ? 'Review type' : 'Last PR'}</th><th scope="col">Date &amp; time</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+                <colgroup><col /><col /><col /><col /><col /><col /><col /></colgroup>
+                <thead><tr><th scope="col">Learner</th><th scope="col">Programme</th><th scope="col" title={otherReviews ? undefined : "Latest recorded completion across this learner's progress reviews, not just this row."} tabIndex={otherReviews ? undefined : 0}>{otherReviews ? 'Review type' : 'Last PR'}</th><th scope="col">Scheduled for (UK time)</th><th scope="col" title="When this review form was completed, not when the meeting took place." tabIndex={0}>Completed on</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
                 <tbody>{paginatedReviews.map(review => {
                   const reviewKey = eventIdentity(review);
                   const isBusy = busyEventId === reviewKey;
@@ -1422,7 +1422,8 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
                     <td><div className={styles.identity}><LearnerAvatar name={review.learner} tone={isAtRiskProgressReview(review) ? 'critical' : statusTone(review.status)} size="lg" /><div><strong className={styles.learnerName}>{review.learner || 'Unknown learner'}</strong><span className={styles.learnerEmail}>{review.email || (otherReviews ? 'Review' : 'Progress review')}</span></div></div></td>
                     <td>{review.programme || '--'}</td>
                     <td>{otherReviews ? (review.importedReviewType || review.reviewTypeName || review.title || 'Review') : <ReviewAge value={review.learnerId ? lastPrByLearner.get(review.learnerId) : undefined} label="PR" />}</td>
-                    <td><span className={styles.date}><span>{formatDateLabel(eventDisplayDate(review))}</span><span>{formatTimeRangeLabel(review)}</span></span></td>
+                    <td><ReviewScheduledDate event={review} /></td>
+                    <td><ReviewCompletedDate event={review} /></td>
                     <td><span className={styles.status} data-status={review.status}><AppIcon className={statusIcon} />{statusLabel(review.status)}</span>{isAtRiskProgressReview(review) || isDueSoonEvent(review) ? <div className={styles.alerts}>{isAtRiskProgressReview(review) ? <StatusBadge tone="critical" label="Overdue" dot={false} size="sm" /> : null}{isDueSoonEvent(review) ? <StatusBadge tone="upcoming" label="Due Soon" dot={false} size="sm" /> : null}</div> : null}</td>
                     <td onClick={(clickEvent) => clickEvent.stopPropagation()}><div className={styles.actions}>
                       {actions.viewForm ? <button type="button" onClick={() => { void openCompletionForm(review); }} disabled={isBusy} className={cn(styles.control, styles.primary, styles.formButton)}>View form</button> : null}

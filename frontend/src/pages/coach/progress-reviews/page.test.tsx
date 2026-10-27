@@ -271,7 +271,7 @@ describe('progress review list navigation and filters', () => {
     mount();
     const row = within((await screen.findByText('History Learner')).closest('tr')!);
     const headers = screen.getAllByRole('columnheader').map(header => header.textContent);
-    expect(headers.indexOf('Last PR')).toBeLessThan(headers.indexOf('Date & time'));
+    expect(headers.indexOf('Last PR')).toBeLessThan(headers.indexOf('Scheduled for (UK time)'));
     expect(row.getByLabelText('Last PR: 01 Jul 2026; 75 days ago')).toHaveAttribute('data-tone', 'warning');
   });
 
@@ -451,4 +451,22 @@ describe('progress review list navigation and filters', () => {
     fireEvent.change(learnerSelect, { target: { value: 'progress-review:2' } });
     expect(within(dialog).getByText('Scheduled Review')).toBeVisible();
   });
+});
+
+
+it.each(['/coach/progress-reviews', '/coach/reviews'])('separates row completion from schedule on %s', async path => {
+  fetchEvents.mockResolvedValue({ events: [review(80, {
+    learner: 'Date Example', status: 'completed', scheduledDate: '2026-09-10', scheduledTime: '23:00',
+    reviewCompletedAt: '2026-09-11T07:00:00Z',
+    ...(path === '/coach/reviews' ? { reviewSource: 'aptem', aptemReviewId: '80', importedReviewType: 'Personal Support Plan', calendarEventKey: 'imported-review:80' } : {}),
+  })] });
+  mount(path);
+  const row = within((await screen.findByText('Date Example')).closest('tr')!);
+  const headers = screen.getAllByRole('columnheader').map(header => header.textContent);
+  expect(headers).toContain('Completed on');
+  expect(row.getAllByRole('cell')[headers.indexOf('Completed on')]).toHaveTextContent('11 Sept 2026');
+  expect(row.getAllByRole('cell')[headers.indexOf('Scheduled for (UK time)')]).toHaveTextContent('10 Sept 2026');
+  expect(row.getByText('23:00 - 00:00 (+1 day)')).toBeVisible();
+  if (path === '/coach/progress-reviews') expect(row.getByLabelText('Last PR: 11 Sept 2026; 3 days ago')).toBeVisible();
+  else expect(headers).toContain('Review type');
 });

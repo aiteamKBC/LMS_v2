@@ -8,7 +8,6 @@ must not be called from here.
 
 from __future__ import annotations
 
-from collections import defaultdict
 from copy import deepcopy
 from datetime import date, timedelta
 
@@ -17,6 +16,7 @@ from django.utils import timezone
 
 from coach_api.selectors.dashboard.marking import dashboard_marking_projection
 from .context import CoachDashboardContext
+from .completed_reviews import apply_completed_review_dates, saved_completed_review_dates
 
 
 class CoachDashboardService:
@@ -35,7 +35,8 @@ class CoachDashboardService:
     # v20 separates other imported reviews from PR dates and dashboard counts.
     # Older snapshots may legitimately contain ``--`` dates, so they must not
     # be served as if they were current after the serializer is corrected.
-    SCHEMA_VERSION = 20
+    # v21 uses completion timestamps for both PR/MCM, including legacy aliases.
+    SCHEMA_VERSION = 21
 
     def build(self) -> dict:
         """Read the persistent projection; build once only if it is absent."""
@@ -100,11 +101,10 @@ class CoachDashboardService:
         rows_by_id = {str(row.id): row for row in rows}
         snapshot_version = (payload.get("readModel") or {}).get("version")
         review_dates = {}
-        if rows and snapshot_version is not None and snapshot_version < 20:
-            # Old projections can contain a completed onboarding review as
-            # Last PR. Read the owned history while the normal refresh queues.
-            review_dates = domain.dashboard_imported_completed_review_dates(
-                [row.id for row in rows], owner_email=self.context.owner_email,
+        if rows and snapshot_version is not None and snapshot_version < self.SCHEMA_VERSION:
+            # Correct old scheduled-date metrics while the normal refresh queues.
+            review_dates = saved_completed_review_dates(
+                rows, owner_email=self.context.owner_email,
                 owner_name=(payload.get("owner") or {}).get("name") or "Coach",
             )
         learners = []
@@ -120,8 +120,7 @@ class CoachDashboardService:
             learner["displayEndDate"] = domain.format_date(getattr(getattr(row, "_caseload_source", None), "learner_end_date", None))
             dates = review_dates.get(domain.to_int(learner.get("id")))
             if dates is not None:
-                learner["lastPr"] = dates.get("lastPr")
-                learner["lastProgressReview"] = dates.get("lastPr") or "--"
+                apply_completed_review_dates(learner, dates)
             learners.append(learner)
         if "learners" in payload:
             payload["learners"] = learners
@@ -148,6 +147,10 @@ class CoachDashboardService:
         learners = payload.get("learners") or []
         rows = domain.fetch_caseload_learner_profiles(self.context.owner_email)
         rows_by_id = {int(row.id): row for row in rows}
+        review_dates = saved_completed_review_dates(
+            rows, owner_email=self.context.owner_email,
+            owner_name=(payload.get("owner") or {}).get("name") or "Coach",
+        ) if any("lastPr" in learner or "lastMcm" in learner or "lastProgressReview" in learner or "lastReview" in learner for learner in learners) else {}
         canonical_metrics = domain.caseload_canonical_metrics(rows, learner_workspace=True)
         aptem_by_profile = domain.caseload_aptem_ids(rows)
         attendance_rows = domain.dashboard_attendance_rows(
@@ -161,6 +164,8 @@ class CoachDashboardService:
             profile_id = domain.to_int(learner.get("id"))
             if profile_id is None or profile_id not in rows_by_id:
                 continue
+            if profile_id in review_dates:
+                apply_completed_review_dates(learner, review_dates[profile_id])
             schedule_planned, schedule_start, schedule_end = domain.caseload_schedule_values(
                 rows_by_id[profile_id],
             )
@@ -327,18 +332,7 @@ class CoachDashboardService:
         ))
         preview_events.sort(key=lambda event: (event.get("date") or "", event.get("startHour") or 0))
 
-        last_dates: dict[int, dict] = defaultdict(lambda: {"lastPr": None, "lastMcm": None})
-        for event in all_review_events:
-            if event.get("status") != "completed":
-                continue
-            learner_id = domain.to_int(event.get("learnerId"))
-            completed = event.get("date") or event.get("scheduledDate")
-            if learner_id is None or not completed:
-                continue
-            category = domain.review_event_category(event)
-            key = "lastMcm" if category == "mcr" else "lastPr" if category == "progress-review" else None
-            if key and (last_dates[learner_id][key] is None or completed > last_dates[learner_id][key]):
-                last_dates[learner_id][key] = completed
+        last_dates = domain.latest_completed_review_dates_from_events(context.rows, all_review_events)
 
         attendance_rows = domain.dashboard_attendance_rows(
             context.rows, context.learners, aptem_by_profile=aptem_by_profile,
@@ -348,9 +342,8 @@ class CoachDashboardService:
             if domain.to_int(item.get("id")) is not None
         }
         for row, learner in zip(context.rows, context.learners):
-            learner.update(last_dates.get(int(row.id), {"lastPr": None, "lastMcm": None}))
             learner.update(progress_projections.get(int(row.id), {}))
-            learner["lastProgressReview"] = learner["lastPr"] or "--"
+            apply_completed_review_dates(learner, last_dates.get(int(row.id), {}))
             domain.apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
             domain.apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
             domain.apply_canonical_learner_metrics(learner, canonical_metrics.get(int(row.id)), learner_workspace=True)
