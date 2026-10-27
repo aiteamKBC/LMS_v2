@@ -26,7 +26,7 @@ interface CoachMeetingArtifactEvent {
 type ArtifactState =
   | { status: 'idle' }
   | { status: 'loading' }
-  | { status: 'ready'; artifacts: CoachMeetingArtifact[]; attendance: CoachMeetingAttendanceSummary | null; meetingSummary: CoachMeetingSummary | null; errors: string[]; storedOnly?: boolean; syncedAt?: string }
+  | { status: 'ready'; artifacts: CoachMeetingArtifact[]; attendance: CoachMeetingAttendanceSummary | null; meetingSummary: CoachMeetingSummary | null; errors: string[]; storedOnly?: boolean; syncedAt?: string; refreshing?: boolean; refreshError?: string }
   | { status: 'error'; message: string };
 
 type PreviewSelection = {
@@ -642,6 +642,7 @@ export function CoachMeetingArtifactsPanel({
   allowContentAccess = true,
   onArtifactsLoaded,
   storedOnly = false,
+  preserveResourcesOnRefreshError = false,
 }: {
   event: CoachMeetingArtifactEvent;
   className?: string;
@@ -661,16 +662,20 @@ export function CoachMeetingArtifactsPanel({
   allowContentAccess?: boolean;
   onArtifactsLoaded?: (result: Awaited<ReturnType<typeof fetchCoachMeetingArtifacts>>) => void;
   storedOnly?: boolean;
+  /** Imported checks only; callers must remount on source/booking/access changes. */
+  preserveResourcesOnRefreshError?: boolean;
 }) {
   const eventKey = event.eventKey || '';
   const hasTeamsLink = hasTeamsMeeting || Boolean(event.meetingLink || event.graphWebLink);
   const supportsMeetingSummary = event.source === 'mcr' || event.source === 'progress-review';
   const [state, setState] = useState<ArtifactState>({ status: 'idle' });
   const [preview, setPreview] = useState<PreviewSelection | null>(null);
+  const [playbackError, setPlaybackError] = useState(false);
   const [transcriptPreview, setTranscriptPreview] = useState<TranscriptPreviewState>({ status: 'idle' });
 
   const loadArtifacts = useCallback((signal?: AbortSignal, refresh = false) => {
-    setState({ status: 'loading' });
+    setState(current => preserveResourcesOnRefreshError && refresh && current.status === 'ready'
+      ? { ...current, refreshing: true, refreshError: undefined } : { status: 'loading' });
     return fetchArtifacts(eventKey, signal, { refresh: storedOnly ? false : refresh })
       .then(result => {
         onArtifactsLoaded?.(result);
@@ -687,15 +692,20 @@ export function CoachMeetingArtifactsPanel({
       })
       .catch(error => {
         if (error instanceof DOMException && error.name === 'AbortError') return;
-        setState({
-          status: 'error',
-          message: error instanceof Error ? error.message : 'Unable to load Teams artifacts.',
-        });
+        const message = error instanceof Error ? error.message : 'Unable to load Teams artifacts.';
+        const failure = error as { status?: number; code?: string } | null;
+        const invalidContext = [401, 403, 404].includes(failure?.status || 0)
+          || (failure?.status === 409 && !['MEETING_END_NOT_CONFIRMED', 'SUMMARY_IN_PROGRESS', 'SUMMARY_SUPERSEDED'].includes(failure.code || ''));
+        if (invalidContext) setPreview(null);
+        setState(current => preserveResourcesOnRefreshError && refresh && !invalidContext && current.status === 'ready'
+          ? { ...current, refreshing: false, refreshError: message }
+          : { status: 'error', message });
       });
-  }, [eventKey, fetchArtifacts, onArtifactsLoaded, onEventStatusChange, storedOnly]);
+  }, [eventKey, fetchArtifacts, onArtifactsLoaded, onEventStatusChange, storedOnly, preserveResourcesOnRefreshError]);
 
   useEffect(() => {
     setPreview(null);
+    setPlaybackError(false);
     if (!eventKey || !hasTeamsLink || event.source === 'live-session') {
       setState({ status: 'idle' });
       return;
@@ -755,7 +765,7 @@ export function CoachMeetingArtifactsPanel({
   const meetingSummary = state.status === 'ready' ? state.meetingSummary : null;
   const visibleArtifacts = artifacts.filter(artifact => visibleArtifactTypes.includes(artifact.artifact_type));
   const hasArtifacts = visibleArtifacts.length > 0;
-  const isLoading = state.status === 'loading';
+  const isLoading = state.status === 'loading' || (state.status === 'ready' && state.refreshing);
   const savedResources = storedOnly || (state.status === 'ready' && state.storedOnly);
 
   return (
@@ -790,9 +800,9 @@ export function CoachMeetingArtifactsPanel({
         </button> : null}
       </div>
 
-      {state.status === 'error' ? (
+      {state.status === 'error' || (state.status === 'ready' && state.refreshError) ? (
         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-800">
-          {state.message}
+          {state.status === 'error' ? state.message : state.refreshError}
         </div>
       ) : null}
 
@@ -815,7 +825,9 @@ export function CoachMeetingArtifactsPanel({
 
       {state.status === 'ready' && !hasArtifacts ? (
         <div className="mt-3 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[12px] leading-5 text-foreground-500">
-          {savedResources
+          {preserveResourcesOnRefreshError
+            ? 'No saved meeting resources are available for this review yet. Check the resource status above or retry.'
+            : savedResources
             ? 'No saved meeting recording is available. Your coach can check Teams for updates.'
             : 'No meeting recording has been returned by Teams yet. It usually appears after the meeting ends and Teams finishes processing.'}
         </div>
@@ -829,7 +841,9 @@ export function CoachMeetingArtifactsPanel({
             const previewUrl = contentUrl(eventKey, type, artifactId, { preview: true });
             const downloadUrl = contentUrl(eventKey, type, artifactId);
             const selected = preview?.type === type && preview.artifactId === artifactId;
-            const contentAvailable = allowContentAccess && artifact.content_available !== false;
+            const contentAvailable = allowContentAccess &&
+              (artifact.content_available !== false || (type === 'recording' && artifact.graph_playback_candidate === true));
+            const downloadAvailable = allowContentAccess && artifact.content_available !== false;
             return (
               <div key={artifactKey(artifact)} className="rounded-lg border border-background-200 bg-background-50 px-3 py-2.5">
                 <div className="flex items-start gap-2">
@@ -844,7 +858,7 @@ export function CoachMeetingArtifactsPanel({
                     <div className="mt-2 flex flex-wrap gap-2">
                       {contentAvailable ? <button
                         type="button"
-                        onClick={() => setPreview({ artifact, artifactId, type, url: previewUrl })}
+                        onClick={() => { setPlaybackError(false); setPreview({ artifact, artifactId, type, url: previewUrl }); }}
                         className={cn(
                           'inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[12px] font-semibold transition',
                           selected
@@ -855,7 +869,7 @@ export function CoachMeetingArtifactsPanel({
                         <AppIcon className={type === 'recording' ? 'ri-play-circle-line' : 'ri-eye-line'}></AppIcon>
                         {type === 'recording' ? 'Play' : 'Preview'}
                       </button> : null}
-                      {contentAvailable ? <a
+                      {downloadAvailable ? <a
                         href={downloadUrl}
                         className="inline-flex items-center gap-1 rounded-md border border-background-300 bg-white px-2 py-1 text-[12px] font-semibold text-foreground-700 transition hover:border-background-400 hover:bg-background-100"
                       >
@@ -863,7 +877,9 @@ export function CoachMeetingArtifactsPanel({
                         Download
                       </a> : null}
                     </div>
-                    {artifact.content_available === false ? (
+                    {artifact.graph_playback_candidate && !artifact.content_available ? (
+                      <p className="mt-2 text-[12px] text-foreground-500">Play from Teams. Video availability is confirmed when playback starts.</p>
+                    ) : artifact.content_available === false ? (
                       <p className="mt-2 text-[12px] text-foreground-500">A saved copy of this recording is not available yet.</p>
                     ) : null}
                   </div>
@@ -887,7 +903,7 @@ export function CoachMeetingArtifactsPanel({
             </div>
             <button
               type="button"
-              onClick={() => setPreview(null)}
+              onClick={() => { setPreview(null); setPlaybackError(false); }}
               className="inline-flex h-8 items-center gap-1 rounded-md border border-primary-200 bg-white px-2 text-[12px] font-semibold text-primary-700 hover:bg-primary-50"
             >
               <AppIcon className="ri-close-line"></AppIcon>
@@ -900,6 +916,7 @@ export function CoachMeetingArtifactsPanel({
               src={preview.url}
               controls
               preload="metadata"
+              onError={() => setPlaybackError(true)}
               className="max-h-[420px] w-full rounded-lg bg-black"
             >
               <track kind="captions" />
@@ -911,6 +928,13 @@ export function CoachMeetingArtifactsPanel({
               Inline preview is not available for this artifact type.
             </div>
           )}
+          {preview.type === 'recording' && playbackError ? (
+            <p role="alert" className="mt-2 text-[12px] text-amber-800">
+              {preview.artifact.graph_playback_candidate && !preview.artifact.content_available
+                ? 'Teams could not play this recording. It may still be processing or access may have expired.'
+                : 'This recording could not be played. Please try again later.'}
+            </p>
+          ) : null}
         </div>
       ) : null}
 

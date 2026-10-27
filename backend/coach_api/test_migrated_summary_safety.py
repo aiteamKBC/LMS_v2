@@ -248,26 +248,30 @@ class SummaryPersistenceSafetyTests(TestCase):
         self.overlay.refresh_from_db()
         self.assertNotIn('_summaryAttempt', self.overlay.meeting_intelligence)
 
-    def test_unmatched_and_multiple_call_transcripts_never_reach_ai(self):
+    def test_unmatched_and_multiple_call_transcripts_remain_resources_without_ai(self):
         start = datetime.combine(self.calendar.scheduled_date, self.calendar.scheduled_time, ZoneInfo(settings.TIME_ZONE))
         for rows in ([{'artifact_type': 'transcript', 'graph_artifact_id': 'unknown'}],
                      [{'artifact_type': 'transcript', 'graph_artifact_id': str(i), 'call_id': str(i), 'created_datetime': start.isoformat()} for i in (1, 2)]):
             response, ai = self.check(snapshot={**self.snapshot, 'artifacts': rows})
-            self.assertEqual(json.loads(response.content)['code'], 'TRANSCRIPT_SESSION_AMBIGUOUS')
+            self.assertIn(response.status_code, (200, 207))
             ai.assert_not_called()
-            self.assertEqual(self.overlay.meeting_intelligence, {})
+            self.assertNotIn('summary', self.overlay.meeting_intelligence)
+            self.assertNotIn('recap', self.overlay.answers)
 
-    def test_pending_end_fetch_failure_and_permission_have_distinct_codes_and_timing(self):
+    def test_verified_ended_report_and_resource_failures_remain_distinct_after_persistence(self):
         self.calendar.scheduled_date = timezone.localdate() + timedelta(days=1)
         self.calendar.save()
-        for failure, code, status in [(None, 'MEETING_END_NOT_CONFIRMED', 409), ('fetch', 'ATTENDANCE_FETCH_FAILED', 502), ('permission', 'GRAPH_PERMISSION_ERROR', 403)]:
+        for failure, status in [(None, 200), ('fetch', 207), ('permission', 207)]:
             snapshot = {**self.snapshot, 'errors': ['Attendance reports unavailable'] if failure else [],
                         'resourceErrors': {'attendance': failure} if failure else {}}
             response, ai = self.check(snapshot=snapshot, transcript=None)
             data = json.loads(response.content)
-            self.assertEqual((response.status_code, data['code']), (status, code))
-            self.assertIn('scheduledEnd', data)
-            self.assertEqual(data['timeZone'], settings.TIME_ZONE)
+            self.assertEqual(response.status_code, status)
+            self.assertIsNone(data['intelligence']['meetingEndCode'])
+            self.assertEqual(data['intelligence']['meetingEndStatus'], 'attendance-confirmed')
+            self.assertEqual(data['intelligence']['resourceErrors'], {'attendance': failure} if failure else {})
+            self.assertEqual(data['partial'], bool(failure))
+            self.assertNotIn('recap', self.overlay.answers)
             ai.assert_not_called()
 
     def test_a_newer_attempt_wins_without_receiving_the_old_generation(self):

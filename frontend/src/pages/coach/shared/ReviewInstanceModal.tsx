@@ -1039,6 +1039,7 @@ function ReviewInstanceContent({
               <MigratedMeetingIntelligence
                 key={`${definition.instance.id}:${migratedIntelligenceRevision}`}
                 instanceId={definition.instance.id}
+                resourceContextKey={JSON.stringify([definition.booking.eventKey, definition.booking.scheduledDate, definition.booking.scheduledTime, definition.booking.durationMinutes])}
                 family={definition.template.reviewTypeCode || ''}
                 status={definition.localStatus || ''}
                 viewAs={isViewingAsCoach}
