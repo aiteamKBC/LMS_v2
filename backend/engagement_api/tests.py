@@ -59,8 +59,8 @@ class FeedbackValidationTests(SimpleTestCase):
         self.assertEqual(created[0].form, form)
         self.assertTrue(bulk_create.call_args.kwargs['ignore_conflicts'])
 
-    def test_production_learner_has_no_feedback_but_staff_preview_remains_available(self):
-        with self.settings(DEBUG=False, LEARNER_FEEDBACK_ENABLED=True, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=False):
+    def test_explicitly_disabled_release_hides_feedback_but_staff_preview_remains_available(self):
+        with self.settings(DEBUG=False, LEARNER_FEEDBACK_ENABLED=False, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=False):
             recipients = mock.MagicMock()
             recipients.filter.return_value.filter.return_value.order_by.return_value = []
             with (

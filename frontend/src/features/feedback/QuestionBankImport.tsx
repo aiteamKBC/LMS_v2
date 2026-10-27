@@ -26,7 +26,7 @@ export function QuestionBankImport({ locked, onApply }: { locked: boolean; onApp
     const url = URL.createObjectURL(new Blob(['\uFEFF', POST_LECTURE_BANK_TEMPLATE], { type: 'text/csv;charset=utf-8' }));
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'post-lecture-question-bank-template.csv';
+    link.download = 'live-sessions-feedback-question-bank-template.csv';
     link.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }
@@ -65,9 +65,10 @@ export function QuestionBankImport({ locked, onApply }: { locked: boolean; onApp
   return <section aria-label="Question bank import" className="rounded-xl border border-primary-100 bg-white p-4 md:col-span-2">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><h3 className="text-sm font-semibold text-foreground-900">Upload question bank</h3><p className="mt-1 text-xs text-foreground-500">Download the template, fill in your questions, then upload it here.</p></div>
-      <a href={`${import.meta.env.BASE_URL}templates/post-lecture-question-bank.xlsx`} download className="rounded-lg border border-primary-200 px-3 py-2 text-xs font-semibold text-primary-700">Download Excel template</a>
+      <a href={`${import.meta.env.BASE_URL}templates/post-lecture-question-bank.xlsx`} download="live-sessions-feedback-question-bank.xlsx" className="rounded-lg border border-primary-200 px-3 py-2 text-xs font-semibold text-primary-700">Download Excel template</a>
     </div>
     <p className="mt-3 text-xs leading-5 text-foreground-600">Fill in <strong>Category</strong>, <strong>Question</strong> and <strong>Answer type</strong>. Choose the answer type from the Excel dropdown. For choice questions, fill in <strong>Option 1</strong>, <strong>Option 2</strong>, and so on. Leave those columns empty for stars or written answers.</p>
+    <p className="mt-2 text-xs leading-5 text-foreground-500">Optional: set <strong>Importance</strong> to Critical, High, Medium or Low. Blank means Medium. After importing, use <strong>Scoring &amp; analytics</strong> to set Yes/No percentages, a score for each choice, or a numeric scoring range. Use <strong>Form scoring setup</strong> below to review questions and try an example response. Text is not automatically classified. Importance never changes the random draw.</p>
     <details className="mt-3 rounded-lg bg-background-50 p-3 text-xs text-foreground-600">
       <summary className="cursor-pointer font-semibold text-primary-700">Using an existing file?</summary>
       <p className="mt-2 leading-5">Previous Excel and CSV formats are still supported. You do not need a Questions per lecture column; choose the numbers after uploading.</p>

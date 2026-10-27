@@ -12,6 +12,13 @@ import { rememberSignedInLearner } from '@/hooks/useMyLearner';
 import { resetFirstLoginDetailsRedirect } from '@/hooks/useFirstLoginDetailsRedirect';
 
 const state = vi.hoisted(() => ({ profileError: '', name: 'Alex Morgan', role: 'learner', learnerType: 'apprenticeship', firstLoginRequired: false, programmeStatus: 'Active', events: [] as UpcomingEvent[], scheduleError: '', refresh: vi.fn(), modules: [] as OverviewWeek['modules'] }));
+const featureFlags = vi.hoisted(() => ({ fullFeedback: true, lectureFeedback: true }));
+vi.mock('@/lib/featureFlags', () => ({
+  CHAT_ENABLED: false,
+  get LEARNER_FEEDBACK_ENABLED() { return featureFlags.fullFeedback; },
+  get LEARNER_POST_LECTURE_FEEDBACK_ENABLED() { return featureFlags.lectureFeedback; },
+}));
+beforeEach(() => { featureFlags.fullFeedback = true; featureFlags.lectureFeedback = true; });
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { id: 3, subjectId: 71, learnerType: state.learnerType, role: state.role, displayName: state.name } }, logout: vi.fn(), retryInitialization: vi.fn() }) }));
 vi.mock('@/components/SupportChatWidget', () => ({ SupportChatWidget: () => null }));
 vi.mock('@/api/feedback', () => ({ feedbackApi: { myForms: vi.fn() } }));
@@ -130,7 +137,8 @@ describe('connected student home', () => {
     fireEvent.click(screen.getByRole('link', { name: 'Dashboard' }));
     expect(screen.getByTestId('destination')).toHaveTextContent('/workspace/learner/dashboard');
   });
-  it('shows the real pending feedback count on the Feedback link', async () => {
+  it.each([true, false])('shows the real pending count with full-feedback release=%s and Live Sessions enabled', async fullFeedback => {
+    featureFlags.fullFeedback = fullFeedback;
     const pending = { id: 4, title: 'Lecture feedback', description: '', assignedAt: '2026-10-24T09:00:00Z', dueDate: null,
       status: 'not_started', responseId: null, deliveryId: 21, sessionTitle: 'Leadership session', sessionStartsAt: '2026-10-24T08:00:00Z',
       formType: 'post_lecture', moduleName: 'Leadership' } satisfies LearnerFeedbackListItem;

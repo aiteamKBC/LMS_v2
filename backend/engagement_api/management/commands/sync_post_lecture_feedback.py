@@ -4,7 +4,7 @@ from engagement_api.feedback_delivery import sync_post_lecture_feedback_from_att
 
 
 class Command(BaseCommand):
-    help = 'Reconcile finalized curriculum attendance into post-lecture feedback deliveries.'
+    help = 'Reconcile finalized curriculum attendance into Live Sessions Feedback deliveries.'
 
     def add_arguments(self, parser):
         parser.add_argument('--live-session-id', action='append', dest='live_session_ids', default=[])

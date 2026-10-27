@@ -469,16 +469,10 @@ PERFORMANCE_DIAGNOSTIC_ACCOUNT_IDS = frozenset(
 )
 PERFORMANCE_SAMPLE_RETENTION_DAYS = int(os.environ.get('PERFORMANCE_SAMPLE_RETENTION_DAYS', '14'))
 
-# Legacy feedback switches retained for deployment compatibility. Learner
-# feedback is currently local-only (DEBUG) in engagement_api.feedback;
-# these switches cannot enable it in production. Staff reporting is separate.
-LEARNER_FEEDBACK_ENABLED = (
-    os.environ.get("LEARNER_FEEDBACK_ENABLED", "false").lower() == "true"
-)
-# Retained alongside the older broad switch; no production learner exception.
-LEARNER_NON_LECTURE_FEEDBACK_ENABLED = (
-    os.environ.get("LEARNER_NON_LECTURE_FEEDBACK_ENABLED", "false").lower() == "true"
-)
+# Release Live Sessions Feedback for learners in production; other types stay
+# local-only. Publication, ownership, assignment and dates are still enforced.
+LEARNER_FEEDBACK_ENABLED = True
+LEARNER_NON_LECTURE_FEEDBACK_ENABLED = False
 
 ROOT_URLCONF = 'config.urls'
 
