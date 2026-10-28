@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { PROGRESS_REVIEWS_DATA } from '@/mocks/progress-reviews';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast.helpers";
 
 interface Props {
   open: boolean;

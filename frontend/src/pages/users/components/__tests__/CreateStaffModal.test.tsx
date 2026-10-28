@@ -24,7 +24,7 @@ vi.mock('@/api/staffUsers', async () => {
   return { ...actual, createStaffUser: (...args: unknown[]) => createStaffUser(...args) };
 });
 
-vi.mock('@/hooks/useToast', () => ({
+vi.mock("@/hooks/useToast.helpers", () => ({
   useToast: () => ({ success: toastSuccess, error: toastError }),
 }));
 

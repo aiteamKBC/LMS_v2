@@ -1,3 +1,4 @@
+import { dashboardSessionCache, dashboardSectionSessionCache, clearCoachDashboardSessionCache, type PerformanceStatus, type ScheduleStatus, type CoachLearner, type CaseloadApiLearner, type CaseloadApiResponse, type WeeklyCounts, type DashboardTotals, type CoachDashboardApiResponse, type CachedCoachDashboard, type EvidenceQueueLearner, type MarkingQueueResponse } from './CoachDashboard.helpers';
 import { reviewCategory } from '@/lib/reviewCategory';
 import { Fragment, useState, useEffect, useMemo, useCallback, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -6,7 +7,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { setCoachViewAs } from '@/lib/coachViewAs';
 import { recordAction } from '@/lib/activityTrail';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachAuditTrailNavItem, roleNavMap } from '@/mocks/navigation';
 import { CoachDirectoryPicker } from './CoachDirectoryPicker';
@@ -51,8 +52,6 @@ const coachNav = roleNavMap.coach;
 type DashboardKpi = 'caseload' | 'at-risk' | 'pending-marking' | 'pr-week' | 'mcm-week' | 'catch-ups-week';
 type CoachDashboardTab = 'learners' | 'meetings' | 'risk';
 type OtjhStatusKey = 'at-risk' | 'need-attention' | 'on-track' | 'unknown';
-type PerformanceStatus = 'on-track' | 'at-risk' | 'high' | 'new-starter';
-type ScheduleStatus = 'upcoming' | 'overdue' | 'needs-schedule' | 'none';
 
 const EMPTY_VALUE = '--';
 const UPCOMING_MEETING_SOURCES = new Set(['progress-review', 'mcr', 'catch-up', 'support', 'student-support', 'live-session']);
@@ -69,155 +68,8 @@ function toIsoDate(value: Date) {
   return `${year}-${month}-${day}`;
 }
 
-interface CoachLearner {
-  id: string;
-  name: string;
-  initials: string;
-  /** 'commercial' | 'apprenticeship' — which learner_detail table this id resolves against. */
-  learnerType?: 'commercial' | 'apprenticeship';
-  aptemId?: string | null;
-  /** enrolment."Created_users".id -- a different, disjoint pk space from `id`
-   *  above. /learner-detail/ needs this one, not the LearnerProfile id. */
-  enrolmentId?: string | null;
-  /** Which module/week otjhTarget's cumulative-to-date figure currently falls in. */
-  currentModule?: string | null;
-  currentWeek?: string | null;
-  componentsTargetToDate?: number | null;
-  /** Whole-programme training-plan total used to calculate today's target. */
-  otjhPlanned?: number | null;
-  startDate?: string | null;
-  plannedEndDate?: string | null;
-  programme: string;
-  programmeName?: string | null;
-  cohortName?: string | null;
-  group: string;
-  employer: string;
-  avatar: string;
-  /** Legacy composite learner performance, not OTJH. See otjhRagStatus. */
-  status: PerformanceStatus;
-  riskFlags: string[];
-  overallProgress: number;
-  overallProgressAvailable?: boolean;
-  attendanceRate: number;
-  attendanceRateAvailable?: boolean;
-  attendanceAvailable?: boolean;
-  activityProgress?: number | null;
-  activityProgressAvailable?: boolean;
-  componentsCompleted?: number | null;
-  componentsPlanned?: number | null;
-  attendancePresent?: number | null;
-  attendanceSessions?: number | null;
-  attendanceAbsent?: number | null;
-  attendanceConsecutiveMissed?: number | null;
-  attendanceLastSession?: string | null;
-  attendanceLastSessionDate?: string | null;
-  otjhCompleted: number;
-  otjhTarget: number;
-  otjhVariance?: number | null;
-  otjhStatus?: string | null;
-  otjhTargetAsOfToday?: number | null;
-  otjhProgressAsOfToday?: number | null;
-  otjhShortfallHours?: number | null;
-  otjhDeltaHours?: number | null;
-  otjhRagStatus?: 'at-risk' | 'need-attention' | 'on-track' | 'unavailable' | null;
-  otjhRagSource?: string | null;
-  ksbCompleted?: number | null;
-  ksbTarget?: number | null;
-  ksbProgress: number | null;
-  ksbProgressAvailable?: boolean;
-  /** Distinct KSB codes evidenced in the audit mapping. A count, not a
-   *  percentage -- the mapping spans several standards, so it carries no
-   *  per-learner denominator. Matches the learner's own workspace. */
-  ksbEvidencedCount?: number | null;
-  evidenceCount: number;
-  evidenceCountAvailable?: boolean;
-  evidenceCompletedCount: number;
-  nextCoaching: string;
-  nextCoachingStatus?: ScheduleStatus;
-  nextReview: string;
-  nextReviewStatus?: ScheduleStatus;
-  lastContact: string;
-  lastActivity?: string;
-  lastActivityDate?: string | null;
-  lastActivityLabel?: string;
-  lastMcm?: string;
-  lastPr?: string;
-  recentFlag: string | null;
-  email?: string | null;
-  rawProgramStatus?: string | null;
-  enrollmentStatus?: string | null;
-  mcmReviews: ImportedReview[];
-  reviews: ImportedReview[];
-}
-
-type CaseloadApiLearner = EmbeddedCaseloadLearner & Partial<CoachLearner> & {
-  cohortName?: string | null;
-};
-
-interface CaseloadApiResponse {
-  owner?: {
-    name?: string;
-    email?: string;
-  };
-  learners?: CaseloadApiLearner[];
-}
-
-interface WeeklyCounts { progressReviews: number; monthlyCoaching: number; catchUps: number; reviewsAvailable: boolean }
-interface DashboardTotals {
-  totalLearners: number;
-  otjhAtRisk: number;
-  needAttention: number;
-  pendingMarking: number | null;
-  prThisWeek: number | null;
-  mcmThisWeek: number | null;
-  catchUpsThisWeek: number;
-}
-
-interface CoachDashboardApiResponse extends CaseloadApiResponse {
-  popupLearners?: DashboardPopupLearner[];
-  popupWeekEvents?: CoachCalendarEvent[];
-  totals?: DashboardTotals;
-  weeklyCounts?: WeeklyCounts;
-  // Attendance is not a separate dataset: the backend overlays the one
-  // canonical figure directly onto each learners[] entry
-  // (attendanceRate/attendanceRateAvailable/attendanceLastSession*).
-  meetings?: {
-    events?: CoachCalendarEvent[];
-    summary?: { progressReviewRows?: number; mcrRows?: number; learnersWithDates?: number; reviewAnchorSkipped?: number; reviewAnchorSkipReasons?: Record<string, number> };
-    reviewGenerationIssues?: Array<{ learnerId?: string; code?: string }>;
-  };
-  marking?: MarkingQueueResponse;
-  errors?: Record<string, string>;
-}
-
-interface CachedCoachDashboard {
-  popupLearners?: DashboardPopupLearner[];
-  popupWeekEvents?: CoachCalendarEvent[];
-  totals?: DashboardTotals;
-  ownerName: string;
-  learners: CoachLearner[];
-  calendarEvents: CoachCalendarEvent[];
-  calendarPreviewEvents: CoachCalendarEvent[];
-  liveSessionEvents: CoachCalendarEvent[];
-  evidenceQueue: EvidenceQueueLearner[];
-  reviewGenerationAvailable: boolean;
-  calendarError: string | null;
-}
-
-// Keep the last successful dashboard per signed-in account and effective coach.
-// Route changes unmount this page, so component state alone would otherwise
-// replace useful data with the full-page skeleton every time the coach returns.
-const dashboardSessionCache = new Map<string, CachedCoachDashboard>();
-const dashboardSectionSessionCache = new Map<string, CoachDashboardApiResponse>();
-
 function dashboardCacheKey(accountEmail: string, coachEmail: string, day: string) {
   return `${accountEmail.trim().toLowerCase()}::${coachEmail.trim().toLowerCase()}::${day}`;
-}
-
-export function clearCoachDashboardSessionCache() {
-  dashboardSessionCache.clear();
-  dashboardSectionSessionCache.clear();
-  clearDashboardLearnerPageCache();
 }
 
 function displayValue(value?: string | number | null): string {
@@ -277,33 +129,6 @@ function isVisibleRiskFlag(value?: string | null) {
 function canonicalOtjhStatus(learner: CoachLearner): OtjhStatusKey {
   const status = otjhProgressAsOfToday(learner).status;
   return status === 'unavailable' ? 'unknown' : status;
-}
-
-interface EvidenceQueueLearner {
-  id: string;
-  learnerId: string;
-  learner: string;
-  initials: string;
-  email?: string | null;
-  programme: string;
-  group: string;
-  pendingEvidence: number;
-  acceptedEvidence: number;
-  referredEvidence: number;
-  totalEvidence: number;
-  lastSubmission: string;
-  lastSubmissionIso?: string | null;
-  submittedAt?: string | null;
-  oldestPendingDate?: string | null;
-  latestPendingDate?: string | null;
-  isOverdue: boolean;
-}
-
-interface MarkingQueueResponse {
-  items?: Partial<EvidenceQueueLearner>[];
-  summary?: {
-    pendingItems?: number;
-  };
 }
 
 function isActiveLearner(learner: CoachLearner): boolean {

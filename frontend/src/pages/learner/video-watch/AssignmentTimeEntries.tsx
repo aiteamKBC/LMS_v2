@@ -1,3 +1,4 @@
+import { assignmentDateRestriction, assignmentMonthBounds, assignmentTimeHours } from './AssignmentTimeEntries.helpers';
 import type { MonthlyAssignment } from '@/api/monthlyAssignment';
 import { useEffect, useId, useState } from 'react';
 import { fetchLearnerCalendarEvents, type BookingCalendarRules } from '@/api/learnerCalendar';
@@ -22,13 +23,6 @@ function HoursInput({ label, value, onChange, maximum }: { label: string; value:
       <button type="button" className={button} aria-label={`Increase ${label} by half an hour`} disabled={hours >= maximum} onClick={() => adjust(1)}>+</button>
     </div>
   </div>;
-}
-
-export function assignmentDateRestriction(date: string, rules: BookingCalendarRules | null) {
-  const day = new Date(`${date}T12:00:00Z`).getUTCDay();
-  if (day === 0 || day === 6) return 'Weekend';
-  if (!rules || !rules.coveredYears.includes(Number(date.slice(0, 4)))) return 'Holiday calendar unavailable';
-  return rules.bankHolidays.find(item => item.date === date)?.title || '';
 }
 
 function WorkingDatePicker({ month, value, label, rules, disabled, onChange }: {
@@ -62,20 +56,6 @@ function WorkingDatePicker({ month, value, label, rules, disabled, onChange }: {
       <button type="button" className="mt-2 text-blue-700" onClick={() => { onChange(''); setOpen(false); }}>Clear date</button>
     </div>}
   </div>;
-}
-
-export function assignmentMonthBounds(month: string) {
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return null;
-  const [year, number] = month.split('-').map(Number);
-  const days = new Date(Date.UTC(year, number, 0)).getUTCDate();
-  return { min: `${month}-01`, max: `${month}-${days}` };
-}
-
-export function assignmentTimeHours(entries: MonthlyAssignment['timeEntries']) {
-  return (entries || []).reduce((sum, row) => {
-    const hours = Number(row.hours);
-    return sum + (Number.isFinite(hours) && hours > 0 ? hours : 0);
-  }, 0);
 }
 
 function assignmentDailyTimeHours(entries: MonthlyAssignment['timeEntries']) {

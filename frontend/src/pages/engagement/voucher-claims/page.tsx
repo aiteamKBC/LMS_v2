@@ -4,7 +4,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { ProgrammeFilter } from '@/components/feature/ProgrammeFilter';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast.helpers";
 import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 import { useListQueryState } from '@/hooks/useListQueryState';
 import { roleNavMap } from '@/mocks/navigation';

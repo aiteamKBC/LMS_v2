@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { roleNavMap } from '@/mocks/navigation';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast.helpers";
 
 const qaNav = roleNavMap.qa;
 

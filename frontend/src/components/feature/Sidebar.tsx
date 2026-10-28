@@ -70,7 +70,7 @@ import {
   type LucideIcon,
   Lock,
 } from 'lucide-react';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { LEARNER_LOGO_URL, LEARNER_SIDEBAR_PATTERN_URL, LEARNER_SIDEBAR_COLLAPSED_WIDTH, LEARNER_SIDEBAR_WIDTH } from './learnerShellAssets';
 import { SignOutConfirmModal } from './Header';
 

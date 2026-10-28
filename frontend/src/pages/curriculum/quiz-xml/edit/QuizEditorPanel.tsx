@@ -12,7 +12,7 @@ import { QuizQuestionImageField } from '@/components/feature/QuizQuestionImageFi
 import { ImageMatchingPairFields } from '@/components/feature/ImageMatchingPairFields';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { QuestionAnswersView } from '@/components/feature/QuestionTypeRenderer';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast.helpers";
 import { formatQuizGradeRange, useQuizGradeSettings } from '@/lib/quizGradeSettings';
 import { convertAnswerTextForQuestionType, isPairAnswerComplete, parseQuizPairAnswer, serializeQuizPairAnswer } from '@/lib/quizPairAnswers';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';

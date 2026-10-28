@@ -25,7 +25,7 @@ vi.mock('@/api/engagement', () => ({
   createClub: vi.fn(), updateClub: vi.fn(), deleteClub: vi.fn(),
   addClubMeeting: vi.fn(), updateClubMeeting: vi.fn(), deleteClubMeeting: vi.fn(),
 }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => authValue() }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => authValue() }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));

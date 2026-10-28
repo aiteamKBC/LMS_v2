@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast.helpers";
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchEnrolmentBoard, updateEnrolmentUser, deleteEnrolmentUser, finishEnrolment, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
 import { fetchCommercialBoard } from '@/api/commercialUsers';
@@ -12,7 +12,7 @@ import { fetchIlrDocument, issueIlrDocument, signIlrDocument, type IlrDocument }
 import { SignaturePad } from './wizard/steps/SignaturePad';
 import { LearnerHeaderDates } from './components/LearnerHeaderDates';
 import { FirstSessionReschedule } from './components/FirstSessionReschedule';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { renderIlrPdf, ilrFilename } from '@/lib/ilrDocumentPdf';
 import {
   fetchTrainingPlanDocument,

@@ -14,7 +14,7 @@ import {
   normaliseKey,
   programmeIdentity,
 } from '../shared/entities/model';
-import { calendarLabel } from './createCalendarForm';
+import { calendarLabel } from "./createCalendarForm.helpers";
 import {
   EntityEmptyState,
   EntityFilterBar,

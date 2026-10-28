@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { activeWorkspace, workspacesFor, type PortalWorkspace } from '@/lib/portalWorkspaces';
 
 /* ═══════════════════════════════════════════════════════

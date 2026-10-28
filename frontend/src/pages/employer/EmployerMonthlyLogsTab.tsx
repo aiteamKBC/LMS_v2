@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import type { LearnerKind } from '@/api/learnerDetail';
 import { fetchEmployerMonthlyLog, fetchEmployerMonthlyLogContent, fetchEmployerMonthlyLogSummary } from '@/api/employerPortal';
 import { EmptyState } from '@/components/ui/EmptyState';

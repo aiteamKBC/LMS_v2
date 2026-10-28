@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { useWizard } from '../WizardContext';
-import { useToast } from '@/hooks/useToast';
+import { useWizard } from "../WizardContext.helpers";
+import { useToast } from "@/hooks/useToast.helpers";
 import type { LearnerKind } from '@/api/extendedIlr';
 import {
   deleteCvDocument,
@@ -13,7 +13,8 @@ import {
 } from '@/api/cvJobDocuments';
 import { EmptyState, FieldRow, YesNoRadio, inputClass } from '../../components/ui';
 import { LabeledInput, LabeledSelect, StepHeading } from './fields';
-import { FieldError, invalidClass, requiredMessage, useMissing, useMissingCheck } from '../stepErrors';
+import { FieldError, invalidClass } from '../stepErrors';
+import { requiredMessage, useMissing, useMissingCheck } from "../stepErrors.helpers";
 import { CvJobText, fieldQualificationLabels, programmeField } from './cvJobText';
 import { StepItems, type ItemRenderer } from '../layout/StepItems';
 import { useStepTitle } from '../layout/useLayout';

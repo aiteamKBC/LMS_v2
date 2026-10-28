@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useToast, type ToastItem, type ToastType } from '@/hooks/useToast';
+import { type ToastItem, type ToastType } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast.helpers";
 
 const toastConfig: Record<ToastType, { icon: string; bar: string; iconBg: string; iconColor: string; titleColor: string }> = {
   success: {

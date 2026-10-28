@@ -13,9 +13,9 @@ const api = vi.hoisted(() => ({
   getIlrEvidenceUrl: vi.fn(),
 }));
 vi.mock('@/api/extendedIlr', () => api);
-vi.mock('../WizardContext', () => ({ useWizard: () => ({ userId: '41', isCommercial: false }) }));
+vi.mock("../WizardContext.helpers", () => ({ useWizard: () => ({ userId: '41', isCommercial: false }) }));
 const toast = vi.hoisted(() => ({ error: vi.fn() }));
-vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn(), error: toast.error }) }));
+vi.mock("@/hooks/useToast.helpers", () => ({ useToast: () => ({ success: vi.fn(), error: toast.error }) }));
 
 import IlrEligibilityEvidence from '../steps/IlrEligibilityEvidence';
 

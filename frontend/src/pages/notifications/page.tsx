@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { roleNavMap } from '@/mocks/navigation';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { roleNotifications, type RoleNotification } from '@/mocks/role-notifications';

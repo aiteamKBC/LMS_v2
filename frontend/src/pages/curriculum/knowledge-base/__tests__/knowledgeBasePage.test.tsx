@@ -5,7 +5,7 @@ import * as api from '@/features/knowledge-base/api';
 import type { KbBook } from '@/features/knowledge-base/api';
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
-vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
+vi.mock("@/hooks/useToast.helpers", () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
 vi.mock('@/features/knowledge-base/api', async importOriginal => ({
   ...await importOriginal<typeof import('@/features/knowledge-base/api')>(),
   fetchScopes: vi.fn(),

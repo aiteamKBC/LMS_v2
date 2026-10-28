@@ -6,7 +6,7 @@ import { reviewDeckMetadata } from '../../lib/reviewDeckMetadata';
 import JSZip from 'jszip';
 import { saveProgressReviewPptx } from '../../lib/progressReviewPptx';
 
-vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
+vi.mock("@/hooks/useToast.helpers", () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
 const deck: ProgressReviewSlidesDeck = { learnerName: 'Assigned learner', reviewLabel: 'Review 1', generatedAt: '2026-09-12', windowLabel: '12 weeks', slides: [
   { id: 'cover', type: 'cover', title: 'Cover', heading: 'Review 1', subheading: '', eyebrow: '', details: [
     { label: 'Programme', value: 'Project Controls Professional' }, { label: 'Employer', value: 'Assigned employer' }, { label: 'Line manager', value: 'Assigned manager' },

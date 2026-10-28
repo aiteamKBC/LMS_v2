@@ -7,7 +7,7 @@ import { AppRoutes } from '../index';
 
 const fixture = vi.hoisted(() => ({ routes: [] as RouteObject[] }));
 vi.mock('../config', () => ({ default: fixture.routes }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { id: 'account-1' } } }) }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({ auth: { account: { id: 'account-1' } } }) }));
 vi.mock('@/features/old-otjh/hooks', () => ({ OldOtjhProvider: ({ children }: { children: ReactNode }) => children }));
 
 beforeEach(() => { fixture.routes.splice(0); });

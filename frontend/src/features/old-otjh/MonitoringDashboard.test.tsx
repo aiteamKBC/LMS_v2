@@ -12,7 +12,7 @@ import { homeRouteFor, mayAccessRoute } from '@/lib/routeAccess';
 
 const viewer = { id: 100, subjectId: 70, role: 'staff' as const, access: 'record-monitor', displayName: 'Record monitor' };
 const shellNavigation = vi.hoisted(() => vi.fn());
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: viewer }, isInitialized: true }) }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({ auth: { account: viewer }, isInitialized: true }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children, navItems }: { children: ReactNode; navItems: SidebarNavItem[] }) => {
   shellNavigation(navItems);
   return <div>{children}</div>;

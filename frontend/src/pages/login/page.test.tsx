@@ -8,7 +8,7 @@ const { login, authState } = vi.hoisted(() => ({ login: vi.fn(), authState: {
   account: null as (Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord'>
     & Partial<Pick<AuthUser, 'subjectType'>>) | null,
 } }));
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth.helpers", () => ({
   useAuth: () => ({ login, auth: authState, isInitialized: true }),
 }));
 vi.mock('@/api/auth', async importOriginal => ({

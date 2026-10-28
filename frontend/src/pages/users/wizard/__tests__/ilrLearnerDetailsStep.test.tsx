@@ -34,7 +34,7 @@ const wizard = vi.hoisted(() => ({
   personalSignature: undefined as string | undefined,
   setSection: vi.fn(),
 }));
-vi.mock('../WizardContext', async (importOriginal) => ({
+vi.mock("../WizardContext.helpers", async (importOriginal) => ({
   ...(await importOriginal<typeof import('../WizardContext')>()),
   useWizard: () => ({
     userId: '41',
@@ -46,7 +46,7 @@ vi.mock('../WizardContext', async (importOriginal) => ({
 }));
 
 import IlrLearnerDetails from '../steps/IlrLearnerDetails';
-import { ageFromDob } from '../WizardContext';
+import { ageFromDob } from "../WizardContext.helpers";
 
 beforeEach(() => {
   vi.clearAllMocks();

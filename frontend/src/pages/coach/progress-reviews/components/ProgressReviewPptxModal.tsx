@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast.helpers";
 import {
   fetchLatestRun,
   fetchMcmLatestRun,

@@ -20,7 +20,7 @@ import { workspacesFor } from '@/lib/portalWorkspaces';
 const authValue = vi.fn();
 const switchRole = vi.fn();
 
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => authValue() }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => authValue() }));
 
 const { WorkspaceSwitcher } = await import('../WorkspaceSwitcher');
 

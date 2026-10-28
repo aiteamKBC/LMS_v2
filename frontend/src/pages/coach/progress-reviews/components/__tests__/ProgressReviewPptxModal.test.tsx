@@ -33,7 +33,7 @@ vi.mock('@/api/progressReviews', async () => {
   };
 });
 
-vi.mock('@/hooks/useToast', () => ({
+vi.mock("@/hooks/useToast.helpers", () => ({
   useToast: () => ({ success: toastSuccess, error: toastError }),
 }));
 

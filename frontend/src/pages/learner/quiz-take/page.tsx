@@ -26,7 +26,8 @@ import { PreviousLearningNotice } from '@/pages/learner/my-learning/PreviousLear
 import { placeActivity } from '@/pages/learner/video-watch/weekPreview';
 import { ActivitySidebar } from '@/pages/learner/video-watch/ActivitySidebar';
 import { componentRoute } from '@/pages/learner/video-watch/componentRoute';
-import { ReflectionWindow, formatClock } from '@/components/feature/ReflectionWindow';
+import { ReflectionWindow } from '@/components/feature/ReflectionWindow';
+import { formatClock } from "@/components/feature/ReflectionWindow.helpers";
 import { ReflectionChoicePopup } from '@/components/feature/ReflectionChoicePopup';
 import { rememberLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';

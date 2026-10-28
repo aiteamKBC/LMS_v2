@@ -10,7 +10,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { rememberLearner } from '@/hooks/useMyLearner';
 import { fetchLearnerSummary } from '@/api/learnerDetail';
 
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({
   auth: { account: { role: 'learner' }, user: { fullName: 'Learner' }, roles: [] },
   isAdmin: false,
   canSeeNavItem: () => true,

@@ -26,7 +26,7 @@ vi.mock('@/api/tutorWorkspace', () => ({
 }));
 vi.mock('@/api/staffUsers', () => ({ fetchStaffUsers: () => fetchStaffUsers() }));
 vi.mock('@/lib/curriculumApi', () => ({ fetchCurriculumTutors: () => fetchCurriculumTutors() }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => authValue() }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => authValue() }));
 // Renders the subtitle as well as the title: "Choose a tutor..." is the
 // subtitle, and it is how the page says it is showing the picker.
 vi.mock('@/components/feature/WorkspaceShell', () => ({

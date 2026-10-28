@@ -158,7 +158,7 @@ const fetchArchivedModuleStructure = vi.fn(async (): Promise<unknown> => null);
 const fetchProgrammeKsbStats = vi.fn(async (): Promise<unknown> => ({ ksbMapped: 0, ksbTotal: 10 }));
 const restoreCurriculumModule = vi.fn(async () => ({ restored: true, id: 'MOD-ARCHIVED' }));
 
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth.helpers", () => ({
   useAuth: () => ({ auth: { account: { role: 'curriculum' } } }),
 }));
 

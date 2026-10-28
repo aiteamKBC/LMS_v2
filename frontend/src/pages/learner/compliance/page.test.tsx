@@ -5,8 +5,8 @@ import Page from './page';
 
 const state = vi.hoisted(() => ({ signed: false, remaining: false, fail: false, role: 'learner', invalidate: vi.fn() }));
 vi.mock('@/hooks/useMyLearner', () => ({ useMyLearner: () => ({ kind: 'apprenticeship', id: '125' }) }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { role: state.role } } }) }));
-vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({ auth: { account: { role: state.role } } }) }));
+vi.mock("@/hooks/useToast.helpers", () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
 vi.mock('@/api/learnerDetail', () => ({ invalidateLearnerDetailCache: state.invalidate }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock('./DocumentCard', () => ({ Field: () => null, DocumentCard: ({ title, onSign }: { title: string; onSign: (mark: string) => void }) => <button onClick={() => onSign('Signature')}>{title}</button> }));

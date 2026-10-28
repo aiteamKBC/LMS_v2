@@ -9,7 +9,7 @@ import { dashboardOtjhProgress } from '@/pages/workspace/learner/dashboardOtjhPr
 import { timelineModuleForDisplay, type DashboardTrainingPayload } from '@/api/dashboardTraining';
 import { EmployerLearningOverview, EmployerTrainingPlan } from './EmployerLearning';
 
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { id: 'employer-account' } } }) }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({ auth: { account: { id: 'employer-account' } } }) }));
 vi.mock('@/api/employerPortal', () => ({ fetchEmployerLearningOverview: vi.fn(), fetchEmployerTraining: vi.fn() }));
 
 let client: QueryClient;

@@ -24,7 +24,7 @@ const loadModuleStructure = vi.fn();
 
 // The workspace reads the signed-in account. Without this the page throws on
 // its first line and every case below fails before it asserts anything.
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth.helpers", () => ({
   useAuth: () => ({ auth: { account: { role: 'curriculum' } } }),
 }));
 

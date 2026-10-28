@@ -4,7 +4,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { roleNavMap } from '@/mocks/navigation';
 import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast.helpers";
 import {
   fetchLearnerAnalytics, fetchReportData,
   type LearnerAnalyticsRow, type PointsRewardsReport, type ClubActivityReport, type EventAttendanceReport,

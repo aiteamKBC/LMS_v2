@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { AdminPageHeader } from '@/pages/admin/_shared/AdminPage';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast.helpers";
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchWizardLayout, publishWizardLayout } from '@/api/wizardLayout';
 import { btnPrimary, btnSecondary, iconBtn, inputClass } from '../components/ui';

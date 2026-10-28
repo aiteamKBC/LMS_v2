@@ -36,7 +36,7 @@ const COMPLETE: IlrForm = {
 } as IlrForm;
 
 const wizard = vi.hoisted(() => ({ ilr: {} as IlrForm, setSection: vi.fn() }));
-vi.mock('../WizardContext', () => ({
+vi.mock("../WizardContext.helpers", () => ({
   useWizard: () => ({
     board: {},
     draft: { ilr: wizard.ilr, personalDetails: {} },
@@ -48,10 +48,10 @@ vi.mock('../WizardContext', () => ({
     ilrFiling: false,
   }),
 }));
-vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
+vi.mock("@/hooks/useToast.helpers", () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
 
 import Ilr from '../steps/Ilr';
-import { StepErrorsContext } from '../stepErrors';
+import { StepErrorsContext } from "../stepErrors.helpers";
 
 const ILR_STEP = WIZARD_STEPS.findIndex((s) => s.slug === 'ilr');
 const missing = (nextOfKin: Partial<IlrForm['nextOfKin']>) =>

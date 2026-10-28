@@ -11,7 +11,7 @@ import { WIZARD_STEPS, type WizardDraft } from '../../types';
 import { missingForStep } from '../validation';
 
 const wizard = vi.hoisted(() => ({ acknowledged: {} as Record<string, boolean>, setSection: vi.fn() }));
-vi.mock('../WizardContext', () => ({
+vi.mock("../WizardContext.helpers", () => ({
   useWizard: () => ({ draft: { policies: { acknowledged: wizard.acknowledged } }, setSection: wizard.setSection }),
 }));
 

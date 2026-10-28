@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { InclusionLoading } from './InclusionLoading';
 import { useLocation } from 'react-router-dom';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 
 const STORAGE_KEY = 'inclusion_sso_pending';
 

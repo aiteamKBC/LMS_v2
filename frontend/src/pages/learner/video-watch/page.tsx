@@ -1,3 +1,4 @@
+import { fileProbe } from './page.helpers';
 import { archiveTimingDraft, timingSessionExpired } from '@/lib/timingRecovery';
 import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
 import { ManualTimeSummary } from '@/components/feature/ManualTimeConfirmation';
@@ -30,7 +31,8 @@ import {
   type JourneyComponent,
 } from '@/utils/learnerJourney';
 import { fetchEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
-import { ReflectionWindow, formatClock, formatRecordedClock } from '@/components/feature/ReflectionWindow';
+import { ReflectionWindow } from '@/components/feature/ReflectionWindow';
+import { formatClock, formatRecordedClock } from "@/components/feature/ReflectionWindow.helpers";
 import { ReflectionChoicePopup } from '@/components/feature/ReflectionChoicePopup';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
@@ -1575,13 +1577,6 @@ function directAudioSource(url: string, fileName?: string | null): string | null
   return null;
 }
 
-export function fileProbe(url: string, fileName?: string | null): string {
-  const named = fileName?.trim().split(/[?#]/)[0];
-  // Protected file endpoints have no extension in their path. Use the known
-  // filename instead of appending the URL and hiding its extension.
-  return named && /\.[a-z0-9]{1,8}$/i.test(named) ? named : url.split(/[?#]/)[0];
-}
-
 function fileLabelFrom(url: string, fileName?: string | null): string {
   if (fileName) return decodeInlineText(fileName);
   try {
@@ -2247,6 +2242,8 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
   const onAnnotationsDirty = readingTools?.onDirty;
   const pdfReaderId = useId();
   const [textView, setTextView] = useState(false);
+  const ocrDocument = useMemo(() => ({ pdf, pages: new Map<number, string>() }), [pdf]);
+  const ocrText = ocrDocument.pages;
   const preferences = readingPreferences || DEFAULT_READING_PREFERENCES;
 
   const persistHighlights = useCallback(() => {
@@ -2275,11 +2272,14 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
     const blocks = narrationFromPdf(content.items);
+    if (!blocks.length && ocrText.has(pageNumber)) {
+      return [{ text: ocrText.get(pageNumber)!, pauseMs: 650 }];
+    }
     if (!blocks.length) {
-      throw new ReadingNarrationError('No readable text was found on the open PDF page. Scanned pages need a text version to be read aloud.');
+      throw new ReadingNarrationError('No readable text was found on the open PDF page. Open Text reading view and choose Extract page text, then try Read aloud again.');
     }
     return blocks;
-  }, [pageNumber, pdf, status]);
+  }, [pageNumber, pdf, status, ocrText]);
 
   useEffect(() => {
     registerPdfReader?.(pdfReaderId, currentPageNarration);
@@ -2554,7 +2554,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
       {textView && <p className="border-b border-background-200 bg-white px-4 py-2 text-xs text-foreground-600">Use the reading tools above to adjust and highlight this page. Save changes keeps text highlights on this device. Original PDF preserves the page layout, images and marker annotations.</p>}
       {exportError && <p role="alert" className="p-3 text-sm text-red-700">{exportError}</p>}
       {narration.speechError && <p role="alert" className="p-3 text-sm text-red-700">{narration.speechError}</p>}
-      {readingPreferences && pdf && <PdfReadingText pdf={pdf} pageNumber={pageNumber} active={textView}
+      {readingPreferences && pdf && <PdfReadingText pdf={pdf} pageNumber={pageNumber} active={textView} ocrText={ocrText}
         storageKey={readingStorageKey(`${annotationKey || url}:${url}`, 'pdf-text-highlights')} preferences={preferences} />}
       <div hidden={textView}>
       <ReadingSurface

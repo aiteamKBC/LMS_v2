@@ -6,7 +6,7 @@ import { PersonalLearningBanner } from './PersonalLearningBanner';
 import { readPersonalLearning, rememberPersonalLearning } from '@/lib/personalLearning';
 import { createCachedResource } from '@/api/cachedRequest';
 const auth = vi.hoisted(() => ({ account: { role: 'admin', id: 7 } }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth }) }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({ auth }) }));
 function Destination() {
   const { pathname, state } = useLocation();
   return <div data-testid="route" data-from={(state as { learnerPreviewFrom?: string } | null)?.learnerPreviewFrom ?? ''}>{pathname}</div>;

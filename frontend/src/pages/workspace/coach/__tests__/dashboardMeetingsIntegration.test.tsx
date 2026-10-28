@@ -6,14 +6,15 @@ import { formatDateLabel, reviewScheduleAvailable, type CoachCalendarEvent } fro
 import { getCurrentWorkWeekRange, isEventThisWeek } from '@/features/coach/dashboard/api/dashboardWeek';
 import { isVisibleCaseloadLearner, otjhProgressAsOfToday } from '@/pages/coach/caseload/lib/format';
 import type { CaseloadApiLearner } from '@/pages/coach/caseload/types';
-import CoachDashboard, { clearCoachDashboardSessionCache, CompactWeeklyMeetingDetails } from '../page';
+import CoachDashboard, { CompactWeeklyMeetingDetails } from '../page';
+import { clearCoachDashboardSessionCache } from '@/features/coach/dashboard/components/CoachDashboard.helpers';
 
 const mocks = vi.hoisted(() => ({
   load: vi.fn(), schedule: vi.fn(), calendar: vi.fn(), coachFetch: vi.fn(),
   coach: { email: 'coach@example.invalid', name: 'Example Coach', isInitialized: true, isViewingAsCoach: false },
 }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <main>{children}</main> }));
-vi.mock('@/hooks/useAuth', () => {
+vi.mock("@/hooks/useAuth.helpers", () => {
   const account = { email: 'coach@example.invalid' };
   return { useAuth: () => ({ isInitialized: true, auth: { account } }) };
 });

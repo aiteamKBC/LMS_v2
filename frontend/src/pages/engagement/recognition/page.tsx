@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { ProgrammeFilter } from '@/components/feature/ProgrammeFilter';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast.helpers";
 import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import { countByProgramme, filterByProgramme, type Recognition, type ProgrammeFilterValue } from '@/mocks/engagement-data';

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast.helpers";
 import { Hero, inputClass, btnPrimary, btnSecondary, EmptyState } from '@/pages/users/components/ui';
 import {
   fetchProgrammes, fetchCohorts, fetchGroups, fetchModules, fetchWeeks, fetchComponents,

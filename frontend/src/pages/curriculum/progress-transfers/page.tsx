@@ -3,7 +3,7 @@ import { ArrowRight, ArrowRightLeft, CheckCircle2, Clock3, Eye, Info, Layers, Re
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { roleNavMap } from '@/mocks/navigation';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { Modal } from '@/pages/users/components/Modal';
 import { getTransferRequests, getTransferReview, approveTransferRequest, type AdminTransfer, type AdminTransfers, type TransferReview, type TransferMapping } from '@/api/progressTransfer';
 import { formatSystemTimestamp } from '@/lib/format';

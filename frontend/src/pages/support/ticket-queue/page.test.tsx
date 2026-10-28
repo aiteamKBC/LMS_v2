@@ -7,7 +7,7 @@ vi.mock('@/api/supportTickets', async () => ({
   ...await vi.importActual<typeof import('@/api/supportTickets')>('@/api/supportTickets'),
   loadSupportTickets: vi.fn(), updateSupportTicket: vi.fn(),
 }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { id: 20, displayName: 'Support Example' } } }) }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({ auth: { account: { id: 20, displayName: 'Support Example' } } }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <main>{children}</main> }));
 (globalThis as Record<string, unknown>).AppIcon = () => <i />;
 afterEach(() => { cleanup(); vi.clearAllMocks(); });

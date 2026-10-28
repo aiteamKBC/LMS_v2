@@ -22,7 +22,7 @@ import LearnerOverview from '../page';
  */
 
 const viewer = vi.hoisted(() => ({ role: 'learner' as string }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({
   isInitialized: true, isAdmin: viewer.role === 'admin', hasPermission: () => true, canSeeNavItem: () => true,
   auth: { isAuthenticated: true, account: viewer.role === 'learner'
     ? { id: 1, role: 'learner', subjectType: 'learner', subjectId: 265, learnerType: 'commercial' }

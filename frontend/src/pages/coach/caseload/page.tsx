@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { useListQueryState } from '@/hooks/useListQueryState';
 import { loadCoachCaseload } from '@/features/coach/learners/api/caseloadApi';

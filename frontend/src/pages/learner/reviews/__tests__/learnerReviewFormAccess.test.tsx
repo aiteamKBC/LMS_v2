@@ -20,13 +20,14 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { ToastProvider } from '@/hooks/useToast';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import type { LearnerCalendarEvent, LearnerReviewDefinition } from '@/api/learnerCalendar';
-import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../LearnerReviewInstanceForm';
+import { LearnerReviewInstanceForm } from '../LearnerReviewInstanceForm';
+import { useLearnerReviewInstance } from "../LearnerReviewInstanceForm.helpers";
 import type { ReviewInstanceFormDefinition } from '@/api/reviewInstances';
 
 const access = vi.hoisted(() => ({ canProgress: true }));
 const viewer = vi.hoisted(() => ({ role: 'learner', subjectId: 12 }));
 vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => access }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { user: { fullName: 'Aya Khater' }, account: viewer }, isInitialized: true }) }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({ auth: { user: { fullName: 'Aya Khater' }, account: viewer }, isInitialized: true }) }));
 vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({
   SignaturePad: ({ onCommit, onCancel }: { onCommit: (signature: string) => void; onCancel: () => void }) => (
     <div>

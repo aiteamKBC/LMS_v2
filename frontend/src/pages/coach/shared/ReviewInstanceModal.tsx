@@ -2,7 +2,8 @@ import { initialReviewBookingDate, initialReviewBookingDuration } from './import
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 import { Link } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { ReviewFormRenderer, computeMissingRequiredFields, computeVisibleRequiredFields } from '@/components/reviews/ReviewFormRenderer';
+import { ReviewFormRenderer } from '@/components/reviews/ReviewFormRenderer';
+import { computeMissingRequiredFields, computeVisibleRequiredFields } from "@/components/reviews/ReviewFormRenderer.helpers";
 import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 import { MigratedReviewHistory } from '@/components/reviews/MigratedReviewHistory';
@@ -40,7 +41,7 @@ import {
 import { ModalHeader, ModalShell } from './ModalHeader';
 import { formatDateLabel } from './calendarEvents';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { useImportedMeetingJoin } from './useImportedMeetingJoin';
 import { MigratedMeetingIntelligence } from './MigratedMeetingIntelligence';
@@ -504,8 +505,7 @@ function ReviewInstanceContent({
         ? reason.message : 'Could not check the coach calendar. Retry before booking.');
     }).finally(() => { if (active) setBookingAvailabilityLoading(false); });
     return () => { active = false; controller.abort(); };
-  }, [bookingOpen, definition?.instance.learnerId, definition?.booking?.canAttach,
-    definition?.booking?.canReschedule, definition?.booking?.eventKey, bookingDate, bookingDuration, bookingAvailabilityRetry]);
+  }, [bookingOpen, definition, bookingDate, bookingDuration, bookingAvailabilityRetry]);
 
   const missingFieldIds = useMemo(
     () => (definition ? computeMissingRequiredFields(definition.sections, answers) : new Set<string>()),

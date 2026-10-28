@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { fetchEmployerLearnerPhoto, fetchEmployerLearnerSchedule, type EmployerLearnerDetail } from '@/api/employerPortal';
 import { useQuery } from '@tanstack/react-query';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { displayValue, EMPTY_VALUE, initialsFor } from '@/lib/format';
 import { learnerRecordedDates } from '@/lib/learnerRecordedDates';
 import { formatProgrammeStartDate, learnerHeaderPlan } from '@/pages/workspace/learner/learnerHeaderPlan';

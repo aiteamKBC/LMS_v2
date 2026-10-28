@@ -27,7 +27,7 @@ import { useAssignmentStepCheck } from './useAssignmentStepCheck';
 import { MonthlyAnswerField, MonthlyAssignmentSteps } from './MonthlyAssignmentSteps';
 import { AssignmentAttachment } from '../monthly-submission/AssignmentAttachment';
 import { readingFiles } from './readingDownloads';
-import { assignmentTimeHours } from './AssignmentTimeEntries';
+import { assignmentTimeHours } from "./AssignmentTimeEntries.helpers";
 import { HistoricalAssignmentCards } from './HistoricalAssignmentCards';
 import { useLearningStatements } from '@/hooks/useLearningStatements';
 import { parsePersonalLearning } from '@/lib/personalLearning';

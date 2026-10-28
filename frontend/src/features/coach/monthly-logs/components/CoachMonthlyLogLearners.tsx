@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { coachViewAs } from '@/lib/coachViewAs';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { SkeletonBlock } from '@/components/feature/Skeletons';

@@ -1,6 +1,6 @@
 import { ChangeEvent, useId, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast.helpers";
 import { parseQuizPairAnswer, readImageFileAsDataUrl, serializeQuizPairAnswer } from '@/lib/quizPairAnswers';
 
 export function ImageMatchingPairFields({

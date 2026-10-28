@@ -40,7 +40,8 @@ import {
 } from '@/pages/coach/timetable/calendarColors';
 import { aptemBookingSnapshot, isAptemReview, meetingBookingWarning } from '../reviews/meetingBooking';
 import { useImportedMeetingBooking } from '../reviews/useImportedMeetingBooking';
-import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
+import { LearnerReviewInstanceForm } from '../reviews/LearnerReviewInstanceForm';
+import { useLearnerReviewInstance } from "../reviews/LearnerReviewInstanceForm.helpers";
 import { bookingInstant, firstAvailableBookingDate, mcmBookingDateRestrictionMessage, parseBookingDay } from '../reviews/bookingDates';
 import CoachSessionTypePicker, { COACH_APPROVAL_SESSION_TYPES } from './CoachSessionTypePicker';
 

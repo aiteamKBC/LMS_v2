@@ -24,8 +24,8 @@ vi.mock('@/api/engagement', () => ({
   fetchRecognitions: vi.fn().mockResolvedValue([]),
   fetchVoucherClaims: vi.fn().mockResolvedValue([]),
 }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => authValue() }));
-vi.mock('@/hooks/useToast', () => ({ useToast: () => toastSpies }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => authValue() }));
+vi.mock("@/hooks/useToast.helpers", () => ({ useToast: () => toastSpies }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));

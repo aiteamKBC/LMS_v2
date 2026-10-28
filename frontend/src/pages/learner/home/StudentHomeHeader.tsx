@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Bell, ChevronDown, CircleHelp, Compass, LogOut, MessageSquare, Settings, UserRound } from 'lucide-react';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { useTheme } from '@/hooks/useTheme';
 import { Modal } from '@/pages/users/components/Modal';
 import type { HomeEvent } from './homeData';

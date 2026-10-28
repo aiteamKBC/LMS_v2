@@ -36,8 +36,10 @@ import {
 } from '../shared/entities/archive';
 import { duplicateGroupWithModules } from '../shared/entities/cloneStructure';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
-import { ArchiveNotice, useCurriculumArchive } from '../shared/entities/archiveView';
-import { CurriculumStructureWizard, withoutDiscardedRecords, type StructureWizardCreated } from '../shared/entities/structureWizard';
+import { ArchiveNotice } from '../shared/entities/archiveView';
+import { useCurriculumArchive } from "../shared/entities/archiveView.helpers";
+import { CurriculumStructureWizard, type StructureWizardCreated } from '../shared/entities/structureWizard';
+import { withoutDiscardedRecords } from "../shared/entities/structureWizard.helpers";
 import {
   EntityEmptyState,
   EntityFilterBar,

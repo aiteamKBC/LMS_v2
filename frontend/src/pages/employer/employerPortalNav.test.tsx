@@ -6,7 +6,7 @@ import type { SidebarNavItem } from '@/components/feature/Sidebar';
 import { useEmployerPortalChrome } from './employerPortalNav';
 
 const viewer = vi.hoisted(() => ({ role: 'employer' }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({
   auth: { account: { role: viewer.role, displayName: 'Example Employer' }, roles: [] },
   isAdmin: viewer.role === 'admin', canSeeNavItem: () => true,
 }) }));

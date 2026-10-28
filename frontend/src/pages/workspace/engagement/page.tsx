@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { PageContainer } from '@/components/ui/PageContainer';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast.helpers";
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 import { LearnerProfilePanel } from '@/pages/engagement/LearnerProfilePanel';

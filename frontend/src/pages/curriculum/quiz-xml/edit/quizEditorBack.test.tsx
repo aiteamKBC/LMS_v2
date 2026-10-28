@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { QuizEditorPanel } from './QuizEditorPanel';
 import { AppIcon } from '@/components/feature/AppIcon';
 
-vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
+vi.mock("@/hooks/useToast.helpers", () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
 
 const QUIZ_LIST = '/curriculum/quiz-xml?status=draft&q=diagram&page=2';
 

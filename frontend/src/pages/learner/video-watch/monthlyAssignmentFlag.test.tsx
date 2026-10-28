@@ -17,7 +17,7 @@ vi.mock('@/api/videos', () => ({ submitVideoProgress: vi.fn() }));
 vi.mock('@/api/reflectionSubmission', () => ({ loadLearningReflectionSubmission: vi.fn(), saveLearningReflectionSubmission: vi.fn() }));
 vi.mock('@/api/evidence', () => ({ fetchEvidence: vi.fn(), uploadEvidence: vi.fn(), getEvidenceDownloadUrl: vi.fn(), deleteEvidence: vi.fn() }));
 vi.mock('@/hooks/useMyLearner', () => ({ rememberLearner: vi.fn() }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { role: 'learner', subjectType: 'learner', subjectId: 1 } }, isInitialized: true }) }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({ auth: { account: { role: 'learner', subjectType: 'learner', subjectId: 1 } }, isInitialized: true }) }));
 vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true, outsideWorkingHours: false, holidays: [], holidayCalendarReady: true, currentTimeLabel: '' }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <main>{children}</main> }));
 vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: ({ title }: { title: string }) => <div data-testid="monthly-wizard">{title}</div> }));

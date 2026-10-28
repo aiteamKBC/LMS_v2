@@ -1,3 +1,4 @@
+import { curriculumReviewTitle } from './curriculumReviews.helpers';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -6,7 +7,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { downloadLearnerMcmPdf, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers, signLearnerProgressReview, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { needsPersonalSupportForm } from '@/api/learnerPersonalSupport';
 import { isMigratedContinuationEvent, useReviewSessions } from './useReviewSessions';
 import { downloadMigratedReviewForParty, saveMigratedReviewPartyAnswers, signMigratedReviewAsParty } from '@/api/learnerCalendar';
@@ -14,7 +15,8 @@ import { useMeetingAttendance } from './useMeetingAttendance';
 import { useMeetingBooking } from './useMeetingBooking';
 import type { MeetingAttendance } from '@/api/meetingAttendance';
 import { useCoachingReviewDefinitions } from '../monthly-coaching/useCoachingReviewDefinitions';
-import { LearnerReviewInstanceForm, useLearnerReviewInstance } from './LearnerReviewInstanceForm';
+import { LearnerReviewInstanceForm } from './LearnerReviewInstanceForm';
+import { useLearnerReviewInstance } from "./LearnerReviewInstanceForm.helpers";
 import ReviewsHome from '../progress-reviews/ReviewsHome';
 import { ImportedReviewSections } from '../progress-reviews/page';
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
@@ -42,15 +44,6 @@ function formatTime(value?: string | null): string {
   return Number.isFinite(hour) && Number.isFinite(minute)
     ? new Date(2000, 0, 1, hour, minute).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
     : 'Time to be confirmed';
-}
-
-export function curriculumReviewTitle(review?: LearnerCalendarEvent | null): string {
-  if (!review) return 'Review';
-  if (review.importedReview) return review.importedReview.name || review.title || 'Review';
-  const name = review.title || review.reviewTypeName || 'Review';
-  const occurrence = review.occurrenceNumber ?? review.sequence;
-  if (!review.reviewTemplateId) return name;
-  return `${name}${occurrence != null ? ` #${occurrence}` : ' — Manual Review'}`;
 }
 
 export function CurriculumReviewsListPage() {

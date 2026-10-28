@@ -21,7 +21,7 @@ const wizard = vi.hoisted(() => ({
   assessments: {} as Record<string, unknown>,
   setSection: vi.fn(),
 }));
-vi.mock('../WizardContext', () => ({
+vi.mock("../WizardContext.helpers", () => ({
   useWizard: () => ({
     draft: { skillsRadar: { assessments: wizard.assessments } },
     setSection: wizard.setSection,

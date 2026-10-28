@@ -7,7 +7,7 @@ import { LearnerEntryGate } from './LearnerEntryGate';
 import { fetchLearnerEntry } from './entry';
 
 const session = vi.hoisted(() => ({ auth: { account: { id: 7, role: 'learner', hasLegacyRecord: false } }, logout: vi.fn() }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => session }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => session }));
 vi.mock('./entry', () => ({ fetchLearnerEntry: vi.fn() }));
 const pending = { classification: 'existing' as const, enabled: true, required: true, canAccess: false, totalMonths: 2, completedMonths: 0 };
 const allowed = { ...pending, required: false, canAccess: true };

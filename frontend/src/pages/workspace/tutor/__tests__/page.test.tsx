@@ -31,7 +31,7 @@ vi.mock('@/api/tutorWorkspace', () => ({
   fetchTutorWorkspace: (...args: unknown[]) => fetchTutorWorkspace(...args),
   fetchModuleStructure: (...args: unknown[]) => fetchModuleStructure(...args),
 }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => authValue() }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => authValue() }));
 // The shell drags in the sidebar, header and learner nav gate; none of that is
 // what these tests are about.
 vi.mock('@/components/feature/WorkspaceShell', () => ({

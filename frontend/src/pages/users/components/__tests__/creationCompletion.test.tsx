@@ -10,7 +10,7 @@ vi.mock('@/api/curriculum', () => ({ fetchProgrammes: async () => [], fetchCohor
 vi.mock('@/api/staffUsers', () => ({ fetchCaseOwners: async () => ['Test Coach'] }));
 vi.mock('@/api/employers', () => ({ createEmployer: mocks.createEmployer, listEmployers: async () => ({ results: [] }),
   listOrganisations: async () => ({ results: [{ id: 'org-1', name: 'Test organisation' }], count: 1 }) }));
-vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: mocks.success, error: mocks.error }) }));
+vi.mock("@/hooks/useToast.helpers", () => ({ useToast: () => ({ success: mocks.success, error: mocks.error }) }));
 vi.mock('../Modal', () => ({ Modal: ({ children, footer }: { children: React.ReactNode; footer: React.ReactNode }) => <div>{children}{footer}</div> }));
 
 beforeEach(() => {

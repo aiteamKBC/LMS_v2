@@ -5,7 +5,7 @@ import { CoachSidebar } from '../CoachSidebar';
 import { Sidebar } from '../Sidebar';
 import { adminNavItems, coachNavItems, learnerNavItems } from '@/mocks/navigation';
 
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ canSeeNavItem: () => true }) }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({ canSeeNavItem: () => true }) }));
 afterEach(cleanup);
 
 it.each([false, true])('opens coach Inclusion through a real external link (collapsed=%s)', collapsed => {

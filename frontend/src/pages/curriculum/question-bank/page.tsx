@@ -6,7 +6,7 @@ import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { QuestionAnswersView } from '@/components/feature/QuestionTypeRenderer';
 import { QuizQuestionImage } from '@/components/feature/QuizQuestionImage';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast.helpers";
 import { roleNavMap } from '@/mocks/navigation';
 
 const curriculumNav = roleNavMap.curriculum;

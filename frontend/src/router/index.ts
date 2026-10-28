@@ -2,7 +2,7 @@ import { Suspense, createElement, useEffect, useLayoutEffect } from "react";
 import { useLocation, useNavigate, useRoutes, type NavigateFunction } from "react-router-dom";
 import { RouteErrorBoundary } from "@/components/feature/RouteErrorBoundary";
 import { RouteLoadingSkeleton } from "@/components/feature/RouteLoadingSkeleton";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth } from "@/hooks/useAuth.helpers";
 import routes from "./config";
 import { installLearnerRoutePreloading } from './preload';
 import { recordPageView } from '@/lib/activityTrail';

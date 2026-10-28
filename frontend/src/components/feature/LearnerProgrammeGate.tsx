@@ -1,6 +1,6 @@
 import { useRef, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { useLearnerSummaryParam } from '@/hooks/useLearnerSummaryParam';
 import { RouteLoadingSkeleton } from './RouteLoadingSkeleton';
 import { LearnerLoadError } from './LearnerLoadError';

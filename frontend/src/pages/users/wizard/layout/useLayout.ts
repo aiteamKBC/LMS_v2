@@ -1,4 +1,4 @@
-import { useWizard } from '../WizardContext';
+import { useWizard } from "../WizardContext.helpers";
 import { BUILTIN_STEP_BY_SLUG } from './registry';
 import { DEFAULT_LAYOUT } from './resolve';
 

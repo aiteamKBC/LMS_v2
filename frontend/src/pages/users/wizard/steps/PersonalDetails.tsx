@@ -1,4 +1,4 @@
-import { ageFromDob, useWizard } from '../WizardContext';
+import { ageFromDob, useWizard } from "../WizardContext.helpers";
 import { SEX_OPTIONS } from '@/mocks/enrolment-console';
 import { LabeledInput, LabeledSelect, SignatureField, StepHeading } from './fields';
 import { StepItems, type ItemRenderer } from '../layout/StepItems';

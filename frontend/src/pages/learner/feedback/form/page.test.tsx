@@ -10,7 +10,7 @@ vi.mock('@/api/feedback', async importOriginal => {
   const actual = await importOriginal<typeof import('@/api/feedback')>();
   return { ...actual, feedbackApi: { ...actual.feedbackApi, myForm: vi.fn(), saveResponse: vi.fn(), myDelivery: vi.fn(), saveDeliveryResponse: vi.fn(), myReviewDelivery: vi.fn(), saveReviewDeliveryResponse: vi.fn() } };
 });
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { role: 'learner', subjectType: 'learner', subjectId: 61, learnerType: 'apprenticeship', displayName: 'Learner' } }, isInitialized: true }) }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({ auth: { account: { role: 'learner', subjectType: 'learner', subjectId: 61, learnerType: 'apprenticeship', displayName: 'Learner' } }, isInitialized: true }) }));
 vi.mock('@/hooks/useMyLearner', () => ({ useResolvedLearner: () => ({ kind: 'apprenticeship', id: '61' }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock('@/mocks/navigation', () => ({ roleNavMap: { learner: { label: 'Learner', items: [], workspaceLabel: 'Workspace' } } }));

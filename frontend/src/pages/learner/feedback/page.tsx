@@ -4,7 +4,7 @@ import Swal from 'sweetalert2';
 import { feedbackApi, type FeedbackFormType, type LearnerFeedbackListItem, type LearnerFeedbackStatus } from '@/api/feedback';
 import { ThemedSelect, type ThemedSelectOption } from '@/components/feature/ThemedSelect';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { LEARNER_FEEDBACK_ENABLED } from '@/lib/featureFlags';
 import { roleNavMap } from '@/mocks/navigation';

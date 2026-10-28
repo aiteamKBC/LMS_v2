@@ -18,7 +18,7 @@ const { coachFetch, fetchCoachCalendarEvents, authState, coachIdentity } = vi.ho
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth.helpers", () => ({
   useAuth: () => authState,
 }));
 vi.mock('@/hooks/useCoachIdentity', () => ({

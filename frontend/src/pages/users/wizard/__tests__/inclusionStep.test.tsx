@@ -24,7 +24,8 @@ vi.mock('@/api/wizardInclusion', () => ({
   SAFEGUARDING_URL: 'https://safeguarding.example/',
 }));
 
-import { WizardProvider, useWizard } from '../WizardContext';
+import { WizardProvider } from '../WizardContext';
+import { useWizard } from "../WizardContext.helpers";
 import { WizardShell } from '../WizardShell';
 import { layoutForLearner, resolveLayout, defaultLayout, visibleSteps } from '../layout/resolve';
 import type { EnrolmentBoard } from '../../types';

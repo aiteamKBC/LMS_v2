@@ -6,7 +6,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { FeedbackFormExperience } from '@/features/feedback/FormRenderer';
 import { missingRequiredQuestionIds } from '@/features/feedback/formPresentation';
 import { lecturePresentationSections } from '@/features/feedback/lecturePresentation';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { roleNavMap } from '@/mocks/navigation';
 

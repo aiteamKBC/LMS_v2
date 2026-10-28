@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { roleNavMap } from '@/mocks/navigation';
 import { listEmployers, type EmployerRow } from '@/api/employers';
 import { Hero, StatCard, btnSecondary } from '@/pages/users/components/ui';

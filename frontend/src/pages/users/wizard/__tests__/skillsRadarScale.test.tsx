@@ -13,7 +13,7 @@ vi.mock('@/api/curriculum', () => ({
   peekKsbProfile: () => ({ results: ksbs }),
   fetchKsbProfile: vi.fn(async () => ({ results: ksbs })),
 }));
-vi.mock('../WizardContext', () => ({
+vi.mock("../WizardContext.helpers", () => ({
   useWizard: () => ({
     draft: { skillsRadar: { assessments: {} } },
     setSection: vi.fn(),

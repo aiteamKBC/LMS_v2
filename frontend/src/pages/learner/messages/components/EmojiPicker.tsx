@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { useState, useRef, useEffect } from 'react';
 import { Smile } from 'lucide-react';
 
@@ -82,6 +83,27 @@ export default function EmojiPicker({ isOpen, onClose, onEmojiSelect, position }
     }
   }, [isOpen]);
 
+  const handleClose = useCallback(() => {
+    setIsExiting(true);
+    setTimeout(() => {
+      onClose();
+      setIsExiting(false);
+    }, 180);
+  }, [onClose]);
+
+
+  // Close on Escape key
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handleClose();
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [isOpen, handleClose]);
+
+
+
   // Close on outside click
   useEffect(() => {
     if (!isOpen) return;
@@ -92,25 +114,8 @@ export default function EmojiPicker({ isOpen, onClose, onEmojiSelect, position }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isOpen]);
+  }, [isOpen, handleClose]);
 
-  // Close on Escape key
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') handleClose();
-    };
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
-  }, [isOpen]);
-
-  const handleClose = () => {
-    setIsExiting(true);
-    setTimeout(() => {
-      onClose();
-      setIsExiting(false);
-    }, 180);
-  };
 
   const handleEmojiClick = (emoji: string) => {
     onEmojiSelect(emoji);

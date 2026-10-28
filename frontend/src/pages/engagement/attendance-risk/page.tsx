@@ -4,7 +4,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { LearnerProfilePanel } from '@/pages/engagement/LearnerProfilePanel';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast.helpers";
 import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import {

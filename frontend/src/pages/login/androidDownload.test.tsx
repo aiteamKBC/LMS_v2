@@ -7,7 +7,7 @@ import { apiMicrosoftStart, PasswordSetupRequired, type AuthUser } from '@/api/a
 const session = vi.hoisted(() => ({
   auth: { account: null as AuthUser | null }, login: vi.fn(), isInitialized: true,
 }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => session }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => session }));
 vi.mock('@/api/auth', async original => ({
   ...await original<typeof import('@/api/auth')>(), apiMicrosoftStart: vi.fn(),
 }));

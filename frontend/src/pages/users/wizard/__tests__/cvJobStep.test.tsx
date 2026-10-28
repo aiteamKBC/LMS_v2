@@ -19,7 +19,7 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock('@/api/cvJobDocuments', () => api);
 const wizard = vi.hoisted(() => ({ cvJob: {} as CvJobForm, programme: 'Marketing Executive Level 4', setSection: vi.fn() }));
-vi.mock('../WizardContext', () => ({
+vi.mock("../WizardContext.helpers", () => ({
   useWizard: () => ({
     userId: '41',
     isCommercial: false,
@@ -28,7 +28,7 @@ vi.mock('../WizardContext', () => ({
     setSection: wizard.setSection,
   }),
 }));
-vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
+vi.mock("@/hooks/useToast.helpers", () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
 
 import CvJob from '../steps/CvJob';
 

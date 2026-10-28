@@ -31,7 +31,7 @@ export function useMarkingQueue(request: MarkingQueueRequest, enabled: boolean) 
     } else setLoading(true);
     setError('');
     try {
-      const data = await fetchMarkingQueue(request);
+      const data = await fetchMarkingQueue({ kind: request.kind, page: request.page, pageSize: request.pageSize, scope: request.scope, status: request.status });
       if (current !== sequence.current) return;
       const next = {
         items: data.items || [],
@@ -49,6 +49,6 @@ export function useMarkingQueue(request: MarkingQueueRequest, enabled: boolean) 
       setError(reason instanceof Error ? reason.message : 'Unable to load the marking queue.');
     } finally { if (current === sequence.current) setLoading(false); }
   }, [cacheKey, enabled, request.kind, request.page, request.pageSize, request.scope, request.status]);
-  useEffect(() => { void load(); return () => { ++sequence.current; }; }, [load]);
+  useEffect(() => { const counter = sequence; void load(); return () => { ++counter.current; }; }, [load]);
   return { items, summary, pagination, loading, error, refresh: load };
 }

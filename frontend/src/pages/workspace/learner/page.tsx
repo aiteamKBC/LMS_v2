@@ -5,7 +5,7 @@ import { ClipboardList, FileText, Monitor } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { useDashboardHeader } from '@/hooks/useDashboardHeader';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { type LearnerKind } from '@/api/learnerDetail';
 import { isOwnLearnerRecord } from '@/api/auth';

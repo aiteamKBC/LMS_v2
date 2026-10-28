@@ -21,7 +21,7 @@ vi.mock('@/api/curriculum', () => ({
 import { ToastProvider } from '@/hooks/useToast';
 import { WizardProvider } from '../WizardContext';
 import { WizardShell } from '../WizardShell';
-import { requiredMessage } from '../stepErrors';
+import { requiredMessage } from "../stepErrors.helpers";
 import type { EnrolmentBoard } from '../../types';
 
 const BOARD = {

@@ -12,7 +12,7 @@ const state = {
   account: { role: 'learner', subjectType: 'learner', subjectId: 61, learnerType: 'apprenticeship', displayName: 'Learner' },
   resolved: { kind: 'apprenticeship', id: '61' },
 };
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: state.account }, isInitialized: true }) }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({ auth: { account: state.account }, isInitialized: true }) }));
 vi.mock('@/hooks/useMyLearner', () => ({ useResolvedLearner: () => state.resolved }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock('@/mocks/navigation', () => ({ roleNavMap: { learner: { label: 'Learner', items: [], workspaceLabel: 'Workspace' } } }));

@@ -20,7 +20,7 @@ vi.mock('@/api/timeTracking', () => ({ startTimeTracking: vi.fn(), resumeTimeTra
 vi.mock('@/api/evidence', () => ({ fetchEvidence: vi.fn() }));
 vi.mock('@/api/slideDeck', () => ({ fetchSlideDeck: vi.fn() }));
 vi.mock('@/hooks/useMyLearner', () => ({ rememberLearner: vi.fn() }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({
   auth: { account: { role: 'learner', subjectType: 'learner', subjectId: 1 } }, isInitialized: true,
 }) }));
 vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({

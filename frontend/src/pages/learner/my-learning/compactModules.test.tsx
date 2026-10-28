@@ -10,7 +10,7 @@ import { buildUnifiedLearningSummary } from './learningSummary';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import contractFixture from '@/test/myLearningFixtures.json';
 
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { role: 'staff', id: 1 } }, isInitialized: true }) }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({ auth: { account: { role: 'staff', id: 1 } }, isInitialized: true }) }));
 vi.mock('@/hooks/useMyLearner', () => ({ useResolvedLearner: (kind: string, id: string) => ({ kind, id }) }));
 vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => ({ canProgress: false, showReadOnlyNotice: false }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));

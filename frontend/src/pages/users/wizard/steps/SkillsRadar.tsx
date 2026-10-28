@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Flag } from 'lucide-react';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { useWizard } from '../WizardContext';
+import { useWizard } from "../WizardContext.helpers";
 import { COMPETENCE_LEVELS, competenceMeta, competenceScore } from '@/mocks/enrolment-console';
 import { fetchKsbProfile, peekKsbProfile } from '@/api/curriculum';
 import type { Ksb, KsbAssessment, RagLevel } from '../../types';
@@ -9,7 +9,7 @@ import { Modal } from '../../components/Modal';
 import { FileList, inputClass, btnPrimary, btnSecondary, EmptyState } from '../../components/ui';
 import { StepHeading } from './fields';
 import { useText } from '../layout/textsContext';
-import { useShowStepErrors } from '../stepErrors';
+import { useShowStepErrors } from "../stepErrors.helpers";
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 /**

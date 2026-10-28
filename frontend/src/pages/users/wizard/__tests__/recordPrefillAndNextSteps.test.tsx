@@ -32,7 +32,8 @@ vi.mock('@/api/curriculum', () => ({
 }));
 
 import { ToastProvider } from '@/hooks/useToast';
-import { WizardProvider, useWizard } from '../WizardContext';
+import { WizardProvider } from '../WizardContext';
+import { useWizard } from "../WizardContext.helpers";
 import { WizardShell } from '../WizardShell';
 import type { EnrolmentBoard } from '../../types';
 

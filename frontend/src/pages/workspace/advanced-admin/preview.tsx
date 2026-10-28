@@ -5,7 +5,7 @@ import { advancedAdminLearner, advancedAdminLearning, type AdvancedAdminLearner 
 import type { StudentActivityResponse } from '@/api/studentActivity';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import ReadOnlyLearning from './ReadOnlyLearning';
 import ReviewSections, { type RecordTab } from './ReviewSections';
 import { assignedAssessments } from './learningAssignments';

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { ArrowRight, CalendarCheck2, MapPin, ShieldCheck } from 'lucide-react';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { useLearnerSummaryParam } from '@/hooks/useLearnerSummaryParam';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { apprenticeHomeRedirect, isFreshStatus, isOnboardingStatus } from '@/hooks/useOnboardingRedirect';

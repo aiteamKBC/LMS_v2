@@ -8,7 +8,7 @@ import { AuditWorkspaceShell } from '@/features/audit/AuditWorkspaceShell';
 import { learnerNavigation } from '@/pages/workspace/advanced-admin/learnerNavigation';
 
 const { denied, viewer } = vi.hoisted(() => ({ denied: new Set<string>(), viewer: { isAdmin: false } }));
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth.helpers", () => ({
   useAuth: () => ({
     auth: { user: { fullName: 'Workspace User' }, roles: [] },
     isAdmin: viewer.isAdmin,

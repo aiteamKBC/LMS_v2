@@ -10,7 +10,7 @@
 import { type ReactNode } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';

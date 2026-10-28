@@ -29,7 +29,7 @@ vi.mock('@/api/components', async () => {
 });
 vi.mock('@/api/timeTracking', () => ({ startTimeTracking: vi.fn() }));
 vi.mock('@/hooks/useMyLearner', () => ({ rememberLearner: vi.fn() }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: session.account }, isInitialized: true }) }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({ auth: { account: session.account }, isInitialized: true }) }));
 vi.mock('@/hooks/useComponentAccessWindow', () => ({
   useComponentAccessWindow: () => ({
     open: true, outsideWorkingHours: true, holidays: session.holidays,

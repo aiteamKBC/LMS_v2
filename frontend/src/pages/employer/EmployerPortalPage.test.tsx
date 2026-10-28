@@ -19,7 +19,7 @@ vi.mock('@/api/employerPortal', () => ({
   fetchEmployerProgressReviewSummary: (...args: unknown[]) => api.reviewSummary(...args),
   fetchEmployerLearnerAttendance: (...args: unknown[]) => api.attendance(...args),
 }));
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth.helpers", () => ({
   useAuth: () => ({ auth: { account: { role: session.role, displayName: 'Test Employer' } } }),
 }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({

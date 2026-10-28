@@ -6,7 +6,7 @@ import { LearnerProgrammeGate } from '../LearnerProgrammeGate';
 const state = vi.hoisted(() => ({ role: 'learner', result: {
   real: { learningAccess: { blocked: true, startDate: '2026-10-01' } }, loading: false, loadError: '', refresh: vi.fn(),
 } }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: {
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({ auth: { account: {
   role: state.role, subjectId: 499, learnerType: 'commercial',
 } } }) }));
 vi.mock('@/hooks/useLearnerSummaryParam', () => ({ useLearnerSummaryParam: () => state.result }));

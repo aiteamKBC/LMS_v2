@@ -8,7 +8,7 @@ import type { LogDetail, LogSummary } from '@/features/monthly-logs/api';
 import { EmployerMonthlyLogsTab } from './EmployerMonthlyLogsTab';
 
 const auth = vi.hoisted(() => ({ role: 'employer', id: 9, displayName: 'Employer' }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: auth } }) }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({ auth: { account: auth } }) }));
 vi.mock('@/api/employerPortal', () => ({
   fetchEmployerMonthlyLogSummary: vi.fn(), fetchEmployerMonthlyLog: vi.fn(), fetchEmployerMonthlyLogContent: vi.fn(),
 }));

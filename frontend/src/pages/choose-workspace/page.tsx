@@ -17,7 +17,7 @@
 // ============================================================================
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { AppIcon } from '@/components/feature/AppIcon';
 import { BrandLockup } from '@/components/BrandLockup';
 import { ACCESS_OPTIONS } from '@/api/staffUsers';

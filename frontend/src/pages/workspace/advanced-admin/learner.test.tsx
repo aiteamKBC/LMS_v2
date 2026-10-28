@@ -6,7 +6,7 @@ import { advancedAdminModuleProgress, advancedAdminWordPressCourses } from '@/ap
 import { expect, it, vi } from 'vitest';
 import AdvancedAdminLearnerPage from './learner';
 
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { displayName: 'Reviewer' } } }) }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({ auth: { account: { displayName: 'Reviewer' } } }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children, navItems }: { children: ReactNode; navItems: SidebarNavItem[] }) => <main>
     <nav aria-label="Advanced Admin navigation">{navItems.map(item => <Link key={item.id} to={item.href || '#'}>{item.label}</Link>)}</nav>

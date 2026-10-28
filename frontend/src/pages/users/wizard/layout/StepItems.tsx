@@ -1,5 +1,5 @@
 import { Fragment, type ComponentType, type ReactNode } from 'react';
-import { useWizard } from '../WizardContext';
+import { useWizard } from "../WizardContext.helpers";
 import Introduction from '../steps/Introduction';
 import BeforeYouBegin from '../steps/BeforeYouBegin';
 import Plr from '../steps/Plr';

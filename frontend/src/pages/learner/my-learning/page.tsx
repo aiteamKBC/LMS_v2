@@ -24,7 +24,7 @@ import { EmptyState, EmptyStateAction } from '@/components/ui/EmptyState';
 import { EMPTY_VALUE } from '@/lib/format';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { LearningHero } from './LearningCatalogue';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import learningStyles from './SubjectWorkspace.module.css';
 import { useMyLearningCatalogue } from '@/api/myLearning';
 import { CompactModules } from './CompactModules';

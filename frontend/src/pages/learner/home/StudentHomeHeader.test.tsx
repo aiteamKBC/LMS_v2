@@ -6,7 +6,7 @@ import type { HomeEvent } from './homeData';
 import { StudentHomeHeader } from './StudentHomeHeader';
 
 const { logout } = vi.hoisted(() => ({ logout: vi.fn() }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ logout }) }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({ logout }) }));
 const events: HomeEvent[] = [
   { id: 'lecture-1', kind: 'lecture', title: 'Leadership', date: '2026-09-18T09:00:00Z', detail: 'Learning session', href: '/learner/attendance' },
   { id: 'assignment-1', kind: 'assignment', title: 'Marketing assignment', date: '2026-09-20', detail: 'Assignment due', href: '/learner/monthly-submission' },

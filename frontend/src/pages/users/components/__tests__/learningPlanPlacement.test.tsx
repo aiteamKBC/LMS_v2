@@ -27,7 +27,7 @@ vi.mock('@/lib/curriculumApi', async () => {
   const actual = await vi.importActual<typeof import('@/lib/curriculumApi')>('@/lib/curriculumApi');
   return { ...actual, fetchFreeProgrammeModules };
 });
-vi.mock('@/hooks/useToast', () => ({
+vi.mock("@/hooks/useToast.helpers", () => ({
   useToast: () => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }),
 }));
 // The real Modal portals and traps focus; neither is what these assert.

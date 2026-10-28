@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { InclusionSignIn } from './InclusionSignIn';
 
 const session = vi.hoisted(() => ({ auth: { account: null as null | { id: number } }, isInitialized: true }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => session }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => session }));
 const state = 'a'.repeat(64);
 const key = 'inclusion_sso_pending';
 

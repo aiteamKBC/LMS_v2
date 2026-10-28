@@ -23,8 +23,9 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { WorkspaceDashboardLayout } from '@/components/feature/WorkspaceDashboardLayout';
 import { roleNavMap } from '@/mocks/navigation';
-import { ResendInvitationButton, canResendInvitation } from '@/pages/admin/_shared/ResendInvitation';
-import { useAuth } from '@/hooks/useAuth';
+import { ResendInvitationButton } from '@/pages/admin/_shared/ResendInvitation';
+import { canResendInvitation } from "@/pages/admin/_shared/ResendInvitation.helpers";
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { readDismissed, dismiss, restoreAll } from '@/lib/adminAlertDismissals';
 import {

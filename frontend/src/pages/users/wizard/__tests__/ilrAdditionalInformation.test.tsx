@@ -38,7 +38,7 @@ const COMPLETE = {
 } as IlrForm;
 
 const wizard = vi.hoisted(() => ({ ilr: {} as IlrForm, setSection: vi.fn() }));
-vi.mock('../WizardContext', () => ({
+vi.mock("../WizardContext.helpers", () => ({
   useWizard: () => ({
     userId: '41',
     isCommercial: false,
@@ -53,7 +53,7 @@ vi.mock('../WizardContext', () => ({
     ilrFiling: false,
   }),
 }));
-vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
+vi.mock("@/hooks/useToast.helpers", () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
 vi.mock('@/api/extendedIlr', () => ({
   fetchIlrEvidence: vi.fn().mockResolvedValue({ results: [], locked: false }),
   uploadIlrEvidence: vi.fn(),

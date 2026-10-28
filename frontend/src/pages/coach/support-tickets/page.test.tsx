@@ -11,7 +11,7 @@ const { coachFetch } = vi.hoisted(() => ({ coachFetch: vi.fn() }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth.helpers", () => ({
   useAuth: () => ({ auth: { account: { id: 7, email: 'coach@example.invalid' } }, isInitialized: true }),
 }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch }));

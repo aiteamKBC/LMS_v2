@@ -17,7 +17,7 @@ const viewer = vi.hoisted(() => ({
   subjectId: null as number | null,
   learnerType: null as string | null,
 }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({
   auth: {
     account: {
       role: viewer.role,

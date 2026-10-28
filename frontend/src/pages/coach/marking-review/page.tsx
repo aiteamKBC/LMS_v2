@@ -162,11 +162,12 @@ export default function CoachMarkingReviewPage() {
     } finally {
       if (sequence === loadSequence.current) setLoading(false);
     }
-  }, [apiEndpoint, coach.email, coach.isInitialized, submissionId]);
+  }, [personal, coach.email, coach.isInitialized, submissionId]);
 
   useEffect(() => {
+    const counter = loadSequence;
     void load();
-    return () => { ++loadSequence.current; };
+    return () => { ++counter.current; };
   }, [load]);
 
   useEffect(() => {

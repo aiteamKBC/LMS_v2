@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { coachNavItems } from '@/mocks/navigation';
 import { AppIcon } from '@/components/feature/AppIcon';

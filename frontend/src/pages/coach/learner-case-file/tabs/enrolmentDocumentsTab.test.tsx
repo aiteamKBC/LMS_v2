@@ -19,7 +19,7 @@ vi.mock('@/api/coachEnrolmentDocuments', () => ({
   signCoachEnrolmentDocument: (...a: unknown[]) => api.sign(...a),
 }));
 vi.mock('@/api/savedSignature', () => ({ saveSignature: (...a: unknown[]) => api.saveSignature(...a) }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { subjectType: 'staff', subjectId: 7 } } }) }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({ auth: { account: { subjectType: 'staff', subjectId: 7 } } }) }));
 vi.mock('@/pages/learner/onboarding/reviews/reviewDocument', () => ({
   buildReviewPdf: () => ({ output: () => 'blob:review' }),
   downloadReviewPdf: (...a: unknown[]) => api.downloadReviewPdf(...a),

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { useDashboardHeader } from '@/hooks/useDashboardHeader';
 import { createSupportTicket, loadSupportTickets, updateSupportTicket, ticketDate, type SupportTicket, type TicketReply } from '@/api/supportTickets';

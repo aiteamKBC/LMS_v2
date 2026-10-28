@@ -11,7 +11,7 @@ vi.mock('./entry', () => ({ fetchLearnerEntry: vi.fn() }));
 
 const signedIn = { id: 1, role: 'learner' as 'learner' | 'staff', access: 'learner', subjectId: 7, subjectType: 'learner',
   hasLegacyRecord: true, displayName: 'Test student', email: 'student@example.org' };
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: signedIn, user: { fullName: 'Test student' } }, isInitialized: true }) }));
+vi.mock("@/hooks/useAuth.helpers", () => ({ useAuth: () => ({ auth: { account: signedIn, user: { fullName: 'Test student' } }, isInitialized: true }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div> }));
 vi.mock('./SignatureCapture', () => ({ SignatureCapture: ({ busy }: { busy: boolean }) => <fieldset disabled={busy}><legend>Signature capture</legend></fieldset> }));
 vi.mock('./api', async importOriginal => ({ ...await importOriginal<typeof import('./api')>(),

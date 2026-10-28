@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth.helpers";
 import { coachViewAs, subscribeCoachViewAs } from '@/lib/coachViewAs';
 import { roleNavMap } from '@/mocks/navigation';
 import { LmsTickets } from './LmsTickets';

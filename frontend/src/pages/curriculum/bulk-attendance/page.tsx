@@ -906,7 +906,7 @@ export default function AttendancePage() {
       });
 
     return () => controller.abort();
-  }, [historyRow?.learner.id, historyRow?.learner.kbcId, detailHistoryVersion]);
+  }, [historyRow, detailHistoryVersion]);
 
   // History and Last 4 share the server's saved-record merge and ordering.
   // Today's curriculum cannot invalidate an older saved attendance record.

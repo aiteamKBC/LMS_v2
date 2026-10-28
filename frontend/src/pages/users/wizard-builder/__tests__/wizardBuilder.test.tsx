@@ -13,7 +13,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => children }));
 const success = vi.fn();
 const error = vi.fn();
-vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success, error }) }));
+vi.mock("@/hooks/useToast.helpers", () => ({ useToast: () => ({ success, error }) }));
 const fetchWizardLayout = vi.fn();
 const publishWizardLayout = vi.fn();
 vi.mock('@/api/wizardLayout', () => ({
