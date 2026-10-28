@@ -143,9 +143,16 @@ def microsoft_transcript(record, job):
             codes = {'calendar_access_denied': 'microsoft_access_denied',
                      'calendar_throttled': 'microsoft_throttled', 'calendar_timeout': 'microsoft_timeout'}
             return {'state': 'unavailable', 'code': codes.get(failure['code'], 'microsoft_unavailable'), 'transcript': None}
-    value = recent_read('transcript-provider', identity, read, timeout=60)
-    try:
-        cache.set(_key(identity), value, timeout=600 if value['state'] == 'available' else 60)
-    except Exception:
-        log.warning('Coaching transcript cache unavailable; returning the verified read.')
+    # A provider denial/timeout must not make the explicit Retry button replay
+    # the same failure after Microsoft has recovered. Successful/missing reads
+    # still share their short cache and verified content keeps its own cache.
+    value = recent_read('transcript-provider-v2', identity, read,
+                        cache_if=lambda result: result['state'] != 'unavailable', timeout=60)
+    if value['state'] == 'available':
+        try:
+            # A failed additional check must not erase already verified text
+            # that the drawer and PDF download can still use.
+            cache.set(_key(identity), value, timeout=600)
+        except Exception:
+            log.warning('Coaching transcript cache unavailable; returning the verified read.')
     return value

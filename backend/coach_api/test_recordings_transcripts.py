@@ -76,6 +76,22 @@ class TranscriptReadTests(SimpleTestCase):
         self.assertEqual(result['state'], 'unavailable')
         self.assertNotIn('Private', str(result))
 
+    def test_retry_can_recover_immediately_after_provider_failure(self):
+        self.graph.side_effect = HTTPError('https://graph.microsoft.com', 403, 'Private', {}, None)
+        self.assertEqual(transport.microsoft_transcript(self.record, self.job)['state'], 'unavailable')
+        self.graph.side_effect = None
+        result = transport.microsoft_transcript(self.record, self.job)
+        self.assertEqual(result['state'], 'available')
+        self.assertEqual(self.graph.call_count, 2)
+        self.content.assert_called_once()
+
+    def test_failed_additional_check_keeps_verified_cached_text_for_pdf(self):
+        saved = transport.microsoft_transcript(self.record, self.job)['transcript']
+        self.graph.side_effect = HTTPError('https://graph.microsoft.com', 403, 'Private', {}, None)
+        with patch.object(transport, 'recent_read', side_effect=lambda kind, identity, read, **kwargs: read()):
+            self.assertEqual(transport.microsoft_transcript(self.record, self.job)['state'], 'unavailable')
+        self.assertEqual(transport.cached_microsoft_transcript(self.record, self.job), saved)
+
     def test_repeated_or_foreign_pagination_never_returns_partial_transcript(self):
         self.graph.return_value = {'value': [], '@odata.nextLink': 'https://graph.microsoft.com/v1.0/users/foreign/onlineMeetings/other/transcripts'}
         self.assertEqual(transport.microsoft_transcript(self.record, self.job)['state'], 'unavailable')

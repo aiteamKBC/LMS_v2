@@ -117,6 +117,7 @@ def list_reviews(start,end,coach='',status='',offset=0,search='',review_type='',
     with connect() as connection:
         rows = connection.execute('''SELECT id,coach_email,learner_id,learner_name,starts_at,status,version,updated_at,
           payload->'meeting'->>'title' AS title,payload->'coach'->>'name' AS coach_name,payload->'definition'->>'title' AS form_title,
+          payload->'reviewer'->>'name' AS reviewer_name,
           jsonb_array_length(payload->'form'->'actions') AS action_count,'''+type_sql()+''' AS review_type,
           (SELECT max(d.version) FROM lms_quality.document d WHERE d.review_id=lms_quality.review.id) AS pdf_version
           FROM lms_quality.review WHERE ''' + where + ' ORDER BY starts_at DESC,id LIMIT 31 OFFSET %s', [*params,offset]).fetchall()
@@ -255,7 +256,7 @@ def save_document(review, content):
 def reviews_for_meeting(identity, offset=0):
     from .quality_review_types import type_sql
     with connect() as connection:
-        rows=connection.execute('''SELECT r.id,r.learner_id,r.learner_name,r.status,r.version,r.updated_at,r.payload->'definition'->>'title' AS form_title,'''+type_sql('r')+''' AS review_type,
+        rows=connection.execute('''SELECT r.id,r.learner_id,r.learner_name,r.status,r.version,r.updated_at,r.payload->'reviewer'->>'name' AS reviewer_name,r.payload->'definition'->>'title' AS form_title,'''+type_sql('r')+''' AS review_type,
           (SELECT max(d.version) FROM lms_quality.document d WHERE d.review_id=r.id) AS pdf_version
           FROM lms_quality.review r WHERE r.payload->'meeting'->>'id'=%s
           ORDER BY r.learner_name,r.id LIMIT 31 OFFSET %s''',[identity,offset]).fetchall()
