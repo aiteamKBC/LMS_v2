@@ -155,6 +155,18 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     # joins. The learner predicate always remains mandatory.
     selection = '' if entry_ids is None else ' AND progress.id=ANY(%s)'
     params = [owner['id']] if entry_ids is None else [owner['id'], list(entry_ids)]
+    reporting_scope = ''
+    activity_source_scope = ''
+    journal_scope = ''
+    if catalogue_summary:
+        # These predicates are redundant with the canonical joins, but make the
+        # learner-specific indexes visible before PostgreSQL plans the aggregate
+        # CTEs. Keep the broader projections unchanged: their measured plans do
+        # not benefit consistently from forcing the same access path.
+        reporting_scope = 'WHERE s.learner_id=%s'
+        activity_source_scope = 's.learner_id=%s AND '
+        journal_scope = 'j.canonical_learner_id=%s AND '
+        params.extend([owner['id'], owner['id'], owner['id']])
     columns = 'progress.*'
     payload = 'to_jsonb(p)'
     if lineage_only:
@@ -218,6 +230,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             SELECT s.progress_id,{"'[{}]'::jsonb" if catalogue_summary else f"jsonb_agg({segment_payload} ORDER BY s.segment_order,s.id)"} AS payload
             FROM "Learner".learner_activity_reporting_segments s
             JOIN canonical p ON p.id=s.progress_id AND p.learner_id=s.learner_id
+            {reporting_scope}
             GROUP BY s.progress_id
         ), activity_sources AS (
             SELECT s.canonical_progress_id AS progress_id,jsonb_agg(jsonb_build_object(
@@ -233,7 +246,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             JOIN canonical p ON s.canonical_progress_id=p.id AND s.learner_id=p.learner_id
             LEFT JOIN curriculum.source_activities a ON a.id=s.source_catalog_activity_id AND a.deleted_at IS NULL
             LEFT JOIN curriculum.source_courses c ON c.id=a.source_course_id AND c.deleted_at IS NULL
-            WHERE s.deleted_at IS NULL
+            WHERE {activity_source_scope}s.deleted_at IS NULL
             GROUP BY s.canonical_progress_id
         ), journal_routes AS (
             SELECT j.progress_id,jsonb_agg(jsonb_build_object(
@@ -244,7 +257,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             JOIN canonical p ON j.progress_id=p.id AND j.canonical_learner_id=p.learner_id
             JOIN "Learner".learner_activity_sources s ON s.id=j.source_id
               AND s.learner_id=p.learner_id AND s.canonical_progress_id=p.id AND s.deleted_at IS NULL
-            WHERE j.deleted_at IS NULL
+            WHERE {journal_scope}j.deleted_at IS NULL
             GROUP BY j.progress_id
         ), historical_components AS (
             SELECT link.progress_id,jsonb_agg({historical_payload} ORDER BY h.id) AS payload

@@ -159,6 +159,15 @@ def _fake_rows(sql, params):
 
 
 class ModuleShiftOptionTests(SimpleTestCase):
+    def setUp(self):
+        self.enterContext(patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "1"}))
+        self.enterContext(
+            patch(
+                "login.permissions.authenticate_request",
+                return_value=SimpleNamespace(role="staff"),
+            )
+        )
+
     def _call(self, module_id=None):
         query = {"moduleId": module_id} if module_id is not None else {}
         request = RequestFactory().get("/learner_api/module-shift/options/", query)

@@ -1,0 +1,65 @@
+{
+  "date": "2026-10-27",
+  "verdict": "BLOCKED",
+  "provisioning_ready": false,
+  "synthetic_rows_created": 0,
+  "database_writes": 0,
+  "migrations": 0,
+  "external_requests": 0,
+  "runtime": {
+    "django_setup_completed": true,
+    "listening_server_started": false,
+    "aliases": ["default", "enrolment"],
+    "branch_name": "lms_ideal_test",
+    "branch_id": "br-orange-shadow-abm8uwwe",
+    "endpoint_id": "ep-dawn-block-ab5vob3x",
+    "database": "neondb",
+    "transaction_read_only": true,
+    "pg_is_in_recovery": false,
+    "threads_before_setup": ["MainThread"],
+    "threads_after_setup": ["MainThread"],
+    "threads_after_request": ["MainThread"],
+    "anonymous_request": {
+      "path": "/learner_api/learner-summary/apprenticeship/1/",
+      "status": 401,
+      "response_bytes": 64
+    },
+    "authenticated_request_executed": false
+  },
+  "database_role": {
+    "endpoint_type": "read_write",
+    "create_database": true,
+    "create_role": true,
+    "replication": true,
+    "bypass_rls": true,
+    "learner_table_dml": true
+  },
+  "controls": {
+    "exact_branch_metadata_guard": true,
+    "django_alias_allowlist": true,
+    "raw_psycopg_guard": true,
+    "python_network_deny_by_default": true,
+    "runtime_schema_bootstrap": false,
+    "background_threads_observed": false,
+    "external_credentials_disabled": true,
+    "os_or_container_egress_policy": false
+  },
+  "tests": [
+    {
+      "command": "python manage.py test config.test_test_isolation_no_db config.tests_test_branch_guard --verbosity=1",
+      "passed": 39,
+      "failed": 0
+    },
+    {
+      "command": "python manage.py test login.test_selectors_no_db login.tests_learner_progress_gate learner_api.test_curriculum_lookup_permissions_no_db --verbosity=1",
+      "passed": 56,
+      "failed": 0
+    }
+  ],
+  "blockers": [
+    "The benchmark credential is a privileged write-capable database role.",
+    "The Neon endpoint is read-write; read-only is currently a client/session default.",
+    "The network boundary is Python-process instrumentation, not OS/container enforcement.",
+    "No test-owned authenticated Learner identity/session exists for a real ownership-path request."
+  ]
+}

@@ -1033,7 +1033,7 @@ def _component_marking_statuses(source, learner_profile):
         return {}
 
 
-def to_learner_detail(source, learner_profile):
+def to_learner_detail(source, learner_profile, *, progress=None):
     """Shape a CommercialUser/EnrolmentUser (+ its learner profile, if any)
     for the learner workspace page. A saved profile can exist before invitation
     and activation. The training plan itself comes straight from the
@@ -1046,7 +1046,11 @@ def to_learner_detail(source, learner_profile):
     # Unified progress log holds both quiz attempts and video completions,
     # distinguished by "kind" (a record without a "kind" is treated as a quiz
     # attempt, for any pre-"kind" data).
-    progress = _as_list(learner_profile.training_plan_progress) if learner_profile else []
+    progress = (
+        _as_list(learner_profile.training_plan_progress)
+        if progress is None and learner_profile
+        else _as_list(progress)
+    )
     quiz_attempts = [r for r in progress if r.get("kind", "quiz") == "quiz"]
     video_progress = [r for r in progress if r.get("kind") == "video"]
     # Generic non-quiz component completions (podcast/reading/slides/reflection/…),

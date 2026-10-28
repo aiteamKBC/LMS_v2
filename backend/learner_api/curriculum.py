@@ -29,8 +29,10 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+from login.permissions import require_role, staff_only
 
 from .ksb_sources import PROFILE, STANDARD, parse_source, resolve_source
+from .selectors.identity import EnrolmentId, ResolutionStatus, resolve_many_for_enrolments
 
 
 logger = logging.getLogger(__name__)
@@ -60,6 +62,7 @@ def _guard(fn):
         return _error("The database service is temporarily unavailable.", 502)
 
 
+@staff_only()
 def programmes(request):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
@@ -75,6 +78,7 @@ def programmes(request):
     ])
 
 
+@staff_only()
 def cohorts(request):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
@@ -93,6 +97,7 @@ def cohorts(request):
     ])
 
 
+@staff_only()
 def groups(request):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
@@ -113,6 +118,7 @@ def groups(request):
     ])
 
 
+@staff_only()
 def modules(request):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
@@ -131,6 +137,7 @@ def modules(request):
     ])
 
 
+@staff_only()
 def weeks(request):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
@@ -149,6 +156,7 @@ def weeks(request):
     ])
 
 
+@staff_only()
 def components(request):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
@@ -263,6 +271,61 @@ def ksb_profile_for_source(source_value, label=""):
     return _profile_results(_source_row(source_value) if source_value else None, label)
 
 
+def _learner_programme_id(account, requested_programme):
+    """Return the canonical programme id when this learner owns the request.
+
+    ``LoginAccount.subject_id`` identifies the enrolment record, not the
+    Learner profile.  Resolve that bridge through the established read-only
+    selector, then accept only an exact, unambiguous curriculum id/name match.
+    The raw query parameter is never treated as evidence of ownership.
+    """
+    if getattr(account, "subject_type", None) != "learner":
+        return None
+    try:
+        enrolment_id = EnrolmentId(int(account.subject_id))
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+    resolutions = resolve_many_for_enrolments([enrolment_id], query=_rows)
+    resolution = resolutions.get(enrolment_id)
+    if resolution is None or resolution.status is not ResolutionStatus.RESOLVED:
+        return None
+
+    profile = resolution.profile or {}
+    assigned_id = str(profile.get("programme_id") or "").strip()
+    assigned_name = str(profile.get("programme") or "").strip()
+    if not assigned_id and not assigned_name:
+        return None
+
+    matches = _rows(
+        "SELECT programme_id, name FROM curriculum.programmes "
+        "WHERE programme_id = %s OR name = %s "
+        "ORDER BY programme_id LIMIT 2",
+        [requested_programme, requested_programme],
+    )
+    if len(matches) != 1:
+        return None
+
+    programme_id = str(matches[0].get("programme_id") or "").strip()
+    programme_name = str(matches[0].get("name") or "").strip()
+    if not programme_id:
+        return None
+    if assigned_id:
+        return programme_id if programme_id == assigned_id else None
+    return programme_id if programme_name == assigned_name else None
+
+
+def _programme_forbidden():
+    """One opaque response for missing, ambiguous and cross-programme access."""
+    return JsonResponse(
+        {
+            "error": "You do not have permission to perform this action.",
+            "code": "forbidden",
+        },
+        status=403,
+    )
+
+
 def _profile_results(row, programme):
     if row is None:
         return None, []
@@ -301,6 +364,7 @@ def _profile_results(row, programme):
     return {"id": row["id"], "label": row.get("name") or programme}, results
 
 
+@require_role("learner", "staff", "admin")
 def ksb_profile(request):
     """The KSB list a learner should self-assess against, for their programme.
 
@@ -317,6 +381,11 @@ def ksb_profile(request):
         return _error("programme query param is required.", 400)
 
     try:
+        account = request.login_account
+        if account.role == "learner":
+            programme = _learner_programme_id(account, programme)
+            if programme is None:
+                return _programme_forbidden()
         standard, results = ksb_profile_for_programme(programme)
     except DatabaseError as exc:
         logger.error("Database operation failed (%s)", type(exc).__name__)

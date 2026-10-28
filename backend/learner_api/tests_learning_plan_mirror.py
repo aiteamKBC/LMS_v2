@@ -77,6 +77,7 @@ class SyncMirrorTests(SimpleTestCase):
                 patch("learner_api.learning_plan.EnrolmentUser") as enrolment, \
                 patch("learner_api.learning_plan.transaction.atomic"), \
                 patch("learner_api.active_users.replace_training_plan") as child_rows, \
+                patch("learner_api.active_users.replace_free_courses"), \
                 patch("learner_api.models.LearnerProfile") as profile:
             count = sync_learning_plan_mirror(source)
         return count, enrolment, type("Profile", (), {"objects": profile.objects.using.return_value}), child_rows

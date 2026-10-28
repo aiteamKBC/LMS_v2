@@ -19,7 +19,7 @@ from learner_api.student_activity_data import (
 )
 from learner_api.subject_dates import activity_schedule
 from learner_api.student_activity_access import student_activity_available
-from learner_api.subject_content import ContentUnavailable, build_material, grade_quiz
+from learner_api.subject_content import build_material, grade_quiz
 
 
 class StudentActivityTests(SimpleTestCase):
@@ -43,19 +43,18 @@ class StudentActivityTests(SimpleTestCase):
         model = MagicMock()
         model.all_learners.only.return_value.get.return_value = SimpleNamespace(aptem_id='4176', email='')
         url = 'https://kentbusinesscollege.org/wp-json/kbc-lms/v1/material/10/embed?attachment_id=9'
-        stored = {'title': 'Podcast', 'learner_name': 'Anna', 'audio_url': url,
-                  '_source': {'activity_id': 10}}
         schema = {'component_type': 'lesson', 'content_type': 'podcast', 'iframe_url': url,
                   'source': {'attachments': [{'attachment_id': 9, 'content_type': 'audio'}]}}
-        for live in (True, False):
+        for has_catalogue_schema in (True, False):
             for archive in ('_legacy_files/9/podcast.mp3', ''):
-                with self.subTest(live=live, archive=archive), \
+                stored = {'title': 'Podcast', 'learner_name': 'Anna', 'audio_url': url,
+                          '_source': {'activity_id': 10,
+                                      '_material_schema': schema if has_catalogue_schema else None}}
+                with self.subTest(has_catalogue_schema=has_catalogue_schema, archive=archive), \
                      patch('learner_api.student_activity.SOURCE_MODELS', {'commercial': model}), \
                      patch('learner_api.student_activity._connection'), \
                      patch('learner_api.student_activity.read_student_material', return_value=stored), \
                      patch('learner_api.student_activity.authenticate_request', return_value=account), \
-                     patch('learner_api.student_activity.material_schema', return_value=schema,
-                           side_effect=None if live else ContentUnavailable('Source unavailable')), \
                      patch('learner_api.media_proxy._legacy_attachment_upload_path', return_value=archive) as resolve:
                     response = student_activity(self.factory.get('/', {'group_id': 1, 'activity_id': 10}),
                                                 kind='commercial', pk=132)
@@ -103,7 +102,7 @@ class StudentActivityTests(SimpleTestCase):
                        'correct_answer': 'Secret', 'options': [{'option_body': 'A', 'is_correct': True}]}])
         with patch('learner_api.student_activity_data._dict_rows', return_value=[row]):
             result = read_student_material(cursor, 4176, 1, 10)
-        self.assertEqual(cursor.execute.call_args.args[1], [4176, 1, 10])
+        self.assertEqual(cursor.execute.call_args.args[1], [10, 4176, 1, 'material:10'])
         self.assertEqual(result['questions'], [{'text': 'Question', 'options': ['A']}])
         with patch('learner_api.student_activity_data._dict_rows', return_value=[]):
             self.assertIsNone(read_student_material(cursor, 4176, 2, 10))
@@ -173,7 +172,7 @@ class StudentActivityTests(SimpleTestCase):
 
     def test_audit_hours_match_the_learner_search_sources(self):
         cursor = MagicMock()
-        cursor.fetchone.return_value = (867, 1171.3406)
+        cursor.fetchall.return_value = [(92, 867, 1171.3406)]
 
         totals = read_audit_hour_totals(cursor, 92)
 
@@ -181,7 +180,7 @@ class StudentActivityTests(SimpleTestCase):
             'audit_tp_planned': 867.0,
             'audit_lms_actual': 1171.34,
         })
-        self.assertEqual(cursor.execute.call_args.args[1], [92])
+        self.assertEqual(cursor.execute.call_args.args[1], [[92]])
 
     def test_shared_activity_uses_available_hours_even_if_first_placement_is_unmapped(self):
         missing = {"source_activity_id": 10, "group_id": 1, "completed": False,
@@ -263,16 +262,19 @@ class StudentActivityTests(SimpleTestCase):
         authenticate.return_value = SimpleNamespace(role="learner", subject_id=132)
         model = MagicMock()
         model.all_learners.only.return_value.get.return_value = SimpleNamespace(aptem_id="4176")
-        expected = {"learner_name": "Anna Rundell", **summarize_activities([])}
+        expected = {"learner_name": "Anna Rundell", "aptem_id": 4176,
+                    "subjects": [], **summarize_activities([])}
         with patch("learner_api.student_activity.SOURCE_MODELS", {"commercial": model}), \
-             patch("learner_api.student_activity._connection") as connection, \
-             patch("learner_api.student_activity.read_student_activity", return_value=expected) as reader:
+             patch("learner_api.canonical_learning.profile", return_value={'id': 10}) as profile, \
+             patch("learner_api.canonical_learning.entries_for", return_value=[]), \
+             patch("learner_api.canonical_learning.source_subjects", return_value=expected) as reader:
             request = self.factory.get("/?aptem_id=92&offset=999&category=attendance")
             response = student_activity(request, kind="commercial", pk=132)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.content)["learner_name"], "Anna Rundell")
         model.all_learners.only.return_value.get.assert_called_once_with(pk=132)
-        reader.assert_called_once_with(connection.return_value.cursor.return_value.__enter__.return_value, 4176)
+        profile.assert_called_once_with(132)
+        self.assertEqual(reader.call_args.args[:2], (132, summarize_activities))
         self.assertEqual(request.GET["aptem_id"], "92")
 
     @patch("login.permissions._auth_gate_enabled", return_value=True)
@@ -286,10 +288,15 @@ class StudentActivityTests(SimpleTestCase):
                     quiz_score=None, quiz_maximum_score=None, **activity_schedule('Workshop', '2026-05-14'))
         payload = {'learner_name': 'Anna', **summarize_activities([item])}
         saved = {'ready': True, 'covers': {}, 'history': [], 'progress': [{'group_id': 1, 'activity_id': 10, 'completed': True, 'best_percent': 90, 'attempt_count': 1}]}
+        item.update(completed=True, best_score_percent=90, attempt_count=1)
+        payload = {'learner_name': 'Anna', **summarize_activities([item]),
+                   'audit_tp_planned': 867.0, 'audit_lms_actual': 1171.34,
+                   'recorded_otjh_total': None, 'direct_otjh_activities': [],
+                   'aptem_id': 4176, 'subjects': []}
         with patch('learner_api.student_activity.SOURCE_MODELS', {'commercial': model}), \
-             patch('learner_api.student_activity._connection'), \
-             patch('learner_api.student_activity.read_student_activity', return_value=payload), \
-             patch('learner_api.student_activity.subject_store.state', return_value=saved):
+             patch('learner_api.canonical_learning.profile', return_value={'id': 10}), \
+             patch('learner_api.canonical_learning.entries_for', return_value=saved['progress']), \
+             patch('learner_api.canonical_learning.source_subjects', return_value=payload):
             response = student_activity(self.factory.get('/'), kind='commercial', pk=132)
         self.assertEqual(response.status_code, 200)
         result = json.loads(response.content)
@@ -305,15 +312,17 @@ class StudentActivityTests(SimpleTestCase):
     @patch("login.permissions._auth_gate_enabled", return_value=True)
     @patch("login.permissions.authenticate_request")
     def test_unknown_audit_identity_returns_not_found(self, authenticate, _gate):
+        from learner_api.canonical_learning import ServiceError
         authenticate.return_value = SimpleNamespace(role="staff")
         model = MagicMock()
         model.all_learners.only.return_value.get.return_value = SimpleNamespace(aptem_id="999999")
         with patch("learner_api.student_activity.SOURCE_MODELS", {"commercial": model}), \
-             patch("learner_api.student_activity._connection") as connection, \
-             patch("learner_api.student_activity.read_student_activity", return_value=None) as reader:
+             patch("learner_api.canonical_learning.profile", return_value=None), \
+             patch("learner_api.canonical_learning.source_subjects",
+                   side_effect=ServiceError("Learner not found.", "not_found", 404)) as reader:
             response = student_activity(self.factory.get("/"), kind="commercial", pk=900)
         self.assertEqual(response.status_code, 404)
-        reader.assert_called_once_with(connection.return_value.cursor.return_value.__enter__.return_value, 999999)
+        reader.assert_called_once()
 
     @patch("login.permissions._auth_gate_enabled", return_value=True)
     @patch("login.permissions.authenticate_request")
@@ -322,7 +331,8 @@ class StudentActivityTests(SimpleTestCase):
         model = MagicMock()
         model.all_learners.only.return_value.get.return_value = SimpleNamespace(aptem_id="4176")
         with patch("learner_api.student_activity.SOURCE_MODELS", {"commercial": model}), \
-             patch("learner_api.student_activity._connection", side_effect=DatabaseError("private connection details")):
+             patch("learner_api.canonical_learning.profile",
+                   side_effect=DatabaseError("private connection details")):
             response = student_activity(self.factory.get("/"), kind="commercial", pk=132)
         self.assertEqual(response.status_code, 503)
         self.assertNotIn("private connection details", response.content.decode())
@@ -406,7 +416,11 @@ class SubjectBuilderCoverTests(SimpleTestCase):
         image = 'data:image/png;base64,aGVsbG8='
         with patch('curriculum_api.views.connection') as connection, \
              patch('curriculum_api.views.invalidate_curriculum_cache') as invalidate, \
-             patch('curriculum_api.views.save_module_authoring_structure') as save_structure:
+             patch('curriculum_api.views.save_module_authoring_structure') as save_structure, \
+             patch('learner_api.evidence_storage.upload_blob',
+                   side_effect=AssertionError('real Azure upload is forbidden in unit tests')) as azure_upload, \
+             patch('curriculum_api.views.upload_storage.store',
+                   return_value='curriculum_component_uploads/MOD-1/cover/fake-cover.png') as store:
             cursor = connection.cursor.return_value.__enter__.return_value
             cursor.fetchone.return_value = ('MOD-1',)
             for cover in (image, ''):
@@ -414,12 +428,16 @@ class SubjectBuilderCoverTests(SimpleTestCase):
                 response = curriculum_module_detail(request, identifier='MOD-1')
                 self.assertEqual(response.status_code, 200)
                 sql, params = cursor.execute.call_args.args
-                self.assertEqual(params, [cover, 'MOD-1'])
+                expected = ('/curriculum_api/curriculum/uploads/MOD-1/cover/fake-cover.png'
+                            if cover else '')
+                self.assertEqual(params, [expected, 'MOD-1'])
                 self.assertIn('cover_image_url=%s,updated_at=CURRENT_TIMESTAMP', sql)
                 self.assertNotIn('weeks', sql)
-                self.assertEqual(json.loads(response.content)['coverImage'], cover)
+                self.assertEqual(json.loads(response.content)['coverImage'], expected)
             self.assertEqual(cursor.execute.call_count, 2)
             self.assertEqual(invalidate.call_count, 2)
+            store.assert_called_once()
+            azure_upload.assert_not_called()
             save_structure.assert_not_called()
 
     @patch('login.permissions.authenticate_request')

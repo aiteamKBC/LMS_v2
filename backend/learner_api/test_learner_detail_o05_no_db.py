@@ -6,6 +6,7 @@ orchestration; authored data/progress/identity/services use synthetic doubles.
 No Django startup/settings, database drivers, writes or live HTTP.
 """
 from contextlib import nullcontext
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import date
 import functools
@@ -115,7 +116,7 @@ class Harness:
 
         self.spy = spy
         ns.update(_active_profile_for_source=spy('profile', lambda *a, **kw: self.profile),
-                  to_learner_detail=spy('mapper', lambda *a: deepcopy(self.data)),
+                  to_learner_detail=spy('mapper', lambda *a, **kw: deepcopy(self.data)),
                   advance_learner=spy('advance'), hydrate_source_training_plan=spy('hydrate'),
                   access_gate=spy('access', {'blocked': False, 'reasons': []}),
                   learning_access=spy('learning_access', {'blocked': False, 'startDate': ''}),
@@ -190,7 +191,7 @@ class Harness:
 
 
 class DetailTests(unittest.TestCase):
-    def compare(self, content=None, setup=None, plan=None, **kwargs):
+    def compare(self, content=None, setup=None, plan=None, same_io=True, **kwargs):
         old, new = Harness(True, plan), Harness(False, plan)
         if setup:
             setup(old); setup(new)
@@ -206,7 +207,8 @@ class DetailTests(unittest.TestCase):
             self.assertEqual(set(json.loads(a[1])), {'error'})
             a = (502, json.dumps({'error': 'The database service is temporarily unavailable.'}).encode(), a[2])
         self.assertEqual(a, b)
-        self.assertEqual(old.calls, new.calls)
+        if same_io:
+            self.assertEqual(old.calls, new.calls)
         self.assertEqual(old.sql, new.sql)
         self.assertEqual(old.assignment.calls, new.assignment.calls)
         return old, new, b
@@ -230,7 +232,9 @@ class DetailTests(unittest.TestCase):
                     with self.subTest(count=count, origin=origin, mode=mode):
                         def setup(h):
                             h.data = graph(count, origin)
-                        old, new, result = self.compare(mode, setup, plan=[{'moduleId': 'A'}])
+                        old, new, result = self.compare(
+                            mode, setup, plan=[{'moduleId': 'A'}], same_io=mode != 'summary',
+                        )
                         self.assertEqual(result[0], 200)
                         self.assertEqual(old.fields, new.fields)
                         data = json.loads(result[1])
@@ -238,17 +242,48 @@ class DetailTests(unittest.TestCase):
                         self.assertEqual(data['quizAttempts'], graph()['quizAttempts'])
                         self.assertEqual(data['componentProgress'], graph()['componentProgress'])
 
-    def test_default_and_summary_keep_activation_hydration_persistence_and_hours(self):
-        for mode in (None, 'summary'):
-            _, new, result = self.compare(mode)
-            names = [c[0] for c in new.calls]
-            self.assertEqual(names[:2], ['advance', 'hydrate'])
-            self.assertLess(names.index('snapshot'), names.index('persist'))
-            self.assertLess(names.index('persist'), names.index('retained'))
-            self.assertIn('attendance', names)
-            data = json.loads(result[1])
-            self.assertEqual(data['totalExpectedOtjh'], 8)
-            self.assertEqual((data['plannedHours'], data['completedHours'], data['targetHours']), ('8', '3', '4'))
+    def test_default_keeps_legacy_reconciliation_and_persistence(self):
+        _, new, result = self.compare(None)
+        names = [c[0] for c in new.calls]
+        self.assertEqual(names[:2], ['advance', 'hydrate'])
+        self.assertLess(names.index('snapshot'), names.index('persist'))
+        self.assertLess(names.index('persist'), names.index('retained'))
+        self.assertIn('attendance', names)
+        data = json.loads(result[1])
+        self.assertEqual(data['totalExpectedOtjh'], 8)
+        self.assertEqual((data['plannedHours'], data['completedHours'], data['targetHours']), ('8', '3', '4'))
+
+    def test_summary_is_read_only_and_keeps_live_hours_contract(self):
+        _, new, result = self.compare('summary', same_io=False)
+        names = [c[0] for c in new.calls]
+        for name in ('advance', 'hydrate', 'persist', 'refresh_ksb'):
+            self.assertNotIn(name, names)
+        self.assertIn('snapshot', names)
+        self.assertIn('attendance', names)
+        self.assertEqual(next(c[2] for c in new.calls if c[0] == 'profile'), {'heal': False})
+        data = json.loads(result[1])
+        self.assertEqual(data['totalExpectedOtjh'], 8)
+        self.assertEqual((data['plannedHours'], data['completedHours'], data['targetHours']), ('8', '3', '4'))
+
+    def test_concurrent_summary_reads_have_identical_contract_and_no_write_calls(self):
+        harness = Harness(False)
+
+        def read_summary(_index):
+            request = SimpleNamespace(GET={'content': 'summary'}, method='GET')
+            return harness.ns['learner_detail'](request, kind='commercial', pk=1)
+
+        with patch.dict(sys.modules, harness.modules):
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                responses = list(pool.map(read_summary, range(8)))
+
+        self.assertTrue(all(response.status_code == 200 for response in responses))
+        self.assertTrue(all(response.content == responses[0].content for response in responses))
+        calls = harness.calls
+        for name in ('advance', 'hydrate', 'persist', 'refresh_ksb'):
+            self.assertNotIn(name, [call[0] for call in calls])
+        profile_calls = [call for call in calls if call[0] == 'profile']
+        self.assertEqual(len(profile_calls), 8)
+        self.assertTrue(all(call[2] == {'heal': False} for call in profile_calls))
 
     def test_quiz_activity_and_reading_keep_read_only_side_effect_boundaries(self):
         for mode in ('quiz', 'activity', 'reading'):
@@ -257,7 +292,7 @@ class DetailTests(unittest.TestCase):
             names = [c[0] for c in new.calls]
             for name in ('advance', 'hydrate', 'persist', 'snapshot'):
                 self.assertNotIn(name, names)
-            if mode == 'activity':
+            if mode in ('quiz', 'activity'):
                 self.assertEqual(next(c[2] for c in new.calls if c[0] == 'profile'), {'heal': False})
 
     def test_reading_assignment_variants_preserve_scope_and_title_only_fallback(self):
@@ -295,7 +330,9 @@ class DetailTests(unittest.TestCase):
             def setup(h):
                 h.account = None if role is None else SimpleNamespace(role=role, subject_id=subject)
             for mode in ('reading', 'summary'):
-                _, new, result = self.compare(mode, setup, plan=[{'moduleId': 'A'}])
+                _, new, result = self.compare(
+                    mode, setup, plan=[{'moduleId': 'A'}], same_io=mode != 'summary',
+                )
                 self.assertEqual(result[0], status)
                 if status != 200:
                     self.assertEqual(new.fields, [])

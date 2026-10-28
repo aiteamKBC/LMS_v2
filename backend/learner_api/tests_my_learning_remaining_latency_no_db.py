@@ -102,15 +102,19 @@ class RemainingLatencyTests(SimpleTestCase):
 
     def test_only_catalogue_collapses_segment_ids_and_keeps_learner_scope(self):
         with patch.object(canonical,'query',return_value=[]) as query, \
-             patch.object(canonical,'current_records',return_value=[]):
+             patch.object(canonical,'current_records',return_value=[]), \
+             patch.object(canonical,'_ksb_not_excluded',return_value='TRUE'):
             canonical.entries_for({'id':9},catalogue_summary=True)
-            catalogue = query.call_args.args[0]
+            catalogue, catalogue_params = query.call_args.args
             canonical.entries_for({'id':9},training_summary=True)
-            other = query.call_args.args[0]
+            other, other_params = query.call_args.args
         self.assertIn("'[{}]'::jsonb AS payload", catalogue)
         self.assertNotIn('jsonb_agg(jsonb_build_object(\'id\',s.id)',catalogue)
         self.assertIn('p.learner_id=s.learner_id',catalogue)
         self.assertIn('progress.learner_id=%s',catalogue)
+        self.assertEqual(catalogue_params,[9,9,9,9])
+        self.assertEqual(other_params,[9])
+        self.assertNotIn('WHERE j.canonical_learner_id=%s',other)
         self.assertIn("jsonb_agg(jsonb_build_object('id',s.id)",other)
 
     def test_shared_result_read_is_scoped_to_relevant_occurrences(self):

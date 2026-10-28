@@ -1,0 +1,154 @@
+{
+  "measurement_date": "2026-10-27",
+  "timezone": "Africa/Cairo",
+  "classification": "ISOLATED POSTGRESQL MEASUREMENT",
+  "environment": {
+    "provider": "Neon PostgreSQL",
+    "project_name": "LMS",
+    "project_id": "green-term-97168878",
+    "branch_name": "lms-ideal-architecture",
+    "branch_id": "br-raspy-sky-abvs8lq9",
+    "endpoint_id": "ep-odd-grass-ab4t9q2o",
+    "database": "neondb",
+    "server_version": "18.6",
+    "transaction_read_only": true,
+    "in_recovery": false,
+    "disposable": false
+  },
+  "safety": {
+    "operations": [
+      "bounded SELECT",
+      "EXPLAIN without ANALYZE",
+      "read-only statistics inspection"
+    ],
+    "writes": 0,
+    "migrations": 0,
+    "schema_changes": 0,
+    "analyze_or_vacuum": 0,
+    "authenticated_http_requests": 0,
+    "mutating_get_requests": 0,
+    "heavy_concurrent_load": 0
+  },
+  "progress_entry_distribution": {
+    "learners_with_entries": 622,
+    "minimum": 1,
+    "p50": 357,
+    "p95": 1115.95,
+    "maximum": 3617,
+    "average": 446.5
+  },
+  "relation_sizes": {
+    "Learner.learner_progress_entries": {
+      "estimated_rows": 262523,
+      "total_relation_bytes": 568606720
+    },
+    "Learner.learners": {
+      "estimated_rows": 682,
+      "total_relation_bytes": 21790720
+    },
+    "public.platform_performance_samples": {
+      "total_relation_bytes": 32768,
+      "row_count": 0
+    },
+    "fetching_evidence.platform_performance_samples": {
+      "row_count": 0
+    }
+  },
+  "pg_stat_statements_snapshot": {
+    "limitations": [
+      "The statistics reset time was not established.",
+      "Statements cannot be attributed to one HTTP endpoint or to the current code revision.",
+      "Mean statement time is not an endpoint percentile and includes network/database conditions during the statistics window."
+    ],
+    "relevant_statements": [
+      {
+        "label": "quiz ownership and history union",
+        "source": "backend/learner_api/learner_detail.py:793",
+        "calls": 5,
+        "mean_exec_ms": 1897.317,
+        "total_exec_ms": 9486.586,
+        "rows": 1519,
+        "critical_path": "Learner Summary invokes _append_week_quizzes"
+      },
+      {
+        "label": "learner activity source mapping",
+        "source": "backend/learner_api/canonical_learning.py:1486",
+        "calls": 21,
+        "mean_exec_ms": 1102.274,
+        "rows": 234889
+      },
+      {
+        "label": "full progress ORM select",
+        "source": "Learner.learner_progress_entries",
+        "calls": 15,
+        "mean_exec_ms": 675.253,
+        "rows": 268804
+      },
+      {
+        "label": "canonical metrics bulk progress",
+        "source": "backend/learner_api/canonical_learning.py:1442",
+        "calls": 24,
+        "mean_exec_ms": 321.262,
+        "rows": 248469
+      },
+      {
+        "label": "KSB bulk read",
+        "source": "canonical learner progress path",
+        "calls": 32,
+        "mean_exec_ms": 277.981,
+        "rows": 564479
+      }
+    ]
+  },
+  "quiz_ownership_explain": {
+    "analyze": false,
+    "scope": "bounded non-personal module and quiz references",
+    "top_node": "Unique over Sort and Append",
+    "estimated_total_cost": 650.7,
+    "estimated_rows": 3,
+    "branches": [
+      {
+        "name": "current components JSON link",
+        "access": "Index Scan using curriculum_components_module_idx, then JSON filter",
+        "estimated_cost": 154.58
+      },
+      {
+        "name": "quiz component link table",
+        "access": "Index Only Scan on quiz_component_links_quiz_id_component_id_key plus component primary-key lookup",
+        "estimated_cost": 17.04
+      },
+      {
+        "name": "record revision JSON history",
+        "access": "Index Scan using record_revisions_module_idx, then snapshot JSON filter",
+        "estimated_cost": 479.03
+      }
+    ],
+    "actual_time_and_rows": "NOT VERIFIED because EXPLAIN ANALYZE was intentionally not used on protected Neon"
+  },
+  "aborted_measurement": {
+    "operation": "aggregate query intended to select a maximum-complexity module",
+    "outcome": "cancelled after approximately 60 seconds with no result",
+    "writes": 0,
+    "repeat_attempted": false,
+    "interpretation": "Evidence that the attempted aggregate was unsafe as a repeatable benchmark, not an endpoint latency measurement."
+  },
+  "frontend_test_recheck": {
+    "command": "npm --prefix frontend test -- --run src/api/__tests__/learnerContentLoading.test.ts src/pages/learner/monthly-submission/page.test.tsx src/pages/learner/__tests__/pages.test.tsx --maxWorkers=2",
+    "files": 3,
+    "passed": 133,
+    "failed": 26,
+    "duration_seconds": 63.52,
+    "classification": {
+      "learnerContentLoading.test.ts": "5 fixture/contract expectation defects; implementation requires content=activity plus matching learner id and component",
+      "monthly-submission/page.test.tsx": "1 date-sensitive assertion; current runtime month was 2026-10 but test expected 2026-09 without pinning time",
+      "pages.test.tsx": "20 mixed environment and fixture failures, including missing jsdom canvas/scrollTo support and incomplete response mocks; individual application-regression status remains unresolved until isolated fixtures are corrected"
+    }
+  },
+  "focused_no_database_test": {
+    "command": "$env:DJANGO_SETTINGS_MODULE='config.settings'; python -c <django.setup and unittest runner>",
+    "suite": "learner_api.test_learner_summary_performance_no_db",
+    "passed": 3,
+    "failed": 0,
+    "database_connections": 0
+  }
+}

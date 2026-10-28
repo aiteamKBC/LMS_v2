@@ -36,12 +36,14 @@ class MobileQuizScopeTests(unittest.TestCase):
                              for mid in ('G1', 'G2') for n in range(1, 15)]
         self.quizzes = []
         self.links = []
+        self.current_authored = []
+        self.historical_authored = []
         self.statements = []
         self.cursor.execute.side_effect = self.execute
 
     def execute(self, sql, params):
         compact = ' '.join(sql.split())
-        self.assertTrue(compact.startswith('SELECT'), compact)
+        self.assertTrue(compact.startswith(('SELECT', 'WITH')), compact)
         self.statements.append((compact, params))
         if 'SELECT module_catalogue_id, title FROM curriculum.modules' in compact:
             titles = set(params[0]); ids = set(params[1]) if len(params) > 1 else set()
@@ -58,6 +60,10 @@ class MobileQuizScopeTests(unittest.TestCase):
             rows = [row for row in self.quizzes if row[0] in params[0]]
         elif 'AND lower(COALESCE(module' in compact:
             rows = [row for row in self.quizzes if row[8].lower() in params[0]]
+        elif 'FROM curriculum.record_revisions' in compact:
+            rows = list(self.historical_authored)
+        elif 'FROM curriculum.quiz_component_links link' in compact:
+            rows = list(self.current_authored)
         else:
             self.fail('Unexpected query: ' + compact)
         self.cursor.fetchall.return_value = rows

@@ -22,6 +22,27 @@ from django.core.exceptions import ImproperlyConfigured
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+TEST_BRANCH_PRIMARY_ENV_KEYS = (
+    "DATABASE_URL", "DATABASEURL", "Database_url",
+    "ENROLMENT_DATABASE_URL", "security_Database_url",
+)
+TEST_BRANCH_ALIAS_ENV_KEYS = (
+    "AUDIT_DATABASE_URL", "AUDIT_CLONE_DATABASE_URL", "LASR-ADUTIOD-CLNE",
+    "KBC_ATTENDANCE_DATABASE_URL",
+    "ASSISTANT_CONVERSATIONS_DATABASE_URL", "TICKETING_DATABASE_URL",
+    "COACHING_SESSIONS_DATABASE_URL",
+    "SAFEGUARDING_DATABASE_URL", "SafeGuarding_database_url",
+    "ASSESSMENT_FETCH_DATABASE_URL",
+    "LEARNER_AUTH_DB_HOST", "LEARNER_AUTH_DB_NAME",
+    "LEARNER_AUTH_DB_USER", "LEARNER_AUTH_DB_PASSWORD",
+)
+TEST_BRANCH_SUPPRESSED_ENV_KEYS = (
+    *TEST_BRANCH_PRIMARY_ENV_KEYS,
+    *TEST_BRANCH_ALIAS_ENV_KEYS,
+    "LMS_IDEAL_TEST",
+    "LEARNER_AUTH_READS_ENABLED",
+)
+
 
 def load_env_file(path):
     if not path.exists():
@@ -39,6 +60,10 @@ def load_env_file(path):
         'MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET',
         'MICROSOFT_TENANT', 'MICROSOFT_TENANT_ID', 'MICROSOFT_CALLBACK_URI',
     }
+    suppress_test_branch_aliases = (
+        os.environ.get("RUN_APP_ON_TEST_BRANCH", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
     for line in path.read_text().splitlines():
         line = line.strip()
         if not line or line.startswith('#') or '=' not in line:
@@ -46,6 +71,8 @@ def load_env_file(path):
 
         key, value = line.split('=', 1)
         key = key.strip()
+        if suppress_test_branch_aliases and key in TEST_BRANCH_SUPPRESSED_ENV_KEYS:
+            continue
         value = value.strip().strip('"').strip("'")
         if key not in process_environment_keys and key in last_declaration_keys:
             os.environ[key] = value
@@ -54,6 +81,14 @@ def load_env_file(path):
 
 
 load_env_file(BASE_DIR / '.env')
+
+if (
+    os.environ.get("RUN_APP_ON_TEST_BRANCH", "").strip().lower()
+    in {"1", "true", "yes", "on"}
+    and not os.environ.get("LMS_BENCHMARK_READER_URL")
+):
+    from .benchmark_credentials import read_benchmark_reader_url
+    os.environ["LMS_BENCHMARK_READER_URL"] = read_benchmark_reader_url()
 
 # New LMS mobile pilot: explicit default-off release gates.
 KBC_MOBILE_API_ENABLED = os.environ.get("KBC_MOBILE_API_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
@@ -171,7 +206,30 @@ def database_from_url(database_url):
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
-USE_SQLITE_FOR_TESTS = os.environ.get("DJANGO_USE_SQLITE", "false").lower() == "true"
+from .test_isolation import (  # noqa: E402
+    BENCHMARK_BRANCH_ID,
+    BENCHMARK_BRANCH_NAME,
+    BENCHMARK_DATABASE_NAME,
+    BENCHMARK_DIRECT_HOST,
+    BENCHMARK_ENDPOINT_ID,
+    configure_read_only_database_url,
+    install_test_isolation,
+    is_test_process,
+    test_mode,
+)
+
+TEST_PROCESS = is_test_process()
+TEST_EXECUTION_MODE = test_mode() if TEST_PROCESS else ""
+if TEST_PROCESS:
+    install_test_isolation()
+USE_SQLITE_FOR_TESTS = (
+    os.environ.get("DJANGO_USE_SQLITE", "false").lower() == "true"
+    or (TEST_PROCESS and TEST_EXECUTION_MODE == "unit")
+)
+if TEST_PROCESS:
+    TEST_RUNNER = "config.test_runner.IsolatedTestRunner"
+if TEST_PROCESS and TEST_EXECUTION_MODE == "unit":
+    EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 
 # Opt-in, test-only "security test branch" mode (A17). Defined here — before the
 # MIGRATION_MODULES and DATABASES blocks that both consult it — and fully wired
@@ -181,7 +239,8 @@ USE_SQLITE_FOR_TESTS = os.environ.get("DJANGO_USE_SQLITE", "false").lower() == "
 # NOT apply in this mode: nulling chat's migrations would make run-syncdb try to
 # CREATE its already-present managed table.
 USE_SECURITY_TEST_BRANCH = (
-    "test" in sys.argv
+    TEST_PROCESS
+    and TEST_EXECUTION_MODE == "integration"
     and os.environ.get("USE_SECURITY_TEST_BRANCH", "").strip().lower()
     in {"1", "true", "yes", "on"}
 )
@@ -191,17 +250,22 @@ USE_SECURITY_TEST_BRANCH = (
 # entry is built: it asserts that `default` and `enrolment` both resolve to the
 # branch host and that the audit/attendance alias env vars are blank (so those
 # aliases are never created). Guarded off `test` so it never affects the runner.
-RUN_APP_ON_TEST_BRANCH = (
+_RUN_APP_ON_TEST_BRANCH_REQUESTED = (
     "test" not in sys.argv
     and os.environ.get("RUN_APP_ON_TEST_BRANCH", "").strip().lower()
     in {"1", "true", "yes", "on"}
 )
+if _RUN_APP_ON_TEST_BRANCH_REQUESTED and TEST_EXECUTION_MODE != "postgres-read-only":
+    raise ImproperlyConfigured(
+        "RUN_APP_ON_TEST_BRANCH requires LMS_TEST_MODE=postgres-read-only."
+    )
+RUN_APP_ON_TEST_BRANCH = (
+    _RUN_APP_ON_TEST_BRANCH_REQUESTED
+    and TEST_EXECUTION_MODE == "postgres-read-only"
+)
 # Aliases whose env vars must be blank in test-branch mode, so the alias is
 # never built and the production database behind it is simply unreachable.
-TEST_BRANCH_BLANK_KEYS = (
-    "AUDIT_DATABASE_URL", "AUDIT_CLONE_DATABASE_URL", "LASR-ADUTIOD-CLNE",
-    "KBC_ATTENDANCE_DATABASE_URL",
-)
+TEST_BRANCH_BLANK_KEYS = TEST_BRANCH_ALIAS_ENV_KEYS
 
 
 def assert_test_branch_databases(environ):
@@ -212,50 +276,48 @@ def assert_test_branch_databases(environ):
     module state, so the guard can be proven directly instead of by booting
     Django against a real database.
     """
-    branch_url = environ.get("security_Database_url")  # case-sensitive key
+    branch_url = environ.get("LMS_BENCHMARK_READER_URL")
     if not branch_url:
         raise ImproperlyConfigured(
-            "RUN_APP_ON_TEST_BRANCH is set but 'security_Database_url' is absent."
+            "RUN_APP_ON_TEST_BRANCH is set but the Benchmark Reader URL is absent."
         )
-    branch_host = (urlparse(branch_url).hostname or "").lower()
-    if not branch_host:
+    parsed_branch = urlparse(branch_url)
+    branch_host = (parsed_branch.hostname or "").lower()
+    branch_database = parsed_branch.path.lstrip("/")
+    if unquote(parsed_branch.username or "") != "lms_benchmark_reader":
         raise ImproperlyConfigured(
-            "security_Database_url has no parseable host; refusing to start."
+            "Benchmark runtime requires the lms_benchmark_reader database role."
         )
-    # `default` must resolve to the branch host. Fail closed on unset or
-    # unparseable, before any connection is opened.
-    for key in ("DATABASE_URL", "Database_url"):
-        url = environ.get(key)
-        host = (urlparse(url).hostname or "").lower() if url else ""
-        if not host:
+    if branch_host != BENCHMARK_DIRECT_HOST and branch_host != (
+        BENCHMARK_DIRECT_HOST.replace(".", "-pooler.", 1)
+    ):
+        raise ImproperlyConfigured(
+            "The Benchmark Reader URL does not target the authorised endpoint."
+        )
+    if branch_database != BENCHMARK_DATABASE_NAME:
+        raise ImproperlyConfigured(
+            "The Benchmark Reader URL does not target the authorised database."
+        )
+    metadata = {
+        "LMS_TEST_POSTGRES_ENDPOINT_ID": BENCHMARK_ENDPOINT_ID,
+        "LMS_TEST_POSTGRES_BRANCH_ID": BENCHMARK_BRANCH_ID,
+        "LMS_TEST_POSTGRES_BRANCH_NAME": BENCHMARK_BRANCH_NAME,
+    }
+    for key, expected in metadata.items():
+        if environ.get(key, "").strip() != expected:
             raise ImproperlyConfigured(
-                f"RUN_APP_ON_TEST_BRANCH: {key} is unset or unparseable; refusing to start."
+                f"RUN_APP_ON_TEST_BRANCH: {key} does not identify the authorised benchmark branch."
             )
-        if host != branch_host:
+    if environ.get("LMS_IDEAL_TEST"):
+        raise ImproperlyConfigured(
+            "RUN_APP_ON_TEST_BRANCH must not load the privileged LMS_IDEAL_TEST URL."
+        )
+    # Even a same-host legacy URL may contain owner credentials. Benchmark mode
+    # therefore requires every primary fallback variable to be absent.
+    for key in TEST_BRANCH_PRIMARY_ENV_KEYS:
+        if environ.get(key):
             raise ImproperlyConfigured(
-                f"RUN_APP_ON_TEST_BRANCH: {key} host ({host!r}) is not the test branch "
-                f"({branch_host!r}); refusing to run the app against a non-branch database."
-            )
-    # `enrolment` is where learner progress, curriculum reads and every
-    # completion write actually land, and the alias resolves from its OWN
-    # variable FIRST (see the DATABASES['enrolment'] block below), so the loop
-    # above does not cover it: a branch-mode process could otherwise be writing
-    # learner completions straight into production. Unset is safe and stays
-    # allowed -- the alias then falls through to Database_url, already proven
-    # above -- but any value it does carry must be the branch.
-    enrolment_url = environ.get("ENROLMENT_DATABASE_URL")
-    if enrolment_url:
-        enrolment_host = (urlparse(enrolment_url).hostname or "").lower()
-        if not enrolment_host:
-            raise ImproperlyConfigured(
-                "RUN_APP_ON_TEST_BRANCH: ENROLMENT_DATABASE_URL is set but has no "
-                "parseable host; refusing to start."
-            )
-        if enrolment_host != branch_host:
-            raise ImproperlyConfigured(
-                f"RUN_APP_ON_TEST_BRANCH: ENROLMENT_DATABASE_URL host ({enrolment_host!r}) "
-                f"is not the test branch ({branch_host!r}); refusing to run the app "
-                f"against a non-branch database."
+                f"RUN_APP_ON_TEST_BRANCH: {key} must be empty; refusing owner/fallback credentials."
             )
     # The audit / audit_clone / attendance databases must be UNREACHABLE: their
     # env vars must be blank so those aliases are never built at all.
@@ -268,11 +330,38 @@ def assert_test_branch_databases(environ):
     return branch_host
 
 
+BENCHMARK_DATABASE_URL = ""
 if RUN_APP_ON_TEST_BRANCH:
     assert_test_branch_databases(os.environ)
+    BENCHMARK_DATABASE_URL = configure_read_only_database_url(
+        os.environ["LMS_BENCHMARK_READER_URL"]
+    )
     # Hermetic: no outbound third-party calls from the baseline (WordPress / AI).
     os.environ["KBC_LMS_API_KEY"] = ""
     os.environ["OPENAI_API_KEY"] = ""
+    os.environ["AZURE_MAIL_ENABLED"] = "false"
+    os.environ["CHAT_DEMO_BOOTSTRAP_ENABLED"] = "false"
+    os.environ["API_REQUIRE_AUTH"] = "1"
+    os.environ["LEARNER_API_REQUIRE_AUTH"] = "1"
+    for _secret_key in (
+        "AZURE_STORAGE_ACCOUNT", "AZURE_STORAGE_KEY",
+        "AZURE_MATERIALS_STORAGE_ACCOUNT", "AZURE_MATERIALS_STORAGE_KEY",
+    ):
+        os.environ[_secret_key] = ""
+    for _background_flag in (
+        "SESSION_RESULTS_AUTOMATIC", "COACH_DASHBOARD_SNAPSHOT_SCHEDULE",
+        "CATCHUP_REMINDERS_ENABLED", "COACH_RECORDINGS_AUTOMATIC",
+        "ENGLAND_HOLIDAY_AUTO_SYNC", "CURRICULUM_WARM",
+    ):
+        os.environ[_background_flag] = "0"
+    # A single direct connection path is easier to prove than a pool whose
+    # connection class may be initialised before application instrumentation.
+    DB_POOL = False
+    EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+    KBC_MOBILE_API_ENABLED = False
+    KBC_MOBILE_COMMS_ENABLED = False
+    KBC_MOBILE_PUSH_ENABLED = False
+    KBC_MOBILE_CALENDAR_WRITES_ENABLED = False
 
 # Curriculum schema is owned by migrations. When this is false (the production
 # default) request handlers only VERIFY that the expected tables exist and raise
@@ -280,7 +369,8 @@ if RUN_APP_ON_TEST_BRANCH:
 # or historical data backfills on the way to serving a request. Set to true only
 # for local Postgres development where running migrations by hand is a nuisance.
 CURRICULUM_ALLOW_RUNTIME_SCHEMA_BOOTSTRAP = (
-    os.environ.get("CURRICULUM_ALLOW_RUNTIME_SCHEMA_BOOTSTRAP", "false").lower() == "true"
+    not RUN_APP_ON_TEST_BRANCH
+    and os.environ.get("CURRICULUM_ALLOW_RUNTIME_SCHEMA_BOOTSTRAP", "false").lower() == "true"
 )
 
 # SECURITY WARNING: keep the secret key used in production secret!
@@ -522,7 +612,7 @@ CHAT_REDIS_URL = (
     or os.environ.get('REDIS_URL')
     or 'redis://127.0.0.1:6379/1'
 )
-if USE_SQLITE_FOR_TESTS:
+if USE_SQLITE_FOR_TESTS or RUN_APP_ON_TEST_BRANCH:
     # Unit tests must be isolated and deterministic: WebSocket tests should not
     # require a developer Redis process or spend seconds waiting for a refused
     # connection. Production and normal development continue to use Redis.
@@ -549,23 +639,33 @@ COACH_DASHBOARD_SNAPSHOT_MAX_AGE = int(os.environ.get('COACH_DASHBOARD_SNAPSHOT_
 COACH_DASHBOARD_REFRESH_DEBOUNCE = float(os.environ.get('COACH_DASHBOARD_REFRESH_DEBOUNCE', '0.25'))
 COACH_DASHBOARD_REFRESH_LOCK_TTL = int(os.environ.get('COACH_DASHBOARD_REFRESH_LOCK_TTL', '300'))
 COACH_DASHBOARD_BACKGROUND_REFRESH_ENABLED = (
-    os.environ.get('COACH_DASHBOARD_BACKGROUND_REFRESH_ENABLED', 'true').lower() == 'true'
+    not RUN_APP_ON_TEST_BRANCH
+    and os.environ.get('COACH_DASHBOARD_BACKGROUND_REFRESH_ENABLED', 'true').lower() == 'true'
 )
 
 # Shared read models are additive and roll out behind flags. Apply the migration
 # on a Neon child branch, verify parity, then enable outbox/dual-write before
 # switching reads. The legacy Coach table remains the fallback throughout.
-READ_MODEL_OUTBOX_ENABLED = os.environ.get('READ_MODEL_OUTBOX_ENABLED', 'false').lower() == 'true'
-READ_MODEL_DUAL_WRITE_ENABLED = os.environ.get('READ_MODEL_DUAL_WRITE_ENABLED', 'false').lower() == 'true'
+READ_MODEL_OUTBOX_ENABLED = (
+    not RUN_APP_ON_TEST_BRANCH
+    and os.environ.get('READ_MODEL_OUTBOX_ENABLED', 'false').lower() == 'true'
+)
+READ_MODEL_DUAL_WRITE_ENABLED = (
+    not RUN_APP_ON_TEST_BRANCH
+    and os.environ.get('READ_MODEL_DUAL_WRITE_ENABLED', 'false').lower() == 'true'
+)
 COACH_DASHBOARD_SHARED_READ_MODEL_ENABLED = (
-    os.environ.get('COACH_DASHBOARD_SHARED_READ_MODEL_ENABLED', 'false').lower() == 'true'
+    not RUN_APP_ON_TEST_BRANCH
+    and os.environ.get('COACH_DASHBOARD_SHARED_READ_MODEL_ENABLED', 'false').lower() == 'true'
 )
 LEARNER_HOME_SHARED_READ_MODEL_ENABLED = (
-    os.environ.get('LEARNER_HOME_SHARED_READ_MODEL_ENABLED', 'false').lower() == 'true'
+    not RUN_APP_ON_TEST_BRANCH
+    and os.environ.get('LEARNER_HOME_SHARED_READ_MODEL_ENABLED', 'false').lower() == 'true'
 )
 LEARNER_HOME_READ_MODEL_TTL_SECONDS = int(os.environ.get('LEARNER_HOME_READ_MODEL_TTL_SECONDS', '30'))
 CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED = (
-    os.environ.get('CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED', 'false').lower() == 'true'
+    not RUN_APP_ON_TEST_BRANCH
+    and os.environ.get('CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED', 'false').lower() == 'true'
 )
 CURRICULUM_HOME_READ_MODEL_TTL_SECONDS = int(os.environ.get('CURRICULUM_HOME_READ_MODEL_TTL_SECONDS', '30'))
 RECORD_MONITOR_SHARED_READ_MODEL_ENABLED = (
@@ -585,7 +685,11 @@ READ_MODEL_OUTBOX_RETENTION_DAYS = int(os.environ.get('READ_MODEL_OUTBOX_RETENTI
 # a developer machine with no Redis running behaves like the branch below
 # instead of raising on every read. Development and tests retain a
 # process-local cache when no Redis URL is configured.
-CACHE_URL = os.environ.get('CACHE_URL') or os.environ.get('REDIS_URL')
+CACHE_URL = (
+    None
+    if RUN_APP_ON_TEST_BRANCH or (TEST_PROCESS and TEST_EXECUTION_MODE == "unit")
+    else (os.environ.get('CACHE_URL') or os.environ.get('REDIS_URL'))
+)
 if CACHE_URL:
     from redis.backoff import NoBackoff
     from redis.retry import Retry
@@ -628,7 +732,7 @@ else:
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASE_URL = (
+DATABASE_URL = BENCHMARK_DATABASE_URL if RUN_APP_ON_TEST_BRANCH else (
     os.environ.get("DATABASE_URL")
     or os.environ.get("DATABASEURL")
     or os.environ.get("Database_url")
@@ -707,7 +811,7 @@ else:
     }
 
 # Enrolment (Neon) database used by the learner_api app via EnrolmentRouter.
-_enrolment_database_url = (
+_enrolment_database_url = BENCHMARK_DATABASE_URL if RUN_APP_ON_TEST_BRANCH else (
     os.environ.get('ENROLMENT_DATABASE_URL')
     or os.environ.get('Database_url')
     or os.environ.get('DATABASEURL')
@@ -878,6 +982,23 @@ from .learner_auth import configure_learner_auth  # noqa: E402
 LEARNER_AUTH_READS_ENABLED, _learner_auth_databases = configure_learner_auth(os.environ)
 DATABASES.update(_learner_auth_databases)
 
+if RUN_APP_ON_TEST_BRANCH:
+    _unexpected_aliases = sorted(set(DATABASES) - {"default", "enrolment"})
+    if _unexpected_aliases:
+        raise ImproperlyConfigured(
+            "RUN_APP_ON_TEST_BRANCH configured unexpected database aliases: "
+            + ", ".join(_unexpected_aliases)
+        )
+    # Phase 4G's local profiling server may read the verified Neon branch, but
+    # PostgreSQL itself must reject every accidental write. This applies to all
+    # aliases that survived assert_test_branch_databases above.
+    for _alias, _config in DATABASES.items():
+        _options = _config.setdefault("OPTIONS", {})
+        _read_only = "-c default_transaction_read_only=on"
+        _existing = str(_options.get("options") or "")
+        if _read_only not in _existing:
+            _options["options"] = f"{_existing} {_read_only}".strip()
+
 # Bound how long a query can run once a connection is open. connect_timeout
 # (above) only bounds *opening* a connection — a query that then stalls on a
 # held lock, or a Neon compute that is slow to wake, has nothing else capping
@@ -890,11 +1011,19 @@ DATABASES.update(_learner_auth_databases)
 # so setting it there breaks every connection outright. `SET` after connecting
 # is a plain query, which the pooler allows through.
 from django.db.backends.signals import connection_created  # noqa: E402
+from .test_isolation import active_policy, verify_neon_connection  # noqa: E402
 
 
 def _apply_statement_timeout(sender, connection, **kwargs):
     if connection.vendor != 'postgresql':
         return
+    if RUN_APP_ON_TEST_BRANCH:
+        if connection.alias not in {"default", "enrolment"}:
+            connection.close()
+            raise ImproperlyConfigured(
+                "Benchmark runtime opened an unauthorised database alias."
+            )
+        verify_neon_connection(connection.connection, active_policy())
     with connection.cursor() as cursor:
         cursor.execute('SET statement_timeout = %s', [DB_STATEMENT_TIMEOUT_MS])
 

@@ -1,0 +1,89 @@
+{
+  "phase": "4G",
+  "date": "2026-10-27",
+  "verdict": "BLOCKED",
+  "blocker": "No explicitly test-owned learner identity, recoverable benchmark session token, or benchmark credential exists on the verified branch. All existing identities are inherited from the parent snapshot and must not be impersonated.",
+  "environment": {
+    "organisation_id": "org-falling-sea-18071422",
+    "project_name": "LMS",
+    "project_id": "green-term-97168878",
+    "branch_name": "lms_ideal_test",
+    "branch_id": "br-orange-shadow-abm8uwwe",
+    "parent_branch_name": "lms-ideal-architecture",
+    "parent_branch_id": "br-raspy-sky-abvs8lq9",
+    "branch_state": "ready",
+    "is_primary": false,
+    "is_default": false,
+    "is_protected": false,
+    "written_data_bytes": 0,
+    "endpoint_id": "ep-dawn-block-ab5vob3x",
+    "endpoint_used": "direct",
+    "database": "neondb",
+    "postgres_version": "18.6 (fd34222)",
+    "transaction_read_only": true,
+    "pg_is_in_recovery": false,
+    "connection_source": "LMS_IDEAL_TEST",
+    "database_url_fallback_used": false,
+    "django_aliases": {
+      "default": {
+        "endpoint_id": "ep-dawn-block-ab5vob3x",
+        "database": "neondb",
+        "read_only_option": true
+      },
+      "enrolment": {
+        "endpoint_id": "ep-dawn-block-ab5vob3x",
+        "database": "neondb",
+        "read_only_option": true
+      }
+    },
+    "unexpected_database_aliases": []
+  },
+  "identity_audit": {
+    "reserved_synthetic_domains": [
+      ".test",
+      ".invalid"
+    ],
+    "candidate_accounts": 0,
+    "candidates_with_password": 0,
+    "candidates_with_live_session": 0,
+    "candidates_with_canonical_profile": 0,
+    "candidates_with_programme": 0,
+    "candidates_with_training_plan": 0,
+    "usable_test_owned_identity": false,
+    "personally_identifying_rows_output": 0
+  },
+  "local_provisioning_environment": {
+    "psql_available": false,
+    "docker_available": false,
+    "validated_on_disposable_postgres": false
+  },
+  "http_benchmark": {
+    "server_started": false,
+    "requests_sent": 0,
+    "authenticated_requests_sent": 0,
+    "endpoints_measured": 0,
+    "metrics": []
+  },
+  "safety": {
+    "neon_writes": 0,
+    "migrations": 0,
+    "external_requests": 0,
+    "teams_graph_azure_smtp_calls": 0,
+    "production_sessions_used": 0,
+    "existing_learners_impersonated": 0,
+    "commits": 0,
+    "pushes": 0
+  },
+  "tests": [
+    {
+      "command": "python manage.py test config.test_test_isolation_no_db config.tests_test_branch_guard --verbosity=1",
+      "passed": 31,
+      "failed": 0
+    },
+    {
+      "command": "python manage.py test login.test_selectors_no_db login.tests_learner_progress_gate learner_api.test_curriculum_lookup_permissions_no_db --verbosity=1",
+      "passed": 56,
+      "failed": 0
+    }
+  ]
+}

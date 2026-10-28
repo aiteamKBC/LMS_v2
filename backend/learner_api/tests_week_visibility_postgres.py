@@ -8,7 +8,9 @@ a set of weeks and components from an earlier archive, stamped with its own id,
 sharing week numbers with the live set and sorting first by id.
 """
 import json
+from types import SimpleNamespace
 from unittest import skipUnless
+from unittest.mock import patch
 
 from django.conf import settings
 from django.db import connections
@@ -137,13 +139,16 @@ class VisibleWeekPostgresTests(IncidentFixture, TestCase):
         from learner_api import curriculum
 
         factory = RequestFactory()
-        weeks = curriculum.weeks(factory.get('/', {'module': self.LIVE_MOD}))
-        self.assertEqual(weeks.status_code, 200, weeks.content)
-        self.assertEqual([row['id'] for row in json.loads(weeks.content)['results']],
-                         ['WEEK-B-LIVE-1', 'WEEK-B-LIVE-2'])
-        components = curriculum.components(factory.get('/', {'week': 'WEEK-B-LIVE-1'}))
-        self.assertEqual([row['id'] for row in json.loads(components.content)['results']],
-                         ['COMP-B-LIVE-1'])
+        with patch.dict('os.environ', {'LEARNER_API_REQUIRE_AUTH': '1'}), \
+                patch('login.permissions.authenticate_request',
+                      return_value=SimpleNamespace(role='staff')):
+            weeks = curriculum.weeks(factory.get('/', {'module': self.LIVE_MOD}))
+            self.assertEqual(weeks.status_code, 200, weeks.content)
+            self.assertEqual([row['id'] for row in json.loads(weeks.content)['results']],
+                             ['WEEK-B-LIVE-1', 'WEEK-B-LIVE-2'])
+            components = curriculum.components(factory.get('/', {'week': 'WEEK-B-LIVE-1'}))
+            self.assertEqual([row['id'] for row in json.loads(components.content)['results']],
+                             ['COMP-B-LIVE-1'])
 
     def test_dashboard_components_exclude_ghost_hours(self):
         from learner_api.dashboard_metrics import load_native_components_bulk

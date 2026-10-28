@@ -1,4 +1,4 @@
-# Project Agent Instructions - LMS_v2
+<!-- # Project Agent Instructions - LMS_v2
 
 Shared working policy for every agent and teammate working in this repository. Read this file before investigating or editing a task. Apply it to screenshots, short messages, follow-up requests, bug fixes, features, refactors, configuration, and documentation. Do not depend on the owner's local `CLAUDE.md`; it is not the team's policy.
 
@@ -376,4 +376,4 @@ Do not claim "everything works", "Teams is working", "all tests pass", or "ready
 
 - Suggested teammate task template: "Read AGENTS.md. Page/role: __. Current behavior: __. Expected behavior: __. Scope: __. Teams behavior changes intended: yes/no, details __. Clarify missing scope before editing and report the required test results."
 
-- These instructions and the test command are a working policy, not tamper-proof enforcement. Owner-controlled CI/acceptance checks and restricted write permissions are separate controls; do not claim they are installed merely because this file exists. The owner should verify scope and test evidence before manually accepting changes.
+- These instructions and the test command are a working policy, not tamper-proof enforcement. Owner-controlled CI/acceptance checks and restricted write permissions are separate controls; do not claim they are installed merely because this file exists. The owner should verify scope and test evidence before manually accepting changes. -->

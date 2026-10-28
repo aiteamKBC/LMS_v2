@@ -49,7 +49,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
-from login.permissions import learner_self_or_staff
+from login.permissions import learner_self_or_staff, staff_only
 
 from .active_users import (
     _component_learning_context,
@@ -226,6 +226,7 @@ def _programme_shift_modules(programme, groups, cohorts):
     ], programme_groups
 
 
+@staff_only()
 def module_shift_options(request):
     """The modules taught alongside one module, for the shift picker."""
     if request.method != "GET":

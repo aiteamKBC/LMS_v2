@@ -499,6 +499,21 @@ class LearnerProfileResolutionTests(SimpleTestCase):
         self.assertEqual(saved, {"update_fields": ["enrolment_id"]})
 
     @patch("learner_api.identity.LearnerProfile.objects.filter")
+    def test_read_only_resolution_never_repairs_the_missing_link(self, profile_filter):
+        profile = SimpleNamespace(id=2, enrolment_id=None, save=Mock())
+        fake, _calls = self._returns(None, profile)
+        profile_filter.side_effect = fake
+
+        result = learner_profile_for_source(
+            SimpleNamespace(email="learner@example.com"), 19,
+            active_only=True, heal=False,
+        )
+
+        self.assertIs(result, profile)
+        self.assertIsNone(profile.enrolment_id)
+        profile.save.assert_not_called()
+
+    @patch("learner_api.identity.LearnerProfile.objects.filter")
     def test_falls_back_to_source_id_only_when_source_has_no_email(self, profile_filter):
         expected = SimpleNamespace(id=19)
         fake, calls = self._returns(None, expected)

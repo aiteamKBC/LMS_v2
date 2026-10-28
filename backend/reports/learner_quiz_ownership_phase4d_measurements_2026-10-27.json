@@ -1,0 +1,159 @@
+{
+  "classification": "ISOLATED POSTGRESQL MEASUREMENT",
+  "captured_on": "2026-10-27",
+  "environment": {
+    "neon_project": "LMS",
+    "neon_project_id": "green-term-97168878",
+    "branch_name": "lms_ideal_test",
+    "branch_id": "br-orange-shadow-abm8uwwe",
+    "parent_branch_name": "lms-ideal-architecture",
+    "endpoint_id": "ep-dawn-block-ab5vob3x",
+    "database": "neondb",
+    "server_version": "18.6 (fd34222)",
+    "connection": "direct endpoint derived from the verified pooled LMS_IDEAL_TEST URL",
+    "transaction_read_only": true
+  },
+  "method": {
+    "warm_iterations_per_shape": 20,
+    "execution_order": "alternating old/new",
+    "explain": "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)",
+    "statement_timeout_ms": 15000,
+    "writes": 0
+  },
+  "ownership_pair_population": {
+    "current_only": 2994,
+    "history_only": 321,
+    "current_and_history": 4242
+  },
+  "sql_fingerprints": {
+    "old": "b9056e0e75d3067e",
+    "current": "1d82c5583a0fbf58",
+    "history_exact": "8447771ed965f992"
+  },
+  "results": [
+    {
+      "shape": "small_current_only",
+      "candidate_pairs": 1,
+      "parity": true,
+      "before": {
+        "sql_count": 1,
+        "client_wall_p50_ms": 84.128,
+        "client_wall_p95_ms": 151.936,
+        "python_p50_ms": 0.0077,
+        "plan_execution_ms": 0.234,
+        "revision_rows_examined": 1,
+        "revision_shared_hit_blocks": 4,
+        "revision_shared_read_blocks": 0
+      },
+      "after": {
+        "strategy": "current_first",
+        "sql_count": 1,
+        "client_wall_p50_ms": 85.889,
+        "client_wall_p95_ms": 163.262,
+        "python_p50_ms": 0.0151,
+        "plan_execution_ms": 0.257,
+        "revision_rows_examined": 0,
+        "revision_shared_hit_blocks": 0,
+        "revision_shared_read_blocks": 0
+      },
+      "median_change_percent": 2.09
+    },
+    {
+      "shape": "median_current_only",
+      "candidate_pairs": 10,
+      "parity": true,
+      "before": {
+        "sql_count": 1,
+        "client_wall_p50_ms": 96.117,
+        "client_wall_p95_ms": 232.274,
+        "python_p50_ms": 0.0197,
+        "plan_execution_ms": 3.630,
+        "revision_rows_examined": 6,
+        "revision_shared_hit_blocks": 17,
+        "revision_shared_read_blocks": 0
+      },
+      "after": {
+        "strategy": "current_first",
+        "sql_count": 1,
+        "client_wall_p50_ms": 89.911,
+        "client_wall_p95_ms": 133.150,
+        "python_p50_ms": 0.0293,
+        "plan_execution_ms": 3.505,
+        "revision_rows_examined": 0,
+        "revision_shared_hit_blocks": 0,
+        "revision_shared_read_blocks": 0
+      },
+      "median_change_percent": -6.46
+    },
+    {
+      "shape": "mixed_30_pairs",
+      "candidate_pairs": 30,
+      "parity": true,
+      "before": {
+        "sql_count": 1,
+        "client_wall_p50_ms": 1231.115,
+        "client_wall_p95_ms": 1367.987,
+        "python_p50_ms": 0.0483,
+        "plan_execution_ms": 1103.156,
+        "revision_rows_examined": 1447221,
+        "revision_shared_hit_blocks": 13241,
+        "revision_shared_read_blocks": 272208
+      },
+      "after": {
+        "strategy": "current_first_then_exact_history",
+        "sql_count": 2,
+        "unresolved_pairs": 15,
+        "client_wall_p50_ms": 248.406,
+        "client_wall_p95_ms": 581.788,
+        "python_p50_ms": 0.0987,
+        "current_plan_execution_ms": 12.765,
+        "history_plan_execution_ms": 49.428,
+        "revision_rows_examined": 32490,
+        "revision_shared_hit_blocks": 36854,
+        "revision_shared_read_blocks": 0
+      },
+      "median_change_percent": -79.82
+    },
+    {
+      "shape": "history_heavy_75_pairs",
+      "candidate_pairs": 75,
+      "parity": true,
+      "before": {
+        "sql_count": 1,
+        "client_wall_p50_ms": 959.252,
+        "client_wall_p95_ms": 1402.178,
+        "python_p50_ms": 0.1017,
+        "plan_execution_ms": 796.074,
+        "revision_rows_examined": 1447221,
+        "revision_shared_hit_blocks": 32944,
+        "revision_shared_read_blocks": 257266
+      },
+      "after": {
+        "strategy": "single_query_safety_valve",
+        "sql_count": 1,
+        "client_wall_p50_ms": 944.875,
+        "client_wall_p95_ms": 1332.773,
+        "python_p50_ms": 0.1224,
+        "plan_execution_ms": 817.823,
+        "revision_rows_examined": 1447221,
+        "revision_shared_hit_blocks": 32783,
+        "revision_shared_read_blocks": 257427
+      },
+      "median_change_percent": -1.50
+    }
+  ],
+  "not_verified": [
+    "Authenticated HTTP duration",
+    "Endpoint JSON serialization duration",
+    "Endpoint raw response size",
+    "Endpoint gzip response size",
+    "Cold worker/cache-reset samples",
+    "Small/median/p95/max learner-history percentile mapping"
+  ],
+  "notes": [
+    "Pair-count shapes are bounded SQL cases, not learner-history percentiles.",
+    "Client wall time includes the remote network round trip.",
+    "The history-heavy safety valve executes the original SQL; the observed 1.50 percent median difference is measurement variability, not a different plan.",
+    "No learner identifiers or personal data are included."
+  ]
+}

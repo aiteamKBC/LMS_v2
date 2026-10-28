@@ -29,7 +29,8 @@ class QuizPlacementTests(unittest.TestCase):
                           'quizMeta': {'quizId': 10}, 'quizAttempts': [{'passed': True, 'score': 100}]}
 
     def run_reader(self, components, *, quiz_week='', extra_quiz=False, other_module=False,
-                   authored_quizzes=(), visible_weeks=None):
+                   extra_quiz_ids=(), current_authored_quizzes=(), authored_quizzes=(),
+                   visible_weeks=None):
         modules = [('M1', 'Module', 'P1', 'Programme')]
         weeks = deepcopy(self.weeks if visible_weeks is None else visible_weeks)
         if other_module:
@@ -39,10 +40,16 @@ class QuizPlacementTests(unittest.TestCase):
         if extra_quiz:
             quizzes.append((11, '', 'Independent quiz', 3, 10, 'Minutes', 'P1', 'Programme', 'Module'))
         links = [(10, 'M1', quiz_week)] + ([(10, 'M2', '')] if other_module else [])
+        for quiz_id in extra_quiz_ids:
+            quizzes.append((quiz_id, '', f'Quiz {quiz_id}', 3, 10, 'Minutes',
+                            'P1', 'Programme', 'Module'))
+            links.append((quiz_id, 'M1', ''))
         def execute(sql, params):
-            self.assertTrue(sql.strip().startswith('SELECT'))
+            self.assertTrue(sql.strip().startswith(('SELECT', 'WITH')))
             if 'FROM curriculum.record_revisions' in sql:
                 result = list(authored_quizzes)
+            elif 'FROM curriculum.quiz_component_links link' in sql:
+                result = list(current_authored_quizzes)
             elif 'FROM curriculum.modules' in sql:
                 result = modules
             elif 'FROM curriculum.quiz_course_links' in sql:
@@ -130,11 +137,61 @@ class QuizPlacementTests(unittest.TestCase):
         self.assertFalse(any('FROM curriculum.record_revisions' in call.args[0]
                              for call in self.cursor.execute.call_args_list))
 
+    def test_current_authored_pair_suppresses_fallback_without_revision_scan(self):
+        weeks, components = self.run_reader(
+            [], quiz_week='W1', current_authored_quizzes=[('M1', '10')],
+        )
+        self.assertEqual(weeks, self.weeks)
+        self.assertEqual(components, [])
+        ownership = [call for call in self.cursor.execute.call_args_list
+                     if 'FROM curriculum.quiz_component_links link' in call.args[0]]
+        self.assertEqual(len(ownership), 1)
+        self.assertIn('FROM curriculum.quiz_component_links link', ownership[0].args[0])
+        self.assertFalse(any('FROM curriculum.record_revisions' in call.args[0]
+                             for call in self.cursor.execute.call_args_list))
+
+    def test_current_pair_does_not_skip_history_for_another_module(self):
+        _, components = self.run_reader(
+            [], other_module=True,
+            current_authored_quizzes=[('M1', '10')],
+            authored_quizzes=[('M2', '10')],
+        )
+        self.assertEqual(components, [])
+        history = next(call for call in self.cursor.execute.call_args_list
+                       if 'FROM curriculum.record_revisions' in call.args[0])
+        self.assertEqual(history.args[1], [['M2'], [10]])
+
+    def test_multiple_matching_revisions_are_deduplicated(self):
+        _, components = self.run_reader(
+            [], authored_quizzes=[('M1', '10'), ('M1', '10')],
+        )
+        self.assertEqual(components, [])
+
+    def test_large_history_set_uses_one_bounded_revision_scan(self):
+        quiz_ids = list(range(100, 133))
+        authored = [('M1', str(quiz_id)) for quiz_id in quiz_ids]
+        _, components = self.run_reader(
+            [self.component], extra_quiz_ids=quiz_ids, authored_quizzes=authored,
+        )
+        self.assertEqual(components, [self.component])
+        history = next(call for call in self.cursor.execute.call_args_list
+                       if 'FROM curriculum.record_revisions' in call.args[0])
+        self.assertNotIn('FROM unnest', history.args[0])
+        self.assertEqual(history.args[1], [
+            ['M1'], [str(quiz_id) for quiz_id in quiz_ids],
+            ['M1'], quiz_ids,
+            ['M1'], [str(quiz_id) for quiz_id in quiz_ids],
+        ])
+
     def test_ownership_lookup_only_checks_unrepresented_quizzes_in_assigned_modules(self):
         self.run_reader([self.component], extra_quiz=True)
-        call = next(call for call in self.cursor.execute.call_args_list
-                    if 'FROM curriculum.record_revisions' in call.args[0])
-        self.assertEqual(call.args[1], [['M1'], ['11'], ['M1'], [11], ['M1'], ['11']])
+        current = next(call for call in self.cursor.execute.call_args_list
+                       if 'FROM curriculum.quiz_component_links link' in call.args[0]
+                       and 'FROM curriculum.record_revisions' not in call.args[0])
+        history = next(call for call in self.cursor.execute.call_args_list
+                       if 'FROM curriculum.record_revisions' in call.args[0])
+        self.assertEqual(current.args[1], [['M1'], ['11'], ['M1'], [11]])
+        self.assertEqual(history.args[1], [['M1'], [11]])
 
 
 if __name__ == '__main__':

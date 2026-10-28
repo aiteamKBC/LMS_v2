@@ -1,0 +1,481 @@
+{
+  "classification": "ISOLATED POSTGRESQL MEASUREMENT",
+  "database": "neondb",
+  "server_version": "18.6 (fd34222)",
+  "transaction_read_only": "on",
+  "in_recovery": false,
+  "direct_endpoint_id": "ep-dawn-block-ab5vob3x",
+  "django_aliases": {
+    "default": "ep-dawn-block-ab5vob3x",
+    "enrolment": "ep-dawn-block-ab5vob3x"
+  },
+  "sql_fingerprints": {
+    "catalogue": {
+      "before": "d413d31341579f02",
+      "after": "40c9bb6b34873ad1"
+    }
+  },
+  "results": [
+    {
+      "shape": "small",
+      "mode": "catalogue",
+      "progress_entries": 48,
+      "returned_rows": 48,
+      "iterations": 20,
+      "parity": true,
+      "before": {
+        "client_wall_p50_ms": 707.829,
+        "client_wall_p95_ms": 1124.445,
+        "plan": {
+          "planning_ms": 7.919,
+          "execution_ms": 5.858,
+          "relations": {
+            "learner_progress_entries": {
+              "rows_examined": 63,
+              "shared_hit_blocks": 94,
+              "shared_read_blocks": 0
+            },
+            "learner_activity_reporting_segments": {
+              "rows_examined": 28,
+              "shared_hit_blocks": 124,
+              "shared_read_blocks": 0
+            },
+            "learner_activity_sources": {
+              "rows_examined": 72,
+              "shared_hit_blocks": 288,
+              "shared_read_blocks": 0
+            },
+            "source_activities": {
+              "rows_examined": 0,
+              "shared_hit_blocks": 0,
+              "shared_read_blocks": 0
+            },
+            "source_courses": {
+              "rows_examined": 9072,
+              "shared_hit_blocks": 624,
+              "shared_read_blocks": 0
+            },
+            "learner_journal_rows": {
+              "rows_examined": 24,
+              "shared_hit_blocks": 179,
+              "shared_read_blocks": 0
+            },
+            "learner_progress_historical_components": {
+              "rows_examined": 9295,
+              "shared_hit_blocks": 367,
+              "shared_read_blocks": 0
+            },
+            "historical_components": {
+              "rows_examined": 0,
+              "shared_hit_blocks": 0,
+              "shared_read_blocks": 0
+            }
+          }
+        }
+      },
+      "after": {
+        "client_wall_p50_ms": 747.175,
+        "client_wall_p95_ms": 1151.53,
+        "plan": {
+          "planning_ms": 7.93,
+          "execution_ms": 4.198,
+          "relations": {
+            "learner_progress_entries": {
+              "rows_examined": 63,
+              "shared_hit_blocks": 94,
+              "shared_read_blocks": 0
+            },
+            "learner_activity_reporting_segments": {
+              "rows_examined": 28,
+              "shared_hit_blocks": 124,
+              "shared_read_blocks": 0
+            },
+            "learner_activity_sources": {
+              "rows_examined": 96,
+              "shared_hit_blocks": 384,
+              "shared_read_blocks": 0
+            },
+            "source_activities": {
+              "rows_examined": 0,
+              "shared_hit_blocks": 0,
+              "shared_read_blocks": 0
+            },
+            "source_courses": {
+              "rows_examined": 0,
+              "shared_hit_blocks": 0,
+              "shared_read_blocks": 0
+            },
+            "learner_journal_rows": {
+              "rows_examined": 24,
+              "shared_hit_blocks": 179,
+              "shared_read_blocks": 0
+            },
+            "learner_progress_historical_components": {
+              "rows_examined": 9295,
+              "shared_hit_blocks": 367,
+              "shared_read_blocks": 0
+            },
+            "historical_components": {
+              "rows_examined": 0,
+              "shared_hit_blocks": 0,
+              "shared_read_blocks": 0
+            }
+          }
+        }
+      },
+      "median_change_percent": 5.56,
+      "sql_result_serialization": {
+        "python_ms": 0.952,
+        "raw_bytes": 77687,
+        "gzip_bytes": 4363
+      }
+    },
+    {
+      "shape": "median",
+      "mode": "catalogue",
+      "progress_entries": 355,
+      "returned_rows": 355,
+      "iterations": 20,
+      "parity": true,
+      "before": {
+        "client_wall_p50_ms": 383.622,
+        "client_wall_p95_ms": 818.806,
+        "plan": {
+          "planning_ms": 8.468,
+          "execution_ms": 34.634,
+          "relations": {
+            "learner_progress_entries": {
+              "rows_examined": 368,
+              "shared_hit_blocks": 307,
+              "shared_read_blocks": 0
+            },
+            "learner_activity_reporting_segments": {
+              "rows_examined": 241,
+              "shared_hit_blocks": 951,
+              "shared_read_blocks": 0
+            },
+            "learner_activity_sources": {
+              "rows_examined": 570,
+              "shared_hit_blocks": 2211,
+              "shared_read_blocks": 0
+            },
+            "source_activities": {
+              "rows_examined": 167,
+              "shared_hit_blocks": 498,
+              "shared_read_blocks": 0
+            },
+            "source_courses": {
+              "rows_examined": 60388,
+              "shared_hit_blocks": 3957,
+              "shared_read_blocks": 0
+            },
+            "learner_journal_rows": {
+              "rows_examined": 191,
+              "shared_hit_blocks": 1259,
+              "shared_read_blocks": 0
+            },
+            "learner_progress_historical_components": {
+              "rows_examined": 9295,
+              "shared_hit_blocks": 367,
+              "shared_read_blocks": 0
+            },
+            "historical_components": {
+              "rows_examined": 84,
+              "shared_hit_blocks": 252,
+              "shared_read_blocks": 0
+            }
+          }
+        }
+      },
+      "after": {
+        "client_wall_p50_ms": 332.706,
+        "client_wall_p95_ms": 661.852,
+        "plan": {
+          "planning_ms": 6.935,
+          "execution_ms": 22.595,
+          "relations": {
+            "learner_progress_entries": {
+              "rows_examined": 368,
+              "shared_hit_blocks": 307,
+              "shared_read_blocks": 0
+            },
+            "learner_activity_reporting_segments": {
+              "rows_examined": 241,
+              "shared_hit_blocks": 951,
+              "shared_read_blocks": 0
+            },
+            "learner_activity_sources": {
+              "rows_examined": 758,
+              "shared_hit_blocks": 2890,
+              "shared_read_blocks": 0
+            },
+            "source_activities": {
+              "rows_examined": 167,
+              "shared_hit_blocks": 498,
+              "shared_read_blocks": 0
+            },
+            "source_courses": {
+              "rows_examined": 167,
+              "shared_hit_blocks": 498,
+              "shared_read_blocks": 0
+            },
+            "learner_journal_rows": {
+              "rows_examined": 190,
+              "shared_hit_blocks": 1337,
+              "shared_read_blocks": 0
+            },
+            "learner_progress_historical_components": {
+              "rows_examined": 9295,
+              "shared_hit_blocks": 367,
+              "shared_read_blocks": 0
+            },
+            "historical_components": {
+              "rows_examined": 84,
+              "shared_hit_blocks": 252,
+              "shared_read_blocks": 0
+            }
+          }
+        }
+      },
+      "median_change_percent": -13.27,
+      "sql_result_serialization": {
+        "python_ms": 2.544,
+        "raw_bytes": 595737,
+        "gzip_bytes": 26525
+      }
+    },
+    {
+      "shape": "p95",
+      "mode": "catalogue",
+      "progress_entries": 1105,
+      "returned_rows": 1105,
+      "iterations": 20,
+      "parity": true,
+      "before": {
+        "client_wall_p50_ms": 1310.102,
+        "client_wall_p95_ms": 2231.65,
+        "plan": {
+          "planning_ms": 7.997,
+          "execution_ms": 82.933,
+          "relations": {
+            "learner_progress_entries": {
+              "rows_examined": 1128,
+              "shared_hit_blocks": 209,
+              "shared_read_blocks": 0
+            },
+            "learner_activity_reporting_segments": {
+              "rows_examined": 54925,
+              "shared_hit_blocks": 831,
+              "shared_read_blocks": 0
+            },
+            "learner_activity_sources": {
+              "rows_examined": 2045,
+              "shared_hit_blocks": 8017,
+              "shared_read_blocks": 0
+            },
+            "source_activities": {
+              "rows_examined": 277,
+              "shared_hit_blocks": 816,
+              "shared_read_blocks": 0
+            },
+            "source_courses": {
+              "rows_examined": 189,
+              "shared_hit_blocks": 13,
+              "shared_read_blocks": 0
+            },
+            "learner_journal_rows": {
+              "rows_examined": 884,
+              "shared_hit_blocks": 4199,
+              "shared_read_blocks": 0
+            },
+            "learner_progress_historical_components": {
+              "rows_examined": 9295,
+              "shared_hit_blocks": 367,
+              "shared_read_blocks": 0
+            },
+            "historical_components": {
+              "rows_examined": 0,
+              "shared_hit_blocks": 0,
+              "shared_read_blocks": 0
+            }
+          }
+        }
+      },
+      "after": {
+        "client_wall_p50_ms": 1325.817,
+        "client_wall_p95_ms": 2278.203,
+        "plan": {
+          "planning_ms": 8.398,
+          "execution_ms": 61.62,
+          "relations": {
+            "learner_progress_entries": {
+              "rows_examined": 1128,
+              "shared_hit_blocks": 209,
+              "shared_read_blocks": 0
+            },
+            "learner_activity_reporting_segments": {
+              "rows_examined": 0,
+              "shared_hit_blocks": 2210,
+              "shared_read_blocks": 0
+            },
+            "learner_activity_sources": {
+              "rows_examined": 2045,
+              "shared_hit_blocks": 8017,
+              "shared_read_blocks": 0
+            },
+            "source_activities": {
+              "rows_examined": 277,
+              "shared_hit_blocks": 816,
+              "shared_read_blocks": 0
+            },
+            "source_courses": {
+              "rows_examined": 277,
+              "shared_hit_blocks": 816,
+              "shared_read_blocks": 0
+            },
+            "learner_journal_rows": {
+              "rows_examined": 884,
+              "shared_hit_blocks": 4199,
+              "shared_read_blocks": 0
+            },
+            "learner_progress_historical_components": {
+              "rows_examined": 9295,
+              "shared_hit_blocks": 367,
+              "shared_read_blocks": 0
+            },
+            "historical_components": {
+              "rows_examined": 0,
+              "shared_hit_blocks": 0,
+              "shared_read_blocks": 0
+            }
+          }
+        }
+      },
+      "median_change_percent": 1.2,
+      "sql_result_serialization": {
+        "python_ms": 12.0999,
+        "raw_bytes": 1823521,
+        "gzip_bytes": 74300
+      }
+    },
+    {
+      "shape": "maximum",
+      "mode": "catalogue",
+      "progress_entries": 2790,
+      "returned_rows": 2790,
+      "iterations": 20,
+      "parity": true,
+      "before": {
+        "client_wall_p50_ms": 2622.988,
+        "client_wall_p95_ms": 5419.708,
+        "plan": {
+          "planning_ms": 8.058,
+          "execution_ms": 307.312,
+          "relations": {
+            "learner_progress_entries": {
+              "rows_examined": 3617,
+              "shared_hit_blocks": 1872,
+              "shared_read_blocks": 0
+            },
+            "learner_activity_reporting_segments": {
+              "rows_examined": 54925,
+              "shared_hit_blocks": 831,
+              "shared_read_blocks": 0
+            },
+            "learner_journal_rows": {
+              "rows_examined": 186304,
+              "shared_hit_blocks": 3430,
+              "shared_read_blocks": 10818
+            },
+            "learner_activity_sources": {
+              "rows_examined": 4842,
+              "shared_hit_blocks": 16582,
+              "shared_read_blocks": 0
+            },
+            "learner_progress_historical_components": {
+              "rows_examined": 9295,
+              "shared_hit_blocks": 367,
+              "shared_read_blocks": 0
+            },
+            "historical_components": {
+              "rows_examined": 2997,
+              "shared_hit_blocks": 541,
+              "shared_read_blocks": 0
+            },
+            "source_activities": {
+              "rows_examined": 2612,
+              "shared_hit_blocks": 7818,
+              "shared_read_blocks": 0
+            },
+            "source_courses": {
+              "rows_examined": 189,
+              "shared_hit_blocks": 13,
+              "shared_read_blocks": 0
+            }
+          }
+        }
+      },
+      "after": {
+        "client_wall_p50_ms": 2597.304,
+        "client_wall_p95_ms": 3899.322,
+        "plan": {
+          "planning_ms": 7.04,
+          "execution_ms": 177.777,
+          "relations": {
+            "learner_progress_entries": {
+              "rows_examined": 3617,
+              "shared_hit_blocks": 1872,
+              "shared_read_blocks": 0
+            },
+            "learner_activity_reporting_segments": {
+              "rows_examined": 0,
+              "shared_hit_blocks": 3,
+              "shared_read_blocks": 0
+            },
+            "learner_activity_sources": {
+              "rows_examined": 7588,
+              "shared_hit_blocks": 24156,
+              "shared_read_blocks": 0
+            },
+            "source_activities": {
+              "rows_examined": 2612,
+              "shared_hit_blocks": 7818,
+              "shared_read_blocks": 0
+            },
+            "source_courses": {
+              "rows_examined": 2612,
+              "shared_hit_blocks": 7818,
+              "shared_read_blocks": 0
+            },
+            "learner_journal_rows": {
+              "rows_examined": 1060,
+              "shared_hit_blocks": 12466,
+              "shared_read_blocks": 0
+            },
+            "learner_progress_historical_components": {
+              "rows_examined": 9295,
+              "shared_hit_blocks": 367,
+              "shared_read_blocks": 0
+            },
+            "historical_components": {
+              "rows_examined": 2997,
+              "shared_hit_blocks": 541,
+              "shared_read_blocks": 0
+            }
+          }
+        }
+      },
+      "median_change_percent": -0.98,
+      "sql_result_serialization": {
+        "python_ms": 27.2516,
+        "raw_bytes": 5175250,
+        "gzip_bytes": 267461
+      }
+    }
+  ],
+  "limitations": [
+    "Measurements cover canonical ledger SQL, not total endpoint latency.",
+    "Serialized bytes cover SQL rows only, not HTTP responses.",
+    "Client wall includes remote network and JSON decoding."
+  ]
+}

@@ -769,7 +769,7 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
                 for c in components if c.get('isQuiz') and isinstance(c.get('quizMeta'), dict)
                 and c['quizMeta'].get('quizId') is not None
             }
-            pending_modules, pending_quizzes = set(), set()
+            pending_pairs = set()
             for quiz in quiz_rows_by_id.values():
                 targets = _matching_module_ids_for_quiz_record(
                     quiz, modules_by_id, explicit_module_ids_by_quiz.get(quiz['id'], set()))
@@ -778,38 +778,107 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
                                if any(item['weekId'] == quiz['weekId'] for item in items)]
                 for mid in targets:
                     if (mid, str(quiz['id'])) not in represented:
-                        pending_modules.add(mid)
-                        pending_quizzes.add(quiz['id'])
-            if pending_modules and pending_quizzes:
+                        pending_pairs.add((_s(mid), quiz['id']))
+            if pending_pairs:
                 # A quiz that belongs (or belonged) to a builder component is
                 # delivered only through the current authored component tree.
                 # Deleted/relinked slots must not reappear through stale course
                 # links or quiz metadata. Keep history for progress, and scope
                 # ownership per module so independent assignments still work.
-                # Already represented quizzes need no history scan.
-                scope_ids = sorted(pending_modules)
-                quiz_ids = sorted(pending_quizzes)
-                quiz_refs = [str(quiz_id) for quiz_id in quiz_ids]
-                cur.execute(
-                    """
-                    SELECT c.module_catalogue_id, c.settings_json->>'linkedQuizId'
-                    FROM curriculum.components c
-                    WHERE c.module_catalogue_id = ANY(%s)
-                      AND c.settings_json->>'linkedQuizId' = ANY(%s)
-                    UNION
-                    SELECT c.module_catalogue_id, link.quiz_id::text
-                    FROM curriculum.quiz_component_links link
-                    JOIN curriculum.components c ON c.id = link.component_id
-                    WHERE c.module_catalogue_id = ANY(%s) AND link.quiz_id = ANY(%s)
-                    UNION
-                    SELECT r.module_catalogue_id, r.snapshot->'settings_json'->>'linkedQuizId'
-                    FROM curriculum.record_revisions r
-                    WHERE r.entity_type = 'component' AND r.module_catalogue_id = ANY(%s)
-                      AND r.snapshot->'settings_json'->>'linkedQuizId' = ANY(%s)
-                    """,
-                    [scope_ids, quiz_refs, scope_ids, quiz_ids, scope_ids, quiz_refs],
-                )
-                authored_quizzes = {(_s(module_id), str(quiz_id)) for module_id, quiz_id in cur.fetchall()}
+                # Already represented quizzes need no ownership lookup. For the
+                # remaining exact (module, quiz) pairs, current rows are enough
+                # to suppress metadata fallback; the same pair in revision
+                # history cannot add another outcome to this set. A different
+                # module remains an independent pair and still reaches history.
+                ordered_pairs = sorted(pending_pairs, key=lambda pair: (pair[0], str(pair[1])))
+                pending_module_ids = sorted({pair[0] for pair in ordered_pairs})
+                pending_quiz_ids = sorted({pair[1] for pair in ordered_pairs})
+                staged_pair_limit = 32
+                if len(ordered_pairs) > staged_pair_limit:
+                    # Above this point, a second round trip plus a broad history
+                    # scan costs more than the proven single-query path. Keep
+                    # that path as a bounded safety valve for outlier payloads.
+                    cur.execute(
+                        """
+                        SELECT c.module_catalogue_id, c.settings_json->>'linkedQuizId'
+                        FROM curriculum.components c
+                        WHERE c.module_catalogue_id = ANY(%s)
+                          AND c.settings_json->>'linkedQuizId' = ANY(%s)
+                        UNION
+                        SELECT c.module_catalogue_id, link.quiz_id::text
+                        FROM curriculum.quiz_component_links link
+                        JOIN curriculum.components c ON c.id = link.component_id
+                        WHERE c.module_catalogue_id = ANY(%s) AND link.quiz_id = ANY(%s)
+                        UNION
+                        SELECT r.module_catalogue_id,
+                               r.snapshot->'settings_json'->>'linkedQuizId'
+                        FROM curriculum.record_revisions r
+                        WHERE r.entity_type = 'component'
+                          AND r.module_catalogue_id = ANY(%s)
+                          AND r.snapshot->'settings_json'->>'linkedQuizId' = ANY(%s)
+                        """,
+                        [
+                            pending_module_ids,
+                            [str(quiz_id) for quiz_id in pending_quiz_ids],
+                            pending_module_ids,
+                            pending_quiz_ids,
+                            pending_module_ids,
+                            [str(quiz_id) for quiz_id in pending_quiz_ids],
+                        ],
+                    )
+                    authored_quizzes = {
+                        (_s(module_id), str(quiz_id)) for module_id, quiz_id in cur.fetchall()
+                    }
+                else:
+                    cur.execute(
+                        """
+                        SELECT c.module_catalogue_id, c.settings_json->>'linkedQuizId'
+                        FROM curriculum.components c
+                        WHERE c.module_catalogue_id = ANY(%s)
+                          AND c.settings_json->>'linkedQuizId' = ANY(%s)
+                        UNION
+                        SELECT c.module_catalogue_id, link.quiz_id::text
+                        FROM curriculum.quiz_component_links link
+                        JOIN curriculum.components c ON c.id = link.component_id
+                        WHERE c.module_catalogue_id = ANY(%s)
+                          AND link.quiz_id = ANY(%s)
+                        """,
+                        [
+                            pending_module_ids,
+                            [str(quiz_id) for quiz_id in pending_quiz_ids],
+                            pending_module_ids,
+                            pending_quiz_ids,
+                        ],
+                    )
+                    authored_quizzes = {
+                        (_s(module_id), str(quiz_id)) for module_id, quiz_id in cur.fetchall()
+                    }
+                    unresolved_pairs = [
+                        pair for pair in ordered_pairs
+                        if (_s(pair[0]), str(pair[1])) not in authored_quizzes
+                    ]
+                    if unresolved_pairs:
+                        cur.execute(
+                            """
+                            SELECT pending.module_catalogue_id, pending.quiz_id::text
+                            FROM unnest(%s::varchar[], %s::bigint[])
+                                 AS pending(module_catalogue_id, quiz_id)
+                            WHERE EXISTS (
+                                SELECT 1
+                                FROM curriculum.record_revisions r
+                                WHERE r.entity_type = 'component'
+                                  AND r.module_catalogue_id = pending.module_catalogue_id
+                                  AND r.snapshot->'settings_json'->>'linkedQuizId' = pending.quiz_id::text
+                            )
+                            """,
+                            [
+                                [pair[0] for pair in unresolved_pairs],
+                                [pair[1] for pair in unresolved_pairs],
+                            ],
+                        )
+                        authored_quizzes.update(
+                            (_s(module_id), str(quiz_id)) for module_id, quiz_id in cur.fetchall()
+                        )
     except DatabaseError as exc:
         logger.warning("Could not look up learner-visible quizzes: %s", exc)
         if strict:
@@ -1166,7 +1235,7 @@ def _review_otjh_hours(learner_profile):
     return planned, review_otjh.completed_hours(learner_id)
 
 
-def _live_otjh_snapshot(detail, learner_profile=None):
+def _live_otjh_snapshot(detail, learner_profile=None, *, progress=None):
     # Reviews are off-the-job training in their own right when Curriculum says
     # so, so they land in the same two totals as curriculum components rather
     # than a figure of their own: planned grows when a review is scheduled,
@@ -1175,7 +1244,7 @@ def _live_otjh_snapshot(detail, learner_profile=None):
     planned = fmt_hours(float(detail.get("totalExpectedOtjh") or 0) + review_planned)
     completed = (
         completed_hours_from_progress(
-            learner_profile.training_plan_progress,
+            learner_profile.training_plan_progress if progress is None else progress,
             detail.get("components"),
         )
         if learner_profile
@@ -1535,7 +1604,8 @@ from .audio_alternative import AUDIO_ALTERNATIVE_SETTINGS_SQL, audio_alternative
 
 def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, compact=False,
                          live_session_ids=True, expected_otjh=False, strict=False, week_ids=None, identities_only=False,
-                         resolved_metadata=None, routing_only=False, compact_content=False, catalogue_facts=False):
+                         resolved_metadata=None, routing_only=False, compact_content=False, catalogue_facts=False,
+                         resolved_expected_otjh=None):
     """Rebuild the module -> week -> component tree LIVE from the master
     authoring tables (curriculum.modules/weeks/components) so coach edits in the
     Module Builder show up immediately for already-enrolled learners.
@@ -1956,6 +2026,12 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
 
     comps_by_week = {}
     for comp_id, week_id, _mid, ctype, ctitle, cdesc, settings, stored_live_link, _order, _ksb_mappings, reflection_required, reflection_question, tutor_validation_required, *component_otjh in master_components:
+        if expected_otjh and resolved_expected_otjh is not None:
+            resolved_expected_otjh[comp_id] = (
+                float(component_otjh[0])
+                if component_otjh and component_otjh[0] is not None
+                else None
+            )
         # settings_json comes back from the raw cursor as a JSON string (JSONField
         # auto-parsing only happens through the ORM), so parse it here.
         if isinstance(settings, str):
@@ -2235,7 +2311,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
     return out_modules, out_weeks, out_components
 
 
-def _annotate_otjh(components):
+def _annotate_otjh(components, *, resolved_expected_otjh=None):
     """Attach expectedOtjh (hours, float|None) to each component dict. Prefers
     an exact componentId match (structured-plan saves); falls back to title
     matching only for components saved before that format existed. Returns
@@ -2243,14 +2319,26 @@ def _annotate_otjh(components):
     if not components:
         return components, 0.0
 
-    otjh_by_id = _otjh_by_component_id(components)
-    otjh_by_legacy_key = _otjh_by_legacy_title(components)
+    if resolved_expected_otjh is None:
+        resolved_expected_otjh = {}
+    unresolved = [
+        component for component in components
+        if component.get("componentId")
+        and component.get("componentId") not in resolved_expected_otjh
+    ]
+    otjh_by_id = _otjh_by_component_id(unresolved) if unresolved else {}
+    legacy_components = [component for component in components if not component.get("componentId")]
+    otjh_by_legacy_key = _otjh_by_legacy_title(legacy_components) if legacy_components else {}
 
     total = 0.0
     for c in components:
         cid = c.get("componentId")
         if cid:
-            otjh = otjh_by_id.get(cid)
+            otjh = (
+                resolved_expected_otjh[cid]
+                if cid in resolved_expected_otjh
+                else otjh_by_id.get(cid)
+            )
         else:
             otjh = otjh_by_legacy_key.get((c.get("module"), c.get("week"), c.get("component")))
         c["expectedOtjh"] = otjh
@@ -2278,6 +2366,7 @@ def build_learner_detail(
     quiz_view=False,
     activity_component_id=None,
     resolved_profile=...,
+    summary_view=False,
 ):
     """The learner's full workspace payload for one already-loaded source row.
 
@@ -2303,7 +2392,10 @@ def build_learner_detail(
         source,
         pk,
         **profile_options,
-        **({'heal': False} if activity_component_id else {}),
+        # A read-only projection must never repair canonical identity as a
+        # side effect.  Activity already enforced this boundary; summary and
+        # quiz reads use the same resolver and need the same guarantee.
+        **({'heal': False} if read_only or activity_component_id else {}),
     )
 
     if learner_profile and not learner_profile.ksbs and not read_only:
@@ -2326,7 +2418,19 @@ def build_learner_detail(
         except DatabaseError as exc:
             logger.warning("Could not refresh learner KSB snapshot for %s: %s", pk, exc)
 
-    detail = to_learner_detail(source, learner_profile)
+    # Summary needs the complete historical contract, but it must not project
+    # the same normalized progress graph twice (once for the response and once
+    # for live OTJH). Keep the reuse explicitly scoped to this endpoint mode.
+    summary_progress = (
+        learner_profile.training_plan_progress
+        if summary_view and learner_profile is not None
+        else None
+    )
+    detail = to_learner_detail(
+        source,
+        learner_profile,
+        **({"progress": summary_progress} if summary_view else {}),
+    )
     # Created_users.Attendance_type is the staff-owned delivery classification.
     # The live-session results view uses it to avoid presenting a Teams absence
     # workflow to learners whose programme is delivered through recordings.
@@ -2338,21 +2442,33 @@ def build_learner_detail(
     _apply_cohort_schedule(detail, source)
     # Live-resolve titles + membership from the master authoring tables so coach
     # edits in Module Builder reflect here immediately (structured-plan learners).
+    resolved_expected_otjh = {} if summary_view else None
     detail["modules"], detail["week"], detail["components"] = _resolve_from_master(
         detail["modules"], detail["week"], detail["components"],
         assigned_modules=assigned_modules,
         **({"compact": True} if compact else {}),
+        **({
+            "expected_otjh": True,
+            "resolved_expected_otjh": resolved_expected_otjh,
+        } if summary_view else {}),
     )
     detail["components"] = _apply_programme_assignment_template(
         detail["components"], getattr(source, "programme", "")
     )
-    detail["components"], detail["totalExpectedOtjh"] = _annotate_otjh(detail["components"])
+    detail["components"], detail["totalExpectedOtjh"] = _annotate_otjh(
+        detail["components"],
+        **({"resolved_expected_otjh": resolved_expected_otjh} if summary_view else {}),
+    )
     detail["week"], detail["components"] = _append_week_quizzes(
         detail["week"], detail["components"], assigned_modules=assigned_modules,
     )
     # Quiz runners need the plan, progress and reflection requirements, not
     # dashboard totals or their persistence on a GET request.
-    snapshot = None if quiz_view or activity_component_id else _live_otjh_snapshot(detail, learner_profile)
+    snapshot = None if quiz_view or activity_component_id else _live_otjh_snapshot(
+        detail,
+        learner_profile,
+        **({"progress": summary_progress} if summary_view else {}),
+    )
     if snapshot is not None:
         _apply_live_otjh_snapshot(detail, snapshot)
     if snapshot is not None and learner_profile is not None and not read_only:
@@ -2506,7 +2622,14 @@ def learner_detail(request, kind, pk):
             response = JsonResponse(detail)
             response['Cache-Control'] = 'private, no-store'
             return response
-        options = {"compact": True} if request.GET.get("content") == "summary" else {}
+        # Summary is a query projection. Lifecycle progression, plan
+        # hydration and identity reconciliation belong to established
+        # lifecycle/write-side triggers. OTJH stays live-calculated for this
+        # response; persisting its derived cache does not belong to a page GET.
+        options = (
+            {"compact": True, "read_only": True, "summary_view": True}
+            if request.GET.get("content") == "summary" else {}
+        )
         if request.GET.get("content") == "quiz":
             options = {"compact": True, "read_only": True, "quiz_view": True}
         with measure_projection(

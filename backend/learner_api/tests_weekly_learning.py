@@ -296,3 +296,14 @@ class ResolveFromMasterOptionTests(SimpleTestCase):
         self.assertEqual(len(statements), len(default_statements) - 2)
         self.assertEqual((modules, weeks), (['Marketing'], [{'module': 'Marketing', 'week': 'Week 1', 'moduleId': 'M1', 'weekId': 'W1'}]))
         self.assertEqual(components[0]['sessionDate'], '2026-09-14')
+
+    def test_expected_otjh_can_be_reused_by_the_summary_request(self):
+        resolved = {}
+        (_modules, _weeks, components), _statements = self.resolve(
+            live_session_ids=False,
+            expected_otjh=True,
+            resolved_expected_otjh=resolved,
+        )
+
+        self.assertEqual(resolved, {'L1': 1.5})
+        self.assertEqual(components[0]['expectedOtjh'], resolved['L1'])

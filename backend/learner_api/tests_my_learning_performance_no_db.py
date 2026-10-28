@@ -104,14 +104,25 @@ class CataloguePerformanceTests(SimpleTestCase):
             self.assertEqual(canonical.entries_for({'id':9},lineage_only=True,monthly_summary=True,catalogue_summary=True),[])
         self.assertEqual(query.call_count,1)
         sql,params=query.call_args.args
-        self.assertEqual(params,[9])
+        self.assertEqual(params,[9,9,9,9])
         self.assertNotIn('learner_progress_ksbs',sql)
         self.assertNotIn('to_jsonb(s)',sql);self.assertNotIn('to_jsonb(h)',sql)
         self.assertNotIn("jsonb_build_object('id',s.id)",sql)
         self.assertIn("'[{}]'::jsonb AS payload",sql)
         self.assertIn("'source_activity_id',h.source_activity_id",sql)
         self.assertIn('s.learner_id=p.learner_id',sql)
+        self.assertIn('WHERE s.learner_id=%s',sql)
+        self.assertIn('WHERE s.learner_id=%s AND s.deleted_at IS NULL',sql)
+        self.assertIn('WHERE j.canonical_learner_id=%s AND j.deleted_at IS NULL',sql)
         self.assertIn('progress.deleted_at IS NULL',sql)
+
+    def test_selected_catalogue_keeps_entry_selection_before_relationship_scopes(self):
+        with patch.object(canonical,'query',return_value=[]) as query, \
+             patch.object(canonical,'current_records',return_value=[]):
+            canonical.entries_for({'id':9},entry_ids=[31,32],catalogue_summary=True)
+        sql,params=query.call_args.args
+        self.assertIn('progress.id=ANY(%s)',sql)
+        self.assertEqual(params,[9,[31,32],9,9,9])
 
     def test_card_metadata_does_not_plan_holidays_or_read_group_settings(self):
         cur=MagicMock()
