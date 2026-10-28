@@ -64,3 +64,10 @@ it('lists separate forms for the same learner using their saved names without re
   expect(open).toHaveBeenCalledWith('review-two');
   expect(attachedQualityPdf).not.toHaveBeenCalled(); expect(meetingQualityChecks).toHaveBeenCalledOnce();
 });
+
+it('shows the authenticated saver separately from the learner and preserves missing historical names', async () => {
+  vi.mocked(meetingQualityChecks).mockResolvedValue({ reviews: [{ ...check, reviewerName: 'Quality Reviewer' }, { ...check, id: 'old-review' }], nextOffset: null });
+  render(<MeetingQualityChecks meetingId={'a'.repeat(32)} refresh={0} onOpen={vi.fn()} onPreviewChange={vi.fn()} />);
+  expect(await screen.findByText('Saved by: Quality Reviewer')).toBeInTheDocument();
+  expect(screen.getByText('Saved by: Not recorded')).toBeInTheDocument();
+});

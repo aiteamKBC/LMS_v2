@@ -104,6 +104,7 @@ class QualityTypeStorageTests(SimpleTestCase):
     def test_filters_include_legacy_titles_and_explicit_overrides_and_pdf_history(self):
         for index,title,kind in [(1,'Monthly Coaching Review',''),(2,'Progress Review',''),(3,'MCM with a corrected quality type','PR')]:
             value=snapshot();value['identity']=str(index)*64;value['meeting']['id']='a'*32;value['meeting']['title']=title
+            value['reviewer']={'id':'staff:1','name':'Quality Reviewer'}
             if kind:value['reviewType']=kind
             value.update(status='completed',form=form(True))
             saved=store.save_review(value,expected=0,request_id=str(uuid4()),actor='staff:1')
@@ -116,6 +117,8 @@ class QualityTypeStorageTests(SimpleTestCase):
         self.assertEqual(len(store.list_reviews(start,end,pdf='missing')[0]),2)
         rows,_=store.reviews_for_meeting('a'*32)
         self.assertEqual({row['review_type'] for row in rows},{'MCM','PR'})
+        self.assertTrue(all(row['reviewer_name']=='Quality Reviewer' for row in rows))
+        self.assertTrue(all(row['reviewer_name']=='Quality Reviewer' for row in pr))
         self.assertNotIn('form',rows[0]);self.assertNotIn('content',rows[0])
 
 

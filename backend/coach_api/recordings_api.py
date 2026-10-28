@@ -234,11 +234,11 @@ def coaching_recordings_calendar(request):
         chosen = _email(request.GET.get('coachEmail'))
         if chosen and chosen not in {row['email'] for row in coaches}:
             return _response({'error': 'Coach not found.', 'code': 'not_found'}, 404)
-        learners = _learners((chosen or None) if background and all_access else None if all_access else owner)
+        directory_only = request.GET.get('directoryOnly') == '1'
+        learners = [] if directory_only else _learners((chosen or None) if background and all_access else None if all_access else owner)
         if learner_id and learner_id not in {str(row['id']) for row in learners}:
             return _response({'error': 'Learner not found.', 'code': 'not_found'}, 404)
         selected = [row for row in coaches if not chosen or row['email'] == chosen]
-        directory_only = request.GET.get('directoryOnly') == '1'
         page = [] if directory_only else selected if background else selected[offset:offset + limit]
         # Resolve all database reads before external requests. A database failure
         # must not be misreported as missing LMS appointments.
@@ -627,7 +627,8 @@ def coaching_saved_evidence_pdf(request):
         evidence = _saved_session_evidence(request, record, job, part='pdf')
         if kind == 'transcript' and not evidence['transcript'] and request.GET.get('checkMicrosoft') == '1':
             evidence = check_microsoft_transcript(record, job, evidence)
-        if evidence['state'] == 'unavailable' or (evidence.get('transcriptCheck') or {}).get('state') == 'unavailable':
+        if evidence['state'] == 'unavailable' or (kind == 'transcript' and not evidence['transcript']
+                and (evidence.get('transcriptCheck') or {}).get('state') == 'unavailable'):
             return _response({'error': 'This PDF could not be prepared because its saved evidence is unavailable. Please retry.', 'code': 'pdf_evidence_unavailable'}, 503)
         analysis = next((row for row in evidence['analyses'] if row['id'] == request.GET.get('analysisId')
                          and row['status'] == 'completed' and row['report'] is not None), None) if kind == 'analysis' else None

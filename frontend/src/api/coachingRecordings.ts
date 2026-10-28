@@ -237,6 +237,7 @@ function isCalendar(value: unknown): value is CoachingCalendar {
 }
 
 export interface CalendarLoadOptions {
+  directoryOnly?: boolean;
   background?: boolean;
   refresh?: boolean;
   onDirectory?: (data: Pick<CoachingCalendar, 'coaches' | 'learners' | 'scope'>) => void;
@@ -334,6 +335,7 @@ async function readCalendarPage(query: CoachingCalendarQuery, offset: number, li
 
 /** Publish the first coach immediately, then read bounded batches of three. */
 export async function loadCoachingCalendar(query: CoachingCalendarQuery, signal?: AbortSignal, options: CalendarLoadOptions = {}): Promise<CoachingCalendar> {
+  if (options.directoryOnly) return readCalendarPage(query, 0, 1, signal, { directoryOnly: true });
   if (options.background) return loadBackgroundCalendar(query, signal, options);
   let result: CoachingCalendar | null = null;
   let offset: number | null = 0;
