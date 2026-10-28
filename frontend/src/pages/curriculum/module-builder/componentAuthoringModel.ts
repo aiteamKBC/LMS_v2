@@ -497,6 +497,10 @@ const LIVE_SESSION_TRACKING_SETTING_KEYS = [
   'teamsMainLinkInherited',
 ] as const;
 
+// These fields route a recording to its dated component, independently of
+// which Teams occurrence currently stores the file.
+const RECORDING_SOURCE_SETTING_KEYS = ['recordingSeriesId', 'recordingSessionNumber', 'recordingDate'] as const;
+
 /**
  * The one-off meeting booked onto a single week, under its own keys.
  *
@@ -519,6 +523,7 @@ export function allowedSettingKeysForType(type: ModuleComponentType) {
   return new Set([
     ...Object.keys(definition.defaultSettings),
     ...WEEK_BUILDER_SHARED_KEYS,
+    ...(['live-session', 'video', 'recording-placeholder'].includes(type) ? RECORDING_SOURCE_SETTING_KEYS : []),
     ...(type === 'live-session' ? [...LIVE_SESSION_TRACKING_SETTING_KEYS, ...ADDITIONAL_TEAMS_MEETING_SETTING_KEYS] : []),
     'legacySettings',
     'legacySourceType',

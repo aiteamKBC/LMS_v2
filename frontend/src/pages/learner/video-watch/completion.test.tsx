@@ -243,8 +243,9 @@ it('lays out recording watch time, evidence, manual input, and Finish in one liv
   expect(screen.getByRole('timer')).toHaveAccessibleName('Time on this activity: 00 hours, 00 minutes, 37 seconds');
 });
 
-it('opens a dated recorded event without a placeholder video URL', async () => {
-  const event = { ...empty, componentId: 'EVENT', component: 'Recorded Event',
+it.each(['video', 'live_session'])('opens a dated recorded %s event without a placeholder video URL', async type => {
+  const event = { ...empty, type, componentId: 'EVENT', component: 'Recorded Event',
+    ...(type === 'live_session' ? { sessionDate: '2026-10-02' } : {}),
     recordingSeriesId: 'LIVE-1', recordingSessionNumber: 3, recordingDate: '2026-10-02' };
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [event] } as LearnerDetail);
   mount('EVENT');
@@ -252,6 +253,13 @@ it('opens a dated recorded event without a placeholder video URL', async () => {
   expect(recording).toHaveAttribute('data-recording-date', '2026-10-02');
   expect(recording).toHaveAttribute('data-recordings-only', 'true');
   expect(screen.queryByText('This video has no playable URL yet.')).not.toBeInTheDocument();
+});
+
+it('limits live-session recordings to the component date when no separate recording date is set', async () => {
+  const live = { ...first, sessionDate: '2026-10-28', teamsLiveSessionId: 'SERIES', teamsSessionNumber: 1 };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [live] } as LearnerDetail);
+  mount('C1');
+  expect(await screen.findByRole('button', { name: 'Simulate recording watch' })).toHaveAttribute('data-recording-date', '2026-10-28');
 });
 
 it.each(['commercial', 'apprenticeship'])('opens live session Finish before entering time for %s learners', async kind => {

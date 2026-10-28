@@ -1001,18 +1001,27 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
             'scheduled_start': '2026-09-01T09:00:00Z', 'scheduled_end': '2026-09-01T10:00:00Z',
             'status': 'scheduled',
         })
-        graph_request.side_effect = [
-            {
-                'value': [{
+        meeting_path = 'users/tutor%40example.com/onlineMeetings/meeting-recovered'
+
+        def graph_response(method, path, payload=None):
+            if method == 'GET' and path.startswith('users/tutor%40example.com/onlineMeetings?'):
+                return {'value': [{
                     'id': 'meeting-recovered',
                     'meetingOptionsWebUrl': 'https://teams.microsoft.com/meetingOptions/recovered',
-                }],
-            },
-            {},
-            {'value': []},
-            {'value': []},
-            {'value': []},
-        ]
+                }]}
+            if method == 'PATCH' and path == meeting_path:
+                return {}
+            if method == 'GET' and path == meeting_path:
+                # The worker now reads the meeting's dial-in details before its
+                # result collections; that read must not consume a collection.
+                return {'id': 'meeting-recovered'}
+            if method == 'GET' and path in {
+                f'{meeting_path}/attendanceReports', f'{meeting_path}/transcripts', f'{meeting_path}/recordings',
+            }:
+                return {'value': []}
+            raise AssertionError(f'Unexpected Graph request: {method} {path}')
+
+        graph_request.side_effect = graph_response
 
         # The HTTP contract now queues durable work. Drive the real worker
         # synchronously while keeping Graph and external archive I/O mocked.
@@ -1054,7 +1063,11 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
         self.assertTrue(reapplied['recordAutomatically'])
         self.assertTrue(reapplied['allowTranscription'])
         self.assertEqual(
-            graph_request.call_args_list[2].args[1],
+            graph_request.call_args_list[2].args[:2],
+            ('GET', meeting_path),
+        )
+        self.assertEqual(
+            graph_request.call_args_list[3].args[1],
             'users/tutor%40example.com/onlineMeetings/meeting-recovered/attendanceReports',
         )
 
@@ -2267,7 +2280,7 @@ def staff_directory(*rows):
     return fetch
 
 
-class CurriculumPersistenceHarness(TestCase):
+class CurriculumPersistenceFixtures:
     """Schema setup and payload builders shared by the persistence test suites.
 
     Split out from ``CurriculumPersistenceTests`` so sibling suites can reuse the
@@ -2487,6 +2500,18 @@ class CurriculumPersistenceHarness(TestCase):
         )
         self.assertEqual(response.status_code, 200, response.content)
         return {item['requestId']: item for item in response.json()['results']}
+
+
+class CurriculumPersistenceHarness(CurriculumPersistenceFixtures, TestCase):
+    """Persistence fixtures for tests that do not cross HTTP connection cleanup."""
+
+
+class CurriculumPersistenceTransactionHarness(CurriculumPersistenceFixtures, CoachTransactionTestCase):
+    """Use real transactions when HTTP middleware releases request connections."""
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(self.clear_curriculum_tables)
 
 
 class CurriculumPersistenceTests(CurriculumPersistenceHarness):

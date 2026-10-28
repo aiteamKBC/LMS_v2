@@ -967,7 +967,7 @@ export default function ComponentViewPage() {
                 component.teamsSessionNumber ? <SessionResults
                   seriesId={component.teamsLiveSessionId}
                   sessionNumber={component.teamsSessionNumber}
-                  recordingDate={component.recordingDate}
+                  recordingDate={component.recordingDate || component.sessionDate}
                   learner={{ kind: kind as LearnerKind, id: id || '' }}
                   attendanceType={detail?.attendanceType}
                   onRecordingWatchTimeChange={setRecordingWatchSeconds}

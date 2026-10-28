@@ -59,6 +59,13 @@ class NumberedSessionHeaderTests(unittest.TestCase):
         self.assertEqual(result[1]['sessionDate'], '2026-10-10')
         self.assertEqual(result[1]['components'][0]['settings']['sessionDate'], '2026-10-10')
 
+    def test_booked_date_matching_its_own_slot_is_not_replaced_by_a_different_numbered_slot(self):
+        weeks = self.weeks(teamsLiveSessionId='meeting-1', sessionDate='2026-10-10', sessionDay='Saturday')
+        before = dict(weeks[1]['components'][0]['settings'])
+        result = self.apply({}, {}, weeks, holidays=[])
+        self.assertEqual(result[1]['sessionDate'], '2026-10-10')
+        self.assertEqual(result[1]['components'][0]['settings'], before)
+
     def test_removed_session_number_falls_back_to_the_week_slot(self):
         result = self.apply({}, {}, self.weeks(number=99), holidays=[])
         self.assertEqual(result[1]['sessionDate'], '2026-10-10')

@@ -6,7 +6,7 @@ from urllib.parse import unquote
 from zoneinfo import ZoneInfo
 
 from curriculum_api import views
-from curriculum_api.tests import CurriculumPersistenceHarness
+from curriculum_api.tests import CurriculumPersistenceTransactionHarness
 from curriculum_api.teams_weekly_calendar import calendar_groups, graph_event_utc
 
 
@@ -69,7 +69,7 @@ class GraphCalendar:
         return copy.deepcopy(self.events[key])
 
 
-class ModuleWeeklyScheduleTests(CurriculumPersistenceHarness):
+class ModuleWeeklyScheduleTests(CurriculumPersistenceTransactionHarness):
     def create_module(self):
         response = self.post_json('/curriculum_api/curriculum/modules/', {
             'moduleType': 'authoring', 'title': 'Independent weekday times',
@@ -175,7 +175,7 @@ class ModuleWeeklyScheduleTests(CurriculumPersistenceHarness):
         self.assertEqual(views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE), [])
 
 
-class TeamsWeekdaySeriesTests(CurriculumPersistenceHarness):
+class TeamsWeekdaySeriesTests(CurriculumPersistenceTransactionHarness):
     create_module = ModuleWeeklyScheduleTests.create_module
 
     def setUp(self):
