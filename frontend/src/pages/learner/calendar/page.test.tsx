@@ -68,6 +68,63 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('calendar event previews', () => {
+  it.each(['mcr', 'progress-review'] as const)('books and then reschedules an imported %s without connecting a personal calendar', async source => {
+    const imported = event({
+      id: 'imported-review:source-only', eventKey: 'imported-review:source-only',
+      reviewSource: 'aptem', reviewId: '41', source, title: 'Imported review date',
+      calendarEventKey: null, calendarEventId: null, meetingLink: '', invited: false, bookingReserved: false,
+    });
+    const linked = { ...imported, calendarEventKey: 'booking:41', calendarEventId: '41',
+      scheduledTime: '11:00', meetingLink: 'https://teams.microsoft.com/meet/example',
+      invited: true, bookingReserved: true, bookingStatus: 'scheduled' };
+    setup([imported]);
+    vi.mocked(bookLearnerCalendarSession).mockResolvedValue({ event: linked });
+    vi.mocked(rescheduleLearnerCalendarSession).mockResolvedValue({ event: { ...linked, scheduledTime: '12:00' } });
+    fireEvent.click((await screen.findAllByRole('button', { name: /Imported review date/ }))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^Schedule / }));
+    const booking = await screen.findByRole('dialog', { name: /^Schedule / });
+    await selectAvailableTime(booking, '11:00');
+    fireEvent.click(within(booking).getByRole('button', { name: 'Book Session' }));
+    const preview = await screen.findByRole('dialog', { name: 'Imported review date' });
+    expect(within(preview).getByRole('link', { name: 'Join Meeting' })).toHaveAttribute('href', linked.meetingLink);
+    expect(within(preview).getByRole('button', { name: 'Export .ics' })).toBeEnabled();
+    fireEvent.click(within(preview).getByRole('button', { name: 'Reschedule' }));
+    const rescheduling = await screen.findByRole('dialog', { name: 'Reschedule Session' });
+    await selectAvailableTime(rescheduling, '12:00');
+    fireEvent.click(within(rescheduling).getByRole('button', { name: 'Save New Time' }));
+    await waitFor(() => expect(rescheduleLearnerCalendarSession).toHaveBeenCalledWith('commercial', '125', expect.objectContaining({
+      eventKey: 'booking:41', reviewId: '41', scheduledTime: '12:00',
+      expectedBooking: expect.objectContaining({ scheduledTime: '11:00' }),
+    })));
+    expect(bookLearnerCalendarSession).toHaveBeenCalledTimes(1);
+    expect(fetchPersonalCalendarAvailability).not.toHaveBeenCalled();
+    expect(within(await screen.findByRole('dialog', { name: 'Imported review date' })).getByText('12:00–13:00')).toBeVisible();
+  });
+
+  it.each(['mcr', 'progress-review'] as const)('does not let another unlinked imported %s block the first booking', async source => {
+    const imported = event({
+      id: 'imported-review:source-only', eventKey: 'imported-review:source-only',
+      reviewSource: 'aptem', reviewId: '41', source, title: 'Selected imported review',
+      calendarEventKey: null, calendarEventId: null, meetingLink: '', invited: false, bookingReserved: false,
+    });
+    setup([imported, { ...imported, id: 'imported-review:other', eventKey: 'imported-review:other',
+      reviewId: '42', title: 'Other imported date' }]);
+    vi.mocked(bookLearnerCalendarSession).mockResolvedValue({ event: { ...imported,
+      calendarEventKey: 'booking:41', calendarEventId: '41', invited: true, bookingReserved: true,
+    } });
+    fireEvent.click((await screen.findAllByRole('button', { name: /Selected imported review/ }))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^Schedule / }));
+    const dialog = await screen.findByRole('dialog', { name: /^Schedule / });
+    await selectAvailableTime(dialog, '10:00');
+    expect(within(dialog).queryByText(/already have a .* booked/)).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Book Session' })).toBeEnabled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Book Session' }));
+    await waitFor(() => expect(bookLearnerCalendarSession).toHaveBeenCalledWith('commercial', '125', expect.objectContaining({
+      reviewId: '41', sessionType: source, scheduledTime: '10:00',
+    })));
+    expect(rescheduleLearnerCalendarSession).not.toHaveBeenCalled();
+  });
+
   it.each(['mcr', 'progress-review'])('books an imported scheduled %s without pretending it has a saved LMS appointment', async source => {
     const imported = event({
       id: 'imported-review:source-only', eventKey: 'imported-review:source-only',
