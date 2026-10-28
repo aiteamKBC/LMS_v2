@@ -27,7 +27,7 @@ The launcher is a waving support robot, played with Lottie.
 | --- | --- |
 | Source | LottieFiles public animation `7cd2dc17-51bb-40a1-9efb-b4870cabc98c`, "chatbot waving" |
 | Licence | Lottie Simple License — commercial use permitted, no attribution required |
-| Dependency | `lottie-react` ^3.1.2 (MIT) |
+| Dependency | `lottie-web` ^5.13.0 light SVG player (MIT) |
 | File | 235 KB JSON, 800×800, 194 frames at 30fps |
 
 **Its colours cannot be themed.** The artwork is raster, not vector: eight PNG
@@ -45,10 +45,9 @@ Two consequences worth knowing:
 - **The launcher is a transparent button, not a purple disc.** The character
   fills a 104px square with its own glow; boxing it in a circle would crop it.
   That is also why hover drops the drop-shadow and scales instead.
-- **The animation uses Lottie expressions**, which the engine evaluates with
-  `eval`. The app shell sets no `Content-Security-Policy`, so this is fine
-  today — but a future page-level CSP would need `'unsafe-eval'`, or the robot
-  would render frozen.
+- **The animation contains no Lottie expressions.** The widget uses the
+  SVG-only light player, which preserves the keyframed motion without shipping
+  the expression engine or requiring `eval`/`'unsafe-eval'`.
 
 The small SVG face in the chat panel's header is unchanged. It is a flat avatar
 in the brand colours and reads better at 24px than the full character would.

@@ -15,7 +15,7 @@ import {
   type CSSProperties, type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import { Lottie } from 'lottie-react';
+import lottieLight from 'lottie-web/build/player/lottie_light';
 import { useAuth } from '@/hooks/useAuth';
 import robotAnimation from '@/assets/support-robot.lottie.json';
 
@@ -89,19 +89,34 @@ const ROBOT_TINT = 'hue-rotate(30deg) saturate(1.04)';
 function RobotMascot({ size, style }: { size: number; style?: CSSProperties }) {
   // Honour the system's reduced-motion setting. Paused, the robot still renders
   // — Lottie holds the first frame — so the launcher never comes up empty.
-  const [still, setStill] = useState(false);
+  const [still, setStill] = useState(
+    () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  );
+  const animationContainer = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const query = window.matchMedia('(prefers-reduced-motion: reduce)');
     const sync = () => setStill(query.matches);
-    sync();
     query.addEventListener('change', sync);
     return () => query.removeEventListener('change', sync);
   }, []);
+
+  useEffect(() => {
+    const container = animationContainer.current;
+    if (!container) return;
+    const animation = lottieLight.loadAnimation({
+      container,
+      renderer: 'svg',
+      loop: !still,
+      autoplay: !still,
+      animationData: robotAnimation,
+    });
+    if (still) animation.goToAndStop(0, true);
+    return () => animation.destroy();
+  }, [still]);
+
   return (
-    <Lottie
-      src={robotAnimation}
-      loop={!still}
-      autoplay={!still}
+    <div
+      ref={animationContainer}
       style={{
         width: size, height: size, pointerEvents: 'none',
         filter: ROBOT_TINT, ...style,
