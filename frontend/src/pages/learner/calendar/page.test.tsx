@@ -68,6 +68,73 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('calendar event previews', () => {
+  it.each(['mcr', 'progress-review'])('books an imported scheduled %s without pretending it has a saved LMS appointment', async source => {
+    const imported = event({
+      id: 'imported-review:source-only', eventKey: 'imported-review:source-only',
+      reviewSource: 'aptem', reviewId: '41', source, title: 'Imported review date',
+      status: 'scheduled', calendarEventKey: null, calendarEventId: null,
+      meetingLink: '', invited: false, bookingReserved: false,
+    });
+    setup([imported]);
+    vi.mocked(bookLearnerCalendarSession).mockResolvedValue({ event: { ...imported,
+      calendarEventKey: 'booking:41', calendarEventId: '41', invited: true, bookingReserved: true,
+    } });
+    fireEvent.click((await screen.findAllByRole('button', { name: /Imported review date/ }))[0]);
+    expect(screen.queryByRole('button', { name: 'Reschedule' })).not.toBeInTheDocument();
+    expect(screen.getByText('This review has an imported appointment date, but no linked calendar booking.')).toBeVisible();
+    expect(screen.queryByText(/Your meeting time is saved in the LMS calendar/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Schedule / }));
+    const dialog = await screen.findByRole('dialog', { name: /^Schedule / });
+    await selectAvailableTime(dialog, '11:00');
+    expect(fetchReviewSlots).toHaveBeenLastCalledWith('commercial', '125', isoDate, 60,
+      expect.objectContaining({ excludeEventKey: undefined }));
+    expect(within(dialog).queryByText(/existing Teams meeting will be updated/)).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/already have a meeting invitation/i)).toBeVisible();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Book Session' }));
+    await waitFor(() => expect(bookLearnerCalendarSession).toHaveBeenCalledWith('commercial', '125', expect.objectContaining({
+      reviewId: '41', assignmentMonth: isoDate.slice(0, 7), eventKey: undefined,
+      sessionType: source, scheduledDate: isoDate, scheduledTime: '11:00', durationMinutes: 60, timezoneOffsetMinutes: -60,
+    })));
+    expect(rescheduleLearnerCalendarSession).not.toHaveBeenCalled();
+  });
+
+  it.each(['mcr', 'progress-review'])('opens the first-booking flow for an old reschedule link to an unlinked imported %s', async source => {
+    setup([event({
+      id: 'imported-review:source-only', eventKey: 'imported-review:source-only',
+      reviewSource: 'aptem', reviewId: '41', source, title: 'Imported review date',
+      status: 'scheduled', calendarEventKey: null, calendarEventId: null,
+      meetingLink: '', invited: false, bookingReserved: false,
+    })], '?action=reschedule&event=imported-review%3Asource-only');
+    const dialog = await screen.findByRole('dialog', { name: /^Schedule / });
+    await selectAvailableTime(dialog, '11:00');
+    expect(fetchReviewSlots).toHaveBeenLastCalledWith('commercial', '125', isoDate, 60,
+      expect.objectContaining({ excludeEventKey: undefined }));
+    expect(within(dialog).getByRole('button', { name: 'Book Session' })).toBeEnabled();
+    expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+    expect(rescheduleLearnerCalendarSession).not.toHaveBeenCalled();
+  });
+
+  it('keeps a first booking blocked when availability fails and allows retry without changing its identity', async () => {
+    vi.mocked(fetchReviewSlots).mockRejectedValue(new Error('Coach availability could not be confirmed.'));
+    setup([event({
+      id: 'imported-review:source-only', eventKey: 'imported-review:source-only',
+      reviewSource: 'aptem', reviewId: '41', source: 'mcr', title: 'Imported review date',
+      status: 'scheduled', calendarEventKey: null, calendarEventId: null, meetingLink: '',
+    })], '?action=reschedule&event=imported-review%3Asource-only');
+    const dialog = await screen.findByRole('dialog', { name: /^Schedule / });
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Coach availability could not be confirmed.');
+    expect(within(dialog).getByLabelText(/Time/)).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Book Session' })).toBeDisabled();
+    vi.mocked(fetchReviewSlots).mockResolvedValue(['11:00']);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Retry availability' }));
+    await selectAvailableTime(dialog, '11:00');
+    expect(within(dialog).getByRole('button', { name: 'Book Session' })).toBeEnabled();
+    expect(fetchReviewSlots).toHaveBeenLastCalledWith('commercial', '125', isoDate, 60,
+      expect.objectContaining({ excludeEventKey: undefined }));
+    expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+    expect(rescheduleLearnerCalendarSession).not.toHaveBeenCalled();
+  });
+
   it.each(['Personal Support Plan', 'Monthly Coaching Meeting', 'Progress Review', 'Progress Review (+ Skills Radar)'])(
     'opens the saved %s from View in calendar without resolving a new booking', async type => {
       const booked = event({
