@@ -133,7 +133,7 @@ def calendar_snapshots(coaches, start, end, *, refresh=False):
         # may have been repaired since the last attempt. Identity stays stable.
         ensure_jobs([('evidence', event_context(row.owner_email, event), {'event': event})
                      for row in jobs.values() for event in events[row.key]
-                     if not event.get('isCancelled') and _instant(event_context(row.owner_email, event)['end']) <= timezone.now()], refresh=True)
+                     if not event.get('isCancelled') and _instant(event_context(row.owner_email, event)['start']) <= timezone.now()], refresh=True)
     result = []
     for kind, context in items:
         job = jobs[job_key(kind, context)]
@@ -181,14 +181,18 @@ def source_summary(job):
             'readyCount': ready, 'recordings': rows, 'check': check}
 
 
-def source_details(record):
+def source_details(record, *, discover=False):
+    """Read saved evidence; an authorised detail view may enqueue one started occurrence."""
     from .recordings_media import session_window
     from .recordings_calendar_media import calendar_context
     start, end = session_window(record)
     if not start or not end or not getattr(record, 'graph_event_id', None):
         return None
     context = calendar_context(record.owner_email, record.graph_event_id, start, end)
-    return CoachingRecordingJob.objects.filter(key=job_key('evidence', context)).first()
+    job = CoachingRecordingJob.objects.filter(key=job_key('evidence', context)).first()
+    if job is None and discover and start <= timezone.now():
+        job = ensure_jobs([('evidence', context)]).get(job_key('evidence', context))
+    return job
 
 
 def queue_attendance(record):
@@ -196,7 +200,7 @@ def queue_attendance(record):
     from .recordings_media import session_window
     from .recordings_calendar_media import calendar_context
     start, end = session_window(record)
-    if not start or not end or not getattr(record, 'graph_event_id', None) or end > timezone.now():
+    if not start or not end or not getattr(record, 'graph_event_id', None) or start > timezone.now():
         return None
     context = calendar_context(record.owner_email, record.graph_event_id, start, end)
     return next(iter(ensure_jobs([('attendance', context)]).values()))
@@ -280,7 +284,7 @@ def execute_job(row):
         items = []
         for event in events:
             occurrence = event_context(row.owner_email, event)
-            if not event.get('isCancelled') and _instant(occurrence['end']) <= now:
+            if not event.get('isCancelled') and _instant(occurrence['start']) <= now:
                 items.append(('evidence', occurrence, {'event': event}))
         # Enqueue before publishing idle: a reader must never see a completed
         # calendar with no evidence jobs yet and stop polling prematurely.

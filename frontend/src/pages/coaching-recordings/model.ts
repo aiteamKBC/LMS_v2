@@ -30,8 +30,8 @@ export function hiddenReadyReasons(meetings: CoachingMeeting[], now: number): [s
   const counts = new Map<string, number>();
   for (const row of meetings) {
     const phase = meetingPhase(row, now);
-    if (phase === 'ended') continue;
-    const label = phase === 'cancelled' ? 'Cancelled' : 'Upcoming / in progress';
+    if (phase === 'ended' || hasPlayableRecording(row, now)) continue;
+    const label = phase === 'cancelled' ? 'Cancelled' : 'Upcoming / within scheduled time';
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
   return [...counts];
@@ -71,11 +71,12 @@ export function meetingPhase(meeting: CoachingMeeting, now: number): CoachingMee
   return Date.parse(meeting.startsAt) > now ? 'upcoming' : 'in-progress';
 }
 export function hasPlayableRecording(meeting: CoachingMeeting, now: number): boolean {
-  return meetingPhase(meeting, now) === 'ended' && meeting.media.readyCount > 0;
+  const phase = meetingPhase(meeting, now);
+  return phase !== 'upcoming' && phase !== 'cancelled' && meeting.media.readyCount > 0;
 }
 export function filterMeetings(meetings: CoachingMeeting[], phase: MeetingFilter, match: MatchFilter, family: string, now: number) {
   return meetings.filter(row => (phase === 'all'
-    || (phase === 'ready' ? meetingPhase(row, now) === 'ended'
+    || (phase === 'ready' ? meetingPhase(row, now) === 'ended' || hasPlayableRecording(row, now)
       : phase === 'attention' ? meetingPhase(row, now) !== 'cancelled' && (row.match !== 'matched' || (meetingPhase(row, now) === 'ended' && !row.media.readyCount))
         : phase === 'cancelled' ? meetingPhase(row, now) === 'cancelled' || Boolean(row.cancellationSources?.length) : meetingPhase(row, now) === phase))
     && (match === 'all' || (match === 'matched' ? row.match === 'matched' : row.match !== 'matched'))

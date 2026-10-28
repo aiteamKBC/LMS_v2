@@ -15,7 +15,7 @@ import SyncReviewDrawer from './SyncReviewDrawer';
 import { readLocation, writeLocation, type CoachingLocation } from './location';
 
 const control = 'max-w-full min-w-0 rounded-lg border border-background-200 bg-white px-3 py-2 text-sm text-foreground-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500';
-const phaseLabels = { ended: 'Ended', upcoming: 'Upcoming', 'in-progress': 'In progress', cancelled: 'Cancelled' };
+const phaseLabels = { ended: 'Ended', upcoming: 'Upcoming', 'in-progress': 'Within scheduled time', cancelled: 'Cancelled' };
 const filterLabels = { ...phaseLabels, ready: 'Ready to action', attention: 'Needs attention', all: 'All meetings' };
 
 function coachPreference(value?: string): string {
@@ -357,8 +357,8 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
         </section>
         {!loading && phase === 'ready' && <section aria-label="Ready to action summary" className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary-200 bg-primary-50 p-4 text-sm">
           <div className="min-w-0">
-            <p className="font-semibold">{visible.length} ended {visible.length === 1 ? 'meeting' : 'meetings'} · {visible.filter(row => hasPlayableRecording(row, now)).length} with playable recordings</p>
-            <p className="mt-1 text-xs text-foreground-600">Ready to action includes all ended meetings and lectures, with or without a recording. Attendance and AI are checked when you open a meeting.</p>
+            <p className="font-semibold">{visible.length} {visible.length === 1 ? 'meeting' : 'meetings'} ready to review · {visible.filter(row => hasPlayableRecording(row, now)).length} with playable recordings</p>
+            <p className="mt-1 text-xs text-foreground-600">Ready to action includes meetings past their scheduled end and started meetings with playable recordings, including lectures. Published evidence can be reviewed before the scheduled end; a recording does not confirm that the call has ended.</p>
             <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-foreground-700">{[...recordingStates].map(([label, count]) => <li key={label}>{count} · {label}</li>)}</ul>
             {hiddenReasons.length > 0 && <p className="mt-2 text-xs text-foreground-600">Outside Ready to action: {hiddenReasons.map(([label, count]) => `${count} ${label.toLowerCase()}`).join(' · ')}.</p>}
             {preparing && <p className="mt-1 text-xs">{updatesPaused ? 'Some recording checks are still pending.' : 'Initial recording checks are still pending.'}</p>}
@@ -369,7 +369,7 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
         <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
           <div className="hidden lg:block"><CoachMiniCalendar date={date} timeZone={zone} meetingDates={meetingDates} onSelectDay={selectDay} /></div>
           <section aria-label="Coaching meetings" className="min-w-0 space-y-4">
-            {!loading && !preparing && !visible.length && !cancellations.length && <p className="rounded-xl border border-background-200 bg-white p-6 text-sm text-foreground-600">{data.partial ? 'No meetings loaded for these filters. Some calendars or recordings could not be checked.' : phase === 'ready' ? 'No ended meetings match these filters in the selected period.' : 'No meetings match these filters in the selected period.'}</p>}
+            {!loading && !preparing && !visible.length && !cancellations.length && <p className="rounded-xl border border-background-200 bg-white p-6 text-sm text-foreground-600">{data.partial ? 'No meetings loaded for these filters. Some calendars or recordings could not be checked.' : phase === 'ready' ? 'No meetings ready to review match these filters in the selected period.' : 'No meetings match these filters in the selected period.'}</p>}
             <MeetingCalendar date={date} period={period} timeZone={zone} meetings={period === 'day' ? visible : visible.slice(0, agendaLimit)} totalMeetings={visible.length} now={now}
               selected={activeKey} coachName={coachName} learnerName={learnerName} onSelectDay={selectDay} onSelectMeeting={selectMeeting} />
             {period !== 'day' && visible.length > agendaLimit && <button className={control} onClick={() => setAgendaLimit(value => value + 30)}>Show more meetings ({visible.length - agendaLimit} remaining)</button>}

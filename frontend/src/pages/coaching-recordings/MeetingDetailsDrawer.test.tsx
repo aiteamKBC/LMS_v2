@@ -19,3 +19,11 @@ it('preserves the Curriculum-only form boundary', () => {
   render(<MeetingDetailsDrawer meeting={meeting('OTHER', 'ended')} timeZone="UTC" now={Date.parse('2026-10-25T11:00:00Z')} coachName="Coach One" learnerNames={[]} onClose={vi.fn()} />);
   expect(screen.queryByRole('button', { name: /Quality Check/ })).not.toBeInTheDocument();
 });
+
+it('opens verified evidence during the scheduled window and explains the calendar status', () => {
+  render(<MeetingDetailsDrawer meeting={meeting('MCM', 'in-progress')} reference="signed-reference" timeZone="UTC" now={Date.parse('2026-10-25T09:30:00Z')} coachName="Coach One" learnerNames={[]} onClose={vi.fn()} />);
+  expect(screen.getByText('Recording details')).toBeInTheDocument();
+  expect(screen.getByText('Within scheduled time')).toBeInTheDocument();
+  expect(screen.getByText(/does not confirm whether the call is still live/)).toBeInTheDocument();
+  expect(screen.queryByText('Ended')).not.toBeInTheDocument();
+});

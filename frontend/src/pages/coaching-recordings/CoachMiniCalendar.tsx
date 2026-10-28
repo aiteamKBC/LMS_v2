@@ -36,7 +36,7 @@ export default function CoachMiniCalendar({ date, timeZone, meetingDates, onSele
     <p className="mt-3 text-[11px] leading-relaxed text-foreground-500">Dots mark meetings in the loaded period only. A date without a dot may not have been checked. Choose a date or Month view to check it.</p>
     <div className="mt-4 space-y-2 border-t border-background-200 pt-4 text-xs text-foreground-600">
       <p className="mb-3 text-[10px] font-bold uppercase tracking-wider text-foreground-400">Meeting status</p>
-      {[['bg-emerald-500', 'Recording available'], ['bg-primary-400', 'Upcoming / in progress'], ['bg-amber-400', 'Recording pending'], ['bg-rose-400', 'Cancelled']].map(([color, label]) =>
+      {[['bg-emerald-500', 'Recording available'], ['bg-primary-400', 'Upcoming / within scheduled time'], ['bg-amber-400', 'Recording pending'], ['bg-rose-400', 'Cancelled']].map(([color, label]) =>
         <p key={label} className="flex items-center gap-2"><span className={`h-2 w-2 rounded-full ${color}`} />{label}</p>)}
       <p className="pt-2 text-[11px]">All times shown in {timeZone}</p>
     </div>

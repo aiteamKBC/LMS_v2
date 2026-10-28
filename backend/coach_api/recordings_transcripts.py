@@ -100,8 +100,8 @@ def microsoft_transcript(record, job):
     from django.core.cache import cache
     try:
         context, base = _context(record, job)
-        if session_window(record)[1] > timezone.now():
-            raise ValueError('The meeting has not ended.')
+        if session_window(record)[0] > timezone.now():
+            raise ValueError('The meeting has not started.')
         identity = _cache_identity(record, job)
     except (ValueError, KeyError, TypeError):
         return {'state': 'unavailable', 'code': 'meeting_identity_pending', 'transcript': None}

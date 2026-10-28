@@ -303,7 +303,7 @@ def coaching_recordings_calendar(request):
         boundary = max((stamp.timestamp() for events, _ in calendar_pages for event in events or [] if isinstance(event, dict)
                         for key in ('start', 'end') if isinstance(event.get(key), dict)
                         if (stamp := _event_instant(event[key])) and stamp <= now), default=0)
-        fingerprint = ['ready-all-ended-v2', start, end, zone_name, chosen, learner_id, sorted(grants), coaches, learners, lectures,
+        fingerprint = ['ready-started-evidence-v3', start, end, zone_name, chosen, learner_id, sorted(grants), coaches, learners, lectures,
             {owner: sorted(rows, key=lambda row: row['event_key']) for owner, rows in bookings.items()},
             stamps, errors, pending_calendars, pending_evidence, initial_calendars, initial_evidence,
             boundary, int(now.timestamp()) // 1800,
@@ -364,9 +364,9 @@ def coaching_recordings_calendar(request):
             row['media'] = source_summary(discovery)
             if discovery and discovery.error_code and not any(item.get('coachEmail') == email and item['code'] == 'recordings_incomplete' for item in errors):
                 errors.append({'coachEmail': email, 'code': 'recordings_incomplete'})
-            # Ready means the appointment can be reviewed after its end time.
-            # Missing media, attendance, AI or booking links must not hide it.
-            row['readyToAction'] = row['phase'] == 'ended'
+            # Past-schedule appointments remain reviewable without evidence.
+            # Published recordings are also reviewable during the scheduled window.
+            row['readyToAction'] = row['phase'] == 'ended' or (row['phase'] == 'in-progress' and row['media']['readyCount'] > 0)
         if any(row['media']['state'] in {'unavailable', 'missing', 'failed'}
                or any(file['state'] in {'unavailable', 'missing', 'failed'} for file in row['media']['recordings']) for row in visible):
             errors.append({'coachEmail': email, 'code': 'recordings_incomplete'})
@@ -500,7 +500,7 @@ def coaching_recording_session(request):
         return _response({'error': 'Choose a valid session detail section.'}, 400)
     if part == 'evidence':
         try:
-            job = source_details(record)
+            job = source_details(record, discover=True)
             evidence = _saved_session_evidence(request, record, job, part='evidence')
             from .completion_status import completion_summary
             evidence = {**evidence, 'completion': completion_summary(record)}
@@ -515,7 +515,7 @@ def coaching_recording_session(request):
             return _response({'error': 'Saved meeting evidence is temporarily unavailable.'}, 503)
     if getattr(record, 'recording_reference', None):
         try:
-            job = source_details(record)
+            job = source_details(record, discover=True)
             media = source_summary(job)
             try:
                 attendance = saved_calendar_attendance(record)

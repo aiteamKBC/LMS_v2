@@ -334,6 +334,34 @@ class RecordingJobsTests(unittest.TestCase):
         self.assertEqual(evidence.result['event'], EVENT)
         self.assertEqual(evidence.context, CONTEXT)
 
+    def test_started_calendar_occurrence_is_discovered_before_its_scheduled_end(self):
+        now = datetime(2026, 10, 20, 9, 30, tzinfo=timezone.utc)
+        future = {**EVENT, 'id':'future', 'start':{'dateTime':'2026-10-20T11:00:00Z'},
+                  'end':{'dateTime':'2026-10-20T12:00:00Z'}}
+        with patch.object(jobs.timezone, 'now', return_value=now):
+            self.make('calendar', {'owner':OWNER, 'start':'2026-10-20T00:00:00+00:00', 'end':'2026-10-21T00:00:00+00:00'})
+            row = jobs.claim_job(('calendar',))
+            with patch('coach_api.recordings_calendar.load_coach_calendar', return_value=[EVENT, future, {**EVENT,'id':'cancelled','isCancelled':True}]):
+                jobs.execute_job(row)
+        self.assertEqual(CoachingRecordingJob.objects.filter(kind='evidence').count(), 1)
+        self.assertEqual(CoachingRecordingJob.objects.get(kind='evidence').context, CONTEXT)
+
+    def test_opened_started_occurrence_queues_one_discovery_and_attendance_before_scheduled_end(self):
+        from .recordings_calendar_media import calendar_record
+        record = calendar_record(CONTEXT)
+        with patch.object(jobs.timezone, 'now', return_value=datetime(2026,10,20,9,30,tzinfo=timezone.utc)):
+            for _ in range(2):
+                self.assertIsNotNone(jobs.source_details(record, discover=True))
+                self.assertIsNotNone(jobs.queue_attendance(record))
+        self.assertEqual(CoachingRecordingJob.objects.filter(kind='evidence').count(),1)
+        self.assertEqual(CoachingRecordingJob.objects.filter(kind='attendance').count(),1)
+        self.assertEqual(CoachingRecordingJob.objects.get(kind='evidence').context,CONTEXT)
+        with patch.object(jobs.timezone, 'now', return_value=datetime(2026,10,20,8,59,tzinfo=timezone.utc)):
+            future = calendar_record({**CONTEXT,'event':'not-started'})
+            self.assertIsNone(jobs.source_details(future, discover=True))
+            self.assertIsNone(jobs.queue_attendance(future))
+        self.assertEqual(CoachingRecordingJob.objects.count(),2)
+
     def test_successful_calendar_publishes_index_in_the_same_generation(self):
         context = {'owner': OWNER, 'start': '2026-10-01T00:00:00+00:00', 'end': '2026-11-01T00:00:00+00:00'}
         self.make('calendar', context)
