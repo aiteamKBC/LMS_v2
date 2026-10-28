@@ -110,7 +110,9 @@ describe('explicit session identity when non-teaching weeks move', () => {
     expect(applyModuleWeekSessionPlan(result, planFor(SATURDAY_DATES))).toEqual(result);
   });
 
-  it('keeps the heading on a numbered session date confirmed by Teams', () => {
+  // Agreed 2026-10-25: the heading follows the plan at once; the booked session
+  // keeps its Teams date (and shows its drift) until Update Teams moves it.
+  it('moves the heading to the plan while a Teams-confirmed session keeps its date', () => {
     const module = movedModule(1);
     const live = module.weekStructure[1].components[0];
     live.settings = {
@@ -121,7 +123,8 @@ describe('explicit session identity when non-teaching weeks move', () => {
     };
     const result = applyModuleWeekSessionPlan(module, planFor(SATURDAY_DATES));
     expect(result.weekStructure[1].components[0]).toBe(live);
-    expect(result.weekStructure[1].sessionDate).toBe('2026-09-26');
+    expect(result.weekStructure[1].components[0].settings.sessionDate).toBe('2026-09-26');
+    expect(result.weekStructure[1].sessionDate).toBe(SATURDAY_DATES[0]);
     expect(result.weekStructure[1].sessionDay).toBe('Saturday');
     expect(applyModuleWeekSessionPlan(result, planFor(SATURDAY_DATES))).toBe(result);
   });

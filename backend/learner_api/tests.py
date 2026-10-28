@@ -19,6 +19,7 @@ from .active_users import (
     _fetch_ksb_items,
     _ksb_version_hash,
     _reported_minutes,
+    _resolve_programme_id,
     completed_hours_from_progress,
     component_reference_exists,
     component_reference_state,
@@ -1445,6 +1446,62 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
             programme="Programme A",
             training_plan=[{"moduleId": "MOD-1"}],
         )
+
+
+class ResolveProgrammeIdTests(SimpleTestCase):
+    PLAN = [{"moduleId": "MOD-SAFEGUARDING"}, {"moduleId": "MOD-PCP"}]
+
+    def _resolve(self, cursor, programme):
+        connections = {"default": ScriptedConnection(cursor), "enrolment": ScriptedConnection(cursor)}
+        with patch.dict(active_users_connections, connections, clear=False):
+            return _resolve_programme_id(programme, training_plan=self.PLAN)
+
+    def test_shared_module_from_another_programme_does_not_win(self):
+        # The shared module's owner sorts first; the learner's own programme
+        # must still be chosen, or they are offered another standard's KSBs.
+        cursor = ScriptedCursor([[
+            ("PROG-MM-L6", "Marketing Manager Level 6"),
+            ("PROG-PCP-L6", "Project Controls Professional Level 6"),
+        ]])
+
+        result = self._resolve(cursor, "Project Controls Professional Level 6")
+
+        self.assertEqual(result, "PROG-PCP-L6")
+        self.assertEqual(len(cursor.queries), 1)
+
+    def test_programme_name_with_cohort_suffix_matches_its_module_owner(self):
+        cursor = ScriptedCursor([[
+            ("PROG-MM-L6", "Marketing Manager Level 6"),
+            ("PROG-PCP-L6", "Project Controls Professional Level 6"),
+        ]])
+
+        result = self._resolve(cursor, "Project Controls Professional Level 6 - Feb 2026")
+
+        self.assertEqual(result, "PROG-PCP-L6")
+
+    def test_single_module_owner_is_used_without_a_name_lookup(self):
+        cursor = ScriptedCursor([[("PROG-PCP-L6", "Project Controls Professional Level 6")]])
+
+        result = self._resolve(cursor, "Renamed Programme")
+
+        self.assertEqual(result, "PROG-PCP-L6")
+        self.assertEqual(len(cursor.queries), 1)
+
+    def test_unmatched_owners_fall_back_to_the_programme_name(self):
+        cursor = ScriptedCursor([
+            [("PROG-A", "Programme A"), ("PROG-B", "Programme B")],
+            [("PROG-C",)],
+        ])
+
+        self.assertEqual(self._resolve(cursor, "Programme C"), "PROG-C")
+
+    def test_first_module_owner_is_the_last_resort(self):
+        cursor = ScriptedCursor([
+            [("PROG-A", "Programme A"), ("PROG-B", "Programme B")],
+            [],
+        ])
+
+        self.assertEqual(self._resolve(cursor, "Unknown Programme"), "PROG-A")
 
 
 class LearnerOtjhTargetTests(SimpleTestCase):

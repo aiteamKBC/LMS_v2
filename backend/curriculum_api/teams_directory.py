@@ -57,10 +57,14 @@ def search_teams_directory(request):
         response = JsonResponse(result)
     except ValueError as exc:
         response = JsonResponse({'error': str(exc)}, status=400)
-    except RuntimeError as exc:
-        # The browser gets a generic message; Graph's code and request id stay
-        # server-side, where an access or token failure can be diagnosed.
+    except (RuntimeError, OSError) as exc:
+        # The browser gets a plain message; Graph's code and request id stay
+        # server-side, where an access or token failure can be diagnosed. A
+        # read timeout arrives as OSError, not RuntimeError.
         logger.warning('Entra directory search failed: %s', exc)
-        response = JsonResponse({'error': 'Entra search is unavailable. Retry or enter a full email address.'}, status=502)
+        denied = 'HTTP 403' in str(exc)
+        message = ("The Microsoft app this LMS uses isn't allowed to search the directory. Enter a full email address."
+                   if denied else 'Entra search is unavailable. Retry or enter a full email address.')
+        response = JsonResponse({'error': message}, status=502)
     response['Cache-Control'] = 'no-store, private'
     return response

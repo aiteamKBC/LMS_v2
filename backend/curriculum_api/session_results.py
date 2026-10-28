@@ -858,12 +858,17 @@ def admin_session(request, series_id, session_number):
         return unavailable()
 
 
-def learner_series(kind, learner_id, series_id):
+def learner_series(kind, learner_id, series_id, linked_recordings=False):
     """The learner and a series from one of their assigned modules, else (None, None).
 
     A module duplicated to share another module's Teams meeting has no series
     of its own, so its learners are matched through the source module. The
     duplicates that led here are kept on the row as ``learner_shared_module_ids``.
+
+    With ``linked_recordings`` (recording/transcript endpoints only, never Join),
+    a series in another group's module is also returned when a session recording
+    in one of the learner's modules links to it, carrying the linked
+    ``linked_session_numbers`` -- the only sessions the caller may then serve.
     """
     from learner_api.learner_detail import SOURCE_MODELS
     from learner_api.attendance_lectures import read_assigned_modules, shared_teams_sources
@@ -883,22 +888,35 @@ def learner_series(kind, learner_id, series_id):
     if owner in modules:
         return learner, series
     shared = sorted(alias for alias, sources in shared_teams_sources(modules).items() if owner in sources)
-    if not shared:
-        return None, None
-    return learner, {**series, 'learner_shared_module_ids': shared}
+    if shared:
+        return learner, {**series, 'learner_shared_module_ids': shared}
+    if linked_recordings:
+        from .linked_recording_access import linked_session_numbers
+        numbers = linked_session_numbers(modules, series_id)
+        if numbers:
+            return learner, {**series, 'linked_session_numbers': numbers}
+    return None, None
 
 
 @require_GET
 @learner_self_or_staff(kwarg='learner_id')
 def learner_results(request, kind, learner_id, series_id, session_number):
     try:
-        learner, series = learner_series(kind, learner_id, series_id)
-        if not series:
+        learner, series = learner_series(kind, learner_id, series_id, linked_recordings=True)
+        linked = bool(series) and 'linked_session_numbers' in series
+        if not series or (linked and session_number not in series['linked_session_numbers']):
             return JsonResponse({'error': 'Session not found.'}, status=404)
         sessions = result_rows(series, session_number=session_number, email=str(learner.email or '').strip().casefold())
+        if linked:
+            # Recording and transcript only: no attendance from another group's
+            # register, not even a row that names this learner.
+            for session in sessions:
+                session['attendance'] = []
         from learner_api.recorded_attendance import saved_delivery_mode, apply_recorded_attendance
         from learner_api.attendance_rules import attendance_outcome
-        mode = saved_delivery_mode(learner_id) if sessions else 'live'
+        # Another group's session, shown only for its recording: it is not the
+        # learner's to attend, so no recorded-attendance outcome is projected.
+        mode = saved_delivery_mode(learner_id) if sessions and not linked else 'live'
         for session in sessions:
             session['attendanceMode'] = mode
             if mode != 'lazy':
@@ -1126,7 +1144,11 @@ def admin_content(request, series_id, artifact_id):
 @learner_self_or_staff(kwarg='learner_id')
 def learner_content(request, kind, learner_id, series_id, artifact_id):
     try:
-        _learner, series = learner_series(kind, learner_id, series_id)
+        _learner, series = learner_series(kind, learner_id, series_id, linked_recordings=True)
+        if series and 'linked_session_numbers' in series:
+            from .linked_recording_access import linked_artifact_allowed
+            if not linked_artifact_allowed(series, artifact_id):
+                series = None
         if not series:
             return JsonResponse({'error': 'Session not found.'}, status=404)
         return stored_content(request, series_id, artifact_id, learner_view=True)

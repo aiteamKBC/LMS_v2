@@ -7,6 +7,7 @@ from django.db import connections
 from .weekly_contract import compact_weekly
 from learner_api.progress_rules import progress_counts_as_achieved
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+from learner_api.weekly_display import display_policies, display_weeks, default_week
 from .weekly_live_attendance import (read_weekly_live_evidence, credit_in_week,
                                      week_live_session, add_live_activity_hours)
 
@@ -142,6 +143,11 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
     with connections['enrolment'].cursor() as cur:
         cur.execute(f'''SELECT m.module_catalogue_id AS id,m.title,m.start_date,m.end_date,
             m.weeks_number,m.sessions_number,m.cohort_id,
+            (SELECT jsonb_agg(sc.source_payload->'weekly_display')
+             FROM curriculum.source_courses sc
+             WHERE sc.source_system='old_lms' AND sc.source_course_ref=m.source_id
+               AND m.source_type='mba-legacy' AND sc.curriculum_module_ref=m.module_catalogue_id
+               AND sc.deleted_at IS NULL AND sc.source_payload ? 'weekly_display') AS source_weekly_display,
             {calendar_columns}
             coalesce(nullif(m.session_week_day,''),g.session_week_day) AS session_week_day,
             coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,
@@ -151,6 +157,10 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
         modules = rows(cur)
         from learner_api.weekly_calendar import normalise_projected_calendar
         modules = [normalise_projected_calendar(row) for row in modules]
+        policies = {}
+        if any(row.get('source_weekly_display') for row in modules):
+            from learner_api.placement_links import placement_ids
+            policies = display_policies(modules, placement_ids(source)['cohort_id'])
         cur.execute(f'''SELECT id,module_catalogue_id,week_number,title,holiday_note_enabled,holiday_note,display_order
             FROM curriculum.weeks WHERE module_catalogue_id=ANY(%s) AND {VISIBLE_WEEK}
             ORDER BY display_order,week_number,id''', [schedule_ids])
@@ -294,18 +304,18 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
             week['sessionState'] = marker['state'] if marker else 'unscheduled'
             week.update(navigation.get((week['moduleId'], week['startDate']), {}))
         weeks = visible_week_rows(weeks, markers)
-        retained_modules = {week['moduleId'] for week in weeks}
+        navigation_weeks = display_weeks(weeks, policies, today)
+        retained_modules = {week['moduleId'] for week in navigation_weeks}
         default_module = module_id or next((row['id'] for row in active + future + past + candidates
                                if row['id'] in retained_modules), None)
-        default_weeks = [week for week in weeks if week['moduleId'] == default_module]
-        selected = next((week for week in weeks if week['id'] == selection), None) if selection else (
-            next((week for week in default_weeks if week['status'] == 'current'), None) or
-            next((week for week in default_weeks if week['status'] == 'upcoming'), None) or
-            (default_weeks[-1] if default_weeks else None))
+        default_weeks = [week for week in navigation_weeks if week['moduleId'] == default_module]
+        selected_navigation = next((week for week in navigation_weeks if week['id'] == selection), None) if selection else default_week(
+            default_weeks, latest_available=default_module in policies, today=today)
+        selected = next((week for week in weeks if selected_navigation and week['id'] == selected_navigation['id']), None)
         if selection and selected is None:
             raise LookupError('Week not found in this learner plan.')
         if selected is None:
-            return compact_weekly(weeks=weeks if include_weeks else ())
+            return compact_weekly(weeks=navigation_weeks if include_weeks else ())
         selected_components = by_week[(selected['moduleId'], selected['weekId'])] if selected['kind'] != 'reading-week' else []
         component_ids = [row['id'] for row in selected_components]
         fallback_columns = f''', (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code) ORDER BY k.ksb_code)
@@ -396,7 +406,7 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
     hours_by_component = activity_hours_index(module_hours, module_components)
     for activity in activities:
         activity['actualHours'] = round(hours_by_component[str(activity['id'])], 4)
-    return compact_weekly(weeks=weeks if include_weeks else (selected,), selected=selected,
+    return compact_weekly(weeks=navigation_weeks if include_weeks else (selected_navigation,), selected=selected_navigation,
         summary={'ksbCount': len(codes), 'achievedKsbCount': len(achieved),
                  'otjhHours': completed_hours, 'plannedOtjhHours': planned,
                  'untimedActivities': sum(item['expectedHours'] is None for item in activities)},

@@ -1007,19 +1007,15 @@ export function ModuleFormDrawer({
   //
   //   * weeks moved      -> the end date is recalculated (the manual one drops);
   //   * end date moved   -> the weeks are recalculated from start -> end;
-  //   * start date moved -> with an end date held by hand, the weeks are
-  //                         recalculated and that end date stays put; with none,
-  //                         the end date is recalculated from the weeks as before.
+  //   * start date moved -> the weeks stay and the end date is recalculated
+  //                         from them (the manual one drops). Moving a run is
+  //                         not shortening it: an edited module's saved end
+  //                         date loads as a manual one, and holding it here
+  //                         turned a five-week module into a one-week one.
   const weeksBetweenDates = (from: string, to: string) => projectModuleWeeks(from, to);
   const changeStartDate = (value: string) => {
     setStartDate(value);
-    const held = cleanText(targetEndDate);
-    const recalculated = held ? weeksBetweenDates(value, held) : 0;
-    // Only when the span is still readable forwards: a start date dragged past
-    // the end date has no week count, and clearing the end date is the honest
-    // answer rather than inventing one.
-    if (recalculated > 0) setSessionsNumber(String(recalculated));
-    else setTargetEndDate('');
+    setTargetEndDate('');
   };
   const changeWeeks = (value: string) => {
     setSessionsNumber(value);

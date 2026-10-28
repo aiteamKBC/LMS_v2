@@ -37,6 +37,7 @@ export interface Module {
 export interface Lecture {
   id: string;
   name: string;
+  sessionNumber?: number;
   moduleId: string;
   moduleCatalogueId?: string;
   moduleName?: string;
@@ -54,6 +55,8 @@ export interface Learner {
   curriculumId?: string;
   name: string;
   email: string;
+  /** LMS enrolment email when it differs from the KBC directory email. */
+  lmsEmail?: string;
   programme?: string;
   group?: string;
   cohort?: string;
@@ -63,5 +66,7 @@ export interface Learner {
   endDate: string;
   /** LMS enrolment status, or the KBC status for learners not enrolled. */
   status?: string;
+  /** Saved delivery mode; absent preferences are represented as live. */
+  attendanceMode?: "live" | "lazy";
 }
 

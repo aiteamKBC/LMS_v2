@@ -823,7 +823,7 @@ export function TeamsCalendarFormBody({
             ? 'Update sends the dates below to this existing Teams calendar and refreshes the links in the module’s live-session components. A session Teams is still holding on another day is marked on its own row.'
             : row.sessions.length
             ? `Create puts one Teams meeting on each of the ${row.sessions.length} session date${row.sessions.length === 1 ? '' : 's'} below and writes the join link into this module’s live-session components. The dates come from the module, not from this form.`
-            : 'This module has no stored session dates yet, so there is nothing to put on a calendar. Save its schedule first — those dates are what the calendar is built from.'}
+            : 'This module has no live-session components yet, so there is nothing to put on a calendar. Add a Live session to each week that should meet — every one becomes a Teams meeting on its date.'}
         </p>
       </div>
 

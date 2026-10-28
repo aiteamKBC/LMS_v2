@@ -1,6 +1,7 @@
 import { coachFetch } from '@/lib/coachFetch';
 import { clearCurriculumGetCache } from '@/lib/curriculumApi';
 import { formatSystemTimestamp } from '@/lib/format';
+import type { OffScheduleRun } from './offScheduleRuns';
 
 /**
  * Calendar health: what each session's Teams meeting is and whether it is sound.
@@ -41,6 +42,8 @@ export interface HealthSession {
   resolution: { type: string; at: string; by: string } | null;
   meeting: MeetingRef;
   title?: string;
+  /** Calls on this link that were not this session; ignored, and said so. */
+  offScheduleRuns?: OffScheduleRun[];
 }
 
 export interface HealthWarning {

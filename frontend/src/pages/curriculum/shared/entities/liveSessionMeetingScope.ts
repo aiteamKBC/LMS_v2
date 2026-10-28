@@ -115,15 +115,21 @@ export function liveSessionPlan(module: ModuleCatalogueItem | null, plan: Module
   const hasSeries = moduleHasBookedSeries((module.weekStructure || []).flatMap(
     week => (week.components || []).filter(component => component.type === 'live-session'),
   ));
-  let fallbackIndex = 0;
+  // Planned dates already given to a week. A date is sent once: when a module
+  // starts after its opening week's delivery day, week 1 has no calendar week
+  // of its own and falls back to the first date -- which week 2 then also
+  // matched by calendar week, sending two sessions on one day ("Session 2
+  // overlaps the previous session") and never the last date at all.
+  const used = new Set<ModuleWeekSessionPlan['sessions'][number]>();
   module.weekStructure.forEach(week => {
     const liveSessions = (week.components || []).filter(component => component.type === 'live-session');
     const liveCount = liveSessions.length;
     if (!liveCount) return;
-    const byWeek = (plan.sessions || []).filter(session => Number(session.weekNumber) === Number(week.weekNumber));
+    const byWeek = (plan.sessions || []).filter(session => Number(session.weekNumber) === Number(week.weekNumber) && !used.has(session));
     const candidates = byWeek.length
       ? byWeek.slice(0, liveCount)
-      : (plan.sessions || []).slice(fallbackIndex, fallbackIndex + liveCount);
+      : (plan.sessions || []).filter(session => !used.has(session)).slice(0, liveCount);
+    candidates.forEach(candidate => used.add(candidate));
     // A live session delivered by its own additional meeting -- or not yet
     // assigned to either calendar -- is not part of this calendar: it is not
     // shown among these dates, not counted among them, and not sent when they
@@ -137,7 +143,6 @@ export function liveSessionPlan(module: ModuleCatalogueItem | null, plan: Module
       const booked = Number(settings?.teamsSessionNumber || 0);
       bookedNumbers.push(bookedOnModuleSeries(settings) && booked > 0 ? booked : null);
     });
-    fallbackIndex += candidates.length;
   });
   const taken = new Set(bookedNumbers.filter((value): value is number => value !== null));
   if (!taken.size) return selected;
