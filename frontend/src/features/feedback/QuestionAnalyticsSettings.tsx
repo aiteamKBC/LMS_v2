@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { FeedbackQuestion, FeedbackQuestionAnalyticsSettings } from '@/api/feedback';
 import { IMPORTANCE_OPTIONS, questionAnalyticsSettings } from './questionAnalyticsConfig';
 import { isScorableQuestion, previewClass, previewQuestionScore, scoringReadiness } from './scorePreview';
@@ -7,8 +8,9 @@ import { SCORE_CLASSIFICATION_TEXT } from './scoreClassification';
 const field = 'mt-1.5 w-full rounded-lg border border-foreground-200/70 bg-white px-3 py-2 text-xs disabled:bg-background-100';
 const OPTION_TYPES = new Set(['single_choice', 'dropdown', 'likert', 'multiple_choice']);
 
-export function QuestionAnalyticsSettings({ question, disabled, onChange }: {
+export function QuestionAnalyticsSettings({ question, disabled, onChange, renderAnswerOptions }: {
   question: FeedbackQuestion; disabled: boolean; onChange: (config: FeedbackQuestion['config']) => void;
+  renderAnswerOptions?: (renderScore: (option: string, index: number) => ReactNode) => ReactNode;
 }) {
   const settings = questionAnalyticsSettings(question);
   const update = (patch: FeedbackQuestionAnalyticsSettings) => onChange({
@@ -23,7 +25,18 @@ export function QuestionAnalyticsSettings({ question, disabled, onChange }: {
   const positive = settings.scoring !== 'options' ? ''
     : settings.optionScores.yes === 100 && settings.optionScores.no === 0 ? 'yes'
       : settings.optionScores.yes === 0 && settings.optionScores.no === 100 ? 'no' : 'custom';
-  return <fieldset disabled={disabled} className="space-y-3 rounded-xl border border-primary-100 bg-primary-50/30 p-3">
+  const renderOptionScore = (option: string, index: number) => <div className={styles.scoreControl}>
+    <input disabled={disabled} type="number" min={0} max={100} step="any" aria-label={`Score for answer ${index + 1}: ${option}`} className={field} value={settings.optionScores[option] ?? ''} onChange={event => {
+      const optionScores = { ...settings.optionScores };
+      if (event.target.value === '') delete optionScores[option];
+      else optionScores[option] = Number(event.target.value);
+      update({ optionScores });
+    }} />
+    <small><span className={`${styles.badge} ${styles[previewClass(settings.optionScores[option] ?? null)]}`}>{previewClass(settings.optionScores[option] ?? null)}</span></small>
+  </div>;
+  return <>
+    {OPTION_TYPES.has(question.type) && renderAnswerOptions?.(renderOptionScore)}
+    <fieldset disabled={disabled} className="space-y-3 rounded-xl border border-primary-100 bg-primary-50/30 p-3">
     <legend className="px-1 text-xs font-bold text-primary-800">Scoring &amp; analytics</legend>
     <span className={`${styles.badge} ${styles[readiness.state]}`}>{readiness.label}</span>
     {hasScoring && <label className="block text-xs font-semibold text-foreground-700">Importance<select aria-label="Question importance" className={field} value={settings.importance} onChange={event => update({ importance: event.target.value as FeedbackQuestionAnalyticsSettings['importance'] })}>{IMPORTANCE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label} (weight {option.weight})</option>)}</select><span className="mt-1 block text-[11px] font-normal text-foreground-500">A higher weight gives this question more influence on the complete response score.</span></label>}
@@ -42,12 +55,7 @@ export function QuestionAnalyticsSettings({ question, disabled, onChange }: {
     </>}
     {OPTION_TYPES.has(question.type) && <>
       <p className="text-xs font-semibold text-foreground-700">Score for each answer (required before publishing)</p>
-      {<div className="space-y-2"><p className="text-[11px] text-foreground-500">Give every answer a score from 0 to 100. Zero is a valid score.{question.type === 'multiple_choice' ? ' For multiple answers, the question score is the average of the selected options.' : ''}</p>{(question.config.options || []).map((option, index) => <label key={index} className={styles.optionScore}><span>{option}</span><input type="number" min={0} max={100} step="any" aria-label={`Score for answer ${index + 1}: ${option}`} className={field} value={settings.optionScores[option] ?? ''} onChange={event => {
-        const optionScores = { ...settings.optionScores };
-        if (event.target.value === '') delete optionScores[option];
-        else optionScores[option] = Number(event.target.value);
-        update({ optionScores });
-      }} /><small><span className={`${styles.badge} ${styles[previewClass(settings.optionScores[option] ?? null)]}`}>{previewClass(settings.optionScores[option] ?? null)}</span></small></label>)}</div>}
+      <div className="space-y-2"><p className="text-[11px] text-foreground-500">Give every answer a score from 0 to 100. Zero is a valid score.{question.type === 'multiple_choice' ? ' For multiple answers, the question score is the average of the selected options.' : ''}</p>{!renderAnswerOptions && (question.config.options || []).map((option, index) => <div key={index} className={styles.optionScore}><span>{option}</span>{renderOptionScore(option, index)}</div>)}</div>
     </>}
     {!['rating', 'yes_no', 'number', ...OPTION_TYPES].includes(question.type) && <p className="text-[11px] text-foreground-600">Qualitative or informational question. Answer rate is shown without an automatic score. Written answers require human review; no AI sentiment is inferred.</p>}
     {hasScoring && <label className="flex items-center gap-2 text-xs font-medium text-foreground-700"><input type="checkbox" checked={settings.includeInOverall} onChange={event => update({ includeInOverall: event.target.checked })} />Include in Overall Score</label>}
@@ -55,5 +63,6 @@ export function QuestionAnalyticsSettings({ question, disabled, onChange }: {
     <p className="text-[11px] leading-5 text-foreground-500">Staff settings only. Learners do not see scores or weights. These settings never change question selection or feedback availability.</p>
     <p className="text-[11px] leading-5 text-primary-800">{SCORE_CLASSIFICATION_TEXT} Text and unanswered questions are never automatically negative.</p>
     {readiness.state === 'incomplete' && <p role="status" className={styles.notice}>{readiness.message}</p>}
-  </fieldset>;
+    </fieldset>
+  </>;
 }

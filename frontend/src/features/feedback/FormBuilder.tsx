@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as SelectPrimitive from '@radix-ui/react-select';
 import { useNavigate, useParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
@@ -11,6 +11,7 @@ import { QuestionBankImport } from './QuestionBankImport';
 import { QuestionAnalyticsSettings } from './QuestionAnalyticsSettings';
 import { FormScoringSetup } from './FormScoringSetup';
 import { analyticsForNewType, withAnswerOptions } from './questionAnalyticsConfig';
+import scoringStyles from './ScoringSetup.module.css';
 
 type BuilderSelectOption = { value: string; label: string; description: string; icon: string };
 
@@ -317,9 +318,10 @@ export function FormBuilder() {
             <label className="block text-xs font-semibold text-foreground-700">Question type<select disabled={locked || activeSectionIndex === closingIndex} aria-label={`Question ${activeQuestionIndex + 1} type`} className={`${field} mt-1.5`} value={activeQuestion.type} onChange={event => { const type = event.target.value as FeedbackQuestionType; updateQuestion(activeSectionIndex, activeQuestionIndex, { type, config: { ...(CHOICE_TYPES.has(type) ? { options: ['Option 1', 'Option 2'] } : type === 'rating' ? { min: 1, max: 5, display: 'stars' as const, labels: ['', '', '', '', ''] } : {}), ...analyticsForNewType(activeQuestion, type) } }); }}>{QUESTION_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}</select></label>
             <label className="block text-xs font-semibold text-foreground-700">Help text <span className="font-normal text-foreground-400">(optional)</span><textarea disabled={locked} className={`${field} mt-1.5`} rows={3} placeholder="Add guidance for learners" value={activeQuestion.helpText} onChange={event => updateQuestion(activeSectionIndex, activeQuestionIndex, { helpText: event.target.value })} /></label>
             <label className="flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-foreground-200/70 bg-background-50/60 p-3"><span><span className="block text-xs font-semibold text-foreground-800">Required question</span><span className="mt-0.5 block text-[10px] text-foreground-500">Learners must provide a response.</span></span><span className="relative inline-flex h-5 w-9 shrink-0"><input disabled={locked} type="checkbox" checked={activeQuestion.required} onChange={event => updateQuestion(activeSectionIndex, activeQuestionIndex, { required: event.target.checked })} className="peer sr-only" /><span className="absolute inset-0 rounded-full bg-foreground-200 transition-colors peer-checked:bg-primary-600" /><span className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-4" /></span></label>
-            {CHOICE_TYPES.has(activeQuestion.type) && <OptionEditor labelPrefix="Answer option" options={activeQuestion.config.options || []} disabled={locked} onChange={options => updateQuestion(activeSectionIndex, activeQuestionIndex, { config: withAnswerOptions(activeQuestion, options) })} />}
             {activeQuestion.type === 'rating' && <RatingEditor question={activeQuestion} disabled={locked} onChange={config => updateQuestion(activeSectionIndex, activeQuestionIndex, { config })} />}
-            <QuestionAnalyticsSettings question={activeQuestion} disabled={locked} onChange={config => updateQuestion(activeSectionIndex, activeQuestionIndex, { config })} />
+            <QuestionAnalyticsSettings question={activeQuestion} disabled={locked} onChange={config => updateQuestion(activeSectionIndex, activeQuestionIndex, { config })}
+              renderAnswerOptions={CHOICE_TYPES.has(activeQuestion.type) ? renderScore => <OptionEditor labelPrefix="Answer option" options={activeQuestion.config.options || []} disabled={locked} renderScore={renderScore} onChange={options => updateQuestion(activeSectionIndex, activeQuestionIndex, { config: withAnswerOptions(activeQuestion, options) })} /> : undefined}
+            />
             <button type="button" disabled={locked} onClick={() => removeQuestion(activeSectionIndex, activeQuestionIndex)} className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-600 transition-colors hover:bg-red-100 disabled:opacity-30"><i className="ri-delete-bin-line" aria-hidden="true" />Remove question</button>
           </div> : <div className="p-6 text-center"><span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary-50 text-primary-500"><i className="ri-question-line text-xl" aria-hidden="true" /></span><p className="mt-3 text-sm font-semibold text-foreground-800">No question selected</p><p className="mt-1 text-xs text-foreground-500">Add or select a question from the structure panel.</p>{activeSection && <button type="button" disabled={locked} onClick={() => addQuestion(activeSectionIndex)} className="mt-4 rounded-lg bg-primary-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-30">Add question</button>}</div>}
         </aside>
@@ -375,6 +377,22 @@ function RatingEditor({ question, disabled, onChange }: { question: FeedbackQues
 
 function MoveButtons({ index, length, onMove, disabled, label }: { index: number; length: number; onMove: (direction: -1 | 1) => void; disabled: boolean; label?: string }) { return <div className="flex shrink-0 gap-1"><button type="button" aria-label={label ? `Move ${label.toLowerCase()} up` : 'Move up'} disabled={disabled || index === 0} onClick={() => onMove(-1)} className="rounded border px-2 text-xs disabled:opacity-25">↑</button><button type="button" aria-label={label ? `Move ${label.toLowerCase()} down` : 'Move down'} disabled={disabled || index === length - 1} onClick={() => onMove(1)} className="rounded border px-2 text-xs disabled:opacity-25">↓</button></div>; }
 function ScopeSelect({ label, value, options, placeholder, disabled, onChange }: { label: string; value: string; options: Array<{ id: string; name: string }>; placeholder: string; disabled: boolean; onChange: (value: string) => void }) { return <label className="text-xs font-semibold text-foreground-700">{label}<select aria-label={label} required className={`${field} mt-1`} value={value} disabled={disabled} onChange={e => onChange(e.target.value)}><option value="">{placeholder}</option>{options.map(option => <option key={option.id} value={option.id}>{option.name || option.id}</option>)}</select></label>; }
-function OptionEditor({ options, onChange, disabled, labelPrefix }: { options: string[]; onChange: (options: string[]) => void; disabled: boolean; labelPrefix?: string }) { return <div className="mt-3 space-y-2">{options.map((option, index) => <div key={index} className="flex gap-2"><input disabled={disabled} aria-label={labelPrefix ? `${labelPrefix} ${index + 1}` : undefined} className={field} value={option} onChange={e => onChange(options.map((item, i) => i === index ? e.target.value : item))} /><MoveButtons disabled={disabled} index={index} length={options.length} onMove={direction => { const next = [...options]; const target = index + direction; [next[index], next[target]] = [next[target], next[index]]; onChange(next); }} /><button type="button" disabled={disabled || options.length <= 2} onClick={() => onChange(options.filter((_, i) => i !== index))} className="px-2 text-xs text-red-600 disabled:opacity-30">Remove</button></div>)}<button type="button" disabled={disabled} onClick={() => onChange([...options, `Option ${options.length + 1}`])} className="text-xs font-semibold text-primary-600">+ Add Option</button></div>; }
+function OptionEditor({ options, onChange, disabled, labelPrefix, renderScore }: {
+  options: string[]; onChange: (options: string[]) => void; disabled: boolean; labelPrefix?: string;
+  renderScore: (option: string, index: number) => ReactNode;
+}) {
+  return <div className="mt-3 space-y-2">
+    <div className={scoringStyles.optionEditorHeading}><span>Answer option</span><span>Score (%)</span></div>
+    {options.map((option, index) => <div key={index} className={scoringStyles.scoredOptionRow}>
+      <input disabled={disabled} aria-label={labelPrefix ? `${labelPrefix} ${index + 1}` : undefined} className={field} value={option} onChange={e => onChange(options.map((item, i) => i === index ? e.target.value : item))} />
+      {renderScore(option, index)}
+      <div className={scoringStyles.optionActions}>
+        <MoveButtons disabled={disabled} index={index} length={options.length} onMove={direction => { const next = [...options]; const target = index + direction; [next[index], next[target]] = [next[target], next[index]]; onChange(next); }} />
+        <button type="button" disabled={disabled || options.length <= 2} onClick={() => onChange(options.filter((_, i) => i !== index))} className="px-2 text-xs text-red-600 disabled:opacity-30">Remove</button>
+      </div>
+    </div>)}
+    <button type="button" disabled={disabled} onClick={() => onChange([...options, `Option ${options.length + 1}`])} className="text-xs font-semibold text-primary-600">+ Add Option</button>
+  </div>;
+}
 function sameId(left: string, right: string) { return left.trim().toLocaleLowerCase() === right.trim().toLocaleLowerCase(); }
 function toLocal(value: string | null) { if (!value) return ''; const date = new Date(value); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
