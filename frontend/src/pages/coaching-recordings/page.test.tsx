@@ -56,7 +56,7 @@ describe('Coaching recordings calendar', () => {
     vi.mocked(loadCoachingCalendar).mockResolvedValue(data);
     mount();
     const notice = within(await screen.findByRole('region', { name: 'Ready to action summary' }));
-    expect(notice.getByText('4 ended meetings · 1 with playable recordings')).toBeInTheDocument();
+    expect(notice.getByText('4 meetings ready to review · 1 with playable recordings')).toBeInTheDocument();
     for (const label of ['1 · Recording available', '1 · No recording returned at last check', '1 · Recording check failed', '1 · No Teams link on this calendar entry']) {
       expect(notice.getByText(label)).toBeInTheDocument();
     }
@@ -433,7 +433,7 @@ describe('Coaching recordings calendar', () => {
     data.meetings[0].readyToAction = false;
     vi.mocked(loadCoachingCalendar).mockResolvedValueOnce(data);
     mount();
-    expect(await screen.findByText('1 ended meeting · 0 with playable recordings')).toBeInTheDocument();
+    expect(await screen.findByText('1 meeting ready to review · 0 with playable recordings')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Monthly Coaching Meeting' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Ready to action', pressed: true })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Show all loaded meetings' }));
@@ -500,6 +500,16 @@ describe('Coaching recordings calendar', () => {
     expect(meetingPhase({ ...upcoming, phase: 'cancelled' }, Date.parse('2026-10-29T10:00:00Z'))).toBe('cancelled');
   });
 
+  it('makes an already published recording ready during the scheduled window without marking the call ended', () => {
+    const row = fixture().meetings[0], now = Date.parse('2026-10-20T09:30:00Z');
+    expect(meetingPhase(row, now)).toBe('in-progress');
+    expect(hasPlayableRecording(row, now)).toBe(true);
+    expect(filterMeetings([row], 'ready', 'all', 'all', now)).toEqual([row]);
+    expect(filterMeetings([row], 'ended', 'all', 'all', now)).toEqual([]);
+    expect(hasPlayableRecording(row, Date.parse('2026-10-20T08:59:00Z'))).toBe(false);
+    expect(hasPlayableRecording({ ...row, phase:'cancelled' }, now)).toBe(false);
+  });
+
   it('separates all ended review appointments from playable recordings and excludes future/cancelled appointments', () => {
     const row = fixture().meetings[0];
     for (const changed of [
@@ -555,6 +565,19 @@ describe('Coaching recordings calendar', () => {
     expect(screen.getByRole('heading', { name: 'Progress Review' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Combined support discussion' })).toBeInTheDocument();
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens playable recording and transcript controls before the scheduled end without claiming the call ended', async () => {
+    vi.setSystemTime(new Date('2026-10-20T09:30:00Z'));
+    mount();
+    const event = await screen.findByRole('button', { name: /^View Monthly Coaching Meeting on / });
+    fireEvent.click(event);
+    const drawer = within(screen.getByRole('dialog', { name: 'Meeting details' }));
+    expect(await drawer.findByRole('button', { name:'Play recording 1' })).toBeInTheDocument();
+    expect(drawer.getByRole('button', { name:'Transcript' })).toBeInTheDocument();
+    expect(drawer.getByText('Within scheduled time')).toBeInTheDocument();
+    expect(drawer.queryByText('Ended')).not.toBeInTheDocument();
+    expect(loadCoachingSession).toHaveBeenCalledOnce();
   });
 
   it('keeps attendance pending when a report has not arrived', async () => {
@@ -898,7 +921,7 @@ describe('Coaching recordings calendar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Upcoming' }));
     fireEvent.click(screen.getByRole('button', { name: 'View Progress Review on 2026-10-20' }));
     const drawer = screen.getByRole('dialog', { name: 'Meeting details' });
-    expect(within(drawer).getByText(/after this meeting ends/)).toBeInTheDocument();
+    expect(within(drawer).getByText(/once the scheduled meeting begins/)).toBeInTheDocument();
     expect(loadCoachingSession).not.toHaveBeenCalled();
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(1);
   });

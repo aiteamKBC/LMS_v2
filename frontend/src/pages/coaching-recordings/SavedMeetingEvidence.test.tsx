@@ -94,6 +94,26 @@ describe('Saved Coaching Session evidence buttons', () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it('picks up a newly discovered recording even when saved attendance was already available', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(loadCoachingSession).mockResolvedValueOnce({ eventKey:'event', partial:false,
+        media:{ state:'pending', readyCount:0, recordings:[], check:{ state:'pending', checkedAt:null } },
+        attendance:{ state:'available', reportCount:1, rows:[] } }).mockResolvedValue({ eventKey:'event', partial:false,
+        media:{ state:'ready', readyCount:1, recordings:[{ id:'published', state:'ready' }], check:{ state:'complete', checkedAt:'2026-10-20T09:20:00Z' } },
+        attendance:{ state:'available', reportCount:1, rows:[] } });
+      render(<SessionDetails eventKey="event" />);
+      await act(async () => {});
+      expect(screen.queryByRole('button', { name:'Play recording 1' })).not.toBeInTheDocument();
+      await act(async () => { await vi.advanceTimersByTimeAsync(20000); });
+      expect(screen.getByRole('button', { name:'Play recording 1' })).toBeInTheDocument();
+      expect(loadCoachingSession).toHaveBeenCalledTimes(2);
+      await act(async () => { await vi.advanceTimersByTimeAsync(300000); });
+      expect(loadCoachingSession).toHaveBeenCalledTimes(2);
+      expect(loadCoachingPdf).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+
   it('offers actual PDF preview/download without rendering raw transcript or loading an external report', async () => {
     const view = render(<SavedMeetingEvidence evidence={evidence()} eventKey="calendar:event" reference="signed-reference" />);
     expect(screen.getAllByRole('button').map(button => button.textContent)).toEqual(['Transcript', 'AI analysis']);

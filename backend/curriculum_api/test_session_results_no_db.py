@@ -168,7 +168,7 @@ class AuthoringIdentityTests(unittest.TestCase):
         self.ns['as_json_value'] = self.ns['json_value']
         tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8-sig'))
         names = {'BASE_COMPONENT_SETTINGS', 'COMPONENT_SETTINGS_SCHEMA', 'LEGACY_SETTING_KEYS',
-                 'LIVE_SESSION_TRACKING_SETTING_KEYS'}
+                 'LIVE_SESSION_TRACKING_SETTING_KEYS', 'RECORDING_SOURCE_SETTING_KEYS'}
         nodes = [node for node in tree.body if isinstance(node, ast.Assign)
                  and any(isinstance(target, ast.Name) and target.id in names for target in node.targets)]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), 'authoring-settings', 'exec'), self.ns)

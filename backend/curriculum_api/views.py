@@ -17021,6 +17021,7 @@ COMPONENT_SETTINGS_SCHEMA = {
 
 
 LEGACY_SETTING_KEYS = {'legacySettings', 'legacySourceType', 'legacyUnsupportedSource', 'shortcode'}
+RECORDING_SOURCE_SETTING_KEYS = {'recordingSeriesId', 'recordingSessionNumber', 'recordingDate'}
 LIVE_SESSION_TRACKING_SETTING_KEYS = {
     'teamsOccurrenceId', 'teamsSessionNumber', 'teamsOnlineMeetingId',
     'teamsMeetingUrl', 'teamsWebLink', 'teamsStartDateTimeUtc',
@@ -17093,6 +17094,8 @@ def component_settings_defaults(component_type):
 
 def allowed_component_setting_keys(component_type):
     allowed = set(component_settings_defaults(component_type)) | LEGACY_SETTING_KEYS
+    if frontend_component_type(component_type) in {'live-session', 'video', 'recording-placeholder'}:
+        allowed |= RECORDING_SOURCE_SETTING_KEYS
     if frontend_component_type(component_type) == 'live-session':
         allowed |= LIVE_SESSION_TRACKING_SETTING_KEYS
     return allowed
@@ -20454,12 +20457,18 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                 None,
             )
             if first_numbered:
-                # The header follows the plan's date for its first numbered
-                # session, even when that session is booked in Teams and kept its
-                # confirmed date above: a new start date moves the week at once,
-                # and the booked session shows its drift until Teams is updated.
-                # Mirrors the frontend's applyModuleWeekSessionPlan.
-                first_planned = first_numbered
+                # Teams numbering can omit orientation and additional events.
+                # Keep a confirmed date that already fits this authored week's
+                # slots; a changed plan still moves the header when it no
+                # longer fits. Mirrors applyModuleWeekSessionPlan.
+                confirmed_date = (
+                    format_date(first_settings.get('sessionDate'))
+                    if clean_str(first_settings.get('teamsLiveSessionId')) else ''
+                )
+                first_planned = next(
+                    (slot for slot in slots if slot.get('date') == confirmed_date),
+                    first_numbered,
+                )
         # The week runs on the day its live session is delivered on. A closed
         # delivery slot is not this week -- it is a reading week of its own,
         # which the plan's `slots` spine keeps in the curriculum at the closed

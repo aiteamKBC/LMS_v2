@@ -36,6 +36,14 @@ class TranscriptReadTests(SimpleTestCase):
         self.graph.assert_called_once_with('GET', 'users/owner/onlineMeetings/online/transcripts')
         self.content.assert_called_once_with('users/owner/onlineMeetings/online', 'transcript')
 
+    def test_published_transcript_is_read_before_scheduled_end_without_claiming_call_ended(self):
+        self.graph.return_value['value'][0]['endDateTime'] = START.replace(minute=15).isoformat()
+        with patch.object(transport.timezone, 'now', return_value=START.replace(minute=30)):
+            result = transport.microsoft_transcript(self.record, self.job)
+        self.assertEqual(result['state'], 'available')
+        self.assertIn('Synthetic verified transcript', result['transcript']['content'])
+        self.graph.assert_called_once()
+
     def test_missing_is_not_an_outage_and_another_occurrence_is_never_selected(self):
         self.graph.return_value = {'value': [{'id': 'old', 'createdDateTime': START.replace(day=21).isoformat(), 'endDateTime': END.replace(day=21).isoformat()}]}
         self.assertEqual(transport.microsoft_transcript(self.record, self.job)['state'], 'missing')

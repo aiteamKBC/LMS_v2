@@ -6,7 +6,7 @@ from urllib.parse import unquote
 from zoneinfo import ZoneInfo
 
 from curriculum_api import views
-from curriculum_api.tests import CurriculumPersistenceHarness
+from curriculum_api.tests import CurriculumPersistenceTransactionHarness
 from curriculum_api.teams_weekly_calendar import calendar_groups, graph_event_utc
 
 
@@ -25,14 +25,14 @@ class GraphCalendar:
         self.posts = []
         self.fail_day = ''
 
-    def __call__(self, method, path, payload=None):
+    def __call__(self, method, path, payload=None, extra_headers=None):
         if method == 'POST':
             day = ((payload.get('recurrence') or {}).get('pattern') or {}).get('daysOfWeek', [''])[0]
             if day == self.fail_day:
                 raise RuntimeError('Simulated Graph rejection')
             self.posts.append(copy.deepcopy(payload))
             key = f'event-{len(self.posts)}'
-            self.events[key] = {'id': key, 'onlineMeeting': {'joinUrl': f'https://teams.example/{key}'}}
+            self.events[key] = {'id': key, 'onlineMeeting': {'joinUrl': f'https://teams.microsoft.com/l/meetup-join/{key}'}}
         else:
             key = unquote(path.split('/events/')[1].split('/')[0].split('?')[0])
         if method == 'DELETE':
@@ -50,6 +50,11 @@ class GraphCalendar:
                         return copy.deepcopy(value)
             raise RuntimeError('No such instance')
         self.events[key].update(copy.deepcopy(payload))
+        if method == 'PATCH':
+            for instance in self.instances.get(key, []):
+                for field in ('attendees', 'hideAttendees', 'subject'):
+                    if field in payload:
+                        instance[field] = copy.deepcopy(payload[field])
         recurrence = payload.get('recurrence')
         if recurrence:
             anchor = datetime.fromisoformat(payload['start']['dateTime'])
@@ -61,7 +66,8 @@ class GraphCalendar:
             while len(instances) < recurrence['range']['numberOfOccurrences']:
                 if current.strftime('%A').lower() in recurrence['pattern']['daysOfWeek']:
                     start = current.replace(tzinfo=zone).astimezone(timezone.utc)
-                    instances.append({'id': f'{key}-instance-{len(instances)+1}',
+                    instances.append({**copy.deepcopy(self.events[key]),
+                                      'id': f'{key}-instance-{len(instances)+1}',
                                       'start': {'dateTime': start.isoformat(), 'timeZone': 'UTC'},
                                       'end': {'dateTime': (start + duration).isoformat(), 'timeZone': 'UTC'}})
                 current += timedelta(days=1)
@@ -69,7 +75,7 @@ class GraphCalendar:
         return copy.deepcopy(self.events[key])
 
 
-class ModuleWeeklyScheduleTests(CurriculumPersistenceHarness):
+class ModuleWeeklyScheduleTests(CurriculumPersistenceTransactionHarness):
     def create_module(self):
         response = self.post_json('/curriculum_api/curriculum/modules/', {
             'moduleType': 'authoring', 'title': 'Independent weekday times',
@@ -175,7 +181,7 @@ class ModuleWeeklyScheduleTests(CurriculumPersistenceHarness):
         self.assertEqual(views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE), [])
 
 
-class TeamsWeekdaySeriesTests(CurriculumPersistenceHarness):
+class TeamsWeekdaySeriesTests(CurriculumPersistenceTransactionHarness):
     create_module = ModuleWeeklyScheduleTests.create_module
 
     def setUp(self):
@@ -214,7 +220,10 @@ class TeamsWeekdaySeriesTests(CurriculumPersistenceHarness):
         self.assertEqual([body['start']['dateTime'][11:16] for body in self.graph.posts], ['09:00', '19:00'])
         self.assertEqual(meeting['trackedOccurrences'], 4)
         occurrences = views.authoring_fetch_all(views.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [meeting['liveSessionId']], 'session_number')
-        self.assertEqual([item['join_url'] for item in occurrences], ['https://teams.example/event-1', 'https://teams.example/event-2'] * 2)
+        self.assertEqual([item['join_url'] for item in occurrences], [
+            'https://teams.microsoft.com/l/meetup-join/event-1',
+            'https://teams.microsoft.com/l/meetup-join/event-2',
+        ] * 2)
         self.assertEqual([item['online_meeting_id'] for item in occurrences], ['meeting-event-1', 'meeting-event-2'] * 2)
         series = self.row(views.LIVE_SESSIONS_TABLE, 'id', meeting['liveSessionId'])
         # Creating the calendar must not author live-session components in
