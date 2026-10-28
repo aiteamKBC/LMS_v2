@@ -50,6 +50,11 @@ class GraphCalendar:
                         return copy.deepcopy(value)
             raise RuntimeError('No such instance')
         self.events[key].update(copy.deepcopy(payload))
+        if method == 'PATCH':
+            for instance in self.instances.get(key, []):
+                for field in ('attendees', 'hideAttendees', 'subject'):
+                    if field in payload:
+                        instance[field] = copy.deepcopy(payload[field])
         recurrence = payload.get('recurrence')
         if recurrence:
             anchor = datetime.fromisoformat(payload['start']['dateTime'])
@@ -61,7 +66,8 @@ class GraphCalendar:
             while len(instances) < recurrence['range']['numberOfOccurrences']:
                 if current.strftime('%A').lower() in recurrence['pattern']['daysOfWeek']:
                     start = current.replace(tzinfo=zone).astimezone(timezone.utc)
-                    instances.append({'id': f'{key}-instance-{len(instances)+1}',
+                    instances.append({**copy.deepcopy(self.events[key]),
+                                      'id': f'{key}-instance-{len(instances)+1}',
                                       'start': {'dateTime': start.isoformat(), 'timeZone': 'UTC'},
                                       'end': {'dateTime': (start + duration).isoformat(), 'timeZone': 'UTC'}})
                 current += timedelta(days=1)
