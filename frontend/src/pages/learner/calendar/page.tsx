@@ -1106,7 +1106,7 @@ function LearnerCalendarBody() {
       return Number.isFinite(otherStart) && Number.isFinite(otherEnd) && start < otherEnd && end > otherStart;
     });
     const lmsConflict = myEvents.some(event => {
-      if (!event.isoDate || event.timeToBeConfirmed || event.id === rescheduleEvent?.id
+      if (!event.isoDate || event.timeToBeConfirmed || event.needsInitialReviewBooking || event.id === rescheduleEvent?.id
           || event.id === bookingSourceEvent?.id || event.bookingStatus === 'cancelled'
           || !event.bookingSessionType) return false;
       const range = getEventTimeRange(event.time);
@@ -1122,7 +1122,7 @@ function LearnerCalendarBody() {
     const requestedStart = reviewSlotBooking ? bookingInstant(bookDate, bookTime) : new Date(`${bookDate}T${bookTime}:00`).getTime();
     const requestedEnd = requestedStart + parseInt(bookDuration || '60') * 60_000;
     return myEvents.find((event) => {
-      if (!event.isoDate || event.timeToBeConfirmed || event.id === rescheduleEvent?.id || event.id === bookingSourceEvent?.id) return false;
+      if (!event.isoDate || event.timeToBeConfirmed || event.needsInitialReviewBooking || event.id === rescheduleEvent?.id || event.id === bookingSourceEvent?.id) return false;
       const range = getEventTimeRange(event.time);
       const existingStart = reviewSlotBooking
         ? bookingInstant(event.isoDate, `${String(Math.floor(range.start / 60)).padStart(2, '0')}:${String(range.start % 60).padStart(2, '0')}`)
@@ -1140,6 +1140,7 @@ function LearnerCalendarBody() {
       event.id !== rescheduleEvent?.id
       && event.id !== bookingSourceEvent?.id
       && !event.timeToBeConfirmed
+      && !event.needsInitialReviewBooking
       && (event.bookingStatus === 'scheduled' || event.bookingStatus === 'not-scheduled')
       && event.bookingSessionType === bookType
       && Boolean(event.isoDate)
