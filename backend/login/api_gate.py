@@ -326,10 +326,13 @@ def refusal_for(path, account, *, django_user_is_authenticated=False, method='GE
         }
         if not path.startswith('/login_api/advanced-admin/') and path not in account_paths:
             return _forbidden(['advanced-admin'])
-    if account is not None and getattr(account, '_staff_access', None) == 'record-monitor':
+    if (account is not None and getattr(account, '_staff_access', None) == 'record-monitor'
+            and not (getattr(account, '_staff_accesses', frozenset())
+                     - {'record-monitor', 'advanced-admin'})):
         from old_otjh.gate import is_transition_path
-        # Applies to batch children too. Record endpoints enforce read-only
-        # methods and learner scope; authentication keeps its own handlers.
+        # Monitoring alone remains restricted, including batch children. Extra
+        # grants use the normal endpoint/ownership gates; previous-record
+        # endpoints still enforce their own read-only monitoring scope.
         if not is_transition_path(path) and path not in {
             '/login_api/me/', '/login_api/logout/', '/login_api/change-password/',
             '/login_api/login/', '/login_api/health/',

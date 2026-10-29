@@ -1,5 +1,6 @@
 """The Coach Review availability endpoint is exercised with synthetic data and Graph."""
 import json
+from datetime import date, datetime, timezone
 from inspect import unwrap
 from unittest.mock import MagicMock, patch
 
@@ -11,6 +12,9 @@ from coach_api.views import coach_review_availability
 
 class CoachReviewAvailabilityEndpointTests(SimpleTestCase):
     def setUp(self):
+        self.enterContext(patch("learner_api.booking_calendar.timezone.localdate", return_value=date(2026, 10, 27)))
+        clock = self.enterContext(patch("learner_api.coach_availability.datetime", wraps=datetime))
+        clock.now.return_value = datetime(2026, 10, 27, 12, tzinfo=timezone.utc)
         self.factory = RequestFactory()
         self.learner = MagicMock()
         self.learner.id = 21
@@ -55,6 +59,16 @@ class CoachReviewAvailabilityEndpointTests(SimpleTestCase):
         response = self.get()
         self.assertEqual(response.status_code, 503)
         self.assertEqual(json.loads(response.content)["error"], "AVAILABILITY_UNAVAILABLE")
+
+    def test_coach_picker_uses_college_hours_when_outlook_has_no_uk_overlap(self):
+        self.graph_mock.return_value["value"][0]["workingHours"] = {
+            "timeZone": {"name": "Pacific Standard Time"}, "startTime": "11:00",
+            "endTime": "16:00", "daysOfWeek": ["monday"],
+        }
+        response = self.get()
+        payload = json.loads(response.content)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual((payload["times"][0], payload["times"][-1]), ("09:00", "15:45"))
 
     def test_rejects_manipulated_duration_outside_policy(self):
         response = self.get("learnerId=21&date=2026-10-28&durationMinutes=481")

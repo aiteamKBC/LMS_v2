@@ -560,7 +560,8 @@ function ReviewInstanceContent({
   const waitingForOtherSignatures = Boolean(
     definition
     && !signatureFreePersonalSupport
-    && isSignatureStage
+    && definition.instance.status === 'awaiting-signature'
+    && requiredSignatures.length > 0
     && !advisorSignaturePending
     && !allRequiredSignaturesSaved,
   );
@@ -770,7 +771,7 @@ function ReviewInstanceContent({
   };
 
   const reopen = async () => {
-    if (!definition || reopening || isViewingAsCoach) return;
+    if (!definition || definition.canReopen === false || reopening || isViewingAsCoach) return;
     setReopening(true);
     setError(null);
     try {
@@ -1046,7 +1047,7 @@ function ReviewInstanceContent({
                   : 'Admin view-as mode is read-only. Open the learner as the assigned coach to change this review.'}
               </section>
             ) : null}
-            {definition.migratedForm && isSignatureStage && !isViewingAsCoach && (
+            {definition.migratedForm && definition.canReopen !== false && isSignatureStage && !isViewingAsCoach && (
               <section aria-label="Reopen review" className="rounded-xl border border-amber-200 bg-amber-50 p-4">
                 <p className="font-semibold text-amber-950">Correct this review</p>
                 <p className="mt-1 text-sm text-amber-900">{signatureFreePersonalSupport ? 'Reopen the form to correct its answers. Previous versions are retained.' : 'Reopen the form and collect new signatures. Previous versions are retained. Recorded hours and Monthly Log signatures stay unchanged.'}</p>
@@ -1203,7 +1204,9 @@ function ReviewInstanceContent({
                 : templateSyncConflict
                 ? 'Saved answers remain available for reference while the template conflict is resolved.'
                 : isImportedReadOnly
-                ? definition.migratedForm ? 'Submitted answers are locked while the required parties sign this review.' : 'These historical review answers are read-only and cannot be changed here.'
+                ? definition.migratedForm
+                  ? definition.instance.status === 'completed' ? 'This completed review is read-only. Its saved answers and signatures are shown below.' : 'Submitted answers are locked while the required parties sign this review.'
+                  : 'These historical review answers are read-only and cannot be changed here.'
                 : definition.migratedForm ? 'Save your answers as a draft, then submit the review when it is ready for signatures.'
                 : `These answers are saved to this ${definition.template.name} and follow the sections/questions configured in Curriculum.`}</span>
             </div>

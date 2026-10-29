@@ -429,6 +429,37 @@ describe('progress review list navigation and filters', () => {
     expect(screen.getByTestId('route')).not.toHaveTextContent('/coach/learner-case-file');
   });
 
+  it.each(['Progress Review', 'Progress Review (+ Skills Radar)', 'Personal Support Plan'])(
+  'keeps the saved LMS form accessible for completed and reopened %s rows', async importedReviewType => {
+    const states = ['completed', 'in-progress', 'awaiting-signature'] as const;
+    fetchEvents.mockResolvedValue({ events: [
+      ...states.map((status, index) => review(61 + index, {
+        id: `imported-review:${61 + index}`, eventKey: `imported-review:${61 + index}`,
+        learner: `Saved form ${status}`, reviewSource: 'aptem', aptemReviewId: String(61 + index),
+        importedReviewType, reviewTemplateId: null, reviewInstanceId: null,
+        hasReviewForm: true, sourceStatus: 'completed', status,
+        reviewCompletedAt: status === 'completed' ? '2026-09-10T10:00:00Z' : null,
+      })),
+      review(64, { learner: 'Source summary only', eventKey: 'imported-review:64',
+        reviewSource: 'aptem', aptemReviewId: '64', importedReviewType,
+        reviewTemplateId: null, reviewInstanceId: null, hasReviewForm: false, status: 'completed' }),
+    ] });
+    mount(importedReviewType === 'Personal Support Plan' ? '/coach/reviews' : '/coach/progress-reviews');
+    await screen.findByText('Saved form completed');
+    for (const [index, status] of states.entries()) {
+      const row = within(screen.getByText(`Saved form ${status}`).closest('tr')!);
+      expect(row.getByRole('button', { name: 'View form' })).toBeVisible();
+      expect(row.getByText(['Completed', 'In Progress', 'Awaiting Signature'][index])).toBeVisible();
+      if (status !== 'completed') expect(row.queryByText('10 Sept 2026')).not.toBeInTheDocument();
+    }
+    expect(within(screen.getByText('Source summary only').closest('tr')!)
+      .queryByRole('button', { name: 'View form' })).not.toBeInTheDocument();
+    fireEvent.click(within(screen.getByText('Saved form completed').closest('tr')!)
+      .getByRole('button', { name: 'View form' }));
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A61');
+    expect(openReview).not.toHaveBeenCalled();
+  });
+
   it('opens Curriculum questions for a non-terminal imported Aptem review', async () => {
     fetchEvents.mockResolvedValue({ events: [
       review(22, { id: 'imported-review:22', eventKey: 'imported-review:22', learner: 'Imported Draft', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00', reviewSource: 'aptem', aptemReviewId: '22', hasReviewForm: true, reviewTemplateId: undefined }),

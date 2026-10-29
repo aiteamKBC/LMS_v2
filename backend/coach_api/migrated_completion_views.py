@@ -10,7 +10,7 @@ from django.views.decorators.http import require_GET, require_POST
 from coach_api.auth import authenticated_coach_email, coach_access_required
 from coach_api.migrated_completion import complete, ensure_document, required_roles, sign, submit
 from coach_api.migrated_review_pdf import stored_pdf_response
-from coach_api.migrated_reviews import review_family
+from coach_api.migrated_reviews import has_completed_lms_form, has_lms_completion_history, review_family
 from coach_api.migrated_respondents import merge_party_answers, writable_keys
 from coach_api import migrated_monthly_log
 from coach_api.models import CoachCalendarEvent, ImportedReviewInstance, MigratedReviewDocument
@@ -129,13 +129,13 @@ def migrated_review_coach_sign(request, review_id):
     return _response(owner, review_id)
 
 
-def _party_overlay(review_id, account, *, lock=False, lock_calendar=False):
+def _party_overlay(review_id, account, *, lock=False, lock_calendar=False, allow_completed_source=False):
     if not review_id.startswith("imported-review:") or account.role not in {"learner", "employer"}:
         return None
     if lock_calendar:
         if not lock:
             raise ValueError("Calendar locking requires an overlay lock.")
-        owned = _party_overlay(review_id, account)
+        owned = _party_overlay(review_id, account, allow_completed_source=allow_completed_source)
         if owned is None:
             return None
         # Match submission, rescheduling and reconciliation lock order.
@@ -168,8 +168,15 @@ def _party_overlay(review_id, account, *, lock=False, lock_calendar=False):
     with connections[get_learner_db_alias()].cursor() as cursor:
         cursor.execute('SELECT status, completed_date FROM "Learner".reviews WHERE id = %s AND learner_id = %s', [overlay.source_review_id, overlay.learner_id])
         source = cursor.fetchone()
-    if not source or str(source[0] or "").strip().casefold() == "completed" or source[1]:
+    if not source:
         return None
+    if str(source[0] or "").strip().casefold() == "completed" or source[1]:
+        if not has_lms_completion_history(overlay):
+            return None
+        # Completed forms remain locked. Only an archived correction can reach
+        # participant answer/signature endpoints while its source stays complete.
+        if overlay.status == "completed" and not allow_completed_source:
+            return None
     return overlay
 
 
@@ -186,7 +193,7 @@ def migrated_review_party_detail(request, review_id):
     account = authenticate_request(request)
     if account is None:
         return JsonResponse({"detail": "Sign in to view this review."}, status=401)
-    overlay = _party_overlay(review_id, account)
+    overlay = _party_overlay(review_id, account, allow_completed_source=True)
     if not overlay:
         return JsonResponse({"detail": "Review not found for this account."}, status=404)
     definition = _party_definition(overlay, account)
@@ -273,7 +280,7 @@ def migrated_review_party_pdf(request, review_id):
     if account is None:
         return JsonResponse({"detail": "Sign in to view this PDF."}, status=401)
     with transaction.atomic():
-        overlay = _party_overlay(review_id, account, lock=True)
+        overlay = _party_overlay(review_id, account, lock=True, allow_completed_source=True)
         if not overlay or overlay.status != ImportedReviewInstance.STATUS_COMPLETED:
             return JsonResponse({"detail": "Completed review not found for this account."}, status=404)
         return _completed_pdf_response(overlay)
@@ -363,7 +370,10 @@ def _pdf_context(overlay, definition=None):
                 [overlay.source_review_id, overlay.learner_id],
             )
             source = cursor.fetchone()
-        if not profile or not source or str(source[2] or "").strip().casefold() == "completed" or source[3]:
+        if not profile or not source or (
+            (str(source[2] or "").strip().casefold() == "completed" or source[3])
+            and not has_completed_lms_form(overlay)
+        ):
             raise ValueError("Migrated source association is unavailable.")
         definition = {
             **_review_learner_identity(profile),

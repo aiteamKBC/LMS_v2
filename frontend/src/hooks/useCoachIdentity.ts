@@ -22,7 +22,8 @@ export function useCoachIdentity() {
   const { auth, isInitialized } = useAuth();
   const viewAs = useCoachViewAs();
   const account = auth.account;
-  const ownsCoachWorkspace = account?.access === 'coach';
+  const grants = [account?.access, ...(account?.accesses ?? []), ...(account?.accessWorkspaces ?? []).map(workspace => workspace.access)];
+  const ownsCoachWorkspace = account?.access !== 'advanced-admin' && grants.includes('coach');
   const canChooseCoach = account?.access === SUPER_ADMIN_ACCESS;
   // A stored selection belongs to the admin who made it; `syncCoachViewAsAccount`
   // clears anybody else's as soon as the account resolves, and this is the
