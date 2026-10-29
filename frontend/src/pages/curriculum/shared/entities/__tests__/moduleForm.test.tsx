@@ -335,6 +335,18 @@ describe('ModuleFormDrawer', () => {
     deliveries: [{ moduleId: 'MOD-1', emailed: true, lastSent: { status: 'sent', at: '2026-10-01T09:30:00Z' } }],
   };
 
+  it('renames the same module without submitting inherited delivery fields or emailing its tutor', async () => {
+    renderDrawer({ module: assignedModule() });
+    const name = screen.getByPlaceholderText('e.g. Data Modelling');
+    await userEvent.clear(name);
+    await userEvent.type(name, 'Renamed foundations');
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+
+    await waitFor(() => expect(updateCurriculumModuleMock).toHaveBeenCalledWith('MOD-1', { name: 'Renamed foundations' }));
+    expect(createGroupModuleMock).not.toHaveBeenCalled();
+    expect(sendTutorAssignmentEmailMock).not.toHaveBeenCalled();
+  });
+
   it('still shows the tick for a tutor who has not changed, reading its state from the ledger', async () => {
     tutorEmailStatusMock.mockResolvedValue(emailedStatus as never);
     renderDrawer({ module: assignedModule() as never });
@@ -816,13 +828,8 @@ describe('ModuleFormDrawer', () => {
     expect(updateCurriculumModuleMock).toHaveBeenCalledTimes(1);
     const [id, payload] = updateCurriculumModuleMock.mock.calls[0];
     expect(id).toBe('MOD-1');
-    expect(payload).toMatchObject({
-      name: 'Data Foundations II',
-      status: 'published',
-      tutor: 'Tutor One',
-      groupId: 'GROUP-1',
-      cohortId: 'COHORT-1',
-    });
+    // A rename addresses the same record without re-authoring its delivery.
+    expect(payload).toEqual({ name: 'Data Foundations II' });
     expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ catalogueId: 'MOD-1', name: 'Data Foundations II', created: false }));
   });
 

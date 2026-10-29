@@ -21029,6 +21029,14 @@ def requested_expected_revision(request, payload):
     )
 
 
+def curriculum_name_only_patch(payload, *, allow_title=False):
+    """Revision metadata does not turn a display-name edit into a delivery save."""
+    fields = {'name', 'title'} if allow_title else {'name'}
+    return any(clean_str(payload.get(key)) for key in fields) and set(payload).issubset(
+        fields | {'expectedRevision', 'expected_revision'},
+    )
+
+
 def record_conflict_response(expected_revision, current_revision, **extra):
     """The 409 a stale guarded save is refused with.
 
@@ -25760,6 +25768,8 @@ def curriculum_programme_detail(request, identifier):
                 'is_archived': programme_status_is_archived(programme_status),
                 'updated_at': datetime.utcnow(),
             }
+            if curriculum_name_only_patch(payload):
+                updates = {'name': name, 'updated_at': updates['updated_at']}
             try:
                 key_column = programme_config_key_column()
             except Exception:
@@ -25775,7 +25785,7 @@ def curriculum_programme_detail(request, identifier):
             # Propagate the new programme name to the denormalized programme_name
             # carried on child cohorts/groups/modules, keeping the canonical
             # programme_id (and every relationship) unchanged.
-            if name and normalise(name) != normalise(config.get('name')):
+            if name and name != clean_str(config.get('name')):
                 propagate_programme_name(clean_str(config.get('program_id') or key_value), name)
             # Learner records carry the name too; renamed through their profile's
             # programme id, never moved. See placement_rename.
@@ -32360,6 +32370,7 @@ def curriculum_module_detail(request, identifier):
         payload = json_body(request)
         if payload is None:
             return json_error('Invalid JSON body.')
+        rename_only = curriculum_name_only_patch(payload, allow_title=True)
         try:
             module_weekly_schedule(payload)
         except ValueError as exc:
@@ -32467,13 +32478,14 @@ def curriculum_module_detail(request, identifier):
         # tutor the module already carries, and one that only changes the tutor
         # against the schedule it already has.
         candidate = {**module_schedule_view(structure_payload), 'module_catalogue_id': module_catalogue_id}
-        delivery_day_error = tutor_assignment_delivery_day_error(
+        delivery_day_error = None if rename_only else tutor_assignment_delivery_day_error(
             candidate, before=module_schedule_view(existing_authoring),
         )
         if delivery_day_error:
             return delivery_day_error
         if (
-            not tutor_conflict_override_requested(payload)
+            not rename_only
+            and not tutor_conflict_override_requested(payload)
             and module_schedule_assignment_changed(module_schedule_view(existing_authoring), candidate)
         ):
             conflicts = tutor_schedule_conflicts_created(module_schedule_view(existing_authoring), candidate)
@@ -32501,7 +32513,27 @@ def curriculum_module_detail(request, identifier):
                             get_authoring_structure_payload(module_catalogue_id)
                         ),
                     )
-            result = save_module_authoring_structure(module_catalogue_id, structure_payload)
+            if rename_only:
+                # Do not re-save weeks/components or reconcile their dates for
+                # a display-name edit. The canonical id and all links stand.
+                update_authoring_rows(
+                    AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id],
+                    {'title': structure_payload['title'], 'updated_at': datetime.utcnow()},
+                )
+                group_id = clean_str(existing_authoring.get('group_id'))
+                if group_id:
+                    module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'group_id = %s', [group_id])
+                    update_group_fields(group_id, {
+                        'module_names': json_db_value(unique([
+                            clean_str(row.get('title')) for row in surviving_authoring_module_rows(module_rows)
+                            if row.get('title')
+                        ])),
+                    })
+                invalidate_curriculum_cache()
+                result = get_authoring_structure_payload(module_catalogue_id)
+                result['qualityChecklist'] = module_authoring_quality_check(result)[0]
+            else:
+                result = save_module_authoring_structure(module_catalogue_id, structure_payload)
         # A tutor change made straight against one module has to mirror onto the
         # raise the assignment notification, exactly as the tree save and the
         # group-modules endpoint do. Without this the module row carried the new
@@ -33235,6 +33267,9 @@ def curriculum_cohort_detail(request, identifier):
         start_date,
         end_date,
     )
+    if curriculum_name_only_patch(payload):
+        # Stored dates, EPA boundaries and status are not authored by a rename.
+        updates = {'cohort_name': updates['cohort_name']}
 
     nullable = ['apprenticeship_end_date']
     if epa_sent:
@@ -33761,7 +33796,8 @@ def curriculum_group_detail(request, identifier):
                     'programme_name': clean_str(updated_group.get('programme_name')),
                     'group_name': clean_str(updated_group.get('group_name')),
                 })
-        repair_curriculum_parent_links(clean_str(updated_group.get('programme_id')))
+        if not curriculum_name_only_patch(payload):
+            repair_curriculum_parent_links(clean_str(updated_group.get('programme_id')))
 
     if 'coach' in payload or 'tutor' in payload:
         next_group_id = clean_str(updated_group.get('group_id')) or group_id
