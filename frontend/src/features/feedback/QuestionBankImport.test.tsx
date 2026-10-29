@@ -20,6 +20,29 @@ function csvFile(contents = mixedBank) {
 }
 
 describe('QuestionBankImport', () => {
+  it('imports every question as fixed and keeps written answers in their categories', async () => {
+    const user = userEvent.setup();
+    const onApply = vi.fn();
+    render(<QuestionBankImport locked={false} fixedQuestions onApply={onApply} />);
+    expect(screen.getByRole('link', { name: 'Download Excel template' })).toHaveAttribute('download', 'feedback-question-bank.xlsx');
+    await user.upload(screen.getByLabelText('Question bank file'), csvFile([
+      'Category,Question,Answer type,Yes score,No score,Required,Help text',
+      'Teaching,Clear explanation?,5 Stars,,,Yes,Rate this session.',
+      'Teaching,Enough support?,Yes / No,75,0,No,',
+      'Teaching,What could improve?,Written answer,,,No,',
+    ].join('\r\n')));
+    expect(await screen.findByText('This form: 3 questions (all fixed)')).toBeVisible();
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(screen.getByText('All questions (fixed)')).toBeVisible();
+    expect(onApply).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Replace draft questions with this bank' }));
+    expect(onApply.mock.calls[0][0]).toMatchObject([{ title: 'Teaching', questionsPerDelivery: null, questions: [
+      { type: 'rating', required: true, helpText: 'Rate this session.' },
+      { type: 'yes_no', required: false, config: { analytics: { optionScores: { yes: 75, no: 0 } } } },
+      { type: 'long_text', required: false },
+    ] }]);
+  });
+
   it('downloads an Excel template and imports friendly answer names without displaying internal codes', async () => {
     const user = userEvent.setup();
     const onApply = vi.fn();
@@ -151,15 +174,16 @@ describe('QuestionBankImport', () => {
     expect(onApply).not.toHaveBeenCalled();
   });
 
-  it('disables uploads and prevents applying a preview if the structure becomes locked', async () => {
+  it.each([false, true])('disables uploads and prevents applying a preview if the structure becomes locked (fixed=%s)', async fixedQuestions => {
     const user = userEvent.setup();
     const onApply = vi.fn();
-    const { rerender } = render(<QuestionBankImport locked={false} onApply={onApply} />);
+    const { rerender } = render(<QuestionBankImport locked={false} fixedQuestions={fixedQuestions} onApply={onApply} />);
     await user.upload(screen.getByLabelText('Question bank file'), csvFile());
     await screen.findByRole('button', { name: 'Replace draft questions with this bank' });
-    rerender(<QuestionBankImport locked onApply={onApply} />);
+    rerender(<QuestionBankImport locked fixedQuestions={fixedQuestions} onApply={onApply} />);
     expect(screen.getByLabelText('Question bank file')).toBeDisabled();
-    expect(screen.getByRole('combobox', { name: 'Questions per lecture: Teaching' })).toBeDisabled();
+    if (fixedQuestions) expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    else expect(screen.getByRole('combobox', { name: 'Questions per lecture: Teaching' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Replace draft questions with this bank' }));
     expect(onApply).not.toHaveBeenCalled();
   });

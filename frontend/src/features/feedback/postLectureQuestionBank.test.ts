@@ -26,6 +26,32 @@ function spreadsheet(rows: unknown[][], name = 'bank.xlsx') {
 }
 
 describe('post-lecture question bank import', () => {
+  it('reuses the same scored spreadsheet for fixed forms without dropping questions or settings', async () => {
+    const file = spreadsheet([
+      ['Category', 'Question', 'Answer type', 'Yes score', 'No score', 'Include in overall score', 'Required', 'Help text'],
+      ['Teaching', 'Clear explanation?', '5 Stars', '', '', 'Yes', 'Yes', 'Rate this session.'],
+      ['Teaching', 'Enough support?', 'Yes / No', 75, 0, 'No', 'No', 'Choose one.'],
+      ['Comments', 'Any comments?', 'Written answer'],
+    ]);
+    const lecture = await parsePostLectureQuestionBank(file);
+    const fixed = await parsePostLectureQuestionBank(file, { fixedQuestions: true });
+    expect(fixed).toEqual({ ...lecture, sections: lecture.sections.map(section => ({ ...section, questionsPerDelivery: null })) });
+    expect(fixed.questionCount).toBe(3);
+  });
+
+  it('ignores legacy draw counts only for fixed forms', async () => {
+    const file = spreadsheet([
+      headings,
+      ['Teaching', 'Clear explanation?', 99, 'stars'],
+      ['Teaching', 'Useful examples?', 2, 'stars'],
+      ['', 'Any comments?', 1, 'text'],
+    ]);
+    const fixed = await parsePostLectureQuestionBank(file, { fixedQuestions: true });
+    expect(fixed.sections.map(section => section.questionsPerDelivery)).toEqual([null, null]);
+    expect(fixed.questionCount).toBe(3);
+    await expect(parsePostLectureQuestionBank(file)).rejects.toThrow(/same draw count/);
+  });
+
   it('imports answer scores, directions and numeric reporting ranges while preserving draw quotas', async () => {
     const parsed = await parsePostLectureQuestionBank(spreadsheet([
       ['Category', 'Question', 'Answer type', 'Option 1', 'Option 2', 'Option 1 score', 'Option 2 score', 'Yes score', 'No score', 'Scoring', 'Score min', 'Score max', 'Include in overall score', 'Required', 'Help text'],
