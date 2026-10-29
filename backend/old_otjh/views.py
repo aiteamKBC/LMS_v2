@@ -35,7 +35,9 @@ def endpoint(*methods):
                     raise service.ServiceError('Previous record review is not enabled yet.', 'not_enabled', 503)
                 if request.method not in methods:
                     raise service.ServiceError('Method not allowed.', 'method_not_allowed', 405)
-                if request.method not in {'GET', 'HEAD', 'OPTIONS'} and service.is_monitor(request.login_account):
+                if request.method not in {'GET', 'HEAD', 'OPTIONS'} and (
+                    request.GET.get('workspace') == 'monitor' or service.is_monitor(request.login_account)
+                ):
                     raise service.ServiceError('This account can view records only.', 'read_only', 403)
                 response = learner_journal_view(view)(request, *args, **kwargs)
             except service.ServiceError as error:
@@ -79,7 +81,7 @@ def scope(request, data=None, learner_id=None):
     selected = assertions[0] if assertions else None
     if any(str(v) != str(selected) for v in assertions):
         raise service.ServiceError('Record not found.', 'not_found', 404)
-    return service.coach_learner(account, selected)
+    return service.coach_learner(account, selected, monitoring=request.GET.get('workspace') == 'monitor')
 
 
 def safe_signature(signature):
@@ -210,7 +212,7 @@ def coach_learners(request):
 @endpoint('GET')
 def monitor_dashboard(request):
     from .monitoring import dashboard
-    actor = service.coach_actor(request.login_account)
+    actor = service.coach_actor(request.login_account, monitoring=True)
     if actor['role'] not in {'admin', 'monitor'}:
         raise service.ServiceError('Monitoring access is required.', 'forbidden', 403)
     if getattr(settings, 'RECORD_MONITOR_SHARED_READ_MODEL_ENABLED', False):

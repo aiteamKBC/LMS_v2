@@ -31,6 +31,10 @@
 // not a change of role — the switcher never touches RBAC state.
 // ============================================================================
 
+import type { AuthUser } from '@/api/auth';
+import { ACCESS_OPTIONS } from '@/api/staffUsers';
+import { mayAccessRoute } from '@/lib/routeAccess';
+
 export interface PortalWorkspace {
   slug: string;
   label: string;
@@ -166,6 +170,25 @@ export function workspacesFor(
   ));
 }
 
+/** Describe only the workspaces granted by the server, retaining its exact URLs. */
+export function grantedWorkspacesFor(account: AuthUser | null | undefined): PortalWorkspace[] {
+  if (!account || account.access === 'advanced-admin') return [];
+  return (account.accessWorkspaces ?? [])
+    .filter(workspace => workspace.access !== 'advanced-admin' && mayAccessRoute(workspace.home, account))
+    .map(workspace => {
+      const curated = PORTAL_WORKSPACES.find(item => item.slug === workspace.access);
+      const option = ACCESS_OPTIONS.find(item => item.id === workspace.access);
+      return {
+        slug: workspace.access,
+        path: workspace.home,
+        label: curated?.label ?? option?.label.replace(/\s*access$/i, '') ?? workspace.access,
+        icon: curated?.icon ?? option?.icon ?? 'ri-apps-line',
+        blurb: curated?.blurb ?? option?.description ?? 'Open this workspace.',
+        demoEmail: null,
+      };
+    });
+}
+
 /**
  * Which workspace a path belongs to, so the switcher can show where you are.
  *
@@ -183,9 +206,9 @@ export function workspacesFor(
  * that /admin/* is not inside /workspace/admin: those pages are reached from the
  * Super Admin sidebar but are not the workspace's own route.
  */
-export function activeWorkspace(pathname: string): PortalWorkspace | null {
+export function activeWorkspace(pathname: string, workspaces = PORTAL_WORKSPACES): PortalWorkspace | null {
   let best: PortalWorkspace | null = null;
-  for (const workspace of PORTAL_WORKSPACES) {
+  for (const workspace of workspaces) {
     const isMatch = pathname === workspace.path || pathname.startsWith(`${workspace.path}/`);
     if (!isMatch) continue;
     if (!best || workspace.path.length > best.path.length) best = workspace;

@@ -1677,6 +1677,40 @@ describe('coach review signature workflow', () => {
     expect(screen.queryByRole('button', { name: 'Send for signatures' })).not.toBeInTheDocument();
   });
 
+  it('does not show pending signatures on a completed historical summary', async () => {
+    const saved = migratedDefinition('completed');
+    saved.migratedForm = false;
+    saved.formAvailable = false;
+    saved.summaryOnly = true;
+    saved.sections = [];
+    saved.signatures = { advisor: { required: false, signed: false }, participant: { required: false, signed: false },
+      employer: { required: false, signed: false }, referrer: { required: false, signed: false } };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(saved);
+    mount(saved.instance.id);
+    expect(await screen.findByText('Review completed')).toBeVisible();
+    expect(screen.queryByText(/waiting for the remaining required signatures/)).not.toBeInTheDocument();
+  });
+
+  it.each(['MCM', 'PR', 'PR_SKILLS_RADAR', 'PSP'])('shows a completed %s LMS form whose source is completed without unlocking it', async family => {
+    const saved = family === 'PR' || family === 'PR_SKILLS_RADAR' ? migratedPrDefinition('completed', family) : migratedDefinition('completed');
+    saved.sourceStatus = 'Completed';
+    saved.canReopen = true;
+    if (family === 'PSP') saved.template.reviewTypeCode = 'aptem_psp';
+    saved.signatures.advisor = { required: true, signed: true, signedName: 'Synthetic coach' };
+    saved.signatures.participant = { required: true, signed: true, signedName: 'Synthetic learner' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(saved);
+    mount(saved.instance.id);
+    expect(await screen.findByText('Review completed')).toBeVisible();
+    expect(screen.getByText('Review the next module')).toBeVisible();
+    expect(screen.getByText('Synthetic learner')).toBeVisible();
+    expect(screen.getByRole('button', { name: family === 'PSP' ? 'Download PDF' : 'Download signed PDF' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Reopen review' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Save draft' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/waiting for the remaining required signatures/)).not.toBeInTheDocument();
+    expect(initializeMigratedReview).not.toHaveBeenCalled();
+    expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
+  });
+
   it('shows direct completion for templates with no required signatures', async () => {
     const draft = definition();
     for (const role of ['advisor', 'participant'] as const) {
@@ -1963,8 +1997,11 @@ describe('Review Meeting Summary integration', () => {
 });
 
 describe('migrated signed PDF lifecycle', () => {
-  it.each(['MCM', 'PR', 'PR_SKILLS_RADAR'] as const)('reopens %s with its saved version and retains previous PDF access', async family => {
-    const original = family === 'MCM' ? migratedDefinition('completed') : migratedPrDefinition('completed', family);
+  it.each(['MCM', 'PR', 'PR_SKILLS_RADAR', 'PSP'] as const)('reopens %s with its saved version and retains previous PDF access', async family => {
+    const original = family === 'MCM' || family === 'PSP' ? migratedDefinition('completed') : migratedPrDefinition('completed', family);
+    original.sourceStatus = 'Completed';
+    original.canReopen = true;
+    if (family === 'PSP') original.template.reviewTypeCode = 'aptem_psp';
     original.answerVersion = 'signed-version';
     original.reviewRevision = 0;
     const updated = { ...original, readOnly: false, localStatus: 'in-progress', reviewRevision: 1,
@@ -1977,7 +2014,7 @@ describe('migrated signed PDF lifecycle', () => {
     const { onStatusChange } = mount(original.instance.id);
     fireEvent.click(await screen.findByRole('button', { name: 'Reopen review' }));
     const dialog = screen.getByRole('dialog', { name: 'Edit this completed Review?' });
-    expect(within(dialog).getByText(/Recorded hours and Monthly Log signatures will not change/)).toBeVisible();
+    if (family !== 'PSP') expect(within(dialog).getByText(/Recorded hours and Monthly Log signatures will not change/)).toBeVisible();
     fireEvent.change(within(dialog).getByLabelText('Reason'), { target: { value: 'incorrect-answer' } });
     fireEvent.change(within(dialog).getByLabelText(/Correction details/), { target: { value: 'Correct the action owner' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'OK' }));
@@ -1986,6 +2023,8 @@ describe('migrated signed PDF lifecycle', () => {
     }));
     expect(reopenReviewInstance).not.toHaveBeenCalled();
     await waitFor(() => expect(onStatusChange).toHaveBeenCalledWith('in-progress'));
+    expect(screen.getByDisplayValue('Review the next module')).toBeEnabled();
+    expect(screen.getByRole('button', { name: family === 'PSP' ? 'Save & send for signatures' : 'Save draft' })).toBeEnabled();
     fireEvent.click(screen.getByText('Previous review versions (1)'));
     fireEvent.click(screen.getByRole('button', { name: 'Download version 1 PDF' }));
     await waitFor(() => expect(downloadMigratedReviewRevision).toHaveBeenCalledWith(original.instance.id, 1));

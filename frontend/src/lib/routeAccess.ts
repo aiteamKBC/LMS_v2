@@ -132,27 +132,29 @@ export function rolesForRoute(path: string): readonly Role[] {
 
 /** Whether `account` is admitted to `path`. */
 export function mayAccessRoute(path: string, account: Pick<AuthUser, 'role' | 'access' | 'accessWorkspaces'>): boolean {
+  const grants = [account.access, ...(account.accessWorkspaces ?? []).map(workspace => workspace.access)];
   if (account.access === 'advanced-admin') {
     return path === '/workspace/advanced-admin'
       || path.startsWith('/workspace/advanced-admin/')
       || path === '/profile';
   }
-  if (account.access === 'record-monitor') return path === '/old-otjh' || path.startsWith('/old-otjh/');
+  if (account.access === 'record-monitor'
+    && !grants.some(grant => grant && !['record-monitor', 'advanced-admin'].includes(grant))) {
+    return path === '/old-otjh' || path.startsWith('/old-otjh/');
+  }
   if (path === '/support/ticket-queue') {
-    const grants = [account.access, ...(account.accessWorkspaces ?? []).map(workspace => workspace.access)];
     return account.role === 'admin' || (account.role === 'staff' && grants.includes('support'));
   }
   if (['/admin/coach_directory', '/users/coach-directory', '/curriculum/coach-directory'].includes(path)) {
-    const grants = [account.access, ...(account.accessWorkspaces ?? []).map(workspace => workspace.access)];
     return STAFF.includes(account.role) && grants.some(grant => ['super-admin', 'enrolment', 'curriculum'].includes(grant ?? ''));
   }
   if (path === '/users/first-sessions') {
     // Enrolment only (super-admin passes everywhere) -- the same grant the API
     // enforces in learner_api/first_session_bookings.py.
-    const grants = [account.access, ...(account.accessWorkspaces ?? []).map(workspace => workspace.access)];
     return STAFF.includes(account.role) && grants.some(grant => ['super-admin', 'enrolment'].includes(grant ?? ''));
   }
-  if (path === '/old-otjh/monitor') return account.access === 'super-admin';
+  if (path === '/old-otjh/monitor') return STAFF.includes(account.role)
+    && grants.some(grant => grant === 'super-admin' || grant === 'record-monitor');
   return rolesForRoute(path).includes(account.role);
 }
 
@@ -200,7 +202,7 @@ export const CHOOSE_WORKSPACE_ROUTE = '/choose-workspace';
 export function workspacesFor(
   account: Pick<AuthUser, 'accessWorkspaces'> | null | undefined,
 ): AccessWorkspace[] {
-  return account?.accessWorkspaces ?? [];
+  return (account?.accessWorkspaces ?? []).filter(workspace => workspace.access !== 'advanced-admin');
 }
 
 /**
@@ -210,15 +212,14 @@ export function workspacesFor(
  * choice, and showing a page with a single button on it would be a step in
  * everybody's way for nothing.
  *
- * `record-monitor` is deliberately excluded: `homeRouteFor` and
- * `mayAccessRoute` both pin that grant to /old-otjh, so offering it a menu
- * would list workspaces it is then refused at the door.
+ * Advanced Admin remains restricted to its own workspace. Monitoring may be
+ * combined with other grants, while monitoring alone still goes straight home.
  */
 export function shouldChooseWorkspace(
   account: Pick<AuthUser, 'access' | 'accessWorkspaces'> | null | undefined,
 ): boolean {
   if (!account) return false;
-  if (account.access === 'record-monitor') return false;
+  if (account.access === 'advanced-admin') return false;
   return workspacesFor(account).length > 1;
 }
 

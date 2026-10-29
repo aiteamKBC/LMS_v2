@@ -25,7 +25,8 @@ export function useTutorIdentity() {
   const viewAs = useTutorViewAs();
   const account = auth.account;
   const access = String(account?.access || '').trim().toLowerCase();
-  const ownsTutorWorkspace = access === TUTOR_ACCESS;
+  const grants = [access, ...(account?.accesses ?? []), ...(account?.accessWorkspaces ?? []).map(workspace => workspace.access)];
+  const ownsTutorWorkspace = access !== 'advanced-admin' && grants.includes(TUTOR_ACCESS);
   const canChooseTutor = access === SUPER_ADMIN_ACCESS;
   const viewingAs = canChooseTutor && viewAs?.adminEmail === String(account?.email || '').trim().toLowerCase()
     ? viewAs

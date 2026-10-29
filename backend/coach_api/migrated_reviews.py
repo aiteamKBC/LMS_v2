@@ -76,6 +76,51 @@ def source_is_completed(review):
     return review.get("status") == "completed" or bool(review.get("completedDate"))
 
 
+def has_completed_lms_form(overlay):
+    """A frozen LMS form remains readable if its source later becomes completed.
+
+    Callers still verify the source, learner and account link and enforce the
+    current lifecycle state before allowing edits, signatures or reopening.
+    """
+    snapshot = getattr(overlay, "template_snapshot", None)
+    return bool(
+        getattr(overlay, "source_review_id", None)
+        and getattr(overlay, "status", None) == "completed"
+        and getattr(overlay, "completed_at", None)
+        and isinstance(snapshot, dict)
+        and isinstance(snapshot.get("sections"), list)
+        and snapshot["sections"]
+    )
+
+
+def completed_lms_revisions(revisions):
+    """Revisions with a completed snapshot and a preserved signed document."""
+    return revisions.filter(
+        snapshot__status="completed", snapshot__completed_at__isnull=False,
+        pdf_sha256__gt="", pdf_bytes__isnull=False,
+    ).exclude(snapshot__completed_at=None)
+
+
+def has_lms_completion_history(overlay):
+    """Keep an authorized correction accessible after completed_at is cleared.
+
+    A real completed revision on this overlay proves its LMS history. A draft,
+    a revision counter or an imported Completed status alone does not.
+    """
+    if has_completed_lms_form(overlay):
+        return True
+    snapshot = getattr(overlay, "template_snapshot", None)
+    if (not getattr(overlay, "source_review_id", None)
+            or getattr(overlay, "status", None) not in {"in-progress", "awaiting-signature"}
+            or not isinstance(snapshot, dict)
+            or not isinstance(snapshot.get("sections"), list) or not snapshot["sections"]):
+        return False
+    revisions = getattr(overlay, "archived_revisions", None)
+    return bool(revisions is not None and completed_lms_revisions(revisions).filter(
+        snapshot__source_review_id=overlay.source_review_id, snapshot__learner_id=overlay.learner_id,
+    ).exists())
+
+
 def initial_local_status(source_status):
     status = str(source_status or "").strip().casefold().replace(" ", "-")
     return status if status in INITIAL_STATUSES else None
