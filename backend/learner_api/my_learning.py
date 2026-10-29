@@ -346,7 +346,7 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
                    'subjectCount': sum(not c.get('previousLearningFor') for c in cards)}
 
 
-def load_context(source, owner, subject_id=None, *, purpose='catalogue', records_override=None):
+def load_context(source, owner, subject_id=None, *, purpose='catalogue', records_override=None, include_personal_replacements=False):
     """One request-local owner/assignment/ledger snapshot; no write-on-read path."""
     from .weekly_learning import build_learning_content_summary
     from .dashboard_tabs import install_request_caches
@@ -437,7 +437,10 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
         current = [builder[f'current:{mid}'] for mid in ids if f'current:{mid}' in builder]
         with projection_stage('subject_metadata'):
             imports = resolved['imported_courses'] if resolved is not None and 'imported_courses' in resolved else read_imported_courses(cur, current)
-            replacements = read_replacement_courses(cur, current, source.pk)
+            # A personal transfer link must not hide the native module or merge
+            # its hours before approval. Only transfer review opts into it.
+            replacements = read_replacement_courses(cur, current, source.pk,
+                **({'include_personal': True} if include_personal_replacements else {}))
             groups = read_previous_learning_groups(cur, source.pk, current) if purpose != 'search' else {}
         settings = {}
         # Both imported modules and verified successors can receive a transfer.

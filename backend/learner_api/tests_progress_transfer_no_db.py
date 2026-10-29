@@ -171,6 +171,49 @@ class TransferWorkflowTests(SimpleTestCase):
         self.owner = {'id':9,'enrolment_id':7}
         self.account = SimpleNamespace(id=11)
 
+    def test_selected_module_freezes_only_its_old_records_and_retries_without_writes(self):
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind):
+                pending = saved()
+                cursor = MagicMock()
+                meta = metadata()
+                meta.update(current_subjects=[{'id': 'M1', 'title': 'New'}, {'id': 'M2', 'title': 'Other'}],
+                            record_ids={('50', 'material:1'): {'1'}, ('51', 'material:2'): {'2'}}, modules={})
+                records = [{'id': 1, 'source_system': 'old_lms'}, {'id': 2, 'source_system': 'old_lms'},
+                           {'id': 3, 'source_system': 'new_lms', 'module_ref': 'M1', 'completed': True}]
+                context = ([], ['M1', 'M2'], records, native(), [], [],
+                           {('50', 'material:1'), ('51', 'material:2')}, set(), {}, meta, [])
+                card = dict(id='legacy:50', title='Old', progress=40, actualHours=1,
+                            activityCount=10, completedActivityCount=1)
+                with patch.object(store, 'lock_learner', return_value=nullcontext(cursor)), \
+                     patch.object(store, 'read_state', side_effect=[{'items': []}, pending, pending]), \
+                     patch.object(api.canonical, 'entries_for', return_value=records), \
+                     patch.object(api, 'available', return_value=(context, {'current:M1': 'legacy:50', 'current:M2': 'legacy:51'})), \
+                     patch('learner_api.my_learning.assemble_cards', return_value=([card], {})), \
+                     patch.object(api, 'uuid4', return_value=pending['items'][0]['requestId']):
+                    result = api.create_request(self.source, kind, self.owner, self.account, module_ids={'M1'})
+                    self.assertEqual([row['moduleId'] for row in result['modules']], ['M1'])
+                    self.assertEqual(cursor.execute.call_count, 2)
+                    self.assertEqual(json.loads(cursor.execute.call_args_list[0].args[1][-1]), [records[0]])
+                    snapshot = json.loads(cursor.execute.call_args_list[1].args[1][-1])
+                    self.assertEqual(snapshot['completedSourceActivities'], ['material:1'])
+                    self.assertEqual(api.create_request(self.source, kind, self.owner, self.account, module_ids={'M1'}), result)
+                    self.assertEqual(cursor.execute.call_count, 2)
+
+    def test_selected_ineligible_module_and_different_pending_request_never_write(self):
+        for state, selected, message in [({'items': []}, {'FOREIGN'}, 'not eligible'),
+                                         (saved(), {'M2'}, 'different modules'),
+                                         ({'items': []}, set(), 'Choose eligible')]:
+            with self.subTest(selected=selected):
+                cursor = MagicMock()
+                with patch.object(store, 'lock_learner', return_value=nullcontext(cursor)), \
+                     patch.object(store, 'read_state', return_value=state), \
+                     patch.object(api.canonical, 'entries_for', return_value=[]), \
+                     patch.object(api, 'available', return_value=((), {'current:M1': 'legacy:50'})):
+                    with self.assertRaisesMessage(ServiceError, message):
+                        api.create_request(self.source, 'commercial', self.owner, self.account, module_ids=selected)
+                    cursor.execute.assert_not_called()
+
     def test_one_request_snapshots_all_modules_and_retry_does_not_write(self):
         pending = saved(modules=[item(),item('51','M2')])
         cursor = MagicMock()

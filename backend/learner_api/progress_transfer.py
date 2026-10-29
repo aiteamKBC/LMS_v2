@@ -64,7 +64,8 @@ def source_owner(kind, pk):
 
 def available(source, owner, state, *, records=None):
     from .my_learning import load_context
-    context = load_context(source, owner, **({'records_override': records} if records is not None else {}))
+    context = load_context(source, owner, include_personal_replacements=True,
+                           **({'records_override': records} if records is not None else {}))
     _, assigned_ids, _, _, courses, _, _, _, _, metadata, _ = context
     pairs = eligible_pairs(metadata['imported_courses'], metadata['replacement_courses'],
         {f"legacy:{int(course['source_course_ref'])}" for course in courses},
@@ -94,17 +95,27 @@ def transfer_preview(source, owner):
 
 
 @learner_journal_reads()
-def create_request(source, kind, owner, account):
+def create_request(source, kind, owner, account, *, module_ids=None):
+    """Freeze eligible progress; internal callers may select an explicit subset."""
     from .my_learning import assemble_cards
+    selected = None if module_ids is None else set(module_ids)
+    if selected is not None and (not selected or any(not isinstance(mid, str) or not mid for mid in selected)):
+        raise ServiceError('Choose eligible modules for this request.', 'invalid_transfer_modules', 400)
     with store.lock_learner(source.pk) as cursor:
         state = store.read_state(source.pk)
         pending = [item for item in state['items'] if item['status'] == 'pending']
         if pending:
+            if selected is not None and selected != {item['moduleId'] for item in pending}:
+                raise ServiceError('An existing pending request covers different modules.', 'transfer_already_pending', 409)
             return request_summary(pending)[0]
         # One immutable read supplies both the numeric preview and the saved
         # ledger facts, even if an external import arrives during this request.
         snapshot_records = canonical.entries_for(owner)
         context, pairs = available(source, owner, state, records=snapshot_records)
+        if selected is not None:
+            if not selected.issubset({ref[8:] for ref in pairs}):
+                raise ServiceError('A selected module is not eligible for transfer.', 'invalid_transfer_modules', 409)
+            pairs = {ref: old for ref, old in pairs.items() if ref[8:] in selected}
         if not pairs:
             raise ServiceError('No old modules are currently eligible for transfer.', 'no_eligible_modules', 409)
         _, _, records, native, courses, definitions, done, started, hours, metadata, credits = context
@@ -155,7 +166,7 @@ def review_request(request_id):
     if not items or any(item['status'] != 'pending' for item in items):
         raise ServiceError('This request is no longer pending. Refresh the requests.', 'transfer_not_pending', 409)
     from .progress_transfer_content import verified_source_types
-    context = with_source_weeks(load_context(source, owner), items)
+    context = with_source_weeks(load_context(source, owner, include_personal_replacements=True), items)
     context = verified_source_types(with_planned_hours(context, items), items)
     # Review suggestions use the names in this review snapshot. Loading old
     # documents/question banks is not needed to match completed components.
@@ -231,7 +242,7 @@ def approve_request(request_id, account, decisions=None):
         if all(item['status'] == 'approved' for item in items):
             return request_summary(items)[0]
         source, owner = source_owner(kind, pk)
-        context = load_context(source, owner)
+        context = load_context(source, owner, include_personal_replacements=True)
         _, assigned, _, native, courses, _, done, _, _, metadata, _ = context
         pairs = eligible_pairs(metadata['imported_courses'], metadata['replacement_courses'],
             {f"legacy:{int(course['source_course_ref'])}" for course in courses},
