@@ -43,7 +43,10 @@ function setComponents(...components: ReturnType<typeof slides>[]) {
 }
 function NextPresentation({ kind }: { kind: LearnerKind }) {
   const navigate = useNavigate();
-  return <button onClick={() => navigate(`/learner/component/${kind}/1/C2`)}>Open second presentation</button>;
+  return <>
+    <button onClick={() => navigate(`/learner/component/${kind}/1/C2`)}>Open second presentation</button>
+    <button onClick={() => navigate(`/learner/component/${kind}/1/C1`)}>Return to first presentation</button>
+  </>;
 }
 function mount(kind: LearnerKind = 'apprenticeship') {
   return render(<MemoryRouter initialEntries={[`/learner/component/${kind}/1/C1`]}>
@@ -166,6 +169,35 @@ it('preserves saved presentation time but waits for the preview again after reop
   expectSeconds(7);
 });
 
+it('resumes saved time when a cached preview loads immediately as it appears', async () => {
+  setComponents(slides('C1', 'png'));
+  const first = mount();
+  fireEvent.load(await screen.findByAltText('Presentation C1'));
+  advanceTo(5000);
+  expectSeconds(5);
+  first.unmount();
+
+  advanceTo(35000);
+  const loaded = deferred<void>();
+  const observer = new MutationObserver(() => {
+    const image = document.querySelector('img[alt="Presentation C1"]');
+    if (!image) return;
+    observer.disconnect();
+    fireEvent.load(image);
+    advanceTo(37000);
+    loaded.resolve();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  try {
+    mount();
+    await loaded.promise;
+    expectSeconds(7);
+    expect(JSON.parse(localStorage.getItem(storageKey)!).elapsedSeconds).toBe(7);
+  } finally {
+    observer.disconnect();
+  }
+});
+
 it('waits for each presentation independently when navigating between activities', async () => {
   setComponents(slides('C1', 'png'), slides('C2', 'png'));
   mount();
@@ -180,6 +212,26 @@ it('waits for each presentation independently when navigating between activities
   advanceTo(37000);
   expectSeconds(2);
   expect(JSON.parse(localStorage.getItem(storageKey)!).elapsedSeconds).toBe(5);
+});
+
+it('waits for a fresh preview when returning to a previously viewed presentation', async () => {
+  setComponents(slides('C1', 'png'), slides('C2', 'png'));
+  mount();
+  fireEvent.load(await screen.findByAltText('Presentation C1'));
+  advanceTo(5000);
+  expectSeconds(5);
+  fireEvent.click(screen.getByRole('button', { name: 'Open second presentation' }));
+  await screen.findByAltText('Presentation C2');
+  advanceTo(35000);
+  expectSeconds(0);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Return to first presentation' }));
+  const first = await screen.findByAltText('Presentation C1');
+  advanceTo(65000);
+  expectSeconds(5);
+  fireEvent.load(first);
+  advanceTo(67000);
+  expectSeconds(7);
 });
 
 it('preserves the existing timer for a presentation without an attached file', async () => {

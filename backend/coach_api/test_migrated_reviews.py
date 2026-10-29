@@ -3,7 +3,7 @@ import json
 from datetime import date, time, timedelta
 from inspect import unwrap
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from django.db import IntegrityError, transaction
 from django.test import RequestFactory, SimpleTestCase, TestCase
@@ -261,8 +261,39 @@ class MigratedPreviewTests(SimpleTestCase):
         self.templates.assert_called_once_with(
             "id:P-42", "MCM",
         )
-        # Read by existing event key, then by explicit source FK for legacy keys.
-        self.assertEqual(self.overlays.return_value.first.call_count, 2)
+        # Read by event key, then by the selected coach/source association.
+        # A third read prevents a fresh preview/continuation over another
+        # coach's saved record when neither owned lookup found an instance.
+        self.assertEqual(self.overlays.call_args_list, [
+            call(owner_email__iexact="coach@example.invalid", event_key="imported-review:A-7"),
+            call(owner_email__iexact="coach@example.invalid", learner_id=21, source_review_id=407),
+            call(learner_id=21, source_review_id=407),
+        ])
+        self.assertEqual(self.overlays.return_value.first.call_count, 3)
+        for method in ("create", "get_or_create", "update", "delete", "bulk_create", "bulk_update"):
+            getattr(self.overlays.return_value, method).assert_not_called()
+        self.assertEqual(self.cursor.execute.call_count, 1)
+        self.assertTrue(self.cursor.execute.call_args.args[0].lstrip().startswith("SELECT"))
+
+    def test_other_coach_continuation_blocks_preview_without_creating_or_overwriting_a_record(self):
+        self.overlays.return_value.first.side_effect = [
+            None, None, SimpleNamespace(owner_email="other-coach@example.invalid"),
+        ]
+        request = RequestFactory().get(
+            "/coach_api/coach/reviews/imported-review%3AA-7",
+            {"viewAsCoach": "coach@example.invalid"},
+        )
+        response = unwrap(views.coach_review_instance_detail)(request, "imported-review:A-7")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(self.overlays.call_args_list, [
+            call(owner_email__iexact="coach@example.invalid", event_key="imported-review:A-7"),
+            call(owner_email__iexact="coach@example.invalid", learner_id=21, source_review_id=407),
+            call(learner_id=21, source_review_id=407),
+        ])
+        self.assertEqual(self.overlays.return_value.first.call_count, 3)
+        self.templates.assert_not_called()
+        for method in ("create", "get_or_create", "update", "delete", "bulk_create", "bulk_update"):
+            getattr(self.overlays.return_value, method).assert_not_called()
         self.assertEqual(self.cursor.execute.call_count, 1)
         self.assertTrue(self.cursor.execute.call_args.args[0].lstrip().startswith("SELECT"))
 

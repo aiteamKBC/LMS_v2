@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
+import { ManualTimeConfirmation } from './ManualTimeConfirmation';
 
 afterEach(cleanup);
 
@@ -75,4 +76,40 @@ it('does not duplicate a submission when the save action is clicked twice', asyn
   expect(screen.getAllByRole('alertdialog')).toHaveLength(1);
   fireEvent.click(screen.getByRole('button', { name: 'Confirm time' }));
   await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+});
+
+it.each([
+  { seconds: 28799, warning: false },
+  { seconds: 28800, warning: false },
+  { seconds: 28801, warning: true },
+  { seconds: 108000, warning: true },
+])('reviews $seconds seconds with high-duration warning=$warning without changing the saved duration', async ({ seconds, warning }) => {
+  const save = vi.fn();
+  render(<Form save={save} initialHours={String(seconds / 3600)} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Save learning' }));
+  if (warning) expect(screen.getByRole('alert')).toHaveTextContent('This time entry exceeds 8 hours.');
+  else expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(save).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm time' }));
+  await waitFor(() => expect(save).toHaveBeenCalledExactlyOnceWith(seconds));
+});
+
+it.each([
+  { duration: '8 hours', warning: false },
+  { duration: '480 minutes', warning: false },
+  { duration: '8 hours and 1 second', warning: true },
+  { duration: '8h 1m', warning: true },
+  { duration: '481 minutes', warning: true },
+  { duration: '49 hours', warning: true },
+  { duration: '4.9 hours', warning: false },
+  { duration: '30', warning: false },
+  { duration: '30 minutes', warning: false },
+])('checks explicitly named units in "$duration" without guessing unitless values', ({ duration, warning }) => {
+  const onConfirm = vi.fn(), onEdit = vi.fn();
+  render(<ManualTimeConfirmation duration={duration} onConfirm={onConfirm} onEdit={onEdit} />);
+  expect(screen.getByRole('alertdialog')).toHaveTextContent(`You entered ${duration}`);
+  expect(Boolean(screen.queryByRole('alert'))).toBe(warning);
+  fireEvent.click(screen.getByRole('button', { name: 'Edit time' }));
+  expect(onEdit).toHaveBeenCalledOnce();
+  expect(onConfirm).not.toHaveBeenCalled();
 });

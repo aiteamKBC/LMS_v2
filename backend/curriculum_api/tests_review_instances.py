@@ -418,6 +418,7 @@ class ReviewInstancesTestCase(TestCase):
             self._template_row(review_id), learner_id=1, learner_kind='commercial', programme_id='PROG-A',
             occurrence_number=1, target_date=date(2026, 9, 2), coach_email='coach@example.com',
         )
+        instance = self._start(instance)
         field_id = reviews.get_review_field_rows(review_id)[0]['id']
         review_instances.save_review_instance_answers(instance, {field_id: 'Discussed progress'}, actor='coach@example.com')
         instance = review_instances.get_review_instance(instance['id'])
@@ -451,9 +452,11 @@ class ReviewInstancesTestCase(TestCase):
             self._template_row(review_id), learner_id=1, learner_kind='commercial', programme_id='PROG-A',
             occurrence_number=1, target_date=date(2026, 9, 15), coach_email='coach@example.com',
         )
+        instance = self._start(instance)
         field_id = reviews.get_review_field_rows(review_id)[0]['id']
         review_instances.save_review_instance_answers(instance, {field_id: 'Saved coaching notes'})
-        review_instances.complete_review_instance(review_instances.get_review_instance(instance['id']))
+        ok, errors = review_instances.complete_review_instance(review_instances.get_review_instance(instance['id']))
+        self.assertTrue(ok, errors)
         mark = sample_definition()['signatures']['participant']['signature']
         coach_signed = review_instances.record_review_instance_signature(
             review_instances.get_review_instance(instance['id']), 'advisor',

@@ -40,6 +40,7 @@ export type Summary = {
   message?: string;
 };
 export type Activity = {
+  manual_time?: { progress_id: number; seconds: number; revision: string };
   id: number; category: string; title: string; activity_date: string | null;
   activity_time: string | null; planned_hours: string | number; actual_hours: string | number;
   actual_pending?: boolean;

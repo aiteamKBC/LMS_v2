@@ -573,8 +573,11 @@ async function openReadingConfirmation(kind = 'apprenticeship') {
 
 it.each(['commercial', 'apprenticeship'])('lets a %s learner correct 30 hours to 30 minutes before saving', async kind => {
   await openReadingConfirmation(kind);
-  fireEvent.click(screen.getByRole('button', { name: /Input/ }));
+  fireEvent.click(screen.getByRole('button', { name: /Input \(hours \/ minutes\)/ }));
+  expect(within(screen.getByRole('dialog')).getByLabelText('Hours spent')).toHaveAccessibleDescription('For 30 minutes: enter 0 in Hours and 30 in Minutes.');
+  expect(within(screen.getByRole('dialog')).getByLabelText('Minutes spent')).toHaveAccessibleDescription('For 30 minutes: enter 0 in Hours and 30 in Minutes.');
   fireEvent.change(within(screen.getByRole('dialog')).getByLabelText('Hours spent'), { target: { value: '30' } });
+  expect(within(screen.getByRole('dialog')).getByText('Selected time: 30 hours and 0 minutes.')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
 
   const review = screen.getByRole('alertdialog', { name: 'Check your time entry' });
@@ -589,6 +592,7 @@ it.each(['commercial', 'apprenticeship'])('lets a %s learner correct 30 hours to
   expect(within(dialog).getByLabelText('Hours spent')).toHaveFocus();
   fireEvent.change(within(dialog).getByLabelText('Hours spent'), { target: { value: '0' } });
   fireEvent.change(within(dialog).getByLabelText('Minutes spent'), { target: { value: '30' } });
+  expect(within(dialog).getByText('Selected time: 0 hours and 30 minutes.')).toBeVisible();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
 
   expect(screen.getByRole('alertdialog')).toHaveAccessibleDescription(/You entered 0 hours and 30 minutes/);

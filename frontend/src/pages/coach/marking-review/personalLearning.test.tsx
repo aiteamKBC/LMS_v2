@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import CoachMarkingReviewPage from './page';
@@ -18,6 +18,7 @@ const item = { id: 'sub-1', learnerKind: 'commercial', learnerId: 'pl.7.study.MO
   contentSections: [{ label: 'Assignment answer', text: 'The complete personal assignment answer.' }] };
 
 beforeEach(() => {
+  vi.mocked(fetchEvidence).mockResolvedValue([]);
   vi.stubGlobal('AppIcon', () => null);
   vi.mocked(coachFetch).mockImplementation(async (url, init) => {
     const path = String(url);
@@ -38,6 +39,30 @@ function review() {
 }
 
 describe('personal coursework review', () => {
+  it.each(['personal', 'official'])('retains the first feedback edit while auxiliary reads finish for %s', async scope => {
+    let finishEvidence!: (value: Response) => void;
+    const evidence = new Promise<Response>(resolve => { finishEvidence = resolve; });
+    vi.mocked(fetchEvidence).mockImplementation(async () => (await (await evidence).json()).results);
+    vi.mocked(coachFetch).mockImplementation(async url => {
+      const path = String(url);
+      if (path.endsWith('/sub-1')) return new Response(JSON.stringify({ item: { ...item, learnerId: scope === 'personal' ? item.learnerId : '7', coachFeedback: 'Saved review feedback.' } }));
+      if (path.endsWith('/evidence')) return evidence;
+      if (path.includes('?')) return new Response(JSON.stringify({ items: [item], summary: {} }));
+      return new Response(JSON.stringify({ available: false }));
+    });
+    render(<MemoryRouter initialEntries={['/coach/marking-queue/sub-1' + (scope === 'personal' ? '?scope=personal' : '')]}><Routes>
+      <Route path="/coach/marking-queue/:submissionId" element={<CoachMarkingReviewPage />} />
+    </Routes></MemoryRouter>);
+    const editor = await screen.findByLabelText('Review feedback');
+    expect(editor).toHaveValue('Saved review feedback.');
+    fireEvent.change(editor, { target: { value: 'My first unsaved edit must remain.' } });
+    await act(async () => {
+      finishEvidence(new Response(JSON.stringify({ results: [] })));
+    });
+    expect(editor).toHaveValue('My first unsaved edit must remain.');
+    expect(vi.mocked(coachFetch).mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
+  });
+
   it('shows the complete answer and saves a versioned decision to the personal endpoint', async () => {
     review();
     expect(await screen.findByText('The complete personal assignment answer.')).toBeVisible();

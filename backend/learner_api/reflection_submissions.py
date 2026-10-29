@@ -188,6 +188,10 @@ def _submit_reflection(request):
     learner_id = _text(payload.get("learnerId"))
     activity_type = _text(payload.get("activityType"))
     activity_id = _text(payload.get("activityId"))
+    if getattr(request, "coach_learner_action", False) and (
+        activity_type.lower() == "extra_activity" or activity_id.lower().startswith("extra:")
+    ):
+        return _error("Extra activities must be recorded by the learner. Coaches can review and approve submitted work.", 403)
     learning_reflection = _text(payload.get("learningReflection"))
     submission_mode = "draft" if _text(payload.get("submissionMode")).lower() == "draft" else "submit"
     if submission_mode == "submit":
@@ -273,6 +277,7 @@ def _submit_reflection(request):
         except (TypeError, ValueError, OverflowError):
             return _error("assignmentElapsedSeconds must be a non-negative number.")
     full_submission = dict(payload)
+    full_submission.pop('coachCreation', None)
     full_submission.pop("selectAssignmentTopic", None)
     lineage = _reflection_lineage(learner_id, activity_id)
     if assignment_topic and submission_mode == "draft":
@@ -316,6 +321,8 @@ def _submit_reflection(request):
                     except (TypeError, ValueError):
                         stored = {}
                 stored = _dict(stored)
+                if stored.get('submissionOrigin') == 'coach' and activity_type == 'extra_activity':
+                    return _error('This activity was recorded by your coach and cannot be edited here.', 409)
                 imported = stored.get("submissionOrigin") == "imported_legacy"
                 full_submission["submissionOrigin"] = "imported_legacy" if imported else "learner"
                 if is_assignment_form and imported:

@@ -227,6 +227,8 @@ export interface DeckEditableFields {
   actions: Array<{ title: string | null; detail: string | null; owner: string | null; due_by: string | null }>;
   epa?: { current_readiness: number | null };
   manager_questions?: string[];
+  /** Optional learner-authored additions to the approved MCM template. */
+  manual_slides?: Array<{ title: string; body: string; notes?: string }>;
 }
 
 export async function fetchDeckEditableFields(reviewId: string): Promise<DeckEditableFields> {

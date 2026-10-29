@@ -24,7 +24,9 @@ export interface MonthlyAssignment {
   actionPlan: string;
   epaPreparedness: string;
   meetingKey: string;
-  slides: Array<{ title: string; body: string }>;
+  slides: Array<{ title: string; body: string; notes?: string; templateSlide?: number }>;
+  /** Opt in only on explicit generation; saved legacy decks retain their renderer. */
+  presentationFormat?: 'kbc-mcm-v1' | 'kbc-mcm-v2';
   presentationDesign?: { name: string; accent: string; font: string; ratio: number; evidenceId?: string; slideCount?: number; coverSlide?: number; contentSlide?: number };
   presentationReviewed: boolean;
   presentationToken: string;

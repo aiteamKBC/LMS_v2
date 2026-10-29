@@ -31,6 +31,7 @@ it('reviews manually entered evidence minutes and allows correction before submi
   expect(submit).toBeEnabled();
   fireEvent.click(submit);
   expect(await screen.findByRole('alertdialog')).toHaveTextContent('49 hours and 0 minutes');
+  expect(screen.getByRole('alert')).toHaveTextContent('This time entry exceeds 8 hours.');
   expect(onSubmit).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Edit time' }));
   await waitFor(() => expect(screen.getByLabelText('Actual time spent (minutes)')).toHaveValue(2940));
@@ -38,6 +39,7 @@ it('reviews manually entered evidence minutes and allows correction before submi
   tab('Review');
   fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
   expect(await screen.findByRole('alertdialog')).toHaveTextContent('4 hours and 54 minutes');
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Confirm time' }));
   await waitFor(() => expect(onSubmit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ otjhActual: 294, reflection: 'Learning '.repeat(110) })));
 });
