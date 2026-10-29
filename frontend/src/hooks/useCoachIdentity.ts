@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useAuth } from "./useAuth.helpers";
+import { useAuth } from './useAuth';
 import { useCoachViewAs } from './useCoachViewAs';
 import { coachFetch } from '@/lib/coachFetch';
 

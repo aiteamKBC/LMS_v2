@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { useAuth } from "./useAuth.helpers";
+import { useAuth } from './useAuth';
 import { subscribeTutorViewAs, tutorViewAs, type TutorViewAs } from '@/lib/tutorViewAs';
 
 const SUPER_ADMIN_ACCESS = 'super-admin';

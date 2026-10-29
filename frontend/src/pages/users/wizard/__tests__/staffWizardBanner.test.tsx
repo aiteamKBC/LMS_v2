@@ -27,8 +27,6 @@ vi.mock('@/api/commercialUsers', () => ({ fetchCommercialBoard: vi.fn(), updateC
 vi.mock('../WizardShell', () => ({ WizardShell: ({ header }: { header: ReactNode }) => <>{header}</> }));
 vi.mock('../WizardContext', () => ({
   WizardProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
-}));
-vi.mock('../WizardContext', () => ({
   useWizard: () => ({ userId: '41', isCommercial: false, board: { user: { name: 'Test enrolment student', reference: 'Test org' } }, draft: {}, saveIlr: vi.fn() }),
 }));
 

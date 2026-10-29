@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useAuth } from "./useAuth.helpers";
+import { useAuth } from './useAuth';
 import { parsePersonalLearning } from '@/lib/personalLearning';
 
 /**
