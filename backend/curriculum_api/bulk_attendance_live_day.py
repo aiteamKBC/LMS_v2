@@ -209,6 +209,8 @@ def bulk_attendance_live_day(request):
             )
             with connections[database].cursor() as cursor:
                 upsert_live_session_register(cursor, rows)
+            from engagement_api.feedback_delivery import reconcile_feedback_after_attendance_commit
+            reconcile_feedback_after_attendance_commit([occurrence['id']], using=database)
     except LiveAttendanceTargetError as exc:
         return JsonResponse({"error": str(exc)}, status=409)
     except ValueError as exc:
