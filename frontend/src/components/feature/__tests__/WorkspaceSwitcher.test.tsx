@@ -21,7 +21,7 @@ import type { AccessWorkspace } from '@/api/auth';
 const authValue = vi.fn();
 const switchRole = vi.fn();
 
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => authValue() }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => authValue() }));
 
 const { WorkspaceSwitcher } = await import('../WorkspaceSwitcher');
 

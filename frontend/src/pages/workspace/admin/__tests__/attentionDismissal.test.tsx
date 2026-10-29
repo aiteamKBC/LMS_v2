@@ -17,7 +17,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 
 const authValue = vi.fn();
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => authValue() }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => authValue() }));
 
 // The shell drags in the sidebar, breadcrumbs and the workspace switcher; none
 // of that is under test here.

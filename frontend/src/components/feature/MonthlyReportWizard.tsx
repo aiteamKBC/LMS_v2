@@ -17,7 +17,7 @@
 // stores and renders them identically.
 // ============================================================================
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import type { LearnerKind } from '@/api/learnerDetail';
 import { uploadEvidence } from '@/api/evidence';
 import {

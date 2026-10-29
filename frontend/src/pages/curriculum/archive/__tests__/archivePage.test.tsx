@@ -1,10 +1,11 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type {
   CurriculumArchivedCohort,
+  CurriculumArchivedGroup,
   CurriculumArchivedModule,
   CurriculumArchivedProgramme,
   CurriculumArchiveEntry,
@@ -114,7 +115,10 @@ function searchText(item: CurriculumArchiveRecord) {
 /** The server's answer, over `records`. */
 function archivePage(params: { page: number; pageSize: number; type?: string; programme?: string; q?: string }): CurriculumArchivePage {
   const q = (params.q || '').toLowerCase();
-  const matching = records.filter(item => !q || searchText(item).includes(q));
+  const programmeId = (item: CurriculumArchiveRecord) => item.kind === 'programme'
+    ? item.record.sourceId || item.record.id : item.record.programmeId;
+  const scoped = records.filter(item => !params.programme || programmeId(item) === params.programme);
+  const matching = scoped.filter(item => !q || searchText(item).includes(q));
   const counts = { programme: 0, cohort: 0, group: 0, module: 0 };
   matching.forEach(item => { counts[item.kind] += 1; });
   const totals = { programme: 0, cohort: 0, group: 0, module: 0 };
@@ -127,11 +131,11 @@ function archivePage(params: { page: number; pageSize: number; type?: string; pr
       .map(item => ({ ...item, archivedWith: parentKeyOf(item, keys), children: [] }) as CurriculumArchiveEntry);
   } else {
     const matched = new Set(matching.map(keyOf));
-    entries = records
+    entries = scoped
       .filter(item => !parentKeyOf(item, keys))
       .map(item => ({
         ...item,
-        children: records
+        children: scoped
           .filter(child => parentKeyOf(child, keys) === item.key)
           .map(child => ({ ...child, archivedWith: item.key })),
       }) as CurriculumArchiveEntry)
@@ -147,7 +151,8 @@ function archivePage(params: { page: number; pageSize: number; type?: string; pr
     counts,
     totals,
     archiveTotal: records.length,
-    programmes: [],
+    programmes: [...new Map(records.map(item => [programmeId(item), item.kind === 'programme' ? item.record.name : item.record.programme]))]
+      .filter(([value]) => Boolean(value)).map(([value, label]) => ({ value, label: label || value })),
     results: entries.slice((page - 1) * params.pageSize, page * params.pageSize),
   };
 }
@@ -157,10 +162,17 @@ const fetchCurriculumArchiveRecord = vi.fn(async (key: string) => records.find(i
 const fetchArchivedModuleStructure = vi.fn(async (): Promise<unknown> => null);
 const fetchProgrammeKsbStats = vi.fn(async (): Promise<unknown> => ({ ksbMapped: 0, ksbTotal: 10 }));
 const restoreCurriculumModule = vi.fn(async () => ({ restored: true, id: 'MOD-ARCHIVED' }));
+const restoreCurriculumProgramme = vi.fn(async (_id: string) => ({ restored: true }));
+const restoreCurriculumCohort = vi.fn(async (_id: string) => ({ restored: true }));
+const restoreCurriculumGroup = vi.fn(async (_id: string) => ({ restored: true }));
+const permanentlyDeleteCurriculumModule = vi.fn(async (_id: string) => ({ deleted: true }));
 
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ auth: { account: { role: 'curriculum' } } }),
 }));
+
+// Search/filter audit transport is outside the restoration workflow under test.
+vi.mock('@/lib/curriculumActivity', () => ({ recordCurriculumAction: vi.fn(), recordCurriculumSearch: vi.fn() }));
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -187,10 +199,15 @@ vi.mock('@/lib/curriculumApi', async () => {
     fetchArchivedModuleStructure: (...args: unknown[]) => fetchArchivedModuleStructure(...(args as [])),
     fetchProgrammeKsbStats: (...args: unknown[]) => fetchProgrammeKsbStats(...(args as [])),
     restoreCurriculumModule: (...args: unknown[]) => restoreCurriculumModule(...(args as [])),
+    restoreCurriculumProgramme,
+    restoreCurriculumCohort,
+    restoreCurriculumGroup,
+    permanentlyDeleteCurriculumModule,
   };
 });
 
 const { default: CurriculumArchivePage } = await import('../page');
+const { CurriculumApiError } = await import('@/lib/curriculumApi');
 
 function renderArchive(route = '/curriculum/archive') {
   return render(
@@ -215,6 +232,10 @@ describe('Curriculum archive', { timeout: 15000 }, () => {
     fetchCurriculumArchiveRecord.mockClear();
     fetchProgrammeKsbStats.mockClear();
     restoreCurriculumModule.mockClear();
+    restoreCurriculumProgramme.mockClear();
+    restoreCurriculumCohort.mockClear();
+    restoreCurriculumGroup.mockClear();
+    permanentlyDeleteCurriculumModule.mockClear();
   });
 
   it('lists what is in the archive, how it got there, and what the buttons would do', async () => {
@@ -237,6 +258,8 @@ describe('Curriculum archive', { timeout: 15000 }, () => {
     renderArchive();
     await screen.findByText('Module 00');
     expect(fetchCurriculumArchivePage).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, pageSize: 25 }), expect.anything());
+    expect(screen.getByText('30 archived records')).toBeVisible();
+    expect(screen.getByRole('button', { name: /^Modules\s*30$/ })).toBeVisible();
     expect(screen.queryByText('Module 29')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Page 2' }));
@@ -273,12 +296,14 @@ describe('Curriculum archive', { timeout: 15000 }, () => {
     ];
     renderArchive();
 
-    expect(await screen.findByText('Retired Leadership Programme')).toBeInTheDocument();
+    // The redesigned columns show the record name and its programme ownership.
+    expect(await screen.findAllByText('Retired Leadership Programme')).toHaveLength(2);
     // One entry, not two rows: the cohort waits behind its programme.
     expect(screen.queryByText('Spring Intake')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /\+ 1 cohort archived with it/ }));
     expect(await screen.findByText('Spring Intake')).toBeInTheDocument();
     expect(screen.getByText(/Can’t restore: Its programme is archived too/)).toBeInTheDocument();
+    expect(within(screen.getByText('Spring Intake').parentElement!.parentElement!).getByRole('button', { name: /^Restore$/ })).toBeDisabled();
 
     // The Cohorts tab lists it flat, still saying where it came from.
     await userEvent.click(screen.getByRole('button', { name: /Cohorts/ }));
@@ -369,7 +394,7 @@ describe('Curriculum archive', { timeout: 15000 }, () => {
     records = [{ kind: 'programme', key: 'programme:PROG-OLD', record: archivedProgramme }];
     fetchProgrammeKsbStats.mockImplementationOnce(() => new Promise(() => undefined));
     renderArchive();
-    expect(await screen.findByText('Retired Leadership Programme')).toBeInTheDocument();
+    expect(await screen.findAllByText('Retired Leadership Programme')).toHaveLength(2);
     // The archive lists the programme without asking for its numbers.
     expect(fetchProgrammeKsbStats).not.toHaveBeenCalled();
     // Its real archive date, not "Date not recorded".
@@ -399,6 +424,7 @@ describe('Curriculum archive', { timeout: 15000 }, () => {
     records = [];
     renderArchive();
     expect(await screen.findByText('Nothing in the archive')).toBeInTheDocument();
+    expect(screen.getByText('0 archived records')).toBeVisible();
   });
 
   it('reports a failed read as a failure, not as an empty archive, and retries', async () => {
@@ -407,10 +433,156 @@ describe('Curriculum archive', { timeout: 15000 }, () => {
 
     expect(await screen.findByText('The archive could not be read')).toBeInTheDocument();
     expect(screen.queryByText('Nothing in the archive')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 archived records')).not.toBeInTheDocument();
     expect(screen.getByText(/timed out/)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: /retry/i }));
     expect(await screen.findByText('Project Management Professional')).toBeInTheDocument();
     expect(screen.queryByText('The archive could not be read')).not.toBeInTheDocument();
+  });
+});
+
+function recordActions(name: string) {
+  const title = screen.getAllByText(name).find(element => element.tagName === 'P')!;
+  return within(title.parentElement!.parentElement!);
+}
+
+describe('Archive design data and actions', () => {
+  beforeEach(() => {
+    records = [
+      { kind: 'module', key: 'module:MOD-ARCHIVED', record: archivedModule },
+      { kind: 'module', key: 'module:MOD-OTHER', record: otherArchivedModule },
+    ];
+    fetchCurriculumArchivePage.mockReset().mockImplementation(async params => archivePage(params));
+    restoreCurriculumModule.mockReset().mockResolvedValue({ restored: true, id: 'MOD-ARCHIVED' });
+    restoreCurriculumProgramme.mockClear();
+    restoreCurriculumCohort.mockClear();
+    restoreCurriculumGroup.mockClear();
+    permanentlyDeleteCurriculumModule.mockClear();
+  });
+
+  it('keeps type-qualified record identity when all four kinds share the same ID', async () => {
+    records = [
+      { kind: 'programme', key: 'programme:SAME', record: { ...archivedProgramme, id: 'SAME', sourceId: 'SAME', name: 'Archived programme' } },
+      { kind: 'cohort', key: 'cohort:SAME', record: { ...cohortWithProgramme, id: 'SAME', name: 'Archived cohort', programmeId: 'ACTIVE', archivedViaParent: '', archivedBy: '' } },
+      { kind: 'group', key: 'group:SAME', record: { id: 'SAME', name: 'Archived group', cohortId: 'ACTIVE-COHORT', cohort: 'Existing cohort', programmeId: 'ACTIVE', programme: 'Existing programme', learners: 0, cohortArchived: false } as CurriculumArchivedGroup },
+      { kind: 'module', key: 'module:SAME', record: { ...archivedModule, id: 'SAME', catalogueId: 'SAME', title: 'Archived module', programmeId: 'ACTIVE' } },
+    ];
+    renderArchive();
+    await screen.findByText('Archived module');
+    expect(recordActions('Archived programme').getByText('Archived on its own')).toBeVisible();
+    expect(recordActions('Archived programme').queryByText('Archived with its programme')).not.toBeInTheDocument();
+    expect(restoreCurriculumProgramme).not.toHaveBeenCalled();
+    for (const [name, restore] of [
+      ['Archived programme', restoreCurriculumProgramme], ['Archived cohort', restoreCurriculumCohort],
+      ['Archived group', restoreCurriculumGroup], ['Archived module', restoreCurriculumModule],
+    ] as const) {
+      await userEvent.click(recordActions(name).getByRole('button', { name: /^Restore$/ }));
+      await waitFor(() => expect(restore).toHaveBeenCalledWith('SAME'));
+      await waitFor(() => expect(recordActions(name).getByRole('button', { name: /^Restore$/ })).toBeEnabled());
+      expect(restore).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('shows dependency blockers and keeps unavailable restores disabled', async () => {
+    records = [
+      { kind: 'module', key: 'module:MOD-ARCHIVED', record: { ...archivedModule, programmeArchived: true } },
+      { kind: 'group', key: 'group:GROUP-OLD', record: { id: 'GROUP-OLD', name: 'Archived dependent group', cohort: 'Archived parent cohort', programme: 'Original programme', programmeId: 'ORIGINAL', cohortArchived: true, learners: 0 } as CurriculumArchivedGroup },
+    ];
+    renderArchive();
+    await screen.findByText('Archived dependent group');
+    expect(recordActions('Project Management Professional').getByRole('button', { name: /^Restore$/ })).toBeDisabled();
+    expect(recordActions('Archived dependent group').getByRole('button', { name: /^Restore$/ })).toBeDisabled();
+    expect(recordActions('Archived dependent group').getByText(/^Its cohort is archived too/)).toBeVisible();
+    expect(screen.getByText('Non-restorable total unavailable')).toBeVisible();
+    expect(restoreCurriculumModule).not.toHaveBeenCalled();
+    expect(restoreCurriculumGroup).not.toHaveBeenCalled();
+  });
+
+  it('retains a failed restore and reconciles rows and totals only from the subsequent server read', async () => {
+    restoreCurriculumModule.mockRejectedValueOnce(new CurriculumApiError('Conflict', 409, '/curriculum/modules/MOD-ARCHIVED/restore/', { error: 'The programme is now archived' })).mockImplementationOnce(async () => {
+      records = records.filter(item => item.key !== 'module:MOD-ARCHIVED');
+      return { restored: true, id: 'MOD-ARCHIVED' };
+    });
+    renderArchive('/curriculum/archive?type=module');
+    await screen.findByText('Project Management Professional');
+    await userEvent.click(recordActions('Project Management Professional').getByRole('button', { name: /^Restore$/ }));
+    expect(await screen.findByText('The programme is now archived')).toBeVisible();
+    expect(screen.getByText('2 archived records')).toBeVisible();
+    expect(screen.getByText('Project Management Professional')).toBeVisible();
+    await waitFor(() => expect(recordActions('Project Management Professional').getByRole('button', { name: /^Restore$/ })).toBeEnabled());
+    await userEvent.click(recordActions('Project Management Professional').getByRole('button', { name: /^Restore$/ }));
+    await waitFor(() => expect(screen.queryByText('Project Management Professional')).not.toBeInTheDocument());
+    expect(screen.getByText('1 archived record')).toBeVisible();
+    expect(screen.getByText('Data Foundations')).toBeVisible();
+  });
+
+  it('locks duplicate submissions and other actions through the authoritative refresh', async () => {
+    let finishRestore!: (value: { restored: boolean; id: string }) => void;
+    let finishRead!: (value: CurriculumArchivePage) => void;
+    restoreCurriculumModule.mockImplementationOnce(() => new Promise(resolve => { finishRestore = resolve; }));
+    renderArchive();
+    await screen.findByText('Project Management Professional');
+    fetchCurriculumArchivePage.mockImplementationOnce(() => new Promise(resolve => { finishRead = resolve; }));
+    const restore = recordActions('Project Management Professional').getByRole('button', { name: /^Restore$/ });
+    fireEvent.click(restore); fireEvent.click(restore);
+    await waitFor(() => expect(restoreCurriculumModule).toHaveBeenCalledTimes(1));
+    expect(recordActions('Data Foundations').getByRole('button', { name: /^Delete$/ })).toBeDisabled();
+    await act(async () => finishRestore({ restored: true, id: 'MOD-ARCHIVED' }));
+    await waitFor(() => expect(finishRead).toBeTypeOf('function'));
+    expect(restore).toBeDisabled();
+    await act(async () => finishRead(archivePage({ page: 1, pageSize: 25 })));
+    await waitFor(() => expect(restore).toBeEnabled());
+    // No optimistic removal: this response still contains the original row.
+    expect(screen.getByText('Project Management Professional')).toBeVisible();
+  });
+
+  it('does not substitute update dates, current users, unavailable item counts or retention claims', async () => {
+    records = [{ kind: 'programme', key: 'programme:PROG-OLD', record: { ...archivedProgramme, archivedAt: '', lastUpdated: '2060-01-01', modules: undefined } as unknown as CurriculumArchivedProgramme }];
+    renderArchive();
+    await screen.findAllByText('Retired Leadership Programme');
+    const row = recordActions('Retired Leadership Programme');
+    expect(row.getByText('Date not recorded')).toBeVisible();
+    expect(row.getByText('Module count unavailable')).toBeVisible();
+    expect(row.getByText('Not recorded')).toBeVisible();
+    expect(row.queryByText(/2060/)).not.toBeInTheDocument();
+    expect(row.queryByText(/programme-delete/)).not.toBeInTheDocument();
+    expect(row.queryByText(/retention expired|as a copy|restore to draft/i)).not.toBeInTheDocument();
+  });
+
+  it('preserves the permanent-delete action for the chosen module', async () => {
+    renderArchive();
+    await screen.findByText('Project Management Professional');
+    await userEvent.click(recordActions('Project Management Professional').getByRole('button', { name: /^Delete$/ }));
+    await waitFor(() => expect(permanentlyDeleteCurriculumModule).toHaveBeenCalledWith('MOD-ARCHIVED'));
+    expect(permanentlyDeleteCurriculumModule).toHaveBeenCalledTimes(1);
+    expect(restoreCurriculumModule).not.toHaveBeenCalled();
+  });
+
+  it('filters by the original archived programme ID and resets server filters without writes', async () => {
+    records = [
+      { kind: 'programme', key: 'programme:PROG-OLD', record: archivedProgramme },
+      { kind: 'module', key: 'module:MOD-ARCHIVED', record: { ...archivedModule, programmeId: 'PROG-OLD', programme: archivedProgramme.name } },
+      { kind: 'module', key: 'module:MOD-OTHER', record: otherArchivedModule },
+    ];
+    renderArchive();
+    await screen.findByText('Project Management Professional');
+    await userEvent.click(screen.getByRole('combobox', { name: 'Programme' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Retired Leadership Programme' }));
+    await waitFor(() => expect(fetchCurriculumArchivePage).toHaveBeenLastCalledWith(expect.objectContaining({ programme: 'PROG-OLD', page: 1 }), expect.anything()));
+    await waitFor(() => expect(screen.queryByText('Data Foundations')).not.toBeInTheDocument());
+    // Global totals are unaffected by a programme filter.
+    expect(screen.getByText('3 archived records')).toBeVisible();
+    expect(screen.getByRole('button', { name: /^Modules\s*1$/ })).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: /^Modules/ }));
+    await userEvent.type(screen.getByRole('textbox', { name: /Search/ }), 'Foundations');
+    await waitFor(() => expect(fetchCurriculumArchivePage).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'module', programme: 'PROG-OLD', q: 'Foundations', pageSize: 25 }), expect.anything()));
+    expect(await screen.findByText('No archived records match these filters')).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: /^Reset$/ }));
+    expect(await screen.findByText('Data Foundations')).toBeVisible();
+    await waitFor(() => expect(fetchCurriculumArchivePage).toHaveBeenLastCalledWith(expect.objectContaining({ type: '', programme: '', q: '', page: 1 }), expect.anything()));
+    expect(restoreCurriculumModule).not.toHaveBeenCalled();
+    expect(restoreCurriculumProgramme).not.toHaveBeenCalled();
+    expect(permanentlyDeleteCurriculumModule).not.toHaveBeenCalled();
   });
 });

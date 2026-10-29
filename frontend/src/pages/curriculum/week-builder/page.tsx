@@ -1,4 +1,7 @@
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
+import railStyles from './WeekComponentRail.module.css';
+import overviewStyles from './WeekOverviewPanel.module.css';
+import { liveSessionCalendarMovePending } from '../module-builder/componentWeekMove';
 import { componentFileList, legacyComponentFile, serialiseComponentFiles, type ComponentFile } from '@/lib/componentFiles';
 import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -1003,7 +1006,10 @@ function FlowStrip({ components, selectedId, onJump }: { components: ModuleCompo
 
 // A "+" threaded into the spine records exactly where the new component lands;
 // the actual picker opens in a roomy dialog instead of squeezing into the rail.
-function InsertionZone({ active, onOpen, first, last }: { active: boolean; onOpen: () => void; first?: boolean; last?: boolean }) {
+function InsertionZone({ active, onOpen, first, last, compact = false }: { active: boolean; onOpen: () => void; first?: boolean; last?: boolean; compact?: boolean }) {
+  if (compact) return <div className={railStyles.insertion} data-active={active || undefined}>
+    <button type="button" onClick={onOpen} aria-label="Add a component here"><span><AppIcon className="ri-add-line" />{active ? 'Adding here' : 'Insert here'}</span></button>
+  </div>;
   return (
     <div className={`group/insert flex gap-3 ${active ? 'py-1' : ''}`}>
       <SpineGutter connectTop={!first} connectBottom={!last} />
@@ -1032,6 +1038,8 @@ function SpineGutter({ connectTop = true, connectBottom = true, children }: { co
 }
 
 interface RailNodeProps {
+  compact?: boolean;
+  onDeselect?: () => void;
   component: ModuleComponent;
   index: number;
   selected: boolean;
@@ -1068,8 +1076,8 @@ interface RailNodeProps {
    */
   otherWeeks?: { id: string; label: string }[];
   onCopyToWeek?: (weekId: string) => void;
-  /** Moves this component (and its linked partner) to another week of the module. */
   onMoveToWeek?: (weekId: string) => void;
+  onReviewTeamsCalendar?: () => void;
   /** The live-session/recording link, in words; empty for a component that has none. */
   linkLabel?: string;
   /** What else moves with this component, in words; empty when it moves alone. */
@@ -1088,10 +1096,11 @@ function SortableRailNode(props: RailNodeProps) {
   );
 }
 
-function RailNodeCard({ component, index, selected, focused = false, issues, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, otherWeeks, onCopyToWeek, onMoveToWeek, linkLabel = '', moveNote = '', handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
+function RailNodeCard({ component, index, selected, compact = false, onDeselect, focused = false, issues, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, otherWeeks, onCopyToWeek, onMoveToWeek, onReviewTeamsCalendar, linkLabel = '', moveNote = '', handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
   const isLiveSession = component.type === 'live-session';
+  const calendarMovePending = liveSessionCalendarMovePending(component);
   const externalTeamsCalendar = isLiveSession && !component.settings.extraTeamsMeetingUrl
     && (component.settings.teamsMeetingType === 'linked-external' || Boolean(component.settings.liveSessionLinkOverride));
   // The date this live session itself holds. It used to fall back to the week's
@@ -1114,8 +1123,88 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
   // twenty components shows at a glance which ones are still placeholders --
   // it is a hint and nothing else, and it disappears on the first real edit.
   const unedited = componentLooksUnedited(component, weekAutoTitleLabels(component.type));
+  const sessionDetails = <>
+            {linkLabel && (
+              <span
+                data-testid="component-link-label"
+                title={linkLabel === 'Not linked'
+                  ? 'This recording is not linked to a live session. It needs its own recording link and moves on its own.'
+                  : linkLabel === 'Linked session missing'
+                    ? 'The live session this recording was linked to no longer exists, so it plays nothing. Open the recording to link it again.'
+                    : moveNote
+                      ? 'Linked: the recording plays the live session’s recording and takes its date. Moving either one to another week moves both, whichever weeks they are in now.'
+                      : 'Linked to a live session in another module: the recording plays that session’s recording. Moving this recording never moves that session, and they stay linked.'}
+                className={`inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border px-1.5 py-px text-[9px] font-bold ${linkLabel === 'Not linked' ? 'border-background-300 bg-background-100 text-foreground-500' : linkLabel === 'Linked session missing' ? 'border-amber-300 bg-amber-100 text-amber-800' : 'border-purple-200 bg-purple-50 text-purple-700'}`}
+              >
+                <AppIcon className={`${linkLabel === 'Not linked' || linkLabel === 'Linked session missing' ? 'ri-link-unlink-m' : 'ri-link-m'} text-[10px]`}></AppIcon>
+                <span className="truncate">{linkLabel}</span>
+              </span>
+            )}
+        {calendarMovePending && <span className="inline-flex flex-wrap items-center gap-1 text-amber-800" title="This component has moved to a new planned date. Its existing Teams booking still needs to be updated through the Teams calendar.">
+      <AppIcon className="ri-calendar-schedule-line" /><span>Teams calendar update needed</span>
+      {onReviewTeamsCalendar && <button type="button" className="underline" onClick={event => { event.stopPropagation(); onReviewTeamsCalendar(); }}>Update Teams calendar</button>}
+    </span>}
+    {scheduledDate && <span className="tabular-nums">{formatDateLabel(scheduledDate)}</span>}
+    {isLiveSession && ['missing', 'ambiguous'].includes(String(component.settings?.teamsCalendarBinding || '')) && (
+      <span
+        title={externalTeamsCalendar
+          ? 'This date has no confirmed session in the imported Teams calendar. The organizer must check or extend the original series in Teams, then its updated dates can be imported and matched here. The existing meeting link is preserved.'
+          : 'This date has no confirmed calendar session. Open Update Teams meeting to review the module calendar.'}
+        className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
+      >
+        <AppIcon className="ri-calendar-schedule-line text-[10px]"></AppIcon>
+        Teams date awaiting confirmation
+      </span>
+    )}
+    {/* The session and its week disagree about when this runs, and the
+        session's date is the one that wins everywhere downstream. Said
+        on the row that owns the date, with the correction offered --
+        pressing it only edits the module, exactly like typing the date
+        in the session's own settings would. */}
+    {dateDrift && (
+      <span
+        title={`Teams calendar currently has this meeting on ${formatDateLabel(dateDrift.storedDate)}. This week is now planned for ${dateDrift.weekDates.map(formatDateLabel).join(' and ')}. ${externalTeamsCalendar
+          ? 'This is an imported Teams series. Open Update Teams meeting to review and re-match its saved dates. If the planned date is missing, the organizer must update the original series in Teams before its dates can be imported. The LMS keeps the existing link and does not reschedule this series.'
+          : 'This session keeps its confirmed date because attendees were invited to it. Open the Teams Meetings page and run Update to move the Microsoft meeting to the planned date and notify attendees.'}`}
+        className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
+      >
+        <AppIcon className="ri-calendar-schedule-line text-[10px]"></AppIcon>
+        Teams calendar: {formatDateLabel(dateDrift.storedDate)} · planned here: {formatDateLabel(dateDrift.weekDates[0])} · {externalTeamsCalendar ? 'review imported calendar' : 'update Teams to match'}
+      </span>
+    )}
+    {/* Says what is missing rather than filling it in: this session is
+        not on the calendar and not in the Teams series until it has a
+        date of its own. The week's date is offered as context, marked
+        as the week's so it cannot be read as this session's. */}
+    {isLiveSession && !scheduledDate && (
+      <span
+        title="This live session has no date, so it is not on the calendar and is not sent to Teams. Give it one in its settings."
+        className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
+      >
+        <AppIcon className="ri-calendar-close-line text-[10px]"></AppIcon>
+        No date
+      </span>
+    )}
+    {weekDate && <span className="tabular-nums text-foreground-300">week: {formatDateLabel(weekDate)}</span>}
+    {onHoliday && (
+      <span
+        title="This live session falls on a holiday. It is unchanged: same date, same week, still scheduled."
+        className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
+      >
+        <AppIcon className="ri-error-warning-line text-[10px]"></AppIcon>
+        Holiday
+      </span>
+    )}
+  </>;
+  if (compact) return <CompactRailNode
+    component={component} index={index} selected={selected} focused={focused} issues={issues}
+    onSelect={onSelect} onDeselect={onDeselect} onDuplicate={onDuplicate} onDelete={onDelete}
+    otherWeeks={otherWeeks} onCopyToWeek={onCopyToWeek} onMoveToWeek={onMoveToWeek} handleProps={handleProps}
+    scheduledDate={scheduledDate} unedited={unedited}
+    notices={linkLabel || isLiveSession && (calendarMovePending || !scheduledDate || onHoliday || dateDrift || ['missing', 'ambiguous'].includes(String(component.settings.teamsCalendarBinding || ''))) ? sessionDetails : null}
+  />;
   return (
-    <div id={`node-${component.id}`} data-focused={focused || undefined} className="group/node">
+    <div id={`node-${component.id}`} data-component-type={component.type} data-focused={focused || undefined} className="group/node">
       {/* Its own row above the card rather than beside the title: the title
           line already truncates in a narrow rail, and a component's name is
           what an author scans for -- the hint says something ABOUT the row,
@@ -1141,7 +1230,7 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
           className={`min-w-0 flex-1 my-1 flex flex-wrap items-center gap-2 rounded-xl border px-2.5 py-2.5 transition-all cursor-pointer ${dragging ? 'border-primary-300 bg-background-50 shadow-xl ring-2 ring-primary-200' : focused ? 'border-primary-400 bg-primary-50 shadow-md ring-4 ring-primary-200/70' : selected ? `${tone.border} ${tone.soft} shadow-sm` : 'border-background-200 bg-background-50 hover:border-background-300 hover:shadow-sm'}`}
         >
           <button type="button" {...(handleProps || {})} onClick={e => e.stopPropagation()} aria-label="Drag to reorder" className="grid place-items-center w-5 h-8 -ml-0.5 shrink-0 text-foreground-300 hover:text-foreground-600 cursor-grab active:cursor-grabbing touch-none rounded"><AppIcon className="ri-draggable"></AppIcon></button>
-          <span className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip}`}><AppIcon className={`${definition.icon} text-base`}></AppIcon></span>
+          <span data-authoring-type-icon className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip}`}><AppIcon className={`${definition.icon} text-base`}></AppIcon></span>
           <span className="flex-1 min-w-0">
           <span className="flex min-w-0 items-center gap-2">
             <span onMouseEnter={showFullTextWhenTruncated} className={`min-w-0 flex-1 text-[13px] font-bold truncate ${unedited ? 'text-foreground-500' : 'text-foreground-900'}`}>{component.title || weekTypeLabel(component.type)}</span>
@@ -1152,57 +1241,7 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
             <span className="tabular-nums">{formatHoursMinutes(component.expectedOtjh)}</span>
             <span className="tabular-nums">{component.points}pts</span>
             {component.ksbMappings.length > 0 && <span className="tabular-nums">{component.ksbMappings.length} KSB</span>}
-            {scheduledDate && <span className="tabular-nums">{formatDateLabel(scheduledDate)}</span>}
-            {isLiveSession && ['missing', 'ambiguous'].includes(String(component.settings?.teamsCalendarBinding || '')) && (
-              <span
-                title={externalTeamsCalendar
-                  ? 'This date has no confirmed session in the imported Teams calendar. The organizer must check or extend the original series in Teams, then its updated dates can be imported and matched here. The existing meeting link is preserved.'
-                  : 'This date has no confirmed calendar session. Open Update Teams meeting to review the module calendar.'}
-                className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
-              >
-                <AppIcon className="ri-calendar-schedule-line text-[10px]"></AppIcon>
-                Teams date awaiting confirmation
-              </span>
-            )}
-            {/* Says what is missing rather than filling it in: this session is
-                not on the calendar and not in the Teams series until it has a
-                date of its own. The week's date is offered as context, marked
-                as the week's so it cannot be read as this session's. */}
-            {isLiveSession && !scheduledDate && (
-              <span
-                title="This live session has no date, so it is not on the calendar and is not sent to Teams. Give it one in its settings."
-                className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
-              >
-                <AppIcon className="ri-calendar-close-line text-[10px]"></AppIcon>
-                No date
-              </span>
-            )}
-            {weekDate && <span className="tabular-nums text-foreground-300">week: {formatDateLabel(weekDate)}</span>}
-            {linkLabel && (
-              <span
-                data-testid="component-link-label"
-                title={linkLabel === 'Not linked'
-                  ? 'This recording is not linked to a live session. It needs its own recording link and moves on its own.'
-                  : linkLabel === 'Linked session missing'
-                    ? 'The live session this recording was linked to no longer exists, so it plays nothing. Open the recording to link it again.'
-                    : moveNote
-                      ? 'Linked: the recording plays the live session’s recording and takes its date. Moving either one to another week moves both, whichever weeks they are in now.'
-                      : 'Linked to a live session in another module: the recording plays that session’s recording. Moving this recording never moves that session, and they stay linked.'}
-                className={`inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border px-1.5 py-px text-[9px] font-bold ${linkLabel === 'Not linked' ? 'border-background-300 bg-background-100 text-foreground-500' : linkLabel === 'Linked session missing' ? 'border-amber-300 bg-amber-100 text-amber-800' : 'border-purple-200 bg-purple-50 text-purple-700'}`}
-              >
-                <AppIcon className={`${linkLabel === 'Not linked' || linkLabel === 'Linked session missing' ? 'ri-link-unlink-m' : 'ri-link-m'} text-[10px]`}></AppIcon>
-                <span className="truncate">{linkLabel}</span>
-              </span>
-            )}
-            {onHoliday && (
-              <span
-                title="This live session falls on a holiday. It is unchanged: same date, same week, still scheduled."
-                className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
-              >
-                <AppIcon className="ri-error-warning-line text-[10px]"></AppIcon>
-                Holiday
-              </span>
-            )}
+            {sessionDetails}
           </span>
         </span>
         {(onDuplicate || onDelete) && (
@@ -1213,6 +1252,7 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
                 otherWeeks={otherWeeks}
                 onDuplicateSameWeek={onDuplicate}
                 onCopyToWeek={onCopyToWeek}
+                onMoveToWeek={onMoveToWeek}
               />
             )}
             {onMoveToWeek && otherWeeks && otherWeeks.length > 0 && (
@@ -1256,20 +1296,62 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
   );
 }
 
+function CompactRailNode({ component, index, selected, focused, issues, onSelect, onDeselect, onDuplicate, onDelete, otherWeeks, onCopyToWeek, onMoveToWeek, handleProps, scheduledDate, unedited, notices }: RailNodeProps & {
+  handleProps?: Record<string, unknown>; scheduledDate: string; unedited: boolean; notices: ReactNode;
+}) {
+  const definition = getComponentDefinition(component.type);
+  const title = component.title || weekTypeLabel(component.type);
+  const labels = [definition.label, ...weekAutoTitleLabels(component.type)].map(label => label.toLocaleLowerCase());
+  const customTitle = !labels.includes(title.replace(/\s+\d+$/, '').trim().toLocaleLowerCase());
+  const status = String(component.settings.contentStatus || 'Draft');
+  const typeLabels: Partial<Record<ModuleComponentType, string>> = { 'live-session': 'Live session', reading: 'Reading', powerpoint: 'Slides' };
+  return <div id={`node-${component.id}`} data-component-type={component.type} data-focused={focused || undefined} data-compact-component className={railStyles.node}>
+    <div className={railStyles.card} data-selected={selected || undefined} data-focused={focused || undefined} onClick={onSelect}
+      title={`${index + 1}. ${title} · ${formatHoursMinutes(component.expectedOtjh)} · ${component.points} pts${scheduledDate ? ` · ${formatDateLabel(scheduledDate)}` : ''}`}>
+      <div className={railStyles.row}>
+        <input type="checkbox" aria-label={`Select ${title}`} checked={selected} disabled={!onSelect} onClick={event => event.stopPropagation()}
+          onChange={event => event.target.checked ? onSelect?.() : onDeselect?.()} />
+        <span className={railStyles.icon} aria-hidden><AppIcon className={definition.icon} /></span>
+        <div className={`${railStyles.summary} min-w-0 flex-1`}>
+          <div className={railStyles.badges}>
+            <span data-content-status={status} title={unedited ? 'Not edited yet — this component still has its initial placeholder values.' : undefined}>{status}</span>
+            <span className={railStyles.scope}>{component.copiedFromId ? 'Reused' : 'This week'}</span>
+          </div>
+          <span className={customTitle ? railStyles.title : 'sr-only'} onMouseEnter={showFullTextWhenTruncated}>{title}</span>
+          <div className={railStyles.meta}>
+            <span className={railStyles.type}>{typeLabels[component.type] || weekTypeLabel(component.type)}</span>
+            <span>{formatHoursMinutes(component.expectedOtjh)} · {component.points} pts</span>
+            {component.ksbMappings.length > 0 && <span>{component.ksbMappings.length} KSB</span>}
+          </div>
+        </div>
+        <div className={railStyles.actions}>
+          <button type="button" aria-label={`Edit ${title}`} title="Edit component" onClick={event => { event.stopPropagation(); onSelect?.(); }}><AppIcon className="ri-pencil-line" /></button>
+          {onDuplicate && <CloneComponentButton label={title} otherWeeks={otherWeeks} onDuplicateSameWeek={onDuplicate} onCopyToWeek={onCopyToWeek} onMoveToWeek={onMoveToWeek} />}
+          {onDelete && <button type="button" aria-label={`Delete ${title}`} title="Delete component" onClick={event => { event.stopPropagation(); onDelete(); }}><AppIcon className="ri-delete-bin-line" /></button>}
+          <button type="button" {...(handleProps || {})} aria-label={`Drag ${title} to reorder`} title="Drag to reorder" onClick={event => event.stopPropagation()} className={railStyles.drag}><AppIcon className="ri-drag-move-2-line" /></button>
+        </div>
+      </div>
+      {notices && <div className={railStyles.notices}>{notices}</div>}
+      {issues > 0 && <span className={railStyles.validation} title={`${issues} fields need attention`} aria-label={`${issues} fields need attention`}><AppIcon className="ri-error-warning-line" /></span>}
+    </div>
+  </div>;
+}
+
 // The clone button: a single click still just duplicates in place wherever the
 // rail has nowhere else to put the copy (the standalone week builder, week
 // templates). Inside the module builder, where a week sits alongside its
 // siblings, it opens a small menu instead so the same button can also send the
 // copy to another week -- one action, offered where it applies.
-function CloneComponentButton({ label, otherWeeks, onDuplicateSameWeek, onCopyToWeek }: {
+function CloneComponentButton({ label, otherWeeks, onDuplicateSameWeek, onCopyToWeek, onMoveToWeek }: {
   label: string;
   otherWeeks?: { id: string; label: string }[];
   onDuplicateSameWeek: () => void;
   onCopyToWeek?: (weekId: string) => void;
+  onMoveToWeek?: (weekId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const hasOtherWeeks = Boolean(onCopyToWeek && otherWeeks && otherWeeks.length > 0);
+  const hasOtherWeeks = Boolean((onCopyToWeek || onMoveToWeek) && otherWeeks && otherWeeks.length > 0);
 
   useEffect(() => {
     if (!open) return;
@@ -1292,7 +1374,7 @@ function CloneComponentButton({ label, otherWeeks, onDuplicateSameWeek, onCopyTo
         aria-label={`Duplicate ${label}`}
         aria-haspopup={hasOtherWeeks ? 'menu' : undefined}
         aria-expanded={hasOtherWeeks ? open : undefined}
-        title={hasOtherWeeks ? 'Duplicate component' : 'Duplicate component in this week'}
+        title={hasOtherWeeks && onMoveToWeek ? 'Copy or move component' : hasOtherWeeks ? 'Duplicate component' : 'Duplicate component in this week'}
         onClick={e => {
           e.stopPropagation();
           if (!hasOtherWeeks) { onDuplicateSameWeek(); return; }
@@ -1303,12 +1385,12 @@ function CloneComponentButton({ label, otherWeeks, onDuplicateSameWeek, onCopyTo
         <AppIcon className="ri-file-copy-line text-[13px]"></AppIcon>
       </button>
       {open && hasOtherWeeks && (
-        <div role="menu" onClick={e => e.stopPropagation()} className="absolute right-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-xl border border-background-200 bg-background-50 py-1 shadow-xl">
+        <div role="menu" onClick={e => e.stopPropagation()} className="absolute right-0 top-full z-20 mt-1 max-h-[65vh] w-56 overflow-y-auto rounded-xl border border-background-200 bg-background-50 py-1 shadow-xl">
           <button type="button" role="menuitem" onClick={() => { setOpen(false); onDuplicateSameWeek(); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-semibold text-foreground-800 hover:bg-background-100">
             <AppIcon className="ri-file-copy-line text-[13px] text-foreground-400"></AppIcon>
             Duplicate in this week
           </button>
-          <p className="mt-1 border-t border-background-200 px-3 pb-1 pt-1.5 text-[9px] font-bold uppercase tracking-wide text-foreground-400">Copy to another week</p>
+          {onCopyToWeek && <><p className="mt-1 border-t border-background-200 px-3 pb-1 pt-1.5 text-[9px] font-bold uppercase tracking-wide text-foreground-400">Copy to another week</p>
           <div className="max-h-48 overflow-y-auto">
             {otherWeeks!.map(week => (
               <button key={week.id} type="button" role="menuitem" onClick={() => { setOpen(false); onCopyToWeek?.(week.id); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-semibold text-foreground-700 hover:bg-primary-50 hover:text-primary-700">
@@ -1317,6 +1399,15 @@ function CloneComponentButton({ label, otherWeeks, onDuplicateSameWeek, onCopyTo
               </button>
             ))}
           </div>
+          </>}
+          {onMoveToWeek && <>
+            <p className="mt-1 border-t border-background-200 px-3 pb-1 pt-1.5 text-[9px] font-bold uppercase tracking-wide text-foreground-400">Move to another week</p>
+            <div className="max-h-48 overflow-y-auto">
+              {otherWeeks!.map(week => <button key={week.id} type="button" role="menuitem" aria-label={`Move to ${week.label}`} onClick={() => { setOpen(false); onMoveToWeek(week.id); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-semibold text-foreground-700 hover:bg-primary-50 hover:text-primary-700">
+                <AppIcon className="ri-arrow-right-line text-[13px] text-foreground-400" /><span className="truncate">{week.label}</span>
+              </button>)}
+            </div>
+          </>}
         </div>
       )}
     </div>
@@ -1396,11 +1487,18 @@ const COMPONENT_PICKER_DESCRIPTIONS: Partial<Record<ModuleComponentType, string>
 function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, onReuse }: {
   atIndex: number;
   componentCount: number;
-  onPick: (type: ModuleComponentType) => void;
+  onPick: (types: ModuleComponentType[]) => void;
   onClose: () => void;
   onReuse?: () => void;
 }) {
   const [search, setSearch] = useState('');
+  const [selectedTypes, setSelectedTypes] = useState<Set<ModuleComponentType>>(() => new Set());
+  const selected = weekPaletteTypes.filter(type => selectedTypes.has(type.type)).map(type => type.type);
+  const toggleType = (type: ModuleComponentType) => setSelectedTypes(current => {
+    const next = new Set(current);
+    if (next.has(type)) next.delete(type); else next.add(type);
+    return next;
+  });
   const query = search.trim().toLowerCase();
   const visibleTypes = weekPaletteTypes.filter(type => (
     !query
@@ -1408,13 +1506,14 @@ function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, o
     || type.group.toLowerCase().includes(query)
     || String(COMPONENT_PICKER_DESCRIPTIONS[type.type] || '').toLowerCase().includes(query)
   ));
+  const noun = selected.length > 1 ? 'components' : 'component';
   const placement = componentCount === 0
-    ? 'This will be the first component in the week.'
+    ? selected.length > 1 ? 'These will be the first components in the week.' : 'This will be the first component in the week.'
     : atIndex === 0
-      ? 'The new component will be added at the start of the week.'
+      ? `The new ${noun} will be added at the start of the week.`
       : atIndex >= componentCount
-        ? 'The new component will be added at the end of the week.'
-        : `The new component will be inserted at position ${atIndex + 1}.`;
+        ? `The new ${noun} will be added at the end of the week.`
+        : `The new ${noun} will be inserted at position ${atIndex + 1}.`;
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -1438,7 +1537,7 @@ function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, o
               <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary-50 text-primary-600"><AppIcon className="ri-add-box-line text-lg"></AppIcon></span>
               <div className="min-w-0">
                 <h3 id="component-picker-title" className="text-base font-heading font-bold text-foreground-950">Add a component</h3>
-                <p className="mt-1 text-[12px] font-medium text-foreground-500">Choose one learning activity. It will open immediately so you can complete its details.</p>
+                <p className="mt-1 text-[12px] font-medium text-foreground-500">Choose one or more learning activities, then add them to this week.</p>
               </div>
             </div>
             <button type="button" onClick={onClose} aria-label="Close component picker" className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-foreground-500 transition-smooth hover:bg-background-100 hover:text-foreground-900"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
@@ -1451,6 +1550,13 @@ function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, o
             <AppIcon className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"></AppIcon>
             <input autoFocus value={search} onChange={event => setSearch(event.target.value)} placeholder="Search component types..." className="h-10 w-full rounded-lg border border-foreground-200/70 bg-background-50 pl-9 pr-3 text-[12px] font-medium text-foreground-900 outline-none transition-smooth placeholder:text-foreground-300 focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
           </label>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+            <span aria-live="polite" className="font-semibold text-primary-700">{selected.length} selected</span>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => setSelectedTypes(new Set(weekPaletteTypes.map(type => type.type)))} className="rounded-lg px-2 py-1.5 font-semibold text-primary-700 hover:bg-primary-50">Select all</button>
+              <button type="button" onClick={() => setSelectedTypes(new Set())} disabled={!selected.length} className="rounded-lg px-2 py-1.5 font-semibold text-foreground-500 hover:bg-background-100 disabled:opacity-40">Clear</button>
+            </div>
+          </div>
         </div>
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto bg-background-100/45 p-4 sm:p-5">
           {weekPaletteGroups.map(group => {
@@ -1463,13 +1569,14 @@ function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, o
                   {groupTypes.map(type => {
                     const tone = TONE[type.tone] || TONE.slate;
                     const definition = getComponentDefinition(type.type);
+                    const chosen = selectedTypes.has(type.type);
                     return (
-                      <button key={type.type} type="button" onClick={() => onPick(type.type)} className="group/tile flex min-h-[88px] items-start gap-3 rounded-xl border border-background-200 bg-background-50 p-3 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-200">
+                      <button key={type.type} type="button" aria-pressed={chosen} onClick={() => toggleType(type.type)} className={`group/tile flex min-h-[88px] items-start gap-3 rounded-xl border p-3 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-200 ${chosen ? 'border-primary-400 bg-primary-50 ring-1 ring-primary-200' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}>
                         <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${tone.chip} transition-transform group-hover/tile:scale-105`}><AppIcon className={`${type.icon} text-lg`}></AppIcon></span>
                         <span className="min-w-0 flex-1">
                           <span className="flex items-start justify-between gap-2">
                             <span className="text-[13px] font-bold text-foreground-900">{type.label}</span>
-                            <AppIcon className="ri-arrow-right-line shrink-0 text-primary-500 opacity-0 transition-opacity group-hover/tile:opacity-100"></AppIcon>
+                            <AppIcon className={`${chosen ? 'ri-checkbox-circle-fill opacity-100' : 'ri-add-circle-line opacity-0 group-hover/tile:opacity-100'} shrink-0 text-primary-500 transition-opacity`} />
                           </span>
                           <span className="mt-1 block text-[11px] leading-relaxed text-foreground-500">{COMPONENT_PICKER_DESCRIPTIONS[type.type]}</span>
                           <span className="mt-2 flex items-center gap-2 text-[10px] font-semibold text-foreground-400 tabular-nums">
@@ -1487,9 +1594,10 @@ function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, o
         </div>
         <div className="flex flex-col-reverse gap-2 border-t border-background-200 bg-background-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
           <p className="text-[10px] font-medium text-foreground-400">You can reorder components from the week timeline at any time.</p>
-          <div className="flex items-center justify-end gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {onReuse && <button type="button" onClick={onReuse} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 hover:bg-primary-100"><AppIcon className="ri-file-copy-line"></AppIcon>Reuse existing</button>}
             <button type="button" onClick={onClose} className="h-9 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 hover:bg-background-100">Cancel</button>
+            <button type="button" onClick={() => { if (selected.length) onPick(selected); }} disabled={!selected.length} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-add-line" />Add {selected.length || ''} component{selected.length === 1 ? '' : 's'}</button>
           </div>
         </div>
       </div>
@@ -1542,16 +1650,13 @@ export interface WeekComponentRailProps {
   // `otherWeeks` -- the caller owns the module's week structure, so this is
   // where the clone actually lands.
   onCopyComponentToWeek?: (component: ModuleComponent, weekId: string) => void;
-  // Moves the given component -- and, while linked, its live session or
-  // recording with it -- to the chosen week. Paired with `otherWeeks`, like the
-  // copy above; a single-week surface leaves it unset and shows no Move action.
+  /** Moves the existing component rather than making a copy; owned by Module Builder. */
   onMoveComponentToWeek?: (component: ModuleComponent, weekId: string) => void;
-  // The module's weeks and other modules, so a recording's row can name a
-  // session in another week or module. Unset, links are read within this week.
+  onReviewTeamsCalendar?: () => void;
   recordingLinks?: RecordingLinkContext;
 }
 
-export function WeekComponentRail({ weekId, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks }: WeekComponentRailProps) {
+export function WeekComponentRail({ weekId, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, onReviewTeamsCalendar, recordingLinks }: WeekComponentRailProps) {
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [componentSearch, setComponentSearch] = useState('');
@@ -1560,21 +1665,25 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  const addComponentAt = (type: ModuleComponentType, index: number) => {
-    const component = createEmptyComponent(weekId, type, components.length + 1);
-    component.title = `${weekTypeLabel(type)} ${components.length + 1}`;
-    const rulePoints = pointsByType[type];
-    if (typeof rulePoints === 'number') component.points = rulePoints;
-    // A live session arrives with its session recording right after it, linked.
-    const added = withLinkedRecordings([component], () => {
-      const recording = createEmptyComponent(weekId, 'recording-placeholder', components.length + 2);
-      const recordingPoints = pointsByType['recording-placeholder'];
-      return typeof recordingPoints === 'number' ? { ...recording, points: recordingPoints } : recording;
+  const addComponentsAt = (types: ModuleComponentType[], index: number) => {
+    if (!types.length) return;
+    const created = types.map((type, offset) => {
+      const number = components.length + offset + 1;
+      const component = createEmptyComponent(weekId, type, number);
+      component.title = `${weekTypeLabel(type)} ${number}`;
+      const rulePoints = pointsByType[type];
+      if (typeof rulePoints === 'number') component.points = rulePoints;
+      return component;
+    });
+    const added = withLinkedRecordings(created, () => {
+      const recording = createEmptyComponent(weekId, 'recording-placeholder', components.length + created.length + 1);
+      const rulePoints = pointsByType['recording-placeholder'];
+      return typeof rulePoints === 'number' ? { ...recording, points: rulePoints } : recording;
     });
     const next = [...components];
     next.splice(index, 0, ...added);
     onChange(next);
-    onSelectId(component.id);
+    onSelectId(added[0].id);
     setPickerIndex(null);
   };
 
@@ -1658,7 +1767,19 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
           <span className="text-[11px] text-foreground-400 tabular-nums">{components.length} {components.length === 1 ? 'part' : 'parts'}</span>
         </div>
       )}
-      {components.length > 0 && (
+      {nested && (
+        <div data-week-rail-toolbar>
+          <label className="relative block min-w-0 flex-1">
+            <span className="sr-only">Search components in this week</span>
+            <AppIcon className="ri-search-line pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-foreground-400" />
+            <input type="search" value={componentSearch} onChange={event => setComponentSearch(event.target.value)} placeholder="Search this week's components" aria-label="Search components in this week" className="h-7 w-full rounded border border-background-200 bg-background-50 pl-7 pr-2 text-[10px] outline-none focus:border-primary-300" />
+          </label>
+          <button type="button" data-week-rail-add aria-label="Add component" onClick={() => setPickerIndex(components.length)} className="inline-flex h-7 shrink-0 items-center gap-1 rounded border border-background-200 bg-background-50 px-2 text-[10px]">
+            <AppIcon className="ri-add-line" />Add
+          </button>
+        </div>
+      )}
+      {!nested && components.length > 0 && (
         <div className={nested ? 'space-y-2' : 'mt-3 space-y-2 border-y border-background-200 py-2'}>
           <div className={`flex flex-wrap items-center gap-2 ${nested ? 'justify-end' : 'justify-between'}`}>
             {!nested && <p className="text-[10px] font-medium text-foreground-400">Select a component to edit it, or add another.</p>}
@@ -1685,7 +1806,11 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
         </div>
       )}
 
-      {components.length === 0 && pickerIndex === null ? (
+      {nested && components.length === 0 && pickerIndex === null ? (
+        <button type="button" data-week-rail-empty aria-label="Add the first component" onClick={() => setPickerIndex(0)}>
+          No components in this week yet. Drag a part here, or insert one right below.
+        </button>
+      ) : components.length === 0 && pickerIndex === null ? (
         <div className="mt-3">
           <button onClick={() => setPickerIndex(0)} className="w-full rounded-xl border-2 border-dashed border-background-300 bg-background-50 py-10 text-center hover:border-primary-300 hover:bg-primary-50/40 transition-all group">
             <span className="grid place-items-center w-11 h-11 mx-auto rounded-full bg-primary-500 text-white text-xl group-hover:scale-110 transition-transform"><AppIcon className="ri-add-line"></AppIcon></span>
@@ -1701,16 +1826,18 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActiveDragId(null)} modifiers={[restrictToVerticalAxis, restrictToParentElement]}>
           <SortableContext items={visibleComponents.map(c => c.id)} strategy={verticalListSortingStrategy}>
-            <div className="mt-2 max-h-[calc(100vh-15rem)] overflow-y-auto overflow-x-hidden px-1.5 py-1.5">
+            <div data-week-rail-parts className="mt-2 max-h-[calc(100vh-15rem)] overflow-y-auto overflow-x-hidden px-1.5 py-1.5">
               {visibleComponents.length === 0 && searchTerm ? (
                 <p className="rounded-xl border border-dashed border-background-300 px-3 py-6 text-center text-[11px] font-medium text-foreground-500">No components match “{componentSearch.trim()}”.</p>
               ) : <>
-              {!searchTerm && <InsertionZone active={pickerIndex === 0} onOpen={() => setPickerIndex(0)} first />}
+              {!searchTerm && <InsertionZone active={pickerIndex === 0} onOpen={() => setPickerIndex(0)} first compact={nested} />}
               {visibleComponents.map((component, index) => (
                 <Fragment key={component.id}>
                   <SortableRailNode
                     component={component}
                     index={index}
+                    compact={nested}
+                    onDeselect={() => onSelectId(null)}
                     selected={component.id === selectedId}
                     focused={component.id === focusedId}
                     onSelect={() => onSelectId(component.id)}
@@ -1719,6 +1846,7 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
                     otherWeeks={otherWeeks}
                     onCopyToWeek={targetWeekId => onCopyComponentToWeek?.(component, targetWeekId)}
                     onMoveToWeek={onMoveComponentToWeek ? targetWeekId => onMoveComponentToWeek(component, targetWeekId) : undefined}
+                    onReviewTeamsCalendar={onReviewTeamsCalendar}
                     linkLabel={linkLabel(component)}
                     moveNote={moveNote(component)}
                     issues={validateWeekComponent(component).length}
@@ -1726,14 +1854,14 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
                     holidayDates={holidayDates}
                     dateDrift={dateDriftByComponentId?.get(component.id)}
                   />
-                  {!searchTerm && <InsertionZone active={pickerIndex === index + 1} onOpen={() => setPickerIndex(index + 1)} last={index === visibleComponents.length - 1} />}
+                  {!searchTerm && <InsertionZone active={pickerIndex === index + 1} onOpen={() => setPickerIndex(index + 1)} last={index === visibleComponents.length - 1} compact={nested} />}
                 </Fragment>
               ))}
               </>}
             </div>
           </SortableContext>
           <DragOverlay>
-            {activeComponent ? <RailNodeCard component={activeComponent} index={components.findIndex(c => c.id === activeComponent.id)} selected dragging issues={0} weekSessionDate={weekSessionDate} holidayDates={holidayDates} dateDrift={dateDriftByComponentId?.get(activeComponent.id)} /> : null}
+            {activeComponent ? <RailNodeCard component={activeComponent} index={components.findIndex(c => c.id === activeComponent.id)} compact={nested} selected dragging issues={0} weekSessionDate={weekSessionDate} holidayDates={holidayDates} dateDrift={dateDriftByComponentId?.get(activeComponent.id)} /> : null}
           </DragOverlay>
         </DndContext>
       )}
@@ -1741,7 +1869,7 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
         <ComponentTypePickerDialog
           atIndex={pickerIndex}
           componentCount={components.length}
-          onPick={type => addComponentAt(type, pickerIndex)}
+          onPick={types => addComponentsAt(types, pickerIndex)}
           onClose={() => setPickerIndex(null)}
           onReuse={onReuseComponents ? () => {
             setPickerIndex(null);
@@ -1822,6 +1950,7 @@ function computeWeekStats(components: ModuleComponent[], weekKsbs: KsbMapping[])
 }
 
 export interface WeekOverviewPanelProps {
+  moduleVariant?: boolean;
   components: ModuleComponent[];
   ksbMappings: KsbMapping[];
   summary: string;
@@ -1830,9 +1959,26 @@ export interface WeekOverviewPanelProps {
   onChangeLearningOutcomes: (value: string[]) => void;
 }
 
-export function WeekOverviewPanel({ components, ksbMappings, summary, learningOutcomes, onChangeSummary, onChangeLearningOutcomes }: WeekOverviewPanelProps) {
+export function WeekOverviewPanel({ components, ksbMappings, summary, learningOutcomes, onChangeSummary, onChangeLearningOutcomes, moduleVariant = false }: WeekOverviewPanelProps) {
   const stats = useMemo(() => computeWeekStats(components, ksbMappings), [components, ksbMappings]);
   const readiness = stats.count ? Math.round((stats.cleanParts / stats.count) * 100) : 0;
+  const composition = stats.byGroup.map(group => ({ ...group, color: undefined }));
+  const weekDetail = (
+    <Section title="Week detail">
+      <Field label="Summary"><textarea value={summary} onChange={e => onChangeSummary(e.target.value)} rows={2} placeholder="What this week is about…" className={`${inputClass} resize-none`} /></Field>
+      <Field label="Learning outcomes" className="mt-4"><textarea value={learningOutcomes.join('\n')} onChange={e => onChangeLearningOutcomes(e.target.value.split('\n'))} rows={3} placeholder="One outcome per line" className={`${inputClass} resize-none`} /></Field>
+      <p className="mt-3 text-[11px] text-foreground-400"><AppIcon className="ri-lightbulb-flash-line mr-1 text-amber-500"></AppIcon>Hover the spine between parts to insert exactly where you want.</p>
+    </Section>
+  );
+
+  if (moduleVariant) {
+    return (
+      <div className={overviewStyles.panel}>
+        <ModuleWeekSummary stats={stats} components={components} />
+        {weekDetail}
+      </div>
+    );
+  }
 
   return (
     <div className="min-w-0 rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
@@ -1860,16 +2006,16 @@ export function WeekOverviewPanel({ components, ksbMappings, summary, learningOu
           ) : (
             <>
               <div className="flex h-3 w-full overflow-hidden rounded-full bg-background-100">
-                {stats.byGroup.map(group => (
-                  <span key={group.group} title={`${group.group}: ${group.count}`} className={(TONE[GROUP_TONE[group.group]] || TONE.slate).marker} style={{ width: `${(group.count / stats.count) * 100}%` }} />
+                {composition.map(group => (
+                  <span key={group.group} title={`${group.group}: ${group.count}`} className={(TONE[GROUP_TONE[group.group]] || TONE.slate).marker} style={{ width: `${(group.count / stats.count) * 100}%`, backgroundColor: group.color }} />
                 ))}
               </div>
               <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5">
-                {stats.byGroup.map(group => {
+                {composition.map(group => {
                   const tone = TONE[GROUP_TONE[group.group]] || TONE.slate;
                   return (
                     <span key={group.group} className="inline-flex items-center gap-1.5 text-[11px] text-foreground-600">
-                      <span className={`w-2.5 h-2.5 rounded-full ${tone.marker}`} />
+                      <span className={`w-2.5 h-2.5 rounded-full ${tone.marker}`} style={{ backgroundColor: group.color }} />
                       {group.group}
                       <strong className="tabular-nums text-foreground-900">{group.count}</strong>
                       <span className="text-foreground-400 tabular-nums">· {Math.round(group.otjh * 10) / 10}h</span>
@@ -1904,13 +2050,80 @@ export function WeekOverviewPanel({ components, ksbMappings, summary, learningOu
         </Section>
 
         {/* Editable week detail */}
-        <Section title="Week detail">
-          <Field label="Summary"><textarea value={summary} onChange={e => onChangeSummary(e.target.value)} rows={2} placeholder="What this week is about…" className={`${inputClass} resize-none`} /></Field>
-          <Field label="Learning outcomes" className="mt-4"><textarea value={learningOutcomes.join('\n')} onChange={e => onChangeLearningOutcomes(e.target.value.split('\n'))} rows={3} placeholder="One outcome per line" className={`${inputClass} resize-none`} /></Field>
-          <p className="mt-3 text-[11px] text-foreground-400"><AppIcon className="ri-lightbulb-flash-line mr-1 text-amber-500"></AppIcon>Hover the spine between parts to insert exactly where you want.</p>
-        </Section>
+        {weekDetail}
       </div>
     </div>
+  );
+}
+
+function ModuleWeekSummary({ stats, components }: { stats: WeekStats; components: ModuleComponent[] }) {
+  const typeLabels: Partial<Record<ModuleComponentType, string>> = { 'live-session': 'Live session', reading: 'Reading', powerpoint: 'Slides' };
+  const composition = [...new Set(components.map(component => component.type))].map(type => {
+    const parts = components.filter(component => component.type === type);
+    return { type, label: typeLabels[type] || weekTypeLabel(type), icon: getComponentDefinition(type).icon, count: parts.length, otjh: Math.round(parts.reduce((sum, part) => sum + Number(part.expectedOtjh || 0), 0) * 100) / 100 };
+  });
+  const metrics = [
+    { label: 'Parts', value: stats.count, icon: 'ri-circle-line', tone: 'violet' },
+    { label: 'OTJH', value: stats.totalOtjh, icon: 'ri-time-line', tone: 'mint' },
+    { label: 'Points', value: stats.points, icon: 'ri-star-line', tone: 'amber' },
+    { label: 'KSBs', value: stats.ksbCodes.length, icon: 'ri-shield-check-line', tone: 'teal' },
+  ];
+  const assurance = [
+    { label: 'Reflection', value: stats.reflection, icon: 'ri-chat-quote-line', tone: 'teal' },
+    { label: 'Evidence', value: stats.evidence, icon: 'ri-folder-open-line', tone: 'aqua' },
+    { label: 'Tutor sign-off', value: stats.tutor, icon: 'ri-user-star-line', tone: 'mint' },
+    { label: 'Coach sign-off', value: stats.coach, icon: 'ri-shield-user-line', tone: 'violet' },
+    { label: 'Assessments', value: stats.assessment, icon: 'ri-award-line', tone: 'amber' },
+  ];
+
+  return (
+    <section className={overviewStyles.summary} aria-label="Week at a glance">
+      <div className={overviewStyles.heading}>
+        <h3 className={overviewStyles.caption}>Week at a glance</h3>
+        <span className={overviewStyles.partCount}>{stats.count} {stats.count === 1 ? 'part' : 'parts'} in this week</span>
+      </div>
+      <dl className={overviewStyles.metrics}>
+        {metrics.map(metric => (
+          <div key={metric.label} className={overviewStyles.metric} data-tone={metric.tone}>
+            <dt><AppIcon className={metric.icon} />{metric.label}</dt>
+            <dd>{metric.value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <div className={overviewStyles.composition} role="group" aria-label="Learning type composition">
+        <div className={overviewStyles.compositionHeading}>
+          <h4 className={overviewStyles.caption}>Composition — mix of learning types</h4>
+          {composition.length > 0 && (
+            <ul className={overviewStyles.typeList}>
+              {composition.map(group => (
+                <li key={group.type} className={overviewStyles.typePill} data-type={group.type}>
+                  <AppIcon className={group.icon} />{group.label} {group.count} · {group.otjh}h
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        {stats.count > 0 ? (
+          <div className={overviewStyles.compositionBar} aria-hidden="true">
+            {composition.map(group => <span key={group.type} data-type={group.type} style={{ width: `${(group.count / stats.count) * 100}%` }} title={`${group.label}: ${group.count}`} />)}
+          </div>
+        ) : <p className={overviewStyles.emptyComposition}>Add parts to see the week take shape.</p>}
+      </div>
+
+      <div role="group" aria-label="Week assurance" className={overviewStyles.assurance}>
+        <h4 className={overviewStyles.caption}>Assurance — what this week demands of learners</h4>
+        <dl className={overviewStyles.assuranceTiles}>
+          {assurance.map(item => (
+            <div key={item.label} className={overviewStyles.assuranceTile} data-tone={item.tone}>
+              <AppIcon className={item.icon} />
+              <dt>{item.label}</dt>
+              <dd>{item.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    </section>
   );
 }
 
@@ -1990,7 +2203,7 @@ export interface ComponentBodyProps {
   recordingLinks?: RecordingLinkContext;
 }
 
-export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string; recordingLinks?: RecordingLinkContext }) {
+export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, initializeGroupSelection = true, recordingLinks }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string; initializeGroupSelection?: boolean; recordingLinks?: RecordingLinkContext }) {
   const editorRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const editor = editorRef.current;
@@ -2031,7 +2244,7 @@ export function ComponentEditor({ component, onChange, onBack, groupOptions, rul
 
         {/* Group assignment applies to every component type — scoped to the
             week's programme + module (resolved in the editor). */}
-        <AssignedGroupsSection component={component} onChange={onChange} groupOptions={groupOptions} programmeId={weekScope.programmeId} groupName={weekScope.groupName} />
+        <AssignedGroupsSection component={component} onChange={onChange} groupOptions={groupOptions} programmeId={weekScope.programmeId} groupName={weekScope.groupName} initializeSelection={initializeGroupSelection} />
 
         {issues.length > 0 && (
           <Section title="To fix before publish">
@@ -3587,7 +3800,7 @@ function formatFileSize(size: number) {
 // (the option list is prepared by the editor). Stored as parallel key/name
 // arrays so a saved template keeps readable names even if a group is later
 // renamed or removed from the picker.
-function AssignedGroupsSection({ component, onChange, groupOptions, programmeId, groupName }: Pick<ComponentBodyProps, 'component' | 'onChange' | 'groupOptions'> & { programmeId: string; groupName?: string }) {
+function AssignedGroupsSection({ component, onChange, groupOptions, programmeId, groupName, initializeSelection = true }: Pick<ComponentBodyProps, 'component' | 'onChange' | 'groupOptions'> & { programmeId: string; groupName?: string; initializeSelection?: boolean }) {
   const rawSelectedKeys = component.settings.selectedGroupKeys as string[] | undefined;
   const norm = (value?: string) => String(value ?? '').trim().toLowerCase();
   // The module was built for this group, so it's never really optional — shown
@@ -3606,9 +3819,9 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
   // week saved without ever touching this list would still store it as
   // unassigned underneath.
   useEffect(() => {
-    if (moduleGroupOption && !hasStoredSelection) setGroups([moduleGroupOption.key]);
+    if (initializeSelection && moduleGroupOption && !hasStoredSelection) setGroups([moduleGroupOption.key]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [moduleGroupOption?.key, hasStoredSelection]);
+  }, [moduleGroupOption?.key, hasStoredSelection, initializeSelection]);
 
   // Placed copies this component has produced elsewhere, one entry per copy
   // (parallel arrays — ComponentSettingValue has no object type). A single
@@ -3917,6 +4130,7 @@ function OtjhHoursMinutesInput({ value, onChange }: { value: number; onChange: (
     <div className="flex items-center gap-2">
       <div className="flex flex-1 items-center gap-1">
         <input
+          aria-label="Expected OTJH hours"
           type="number"
           min={0}
           step={1}
@@ -3930,6 +4144,7 @@ function OtjhHoursMinutesInput({ value, onChange }: { value: number; onChange: (
       </div>
       <div className="flex flex-1 items-center gap-1">
         <input
+          aria-label="Expected OTJH minutes"
           type="number"
           min={0}
           max={59}
@@ -3947,8 +4162,12 @@ function OtjhHoursMinutesInput({ value, onChange }: { value: number; onChange: (
 }
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
+  // Presentation metadata only. Module Builder groups the existing sections
+  // into drawer tabs; Week Builder keeps every section visible as before.
+  const tab = ['Assigned groups', 'Effort & reward'].includes(title) ? 'delivery'
+    : ['Assurance', 'Requirements', 'Publishing', 'To fix before publish'].includes(title) ? 'quality' : 'content';
   return (
-    <section className="px-6 py-5">
+    <section data-authoring-tab={tab} className="px-6 py-5">
       <div className="flex items-baseline gap-2 mb-3">
         <h4 className="text-[11px] font-bold uppercase tracking-[0.14em] text-foreground-500">{title}</h4>
         {hint && <span className="text-[10px] text-foreground-400">· {hint}</span>}

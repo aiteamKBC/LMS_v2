@@ -60,7 +60,7 @@ class DemoIsolationTests(SimpleTestCase):
         self.assertIn({'source_course_ref':'51','source_activity_id':'material:2'}, result)
         self.assertEqual(rows, original)
 
-    def test_progress_is_aggregate_labelled_and_survives_approval_without_completions(self):
+    def test_demo_percentage_is_retained_as_history_not_current_component_completion(self):
         harness = catalogue_tests.MyLearningAggregateTests()
         meta = metadata(); meta['replacement_courses'] = {'current:M1':'legacy:50'}
         definitions = [{'source_course_ref':'50','source_activity_id':'material:1','source_activity_title':'Old reading'}]
@@ -72,7 +72,8 @@ class DemoIsolationTests(SimpleTestCase):
         meta['progress_transfers'] = saved('approved', [transfer])['items']
         content['componentProgress'] = [{'componentId':'0','kind':'component'}]
         cards, _ = harness.cards(content, [demo_course()], definitions, meta=meta)
-        self.assertEqual((cards[0]['id'],cards[0]['progress'],cards[0]['completedActivityCount']), ('current:M1',50,1))
+        self.assertEqual((cards[0]['id'],cards[0]['progress'],cards[0]['completedActivityCount']), ('current:M1',10,1))
+        self.assertEqual(cards[0]['transferredProgress'], 40)
         self.assertTrue(cards[0]['demoProgress']); self.assertTrue(public_item(transfer)['demoProgress'])
 
     def test_demo_material_reader_keeps_membership_and_enrolment_scopes(self):

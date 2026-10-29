@@ -89,7 +89,7 @@ const modules = [
 // The workspace reads the signed-in account (it decides which learner preview
 // an admin is offered). Without this the page throws on its first line and
 // every case below fails before it has asserted anything about saving.
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ auth: { account: { role: 'curriculum' } } }),
 }));
 

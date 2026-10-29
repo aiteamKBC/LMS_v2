@@ -14,7 +14,7 @@ import { learnerNavItems, coachNavItems } from '@/mocks/navigation';
 import { rememberLearner } from '@/hooks/useMyLearner';
 
 const account = { id: 1, role: 'learner', subjectId: 7, displayName: 'Example learner', access: 'learner' };
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account } }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account } }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children, role }: { children: ReactNode; role: string }) => <div data-testid="workspace" data-role={role}>{children}</div> }));
 vi.mock('@/features/old-otjh/JournalDownloads', () => ({ JournalDownloads: () => <button>Download PDF</button> }));
 vi.mock('@/features/old-otjh/SignatureCapture', () => ({ SignatureCapture: ({ dialogRole, onDraftStart, onSave }: {

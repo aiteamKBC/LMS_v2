@@ -58,7 +58,7 @@ class LiveSessionRegisterTests(unittest.TestCase):
 
     def test_reporting_sync_publishes_the_learner_register(self):
         source = (ROOT.parent / 'learner_api' / 'teams_attendance.py').read_text()
-        self.assertIn('upsert_live_session_register(cursor, rows)', source)
+        self.assertIn('upsert_live_session_register(cursor, [*rows, *shared_rows])', source)
 
 
 if __name__ == '__main__':

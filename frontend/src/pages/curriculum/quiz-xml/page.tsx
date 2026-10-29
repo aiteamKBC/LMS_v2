@@ -10,7 +10,7 @@ import { ImageMatchingPairFields } from '@/components/feature/ImageMatchingPairF
 import { QuestionAnswersView } from '@/components/feature/QuestionTypeRenderer';
 import { roleNavMap } from '@/mocks/navigation';
 import { kbcUsers } from '@/mocks/users';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast";
 import { KnowledgeBookPicker, KnowledgeSourcesSummary, type KnowledgeSourcesMeta } from '@/features/knowledge-base/KnowledgeBookPicker';
 import { fetchWeeks, type WeekItem } from '@/api/curriculum';
 import { formatQuizGradeRange, type QuizGradeRow, type QuizGradeSettings, useQuizGradeSettings } from '@/lib/quizGradeSettings';

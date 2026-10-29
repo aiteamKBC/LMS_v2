@@ -13,7 +13,7 @@ vi.mock('@/components/feature/WorkspaceShell', () => ({
     <div data-testid="scroller" className="workspace-main">{children}</div>
   ),
 }));
-vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
+vi.mock("@/hooks/useToast", () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
 // The wizard itself is not under test: a failed load keeps the page to its
 // retry state, which is all the scroll reset needs.
 vi.mock('@/api/enrolmentUsers', () => ({

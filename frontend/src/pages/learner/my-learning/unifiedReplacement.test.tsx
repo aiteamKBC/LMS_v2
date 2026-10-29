@@ -83,18 +83,23 @@ describe('replacement module transfer', () => {
     expect(separate.subjects).toHaveLength(2);
   });
 
-  it('includes approved matched components within aggregate credit without changing attempts or history', () => {
+  it('shows merged completion and historical percentage separately without changing attempts or history', () => {
     const before = JSON.stringify({ real, history });
     const summary = buildUnifiedLearningSummary(history, real, { ...metadata,
       approved_transfers: { 'current:M': 'legacy:50' },
-      module_credits: { 'current:M': { progress: 65, transferredProgress: 40, actualHours: 2 } } });
-    expect(summary).toMatchObject({ subjectCount: 1, activityCount: 4, completedActivityCount: 3, percent: 65 });
+      module_credits: { 'current:M': { progress: 75, transferredProgress: 40, actualHours: 2 } } });
+    expect(summary).toMatchObject({ subjectCount: 1, activityCount: 4, completedActivityCount: 3, percent: 75 });
     expect(summary.subjects).toHaveLength(1);
     expect(summary.subjects[0].activities.map(a => [a.id, a.completed])).toEqual([
       ['C1', true], ['C2', true], ['C3', false], ['Q', true],
     ]);
     expect(summary.subjects[0].archivedActivities).toBeUndefined();
     expect(JSON.stringify({ real, history })).toBe(before);
+    render(<MemoryRouter><SubjectCard subject={summary.subjects[0]} template={null} csrfToken="" onOpen={() => {}} /></MemoryRouter>);
+    expect(screen.getByRole('progressbar', { name: 'Updated course current plan activities progress' })).toHaveAttribute('aria-valuenow', '75');
+    expect(screen.getByText('3 of 4 completed')).toBeVisible();
+    expect(screen.getByRole('status')).toHaveTextContent('Progress merged.');
+    expect(screen.getByRole('status')).toHaveTextContent('Old LMS progress before transfer: 40% (historical)');
   });
 
   it('uses the same completion in the activity player and week sidebar without inventing a passed attempt', () => {

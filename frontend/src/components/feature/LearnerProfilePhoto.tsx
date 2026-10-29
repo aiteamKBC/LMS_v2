@@ -3,7 +3,7 @@ import { Camera, LoaderCircle } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { MAX_PHOTO_BYTES, readLearnerPhoto, uploadLearnerPhoto } from '@/api/learnerPhoto';
 import { initialsFor } from '@/lib/format';
-import { useToastOptional } from '@/hooks/useToast';
+import { useToastOptional } from "@/hooks/useToast";
 import styles from './LearnerProfilePhoto.module.css';
 
 type Props = { kind: LearnerKind; learnerId: string; name: string; className?: string };

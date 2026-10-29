@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CurriculumProgramme, CurriculumKsbSourceDefinitions } from '@/lib/curriculumApi';
 import { fetchCurriculumKsbSets, fetchCurriculumKsbSetSummaries, fetchCurriculumKsbSourceDefinitions } from '@/lib/curriculumApi';
+import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 
 /**
  * A programme with no usable KSB source is unfinished work, not a programme with
@@ -22,6 +23,12 @@ import { fetchCurriculumKsbSets, fetchCurriculumKsbSetSummaries, fetchCurriculum
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
+
+// Render the supplied facts in the same presentation slot as the embedded
+// workspace; its own data loading is covered by the workspace contract tests.
+vi.mock('@/pages/curriculum/programme-detail/page', () => ({ default: ({ summaryContent, summaryActions }: { summaryContent?: ReactNode; summaryActions?: ReactNode }) => <section aria-label="Programme summary">{summaryContent}{summaryActions}</section> }));
+
+vi.mock('@/pages/curriculum/shared/entities/structureWizard', () => ({ CurriculumStructureWizard: ({ open, defaults }: { open: boolean; defaults?: { programmeId?: string } }) => open ? <output data-testid="structure-programme">{defaults?.programmeId}</output> : null }));
 
 vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
   showCurriculumAlert: vi.fn(async () => undefined),
@@ -121,18 +128,14 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   fetchCurriculumProgrammeLearnerKsbImpact: vi.fn(async () => null),
 }));
 
-async function renderProgrammes() {
+async function renderProgrammes(initialEntry = '/') {
   const { default: Page } = await import('../page');
-  return render(<MemoryRouter><Page /><LocationProbe /></MemoryRouter>);
+  return render(<MemoryRouter initialEntries={[initialEntry]}><Page /><LocationProbe /></MemoryRouter>);
 }
 
 function LocationProbe() {
   const location = useLocation();
   return <output data-testid="location">{`${location.pathname}${location.search}`}</output>;
-}
-
-function cardFor(name: string) {
-  return screen.getByText(name).closest('article') as HTMLElement;
 }
 
 describe('Programmes page — a programme with no usable KSB source', { timeout: 15000 }, () => {
@@ -146,6 +149,64 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     vi.mocked(fetchCurriculumKsbSets).mockClear();
     vi.mocked(fetchCurriculumKsbSetSummaries).mockClear();
     vi.mocked(fetchCurriculumKsbSourceDefinitions).mockClear();
+  });
+
+  it('exposes programmes beyond the former page limit and preserves selection while searching', async () => {
+    listedProgrammes = Array.from({ length: 12 }, (_, index) => ({
+      ...withSource, id: `PROG-${index}`, sourceId: `PROG-${index}`,
+      name: `Catalogue ${String(index).padStart(2, '0')}`, status: 'active',
+    }));
+    listedProgrammes.push({ ...withoutSource, status: 'draft' });
+    await renderProgrammes('/curriculum/programmes?q=Catalogue&page=2&keep=example');
+    const browser = within(screen.getByRole('complementary', { name: 'Programme browser' }));
+    const list = within(browser.getByRole('region', { name: 'Programme list' }));
+    expect(list.getAllByRole('button', { name: /Catalogue.*learners/ })).toHaveLength(12);
+    expect(browser.queryByRole('navigation', { name: 'Programme pages' })).not.toBeInTheDocument();
+    expect(browser.queryByRole('button', { name: 'Next page' })).not.toBeInTheDocument();
+    expect(browser.getByText('12 of 13 programmes')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/curriculum/programmes?q=Catalogue&keep=example'));
+    await userEvent.click(list.getByRole('button', { name: /Catalogue 11.*learners/ }));
+    expect(list.getByRole('button', { name: /Catalogue 11.*learners/ })).toHaveAttribute('aria-pressed', 'true');
+    await userEvent.clear(browser.getByPlaceholderText('Search by programme...'));
+    await userEvent.type(browser.getByPlaceholderText('Search by programme...'), 'Catalogue 01');
+    expect(list.getAllByRole('button', { name: /Catalogue.*learners/ })).toHaveLength(1);
+    expect(list.getByRole('button', { name: /Catalogue 01.*learners/ })).toHaveAttribute('aria-pressed', 'true');
+    await userEvent.click(browser.getByRole('button', { name: 'Clear search' }));
+    expect(list.getAllByRole('button', { name: /Catalogue.*learners/ })).toHaveLength(12);
+    expect(list.getByRole('button', { name: /Catalogue 11.*learners/ })).toHaveAttribute('aria-pressed', 'true');
+    await userEvent.click(browser.getByRole('button', { name: 'Draft 1' }));
+    expect(list.getByRole('button', { name: /Test-Zyad.*learners/ })).toBeInTheDocument();
+  });
+
+  it('opens Active by default and selects the first active programme even when a draft comes first', async () => {
+    listedProgrammes = [{ ...withoutSource, status: 'draft' }, { ...withSource, status: 'active' }];
+    await renderProgrammes();
+    const browser = within(screen.getByRole('complementary', { name: 'Programme browser' }));
+    expect(browser.getByRole('button', { name: 'Active 1' })).toHaveAttribute('aria-pressed', 'true');
+    expect(browser.getByRole('button', { name: /active\s*Data Analyst\s*0 learners/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(browser.queryByRole('button', { name: /draft\s*Test-Zyad\s*0 learners/ })).not.toBeInTheDocument();
+    await userEvent.click(browser.getByRole('button', { name: 'Draft 1' }));
+    expect(browser.getByRole('button', { name: /draft\s*Test-Zyad\s*0 learners/ })).toHaveAttribute('aria-pressed', 'true');
+    await userEvent.click(browser.getByRole('button', { name: 'All 2' }));
+    expect(browser.getByRole('button', { name: /active\s*Data Analyst\s*0 learners/ })).toBeInTheDocument();
+    expect(browser.getByRole('button', { name: /draft\s*Test-Zyad\s*0 learners/ })).toBeInTheDocument();
+  });
+
+  it('keeps drafts accessible when no active programmes exist', async () => {
+    listedProgrammes = [{ ...withoutSource, status: 'draft' }];
+    await renderProgrammes();
+    const browser = within(screen.getByRole('complementary', { name: 'Programme browser' }));
+    expect(browser.getByRole('button', { name: 'Active 0' })).toHaveAttribute('aria-pressed', 'true');
+    expect(browser.getByRole('heading', { name: 'No programmes match your filters' })).toBeInTheDocument();
+    await userEvent.click(browser.getByRole('button', { name: 'Draft 1' }));
+    expect(browser.getByRole('button', { name: /draft\s*Test-Zyad\s*0 learners/ })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('keeps the create-programme empty state when the default Active filter has no records', async () => {
+    listedProgrammes = [];
+    await renderProgrammes();
+    expect(await screen.findByRole('heading', { name: 'No programmes created yet' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'No programmes match your filters' })).not.toBeInTheDocument();
   });
 
   it('loads source summaries on mount and definitions only when that source is opened', async () => {
@@ -202,16 +263,26 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     await renderProgrammes();
     expect(await screen.findByText('Test-Zyad')).toBeInTheDocument();
 
+    await userEvent.click(screen.getByText('KSB source checks and shortcuts'));
     await userEvent.click(screen.getByRole('button', { name: 'Choose a source' }));
     expect(await screen.findByText('Apply KSB Source')).toBeInTheDocument();
   });
 
-  it('marks the card, and says what the gap costs rather than that a value is unset', async () => {
+  it('keeps facts and tools in the selected programme summary and removes tools from the browser', async () => {
     await renderProgrammes();
     expect(await screen.findByText('Test-Zyad')).toBeInTheDocument();
 
-    const bare = within(cardFor('Test-Zyad'));
-    expect(bare.getByText('Needs KSB source')).toBeInTheDocument();
+    const browser = within(screen.getByRole('complementary', { name: 'Programme browser' }));
+    expect(browser.queryByText('Programme tools')).not.toBeInTheDocument();
+    expect(browser.queryByText('KSB Source required')).not.toBeInTheDocument();
+    for (const name of ['Add structure', 'KSB Source', 'Learners', 'Archive', 'Open programme', 'Edit']) {
+      expect(browser.queryByRole('button', { name })).not.toBeInTheDocument();
+    }
+    await userEvent.click(screen.getByRole('button', { name: /Test-Zyad.*learners/ }));
+    const bare = within(screen.getByRole('region', { name: 'Programme summary' }));
+    for (const name of ['Add structure', 'KSB Source', 'Learners', 'Archive']) {
+      expect(bare.getByRole('button', { name })).toBeInTheDocument();
+    }
     expect(bare.getByText('KSB Source required')).toBeInTheDocument();
     expect(bare.getByText(/Modules cannot map KSBs/)).toBeInTheDocument();
     // The panel is the control, so it says what pressing it does.
@@ -219,12 +290,29 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
 
     // A programme that has a filled-in source stays quiet: the warning is a
     // state to clear, so it must not appear where there is nothing to clear.
-    const mapped = within(cardFor('Data Analyst'));
-    expect(mapped.queryByText('Needs KSB source')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Data Analyst.*learners/ }));
+    const mapped = within(screen.getByRole('region', { name: 'Programme summary' }));
     expect(mapped.getByText('Applied KSB Source')).toBeInTheDocument();
     expect(mapped.getByText('Project Control Professional')).toBeInTheDocument();
     expect(mapped.getByText('348 hrs min')).toBeInTheDocument();
     expect(mapped.getByText('£27,000 max funding')).toBeInTheDocument();
+  });
+
+  it('targets the selected programme from the relocated tools', async () => {
+    const api = await import('@/lib/curriculumApi');
+    await renderProgrammes();
+    await userEvent.click(await screen.findByRole('button', { name: /Test-Zyad.*learners/ }));
+    const summary = within(screen.getByRole('region', { name: 'Programme summary' }));
+    await userEvent.click(summary.getByRole('button', { name: 'KSB Source' }));
+    expect(await screen.findByRole('heading', { name: 'Test-Zyad' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Close KSB Source' }));
+    await userEvent.click(summary.getByRole('button', { name: 'Learners' }));
+    expect(api.fetchCurriculumProgrammeLearnerKsbImpact).toHaveBeenCalledWith('PROG-BARE', { learnerStatus: 'all' });
+    await userEvent.click(await screen.findByRole('button', { name: 'Close learner impact' }));
+    await userEvent.click(summary.getByRole('button', { name: 'Add structure' }));
+    expect(screen.getByTestId('structure-programme')).toHaveTextContent('PROG-BARE');
+    await userEvent.click(summary.getByRole('button', { name: 'Archive' }));
+    expect(showCurriculumConfirm).toHaveBeenLastCalledWith(expect.objectContaining({ title: 'Archive programme?', text: expect.stringContaining('Test-Zyad') }));
   });
 
   it('marks a programme parked on the empty profile', async () => {
@@ -234,8 +322,8 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     expect(await screen.findByText('Parked Programme')).toBeInTheDocument();
 
     // Applied is not ready: an empty source maps exactly as much as no source.
-    await waitFor(() => expect(screen.getByText('Needs KSB codes')).toBeInTheDocument());
-    const card = within(screen.getByText('Needs KSB codes').closest('article') as HTMLElement);
+    await waitFor(() => expect(screen.getByText('Applied KSB Source · empty')).toBeInTheDocument());
+    const card = within(screen.getByRole('region', { name: 'Programme summary' }));
     expect(card.getByText('Applied KSB Source · empty')).toBeInTheDocument();
     expect(card.getByText(/A placeholder with no KSB codes in it/)).toBeInTheDocument();
     // The placeholder is moved off, not filled in.
@@ -249,6 +337,7 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     await renderProgrammes();
     expect(await screen.findByText('Test-Zyad')).toBeInTheDocument();
 
+    await userEvent.click(screen.getByText('+ Add new'));
     await userEvent.click(screen.getByRole('button', { name: /Add Programme/ }));
     await userEvent.type(await screen.findByPlaceholderText('e.g. Data Analyst'), 'Fresh Programme');
     await userEvent.click(screen.getByRole('button', { name: 'Create programme' }));
@@ -262,6 +351,7 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     await renderProgrammes();
     expect(await screen.findByText('Test-Zyad')).toBeInTheDocument();
 
+    await userEvent.click(screen.getByText('+ Add new'));
     await userEvent.click(screen.getByRole('button', { name: /Add Programme/ }));
     await userEvent.type(await screen.findByPlaceholderText('e.g. Data Analyst'), 'Fresh Programme');
     await userEvent.click(screen.getByRole('button', { name: 'Create programme' }));

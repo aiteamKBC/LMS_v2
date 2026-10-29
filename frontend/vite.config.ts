@@ -107,7 +107,7 @@ export default defineConfig(({ mode }) => {
     },
   },
     server: {
-    port: 3000,
+    port: 3001,
     host: "0.0.0.0",
     // Forward API calls to the Django backend so the browser sees them as
     // same-origin (no CORS). Override :8000 with VITE_API_TARGET when another

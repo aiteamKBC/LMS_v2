@@ -69,6 +69,7 @@ import {
   weekendDateNotice,
 } from './model';
 import { confirmTeamsCalendarUpdate } from './teamsCalendarNotice';
+import { isNameOnlyEdit } from './nameOnlyEdit';
 import { weekCountChangeForSave, weekCountChangeText, type StoredWeekStructure } from './weekCountChange';
 import {
   CoEditNotice,
@@ -1016,9 +1017,10 @@ export function ModuleFormDrawer({
   const showSchedule = lockGroup || showPlacement;
 
   const submit = async () => {
+    const renameOnly = Boolean(module && isNameOnlyEdit(liveValues, baseline.current));
     const trimmed = name.trim();
     if (!trimmed) { setError('Give the module a name.'); return; }
-    if (!lockGroup && !placementOptional) {
+    if (!renameOnly && !lockGroup && !placementOptional) {
       if (!programmeId) { setError('Choose the programme this module belongs to.'); return; }
       if (!cohortId) { setError('Choose the cohort this module runs for.'); return; }
       if (!groupIds.length) { setError('Tick at least one group to run this module.'); return; }
@@ -1027,7 +1029,7 @@ export function ModuleFormDrawer({
     // only mean something once at least one group is actually being attached.
     // An unplaced module (no group ticked, whichever way it got there) saves
     // with none of them.
-    if (selectedGroups.length) {
+    if (!renameOnly && selectedGroups.length) {
       if (!(Number(sessionsNumber) >= 1)) { setError('Set how many weeks the module runs for.'); return; }
       if (!startDate) { setError('Choose the module start date.'); return; }
       if (!endDate) { setError('Choose the module end date.'); return; }
@@ -1189,7 +1191,7 @@ export function ModuleFormDrawer({
         const primarySchedule = primaryPattern?.days && primaryPattern.startTime && primaryPattern.endTime
           ? primaryPattern.days.split(', ').map(day => ({ day, startTime: primaryPattern.startTime, endTime: primaryPattern.endTime }))
           : [];
-        const patchPayload = {
+        const patchPayload = renameOnly ? { name: trimmed } : {
           name: trimmed,
           notes: description,
           status,

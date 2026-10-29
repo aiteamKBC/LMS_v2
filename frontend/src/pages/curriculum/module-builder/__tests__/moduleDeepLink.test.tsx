@@ -220,7 +220,7 @@ describe('Module Builder deep links', { timeout: 15000 }, () => {
     expect(address().get('module')).toBeNull();
     const catalogueHistoryKey = historyKey();
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Edit components' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Open module - Edit components' }));
 
     await waitFor(() => expect(address().get('module')).toBe('MOD-202608229DBEB6F2ACA5'));
     expect(historyKey()).not.toBe(catalogueHistoryKey);
@@ -265,7 +265,10 @@ describe('Module Builder deep links', { timeout: 15000 }, () => {
     await renderAt('?module=MOD-NOT-IN-CATALOGUE&moduleTitle=Data%20Foundations');
     expect(await screen.findByText('Unable to find module "Data Foundations" (MOD-NOT-IN-CATALOGUE) in Module Builder.'))
       .toBeInTheDocument();
-    expect(loadModuleStructure).not.toHaveBeenCalled();
+    // A canonical id is asked of the server directly; the id is the only thing
+    // ever read, never the module whose title happens to match.
+    expect(loadModuleStructure).toHaveBeenCalledTimes(1);
+    expect(loadModuleStructure).toHaveBeenCalledWith('MOD-NOT-IN-CATALOGUE', { revalidate: true });
     expect(createNewModule).not.toHaveBeenCalled();
   });
 

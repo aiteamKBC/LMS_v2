@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 from old_otjh.repository import query
 from .active_users import completed_hours_value_from_progress
 from .progress_rules import progress_counts_as_achieved
-from .retake_timing import native_choices, measured_choice
+from .retake_timing import attempt_order, native_choices, measured_choice
 from .extra_activity_month import valid_activity_month
 
 
@@ -105,11 +105,13 @@ def project_current(records, markings):
                  reporting_month=at.strftime('%Y-%m'), reporting_started_at=at,
                  reporting_ended_at=at, activity_status='Completed' if accepted else 'Submitted')
         candidates.append(p)
-        # Same component/quiz retries are one activity, not extra earned hours.
+        # Count the latest eligible attempt, even when its duration decreases.
+        # Failed retries cannot displace an accepted completion.
         key = ('quiz', p['quiz_ref']) if p.get('quiz_ref') else ('component', component) if component else ('entry', p['id'])
+        key = (p.get('learner_id'), *key)
         previous = native.get(key)
-        if previous is None or (accepted, seconds, str(at), str(p['id'])) > (
-                previous['accepted'], previous['actual_seconds'], str(previous['reporting_ended_at']), str(previous['id'])):
+        if previous is None or (accepted, attempt_order(p['submitted_at'], p['id'])) > (
+                previous['accepted'], attempt_order(previous['submitted_at'], previous['id'])):
             native[key] = p
     return native_choices(result + list(native.values()), candidates)
 
@@ -201,7 +203,7 @@ def merge_attempts(records, attempts):
 
 
 def measured_attempt_record(attempt, route, *, has_accepted_history=False):
-    """One best completed local duration per placement, as for native saves.
+    """One selected completed local duration per placement, as for native saves.
 
     Untimed historical attempts contribute no hours. Keep this row separate
     from audited source time, and give retries/re-reads a stable identity.

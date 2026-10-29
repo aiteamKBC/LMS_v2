@@ -8,7 +8,7 @@ import { CoachMonthlyLogLearners } from './CoachMonthlyLogLearners';
 import { CoachLearnerLogs } from './CoachLearnerLogs';
 
 const identity = vi.hoisted(() => ({ account: 1, viewAs: '' }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { id: identity.account } } }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: { id: identity.account } } }) }));
 vi.mock('@/lib/coachViewAs', () => ({ coachViewAs: () => identity.viewAs ? { email: identity.viewAs } : null }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn() }));
 vi.mock('@/features/monthly-logs/page', () => ({ MonthlyLog: () => <div>Opened month detail</div> }));

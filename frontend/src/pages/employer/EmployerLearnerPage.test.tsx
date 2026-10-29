@@ -27,8 +27,8 @@ const mocks = vi.hoisted(() => ({
   toastError: vi.fn(),
 }));
 
-vi.mock('@/hooks/useAuth', () => ({ useAuth: mocks.useAuth }));
-vi.mock('@/hooks/useToast', () => ({
+vi.mock("@/hooks/useAuth", () => ({ useAuth: mocks.useAuth }));
+vi.mock("@/hooks/useToast", () => ({
   useToast: () => ({ success: vi.fn(), error: mocks.toastError }),
 }));
 vi.mock('@/api/employerPortal', async (importOriginal) => ({

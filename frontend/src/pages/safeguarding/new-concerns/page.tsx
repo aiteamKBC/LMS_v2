@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { SAFEGUARDING_CASES, SAFEGUARDING_OFFICERS } from '@/mocks/safeguarding';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast";
 
 const sgConfig = roleNavMap.safeguarding;
 

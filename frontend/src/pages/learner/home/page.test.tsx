@@ -19,7 +19,7 @@ vi.mock('@/lib/featureFlags', () => ({
   get LEARNER_POST_LECTURE_FEEDBACK_ENABLED() { return featureFlags.lectureFeedback; },
 }));
 beforeEach(() => { featureFlags.fullFeedback = true; featureFlags.lectureFeedback = true; });
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { id: 3, subjectId: 71, learnerType: state.learnerType, role: state.role, displayName: state.name } }, logout: vi.fn(), retryInitialization: vi.fn() }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: { id: 3, subjectId: 71, learnerType: state.learnerType, role: state.role, displayName: state.name } }, logout: vi.fn(), retryInitialization: vi.fn() }) }));
 vi.mock('@/components/SupportChatWidget', () => ({ SupportChatWidget: () => null }));
 vi.mock('@/api/feedback', () => ({ feedbackApi: { myForms: vi.fn() } }));
 vi.mock('@/api/firstLoginDetails', () => ({ fetchFirstLoginDetails: vi.fn(async () => ({ required: state.firstLoginRequired })) }));

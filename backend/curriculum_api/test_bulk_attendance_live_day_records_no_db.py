@@ -107,8 +107,9 @@ class LiveAttendanceDayRecordsTests(unittest.TestCase):
             {"id": "next-month", "live_session_id": "series-1", "scheduled_start": datetime(2026, 11, 1, tzinfo=timezone.utc), "session_number": 4, "status": "scheduled"},
         ]))
         register = SimpleNamespace(objects=Query([
-            {"id": 1, "occurrence_id": "occ-1", "learner_profile_id": 11, "attendance_status": "present"},
-            {"id": 2, "occurrence_id": "occ-2", "learner_profile_id": 11, "attendance_status": "absent"},
+            {"id": 1, "occurrence_id": "occ-1", "module_catalogue_id": "module-1", "learner_profile_id": 11, "attendance_status": "present"},
+            {"id": 2, "occurrence_id": "occ-2", "module_catalogue_id": "module-1", "learner_profile_id": 11, "attendance_status": "absent"},
+            {"id": 3, "occurrence_id": "occ-1", "module_catalogue_id": "shared-module", "learner_profile_id": 11, "attendance_status": "absent"},
         ]))
 
         class Response:

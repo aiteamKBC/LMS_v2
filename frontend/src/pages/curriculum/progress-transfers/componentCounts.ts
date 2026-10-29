@@ -1,6 +1,6 @@
 import type { TransferMapping, TransferReview } from '@/api/progressTransfer';
 
-/** Preview the same active destinations counted by approval, including existing progress. */
+/** Preview approval counts, preserving the LMS's retained passed quizzes. */
 export function previewComponentCounts(module: TransferReview['modules'][number], mappings: TransferMapping[]) {
   const targets = new Set(module.targets.map(target => target.componentId));
   const sources = new Set(module.sources.filter(source => !source.automaticTargetId).map(source => source.sourceActivityRef));
@@ -10,8 +10,10 @@ export function previewComponentCounts(module: TransferReview['modules'][number]
       .map(mapping => mapping.targetComponentId),
   ].filter(id => targets.has(id)));
   // An older API response does not establish that existing completions are zero.
+  const retained = new Set((module.retainedCompletedIds ?? []).filter(id => !targets.has(id)));
+  const total = targets.size + retained.size;
   const completed = module.completedTargetIds === undefined ? null
-    : new Set([...module.completedTargetIds.filter(id => targets.has(id)), ...matched]).size;
-  return { total: targets.size, matched: matched.size, completed,
-    remaining: completed === null ? null : targets.size - completed };
+    : new Set([...module.completedTargetIds.filter(id => targets.has(id)), ...matched, ...retained]).size;
+  return { total, matched: matched.size, completed,
+    remaining: completed === null ? null : total - completed };
 }

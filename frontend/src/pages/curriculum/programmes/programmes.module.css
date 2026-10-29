@@ -1,0 +1,142 @@
+/* These IDs exist only in the Programmes browser and its embedded detail.
+   They override legacy shared theme rules without changing shared defaults. */
+.page:global(#curriculum-programmes) { min-height: 100%; padding: 16px 20px 28px; background: #f5f6f8; color: #292433; font-size: 12px; }
+.pageHeading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; border: 1px solid #e2e3e8; border-radius: 9px; padding: 15px 16px; background: #fff; margin-bottom: 12px; }
+.pageHeading h1 { margin: 0 0 5px; font-size: 21px; line-height: 1.2; font-weight: 650; }
+.page:global(#curriculum-programmes) .pageHeading h1 { font-size: 21px !important; font-weight: 650 !important; line-height: 1.3 !important; color: #292433 !important; }
+.summary { display: flex; flex-wrap: wrap; gap: 5px 12px; color: #746c7d; font-size: 11px; }
+.summary strong { color: #302936; }
+.summary a { color: #663292; }
+.headingActions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.page:global(#curriculum-programmes) .headingActions button, .page:global(#curriculum-programmes) .addMenu > summary { min-height: 34px; border: 1px solid #dedce5; border-radius: 7px; padding: 7px 11px; background: #fff; color: #493d57; font-size: 11px; cursor: pointer; }
+.attentionBadge { display: inline-flex; align-items: center; min-height: 27px; border: 1px solid #edcb86; border-radius: 20px; padding: 4px 9px; color: #966012; background: #fffaf1; font-size: 10px; }
+.addMenu { position: relative; }
+.page:global(#curriculum-programmes) .addMenu > summary { background: #61308b; color: #fff; list-style: none; }
+.addMenu > div { position: absolute; z-index: 25; top: calc(100% + 6px); right: 0; display: grid; gap: 4px; width: 190px; border: 1px solid #e1dce7; border-radius: 8px; padding: 6px; background: #fff; box-shadow: 0 8px 25px #28123820; }
+.layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); align-items: start; gap: 12px; }
+.browser { min-width: 0; border: 1px solid #e1e2e7; border-radius: 9px; background: #f8f9fb; overflow: hidden; }
+.browser .searchPanel { border: 0; border-radius: 0; padding: 10px; box-shadow: none; background: transparent; }
+.browser:not(.arranging) .searchPanel > div { flex-direction: column; align-items: stretch; gap: 7px; }
+.browser:not(.arranging) .searchPanel input { height: 34px; font-size: 11px; }
+.page:global(#curriculum-programmes) .browser:not(.arranging) input { border-radius: 6px !important; min-height: 32px; font-size: 11px !important; box-shadow: none !important; }
+.page:global(#curriculum-programmes) .browser [aria-label="Sort programmes"] {
+  --curriculum-control-surface: #f8f7fb;
+  --curriculum-control-border: #e1dce9;
+  --curriculum-control-text: #81718f;
+  min-height: 36px;
+  height: 36px;
+  background: var(--curriculum-control-surface) !important;
+  border: 1px solid var(--curriculum-control-border) !important;
+  color: var(--curriculum-control-text) !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+  font-size: 12px;
+  font-weight: 500;
+}
+.page:global(#curriculum-programmes) .browser [aria-label="Sort programmes"]:hover {
+  --curriculum-control-surface: #f2eef7;
+  --curriculum-control-border: #d5c9e2;
+}
+.page:global(#curriculum-programmes) .browser [aria-label="Sort programmes"] > span { font: inherit !important; color: inherit !important; }
+.page:global(#curriculum-programmes) .browser [aria-label="Sort programmes"] > :last-child { width: 16px; height: 16px; font-size: 16px; color: inherit !important; }
+.browser:not(.arranging) .searchPanel > div > button { height: 29px; font-size: 10px; justify-content: center; }
+.browser:not(.arranging) .searchPanel label { justify-content: space-between; }
+.filters { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 9px 9px; }
+.page:global(#curriculum-programmes) .filters button { border: 1px solid #dedde4; border-radius: 7px; padding: 6px 8px; background: #f6f6f8; color: #665d70; font-size: 10px; }
+.page:global(#curriculum-programmes) .filters button[aria-pressed="true"] { color: #fff; background: #63328d; border-color: #63328d; }
+.resultCount { margin: 0; padding: 0 10px 9px; color: #817787; font-size: 10px; }
+.browser:not(.arranging) .cards { display: flex; flex-direction: column; gap: 0; max-height: min(60vh, 640px); overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; }
+.browser:not(.arranging) .browserCard { flex-shrink: 0; }
+.browserCard { min-width: 0; border-top: 1px solid #e4e2e8; border-left: 3px solid var(--programme-color, #7942a0); }
+.browserCard[data-selected="true"] { background: color-mix(in srgb, var(--programme-color, #7942a0) 9%, #fff); }
+.page:global(#curriculum-programmes) .browserSelect { display: flex; align-items: flex-start; gap: 8px; width: 100%; min-height: 66px; padding: 10px; border-radius: 0; background: transparent !important; color: #332b3d !important; text-align: left; }
+.browserSelect > span:nth-child(2) { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 3px; }
+.browserSelect strong { font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.browserSelect small { color: #7e7585; font-size: 10px; }
+.programmeIcon { display: grid; place-items: center; width: 27px; height: 27px; flex-shrink: 0; border-radius: 6px; background: color-mix(in srgb, var(--programme-color, #7942a0) 12%, #fff); color: var(--programme-color, #7942a0); }
+.arranging { grid-column: 1 / -1; }
+.page:global(#curriculum-programmes) .arranging .browserSelect { min-height: 210px; }
+.pageNotice { margin-bottom: 12px; }
+.pageNotice > summary { cursor: pointer; padding: 9px 12px; border: 1px solid #edd7a6; border-radius: 7px; color: #825711; background: #fffaf0; }
+.selected { min-width: 0; }
+.detail:global(#curriculum-programme-selected) { min-width: 0; color: #342b3c; }
+.detail:global(#curriculum-programme-selected) > div { padding: 0; background: transparent; }
+.selectedBanner { margin-bottom: 10px; border-radius: 8px; padding: 17px 18px; background: var(--programme-color, #4f2d7f); color: var(--programme-ink, #fff); }
+.bannerHeading { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px; }
+.bannerHeading h2 { color: #fff; margin: 7px 0 0; font-size: 21px; font-weight: 650; line-height: 1.3; }
+.page:global(#curriculum-programmes) .bannerHeading h2 { font-size: 21px !important; font-weight: 650 !important; line-height: 1.3 !important; color: #fff !important; }
+.bannerHeading small { font-size: 10px; color: #d0bbdf; }
+.badges { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.badges > span { border: 1px solid #b99ac759; border-radius: 20px; padding: 3px 7px; background: #ffffff16; color: #f4e9fd; font-size: 10px; }
+.bannerMetadata { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; margin-top: 16px; padding-top: 13px; border-top: 1px solid #ffffff25; }
+.bannerMetadata dt { color: #c8acd9; font-size: 9px; letter-spacing: .6px; text-transform: uppercase; }
+.bannerMetadata dd { margin: 4px 0 0; color: #f1e7f8; font-size: 11px; }
+.bannerActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 13px; }
+.page:global(#curriculum-programmes) .bannerActions :is(button, a) { display: inline-flex; align-items: center; gap: 6px; min-height: 29px; border: 1px solid #ffffff50; border-radius: 6px; padding: 5px 9px; background: #ffffff13 !important; color: #fff !important; font-size: 10px; }
+.page:global(#curriculum-programmes) .selectedBanner :is(h2, small, dt, dd, p, span, strong, button, a) { color: var(--programme-ink, #fff) !important; }
+.tabBar { display: flex; flex-wrap: wrap; gap: 4px; padding: 7px; border: 1px solid #e1e1e7; border-radius: 8px; margin-bottom: 10px; background: #f7f8fa; }
+.page:global(#curriculum-programmes) .tabBar { border-radius: 8px !important; background: #f7f8fa !important; }
+.page:global(#curriculum-programmes) .detail button { box-shadow: none !important; border-radius: 6px !important; }
+.page:global(#curriculum-programmes) .detail :is(button, a):is([class~="bg-primary-600"], [class~="bg-primary-500"]) { background: #63328d !important; color: #fff !important; }
+.page:global(#curriculum-programmes) .tabBar button { display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 6px; padding: 8px 10px; background: transparent; color: #716779; font-size: 11px; }
+.page:global(#curriculum-programmes) .tabBar button[aria-selected="true"] { color: #fff; background: #64318d; }
+.extraTools { margin: 0 0 10px; color: #75647f; }
+.extraTools > summary { cursor: pointer; font-size: 11px; padding: 5px; }
+.deliverySize { border: 1px solid #e2e2e8; border-radius: 8px; padding: 13px; background: #fafbfc; margin-bottom: 10px; }
+.deliverySize h3 { margin: 0 0 10px; font-size: 12px; font-weight: 600; }
+.sizeGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 7px; }
+.page:global(#curriculum-programmes) .sizeGrid button { border: 1px solid #e3e1e8; border-radius: 6px; padding: 10px; background: #f2f2f6; color: #4d405a; text-align: center; }
+.sizeGrid span { display: block; font-size: 9px; text-transform: uppercase; color: #8d8198; }
+.sizeGrid strong { display: block; margin-top: 4px; font-size: 16px; font-weight: 600; }
+.overviewDetails { margin: 11px 0; }
+.overviewDetails > summary { cursor: pointer; border: 1px solid #e2e1e8; border-radius: 7px; padding: 10px; color: #6d4d83; background: #fff; }
+.overviewDetails > div { margin-top: 10px; }
+.detail:global(#curriculum-programme-selected) :global(.workspace-panel) { border-radius: 8px; box-shadow: none; }
+.detail:global(#curriculum-programme-selected) section:not(.selectedBanner):not(.evidence):not(.timeline):not(.deliverySize) { border-radius: 8px; box-shadow: none; }
+.detail:global(#curriculum-programme-selected) :is(table, [role="table"]) { font-size: 11px; }
+.evidence { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 13px; border: 1px solid #e2e2e8; border-radius: 8px; background: #fafbfc; margin-top: 12px; }
+.evidence h3 { margin: 0 0 4px; font-size: 12px; }
+.evidence p { margin: 0; color: #887c90; font-size: 11px; }
+.evidence button { color: #6b388a; font-size: 11px; }
+.timeline { min-width: 0; border: 1px solid #e2e2e8; border-radius: 8px; background: #fafbfc; margin-bottom: 12px; }
+.sectionHeading { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: center; padding: 12px; }
+.sectionHeading h3 { margin: 0 0 5px; font-size: 12px; font-weight: 600; }
+.sectionHeading p, .timelineFootnote { margin: 0; font-size: 10px; color: #8d8097; }
+.timelineControls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.timelineControls > div { display: flex; padding: 3px; border: 1px solid #e1dce8; border-radius: 7px; }
+.page:global(#curriculum-programmes) .timelineControls button { border: 0; border-radius: 5px; padding: 6px 8px; background: transparent; color: #7a6b84; font-size: 10px; }
+.page:global(#curriculum-programmes) .timelineControls button[aria-pressed="true"] { color: #fff; background: #67378b; }
+.timelineControls a { border: 1px solid #e2deea; border-radius: 6px; padding: 7px; font-size: 10px; color: #706077; }
+.timelineScroll { max-height: 560px; overflow: auto; border-top: 1px solid #e4dfe9; }
+.timelineRow { display: grid; grid-template-columns: 180px minmax(0, 1fr); border-bottom: 1px solid #eeeaf1; }
+.timelineGroup { position: sticky; left: 0; z-index: 2; border-right: 1px solid #e5e0eb; background: #f7f7fa; padding: 12px 8px; overflow-wrap: anywhere; }
+.timelineGroup strong { font-size: 10px; font-weight: 600; }
+.timelineGroup small { display: block; color: #9a8ea2; font-size: 9px; margin-top: 4px; }
+.timeline .timelineCohortToggle { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; padding: 0; background: transparent; color: #4f2d7f; text-align: left; cursor: pointer; }
+.timelineCohortToggle > span:first-child { width: 12px; flex-shrink: 0; font-size: 18px; }
+.timelineCohortToggle:focus-visible { outline: 2px solid #6f398f; outline-offset: 3px; border-radius: 3px; }
+.timelineChildGroup { padding-left: 30px; }
+.timelineChildGroup::before { content: ''; position: absolute; left: 16px; top: 0; bottom: 0; border-left: 1px solid #dcd3e7; }
+.timelineCohortSummary { display: flex; align-items: center; padding: 12px; background: #f2eef7; color: #8c7b98; font-size: 10px; }
+.timelineNoDates { margin: 0; padding: 14px 10px; color: #8c7b98; font-size: 10px; }
+.timelineAxis { display: flex; justify-content: space-between; gap: 20px; padding: 10px; color: #8c7b98; font-size: 9px; }
+.timelineTrack { position: relative; background: repeating-linear-gradient(to right, transparent 0, transparent calc(100% / 12 - 1px), #eee9f2 calc(100% / 12 - 1px), #eee9f2 calc(100% / 12)); }
+.timelineRun { position: absolute; display: block; height: 22px; min-width: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid #e8bbd5; border-radius: 4px; padding: 3px 6px; background: #faeaf4; color: #a34f82; font-size: 10px; }
+.timelineRun:focus-visible { outline: 2px solid #6f398f; outline-offset: 1px; }
+.timelineEmpty { padding: 28px 14px; text-align: center; color: #8a7c93; }
+.timelineFootnote { padding: 8px 12px; }
+.srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }
+@media (min-width: 1700px) { .layout { grid-template-columns: 300px minmax(0, 1fr); } }
+@media (max-width: 1150px) { .layout { grid-template-columns: 240px minmax(0, 1fr); } .bannerMetadata { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 767px) {
+  .timelineRow { grid-template-columns: 120px minmax(0, 1fr); }
+  .timelineChildGroup { padding-left: 22px; }
+  .page:global(#curriculum-programmes) { padding: 12px; }
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .browser:not(.arranging) .cards { max-height: 380px; overflow-y: auto; }
+  .bannerHeading h2 { font-size: 19px; }
+  .bannerMetadata, .sizeGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tabBar { flex-wrap: nowrap; overflow-x: auto; }
+  .tabBar button { flex-shrink: 0; white-space: nowrap; }
+  .detail:global(#curriculum-programme-selected) { overflow-wrap: anywhere; }
+}

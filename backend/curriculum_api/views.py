@@ -39,6 +39,7 @@ from django.views.decorators.gzip import gzip_page
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from login.permissions import require_role
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
+from .course_types import CourseTypeError, course_types_for_modules
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
 from .teams_options_retry import microsoft_update_summary
 from .session_overrides import apply_session_overrides, override_clock, session_overrides
@@ -15562,6 +15563,7 @@ def provision_free_programme_tables():
             create table if not exists {authoring_table_name(FREE_COURSES_TABLE)} (
                 id varchar(128) primary key,
                 course_name text not null default '',
+                course_type varchar(16) not null default 'free' check (course_type in ('free', 'apprentices')),
                 description text,
                 cover_image_url text,
                 week_builder_week_ids {json_type} not null default '[]',
@@ -15614,6 +15616,11 @@ def provision_free_programme_tables():
             cursor.execute(f'''
                 alter table {authoring_table_name(FREE_COURSES_TABLE)}
                 add column if not exists course_name text not null default ''
+            ''')
+            cursor.execute(f'''
+                alter table {authoring_table_name(FREE_COURSES_TABLE)}
+                add column if not exists course_type varchar(16) not null default 'free'
+                check (course_type in ('free', 'apprentices'))
             ''')
             cursor.execute(f'''
                 alter table {authoring_table_name(FREE_COURSES_TABLE)}
@@ -15704,6 +15711,8 @@ def provision_free_programme_tables():
             module_columns = {row[1] for row in cursor.fetchall()}
             cursor.execute(f'pragma table_info({quote_ident(FREE_COURSES_TABLE)})')
             course_columns = {row[1] for row in cursor.fetchall()}
+            if 'course_type' not in course_columns:
+                cursor.execute(f"alter table {authoring_table_name(FREE_COURSES_TABLE)} add column course_type varchar(16) not null default 'free' check (course_type in ('free', 'apprentices'))")
             if 'course_name' not in course_columns:
                 cursor.execute(f'alter table {authoring_table_name(FREE_COURSES_TABLE)} add column course_name text not null default ""')
             if 'description' not in course_columns:
@@ -21029,6 +21038,14 @@ def requested_expected_revision(request, payload):
     )
 
 
+def curriculum_name_only_patch(payload, *, allow_title=False):
+    """Revision metadata does not turn a display-name edit into a delivery save."""
+    fields = {'name', 'title'} if allow_title else {'name'}
+    return any(clean_str(payload.get(key)) for key in fields) and set(payload).issubset(
+        fields | {'expectedRevision', 'expected_revision'},
+    )
+
+
 def record_conflict_response(expected_revision, current_revision, **extra):
     """The 409 a stale guarded save is refused with.
 
@@ -23930,6 +23947,7 @@ def free_programme_module_response(row, components, course=None):
     return {
         'id': module_id,
         'courseId': row.get('course_id') or course.get('id') or module_id,
+        'courseType': course.get('course_type') or 'free',
         'weekId': row.get('week_id') or '',
         'weekNumber': parse_int(row.get('week_number'), 1),
         'weekTitle': row.get('week_title') or '',
@@ -24047,6 +24065,11 @@ def save_free_programme_modules(programme_id, payload):
         modules = []
 
     with transaction.atomic():
+        existing_types = {
+            clean_str(course.get('id')): course.get('course_type') or 'free'
+            for course in free_programme_fetch_all(FREE_COURSES_TABLE, columns=['id', 'course_type'])
+        }
+        course_types = course_types_for_modules(modules, existing_types)
         # Scope the rewrite to this programme's own free courses/weeks. This
         # used to delete every row in both tables, destroying other
         # programmes' free-course data on every save.
@@ -24071,11 +24094,13 @@ def save_free_programme_modules(programme_id, payload):
         for module_index, module in enumerate(modules):
             if not isinstance(module, dict):
                 continue
+            course_type = course_types[module_index]
             course_key = (
                 clean_str(module.get('courseId') or module.get('course_id')),
                 clean_str(module.get('courseName') or module.get('course_name') or module.get('title') or module.get('name')),
                 clean_str(module.get('description') or ''),
                 clean_str(module.get('coverImageUrl') or module.get('cover_image_url') or ''),
+                course_type,
             )
             course_id = course_key[0]
             if not course_id:
@@ -24131,6 +24156,7 @@ def save_free_programme_modules(programme_id, payload):
                 'total_otjh': total_otjh,
             })
             group = course_groups.setdefault(course_id, {
+                'course_type': course_type,
                 'course_name': module.get('courseName') or module.get('course_name') or module.get('title') or module.get('name') or f'Free course {len(course_groups) + 1}',
                 'description': module.get('description') or '',
                 'cover_image_url': cover_image_url,
@@ -25760,6 +25786,8 @@ def curriculum_programme_detail(request, identifier):
                 'is_archived': programme_status_is_archived(programme_status),
                 'updated_at': datetime.utcnow(),
             }
+            if curriculum_name_only_patch(payload):
+                updates = {'name': name, 'updated_at': updates['updated_at']}
             try:
                 key_column = programme_config_key_column()
             except Exception:
@@ -25775,7 +25803,7 @@ def curriculum_programme_detail(request, identifier):
             # Propagate the new programme name to the denormalized programme_name
             # carried on child cohorts/groups/modules, keeping the canonical
             # programme_id (and every relationship) unchanged.
-            if name and normalise(name) != normalise(config.get('name')):
+            if name and name != clean_str(config.get('name')):
                 propagate_programme_name(clean_str(config.get('program_id') or key_value), name)
             # Learner records carry the name too; renamed through their profile's
             # programme id, never moved. See placement_rename.
@@ -27289,6 +27317,8 @@ def curriculum_free_programme_modules(request, programme_id):
         return json_error('Invalid JSON body.')
     try:
         modules = save_free_programme_modules(programme_id, payload)
+    except CourseTypeError as exc:
+        return json_error(str(exc), status=400)
     except Exception as exc:
         logger.exception('Unable to save free programme modules for %s.', programme_id)
         return json_error('Unable to save free programme modules.', status=500, detail=str(exc))
@@ -27559,6 +27589,7 @@ def _free_module_response_to_input(module):
     return {
         'id': module.get('id'),
         'courseId': module.get('courseId'),
+        'courseType': module.get('courseType') or 'free',
         'weekId': module.get('weekId'),
         'weekNumber': module.get('weekNumber'),
         'weekTitle': module.get('weekTitle'),
@@ -31200,6 +31231,18 @@ def scope_ksb_achievement(coverage_items, learner_consumption, learners, plan, l
     }
 
 
+def learners_matching_profile(learners, learner_id):
+    """Narrow a scope roster to one learner by profile id; no id keeps them all.
+
+    Profile ids and enrolment ids are separate sequences that can collide, so
+    only the profile ``id`` is matched, never ``enrolmentId``.
+    """
+    learner_id = clean_str(learner_id)
+    if not learner_id:
+        return learners
+    return [row for row in learners if clean_str(row.get('id')) == learner_id]
+
+
 def scope_learner_ksb_impact_payload(request, scope, identifier):
     """The one read behind every scope's achievement view.
 
@@ -31246,6 +31289,10 @@ def _scope_learner_ksb_impact_payload(request, scope, identifier):
         '' if learner_status.lower() in {'', 'all'} else learner_status,
         lineage=lineage,
     )
+    # The module learners dialog reads one learner's programme-wide progress.
+    # Narrowing before any progress read keeps every learner-shaped read below
+    # to that learner instead of the programme's whole roster.
+    learners = learners_matching_profile(learners, request.GET.get('learnerId'))
     learner_ids = [
         int(row.get('sourceId') if row.get('sourceKind') == 'learner' else row.get('id'))
         for row in learners
@@ -32360,6 +32407,7 @@ def curriculum_module_detail(request, identifier):
         payload = json_body(request)
         if payload is None:
             return json_error('Invalid JSON body.')
+        rename_only = curriculum_name_only_patch(payload, allow_title=True)
         try:
             module_weekly_schedule(payload)
         except ValueError as exc:
@@ -32467,13 +32515,14 @@ def curriculum_module_detail(request, identifier):
         # tutor the module already carries, and one that only changes the tutor
         # against the schedule it already has.
         candidate = {**module_schedule_view(structure_payload), 'module_catalogue_id': module_catalogue_id}
-        delivery_day_error = tutor_assignment_delivery_day_error(
+        delivery_day_error = None if rename_only else tutor_assignment_delivery_day_error(
             candidate, before=module_schedule_view(existing_authoring),
         )
         if delivery_day_error:
             return delivery_day_error
         if (
-            not tutor_conflict_override_requested(payload)
+            not rename_only
+            and not tutor_conflict_override_requested(payload)
             and module_schedule_assignment_changed(module_schedule_view(existing_authoring), candidate)
         ):
             conflicts = tutor_schedule_conflicts_created(module_schedule_view(existing_authoring), candidate)
@@ -32501,7 +32550,27 @@ def curriculum_module_detail(request, identifier):
                             get_authoring_structure_payload(module_catalogue_id)
                         ),
                     )
-            result = save_module_authoring_structure(module_catalogue_id, structure_payload)
+            if rename_only:
+                # Do not re-save weeks/components or reconcile their dates for
+                # a display-name edit. The canonical id and all links stand.
+                update_authoring_rows(
+                    AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id],
+                    {'title': structure_payload['title'], 'updated_at': datetime.utcnow()},
+                )
+                group_id = clean_str(existing_authoring.get('group_id'))
+                if group_id:
+                    module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'group_id = %s', [group_id])
+                    update_group_fields(group_id, {
+                        'module_names': json_db_value(unique([
+                            clean_str(row.get('title')) for row in surviving_authoring_module_rows(module_rows)
+                            if row.get('title')
+                        ])),
+                    })
+                invalidate_curriculum_cache()
+                result = get_authoring_structure_payload(module_catalogue_id)
+                result['qualityChecklist'] = module_authoring_quality_check(result)[0]
+            else:
+                result = save_module_authoring_structure(module_catalogue_id, structure_payload)
         # A tutor change made straight against one module has to mirror onto the
         # raise the assignment notification, exactly as the tree save and the
         # group-modules endpoint do. Without this the module row carried the new
@@ -33235,6 +33304,9 @@ def curriculum_cohort_detail(request, identifier):
         start_date,
         end_date,
     )
+    if curriculum_name_only_patch(payload):
+        # Stored dates, EPA boundaries and status are not authored by a rename.
+        updates = {'cohort_name': updates['cohort_name']}
 
     nullable = ['apprenticeship_end_date']
     if epa_sent:
@@ -33761,7 +33833,8 @@ def curriculum_group_detail(request, identifier):
                     'programme_name': clean_str(updated_group.get('programme_name')),
                     'group_name': clean_str(updated_group.get('group_name')),
                 })
-        repair_curriculum_parent_links(clean_str(updated_group.get('programme_id')))
+        if not curriculum_name_only_patch(payload):
+            repair_curriculum_parent_links(clean_str(updated_group.get('programme_id')))
 
     if 'coach' in payload or 'tutor' in payload:
         next_group_id = clean_str(updated_group.get('group_id')) or group_id

@@ -16,7 +16,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div className="workspace-main">{children}</div>,
 }));
-vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
+vi.mock("@/hooks/useToast", () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
 vi.mock('@/api/enrolmentUsers', () => ({
   fetchEnrolmentBoard: vi.fn(async () => ({ user: { name: 'Test enrolment student', reference: 'Test org' } })),
   updateEnrolmentUser: vi.fn(),

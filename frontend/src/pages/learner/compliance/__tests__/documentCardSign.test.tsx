@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ auth: { user: { fullName: 'Test Learner' }, account: { role: 'learner', subjectType: 'learner', subjectId: 670 } } }),
 }));
 vi.mock('@/api/savedSignature', () => ({

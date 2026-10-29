@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect, useRef, useLayoutEffect, type CSSProperties, type ReactNode, type RefObject } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef, useLayoutEffect, useContext, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { useLocation, Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import {
@@ -70,9 +70,11 @@ import {
   type LucideIcon,
   Lock,
 } from 'lucide-react';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { LEARNER_LOGO_URL, LEARNER_SIDEBAR_PATTERN_URL, LEARNER_SIDEBAR_COLLAPSED_WIDTH, LEARNER_SIDEBAR_WIDTH } from './learnerShellAssets';
 import { SignOutConfirmModal } from './Header';
+import { SidebarNavigationContext } from './SidebarNavigationContext';
+import { curriculumSidebar } from './curriculumSidebarNavigation';
 
 // ============================================================================
 // Workspace navigation.
@@ -348,6 +350,8 @@ export function Sidebar({
   onHoverChange,
   appearance,
 }: SidebarProps) {
+  const navigationPresentation = useContext(SidebarNavigationContext) ?? (role === 'curriculum' ? curriculumSidebar : null);
+  const expandedStorageKey = navigationPresentation?.expandedStorageKey ?? 'kbc_sidebar_expanded';
   const look = appearance ?? role;
   const location = useLocation();
   const secondaryNavigationId = `${role}-secondary-navigation`;
@@ -359,17 +363,18 @@ export function Sidebar({
   const fullHeightNavigation = look === 'learner' || role === 'advanced-admin' || role === 'curriculum';
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
     try {
-      const stored = localStorage.getItem('kbc_sidebar_expanded');
+      const stored = localStorage.getItem(expandedStorageKey);
       if (stored) return new Set(JSON.parse(stored));
     } catch { return new Set(); }
-    return new Set(navItems.filter(item => item.children?.length).map(item => item.id));
+    const initialItems = navigationPresentation?.mapItems(navItems) ?? navItems;
+    return new Set(initialItems.filter(item => item.children?.length).map(item => item.id));
   });
 
   useEffect(() => {
     try {
-      localStorage.setItem('kbc_sidebar_expanded', JSON.stringify([...expandedGroups]));
+      localStorage.setItem(expandedStorageKey, JSON.stringify([...expandedGroups]));
     } catch { /* Ignore unavailable browser storage. */ }
-  }, [expandedGroups]);
+  }, [expandedGroups, expandedStorageKey]);
 
   // Close dropdown on route change
   useEffect(() => {
@@ -398,14 +403,19 @@ export function Sidebar({
   }, [activeDropdown]);
 
   const filteredNavItems = useMemo(() => {
-    return navItems
+    const permittedItems = navItems
       .filter(item => canSeeNavItem(item.id))
       .map(item => ({
         ...item,
         children: item.children?.filter(child => canSeeNavItem(child.id)),
       }))
       .filter(item => Boolean(item.href || item.children?.length));
-  }, [navItems, canSeeNavItem]);
+    if (!navigationPresentation) return permittedItems;
+    return navigationPresentation.mapItems(permittedItems)
+      .filter(item => canSeeNavItem(item.id))
+      .map(item => ({ ...item, children: item.children?.filter(child => canSeeNavItem(child.id)) }))
+      .filter(item => Boolean(item.href || item.children?.length));
+  }, [navItems, canSeeNavItem, navigationPresentation]);
 
   const queryMatchedHref = useMemo(() => {
     const current = `${location.pathname}${location.search}`;
@@ -613,7 +623,10 @@ export function Sidebar({
             className="h-auto min-w-0 flex-1 object-contain object-left"
           />
         )}
-        {instance === 'desktop' && onLearnerCollapsedChange && (
+        {instance === 'desktop' && role === 'curriculum' && !collapsed && (
+          <span aria-hidden="true" className="h-9 w-9 shrink-0" />
+        )}
+        {instance === 'desktop' && role !== 'curriculum' && onLearnerCollapsedChange && (
           <button
             type="button"
             onClick={() => onLearnerCollapsedChange(!collapsed)}
@@ -635,7 +648,8 @@ export function Sidebar({
           <nav
             id={`${role}-${instance}-primary-navigation`}
             aria-label={`${roleLabel} primary navigation`}
-            className="relative z-10 min-h-0 flex-1 space-y-3 overflow-y-auto px-2 py-5 [scrollbar-width:thin] [scrollbar-color:rgb(255_255_255/0.32)_transparent]"
+            className={'relative z-10 min-h-0 flex-1 space-y-3 overflow-y-auto px-2 py-5 [scrollbar-width:thin] [scrollbar-color:rgb(255_255_255/0.32)_transparent]' + (navigationPresentation?.className ? ` ${navigationPresentation.className}` : '')}
+            data-navigation-collapsed={navigationPresentation ? 'true' : undefined}
           >
             {filteredNavItems.map(item => hasChildren(item) ? (
               <ExpandedGroup
@@ -654,12 +668,15 @@ export function Sidebar({
           <div className="relative z-10 shrink-0 border-t border-white/15 px-2 py-4">
             <button
               type="button"
-              onClick={() => setSignOutOpen(true)}
-              aria-label="Sign out"
-              title="Sign out"
+              onClick={() => role === 'curriculum' ? onLearnerCollapsedChange?.(false) : setSignOutOpen(true)}
+              aria-label={role === 'curriculum' ? 'Expand sidebar' : 'Sign out'}
+              title={role === 'curriculum' ? 'Expand sidebar' : 'Sign out'}
+              aria-expanded={role === 'curriculum' ? false : undefined}
               className="flex h-12 w-full items-center justify-center text-white transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#f5c94f]"
             >
-              <LogOut aria-hidden="true" size={21} strokeWidth={1.8} />
+              {role === 'curriculum'
+                ? <PanelLeftOpen aria-hidden="true" size={21} strokeWidth={1.8} />
+                : <LogOut aria-hidden="true" size={21} strokeWidth={1.8} />}
             </button>
           </div>
         </>
@@ -667,8 +684,9 @@ export function Sidebar({
         <nav
           id={`${role}-${instance}-primary-navigation`}
           aria-label={`${roleLabel} primary navigation`}
-          className="relative z-10 min-h-0 flex-1 space-y-2 overflow-y-auto px-5 py-7 [scrollbar-width:thin] [scrollbar-color:rgb(255_255_255/0.32)_transparent]"
+          className={'relative z-10 min-h-0 flex-1 space-y-2 overflow-y-auto px-5 py-7 [scrollbar-width:thin] [scrollbar-color:rgb(255_255_255/0.32)_transparent]' + (navigationPresentation?.className ? ` ${navigationPresentation.className}` : '')}
         >
+          {navigationPresentation?.header}
           {filteredNavItems.map(item => hasChildren(item) ? (
             <ExpandedGroup
               key={item.id}
@@ -686,11 +704,20 @@ export function Sidebar({
         <div className="relative z-10 shrink-0 border-t border-white/15 px-5 py-5">
           <button
             type="button"
-            onClick={() => setSignOutOpen(true)}
-            className="kbc-learner-signout flex min-h-12 w-full items-center gap-3 px-3 py-2 text-left text-sm font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f5c94f] focus-visible:ring-inset"
+            onClick={() => {
+              if (role !== 'curriculum') setSignOutOpen(true);
+              else if (instance === 'mobile') onCloseMobile();
+              else onLearnerCollapsedChange?.(true);
+            }}
+            aria-label={role === 'curriculum' ? 'Collapse sidebar' : undefined}
+            aria-expanded={role === 'curriculum' ? instance === 'mobile' ? mobileOpen : true : undefined}
+            title={role === 'curriculum' ? 'Collapse sidebar' : undefined}
+            className={`${role === 'curriculum' ? 'kbc-curriculum-sidebar-toggle' : 'kbc-learner-signout'} flex min-h-12 w-full items-center gap-3 px-3 py-2 text-left text-sm font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f5c94f] focus-visible:ring-inset`}
           >
-            <LogOut aria-hidden="true" size={21} strokeWidth={1.8} />
-            <span>Sign out</span>
+            {role === 'curriculum'
+              ? <PanelLeftClose aria-hidden="true" size={21} strokeWidth={1.8} />
+              : <LogOut aria-hidden="true" size={21} strokeWidth={1.8} />}
+            <span>{role === 'curriculum' ? 'Collapse' : 'Sign out'}</span>
           </button>
         </div>
       </>}
@@ -698,7 +725,7 @@ export function Sidebar({
   };
 
   return (
-    <>
+    <SidebarNavigationContext.Provider value={navigationPresentation}>
       {fullHeightNavigation ? (
         <aside
           aria-label={`${roleLabel} sidebar`}
@@ -832,7 +859,7 @@ export function Sidebar({
         />,
         document.body,
       )}
-    </>
+    </SidebarNavigationContext.Provider>
   );
 }
 
@@ -959,6 +986,7 @@ function ExpandedLink({ item, isActive, onNavigate, compact, presentation }: {
   compact?: boolean;
   presentation?: 'rail' | 'row' | 'tile';
 }) {
+  const navigationPresentation = useContext(SidebarNavigationContext);
   const active = isActive(item.href, item.matchPaths);
   if (presentation === 'tile') {
     return <SecondaryNavCard item={item} active={active} onNavigate={onNavigate} />;
@@ -974,7 +1002,7 @@ function ExpandedLink({ item, isActive, onNavigate, compact, presentation }: {
     >
       {active && <span className={presentation ? 'hidden' : 'contents'}><ActiveMarker /></span>}
       <span className={presentation ? 'relative flex h-5 w-5 shrink-0 items-center justify-center' : 'kbc-sidebar-icon-well flex h-5 w-5 shrink-0 items-center justify-center'}>
-        <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={compact ? 16 : 18} className={presentation ? 'h-5 w-5' : undefined} />
+        {navigationPresentation?.renderIcon?.(item) ?? <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={compact ? 16 : 18} className={presentation ? 'h-5 w-5' : undefined} />}
         {presentation === 'rail' && item.badge ? <RailDot className="bg-primary-500" /> : null}
         {presentation === 'rail' && item.statusDot && !item.badge ? <RailDot className="bg-red-500" /> : null}
         {presentation === 'rail' && (item.comingSoon || item.tag) && !item.badge && !item.statusDot ? <RailDot className="bg-amber-400" /> : null}
@@ -1006,14 +1034,15 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate, prese
   onNavigate?: () => void;
   presentation?: 'rail' | 'row' | 'tiles';
 }) {
+  const navigationPresentation = useContext(SidebarNavigationContext);
   const anyChildActive = item.children?.some(child => isActive(child.href, child.matchPaths)) ?? false;
   const activeChildIndex = item.children?.findIndex(child => isActive(child.href, child.matchPaths)) ?? -1;
 
   return (
-    <div>
+    <div data-sidebar-group={navigationPresentation ? item.id : undefined}>
       {presentation === 'tiles' ? (
         <div className="mb-3 flex min-h-12 items-center gap-2.5 rounded-lg border border-white/90 bg-brand-accent px-3 py-2 text-[13px] font-semibold leading-snug text-white shadow-sm">
-          <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={17} />
+          {navigationPresentation?.renderIcon?.(item) ?? <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={17} />}
           <span className="min-w-0 flex-1">{item.label}</span>
         </div>
       ) : (
@@ -1031,7 +1060,7 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate, prese
       >
         {anyChildActive && !isExpanded && <span className={presentation ? 'hidden' : 'contents'}><ActiveMarker /></span>}
         <span className={presentation ? 'flex h-5 w-5 shrink-0 items-center justify-center' : 'kbc-sidebar-icon-well flex h-5 w-5 shrink-0 items-center justify-center'}>
-          <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} className={presentation ? 'h-5 w-5' : undefined} />
+          {navigationPresentation?.renderIcon?.(item) ?? <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} className={presentation ? 'h-5 w-5' : undefined} />}
         </span>
         <span className={presentation === 'rail' ? 'sr-only' : presentation === 'row' ? 'min-w-0 flex-1 whitespace-normal break-words text-left' : 'min-w-0 flex-1 truncate text-left'}>{item.label}</span>
         <span className={presentation === 'rail' ? 'sr-only' : 'flex shrink-0 items-center gap-1.5'}>

@@ -1,5 +1,6 @@
 import { LearnerPreview } from '../module-builder/LearnerPreview';
 import { ModuleSessions } from './ModuleSessions';
+import { programmeColor } from '../shared/programmeColors';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -716,7 +717,7 @@ export default function ModuleWorkspacePage() {
               />
             </span>
           ) : ''}
-          accentColor={module?.color}
+          accentColor={programmeColor(context?.programme || (context?.programmeId ? { id: context.programmeId } : null))}
           dense
           stats={[
             { icon: 'ri-presentation-line', label: 'Tutor', value: cleanText(module?.tutor, 'Unassigned') },

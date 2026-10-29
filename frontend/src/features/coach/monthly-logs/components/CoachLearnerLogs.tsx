@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { coachViewAs } from '@/lib/coachViewAs';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { CoachMonthList, MonthIndexSkeleton } from '@/features/monthly-logs/MonthList';

@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useCallback } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { roleNavMap } from '@/mocks/navigation';
 import TypingIndicator from '@/components/feature/TypingIndicator';
 import { highlightText } from '@/components/feature/HighlightText';

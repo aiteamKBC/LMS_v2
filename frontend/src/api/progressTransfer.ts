@@ -4,7 +4,7 @@ import type { LearnerKind } from './learnerDetail';
 
 export type ComponentMatch = { sourceActivityRef: string; sourceTitle: string; targetComponentId: string; targetTitle: string; manual: boolean; plannedHours?: number | null };
 export type TransferComponentCounts = { total: number; matched: number; completed: number; remaining: number };
-export type TransferModule = { courseRef: string; moduleId: string; oldTitle: string; newTitle: string; percent: number; hours: number; demoProgress?: boolean; componentMatches?: ComponentMatch[]; componentCounts?: TransferComponentCounts };
+export type TransferModule = { courseRef: string; moduleId: string; oldTitle: string; newTitle: string; percent: number; hours: number; mergedPercent?: number; demoProgress?: boolean; componentMatches?: ComponentMatch[]; componentCounts?: TransferComponentCounts };
 export type ProgressTransferRequest = {
   requestId: string; status: 'pending' | 'approved'; requestedAt: string; approvedAt: string | null; modules: TransferModule[];
 };
@@ -14,8 +14,8 @@ export type AdminTransfers = { requests: AdminTransfer[]; nextOffset: number | n
 export type TransferReview = {
   reviewToken: string; csrfToken: string;
   modules: {
-    moduleId: string; courseRef: string; title: string; completedTargetIds?: string[];
-    sources: { sourceActivityRef: string; title: string; week: string; type: string; automaticTargetId: string | null;
+    moduleId: string; courseRef: string; title: string; completedTargetIds?: string[]; retainedCompletedIds?: string[];
+    sources: { sourceActivityRef: string; title: string; week: string; type: string; automaticTargetId: string | null; savedTargetId?: string; recommendedTargetId?: string;
       contentAvailable?: boolean; contentScores?: { componentId: string; score: number | null; contentAvailable?: boolean }[] }[];
     targets: { componentId: string; title: string; week: string; type: string; plannedHours: number | null }[];
   }[];

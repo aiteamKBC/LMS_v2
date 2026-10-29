@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   logout: vi.fn(),
 }));
 
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ auth: { account: mocks.account }, logout: mocks.logout }),
 }));
 vi.mock('@/api/learnerCalendar', () => ({
