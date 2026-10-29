@@ -198,7 +198,7 @@ export function FormBuilder() {
 
   function applyBankSections(sections: FeedbackSection[]) {
     if (locked) return;
-    setSections(sections);
+    setSections(model.formType === 'post_lecture' ? sections : sections.map(section => ({ ...section, questionsPerDelivery: null })));
     setSelectedSectionIndex(0);
     setSelectedQuestionIndex(0);
     setPreviewStep(0);
@@ -277,15 +277,15 @@ export function FormBuilder() {
         </div>
       </section>
 
-      {model.formType === 'post_lecture' && <section aria-label="Question bank import" className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-white shadow-sm">
+      <section aria-label="Question bank import" className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-white shadow-sm">
         <div className="border-b border-foreground-100 bg-background-50/70 p-5"><h2 className="text-lg font-bold text-foreground-900">Question bank</h2><p className="mt-1 text-sm text-foreground-500">Upload your bank, then select a question in Form structure to edit it.</p></div>
-        <div className="space-y-4 p-5"><QuestionBankImport locked={locked} onApply={applyBankSections} /><p role="status" className="rounded-xl bg-primary-50 px-4 py-3 text-sm font-semibold text-primary-800">Learners will answer {lectureQuestionCount} {lectureQuestionCount === 1 ? 'question' : 'questions'} per lecture.</p></div>
-      </section>}
+        <div className="space-y-4 p-5"><QuestionBankImport key={model.formType} locked={locked} fixedQuestions={model.formType !== 'post_lecture'} onApply={applyBankSections} /><p role="status" className="rounded-xl bg-primary-50 px-4 py-3 text-sm font-semibold text-primary-800">{model.formType === 'post_lecture' ? `Learners will answer ${lectureQuestionCount} ${lectureQuestionCount === 1 ? 'question' : 'questions'} per lecture.` : `All questions (fixed): ${lectureQuestionCount} ${lectureQuestionCount === 1 ? 'question' : 'questions'} in this form.`}</p></div>
+      </section>
       <FormScoringSetup sections={model.sections} bank={model.formType === 'post_lecture'} locked={locked} onSelect={(sectionIndex, questionIndex) => {
         selectQuestion(sectionIndex, questionIndex);
         questionSettingsRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
       }} />
-      <section className="grid items-start gap-4 xl:grid-cols-[290px_minmax(0,1fr)_360px]">
+      <section className="grid items-start gap-4 xl:grid-cols-[290px_360px_minmax(0,1fr)]">
         <aside className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-white shadow-sm xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto">
           <div className="sticky top-0 z-10 border-b border-foreground-100 bg-white px-4 py-4">
             <div className="flex items-start justify-between gap-3"><div><h2 className="flex items-center gap-2 text-sm font-bold text-foreground-900"><i className="ri-node-tree text-primary-600" aria-hidden="true" />Form structure</h2><p className="mt-1 text-[11px] text-foreground-500">Select a question to edit its settings.</p></div><span className="rounded-full bg-primary-50 px-2 py-1 text-[10px] font-bold text-primary-700">{model.sections.length}</span></div>
@@ -305,11 +305,6 @@ export function FormBuilder() {
           </div>
         </aside>
 
-        <main className="min-w-0 overflow-hidden rounded-2xl border border-foreground-200/70 bg-white shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-foreground-100 bg-background-50/70 px-4 py-3"><div><h2 className="flex items-center gap-2 text-sm font-bold text-foreground-900"><i className="ri-macbook-line text-primary-600" aria-hidden="true" />Form preview</h2><p className="mt-0.5 text-[11px] text-foreground-500">{model.formType === 'post_lecture' ? 'Edit the full bank by category. Each lecture shows only the saved automatic selection in one form.' : 'This is how learners will see the form.'}</p></div><div className="flex rounded-lg border border-primary-200 bg-white p-1"><button type="button" onClick={() => setPreviewViewport('desktop')} className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[11px] font-semibold ${previewViewport === 'desktop' ? 'bg-primary-600 text-white' : 'text-foreground-500'}`}><i className="ri-computer-line" aria-hidden="true" />Desktop</button><button type="button" onClick={() => setPreviewViewport('mobile')} className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[11px] font-semibold ${previewViewport === 'mobile' ? 'bg-primary-600 text-white' : 'text-foreground-500'}`}><i className="ri-smartphone-line" aria-hidden="true" />Mobile</button></div></div>
-          <div className="bg-[#f6f4fb] p-4 sm:p-6"><div className={`mx-auto rounded-2xl border border-foreground-200/70 bg-white p-5 shadow-sm transition-[max-width] sm:p-6 ${previewViewport === 'mobile' ? 'max-w-[390px]' : 'max-w-4xl'}`}><FeedbackFormHeader title={model.title || 'Untitled feedback form'} description={model.description} instructions={model.instructions} /><FeedbackStepProgress sections={model.sections} activeSection={activeSectionIndex} onStepChange={step => { setPreviewStep(step); setSelectedSectionIndex(step); setSelectedQuestionIndex(0); }} /><FormRenderer sections={model.sections} activeSection={activeSectionIndex} answers={{}} readOnly /><div className="mt-6 grid grid-cols-3 items-center border-t border-foreground-100 pt-4"><div>{activeSectionIndex > 0 && <button type="button" onClick={() => { const step = activeSectionIndex - 1; setPreviewStep(step); setSelectedSectionIndex(step); setSelectedQuestionIndex(0); }} className="rounded-md bg-[#34405f] px-4 py-2 text-xs font-semibold text-white">Back</button>}</div><div className="flex justify-center">{activeSectionIndex < model.sections.length - 1 && <button type="button" onClick={() => { const step = activeSectionIndex + 1; setPreviewStep(step); setSelectedSectionIndex(step); setSelectedQuestionIndex(0); }} className="rounded-md bg-[#34405f] px-4 py-2 text-xs font-semibold text-white">Next</button>}</div><p className="text-right text-xs text-foreground-500">{activeSectionIndex + 1}/{model.sections.length}</p></div></div></div>
-        </main>
-
         <aside ref={questionSettingsRef} className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-white shadow-sm xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto">
           <div className="sticky top-0 z-10 border-b border-foreground-100 bg-white px-4 py-4"><div className="flex items-start justify-between gap-3"><div><h2 className="flex items-center gap-2 text-sm font-bold text-foreground-900"><i className="ri-edit-2-line text-primary-600" aria-hidden="true" />Question settings</h2><p className="mt-1 text-[11px] text-foreground-500">Edit the selected question.</p></div>{activeQuestion && <span className="rounded-full bg-primary-50 px-2 py-1 text-[10px] font-bold text-primary-700">{activeQuestionIndex + 1} of {activeSection.questions.length}</span>}</div></div>
           {activeQuestion ? <div className="space-y-4 p-4">
@@ -325,6 +320,11 @@ export function FormBuilder() {
             <button type="button" disabled={locked} onClick={() => removeQuestion(activeSectionIndex, activeQuestionIndex)} className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-600 transition-colors hover:bg-red-100 disabled:opacity-30"><i className="ri-delete-bin-line" aria-hidden="true" />Remove question</button>
           </div> : <div className="p-6 text-center"><span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary-50 text-primary-500"><i className="ri-question-line text-xl" aria-hidden="true" /></span><p className="mt-3 text-sm font-semibold text-foreground-800">No question selected</p><p className="mt-1 text-xs text-foreground-500">Add or select a question from the structure panel.</p>{activeSection && <button type="button" disabled={locked} onClick={() => addQuestion(activeSectionIndex)} className="mt-4 rounded-lg bg-primary-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-30">Add question</button>}</div>}
         </aside>
+
+        <main className="min-w-0 overflow-hidden rounded-2xl border border-foreground-200/70 bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-foreground-100 bg-background-50/70 px-4 py-3"><div><h2 className="flex items-center gap-2 text-sm font-bold text-foreground-900"><i className="ri-macbook-line text-primary-600" aria-hidden="true" />Form preview</h2><p className="mt-0.5 text-[11px] text-foreground-500">{model.formType === 'post_lecture' ? 'Edit the full bank by category. Each lecture shows only the saved automatic selection in one form.' : 'This is how learners will see the form.'}</p></div><div className="flex rounded-lg border border-primary-200 bg-white p-1"><button type="button" onClick={() => setPreviewViewport('desktop')} className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[11px] font-semibold ${previewViewport === 'desktop' ? 'bg-primary-600 text-white' : 'text-foreground-500'}`}><i className="ri-computer-line" aria-hidden="true" />Desktop</button><button type="button" onClick={() => setPreviewViewport('mobile')} className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[11px] font-semibold ${previewViewport === 'mobile' ? 'bg-primary-600 text-white' : 'text-foreground-500'}`}><i className="ri-smartphone-line" aria-hidden="true" />Mobile</button></div></div>
+          <div className="bg-[#f6f4fb] p-4 sm:p-6"><div className={`mx-auto rounded-2xl border border-foreground-200/70 bg-white p-5 shadow-sm transition-[max-width] sm:p-6 ${previewViewport === 'mobile' ? 'max-w-[390px]' : 'max-w-4xl'}`}><FeedbackFormHeader title={model.title || 'Untitled feedback form'} description={model.description} instructions={model.instructions} /><FeedbackStepProgress sections={model.sections} activeSection={activeSectionIndex} onStepChange={step => { setPreviewStep(step); setSelectedSectionIndex(step); setSelectedQuestionIndex(0); }} /><FormRenderer sections={model.sections} activeSection={activeSectionIndex} answers={{}} readOnly /><div className="mt-6 grid grid-cols-3 items-center border-t border-foreground-100 pt-4"><div>{activeSectionIndex > 0 && <button type="button" onClick={() => { const step = activeSectionIndex - 1; setPreviewStep(step); setSelectedSectionIndex(step); setSelectedQuestionIndex(0); }} className="rounded-md bg-[#34405f] px-4 py-2 text-xs font-semibold text-white">Back</button>}</div><div className="flex justify-center">{activeSectionIndex < model.sections.length - 1 && <button type="button" onClick={() => { const step = activeSectionIndex + 1; setPreviewStep(step); setSelectedSectionIndex(step); setSelectedQuestionIndex(0); }} className="rounded-md bg-[#34405f] px-4 py-2 text-xs font-semibold text-white">Next</button>}</div><p className="text-right text-xs text-foreground-500">{activeSectionIndex + 1}/{model.sections.length}</p></div></div></div>
+        </main>
       </section>
       </div>
     </>}
@@ -381,14 +381,27 @@ function OptionEditor({ options, onChange, disabled, labelPrefix, renderScore }:
   options: string[]; onChange: (options: string[]) => void; disabled: boolean; labelPrefix?: string;
   renderScore: (option: string, index: number) => ReactNode;
 }) {
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const moveOption = (from: number, to: number) => {
+    if (from === to || to < 0 || to >= options.length) return;
+    const next = [...options];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    onChange(next);
+  };
   return <div className="mt-3 space-y-2">
     <div className={scoringStyles.optionEditorHeading}><span>Answer option</span><span>Score (%)</span></div>
-    {options.map((option, index) => <div key={index} className={scoringStyles.scoredOptionRow}>
+    {options.map((option, index) => <div key={index} className={`${scoringStyles.scoredOptionRow} ${draggedIndex === index ? scoringStyles.dragging : ''}`}
+      onDragOver={event => { if (draggedIndex !== null && !disabled) event.preventDefault(); }}
+      onDrop={event => { event.preventDefault(); if (draggedIndex !== null && !disabled) moveOption(draggedIndex, index); setDraggedIndex(null); }}>
       <input disabled={disabled} aria-label={labelPrefix ? `${labelPrefix} ${index + 1}` : undefined} className={field} value={option} onChange={e => onChange(options.map((item, i) => i === index ? e.target.value : item))} />
       {renderScore(option, index)}
       <div className={scoringStyles.optionActions}>
-        <MoveButtons disabled={disabled} index={index} length={options.length} onMove={direction => { const next = [...options]; const target = index + direction; [next[index], next[target]] = [next[target], next[index]]; onChange(next); }} />
-        <button type="button" disabled={disabled || options.length <= 2} onClick={() => onChange(options.filter((_, i) => i !== index))} className="px-2 text-xs text-red-600 disabled:opacity-30">Remove</button>
+        <button type="button" draggable={!disabled} disabled={disabled} aria-label={`Drag answer option ${index + 1} to reorder`} title="Drag to reorder · Alt + ↑/↓ with keyboard"
+          onDragStart={event => { setDraggedIndex(index); event.dataTransfer.effectAllowed = 'move'; }} onDragEnd={() => setDraggedIndex(null)}
+          onKeyDown={event => { if (!event.altKey) return; if (event.key === 'ArrowUp') { event.preventDefault(); moveOption(index, index - 1); } else if (event.key === 'ArrowDown') { event.preventDefault(); moveOption(index, index + 1); } }}
+          className={scoringStyles.dragHandle}><i className="ri-draggable" aria-hidden="true" /></button>
+        <button type="button" aria-label={`Delete answer option ${index + 1}`} title="Delete option" disabled={disabled || options.length <= 2} onClick={() => onChange(options.filter((_, i) => i !== index))} className={scoringStyles.deleteOption}><i className="ri-delete-bin-line" aria-hidden="true" /></button>
       </div>
     </div>)}
     <button type="button" disabled={disabled} onClick={() => onChange([...options, `Option ${options.length + 1}`])} className="text-xs font-semibold text-primary-600">+ Add Option</button>

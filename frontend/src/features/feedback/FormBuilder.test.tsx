@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -63,7 +63,8 @@ describe('post-lecture feedback delivery scope', () => {
     expect(screen.queryByLabelText('Start Date')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Due Date')).not.toBeInTheDocument();
     expect(screen.queryByText('Reusable Live Sessions Feedback QR')).not.toBeInTheDocument();
-    expect(screen.queryByText('Upload question bank')).not.toBeInTheDocument();
+    expect(screen.getByText('Upload question bank')).toBeVisible();
+    expect(screen.queryByRole('combobox', { name: /questions per lecture/i })).not.toBeInTheDocument();
     await user.click(screen.getByRole('radio', { name: /One module only/ }));
     expect(await screen.findByRole('combobox', { name: 'Programme' })).toBeVisible();
     await waitFor(() => expect(curriculum).toHaveBeenCalledTimes(1));
@@ -110,9 +111,14 @@ describe('post-lecture feedback delivery scope', () => {
     expect(screen.getByRole('combobox', { name: 'Rating style' })).toHaveValue('stars');
     expect(screen.getByLabelText('Question bank file')).toBeVisible();
     expect(screen.getByRole('link', { name: 'Download Excel template' })).toHaveAttribute('href', '/templates/post-lecture-question-bank.xlsx');
-    expect(screen.getByRole('heading', { name: 'Form structure' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Question settings' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Form preview' })).toBeVisible();
+    const structureHeading = screen.getByRole('heading', { name: 'Form structure' });
+    const settingsHeading = screen.getByRole('heading', { name: 'Question settings' });
+    const previewHeading = screen.getByRole('heading', { name: 'Form preview' });
+    expect(structureHeading).toBeVisible();
+    expect(settingsHeading).toBeVisible();
+    expect(previewHeading).toBeVisible();
+    expect(structureHeading.compareDocumentPosition(settingsHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(settingsHeading.compareDocumentPosition(previewHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await user.click(screen.getByRole('button', { name: '+ Add Question to section 1' }));
     await user.selectOptions(screen.getByRole('combobox', { name: 'Section 1 questions per lecture' }), '1');
     expect(screen.getByRole('combobox', { name: 'Section 1 questions per lecture' })).toHaveValue('1');
@@ -301,6 +307,25 @@ describe('post-lecture feedback delivery scope', () => {
     await user.click(screen.getByRole('button', { name: /Edit section 1 question 1:/ }));
     expect(screen.getByRole('textbox', { name: 'Question text' })).toHaveValue('Any suggestions?');
     expect(screen.getByRole('combobox', { name: 'Question 1 type' })).toHaveValue('long_text');
+  });
+
+  it('reorders answer options by dragging and removes them with a delete icon', async () => {
+    const user = userEvent.setup();
+    render(<MemoryRouter><FormBuilder /></MemoryRouter>);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Question 1 type' }), 'multiple_choice');
+    await user.click(screen.getByRole('button', { name: '+ Add Option' }));
+    const thirdOption = screen.getByRole('textbox', { name: 'Answer option 3' });
+    await user.clear(thirdOption);
+    await user.type(thirdOption, 'Final option');
+
+    fireEvent.dragStart(screen.getByRole('button', { name: 'Drag answer option 3 to reorder' }), { dataTransfer: { effectAllowed: '' } });
+    fireEvent.drop(screen.getByRole('textbox', { name: 'Answer option 1' }).closest('div')!);
+    expect(screen.getByRole('textbox', { name: 'Answer option 1' })).toHaveValue('Final option');
+    expect(screen.queryByRole('button', { name: 'Move up' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Remove')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Delete answer option 1' }));
+    expect(screen.queryByDisplayValue('Final option')).not.toBeInTheDocument();
   });
 
   it('clamps a category quota after deletion and preserves question order and values', async () => {
