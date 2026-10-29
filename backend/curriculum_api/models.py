@@ -316,6 +316,7 @@ class LiveSessionLearnerAttendance(models.Model):
     ]
 
     occurrence_id = models.CharField(max_length=128, db_index=True)
+    session_date = models.DateField(null=True, blank=True, editable=False)
     live_session_id = models.CharField(max_length=128, db_index=True)
     module_catalogue_id = models.CharField(max_length=128, db_index=True)
     learner_profile_id = models.BigIntegerField(db_index=True)
