@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone as datetime_timezone
+import logging
 from secrets import SystemRandom
 
 from django.db import IntegrityError, connection, transaction
@@ -15,6 +16,7 @@ from .feedback_delivery_guard import audit, is_creation_guard_rejection, rejecte
 
 
 _random = SystemRandom()
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -235,6 +237,30 @@ def _aware_utc(value):
     if value is None or timezone.is_aware(value):
         return value
     return timezone.make_aware(value, datetime_timezone.utc)
+
+
+def reconcile_feedback_after_attendance_commit(occurrence_ids, *, using):
+    """Refresh only the saved lectures once their attendance transaction commits.
+
+    The existing reconciliation still checks finalization, form creation time
+    and learner identity, and retains the pinned form/question set. This hook
+    must not wait for unrelated recording/archive work or undo saved attendance
+    if feedback fails; the existing session worker remains the retry fallback.
+    """
+    ids = list(dict.fromkeys(str(value or '').strip() for value in occurrence_ids
+                            if str(value or '').strip()))
+    if not ids:
+        return
+
+    def reconcile():
+        try:
+            sync_post_lecture_feedback_from_attendance(occurrence_ids=ids)
+        except Exception as error:
+            # Driver messages may contain names, answers or connection details.
+            logger.warning('Live Sessions Feedback pending after attendance commit: %s occurrence(s), %s',
+                           len(ids), type(error).__name__)
+
+    transaction.on_commit(reconcile, using=using)
 
 
 def sync_post_lecture_feedback_from_attendance(*, live_session_ids=None, occurrence_ids=None):

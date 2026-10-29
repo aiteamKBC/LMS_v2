@@ -1012,6 +1012,10 @@ def sync_verified_teams_attendance_reporting(
             if params:
                 cursor.executemany(query, params)
             upsert_live_session_register(cursor, rows)
+        from engagement_api.feedback_delivery import reconcile_feedback_after_attendance_commit
+        reconcile_feedback_after_attendance_commit(
+            [row['occurrence_id'] for row in rows], using=database,
+        )
     _award_attendance_points(rows)
     return len(rows)
 
