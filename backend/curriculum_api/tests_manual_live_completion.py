@@ -62,7 +62,10 @@ class BulkManualCompletionPersistenceTests(SimpleTestCase):
         from django.db import connections
         from coach_api.models import CoachAttendanceSourceAdjustment, CoachManualAttendance
         from curriculum_api.models import ModuleAuthoringComponent, ModuleAuthoringModule
+        from learner_api.models import EnrolmentUser, LearnerProfile
         self.tables = [
+            ('default', EnrolmentUser, 'manual_completion_enrolments_test'),
+            ('default', LearnerProfile, 'manual_completion_profiles_test'),
             ('default', register.LiveSession, 'manual_completion_sessions_test'),
             ('default', register.LiveSessionLearnerAttendance, 'manual_completion_register_test'),
             ('default', CoachAttendanceSourceAdjustment, 'manual_completion_adjustment_test'),
@@ -121,6 +124,19 @@ class BulkManualCompletionPersistenceTests(SimpleTestCase):
         self.assertEqual((self.register.attended_seconds, self.register.attendance_report_id), (0, ''))
         register.save_live_attendance({self.register.pk: 'absent'}, actor='staff@example.invalid')
         self.assertFalse(self.completion()[('C1', 'M1')][0])
+
+    def test_shared_correction_preserves_the_source_module_with_real_tables(self):
+        shared = register.LiveSessionLearnerAttendance.objects.create(
+            occurrence_id='O1', live_session_id='S1', module_catalogue_id='M2',
+            learner_profile_id=7, attendance_status='absent', calculated_at=self.now)
+        register.save_live_attendance({self.register.pk: 'present', shared.pk: 'absent'})
+        self.assertEqual(dict(self.corrections.values_list('source_id', 'status')),
+                         {'O1': 'present', 'O1:M2': 'absent'})
+        register.save_live_attendance({shared.pk: 'present'})
+        self.register.refresh_from_db()
+        shared.refresh_from_db()
+        self.assertEqual((self.register.attendance_status, shared.attendance_status), ('present', 'present'))
+        self.assertEqual(self.corrections.count(), 2)
 
     def test_saved_bulk_presence_projects_authored_hours_without_writing_progress(self):
         from learner_api.live_session_progress import read_live_credits, supplement_module_hours
