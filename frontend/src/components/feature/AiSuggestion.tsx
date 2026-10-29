@@ -1,5 +1,5 @@
 import { type ReactNode, useState } from 'react';
-import { useAiSettings } from '@/hooks/useAiSettings';
+import { useAiSettings } from "@/hooks/useAiSettings.helpers";
 
 // ============================================================
 // AiSuggestion — wraps AI-generated content with mandatory

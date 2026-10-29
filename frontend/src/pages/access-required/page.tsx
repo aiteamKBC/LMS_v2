@@ -11,7 +11,7 @@
 // not the person has a mail client set up.
 // ============================================================================
 import { useState } from 'react';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { BrandLockup } from '@/components/BrandLockup';
 import { requestAccess, type AccessRequestResult } from '@/api/accessRequest';
 

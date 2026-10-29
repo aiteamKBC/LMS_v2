@@ -14,8 +14,8 @@ import { fetchCoachOptions } from '@/api/staffUsers';
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => children }));
 const toast = vi.hoisted(() => ({ info: vi.fn(), success: vi.fn(), error: vi.fn() }));
-vi.mock('@/hooks/useToast', () => ({ useToast: () => toast }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ isAdmin: true, auth: { user: { fullName: 'Staff Member' } } }) }));
+vi.mock("@/hooks/useToast", () => ({ useToast: () => toast }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ isAdmin: true, auth: { user: { fullName: 'Staff Member' } } }) }));
 vi.mock('../components/LearnerHeaderDates', () => ({ LearnerHeaderDates: () => <div>Learner dates</div> }));
 vi.mock('../components/FirstSessionReschedule', () => ({ FirstSessionReschedule: () => null }));
 

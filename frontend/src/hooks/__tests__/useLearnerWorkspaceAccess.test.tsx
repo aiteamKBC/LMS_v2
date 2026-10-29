@@ -19,7 +19,7 @@ import type { AuthUser } from '@/api/auth';
 
 const authState = vi.fn();
 
-vi.mock('../useAuth', () => ({ useAuth: () => authState() }));
+vi.mock("../useAuth.helpers", () => ({ useAuth: () => authState() }));
 
 const { useLearnerWorkspaceAccess } = await import('../useLearnerWorkspaceAccess');
 

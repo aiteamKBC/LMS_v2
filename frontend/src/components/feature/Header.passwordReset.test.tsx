@@ -15,7 +15,7 @@ import { Header } from './Header';
 const forgotPassword = vi.fn();
 
 vi.mock('@/api/auth', () => ({ apiForgotPassword: (email: string) => forgotPassword(email) }));
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({
     auth: {
       user: { email: 'aya.khater@kentbusinesscollege.com', displayName: 'Aya Aya Test' },

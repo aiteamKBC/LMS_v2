@@ -4,7 +4,7 @@ import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast";
 import { roleNavMap } from '@/mocks/navigation';
 import type { AbsenceReport } from '@/mocks/absence-reports';
 import { cn } from '@/lib/cn';

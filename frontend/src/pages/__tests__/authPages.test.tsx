@@ -23,7 +23,7 @@ const apiAcceptInvitation = vi.fn();
 const apiResetInfo = vi.fn();
 const apiResetPassword = vi.fn();
 
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({
     login,
     auth: { isAuthenticated: false, account: null, user: null, roles: [], tenant: null },

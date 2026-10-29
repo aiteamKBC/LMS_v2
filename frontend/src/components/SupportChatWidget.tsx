@@ -16,7 +16,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { Lottie } from 'lottie-react';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import robotAnimation from '@/assets/support-robot.lottie.json';
 
 const SUPPORT_PORTAL_DEFAULT = 'https://technicalsupport.kentbusinesscollege.net';

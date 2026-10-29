@@ -8,7 +8,7 @@ import type { EvidenceRecord } from '@/api/evidence';
 import { EvidenceBody } from './components/EvidenceBody';
 import { auditDocumentEmbedUrl } from '@/features/audit/documentPreview';
 
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { id: 125 } } }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: { id: 125 } } }) }));
 
 const historical: HistoricalEvidenceItem = { id: 'aptem:123', source: 'aptem', source_id: 123, name: 'Leadership assignment.docx', component_name: 'Leadership', category: 'assignment', status: 'Accepted', date: '2026-08-10', otjh_hours: 2, ksb_codes: ['K1'], has_file: true, has_report: true, has_note: true, replaced: false, original_has_file: true, note_preview: 'Saved reflection' };
 const review: HistoricalEvidenceItem = { ...historical, id: 'aptem:124', source_id: 124, name: 'Progress review', category: 'review', status: 'Recorded', date: '2026-07-02' };

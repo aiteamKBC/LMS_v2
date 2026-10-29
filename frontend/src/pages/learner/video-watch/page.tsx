@@ -2264,6 +2264,8 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
   const onAnnotationsDirty = readingTools?.onDirty;
   const pdfReaderId = useId();
   const [textView, setTextView] = useState(false);
+  const ocrDocument = useMemo(() => ({ pdf, pages: new Map<number, string>() }), [pdf]);
+  const ocrText = ocrDocument.pages;
   const preferences = readingPreferences || DEFAULT_READING_PREFERENCES;
 
   const persistHighlights = useCallback(() => {
@@ -2292,11 +2294,14 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
     const blocks = narrationFromPdf(content.items);
+    if (!blocks.length && ocrText.has(pageNumber)) {
+      return [{ text: ocrText.get(pageNumber)!, pauseMs: 650 }];
+    }
     if (!blocks.length) {
-      throw new ReadingNarrationError('No readable text was found on the open PDF page. Scanned pages need a text version to be read aloud.');
+      throw new ReadingNarrationError('No readable text was found on the open PDF page. Open Text reading view and choose Extract page text, then try Read aloud again.');
     }
     return blocks;
-  }, [pageNumber, pdf, status]);
+  }, [pageNumber, pdf, status, ocrText]);
 
   useEffect(() => {
     registerPdfReader?.(pdfReaderId, currentPageNarration);
@@ -2571,7 +2576,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
       {textView && <p className="border-b border-background-200 bg-white px-4 py-2 text-xs text-foreground-600">Use the reading tools above to adjust and highlight this page. Save changes keeps text highlights on this device. Original PDF preserves the page layout, images and marker annotations.</p>}
       {exportError && <p role="alert" className="p-3 text-sm text-red-700">{exportError}</p>}
       {narration.speechError && <p role="alert" className="p-3 text-sm text-red-700">{narration.speechError}</p>}
-      {readingPreferences && pdf && <PdfReadingText pdf={pdf} pageNumber={pageNumber} active={textView}
+      {readingPreferences && pdf && <PdfReadingText pdf={pdf} pageNumber={pageNumber} active={textView} ocrText={ocrText}
         storageKey={readingStorageKey(`${annotationKey || url}:${url}`, 'pdf-text-highlights')} preferences={preferences} />}
       <div hidden={textView}>
       <ReadingSurface

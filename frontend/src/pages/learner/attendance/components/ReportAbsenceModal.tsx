@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast";
 
 const UPCOMING_SESSIONS = [
   { id: 's1', date: '18 Jun 2026', title: 'Live Session: Consumer Behaviour', time: '10:00–12:00' },

@@ -194,7 +194,7 @@ def next_title(items, today):
 
 def assemble_cards(native, current, courses, definitions, done, started, hours, metadata, records, modules, credits, *, search=None):
     """Programme-wide counts with the same explicit import/replacement identities as My Learning."""
-    from .progress_transfer_policy import credited_percent
+    from .progress_transfer_policy import merged_percent
     from .progress_demo import credit as demo_credit
     from .training_plan_dashboard import _canonical_module_progress, module_record_index
     from .live_session_progress import supplement_module_hours
@@ -329,7 +329,7 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
         transfer = approved.get(subject['id'])
         if transfer:
             completed_ids = [item['id'] for item in items if item['completed']]
-            subject['progress'] = credited_percent(transfer, completed_ids, count)
+            subject['progress'] = merged_percent(completed_ids, count)
             subject['transferredProgress'] = transfer['percent']
             if transfer.get('demoProgress'):
                 subject['demoProgress'] = True
@@ -338,7 +338,8 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             native_records = [record for record in records if str(record['id']) not in previous_ids]
             native_hours = supplement_module_hours(_canonical_module_progress(native_records, module_list), native_records, credits)
             subject['actualHours'] = round(transfer['hours'] + (native_hours.get(subject.get('moduleId'), {}).get('hours', {}).get('actual') or 0), 6)
-            subject['status'] = 'Completed' if subject['progress'] == 100 else 'In progress' if subject['progress'] > 0 else 'Upcoming'
+            # Keep the component-derived status, including a started native
+            # attempt with no completed components yet (0% is not "Upcoming").
         cards.append(subject)
     def totals(source):
         rows = [c for c in cards if c['source'] == source]
@@ -351,7 +352,7 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
                    'subjectCount': sum(not c.get('previousLearningFor') for c in cards)}
 
 
-def load_context(source, owner, subject_id=None, *, purpose='catalogue', records_override=None):
+def load_context(source, owner, subject_id=None, *, purpose='catalogue', records_override=None, include_personal_replacements=False):
     """One request-local owner/assignment/ledger snapshot; no write-on-read path."""
     from .weekly_learning import build_learning_content_summary
     from .dashboard_tabs import install_request_caches
@@ -442,7 +443,10 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
         current = [builder[f'current:{mid}'] for mid in ids if f'current:{mid}' in builder]
         with projection_stage('subject_metadata'):
             imports = resolved['imported_courses'] if resolved is not None and 'imported_courses' in resolved else read_imported_courses(cur, current)
-            replacements = read_replacement_courses(cur, current, source.pk)
+            # A personal transfer link must not hide the native module or merge
+            # its hours before approval. Only transfer review opts into it.
+            replacements = read_replacement_courses(cur, current, source.pk,
+                **({'include_personal': True} if include_personal_replacements else {}))
             groups = read_previous_learning_groups(cur, source.pk, current) if purpose != 'search' else {}
         settings = {}
         # Both imported modules and verified successors can receive a transfer.
@@ -707,16 +711,21 @@ def read_module(source, kind, owner, subject_id):
         clean_metadata['module_credits'] = {}
     transfer = approved.get(subject_id)
     if transfer:
-        from .progress_transfer_policy import credited_percent
+        from .progress_transfer_policy import merged_percent
         from .training_plan_dashboard import _canonical_module_progress
         from .live_session_progress import supplement_module_hours
-        components = [*detail['components'], *detail['retiredQuizComponents']]
-        component_ids = {c['componentId'] for c in components if c.get('componentId') and native_done(c, detail)}
+        # Same stable identities as the catalogue; duplicate placements must not
+        # inflate the denominator or count a completed component twice.
+        components = {}
+        for index, c in enumerate([*detail['components'], *detail['retiredQuizComponents']]):
+            ident = c.get('componentId') or f"quiz:{(c.get('quizMeta') or {}).get('quizId') or str(c.get('week')) + ':' + str(index)}"
+            components.setdefault(ident, c)
+        component_ids = {ident for ident, c in components.items() if native_done(c, detail)}
         previous_ids = set(transfer['recordIds'])
         native_records = [record for record in records if str(record['id']) not in previous_ids]
         native_hours = supplement_module_hours(_canonical_module_progress(native_records, list(modules.values())), native_records, credits)
         clean_metadata['module_credits'][subject_id] = {
-            'progress': credited_percent(transfer, component_ids, len(components)), 'transferredProgress': transfer['percent'],
+            'progress': merged_percent(component_ids, len(components)), 'transferredProgress': transfer['percent'],
             'actualHours': round(transfer['hours'] + (native_hours.get(mid, {}).get('hours', {}).get('actual') or 0), 6)}
         if transfer.get('demoProgress'):
             clean_metadata['module_credits'][subject_id]['demoProgress'] = True

@@ -316,6 +316,7 @@ class LiveSessionLearnerAttendance(models.Model):
     ]
 
     occurrence_id = models.CharField(max_length=128, db_index=True)
+    session_date = models.DateField(null=True, blank=True, editable=False)
     live_session_id = models.CharField(max_length=128, db_index=True)
     module_catalogue_id = models.CharField(max_length=128, db_index=True)
     learner_profile_id = models.BigIntegerField(db_index=True)
@@ -336,7 +337,7 @@ class LiveSessionLearnerAttendance(models.Model):
         managed = False
         constraints = [
             models.UniqueConstraint(
-                fields=['occurrence_id', 'learner_profile_id'],
+                fields=['occurrence_id', 'learner_profile_id', 'module_catalogue_id'],
                 name='curriculum_live_learner_attendance_uniq',
             ),
         ]

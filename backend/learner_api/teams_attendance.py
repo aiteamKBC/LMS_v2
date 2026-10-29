@@ -860,12 +860,15 @@ def sync_verified_teams_attendance_reporting(
         module_refs,
         all_learners=all_learners,
     )
+    from curriculum_api.shared_session_register import shared_register_rows
+    shared_rows = shared_register_rows(database=database, module_refs=module_refs,
+        learner_ids=learner_ids, learner_emails=learner_emails, all_learners=all_learners)
     occurrence_ids = (
         _verified_occurrence_ids(database, module_refs)
         if all_learners or module_refs
         else []
     )
-    if not rows and not occurrence_ids and not scoped_modules and not all_learners:
+    if not rows and not shared_rows and not occurrence_ids and not scoped_modules and not all_learners:
         return 0
 
     query = f"""
@@ -1011,13 +1014,13 @@ def sync_verified_teams_attendance_reporting(
                 )
             if params:
                 cursor.executemany(query, params)
-            upsert_live_session_register(cursor, rows)
+            upsert_live_session_register(cursor, [*rows, *shared_rows])
         from engagement_api.feedback_delivery import reconcile_feedback_after_attendance_commit
         reconcile_feedback_after_attendance_commit(
-            [row['occurrence_id'] for row in rows], using=database,
+            [row['occurrence_id'] for row in [*rows, *shared_rows]], using=database,
         )
     _award_attendance_points(rows)
-    return len(rows)
+    return len(rows) + len(shared_rows)
 
 
 def _award_attendance_points(rows):

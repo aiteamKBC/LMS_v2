@@ -9,7 +9,7 @@ import type { IlrForm } from '../../types';
 const api = vi.hoisted(() => ({ fetchIlrEmployerDetails: vi.fn() }));
 vi.mock('@/api/extendedIlr', () => api);
 const wizard = vi.hoisted(() => ({ employer: {} as IlrForm['employer'], hydrated: true, setSection: vi.fn() }));
-vi.mock('../WizardContext', () => ({
+vi.mock("../WizardContext", () => ({
   useWizard: () => ({
     userId: '41',
     isCommercial: false,

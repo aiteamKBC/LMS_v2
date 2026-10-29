@@ -42,7 +42,6 @@ def upsert_live_session_register(cursor, rows):
         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT ON CONSTRAINT curriculum_live_learner_attendance_uniq DO UPDATE SET
             live_session_id = EXCLUDED.live_session_id,
-            module_catalogue_id = EXCLUDED.module_catalogue_id,
             learner_email = EXCLUDED.learner_email,
             learner_name = EXCLUDED.learner_name,
             attendance_status = EXCLUDED.attendance_status,

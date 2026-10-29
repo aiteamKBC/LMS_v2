@@ -1,2 +1,2 @@
-export * from './stepErrors.helpers';
+export * from './stepErrors';
 export { FieldError, invalidClass } from './FieldError';

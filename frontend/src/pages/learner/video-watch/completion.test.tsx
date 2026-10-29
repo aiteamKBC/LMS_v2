@@ -45,7 +45,7 @@ vi.mock('@/api/evidence', () => ({
   fetchEvidence: vi.fn(), uploadEvidence: vi.fn(), getEvidenceDownloadUrl: vi.fn(), deleteEvidence: vi.fn(),
 }));
 vi.mock('@/hooks/useMyLearner', () => ({ rememberLearner: vi.fn() }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: session.account }, isInitialized: session.isInitialized }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: session.account }, isInitialized: session.isInitialized }) }));
 vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true, outsideWorkingHours: session.outsideWorkingHours, holidays: session.holidays, holidayCalendarReady: session.holidayCalendarReady, currentTimeLabel: 'Sunday, 14:02 BST' }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children, pageSubtitle }: { children: ReactNode; pageSubtitle: string }) => <main><p>{pageSubtitle}</p>{children}</main> }));
 vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: ({ questionFiles, onSubmitProgress }: {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { Panel } from '@/components/ui/Panel';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { MonthReportSkeleton } from './RecordSkeletons';

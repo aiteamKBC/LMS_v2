@@ -507,7 +507,7 @@ def _live_register_rows(source, *, occurrence_ids=None):
             row['id']: row
             for row in LiveSession.objects.using(register_database)
             .filter(id__in={row['live_session_id'] for row in register_rows})
-            .values('id', 'module_title')
+            .values('id', 'module_title', 'module_catalogue_id')
         }
     except DatabaseError:
         logger.warning('Learner live attendance register unavailable.', exc_info=True)
@@ -536,12 +536,14 @@ def _live_register_rows(source, *, occurrence_ids=None):
             f'{module_title} — Session {session_number}'
             if session_number is not None else module_title
         )
+        shared_delivery = row['module_catalogue_id'] != session.get('module_catalogue_id', row['module_catalogue_id'])
+        register_id = f"{row['occurrence_id']}:{row['module_catalogue_id']}" if shared_delivery else row['occurrence_id']
         result.append({
             'learner_id': source.id,
             'learner_name': getattr(source, 'username', '') or '',
             'learner_email': getattr(source, 'email', '') or '',
-            'session_id': row['occurrence_id'],
-            'occurrence_id': row['occurrence_id'],
+            'session_id': register_id,
+            'occurrence_id': register_id,
             'live_session_id': row['live_session_id'],
             'module_catalogue_id': row['module_catalogue_id'],
             'session_date': local_start.date(),

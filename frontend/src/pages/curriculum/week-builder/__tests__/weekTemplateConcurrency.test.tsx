@@ -63,7 +63,7 @@ describe('recognising a refused week template save', () => {
  */
 // The editor reads the signed-in account on its first line, and renders inside
 // the workspace chrome. Neither has anything to do with concurrency.
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ auth: { account: { role: 'curriculum' } } }),
 }));
 

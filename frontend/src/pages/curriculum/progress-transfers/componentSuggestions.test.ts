@@ -11,6 +11,51 @@ const review = { reviewToken: 'review', csrfToken: 'csrf', modules: [module] };
 
 // The requested matching policy now uses names rather than body content.
 describe('component name recommendations', () => {
+  it('offers only the recorded different-type recommendation and never preselects it', () => {
+    const original = { ...source, title: 'Narrated walkthrough', type: 'video', recommendedTargetId: 'A' };
+    const destinations = targets.map(target => ({ ...target, type: 'reading', title: original.title }));
+    const result = componentSuggestions(original, destinations, new Set());
+    expect(result.candidates.map(t => t.componentId)).toEqual(['A']);
+    expect(result.suggestedId).toBe('A');
+    expect(componentSuggestions(original, destinations, new Set(['A'])).suggestedId).toBeNull();
+    for (const type of ['video', 'reading']) {
+      expect(suggestedMappings({ ...review, modules: [{ ...module, sources: [{ ...original, type }], targets: destinations }] })).toEqual([]);
+    }
+    expect(componentSuggestions({ ...original, recommendedTargetId: 'FOREIGN' }, destinations, new Set()).candidates).toEqual([]);
+    expect(componentSuggestions({ ...original, type: 'unknown' }, destinations, new Set()).candidates).toEqual([]);
+    // Existing saved selections are not replaced by recommendations on another source.
+    expect(suggestedMappings({ ...review, modules: [{ ...module, sources: [original, { ...source, sourceActivityRef: 'material:8', savedTargetId: 'B' }], targets: [...destinations.slice(0, 1), targets[1]] }] }))
+      .toEqual([{ moduleId: 'M1', sourceActivityRef: 'material:8', targetComponentId: 'B' }]);
+  });
+  it('restores saved matches before name suggestions without claiming their destinations twice', () => {
+    const saved = { ...source, savedTargetId: 'A' };
+    const second = { ...source, sourceActivityRef: 'material:8', title: 'Budget planning' };
+    const input = { ...review, modules: [{ ...module, sources: [saved, second] }, { ...module, moduleId: 'M2' }] };
+    const before = structuredClone(input);
+    expect(suggestedMappings(input)).toEqual([
+      { moduleId: 'M1', sourceActivityRef: 'material:7', targetComponentId: 'A' },
+      { moduleId: 'M2', sourceActivityRef: 'material:7', targetComponentId: 'B' },
+    ]);
+    expect(input).toEqual(before);
+  });
+  it('does not restore saved destinations that are invalid, incompatible, occupied or duplicated', () => {
+    const saved = { ...source, title: 'Unrelated old title', savedTargetId: 'A' };
+    for (const sources of [
+      [{ ...saved, savedTargetId: 'FOREIGN' }], [{ ...saved, type: 'video' }], [{ ...saved, type: 'unknown' }],
+      [saved, { ...saved, sourceActivityRef: 'material:8' }],
+      [saved, { ...saved, sourceActivityRef: 'material:8', automaticTargetId: 'A' }],
+    ]) expect(suggestedMappings({ ...review, modules: [{ ...module, sources }] })).toEqual([]);
+  });
+  it('preselects an equivalent title with a spaced numeric export prefix', () => {
+    const original = { ...source, title: 'Welcome to the scheduling module', type: 'video' };
+    for (const prefix of ['00 - ', '00-', '00 : ', '00. ']) {
+      const target = { ...targets[0], title: `${prefix}${original.title}`, type: 'video' };
+      expect(nameSimilarity(original.title, target.title)).toBe(1);
+      expect(suggestedMappings({ ...review, modules: [{ ...module, sources: [original], targets: [target] }] }))
+        .toEqual([{ moduleId: 'M1', sourceActivityRef: 'material:7', targetComponentId: 'A' }]);
+    }
+    expect(nameSimilarity('Session 1 Part 1: Scheduling', '00 - Session 1 Part 2: Scheduling')).toBe(0);
+  });
   it('preselects the matching podcast despite dash/spacing differences and a different week', () => {
     const oldTitle = 'AUD–Overview of the Programme and assignment';
     const newTitle = 'AUD - Overview of the Programme and assignment';

@@ -16,7 +16,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div className="workspace-main">{children}</div>,
 }));
-vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
+vi.mock("@/hooks/useToast", () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
 vi.mock('@/api/enrolmentUsers', () => ({
   fetchEnrolmentBoard: vi.fn(async () => ({ user: { name: 'Test enrolment student', reference: 'Test org' } })),
   updateEnrolmentUser: vi.fn(),
@@ -27,6 +27,8 @@ vi.mock('@/api/commercialUsers', () => ({ fetchCommercialBoard: vi.fn(), updateC
 vi.mock('../WizardShell', () => ({ WizardShell: ({ header }: { header: ReactNode }) => <>{header}</> }));
 vi.mock('../WizardContext', () => ({
   WizardProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+vi.mock('../WizardContext', () => ({
   useWizard: () => ({ userId: '41', isCommercial: false, board: { user: { name: 'Test enrolment student', reference: 'Test org' } }, draft: {}, saveIlr: vi.fn() }),
 }));
 

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import type { LearnerKind } from '@/api/learnerDetail';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { timelineModuleForDisplay } from '@/api/dashboardTraining';

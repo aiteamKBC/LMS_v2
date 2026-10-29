@@ -6,7 +6,7 @@ import { MigratedMeetingIntelligence } from './MigratedMeetingIntelligence';
 import * as api from '@/api/reviewInstances';
 import type { CoachMeetingArtifactsResponse, MigratedSummaryBinding } from './calendarEvents';
 
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { user: { fullName: 'Synthetic coach' } } }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { user: { fullName: 'Synthetic coach' } } }) }));
 const identity = vi.hoisted(() => ({ viewAs: false, email: 'coach@example.invalid' }));
 vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => ({ email: identity.email, isInitialized: true, isViewingAsCoach: identity.viewAs }) }));
 vi.mock('@/api/reviewInstances', async original => ({

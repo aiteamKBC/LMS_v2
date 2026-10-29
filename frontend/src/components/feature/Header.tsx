@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { Moon, Sun } from 'lucide-react';
 import { LogOut, Menu } from 'lucide-react';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { apiForgotPassword } from '@/api/auth';
 // Explicit rather than auto-imported: unplugin-auto-import does not run under
 // vitest, so an auto-imported AppIcon makes this component untestable.

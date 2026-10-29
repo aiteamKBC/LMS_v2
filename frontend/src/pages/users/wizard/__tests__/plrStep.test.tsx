@@ -18,7 +18,7 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock('@/api/plrEvidence', () => api);
 const wizard = vi.hoisted(() => ({ records: [] as PlrRecord[], setSection: vi.fn() }));
-vi.mock('../WizardContext', () => ({
+vi.mock("../WizardContext", () => ({
   useWizard: () => ({
     userId: '41',
     isCommercial: false,
@@ -26,7 +26,7 @@ vi.mock('../WizardContext', () => ({
     setSection: wizard.setSection,
   }),
 }));
-vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
+vi.mock("@/hooks/useToast", () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
 
 import Plr from '../steps/Plr';
 

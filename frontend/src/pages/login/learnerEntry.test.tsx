@@ -10,7 +10,7 @@ const session = vi.hoisted(() => ({
   auth: { account: null as AuthUser | null },
   login: vi.fn(), logout: vi.fn(), isInitialized: true,
 }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => session }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => session }));
 vi.mock('@/api/auth', async original => ({
   ...await original<typeof import('@/api/auth')>(),
   apiAuthHealth: vi.fn().mockResolvedValue({ microsoftSso: { configured: false } }),

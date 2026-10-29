@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { personalLearningId, rememberPersonalLearning } from '@/lib/personalLearning';
 import { LEARNER_PREVIEW_FROM } from '@/router/keepAlive';
 

@@ -10,8 +10,10 @@ from . import bulk_attendance_live_register as register
 
 class BulkManualCompletionTests(SimpleTestCase):
     def setUp(self):
-        self.rows = [{'id': 1, 'learner_profile_id': 7, 'occurrence_id': 'O1'},
-                     {'id': 2, 'learner_profile_id': 8, 'occurrence_id': 'O1'}]
+        self.rows = [{'id': 1, 'learner_profile_id': 7, 'occurrence_id': 'O1', 'live_session_id': 'S1', 'module_catalogue_id': 'M1'},
+                     {'id': 2, 'learner_profile_id': 8, 'occurrence_id': 'O1', 'live_session_id': 'S1', 'module_catalogue_id': 'M1'}]
+        sessions = patch.object(register.LiveSession, 'objects').start()
+        sessions.using.return_value.filter.return_value.values_list.return_value = [('S1', 'M1')]
         self.manager = patch.object(register.LiveSessionLearnerAttendance, 'objects').start()
         self.manager.select_for_update.return_value.filter.return_value.values.return_value = self.rows
         self.corrections = patch('coach_api.models.CoachAttendanceSourceAdjustment.objects').start()
@@ -37,6 +39,13 @@ class BulkManualCompletionTests(SimpleTestCase):
         self.manager.filter.return_value.update.assert_not_called()
         self.corrections.using.assert_not_called()
 
+    def test_shared_correction_has_its_own_module_key(self):
+        self.rows[1].update(learner_profile_id=7, module_catalogue_id='SHARED')
+        register.save_live_attendance({1: 'present', 2: 'absent'})
+        calls = self.corrections.using.return_value.update_or_create.call_args_list
+        self.assertEqual([(c.kwargs['learner_id'], c.kwargs['source_id'], c.kwargs['defaults']['status']) for c in calls],
+                         [(7, 'O1', 'present'), (7, 'O1:SHARED', 'absent')])
+
     def test_correction_failure_propagates_inside_the_register_transaction(self):
         from django.db import DatabaseError
         self.corrections.using.return_value.update_or_create.side_effect = DatabaseError('synthetic failure')
@@ -53,7 +62,11 @@ class BulkManualCompletionPersistenceTests(SimpleTestCase):
         from django.db import connections
         from coach_api.models import CoachAttendanceSourceAdjustment, CoachManualAttendance
         from curriculum_api.models import ModuleAuthoringComponent, ModuleAuthoringModule
+        from learner_api.models import EnrolmentUser, LearnerProfile
         self.tables = [
+            ('default', EnrolmentUser, 'manual_completion_enrolments_test'),
+            ('default', LearnerProfile, 'manual_completion_profiles_test'),
+            ('default', register.LiveSession, 'manual_completion_sessions_test'),
             ('default', register.LiveSessionLearnerAttendance, 'manual_completion_register_test'),
             ('default', CoachAttendanceSourceAdjustment, 'manual_completion_adjustment_test'),
             ('default', CoachManualAttendance, 'manual_completion_coach_test'),
@@ -72,6 +85,8 @@ class BulkManualCompletionPersistenceTests(SimpleTestCase):
                 schema.create_model(model)
             self.addCleanup(self.drop_table, alias, model)
         self.now = datetime(2026, 10, 24, 12, tzinfo=timezone.utc)
+        register.LiveSession.objects.create(id='S1', module_catalogue_id='M1',
+                                           start_datetime=self.now, organizer_email='staff@example.invalid')
         self.register = register.LiveSessionLearnerAttendance.objects.create(
             occurrence_id='O1', live_session_id='S1', module_catalogue_id='M1',
             learner_profile_id=7, attendance_status='absent', calculated_at=self.now,
@@ -109,6 +124,19 @@ class BulkManualCompletionPersistenceTests(SimpleTestCase):
         self.assertEqual((self.register.attended_seconds, self.register.attendance_report_id), (0, ''))
         register.save_live_attendance({self.register.pk: 'absent'}, actor='staff@example.invalid')
         self.assertFalse(self.completion()[('C1', 'M1')][0])
+
+    def test_shared_correction_preserves_the_source_module_with_real_tables(self):
+        shared = register.LiveSessionLearnerAttendance.objects.create(
+            occurrence_id='O1', live_session_id='S1', module_catalogue_id='M2',
+            learner_profile_id=7, attendance_status='absent', calculated_at=self.now)
+        register.save_live_attendance({self.register.pk: 'present', shared.pk: 'absent'})
+        self.assertEqual(dict(self.corrections.values_list('source_id', 'status')),
+                         {'O1': 'present', 'O1:M2': 'absent'})
+        register.save_live_attendance({shared.pk: 'present'})
+        self.register.refresh_from_db()
+        shared.refresh_from_db()
+        self.assertEqual((self.register.attendance_status, shared.attendance_status), ('present', 'present'))
+        self.assertEqual(self.corrections.count(), 2)
 
     def test_saved_bulk_presence_projects_authored_hours_without_writing_progress(self):
         from learner_api.live_session_progress import read_live_credits, supplement_module_hours

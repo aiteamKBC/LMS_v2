@@ -4,7 +4,7 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import { Sidebar } from '../Sidebar';
 import { adminNavItems } from '@/mocks/navigation';
 
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ canSeeNavItem: () => true }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ canSeeNavItem: () => true }) }));
 
 function CurrentPath() {
   return <output data-testid="current-path">{useLocation().pathname}</output>;

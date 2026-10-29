@@ -1,5 +1,5 @@
-import { StepErrorsContext, findEntry, useMissing, useMissingCheck, useShowStepErrors, lowerWords, requiredMessage, missingMessage, type StepErrors, type Verb } from './stepErrors.helpers';
-export type { StepErrors } from './stepErrors.helpers';
+import { StepErrorsContext, findEntry, useMissing, useMissingCheck, useShowStepErrors, lowerWords, requiredMessage, missingMessage, type StepErrors, type Verb } from './stepErrors';
+export type { StepErrors } from './stepErrors';
 import { createContext, useContext } from 'react';
 
 /** Red outline for an outstanding box; appended to the box's own classes. */

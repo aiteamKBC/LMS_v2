@@ -34,7 +34,7 @@ vi.mock('@/api/curriculumLearnerAssignments', async importOriginal => ({
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: null }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: null }) }));
 vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
   showCurriculumAlert: vi.fn(async () => undefined),
   showCurriculumConfirm: vi.fn(async () => undefined),

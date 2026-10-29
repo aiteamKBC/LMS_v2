@@ -92,7 +92,7 @@ const modules = [
   },
 ] as CurriculumModule[];
 
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ auth: { account: { role: 'curriculum' } } }),
 }));
 

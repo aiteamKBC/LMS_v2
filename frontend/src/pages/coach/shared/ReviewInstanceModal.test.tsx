@@ -15,7 +15,7 @@ import { bookMigratedReview, calculateReviewInstanceProgress, completeMigratedRe
 const account = vi.hoisted(() => ({ name: 'Sam Coach' }));
 const coachMode = vi.hoisted(() => ({ email: 'coach@example.invalid', isInitialized: true, isViewingAsCoach: false }));
 vi.mock('@/features/monthly-logs/page', () => ({ LearnerLogs: () => null }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { user: { fullName: account.name } } }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { user: { fullName: account.name } } }) }));
 vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => coachMode }));
 vi.mock('@/api/reviewInstances', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/api/reviewInstances')>(),
