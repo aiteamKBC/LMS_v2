@@ -34,6 +34,7 @@ from .feedback_delivery import ensure_delivery_questions, lecture_after_form_cre
 from .feedback_analytics import lecture_analytics_options, question_analytics
 from .feedback_scoring import validate_analytics_settings
 from .module_feedback import MODULE_FORM_TYPES, assigned_active_module_ids, module_delivery_accessible, sync_module_feedback
+from .review_feedback import REVIEW_FORM_TYPES, sync_review_feedback
 from .models import (
     FeedbackAnswer, FeedbackAssignment, FeedbackDelivery, FeedbackDeliveryRecipient,
     FeedbackEventCampaign, FeedbackEventRecipient, FeedbackForm, FeedbackQuestion, FeedbackResponse,
@@ -50,10 +51,6 @@ QUESTION_TYPES = {
     'name', 'email', 'photo_upload',
 }
 CHOICE_TYPES = {'single_choice', 'multiple_choice', 'dropdown', 'likert'}
-REVIEW_FORM_TYPES = {
-    'post_mcm_review': 'Monthly Coaching Meeting',
-    'post_progress_review': 'Progress Review',
-}
 VERSIONED_FORM_TYPES = {'post_lecture', *REVIEW_FORM_TYPES, *MODULE_FORM_TYPES}
 FORM_TYPES = {'general', 'post_lecture', 'post_event', 'event_rsvp', *REVIEW_FORM_TYPES, *MODULE_FORM_TYPES}
 SECTION_ICONS = {
@@ -988,43 +985,7 @@ def _assignment_for(form, learner_id):
 
 
 def _sync_review_feedback_deliveries(learner_id):
-    """Pin newly completed MCM/Progress reviews to the active templates.
-
-    ``published_at`` is the launch boundary: reviews completed before a
-    template was first published are deliberately never backfilled.
-    """
-    templates = {}
-    for form in FeedbackForm.objects.filter(
-        form_type__in=REVIEW_FORM_TYPES, status='published', is_current=True,
-        published_at__isnull=False,
-    ).order_by('-published_at', '-id'):
-        templates.setdefault(form.form_type, form)
-    if not templates:
-        return
-
-    pending = []
-    table_name = '"Learner".reviews'
-    with connection.cursor() as cursor:
-        for form_type, form in templates.items():
-            cursor.execute(
-                f'''SELECT id, aptem_review_id, learner_id, learner_name,
-                           review_type, review_name, completed_date
-                      FROM {table_name}
-                     WHERE learner_id = %s
-                       AND review_type = %s
-                       AND status = 'Completed'
-                       AND completed_date IS NOT NULL
-                       AND completed_date >= %s''',
-                [learner_id, REVIEW_FORM_TYPES[form_type], form.published_at],
-            )
-            for row in cursor.fetchall():
-                pending.append(FeedbackReviewDelivery(
-                    form=form, source_review_id=row[0], aptem_review_id=row[1] or '',
-                    learner_id=str(row[2]), learner_name=row[3] or '',
-                    review_type=row[4], review_name=row[5] or '', completed_at=row[6],
-                ))
-    if pending:
-        FeedbackReviewDelivery.objects.bulk_create(pending, ignore_conflicts=True)
+    return sync_review_feedback(learner_id)
 
 
 def learner_forms(request):
