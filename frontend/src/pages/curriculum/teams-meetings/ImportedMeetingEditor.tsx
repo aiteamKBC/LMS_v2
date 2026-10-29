@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react';
 import {
   readImportedMeetingEditor, previewImportedMeetingEdit, confirmImportedMeetingEdit, checkImportedMeetingEdit,
   type ImportedMeetingEditor as EditorData, type ImportedMeetingEdits, type ImportedCalendarPreview,
@@ -11,11 +11,17 @@ import { TeamsPeopleFields, TeamsMeetingOptionFields,
 import { EntraPeopleInput } from './EntraPeopleInput';
 import { FormField } from '../shared/entities/ui';
 
+export interface ImportedMeetingEditorActions {
+  update: () => void;
+}
+
 /** Reads the organiser's original calendar before exposing any imported edit. */
-export function ImportedMeetingEditor({ liveSessionId, disabled, onUpdated, onEditingChange, onConnectionRequired }: {
+export function ImportedMeetingEditor({ liveSessionId, disabled, onUpdated, onEditingChange, onConnectionRequired, updateRef, hideEntryButton = false }: {
   liveSessionId: string; disabled: boolean; onUpdated: () => Promise<void>;
-  onEditingChange?: (dirty: boolean, busy: boolean) => void;
+  onEditingChange?: (dirty: boolean, busy: boolean, updateBlocked?: boolean) => void;
   onConnectionRequired?: (kind: 'user' | 'group' | null) => void;
+  updateRef?: Ref<ImportedMeetingEditorActions>;
+  hideEntryButton?: boolean;
 }) {
   const [data, setData] = useState<EditorData | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
@@ -29,6 +35,7 @@ export function ImportedMeetingEditor({ liveSessionId, disabled, onUpdated, onEd
   const active = useRef(false);
   const inFlight = useRef(false);
   const operation = useRef<string | undefined>(undefined);
+  const section = useRef<HTMLElement>(null);
   const dirty = data?.status === 'editable' && (
     (['attendees', 'presenters', 'coOrganizers'] as const).some(key =>
       JSON.stringify([...new Set(emailList(form[key] || '').map(value => value.toLowerCase()))].sort())
@@ -36,7 +43,7 @@ export function ImportedMeetingEditor({ liveSessionId, disabled, onUpdated, onEd
     || (data.options && (form.recording !== (data.options.recordAutomatically ? data.options.allowTranscription ? 'record-transcribe' : 'record' : 'none')
       || form.lobby !== (data.options.lobbyBypassSettings?.scope || '') || form.language !== (data.options.meetingSpokenLanguageTag || '')))
     || (data.sessions || []).some(session => times[session.sessionNumber] && times[session.sessionNumber] !== localTime(session.start, data.timeZone || 'Europe/London')));
-  useEffect(() => { onEditingChange?.(Boolean(dirty), busy); }, [dirty, busy, onEditingChange]);
+  useEffect(() => { onEditingChange?.(Boolean(dirty), busy, busy || uncertain || review?.status === 'ready'); }, [dirty, busy, uncertain, review?.status, onEditingChange]);
   useEffect(() => () => { onEditingChange?.(false, false); }, [onEditingChange]);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const run = async (task: () => Promise<void>, saving = false) => {
@@ -111,6 +118,11 @@ export function ImportedMeetingEditor({ liveSessionId, disabled, onUpdated, onEd
   });
   const locked = disabled || busy || uncertain || review?.status === 'ready';
   const editable = data?.status === 'editable';
+  useImperativeHandle(updateRef, () => ({ update: () => {
+    if (locked) return;
+    section.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+    void (editable ? prepare(true) : load());
+  } }));
   // Reuse the existing calendar editor's fields and choices from before the
   // imported-calendar restriction, rather than maintaining another form UI.
   const calendarForm = { attendees: form.attendees || '', presenters: form.presenters || '', coOrganizers: form.coOrganizers || '',
@@ -124,12 +136,12 @@ export function ImportedMeetingEditor({ liveSessionId, disabled, onUpdated, onEd
     ...('lobbyBypass' in values ? { lobby: values.lobbyBypass === 'organization-excluding-guests' ? 'organizationExcludingGuests' : values.lobbyBypass! } : {}),
     ...('spokenLanguage' in values ? { language: values.spokenLanguage! } : {}),
   }));
-  return <section aria-label="Edit original Teams meeting" className="space-y-3 rounded-xl border border-background-200 p-4">
+  return <section ref={section} aria-label="Edit original Teams meeting" className="space-y-3 rounded-xl border border-background-200 p-4">
     <h3 className="text-sm font-bold text-foreground-800">Invitations and meeting settings</h3>
     <p className="text-xs text-foreground-600">Update the verified original meeting while keeping its join link. Historical sessions, recordings and attendance are preserved.</p>
     {message && <p role="status" className="text-xs text-foreground-700">{message}</p>}
     {error && <p role="alert" className="text-xs text-red-700">{error}</p>}
-    {!uncertain && <button type="button" onClick={() => void load()} disabled={disabled || busy || Boolean(dirty) || review?.status === 'ready'}
+    {!uncertain && (!hideEntryButton || editable) && <button type="button" onClick={() => void load()} disabled={disabled || busy || Boolean(dirty) || review?.status === 'ready'}
       className="rounded-lg border border-primary-200 px-3 py-2 text-xs font-bold text-primary-700 disabled:opacity-50">
       {busy ? 'Checking original meeting…' : editable ? 'Refresh original meeting' : 'Edit existing Teams meeting'}
     </button>}

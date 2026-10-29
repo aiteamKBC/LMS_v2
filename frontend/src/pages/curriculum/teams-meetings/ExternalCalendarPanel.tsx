@@ -1,18 +1,20 @@
 import { AppIcon } from '@/components/feature/AppIcon';
-import { useState } from 'react';
+import { useState, type Ref } from 'react';
 import { formatDateLabel } from '../shared/entities/model';
 import type { ExternalCalendar } from './externalCalendar';
 import type { MeetingRow } from './useTeamsMeetingsWorkspace';
 import { ImportedParticipantsPanel } from './ImportedParticipantsPanel';
-import { ImportedMeetingEditor } from './ImportedMeetingEditor';
+import { ImportedMeetingEditor, type ImportedMeetingEditorActions } from './ImportedMeetingEditor';
 import { ImportedCalendarUpdatePanel } from './ImportedCalendarUpdatePanel';
 
-export function ExternalCalendarPanel({ calendar, row, onReattach, onUpdated, onEditingChange, busy, disabled }: {
+export function ExternalCalendarPanel({ calendar, row, onReattach, onUpdated, onEditingChange, busy, disabled, editorUpdateRef, hideEditorEntry = false }: {
   calendar: ExternalCalendar;
   row: MeetingRow;
   onReattach: () => void;
   onUpdated: () => Promise<void>;
-  onEditingChange?: (dirty: boolean, busy: boolean) => void;
+  onEditingChange?: (dirty: boolean, busy: boolean, updateBlocked?: boolean) => void;
+  editorUpdateRef?: Ref<ImportedMeetingEditorActions>;
+  hideEditorEntry?: boolean;
   busy: boolean;
   disabled: boolean;
 }) {
@@ -68,7 +70,7 @@ export function ExternalCalendarPanel({ calendar, row, onReattach, onUpdated, on
       {originalSeriesId && <>
         <ImportedMeetingEditor key={`${originalSeriesId}:${editorRevision}`} liveSessionId={originalSeriesId}
           disabled={disabled || busy} onUpdated={refreshed} onEditingChange={onEditingChange}
-          onConnectionRequired={setEditorConnectionKind} />
+          onConnectionRequired={setEditorConnectionKind} updateRef={editorUpdateRef} hideEntryButton={hideEditorEntry} />
         <ImportedCalendarUpdatePanel key={`calendar:${originalSeriesId}`} liveSessionId={originalSeriesId}
           disabled={disabled || busy} onUpdated={refreshed} editorConnectionKind={editorConnectionKind}
           onEditorConnected={() => { setEditorConnectionKind(null); setEditorRevision(value => value + 1); }} />
