@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { fetchEvidence, getEvidenceDownloadUrl, type EvidenceRecord } from '@/api/evidence';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -11,6 +11,9 @@ import styles from './markingReview.module.css';
 import { AssignmentAttemptHistory } from '@/components/feature/AssignmentAttemptHistory';
 import type { SubmissionAttempt } from '@/api/assignmentAttempts';
 import { fetchMarkingDetail, fetchMarkingSidebarQueue } from '@/features/coach/marking/api/markingApi';
+import { readExtraActivities } from '../extra-activities/api';
+import { loadLearningReflectionSubmission, type StoredLearningReflectionSubmission } from '@/api/reflectionSubmission';
+import { CoachPresentationDownload } from './CoachPresentationDownload';
 
 const coachNav = roleNavMap.coach;
 async function personalEvidence(submissionId: string, fileId?: string) {
@@ -101,14 +104,17 @@ function isAssignment(item: Submission) {
 
 export default function CoachMarkingReviewPage() {
   const [searchParams] = useSearchParams();
+  const extraActivities = useLocation().pathname.startsWith('/coach/extra-activities');
   const personal = searchParams.get('scope') === 'personal';
   const apiEndpoint = personal ? '/coach_api/coach/personal-marking' : '/coach_api/coach/marking-queue';
   const scopeQuery = personal ? '?scope=personal' : '';
-  const queuePath = `/coach/marking-queue${scopeQuery}`;
+  const queuePath = extraActivities ? '/coach/extra-activities' : `/coach/marking-queue${scopeQuery}`;
   const { submissionId } = useParams<{ submissionId: string }>();
   const navigate = useNavigate();
   const coach = useCoachIdentity();
   const [selected, setSelected] = useState<Submission | null>(null);
+  const [extraDocument, setExtraDocument] = useState<StoredLearningReflectionSubmission | null>(null);
+  const [extraDocumentError, setExtraDocumentError] = useState('');
   const [queueItems, setQueueItems] = useState<Submission[]>([]);
   const [queueSummary, setQueueSummary] = useState<QueueSummary>({ pendingItems: 0, overdueItems: 0, acceptedItems: 0, referredItems: 0 });
   const [feedback, setFeedback] = useState('');
@@ -146,10 +152,16 @@ export default function CoachMarkingReviewPage() {
     try {
       const detailItem = await fetchMarkingDetail<Submission>(personal ? 'personal' : 'official', submissionId || '');
       if (sequence !== loadSequence.current) return;
+      if (extraActivities && detailItem?.activityType !== 'extra_activity') throw new Error('Extra activity not found.');
+      // Initialise together: a later effect could overwrite the coach's first edit.
+      setFeedback(detailItem?.coachFeedback ?? '');
       setSelected(detailItem);
 
       try {
-        const queueData = await fetchMarkingSidebarQueue<Submission>(personal ? 'personal' : 'official');
+        const queueData = extraActivities ? await readExtraActivities(new URLSearchParams({ status: 'all', page: '1' })).then(data => ({
+          items: data.items.map(row => ({ ...row, activityType: 'extra_activity', activityTitle: row.title, actualTimeHours: row.hours, submittedDisplay: row.month }) as unknown as Submission), summary: {},
+        })) : await fetchMarkingSidebarQueue<Submission>(personal ? 'personal' : 'official');
+        if (sequence !== loadSequence.current) return;
         setQueueItems(queueData.items || []);
         setQueueSummary({ pendingItems: 0, overdueItems: 0, acceptedItems: 0, referredItems: 0, ...queueData.summary });
       } catch {
@@ -162,16 +174,22 @@ export default function CoachMarkingReviewPage() {
     } finally {
       if (sequence === loadSequence.current) setLoading(false);
     }
-  }, [apiEndpoint, coach.email, coach.isInitialized, submissionId]);
+  }, [coach.email, coach.isInitialized, submissionId, personal, extraActivities]);
+
+  useEffect(() => {
+    let active = true;
+    setExtraDocument(null); setExtraDocumentError('');
+    if (!selected || selected.activityType !== 'extra_activity' || personal) return;
+    void loadLearningReflectionSubmission({ learnerKind: selected.learnerKind, learnerId: selected.learnerId, activityType: 'extra_activity', activityId: selected.activityId }, { revalidate: true })
+      .then(value => { if (active) setExtraDocument(value); })
+      .catch(() => { if (active) setExtraDocumentError('Could not load the full activity. Reload before reviewing.'); });
+    return () => { active = false; };
+  }, [selected, personal]);
 
   useEffect(() => {
     void load();
     return () => { ++loadSequence.current; };
   }, [load]);
-
-  useEffect(() => {
-    if (selected) setFeedback(selected.coachFeedback ?? '');
-  }, [selected]);
 
   useEffect(() => {
     if (!selected) return;
@@ -275,7 +293,7 @@ export default function CoachMarkingReviewPage() {
   };
 
   const saveDecision = async (decision: ReviewDecision) => {
-    if (!selected || saving) return;
+    if (!selected || saving || (selected.activityType === 'extra_activity' && (!extraDocument || extraDocumentError))) return;
     if (!feedback.trim()) {
       setError('Write feedback for the learner before sending this decision.');
       return;
@@ -308,12 +326,12 @@ export default function CoachMarkingReviewPage() {
       <div className={styles.page}>
         <header className={styles.hero}>
           <button type="button" className={styles.back} onClick={() => navigate(queuePath)}>
-            <i className="ri-arrow-left-line" aria-hidden="true" /> Marking queue
+            <i className="ri-arrow-left-line" aria-hidden="true" /> {extraActivities ? 'Extra activities' : 'Marking queue'}
           </button>
           <p className={styles.eyebrow}>AI-assisted marking</p>
           <div className={styles.heroRow}>
             <div>
-              <h1>Monthly marking workspace</h1>
+              <h1>{extraActivities ? 'Extra activity review' : 'Monthly marking workspace'}</h1>
               <p>AI drafts are clearly labelled and require your validation. Final professional judgement is yours.</p>
             </div>
             <span className={styles.judgement}><i className="ri-shield-check-line" aria-hidden="true" /> Coach judgement final</span>
@@ -331,26 +349,26 @@ export default function CoachMarkingReviewPage() {
           </div>
         ) : (
           <div className={styles.workspace}>
-            <aside className={styles.queuePanel} aria-label="Marking queue">
-              <div className={styles.stats}>
+            <aside className={styles.queuePanel} aria-label={extraActivities ? 'Extra activities queue' : 'Marking queue'}>
+              {!extraActivities && <div className={styles.stats}>
                 <div><i className="ri-time-line" aria-hidden="true" /><span>Due</span><strong>{queueSummary.pendingItems}</strong></div>
                 <div><i className="ri-error-warning-line" aria-hidden="true" /><span>Overdue</span><strong>{queueSummary.overdueItems}</strong></div>
                 <div><i className="ri-checkbox-circle-line" aria-hidden="true" /><span>Marked today</span><strong>{markedToday}</strong></div>
-              </div>
+              </div>}
               <label className={styles.search}>
                 <i className="ri-search-line" aria-hidden="true" />
                 <span className="sr-only">Search marking queue</span>
                 <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search learner or activity" />
               </label>
-              <div className={styles.queueFilters} role="group" aria-label="Filter marking queue by type">
+              {!extraActivities && <div className={styles.queueFilters} role="group" aria-label="Filter marking queue by type">
                 {(['all', 'assignment', 'reflection'] as QueueKind[]).map(value => (
                   <button type="button" key={value} aria-pressed={queueKind === value} onClick={() => setQueueKind(value)}>{value === 'all' ? 'All' : `${value[0].toUpperCase()}${value.slice(1)}s`}</button>
                 ))}
-              </div>
+              </div>}
               <div className={styles.queueList}>
                 {visibleQueue.map(item => (
-                  <button type="button" key={item.id} className={styles.queueItem} aria-current={item.id === selected.id ? 'true' : undefined} onClick={() => navigate(`/coach/marking-queue/${item.id}`)}>
-                    <span className={styles.queueItemTop}><strong>{item.learner}</strong><em>{isAssignment(item) ? 'Assignment' : 'Reflection'}</em></span>
+                  <button type="button" key={item.id} className={styles.queueItem} aria-current={item.id === selected.id ? 'true' : undefined} onClick={() => navigate(extraActivities ? `/coach/extra-activities/${item.id}` : `/coach/marking-queue/${item.id}`)}>
+                    <span className={styles.queueItemTop}><strong>{item.learner}</strong><em>{item.activityType === 'extra_activity' ? 'Extra activity' : isAssignment(item) ? 'Assignment' : 'Reflection'}</em></span>
                     <span className={styles.queueTitle}>{item.activityTitle}</span>
                     <span className={styles.queueMeta}>Submitted {item.submittedDisplay}</span>
                     <span className={styles.queueStatus} data-overdue={item.isOverdue || undefined}>{item.isOverdue ? `Overdue ${item.elapsedDays}d` : statusLabel(item.status)}</span>
@@ -364,7 +382,7 @@ export default function CoachMarkingReviewPage() {
               <section className={styles.submissionHeader}>
                 <div className={styles.personRow}>
                   <div><h2>{selected.learner}</h2><p>{selected.programme || 'Learner programme'}</p></div>
-                  <span>{isAssignment(selected) ? 'Assignment' : 'Reflection'}</span>
+                  <span>{selected.activityType === 'extra_activity' ? 'Extra activity' : isAssignment(selected) ? 'Assignment' : 'Reflection'}</span>
                 </div>
                 <h3>{selected.activityTitle}</h3>
                 <dl className={styles.metrics}>
@@ -376,6 +394,17 @@ export default function CoachMarkingReviewPage() {
               </section>
 
               <AssignmentAttemptHistory attempts={selected.submissionAttempts || []} />
+              {selected.activityType === 'assignment' && <CoachPresentationDownload
+                key={`${coach.email}:${personal}:${selected.id}:${selected.version ?? selected.submittedAt ?? ''}`}
+                scope={personal ? 'personal' : 'official'} submissionId={selected.id}
+                submittedAt={selected.submittedAt} version={selected.version}
+              />}
+              {selected.activityType === 'extra_activity' && <section className={styles.responseBlock}>
+                <strong>Extra activity</strong>
+                {extraDocumentError && <p role="alert">{extraDocumentError}</p>}
+                {extraDocument?.coachCreation && <p>Added and originally approved by: {extraDocument.coachCreation.name}</p>}
+                {extraDocument && <><strong>Activity description</strong><p className="whitespace-pre-wrap">{extraDocument.assignmentAnswer}</p><strong>What the learner learned</strong><p className="whitespace-pre-wrap">{extraDocument.whatYouLearned}</p></>}
+              </section>}
 
               <div className={styles.tabs} role="tablist" aria-label="Submission detail">
                 {([
@@ -488,8 +517,8 @@ export default function CoachMarkingReviewPage() {
                 </details>}
 
                 <div className={styles.decisionRow}>
-                  <button type="button" className={styles.reject} disabled={saving} onClick={() => void saveDecision(personal ? 'referred' : 'rejected')}><i className="ri-arrow-go-back-line" aria-hidden="true" /> {personal ? 'Return for improvement' : 'Refer back with feedback'}</button>
-                  <button type="button" className={styles.accept} disabled={saving} onClick={() => void saveDecision('accepted')}><i className={saving ? 'ri-loader-4-line' : 'ri-shield-check-line'} aria-hidden="true" /> Accept assignment and send feedback</button>
+                  <button type="button" className={styles.reject} disabled={saving || (selected.activityType === 'extra_activity' && !extraDocument)} onClick={() => void saveDecision(personal ? 'referred' : 'rejected')}><i className="ri-arrow-go-back-line" aria-hidden="true" /> {personal ? 'Return for improvement' : 'Refer back with feedback'}</button>
+                  <button type="button" className={styles.accept} disabled={saving || (selected.activityType === 'extra_activity' && !extraDocument)} onClick={() => void saveDecision('accepted')}><i className={saving ? 'ri-loader-4-line' : 'ri-shield-check-line'} aria-hidden="true" /> {selected.activityType === 'extra_activity' ? 'Accept extra activity and send feedback' : 'Accept assignment and send feedback'}</button>
                 </div>
               </section>
             </main>

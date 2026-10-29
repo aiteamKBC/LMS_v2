@@ -139,7 +139,7 @@ export function AssignmentSubmissionForm({
   const questionAttachments = useMemo(() => readingFiles(questionFileUrl, questionFileName, questionHtml || '', questionFiles),
     [questionFileUrl, questionFileName, questionHtml, questionFiles]);
   const personalStudy = parsePersonalLearning(learnerId)?.mode === 'study';
-  const steps = MONTHLY_STEPS.map((label, index) => personalStudy && index === 7 ? 'Presentation' : label);
+  const steps = MONTHLY_STEPS.map((label, index) => personalStudy && index === 6 ? 'Presentation' : label);
   // Imported cards retain their original storage order; display them in wizard order.
   const orderedHistoricalContent = historicalContent ? { ...historicalContent, cards: [
     ...historicalContent.cards.slice(0, 6), ...historicalContent.cards.slice(6, 8).reverse(),

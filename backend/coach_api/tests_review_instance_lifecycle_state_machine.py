@@ -134,7 +134,10 @@ class ReviewLifecycleStateMachineTestCase(TestCase):
         return coach_views.apply_teams_attendance_status_transition(record, records)
 
     def _complete_via_view(self, instance_id, *, owner_email=COACH_EMAIL):
-        request = RequestFactory().post(f'/coach_api/coach/reviews/{instance_id}/complete')
+        request = RequestFactory().post(
+            f'/coach_api/coach/reviews/{instance_id}/complete',
+            data='{}', content_type='application/json',
+        )
         request.coach_email = owner_email
         from inspect import unwrap
         return unwrap(coach_views.coach_review_instance_complete)(request, instance_id)

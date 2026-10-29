@@ -224,6 +224,7 @@ const ModuleBuilder = lazyRoute(() => import("../pages/curriculum/module-builder
 const LearnerModuleProgressPage = lazyRoute(() => import("../pages/curriculum/learner-module-progress/page"));
 const ModulesPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
 const ExtraActivityPage = lazyRoute(() => import("../pages/learner/monthly-submission/ExtraActivityPage"));
+const CoachExtraActivitiesPage = lazyRoute(() => import("../pages/coach/extra-activities/page"));
 const MonthlySubmissionPage = lazyRoute(() => import("../pages/learner/monthly-submission/page"));
 const HistoricalAssignmentPage = lazyRoute(() => import("../pages/learner/monthly-submission/HistoricalAssignmentPage"));
 const MyLearningPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
@@ -753,6 +754,10 @@ const routes: RouteObject[] = [
     element: <MonthlyLogsPage />,
   },
   {
+    path: "/learner/extra-activities",
+    element: <ExtraActivityPage />,
+  },
+  {
     path: "/learner/monthly-submission",
     element: <MonthlySubmissionPage />,
   },
@@ -940,6 +945,14 @@ const routes: RouteObject[] = [
   {
     path: "/coach/catchup-queue",
     element: <CoachCatchupQueue />,
+  },
+  {
+    path: "/coach/extra-activities",
+    element: <CoachExtraActivitiesPage />,
+  },
+  {
+    path: "/coach/extra-activities/:submissionId",
+    element: <CoachMarkingReviewPage />,
   },
   {
     path: "/coach/marking-queue",

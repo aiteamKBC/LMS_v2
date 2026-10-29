@@ -4,6 +4,7 @@ export interface ExtraActivity {
   activityId: string; title: string; status: string; submittedAt: string | null; month: string;
   answer: string; reflection: string; ksbs: string[]; hours: string;
   coachFeedback: string | null; reviewedBy: string | null; reviewedAt: string | null;
+  addedBy?: string | null;
 }
 export function useExtraActivities(kind: string | undefined, learnerId: string | undefined, month?: string, enabled = true) {
   const [activities, setActivities] = useState<ExtraActivity[]>([]);

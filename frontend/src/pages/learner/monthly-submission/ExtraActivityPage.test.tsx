@@ -3,6 +3,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { ExtraActivityForm } from './ExtraActivityPage';
+import { useAuth } from '@/hooks/useAuth';
+vi.mock('@/hooks/useAuth', () => ({ useAuth: vi.fn() }));
 import { loadLearningReflectionSubmission, saveLearningReflectionSubmission, type StoredLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import { checkMonthlyAssignment, emptyMonthlyAssignment } from '@/api/monthlyAssignment';
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</> }));
@@ -11,14 +13,26 @@ vi.mock('@/api/extraActivities', () => ({ useExtraActivities: () => ({ activitie
 vi.mock('@/api/reflectionSubmission', () => ({ loadLearningReflectionSubmission: vi.fn(), saveLearningReflectionSubmission: vi.fn() }));
 vi.mock('@/api/monthlyAssignment', async original => ({ ...await original<typeof import('@/api/monthlyAssignment')>(), checkMonthlyAssignment: vi.fn() }));
 vi.mock('@/api/evidence', () => ({ fetchEvidence: vi.fn().mockResolvedValue([]) }));
-vi.mock('@/components/feature/AssignmentEvidence', () => ({ AssignmentEvidence: () => <div>Evidence upload</div> }));
+vi.mock('@/components/feature/AssignmentEvidence', () => ({ AssignmentEvidence: ({ readOnly }: { readOnly: boolean }) => <button disabled={readOnly}>Evidence upload</button> }));
 vi.mock('@/hooks/useLearnerDetailParam', () => ({ useLearnerDetailParam: () => ({ real: { name: 'Example learner', programme: 'Example programme' } }) }));
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn().mockResolvedValue({ ksbs: [], activityFeed: [] }) }));
 vi.mock('@/api/learnerCalendar', () => ({ fetchLearnerCalendarEvents: vi.fn().mockResolvedValue({ events: [], bookingCalendar: { coveredYears: [2026], bankHolidays: [] } }) }));
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks(); });
 beforeEach(() => {
+  vi.mocked(useAuth).mockReturnValue({ auth: { account: null }, isInitialized: true } as ReturnType<typeof useAuth>);
   vi.mocked(saveLearningReflectionSubmission).mockResolvedValue({ id: 'record', status: 'submitted_for_tutor_review' });
   vi.mocked(checkMonthlyAssignment).mockResolvedValue(['title', 'answer', 'learning', 'evidence', 'ksbs', 'planned', 'declarations', 'hours'].map(key => ({ key, label: key, passed: true })));
+});
+
+it('shows coach provenance and prevents learner edits even if the review status changes', async () => {
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({ activityTitle: 'Coach activity', status: 'referred', submissionOrigin: 'coach',
+    coachCreation: { name: 'Actual Coach', addedAt: '', approvedAt: '', role: 'coach' }, monthlyAssignment: emptyMonthlyAssignment([], '2026-10'),
+  } as StoredLearningReflectionSubmission);
+  render(<MemoryRouter><ExtraActivityForm kind="apprenticeship" learnerId="7" savedId="extra:00000000-0000-4000-8000-000000000001" /></MemoryRouter>);
+  expect(await screen.findByRole('note')).toHaveTextContent('Added and originally approved by Actual Coach');
+  expect(screen.getByLabelText('Activity title')).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Save draft' })).toBeDisabled();
+  expect(saveLearningReflectionSubmission).not.toHaveBeenCalled();
 });
 
 it('returns to extra-activity hours without submitting or clearing the draft', async () => {
@@ -171,4 +185,22 @@ it('invalidates previous checks after changing the month and prevents saving an 
   fireEvent.change(screen.getByLabelText('Activity month'), { target: { value: '' } });
   expect(screen.getByRole('button', { name: 'Save draft' })).toBeDisabled();
   expect(screen.getByRole('alert')).toHaveTextContent('Choose a valid activity month');
+});
+
+it.each(['apprenticeship', 'commercial'] as const)('prevents a coach adding or uploading an extra activity from a %s learner workspace', async kind => {
+  vi.mocked(useAuth).mockReturnValue({ auth: { account: { role: 'staff', subjectType: 'staff', subjectId: 3, access: 'coach', learnerRecordId: null } }, isInitialized: true } as ReturnType<typeof useAuth>);
+  render(<MemoryRouter><ExtraActivityForm kind={kind} learnerId="7" savedId={null} /></MemoryRouter>);
+  expect(screen.getByRole('note')).toHaveTextContent('Learners add their own extra activities and evidence');
+  expect(screen.getByLabelText('Activity title')).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Save draft' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: '2. Evidence & cross-referencing' }));
+  expect(screen.getByRole('button', { name: 'Evidence upload' })).toBeDisabled();
+  expect(saveLearningReflectionSubmission).not.toHaveBeenCalled();
+});
+
+it('keeps staff learning on their own linked learner record editable', () => {
+  vi.mocked(useAuth).mockReturnValue({ auth: { account: { role: 'staff', learnerRecordId: 7 } }, isInitialized: true } as ReturnType<typeof useAuth>);
+  render(<MemoryRouter><ExtraActivityForm kind="commercial" learnerId="7" savedId={null} /></MemoryRouter>);
+  expect(screen.getByLabelText('Activity title')).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled();
 });

@@ -16,8 +16,10 @@ import { AssignmentAiCheckContext } from '../video-watch/AssignmentAiCheckContex
 import { assignmentTimeHours } from '../video-watch/AssignmentTimeEntries';
 import { useLearningStatements } from '@/hooks/useLearningStatements';
 import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
+import { useAuth } from '@/hooks/useAuth';
 import { ExtraActivities } from './ExtraActivities';
 import styles from './monthlySubmission.module.css';
+import { ExtraActivityInfo } from '@/components/feature/ExtraActivityInfo';
 
 const steps = ['Activity answer', 'Evidence & cross-referencing', 'KSBs & hours claimed', 'Quality checks'];
 const monthNow = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit' }).format(new Date());
@@ -29,6 +31,8 @@ export default function ExtraActivityPage() {
   return <ExtraActivityForm key={`${kind}:${id}:${query.get('activity') || 'new'}`} kind={kind} learnerId={id} savedId={query.get('activity')} />;
 }
 export function ExtraActivityForm({ kind, learnerId, savedId }: { kind: LearnerKind; learnerId: string; savedId: string | null }) {
+  const { auth, isInitialized } = useAuth();
+  const staffPreview = auth.account?.role === 'staff' && String(auth.account.learnerRecordId ?? '') !== learnerId;
   const { real } = useLearnerDetailParam(kind, learnerId);
   const [activityId] = useState(() => savedId || `extra:${crypto.randomUUID()}`);
   const [title, setTitle] = useState('');
@@ -36,6 +40,7 @@ export function ExtraActivityForm({ kind, learnerId, savedId }: { kind: LearnerK
   const [monthly, setMonthly] = useState(() => emptyMonthlyAssignment([], monthNow()));
   const [step, setStep] = useState(0);
   const [status, setStatus] = useState('draft');
+  const [addedBy, setAddedBy] = useState('');
   const [attempts, setAttempts] = useState<SubmissionAttempt[]>([]);
   const [files, setFiles] = useState<EvidenceRecord[]>([]);
   const [loading, setLoading] = useState(Boolean(savedId));
@@ -53,8 +58,8 @@ export function ExtraActivityForm({ kind, learnerId, savedId }: { kind: LearnerK
   const [evidenceVersion, setEvidenceVersion] = useState(0);
   const requestRunning = useRef(false);
   const { confirmTime, timeConfirmation } = useManualTimeConfirmation();
-  const locked = ['accepted', 'submitted_for_tutor_review'].includes(status);
-  const disabled = locked || busy || loading || loadFailed;
+  const locked = Boolean(addedBy) || ['accepted', 'submitted_for_tutor_review'].includes(status);
+  const disabled = !isInitialized || staffPreview || locked || busy || loading || loadFailed;
   const validMonth = /^(?!0000)\d{4}-(0[1-9]|1[0-2])$/.test(monthly.month);
   const datesOutsideMonth = validMonth && (monthly.timeEntries || []).some(entry => entry.date && !entry.date.startsWith(`${monthly.month}-`));
   useEffect(() => {
@@ -66,6 +71,7 @@ export function ExtraActivityForm({ kind, learnerId, savedId }: { kind: LearnerK
         if (!value) throw new Error('Extra activity not found.');
         setTitle(value.activityTitle); setAnswers({ assignmentAnswer: value.assignmentAnswer || '', whatYouLearned: value.whatYouLearned || '', businessImpact: '' });
         setStatus(value.status); setAttempts(value.submissionAttempts || []);
+        if (value.submissionOrigin === 'coach') setAddedBy(value.coachCreation?.name || 'Coach');
         if (value.monthlyAssignment) { setMonthly({ ...value.monthlyAssignment, month: value.monthlyAssignment.month || monthNow() }); setStep(Math.min(3, value.monthlyAssignment.step || 0)); }
         setOutsideConfirmed(Boolean(value.outsideWorkingHoursConfirmed));
       }).catch(reason => { if (active) { setLoadFailed(true); setError(String(reason.message || reason)); } })
@@ -149,14 +155,17 @@ export function ExtraActivityForm({ kind, learnerId, savedId }: { kind: LearnerK
     <main className={`page-container ${styles.extraPage}`}>
       {timeConfirmation}
       <Link to={`/learner/monthly-submission/${kind}/${learnerId}`} onClick={event => { if (dirty && !window.confirm('Leave without saving your changes?')) event.preventDefault(); }}>Back to monthly submission</Link>
-      <header className={styles.extraHeader}><div><p className={styles.eyebrow}>Monthly learning</p><h1>Extra activity</h1>
+      <header className={styles.extraHeader}><div><p className={styles.eyebrow}>Monthly learning</p><h1>Extra activities</h1>
+        <ExtraActivityInfo />
+        {staffPreview && <p role="note">Learners add their own extra activities and evidence. Review and approve submitted work from the coach Extra activities page.</p>}
+        {addedBy && <p role="note">Added and originally approved by {addedBy}. This record was completed by your coach.</p>}
       <p>Record your learning, add evidence and claim your KSBs and hours.</p><p>Choose the month this activity belongs to. Your submission date is recorded separately.</p></div>
       <div className={styles.extraSave}><span role="status" data-state={saveState}>{locked ? 'Submitted work' : savingDraft ? 'Saving draft...' : saveState === 'error' ? 'Draft not saved — please retry' : dirty ? 'Unsaved changes' : saveState === 'saved' ? 'Draft saved' : 'Changes save automatically'}</span>
         <button type="button" className={styles.secondary} disabled={disabled || !validMonth || savingDraft} onClick={() => void save('draft')}>{saveState === 'error' ? 'Retry save' : 'Save draft'}</button></div></header>
       {loading && <p role="status">Loading extra activity...</p>}
       {notice && <p role="status" className="rounded-xl bg-green-50 p-4 text-green-900">{notice}</p>}
       {error && <p role="alert" className="rounded-xl bg-red-50 p-4 text-red-800">{error}</p>}
-      {locked && <p>This activity is {status === 'accepted' ? 'accepted' : 'awaiting coach review'}. Your submitted work is read-only.</p>}
+      {locked && <p>{addedBy ? 'Your coach recorded this activity. It is read-only here.' : `This activity is ${status === 'accepted' ? 'accepted' : 'awaiting coach review'}. Your submitted work is read-only.`}</p>}
       <AssignmentAttemptHistory attempts={attempts} />
       <section className={styles.extraForm} aria-label="Extra activity form">
       <div className="border-b border-slate-200 p-6">

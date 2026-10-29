@@ -217,11 +217,13 @@ def upload_evidence(request, kind, pk):
         return _error("Method not allowed.", 405)
     if kind not in VALID_KINDS:
         return _error("Unknown learner kind.", 400)
+    section_ref = (request.POST.get("section_ref") or "").strip()
+    if getattr(request, "coach_learner_action", False) and section_ref.lower().startswith("extra:"):
+        return _error("Extra activity evidence must be uploaded by the learner.", 403)
     if not azure_configured():
         return _error("Evidence storage is not configured.", 503)
 
     f = request.FILES.get("file")
-    section_ref = (request.POST.get("section_ref") or "").strip()
     if not f or not section_ref:
         return _error("file and section_ref are required.", 400)
     if not _evidence_type_allowed(f):
