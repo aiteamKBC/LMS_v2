@@ -37,7 +37,7 @@ def build_live_records(rows, occurrences, titles, kbc_id_by_profile, local_date,
         if session_date is None or session_date > today:
             continue
         number = _session_number(occurrence.get('session_number'))
-        module_name = str(titles.get(row['live_session_id']) or '').strip()
+        module_name = str(row.get('module_title') or titles.get(row['live_session_id']) or '').strip()
         status = str(row['attendance_status'] or '').strip().lower()
         records.setdefault(learner_id, []).append({
             'recordKey': f"live:{row['id']}",

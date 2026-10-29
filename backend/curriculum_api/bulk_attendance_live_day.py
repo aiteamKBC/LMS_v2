@@ -197,6 +197,7 @@ def bulk_attendance_live_day(request):
                 .select_for_update()
                 .filter(
                     occurrence_id=occurrence["id"],
+                    module_catalogue_id=payload["module_catalogue_id"],
                     learner_profile_id__in=[profile.id for profile in profiles],
                 )
                 .values(

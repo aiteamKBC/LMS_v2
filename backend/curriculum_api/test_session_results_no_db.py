@@ -493,7 +493,7 @@ class SharedSessionRosterQueryTests(unittest.TestCase):
     def test_shared_module_without_occurrences_uses_its_plan_roster(self):
         read = Mock(side_effect=[[], [{
             'id': 'SOURCE-O', 'attendance_report_id': 'R', 'actual_end': '2026-10-01',
-        }]])
+        }], []])
         effective = Mock(return_value=[{'source_occurrence_id': 'SOURCE-O', 'learner_profile_id': 33,
                                        'learner_email': 'destination@example.invalid'}])
         namespace = {'read': read, 'effective_module_register_rows': effective}
@@ -511,6 +511,9 @@ class SharedSessionRosterQueryTests(unittest.TestCase):
         self.assertNotIn('learner_training_plan_modules', query)
         self.assertEqual(params, ['DEST', ['SOURCE-O']])
         effective.assert_called_once_with('DEST', [{'id': 'SOURCE-O', 'attendance_report_id': 'R', 'actual_end': '2026-10-01'}])
+        saved_query, saved_params = read.call_args_list[2].args
+        self.assertIn('module_catalogue_id=%s', saved_query)
+        self.assertEqual(saved_params, ['DEST', ['SOURCE-O']])
 
 
 class KnownLearnerEmailTests(unittest.TestCase):

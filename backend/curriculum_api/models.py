@@ -336,7 +336,7 @@ class LiveSessionLearnerAttendance(models.Model):
         managed = False
         constraints = [
             models.UniqueConstraint(
-                fields=['occurrence_id', 'learner_profile_id'],
+                fields=['occurrence_id', 'learner_profile_id', 'module_catalogue_id'],
                 name='curriculum_live_learner_attendance_uniq',
             ),
         ]

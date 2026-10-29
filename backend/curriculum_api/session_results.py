@@ -163,7 +163,8 @@ def replaced_module_register_rows(module_catalogue_id, source_occurrence_ids):
         FROM curriculum.live_session_occurrences o
         JOIN curriculum.live_sessions s ON s.id=o.live_session_id
         {REPLACED_ATTENDANCE_LATERAL_SQL}
-        LEFT JOIN curriculum.live_session_learner_attendance r ON r.occurrence_id=o.id
+        LEFT JOIN curriculum.live_session_learner_attendance r
+          ON r.occurrence_id=o.id AND r.module_catalogue_id=s.module_catalogue_id
         WHERE s.module_catalogue_id=%s
           AND replaced_attendance.occurrence_id=ANY(%s)
         ORDER BY r.learner_name,r.learner_profile_id''', [
@@ -201,8 +202,14 @@ def replaced_module_register_rows(module_catalogue_id, source_occurrence_ids):
           AND lower(btrim(source_o.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
         ORDER BY source_o.id''', [module_catalogue_id, source_occurrence_ids])
     # Keep an association marker for a valid meeting even with an empty roster.
+    saved = read('''SELECT occurrence_id,learner_profile_id,learner_email,learner_name,
+        attendance_status,recovery_status,attended_seconds,attendance_report_id,first_join_at,last_leave_at
+        FROM curriculum.live_session_learner_attendance
+        WHERE module_catalogue_id=%s AND occurrence_id=ANY(%s)''',
+        [module_catalogue_id, [item['id'] for item in occurrences]]) if occurrences else []
     return ([{'source_occurrence_id': occurrence['id'], 'learner_profile_id': None}
              for occurrence in occurrences]
+            + [{**row, 'source_occurrence_id': row['occurrence_id']} for row in saved]
             + effective_module_register_rows(module_catalogue_id, occurrences))
 
 
@@ -229,7 +236,7 @@ def merge_session_register_rows(rows):
     return [by_email[email] for email in sorted(by_email)]
 
 
-def result_rows(series, *, session_number=None, email=None, identity=False, module_catalogue_id='', attendance_only=False, occurrence_ids=None):
+def result_rows(series, *, session_number=None, email=None, identity=False, module_catalogue_id='', attendance_only=False, occurrence_ids=None, use_saved_outcomes=True):
     params = [series['id']]
     where = ''
     if session_number is not None:
@@ -249,7 +256,8 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
     register_rows = read('''SELECT occurrence_id,learner_profile_id,learner_email,learner_name,
         attendance_status,recovery_status,attended_seconds,attendance_report_id,first_join_at,last_leave_at
         FROM curriculum.live_session_learner_attendance
-        WHERE occurrence_id=ANY(%s) ORDER BY learner_name,learner_profile_id''', [ids])
+        WHERE occurrence_id=ANY(%s) AND module_catalogue_id=%s
+        ORDER BY learner_name,learner_profile_id''', [ids, series.get('module_catalogue_id')])
     context_register_rows = []
     if not module_catalogue_id and email is not None:
         shared = series.get('learner_shared_module_ids') or []
@@ -397,7 +405,7 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
             # Reporting rows can lag behind the source report. Preserve saved
             # matches, but never let saved absence erase current presence.
             # Reviewed identity decisions still take precedence over old rows.
-            if not (rules or aliases or identity_links or name_decisions) and person.get('status') != 'present':
+            if use_saved_outcomes and not (rules or aliases or identity_links or name_decisions) and person.get('status') != 'present':
                 person.update(
                     seconds=max(0, int(saved.get('attended_seconds') or 0)),
                     status=status,
@@ -591,7 +599,8 @@ def link_attendance_alias(request, series_id, session_number):
                 return JsonResponse({'error': 'This session is not linked to that module.'}, status=400)
         else:
             roster = read('''SELECT learner_profile_id,learner_email,learner_name
-                FROM curriculum.live_session_learner_attendance WHERE occurrence_id=%s''', [occurrence['id']])
+                FROM curriculum.live_session_learner_attendance
+                WHERE occurrence_id=%s AND module_catalogue_id=%s''', [occurrence['id'], module_id])
             roster += effective_module_register_rows(module_id, [occurrence])
         candidate = next((row for row in roster if row.get('learner_profile_id') == learner_profile_id), None)
         if action != 'unlink' and (not candidate or not candidate.get('learner_email')):

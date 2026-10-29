@@ -38,7 +38,7 @@ class LiveSessionRegisterTests(unittest.TestCase):
 
         self.assertEqual(count, 1)
         sql, params = cursor.executemany.call_args.args
-        self.assertIn('ON CONFLICT (occurrence_id, learner_profile_id) DO UPDATE', sql)
+        self.assertIn('ON CONFLICT (occurrence_id, learner_profile_id, module_catalogue_id) DO UPDATE', sql)
         self.assertNotIn('DELETE', sql.upper())
         self.assertEqual(params[0][4], 'learner@example.test')
         self.assertEqual(params[0][6], 'absent')
@@ -58,7 +58,7 @@ class LiveSessionRegisterTests(unittest.TestCase):
 
     def test_reporting_sync_publishes_the_learner_register(self):
         source = (ROOT.parent / 'learner_api' / 'teams_attendance.py').read_text()
-        self.assertIn('upsert_live_session_register(cursor, rows)', source)
+        self.assertIn('upsert_live_session_register(cursor, [*rows, *shared_rows])', source)
 
 
 if __name__ == '__main__':

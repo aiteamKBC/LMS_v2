@@ -325,6 +325,20 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertEqual(result[0]['source'], 'microsoft-teams')
         self.assertEqual(result[0]['attendance_report_id'], 'report-1')
 
+    def test_saved_shared_outcome_cannot_be_replaced_by_the_source_register(self):
+        now = timezone.now()
+        native = register_row(source='microsoft-teams', session_id='occ', occurrence_id='occ',
+            module_catalogue_id='source', scheduled_start=now-timedelta(hours=2),
+            scheduled_end=now-timedelta(hours=1), attendance_status='present', attendance_report_id='report')
+        shared = {**native, 'session_id': 'occ:destination', 'occurrence_id': 'occ:destination',
+                  'module_catalogue_id': 'destination', 'attendance_source_occurrence_id': 'occ'}
+        records = [{**native, 'source': 'live-register'},
+                   {**shared, 'source': 'live-register', 'attendance_status': 'absent'}]
+        result = lecture_register(SimpleNamespace(id=12), records=records,
+                                  scheduled=[native, shared], apply_adjustments=False)
+        self.assertEqual({row['module_catalogue_id']: row['attendance_status'] for row in result},
+                         {'source': 'present', 'destination': 'absent'})
+
     def test_schedule_excludes_deleted_modules_and_superseded_or_failed_series_and_occurrences(self):
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value

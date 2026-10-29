@@ -37,9 +37,8 @@ def upsert_live_session_register(cursor, rows):
             attendance_status, recovery_status, attended_seconds, attendance_report_id,
             first_join_at, last_leave_at, calculated_at
         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (occurrence_id, learner_profile_id) DO UPDATE SET
+        ON CONFLICT (occurrence_id, learner_profile_id, module_catalogue_id) DO UPDATE SET
             live_session_id = EXCLUDED.live_session_id,
-            module_catalogue_id = EXCLUDED.module_catalogue_id,
             learner_email = EXCLUDED.learner_email,
             learner_name = EXCLUDED.learner_name,
             attendance_status = EXCLUDED.attendance_status,

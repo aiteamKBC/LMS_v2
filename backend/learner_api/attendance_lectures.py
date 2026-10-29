@@ -418,6 +418,12 @@ def lecture_register(source, *, module_ids=None, records=None, learner_profile_i
             occurrence_id = str(row.get('occurrence_id') or row['session_id'])
             target_ids = ([occurrence_id] if occurrence_id in by_occurrence else []) + by_attendance_source.get(occurrence_id, [])
             target_ids = list(dict.fromkeys(target_ids))
+            if row.get('source') == 'live-register':
+                # A saved outcome belongs to its delivery. Raw evidence may
+                # feed several modules, but one module's correction may not.
+                target_ids = [target for target in target_ids
+                              if by_occurrence.get(target, {}).get('module_catalogue_id')
+                              == row.get('module_catalogue_id')]
             if not target_ids:
                 # Another group's occurrence joined as an approved alternative
                 # recovers the original absence; it is not a lecture of its own.

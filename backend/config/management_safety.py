@@ -6,6 +6,7 @@ from contextlib import contextmanager, ExitStack
 def reconciliation_command():
     return len(sys.argv) > 1 and sys.argv[1] in {
         "reconcile_review_booking", "auto_reconcile_legacy_aptem_reviews",
+        "reconcile_shared_session_attendance",
     }
 
 

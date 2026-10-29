@@ -872,6 +872,11 @@ class LearnerAttendanceEndpointTests(SimpleTestCase):
 
 
 class TeamsAttendanceSyncTests(SimpleTestCase):
+    def setUp(self):
+        shared = patch('curriculum_api.shared_session_register.shared_register_rows', return_value=[])
+        self.shared_rows = shared.start()
+        self.addCleanup(shared.stop)
+
     @patch('learner_api.teams_attendance.ensure_teams_attendance_reporting_columns')
     @patch('learner_api.teams_attendance._verified_occurrence_ids', return_value=[])
     @patch('learner_api.teams_attendance.fetch_verified_teams_attendance_rows', return_value=[])
@@ -910,6 +915,25 @@ class TeamsAttendanceSyncTests(SimpleTestCase):
         sql, params = cursor.execute.call_args.args
         self.assertIn('module_catalogue_id = ANY(%s)', sql)
         self.assertEqual(params, [['MOD-1'], []])
+
+    def test_shared_only_sync_persists_the_module_register_without_duplicate_rewards(self):
+        rows = [{'occurrence_id': 'O', 'module_catalogue_id': 'SHARED', 'learner_profile_id': 7}]
+        self.shared_rows.return_value = rows
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        with patch.object(teams_attendance_module, 'connections', {'default': connection}), \
+             patch.object(teams_attendance_module.router, 'db_for_write', return_value='default'), \
+             patch.object(teams_attendance_module, 'fetch_verified_teams_attendance_rows', return_value=[]), \
+             patch.object(teams_attendance_module, '_verified_occurrence_ids', return_value=[]), \
+             patch.object(teams_attendance_module.transaction, 'atomic', side_effect=lambda **kwargs: nullcontext()), \
+             patch.object(teams_attendance_module, 'upsert_live_session_register') as save, \
+             patch.object(teams_attendance_module, '_award_attendance_points') as award:
+            self.assertEqual(sync_verified_teams_attendance_reporting(module_refs=['SHARED']), 1)
+        save.assert_called_once_with(cursor, rows)
+        cursor.executemany.assert_not_called()  # Shared deliveries do not duplicate the legacy report.
+        award.assert_called_once_with([])
+        self.shared_rows.assert_called_once_with(database='default', module_refs=['SHARED'],
+                                                 learner_ids=None, learner_emails=None, all_learners=False)
 
 
 class LearnerQuizModuleMatchingTests(SimpleTestCase):
