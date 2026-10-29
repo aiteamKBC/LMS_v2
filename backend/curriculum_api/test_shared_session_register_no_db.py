@@ -52,6 +52,10 @@ class SharedRegisterTests(unittest.TestCase):
         db = self.db
         class Cursor:
             def executemany(self, sql, params):
+                # SQLite spells a named PostgreSQL constraint as its columns.
+                # Keep the same three-column uniqueness enforced by this fixture.
+                sql = sql.replace('ON CONFLICT ON CONSTRAINT curriculum_live_learner_attendance_uniq',
+                                  'ON CONFLICT (occurrence_id, learner_profile_id, module_catalogue_id)')
                 db.executemany(sql.replace('%s', '?'), [tuple(
                     value.isoformat() if isinstance(value, datetime) else value for value in row) for row in params])
         return self.upsert(Cursor(), rows)
