@@ -47,7 +47,7 @@ describe('Transfer Progress design and supported operations', () => {
     fireEvent.click(await within(await screen.findByRole('article', { name: 'Request R2 for Same learner' })).findByRole('button', { name: 'Review details' }));
     const dialog = within(screen.getByRole('dialog'));
     expect(dialog.getByText('R2')).toBeVisible();expect(dialog.getByText('8')).toBeVisible();expect(dialog.getByText('Apprenticeship')).toBeVisible();
-    expect(dialog.getByText('Old LMS · legacy:M4')).toBeVisible();expect(dialog.getByText('New LMS · M4')).toBeVisible();
+    expect(dialog.getByText('Old LMS course: M4')).toBeVisible();expect(dialog.getByText('New LMS module: M4')).toBeVisible();
     expect(dialog.getByText('100% saved progress')).toBeVisible();expect(dialog.getByText('40% saved progress')).toBeVisible();expect(dialog.getByText('0% saved progress')).toBeVisible();
     expect(api.getTransferRequests).toHaveBeenCalledTimes(1);expect(api.approveTransferRequest).not.toHaveBeenCalled();
     fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));expect(screen.queryByRole('dialog')).not.toBeInTheDocument();

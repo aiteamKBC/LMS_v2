@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -18,6 +18,35 @@ async function chooseGeneralFeedback(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe('post-lecture feedback delivery scope', () => {
+  it.each(['post_lecture', 'general', 'post_event', 'event_rsvp', 'post_mcm_review', 'post_progress_review', 'mid_module', 'end_module'] as const)('offers staff scoring examples for %s without including them in saved form data or learner preview', async formType => {
+    const user = userEvent.setup();
+    const form: FeedbackForm = {
+      id: 7, title: 'Synthetic feedback', formType, deliveryScope: ['post_lecture', 'mid_module', 'end_module'].includes(formType) ? 'all_modules' : 'manual',
+      templateKey: 'synthetic-template', version: 1, isCurrent: true, previousVersionId: null,
+      curriculumScope: { programmeId: '', programmeName: '', cohortId: '', cohortName: '', groupId: '', groupName: '', moduleCatalogueId: '', moduleName: '' },
+      description: 'Keep description', instructions: 'Keep instructions', status: 'draft', startDate: '2026-11-01T09:00:00Z', dueDate: null,
+      anonymousResponses: false, allowSaveContinue: true, allowEditAfterSubmission: false,
+      createdBy: 'Staff', createdAt: '2026-10-26T09:00:00Z', updatedAt: '2026-10-26T09:00:00Z', publishedAt: null,
+      assignedCount: 0, responseCount: 0, startedCount: 0, structureLocked: false, willCreateVersion: false,
+      sections: [{ title: 'Teaching', description: '', questionsPerDelivery: formType === 'post_lecture' ? 1 : null, questions: [{ id: 101, type: 'rating', text: 'Support?', required: true, helpText: '', config: { min: 1, max: 5, display: 'stars' } }] }],
+    };
+    vi.spyOn(feedbackApi, 'getForm').mockResolvedValue({ form });
+    const update = vi.spyOn(feedbackApi, 'updateForm').mockResolvedValue({ form });
+    render(<MemoryRouter initialEntries={['/engagement/reports/feedback/forms/7/edit']}><Routes><Route path="/engagement/reports/feedback/forms/:formId/edit" element={<FormBuilder />} /></Routes></MemoryRouter>);
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Question text' })).toHaveValue('Support?'));
+    await user.click(screen.getByRole('button', { name: 'Try scoring' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Example answer 1.1: Support?' }), '5');
+    expect(within(screen.getByRole('region', { name: 'Example response result' })).getByText('100%')).toBeVisible();
+    expect(update).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Preview' }));
+    expect(screen.queryByRole('region', { name: 'Form scoring setup' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Question importance' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    expect(update.mock.calls[0][1]).toMatchObject({ formType, deliveryScope: form.deliveryScope, startDate: form.startDate, dueDate: null, sections: form.sections });
+    expect(JSON.stringify(update.mock.calls[0][1])).not.toContain('answer');
+  });
+
   it.each(['Mid-module Feedback', 'End-module Feedback'])('configures %s using module dates and assignment', async label => {
     const user = userEvent.setup();
     const curriculum = vi.spyOn(feedbackApi, 'curriculumOptions').mockResolvedValue({
@@ -33,8 +62,9 @@ describe('post-lecture feedback delivery scope', () => {
     expect(screen.getByText(/Responses remain open until the template is closed manually/)).toBeVisible();
     expect(screen.queryByLabelText('Start Date')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Due Date')).not.toBeInTheDocument();
-    expect(screen.queryByText('Reusable lecture feedback QR')).not.toBeInTheDocument();
-    expect(screen.queryByText('Upload question bank')).not.toBeInTheDocument();
+    expect(screen.queryByText('Reusable Live Sessions Feedback QR')).not.toBeInTheDocument();
+    expect(screen.getByText('Upload question bank')).toBeVisible();
+    expect(screen.queryByRole('combobox', { name: /questions per lecture/i })).not.toBeInTheDocument();
     await user.click(screen.getByRole('radio', { name: /One module only/ }));
     expect(await screen.findByRole('combobox', { name: 'Programme' })).toBeVisible();
     await waitFor(() => expect(curriculum).toHaveBeenCalledTimes(1));
@@ -74,16 +104,21 @@ describe('post-lecture feedback delivery scope', () => {
     const user = userEvent.setup();
     render(<MemoryRouter><FormBuilder /></MemoryRouter>);
 
-    expect(screen.getByText('Reusable lecture feedback QR')).toBeVisible();
+    expect(screen.getByText('Reusable Live Sessions Feedback QR')).toBeVisible();
     expect(screen.getByText(`${window.location.origin}/login?lectureFeedback=1`)).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Question bank' })).toBeVisible();
     expect(screen.getAllByRole('radio', { name: /star/ })).toHaveLength(5);
     expect(screen.getByRole('combobox', { name: 'Rating style' })).toHaveValue('stars');
     expect(screen.getByLabelText('Question bank file')).toBeVisible();
     expect(screen.getByRole('link', { name: 'Download Excel template' })).toHaveAttribute('href', '/templates/post-lecture-question-bank.xlsx');
-    expect(screen.getByRole('heading', { name: 'Form structure' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Question settings' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Form preview' })).toBeVisible();
+    const structureHeading = screen.getByRole('heading', { name: 'Form structure' });
+    const settingsHeading = screen.getByRole('heading', { name: 'Question settings' });
+    const previewHeading = screen.getByRole('heading', { name: 'Form preview' });
+    expect(structureHeading).toBeVisible();
+    expect(settingsHeading).toBeVisible();
+    expect(previewHeading).toBeVisible();
+    expect(structureHeading.compareDocumentPosition(settingsHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(settingsHeading.compareDocumentPosition(previewHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await user.click(screen.getByRole('button', { name: '+ Add Question to section 1' }));
     await user.selectOptions(screen.getByRole('combobox', { name: 'Section 1 questions per lecture' }), '1');
     expect(screen.getByRole('combobox', { name: 'Section 1 questions per lecture' })).toHaveValue('1');
@@ -97,12 +132,12 @@ describe('post-lecture feedback delivery scope', () => {
     await user.type(screen.getByRole('textbox', { name: 'Form Name' }), 'Mixed question bank');
     await user.type(screen.getByRole('textbox', { name: 'Description' }), 'Keep this description.');
     const bytes = new TextEncoder().encode([
-      'Category,Question,Answer type,Option 1,Option 2,Required',
-      'Teaching,Was the explanation clear?,5 Stars,,,yes',
-      'Teaching,Were objectives clear?,Yes / No,,,no',
-      'Resources,Which resource helped?,Choose one,Slides,Workbook,yes',
-      'General,Any comments?,Written answer,,,no',
-    ].join('\r\n'));
+      ['Category', 'Question', 'Answer type', 'Option 1', 'Option 2', 'Required', 'Yes score', 'No score', 'Option 1 score', 'Option 2 score', 'Include in overall score'],
+      ['Teaching', 'Was the explanation clear?', '5 Stars', '', '', 'yes'],
+      ['Teaching', 'Were objectives clear?', 'Yes / No', '', '', 'no', 75, 0, '', '', 'No'],
+      ['Resources', 'Which resource helped?', 'Choose one', 'Slides', 'Workbook', 'yes', '', '', 100, 0, 'Yes'],
+      ['General', 'Any comments?', 'Written answer', '', '', 'no'],
+    ].map(row => row.join(',')).join('\r\n'));
     const file = new File([bytes], 'mixed.csv', { type: 'text/csv' });
     Object.defineProperty(file, 'arrayBuffer', { value: async () => bytes.buffer });
     await user.upload(screen.getByLabelText('Question bank file'), file);
@@ -117,8 +152,8 @@ describe('post-lecture feedback delivery scope', () => {
       title: 'Mixed question bank', description: 'Keep this description.',
       formType: 'post_lecture', deliveryScope: 'all_modules',
       sections: [
-        { title: 'Teaching', questionsPerDelivery: 2, questions: [{ type: 'rating' }, { type: 'yes_no', required: false }] },
-        { title: 'Resources', questionsPerDelivery: 1, questions: [{ type: 'single_choice', config: { options: ['Slides', 'Workbook'] } }] },
+        { title: 'Teaching', questionsPerDelivery: 2, questions: [{ type: 'rating' }, { type: 'yes_no', required: false, config: { analytics: { scoring: 'options', optionScores: { yes: 75, no: 0 }, includeInOverall: false } } }] },
+        { title: 'Resources', questionsPerDelivery: 1, questions: [{ type: 'single_choice', config: { options: ['Slides', 'Workbook'], analytics: { optionScores: { Slides: 100, Workbook: 0 }, includeInOverall: true } } }] },
         { title: 'General comments', questionsPerDelivery: null },
       ],
     });
@@ -234,7 +269,7 @@ describe('post-lecture feedback delivery scope', () => {
       await user.clear(option);
       await user.type(option, answer);
     }
-    expect(screen.getByRole('status')).toHaveTextContent('Learners will answer 3 questions per lecture');
+    expect(screen.getByText('Learners will answer 3 questions per lecture.')).toHaveAttribute('role', 'status');
     expect(createForm).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Preview' }));
     expect(screen.getByText('1/1')).toBeVisible();
@@ -272,6 +307,25 @@ describe('post-lecture feedback delivery scope', () => {
     await user.click(screen.getByRole('button', { name: /Edit section 1 question 1:/ }));
     expect(screen.getByRole('textbox', { name: 'Question text' })).toHaveValue('Any suggestions?');
     expect(screen.getByRole('combobox', { name: 'Question 1 type' })).toHaveValue('long_text');
+  });
+
+  it('reorders answer options by dragging and removes them with a delete icon', async () => {
+    const user = userEvent.setup();
+    render(<MemoryRouter><FormBuilder /></MemoryRouter>);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Question 1 type' }), 'multiple_choice');
+    await user.click(screen.getByRole('button', { name: '+ Add Option' }));
+    const thirdOption = screen.getByRole('textbox', { name: 'Answer option 3' });
+    await user.clear(thirdOption);
+    await user.type(thirdOption, 'Final option');
+
+    fireEvent.dragStart(screen.getByRole('button', { name: 'Drag answer option 3 to reorder' }), { dataTransfer: { effectAllowed: '' } });
+    fireEvent.drop(screen.getByRole('textbox', { name: 'Answer option 1' }).closest('div')!);
+    expect(screen.getByRole('textbox', { name: 'Answer option 1' })).toHaveValue('Final option');
+    expect(screen.queryByRole('button', { name: 'Move up' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Remove')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Delete answer option 1' }));
+    expect(screen.queryByDisplayValue('Final option')).not.toBeInTheDocument();
   });
 
   it('clamps a category quota after deletion and preserves question order and values', async () => {
@@ -320,6 +374,8 @@ describe('post-lecture feedback delivery scope', () => {
       expect(screen.getByRole('combobox', { name: 'Question 1 type' })).toBeDisabled();
       expect(screen.getByRole('combobox', { name: 'Section 1 questions per lecture' })).toBeDisabled();
       expect(screen.getByRole('combobox', { name: 'Rating style' })).toBeDisabled();
+      expect(screen.getByRole('combobox', { name: 'Question importance' })).toBeDisabled();
+      expect(screen.getByRole('combobox', { name: 'Question scoring' })).toBeDisabled();
       expect(screen.getByRole('textbox', { name: '1 star description' })).toBeDisabled();
       expect(screen.getByRole('button', { name: 'Remove question' })).toBeDisabled();
       expect(screen.getByRole('button', { name: '+ Add Section' })).toBeDisabled();
@@ -336,6 +392,22 @@ describe('post-lecture feedback delivery scope', () => {
     expect(updateForm.mock.calls[0][0]).toBe(7);
     expect(updateForm.mock.calls[0][1].sections).toEqual(structureLocked ? undefined : sections);
     expect(updateForm.mock.calls[0][1]).toMatchObject({ title: 'Existing feedback', description: 'Existing description', instructions: 'Keep instructions' });
+  });
+
+  it('saves reporting settings without changing availability, delivery scope or category draw count', async () => {
+    const user = userEvent.setup();
+    const create = vi.spyOn(feedbackApi, 'createForm').mockResolvedValue({ form: { id: 999, version: 1 } as FeedbackForm });
+    render(<MemoryRouter><FormBuilder /></MemoryRouter>);
+    await user.type(screen.getByRole('textbox', { name: 'Form Name' }), 'Reporting test');
+    await user.type(screen.getByRole('textbox', { name: 'Question text' }), 'Clear?');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Question importance' }), 'critical');
+    await user.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    expect(create.mock.calls[0][0]).toMatchObject({
+      formType: 'post_lecture', deliveryScope: 'all_modules', startDate: null, dueDate: null,
+      allowSaveContinue: true, allowEditAfterSubmission: false,
+      sections: [{ questionsPerDelivery: 1, questions: [{ type: 'rating', config: { min: 1, max: 5, display: 'stars', analytics: { importance: 'critical' } } }] }],
+    });
   });
 
   it('lets the creator choose section icons and previews sections as steps', async () => {
@@ -386,7 +458,7 @@ describe('post-lecture feedback delivery scope', () => {
     await user.keyboard('{End}{Enter}');
 
     expect(screen.getByRole('combobox', { name: 'Form Type' })).toHaveTextContent('General feedback');
-    expect(screen.queryByText('Lecture delivery')).not.toBeInTheDocument();
+    expect(screen.queryByText('Live Sessions Feedback delivery')).not.toBeInTheDocument();
   });
 
   it('edits the selected question from the settings panel', async () => {

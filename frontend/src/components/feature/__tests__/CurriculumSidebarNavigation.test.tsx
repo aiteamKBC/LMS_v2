@@ -44,7 +44,7 @@ describe('Curriculum workspace sidebar presentation', () => {
       ['Modules', '/curriculum/module-builder'], ['Session recordings', '/curriculum/recordings'], ['Bank holidays', '/curriculum/england-holidays'],
     ]);
     // Transfer Progress belongs to the enrolment sidebars (/users/progress-transfers), not curriculum.
-    expect(items[8].children?.map(item => item.href)).toEqual(['/curriculum/coach-directory']);
+    expect(items[8].children?.map(item => item.href)).toEqual(['/curriculum/coach-directory', '/curriculum/coaching-recordings']);
     expect(curriculumNavItems.some(item => item.href === '/curriculum/delivery')).toBe(false);
     expect(JSON.stringify(curriculumNavItems)).toBe(before);
     show();

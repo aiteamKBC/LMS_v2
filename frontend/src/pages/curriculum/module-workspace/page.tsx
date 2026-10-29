@@ -52,6 +52,7 @@ import {
 import { ModuleFormDrawer } from '../shared/entities/moduleForm';
 import { ScopeAchievementPanel } from '../shared/entities/scopeAchievement';
 import { buildHolidayShiftPlan, CompactSchedulePreview, WeekHolidayNotice } from '../shared/entities/sessionShiftPreview';
+import { liveSessionDriftCause } from '../shared/entities/liveSessionDriftCause';
 import {
   DetailRow,
   EntityEmptyState,
@@ -1306,6 +1307,7 @@ function ScheduleDriftNotice({ drifted, teamsUrl }: {
         {drifted.map(session => (
           <li key={session.componentId} className="tabular-nums">
             {formatDateLabel(session.storedDate)} — its week now runs {session.weekDates.map(formatDateLabel).join(' and ')}
+            {liveSessionDriftCause(session) && <span className="block text-amber-800/90">{liveSessionDriftCause(session)?.sentence}</span>}
           </li>
         ))}
       </ul>

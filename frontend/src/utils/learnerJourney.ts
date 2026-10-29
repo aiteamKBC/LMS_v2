@@ -412,6 +412,8 @@ export function hasComponentContent(c: JourneyComponent): boolean {
   if (type === 'quiz') return false; // Unlinked builder placeholders have no quiz to attempt.
   const hasDescription = hasText(c.description);
   if (type === 'video') return hasUrl(c.videoUrl) || Boolean(c.recordingSeriesId && c.recordingSessionNumber && c.recordingDate);
+  // A session recording linked to its live session plays that session's recording.
+  if (type === 'recording_placeholder' && c.recordingSeriesId && c.recordingSessionNumber && c.recordingDate) return true;
   if (type === 'podcast' || type === 'audio') return hasUrl(c.audioUrl) || hasUrl(c.resourceUrl) || hasDescription;
   if (type === 'reading') return c.hasReadingContent === true || hasText(c.contentHtml) || hasUrl(c.resourceUrl) || hasUrl(c.audioUrl) || hasDescription;
   if (type === 'powerpoint' || type === 'presentation' || type === 'slides') return hasUrl(c.resourceUrl) || hasDescription;

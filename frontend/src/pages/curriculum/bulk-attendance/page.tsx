@@ -16,6 +16,15 @@ import {
 } from "@/lib/curriculumApi";
 
 const ROSTER_TIMEOUT_MS = 60_000;
+
+// Curriculum rosters list learners by LMS email. A learner whose KBC
+// directory email differs is matched through the LMS email for the same KBC id.
+function rosterEmailFor(learner: Learner, rosterEmails?: { has: (email: string) => boolean } | null): string {
+  const emails = [learner.email, learner.lmsEmail ?? ""]
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean);
+  return emails.find((email) => rosterEmails?.has(email)) ?? emails[0] ?? "";
+}
 // A Programme -> Cohort -> Group -> Module selection is usually made in quick
 // succession. Waiting briefly avoids requests for every intermediate choice,
 // while the selected filter label still updates at once.
@@ -41,6 +50,9 @@ import { downloadCsv, slugify } from "@/utils/bulkCsv";
 import { downloadAttendanceSummaryPdf } from "./attendancePdf";
 import FilterCard, { type FilterOption } from "./components/FilterCard";
 import RegisterTabs, { type RegisterTab } from "./components/RegisterTabs";
+import HighlightsTab from "./components/HighlightsTab";
+import { HighlightLegend } from "./components/HighlightControls";
+import { highlightKey, useLearnerHighlights } from "./components/highlights";
 import SearchBar from "./components/SearchBar";
 import AttendanceTable, {
   type AttendanceRow,
@@ -48,6 +60,7 @@ import AttendanceTable, {
   type LectureInfo,
 } from "./components/AttendanceTable";
 import WeeklyGrid from "./components/WeeklyGrid";
+import MonthlyGrid from "./components/MonthlyGrid";
 import SummaryReport from "./components/SummaryReport";
 import LearnerHistoryModal, {
   type LearnerHistoryRecord,
@@ -99,6 +112,7 @@ export default function AttendancePage() {
   const [groupId, setGroupId] = useState("");
   const [moduleId, setModuleId] = useState("");
   const [lectureId, setLectureId] = useState("");
+  const [attendanceModeFilter, setAttendanceModeFilter] = useState<"" | "live" | "lazy">("");
   const [scopeLearnerEmails, setScopeLearnerEmails] = useState<Set<string> | null>(null);
   const [scopeLearnersByEmail, setScopeLearnersByEmail] = useState<Map<string, CurriculumProgrammeAssignedLearner>>(new Map());
   const [scopeRosterLoading, setScopeRosterLoading] = useState(false);
@@ -108,6 +122,7 @@ export default function AttendancePage() {
   const [date, setDate] = useState("");
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<RegisterTab>("daily");
+  const { highlights, setHighlight } = useLearnerHighlights();
   const [historyRow, setHistoryRow] = useState<AttendanceRow | null>(null);
   const [detailKbcHistory, setDetailKbcHistory] = useState<BulkAttendanceKbcHistoryRecord[]>([]);
   const [detailHistoryLoading, setDetailHistoryLoading] = useState(false);
@@ -427,17 +442,17 @@ export default function AttendancePage() {
   const scopedLearners = useMemo(
     () =>
       learners.map((learner) => {
-        const placement = scopeLearnersByEmail.get(learner.email.trim().toLowerCase());
+        const placement = scopeLearnersByEmail.get(rosterEmailFor(learner, scopeLearnersByEmail));
         return placement ? { ...learner, curriculumId: String(placement.id) } : learner;
       }).filter((learner) => {
         const hasScopeFilter = Boolean(programmeId || cohortId || groupId || moduleId || selectedLecture);
         if (hasScopeFilter) {
           if (!scopeLearnerEmails) return false;
-          return scopeLearnerEmails.has(learner.email.trim().toLowerCase());
+          if (!scopeLearnerEmails.has(rosterEmailFor(learner, scopeLearnerEmails))) return false;
         }
-        return true;
+        return !attendanceModeFilter || learner.attendanceMode === attendanceModeFilter;
       }),
-    [programmeId, cohortId, groupId, moduleId, selectedLecture, scopeLearnerEmails, scopeLearnersByEmail, learners]
+    [programmeId, cohortId, groupId, moduleId, selectedLecture, scopeLearnerEmails, scopeLearnersByEmail, learners, attendanceModeFilter]
   );
 
   const filteredLearners = useMemo(() => {
@@ -464,14 +479,9 @@ export default function AttendancePage() {
     sourceError: attendanceSourceError,
     statuses,
     getStatus,
-    setStatusForDate,
+    setStatusForDate, dirty, pendingCount, pendingStatuses, save, undo,
     applySavedStatuses,
     replaceSavedStatusesForDate,
-    dirty,
-    pendingCount,
-    pendingStatuses,
-    save,
-    undo,
   } = useAttendance({
     learners: activeLearners,
     moduleKey,
@@ -613,7 +623,7 @@ export default function AttendancePage() {
   const buildRows = useCallback(
     (list: typeof learners): AttendanceRow[] =>
       list.map((learner, index) => {
-        const email = learner.email.trim().toLowerCase();
+        const email = rosterEmailFor(learner, scopeLearnerEmails);
         const placement = scopeLearnersByEmail.get(email);
         const placementIsAmbiguous = Boolean(scopeLearnerEmails?.has(email) && !placement);
         const cohortName = placementIsAmbiguous
@@ -637,6 +647,17 @@ export default function AttendancePage() {
   );
 
   const rows = useMemo(() => buildRows(activeLearners), [activeLearners, buildRows]);
+  const monthlyRows = useMemo(
+    () => buildRows(filteredLearners.filter((learner) => !isArchived(learner))),
+    [buildRows, filteredLearners, isArchived],
+  );
+  const monthlyModuleCatalogueIds = useMemo(() => {
+    if (moduleId) {
+      const selected = modules.find((module) => module.id === moduleId);
+      return selected ? [selected.rosterId || selected.id] : [];
+    }
+    return scopedModules.map((module) => module.rosterId || module.id).filter(Boolean);
+  }, [moduleId, modules, scopedModules]);
   const visibleRows = rows;
   const visibleLearners = useMemo(() => visibleRows.map((row) => row.learner), [visibleRows]);
 
@@ -686,7 +707,7 @@ export default function AttendancePage() {
       assigned.map((learner) => learner.email.trim().toLowerCase()).filter(Boolean),
     );
     return learners.filter((learner) =>
-      !isArchived(learner) && sessionEmails.has(learner.email.trim().toLowerCase()),
+      !isArchived(learner) && sessionEmails.has(rosterEmailFor(learner, sessionEmails)),
     );
   }, [learners, isArchived]);
 
@@ -977,7 +998,10 @@ export default function AttendancePage() {
     // Details is the historical audit view: include both the legacy KBC rows
     // and the newer live-session register. The register's recent/current reads
     // stay live-only, but a learner's history must not lose older KBC records.
-    void fetchBulkAttendanceKbcHistory(learnerId, controller.signal, { source: "all" })
+    void fetchBulkAttendanceKbcHistory(learnerId, controller.signal, {
+      source: "all",
+      email: historyRow.learner.email,
+    })
       .then(({ records, warnings }) => {
         if (controller.signal.aborted) return;
         setDetailKbcHistory(records);
@@ -1167,7 +1191,7 @@ export default function AttendancePage() {
         {/* Compact filter toolbar — shared by the register and the archive. */}
         <details className={styles.filters} open>
           <summary>Filters</summary>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <FilterCard
               variant="compact"
               icon="ri-stack-line"
@@ -1239,6 +1263,22 @@ export default function AttendancePage() {
                 const lecture = lectures.find((item) => item.id === value);
                 if (lecture?.sessionDate) handleDateChange(lecture.sessionDate, value);
                 else setLectureId(value);
+              }}
+            />
+            <FilterCard
+              variant="compact"
+              icon="ri-checkbox-circle-line"
+              label="Attendance mode"
+              value={attendanceModeFilter}
+              placeholder="All modes"
+              options={[
+                { value: "", label: "All modes" },
+                { value: "live", label: "Live Sessions" },
+                { value: "lazy", label: "Recorded" },
+              ]}
+              onChange={(value) => {
+                setAttendanceModeFilter(value as "" | "live" | "lazy");
+                setSelectedIds([]);
               }}
             />
           </div>
@@ -1364,6 +1404,10 @@ export default function AttendancePage() {
                   </div>
                 </div>
 
+                <HighlightLegend
+                  highlights={highlights}
+                  learnerKeys={visibleRows.map((row) => highlightKey(row.learner))}
+                />
                 <AttendanceTable
                   rows={visibleRows}
                   loading={pageLoading}
@@ -1373,6 +1417,8 @@ export default function AttendancePage() {
                   onToggleSelectAll={handleToggleSelectAll}
                   onOpenHistory={setHistoryRow}
                   onToggleRecord={toggleRecord}
+                  highlights={highlights}
+                  onHighlightChange={setHighlight}
                   currentRegister={{ ready: currentRegisterReady, statuses, savingIds: savingLiveLearnerIds, onMark: (learnerId, status) => { void handleMarkSelected(status, [learnerId]); } }}
                 />
                 <p className={styles.registerNotice}>Bulk actions save selected learners assigned to the chosen session. Selection can include learners hidden by search. Individual buttons save immediately; recent-history corrections use the existing Save action.</p>
@@ -1427,12 +1473,37 @@ export default function AttendancePage() {
                 />
               </section>
             )}
+
+            {tab === "highlights" && (
+              <HighlightsTab
+                rows={rows}
+                loading={dataLoading || scopeRosterLoading}
+                highlights={highlights}
+                onHighlightChange={setHighlight}
+              />
+            )}
           </>
         )}
+        <MonthlyGrid
+          rows={monthlyRows}
+          lectures={lectures}
+          selectedLecture={selectedLecture}
+          moduleCatalogueId={selectedLecture?.moduleCatalogueId
+            || (moduleId ? modules.find((module) => module.id === moduleId)?.rosterId || moduleId : "")}
+          groupId={groupId}
+          moduleCatalogueIds={monthlyModuleCatalogueIds}
+          date={date}
+          active={!isArchiveView && tab === "monthly"}
+          loading={dataLoading || scopeRosterLoading}
+          onSaved={() => {
+            setKbcRecentVersion((version) => version + 1);
+            setDetailHistoryVersion((version) => version + 1);
+          }}
+        />
       </main>
 
       {!historyRow && (pendingEditCount > 0 || detailSaveError) && (
-        <div className={`fixed inset-x-0 z-40 flex justify-center px-4 ${dirty ? "bottom-28 sm:bottom-24" : "bottom-0 pb-5"}`}>
+        <div className="fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-5">
           <div className="w-full max-w-md rounded-lg border border-primary-200 bg-background-50 p-3 shadow-lg" role="region" aria-label="Unsaved attendance corrections">
             {detailSaveError && <p className="mb-2 text-sm text-red-700" role="alert">{detailSaveError}</p>}
             {pendingEditCount > 0 && (

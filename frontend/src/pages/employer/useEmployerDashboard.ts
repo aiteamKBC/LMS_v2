@@ -1,38 +1,48 @@
 import { useEffect, useState } from 'react';
-import { fetchEmployerDashboardMetrics, fetchEmployerLearnerAttendance, fetchEmployerProgressReviews, type EmployerDashboardMetrics, type EmployerLearnerCard } from '@/api/employerPortal';
-import { learnerKey, progressReviews, type DashboardAttendance, type DashboardReviews, type Loadable } from './employerDashboardData';
+import { fetchEmployerDashboardMetrics, fetchEmployerLearnerAttendance, fetchEmployerProgressReviews, fetchEmployerProgressReviewSummary, type EmployerDashboardMetrics, type EmployerLearnerCard } from '@/api/employerPortal';
+import { learnerKey, londonToday, progressReviews, type DashboardAttendance, type DashboardReviews, type DashboardReviewSummaries, type Loadable } from './employerDashboardData';
 
 export function useEmployerDashboard(employerId: string, learners: EmployerLearnerCard[] | undefined, refresh: number, includeProgramme = true) {
   const [metrics, setMetrics] = useState<Loadable<EmployerDashboardMetrics>>({ status: 'loading' });
   const [programmeMetrics, setProgrammeMetrics] = useState<Loadable<EmployerDashboardMetrics>>({ status: 'loading' });
   const [attendance, setAttendance] = useState<DashboardAttendance>({});
   const [reviews, setReviews] = useState<DashboardReviews>({});
-  useEffect(() => {
-    const controller = new AbortController();
-    const { signal } = controller;
-    setProgrammeMetrics({ status: 'loading' });
-    if (includeProgramme && learners?.length) {
-      void fetchEmployerDashboardMetrics(employerId, signal, 'programme')
-        .then(data => { if (!signal.aborted) setProgrammeMetrics({ status: 'ready', data }); })
-        .catch(() => { if (!signal.aborted) setProgrammeMetrics({ status: 'error' }); });
-    }
-    return () => controller.abort();
-  }, [employerId, learners, refresh, includeProgramme]);
+  const [reviewSummaries, setReviewSummaries] = useState<DashboardReviewSummaries>({});
   useEffect(() => {
     const controller = new AbortController();
     const { signal } = controller;
     setMetrics({ status: 'loading' });
     setAttendance({});
     setReviews({});
+    setReviewSummaries({});
     if (!learners) return () => controller.abort();
     if (!learners.length) {
-      setMetrics({ status: 'ready', data: { learners: {}, asOf: '' } });
+      const empty = { learners: {}, asOf: '' };
+      setMetrics({ status: 'ready', data: empty });
+      if (includeProgramme) {
+        setProgrammeMetrics({ status: 'ready', data: empty });
+      }
       return () => controller.abort();
     }
-    void fetchEmployerDashboardMetrics(employerId, signal, 'summary')
-      .then(data => { if (!signal.aborted) setMetrics({ status: 'ready', data }); })
-      .catch(() => { if (!signal.aborted) setMetrics({ status: 'error', error: 'Learner progress could not be loaded.' }); });
+    if (includeProgramme) {
+      setProgrammeMetrics({ status: 'loading' });
+    }
+    if (includeProgramme) {
+      // Risk status is a small saved field; render it without waiting for the
+      // learner's full OTJ/module projection below.
+      void fetchEmployerDashboardMetrics(employerId, signal, 'status')
+        .then(data => { if (!signal.aborted) setMetrics({ status: 'ready', data }); })
+        .catch(() => { if (!signal.aborted) setMetrics({ status: 'error', error: 'Learner status could not be loaded.' }); });
+      void fetchEmployerDashboardMetrics(employerId, signal, 'programme')
+        .then(data => { if (!signal.aborted) setProgrammeMetrics({ status: 'ready', data }); })
+        .catch(() => { if (!signal.aborted) setProgrammeMetrics({ status: 'error' }); });
+    } else {
+      void fetchEmployerDashboardMetrics(employerId, signal, 'status')
+        .then(data => { if (!signal.aborted) setMetrics({ status: 'ready', data }); })
+        .catch(() => { if (!signal.aborted) setMetrics({ status: 'error', error: 'Learner status could not be loaded.' }); });
+    }
     setReviews(Object.fromEntries(learners.map(learner => [learnerKey(learner), { status: 'loading' }])));
+    if (includeProgramme) setReviewSummaries(Object.fromEntries(learners.map(learner => [learnerKey(learner), { status: 'loading' }])));
     setAttendance(Object.fromEntries(learners.map(learner => [learnerKey(learner), { status: 'loading' }])));
     // Publish each register as it arrives. A slow/failed learner must not hold
     // saved hours, risk statuses, or the other learners' attendance hostage.
@@ -49,7 +59,7 @@ export function useEmployerDashboard(employerId: string, learners: EmployerLearn
         }
       }
     }
-    void Promise.all(Array.from({ length: Math.min(2, learners.length) }, () => attendanceWorker()));
+    void Promise.all(Array.from({ length: Math.min(3, learners.length) }, () => attendanceWorker()));
     // Bound concurrent review reads; one failed learner must not hide everyone else.
     const queue = [...learners];
     async function worker() {
@@ -65,7 +75,27 @@ export function useEmployerDashboard(employerId: string, learners: EmployerLearn
       }
     }
     void Promise.all(Array.from({ length: Math.min(3, learners.length) }, () => worker()));
+    if (includeProgramme) {
+      // Resolve the home card from this month's compact calendar projection;
+      // the full review list continues loading independently for the journey.
+      const summaryQueue = [...learners];
+      async function summaryWorker() {
+        while (summaryQueue.length && !signal.aborted) {
+          const learner = summaryQueue.shift()!;
+          const key = learnerKey(learner);
+          try {
+            const result = await fetchEmployerProgressReviewSummary(
+              employerId, learner.kind, learner.id, londonToday().slice(0, 7), signal,
+            );
+            if (!signal.aborted) setReviewSummaries(current => ({ ...current, [key]: { status: 'ready', data: progressReviews(result.events) } }));
+          } catch {
+            if (!signal.aborted) setReviewSummaries(current => ({ ...current, [key]: { status: 'error', error: 'Review dates could not be loaded.' } }));
+          }
+        }
+      }
+      void Promise.all(Array.from({ length: Math.min(3, learners.length) }, () => summaryWorker()));
+    }
     return () => controller.abort();
-  }, [employerId, learners, refresh]);
-  return { metrics, programmeMetrics, attendance, reviews };
+  }, [employerId, learners, refresh, includeProgramme]);
+  return { metrics, programmeMetrics, attendance, reviews, reviewSummaries };
 }

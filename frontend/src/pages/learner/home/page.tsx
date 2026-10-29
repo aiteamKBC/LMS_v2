@@ -13,7 +13,7 @@ import type { LearnerKind } from '@/api/learnerDetail';
 import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { SupportChatWidget } from '@/components/SupportChatWidget';
 import { learnerHref } from '@/lib/learnerRoutes';
-import { LEARNER_FEEDBACK_ENABLED } from '@/lib/featureFlags';
+import { LEARNER_FEEDBACK_ENABLED, LEARNER_POST_LECTURE_FEEDBACK_ENABLED } from '@/lib/featureFlags';
 import { homeActions, greeting, homeUpcomingEvents, withLearner } from './homeData';
 import { ReferenceIcon } from './ReferenceIcon';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
@@ -98,7 +98,8 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
     kind, id, profile.real?.programmeStatus, ready && !preview && account.role === 'learner',
   );
   const loadCards = ready && !onboarding && !fresh;
-  const loadFeedbackCount = LEARNER_FEEDBACK_ENABLED && ready && (preview || kind === 'commercial' || (!onboarding && !fresh));
+  const feedbackEnabled = LEARNER_FEEDBACK_ENABLED || LEARNER_POST_LECTURE_FEEDBACK_ENABLED;
+  const loadFeedbackCount = feedbackEnabled && ready && (preview || kind === 'commercial' || (!onboarding && !fresh));
   const schedule = useLiveLearnerRead(kind, id, loadCards, upcomingSchedule.read, upcomingSchedule.peek);
   const week = useLiveLearnerRead(kind, id, loadCards, homeSummary.read, homeSummary.peek);
   const [feedbackPendingCount, setFeedbackPendingCount] = useState(0);
@@ -132,7 +133,7 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
     <StudentHomeHeader key={`${account.id}:${kind}:${id}`} name={name} homeHref={homeHref}
       identity={`${account.id}:${kind}:${id}`} events={events} loading={schedule.loading}
       error={!!schedule.error} onRetry={schedule.refresh}
-      feedbackEnabled={LEARNER_FEEDBACK_ENABLED}
+      feedbackEnabled={feedbackEnabled}
       feedbackHref={feedbackHref}
       feedbackPendingCount={feedbackPendingCount}
       supportHref={link('/learner/monthly-coaching')}/>

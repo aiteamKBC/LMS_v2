@@ -1,8 +1,11 @@
+import { useState } from "react";
 import type { AttendanceStatus, Learner } from "@/types/bulkAttendance";
 import { formatShortDate, getInitials } from "@/utils/bulkAttendance";
 import LearnerStatusBadge from "./LearnerStatusBadge";
 import { AppIcon } from '@/components/feature/AppIcon';
 import styles from '../bulkAttendance.module.css';
+import { HighlightPicker } from "./HighlightControls";
+import { highlightColor, highlightKey, type LearnerHighlight, type LearnerHighlights } from "./highlights";
 
 export interface AttendanceRow {
   learner: Learner;
@@ -50,6 +53,9 @@ interface AttendanceTableProps {
     savingIds: string[];
     onMark: (learnerId: string, status: 'present' | 'absent') => void;
   };
+  /** Browser-only learner highlights; the row button shows only with onHighlightChange. */
+  highlights?: LearnerHighlights;
+  onHighlightChange?: (key: string, next: LearnerHighlight | null) => void;
 }
 
 function formatBadgeDate(iso: string): string {
@@ -58,7 +64,8 @@ function formatBadgeDate(iso: string): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export default function AttendanceTable({ rows, loading, selectedIds, lectureInfo, onToggleSelect, onToggleSelectAll, onOpenHistory, onToggleRecord, currentRegister }: AttendanceTableProps) {
+export default function AttendanceTable({ rows, loading, selectedIds, lectureInfo, onToggleSelect, onToggleSelectAll, onOpenHistory, onToggleRecord, currentRegister, highlights, onHighlightChange }: AttendanceTableProps) {
+  const [openHighlightFor, setOpenHighlightFor] = useState<string | null>(null);
   const allSelected = rows.length > 0 && rows.every(row => selectedIds.includes(row.learner.id));
   return <div className={styles.tableScroll}><div className={styles.table}>
     <div className={styles.tableHeader}>
@@ -72,13 +79,18 @@ export default function AttendanceTable({ rows, loading, selectedIds, lectureInf
         const current = currentRegister?.ready ? currentRegister.statuses[learner.id] ?? 'unmarked' : null;
         const saving = currentRegister?.savingIds.includes(learner.id);
         const markedRecent = recent.filter(record => record.status !== 'unmarked');
-        return <div key={learner.id} className={styles.tableRow} data-selected={selectedIds.includes(learner.id)}>
+        const key = highlightKey(learner);
+        const highlight = highlights?.[key];
+        const color = highlightColor(highlight);
+        const pickerOpen = Boolean(onHighlightChange) && openHighlightFor === key;
+        return <div key={learner.id} className={`border-l-4 ${color ? color.row : "border-l-transparent"}`}>
+        <div className={styles.tableRow} style={color ? { backgroundColor: "transparent" } : undefined} data-selected={selectedIds.includes(learner.id)}>
           <button type="button" className={styles.select} aria-pressed={selectedIds.includes(learner.id)} aria-label={`Select ${learner.name}`} onClick={() => onToggleSelect(learner.id)}><AppIcon name="ri-check-line" /></button>
           <div className={styles.learnerCell}><span className={styles.avatar}>{getInitials(learner.name)}</span><div className={styles.learnerCopy}>
             <button type="button" className={styles.name} onClick={() => onOpenHistory(row)}>{learner.name}</button>
             <p>{learner.programme || 'Programme not recorded'}</p><p>{learner.email}</p>
             {lectureInfo[learner.id]?.moduleName && <p>Module: {lectureInfo[learner.id].moduleName}</p>}
-            <p><LearnerStatusBadge status={learner.status} /></p>
+            <p><LearnerStatusBadge status={learner.status} /></p><p>{learner.attendanceMode === "lazy" ? "Recorded" : "Live Sessions"}</p>
           </div></div>
           <div><div className={styles.currentControls}>
             {(['present', 'absent'] as const).map(status => <button key={status} type="button" aria-label={`Mark ${learner.name} ${status}`} aria-pressed={current === status} data-active={current === status ? status : undefined}
@@ -96,7 +108,18 @@ export default function AttendanceTable({ rows, loading, selectedIds, lectureInf
               <span>{formatBadgeDate(lecture.sessionDate)}</span></span>;
           })}</div><p className={styles.recentSummary}>{recent.length ? `${recent.filter(record => record.status === 'present').length} present / ${markedRecent.length} marked recent` : 'No recent records'}</p></div>
           <div className={styles.placement}><span>{cohortName}</span><span>{groupName}</span></div>
-          <div className={styles.history}><span title="Overall attendance is read when learner history is opened">&mdash;</span><button type="button" onClick={() => onOpenHistory(row)} aria-label={`View details for ${learner.name}`} title="View details"><AppIcon name="ri-history-line" /></button></div>
+          <div className={styles.history}>
+            {onHighlightChange && <button type="button" aria-label={`Highlight ${learner.name}`} aria-expanded={pickerOpen}
+              title={highlight?.note || 'Highlight learner'} onClick={() => setOpenHighlightFor(pickerOpen ? null : key)}>
+              {color ? <span aria-hidden="true" className={`inline-block h-3 w-3 rounded-full ${color.swatch}`} /> : <AppIcon name="ri-mark-pen-line" />}
+            </button>}<span title="Overall attendance is read when learner history is opened">&mdash;</span><button type="button" onClick={() => onOpenHistory(row)} aria-label={`View details for ${learner.name}`} title="View details"><AppIcon name="ri-history-line" /></button></div>
+        </div>
+        {pickerOpen && onHighlightChange && <div className="flex flex-wrap items-center gap-3 border-t border-background-200 px-4 py-3"
+          onKeyDown={event => { if (event.key === 'Escape') setOpenHighlightFor(null); }}>
+          <span className="text-xs text-foreground-500">Saved automatically in this browser only</span>
+          <HighlightPicker learnerName={learner.name} highlight={highlight} onChange={next => onHighlightChange(key, next)} />
+          <button type="button" onClick={() => setOpenHighlightFor(null)}>Done</button>
+        </div>}
         </div>;
       })}
   </div></div>;

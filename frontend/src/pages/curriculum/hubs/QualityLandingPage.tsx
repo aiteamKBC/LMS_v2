@@ -124,8 +124,10 @@ export function QualityLandingPage() {
       {(overview.error || programmes.error || !loading && (!modulesReady || !groupsReady)) && <div role="alert" className={styles.error}>Some quality results are unavailable. <button type="button" disabled={refreshing} onClick={() => void refresh()}>Retry quality checks</button></div>}
       {refreshing && <p role="status" className={styles.refreshStatus}>Refreshing quality results from current records…</p>}
       <section aria-labelledby="quality-destinations-heading">
-        <div className={styles.directoryHeading}><div><h2 id="quality-destinations-heading">Choose what you want to do</h2><p>Each destination owns its data, so you always know where a change will be saved.</p></div><span>4 workspaces</span></div>
+        <div className={styles.directoryHeading}><div><h2 id="quality-destinations-heading">Choose what you want to do</h2><p>Each destination owns its data, so you always know where a change will be saved.</p></div><span>6 workspaces</span></div>
         <div className={styles.destinations}>
+          <Destination title="Quality Forms" icon="ri-survey-line" tone="pink" description="Edit, preview and publish the questions used to assess coach meetings." href="/curriculum/quality/forms" />
+          <Destination title="Quality Checks" icon="ri-checkbox-circle-line" tone="teal" description="Open saved meeting reviews, screenshots, action plans and completed PDFs." href="/curriculum/coaching-recordings/reviews" />
           <Destination title="Published Content" icon="ri-book-open-line" tone="pink" description="See what is live, ready to run, or being delivered before it is published. Authored modules are grouped in the workspace."
             badge={loading ? 'Checking…' : modulesReady ? `${unpublished.length} unpublished module rows` : 'Count unavailable'} href="/curriculum/published" />
           <Destination title="Curriculum Reports" icon="ri-bar-chart-box-line" tone="teal" description="Coverage, delivery and staffing read from current records, previewed on screen and exportable as CSV." href="/curriculum/reports" />
@@ -155,7 +157,7 @@ export function QualityLandingPage() {
           href="/curriculum/published" records={moduleRecords(unpublished)} />
       </section>
       <div className={styles.additional}><Link to="/curriculum/audit-trail"><AppIcon className="ri-history-line" />Audit Trail<AppIcon className="ri-arrow-right-line" /></Link>
-        <p>Quality assurance workflow unavailable: sampling, IQA findings and sign-off are not supported here yet.</p></div>
+        <p>Meeting forms and saved quality checks are available above. Wider IQA review cycles and sign-off are not yet available.</p></div>
     </main>
   </WorkspaceShell>;
 }

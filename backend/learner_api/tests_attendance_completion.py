@@ -9,6 +9,10 @@ from coach_api.learning_plan_projection import native_state
 
 
 class AttendanceCompletionTests(SimpleTestCase):
+    def setUp(self):
+        self.manual = patch('learner_api.manual_attendance_completion.read_manual_completion', return_value={}).start()
+        self.addCleanup(patch.stopall)
+
     def component(self, **over):
         return {'componentId': 'C1', 'moduleId': 'M1', 'type': 'live_session', **over}
 
@@ -38,6 +42,36 @@ class AttendanceCompletionTests(SimpleTestCase):
         with patch('learner_api.teams_attendance.connections', {'enrolment': connection}):
             result = annotate_attendance_completion([self.component(attendanceCompleted=True)], SimpleNamespace(pk=7))
         self.assertNotIn('attendanceCompleted', result[0])
+
+    def test_staff_presence_completes_required_activity_without_provider_evidence(self):
+        ended = datetime(2026, 10, 14, 12, tzinfo=timezone.utc)
+        self.manual.return_value = {('C1', 'M1'): (True, ended)}
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value.fetchall.return_value = []
+        original = self.component(reflectionRequired=True, tutorValidationRequired=True, workplaceEvidenceRequired=True)
+        with patch('learner_api.teams_attendance.connections', {'enrolment': connection}):
+            result = annotate_attendance_completion([original, self.component(componentId='C2')], SimpleNamespace(pk=7))
+        self.assertTrue(result[0]['attendanceCompleted'])
+        self.assertEqual(result[0]['attendanceCompletedAt'], ended.isoformat())
+        self.assertNotIn('attendanceCompleted', original)
+        self.assertNotIn('attendanceCompleted', result[1])
+        self.assertTrue(result[0]['reflectionRequired'])
+        self.assertNotIn('componentProgress', result[0])
+        self.assertEqual(native_state(result[0], {})['status'], 'completed')
+        rows = aggregate_module_progress(None, {'components': result, 'quizAttempts': []}, [], [])
+        self.assertEqual((rows[0]['completed'], rows[0]['total']), (1, 2))
+
+    def test_staff_absence_removes_attendance_completion_without_erasing_submissions(self):
+        ended = datetime(2026, 10, 14, 12, tzinfo=timezone.utc)
+        self.manual.return_value = {('C1', 'M1'): (False, ended)}
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value.fetchall.return_value = [('C1', 'M1', ended)]
+        with patch('learner_api.teams_attendance.connections', {'enrolment': connection}):
+            result = annotate_attendance_completion([self.component()], SimpleNamespace(pk=7))
+        self.assertNotIn('attendanceCompleted', result[0])
+        progress = [{'kind': 'component', 'component_ref': 'C1', 'passed': True}]
+        rows = aggregate_module_progress(None, {'components': result, 'quizAttempts': []}, [], progress)
+        self.assertEqual(rows[0]['completed'], 1)
 
     def test_no_profile_or_no_live_component_needs_no_database(self):
         self.assertEqual(annotate_attendance_completion([self.component()], None), [self.component()])

@@ -1,7 +1,7 @@
 import { AppIcon } from '@/components/feature/AppIcon';
 import styles from '../bulkAttendance.module.css';
 
-export type RegisterTab = "daily" | "weekly" | "report";
+export type RegisterTab = "daily" | "weekly" | "monthly" | "report" | "highlights";
 
 interface RegisterTabsProps {
   active: RegisterTab;
@@ -11,7 +11,9 @@ interface RegisterTabsProps {
 const TABS: { key: RegisterTab; label: string; icon: string }[] = [
   { key: "daily", label: "Daily register", icon: "ri-list-check-2" },
   { key: "weekly", label: "Week", icon: "ri-calendar-2-line" },
+  { key: "monthly", label: "Monthly", icon: "ri-calendar-2-line" },
   { key: "report", label: "Report", icon: "ri-bar-chart-2-line" },
+  { key: "highlights", label: "Highlights", icon: "ri-mark-pen-line" },
 ];
 
 export default function RegisterTabs({ active, onChange }: RegisterTabsProps) {

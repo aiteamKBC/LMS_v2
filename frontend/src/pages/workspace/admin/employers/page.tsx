@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { useAuth } from '@/hooks/useAuth';
@@ -83,6 +83,7 @@ function EmployerCard({ employer, onOpen }: { employer: EmployerRow; onOpen: () 
 }
 
 export default function EmployerWorkspacePage() {
+  const location = useLocation();
   const navigate = useNavigate();
   const { auth } = useAuth();
   const [employers, setEmployers] = useState<EmployerRow[] | null>(null);
@@ -181,7 +182,7 @@ export default function EmployerWorkspacePage() {
                   <EmployerCard
                     key={employer.id}
                     employer={employer}
-                    onOpen={() => navigate(`/employers/${employer.id}`)}
+                    onOpen={() => navigate(`/employers/${employer.id}`, { state: { employerReturnTo: `${location.pathname}${location.search}${location.hash}` } })}
                   />
                 ))}
               </div>

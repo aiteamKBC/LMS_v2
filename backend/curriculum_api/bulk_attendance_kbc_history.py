@@ -67,9 +67,9 @@ def bulk_attendance_day_learners(request):
     return _with_warnings({'date': value, 'learnerIds': sorted(learner_ids)}, None)
 
 
-def _save_live_attendance(changes):
+def _save_live_attendance(changes, *, actor=''):
     from .bulk_attendance_live_register import save_live_attendance
-    return save_live_attendance(changes)
+    return save_live_attendance(changes, actor=actor)
 
 
 def save_kbc_attendance(dsn, changes):
@@ -140,7 +140,8 @@ def bulk_attendance_save_attendance(request):
     saved_live = []
     if live:
         try:
-            saved_live = _save_live_attendance(live)
+            actor = str(getattr(getattr(request, 'login_account', None), 'email', '') or '').strip()
+            saved_live = _save_live_attendance(live, actor=actor)
         except (LookupError, DatabaseError) as exc:
             missing = isinstance(exc, LookupError)
             if not saved_kbc:
@@ -171,7 +172,29 @@ def _attendance_status(value, source_status):
     return None
 
 
-def read_kbc_attendance_history(dsn, learner_id):
+def _session_date(value):
+    """Return the KBC calendar day for date and timestamp-shaped values."""
+    return str(value or '').strip()[:10]
+
+
+def _map_kbc_history_rows(rows):
+    records = []
+    for row in rows:
+        lecture_name = str(row['lectureName'] or '').strip()
+        records.append({
+            'recordKey': str(row['recordKey'] or '').strip(),
+            'learnerId': str(row['learnerId'] or '').strip(),
+            'sessionDate': _session_date(row['sessionDate']),
+            'moduleName': str(row['moduleName'] or '').strip(),
+            'lectureName': lecture_name,
+            'sessionNumber': _session_number(lecture_name),
+            'attendance': _attendance_status(row['attendance_value'], row['source_status']),
+            'source': 'kbc',
+        })
+    return records
+
+
+def read_kbc_attendance_history(dsn, learner_id, learner_email=''):
     # Neon's pooler rejects startup `options`; set the timeout per transaction.
     with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10) as connection:
         connection.read_only = True
@@ -193,13 +216,88 @@ def read_kbc_attendance_history(dsn, learner_id):
                 ''',
                 [learner_id],
             )
+            rows = cursor.fetchall()
+            if rows or not learner_email:
+                return _map_kbc_history_rows(rows)
+
+            # A learner can retain attendance under an older Aptem ID after a
+            # directory correction. Use the directory email only as a
+            # no-ID-match fallback; the normal path remains ID based.
+            cursor.execute(
+                '''
+                SELECT
+                    "key"::text AS "recordKey",
+                    "ID"::text AS "learnerId",
+                    "date"::text AS "sessionDate",
+                    coalesce("module", '') AS "moduleName",
+                    coalesce("lecture_name", '') AS "lectureName",
+                    "Attendance" AS attendance_value,
+                    "attendance_status" AS source_status
+                FROM public.kbc_attendance
+                WHERE lower(trim("Email")) = %s
+                ORDER BY "date" DESC NULLS LAST, "key" DESC
+                ''',
+                [learner_email],
+            )
+            return _map_kbc_history_rows(cursor.fetchall())
+
+
+RECENT_LECTURE_LIMIT = 4
+
+
+def _parse_month(value):
+    value = str(value or '').strip()
+    if len(value) != 7 or value[4] != '-':
+        raise ValueError('Choose a valid attendance month.')
+    try:
+        first = date.fromisoformat(f'{value}-01')
+        following = date(first.year + (first.month == 12), first.month % 12 + 1, 1)
+    except ValueError as exc:
+        raise ValueError('Choose a valid attendance month.') from exc
+    return first, following
+
+
+def read_kbc_month_attendance(dsn, first, following, learner_ids=None):
+    """Read saved KBC attendance records for one calendar month."""
+    with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10) as connection:
+        connection.read_only = True
+        connection.execute("SET LOCAL statement_timeout = '10s'")
+        # The KBC source has existed with both DATE and timestamp-shaped text
+        # values. Compare the calendar-day prefix so either shape follows the
+        # same month boundary and remains compatible with the Daily reader.
+        where = [
+            'substr("date"::text, 1, 10) >= %s',
+            'substr("date"::text, 1, 10) < %s',
+            '"ID" IS NOT NULL',
+        ]
+        # Text against text: Postgres has no text >= date operator.
+        params = [first.isoformat(), following.isoformat()]
+        cleaned_ids = [str(value).strip() for value in (learner_ids or []) if str(value).strip()]
+        if cleaned_ids:
+            where.append('"ID"::text = ANY(%s)')
+            params.append(cleaned_ids)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f'''SELECT
+                        "key"::text AS "recordKey",
+                        "ID"::text AS "learnerId",
+                        "date"::text AS "sessionDate",
+                        coalesce("module", '') AS "moduleName",
+                        coalesce("lecture_name", '') AS "lectureName",
+                        "Attendance" AS attendance_value,
+                        "attendance_status" AS source_status
+                    FROM public.kbc_attendance
+                    WHERE {' AND '.join(where)}
+                    ORDER BY "date", "key"''',
+                params,
+            )
             records = []
             for row in cursor.fetchall():
                 lecture_name = str(row['lectureName'] or '').strip()
                 records.append({
                     'recordKey': str(row['recordKey'] or '').strip(),
                     'learnerId': str(row['learnerId'] or '').strip(),
-                    'sessionDate': str(row['sessionDate'] or '').strip(),
+                    'sessionDate': _session_date(row['sessionDate']),
                     'moduleName': str(row['moduleName'] or '').strip(),
                     'lectureName': lecture_name,
                     'sessionNumber': _session_number(lecture_name),
@@ -209,7 +307,48 @@ def read_kbc_attendance_history(dsn, learner_id):
             return records
 
 
-RECENT_LECTURE_LIMIT = 4
+@require_GET
+def bulk_attendance_kbc_month_records(request):
+    try:
+        first, following = _parse_month(request.GET.get('month'))
+        raw_ids = str(request.GET.get('learner_ids') or '').split(',')
+        learner_ids = [value.strip() for value in raw_ids if value.strip()]
+        if len(learner_ids) > 1000 or any(not re.fullmatch(r'\d{1,20}', value) for value in learner_ids):
+            raise ValueError('The selected learners are invalid.')
+        dsn = learner_directory_dsn()
+        if not dsn:
+            return JsonResponse({'error': 'KBC attendance is not configured.'}, status=503)
+        kbc_records = read_kbc_month_attendance(dsn, first, following, learner_ids)
+
+        # Keep Monthly aligned with Daily: Daily reads the saved live register
+        # and lets a live row replace KBC rows on the same calendar day.  The
+        # monthly schedule endpoint is still used for unmarked scheduled days,
+        # but saved live rows must remain visible even when an old module/session
+        # no longer resolves through the current curriculum payload.
+        live_by_learner, warning = _live_register()
+        selected = set(learner_ids)
+        live_records = {
+            learner_id: [
+                record for record in rows
+                if first.isoformat() <= str(record.get('sessionDate') or '')[:10] < following.isoformat()
+            ]
+            for learner_id, rows in live_by_learner.items()
+            if not selected or learner_id in selected
+        }
+        learner_keys = set(selected) | {
+            record['learnerId'] for record in kbc_records if record.get('learnerId')
+        } | set(live_records)
+        merged = []
+        for learner_id in learner_keys:
+            merged.extend(merge_live_over_kbc(
+                [record for record in kbc_records if record.get('learnerId') == learner_id],
+                live_records.get(learner_id, []),
+            ))
+        return _with_warnings({'records': merged}, warning)
+    except ValueError as exc:
+        return JsonResponse({'error': str(exc)}, status=400)
+    except psycopg.Error:
+        return JsonResponse({'error': 'Unable to load monthly KBC attendance. Please try again.'}, status=503)
 
 
 def read_kbc_recent_attendance(dsn, limit=RECENT_LECTURE_LIMIT):
@@ -258,7 +397,7 @@ def read_kbc_recent_attendance(dsn, limit=RECENT_LECTURE_LIMIT):
                 recent.setdefault(learner_id, []).append({
                     'recordKey': str(row['recordKey'] or '').strip(),
                     'learnerId': learner_id,
-                    'sessionDate': str(row['sessionDate'] or '').strip(),
+                    'sessionDate': _session_date(row['sessionDate']),
                     'moduleName': str(row['moduleName'] or '').strip(),
                     'lectureName': lecture_name,
                     'sessionNumber': _session_number(lecture_name),
@@ -304,6 +443,9 @@ def bulk_attendance_kbc_history(request):
     learner_id = request.GET.get('learner_id', '').strip()
     if not re.fullmatch(r'\d{1,20}', learner_id):
         return JsonResponse({'error': 'A valid learner is required.'}, status=400)
+    learner_email = request.GET.get('learner_email', '').strip().lower()
+    if len(learner_email) > 320 or (learner_email and not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', learner_email)):
+        return JsonResponse({'error': 'The learner email is invalid.'}, status=400)
 
     live_only = request.GET.get('source') == 'live'
     records = []
@@ -312,7 +454,7 @@ def bulk_attendance_kbc_history(request):
             dsn = learner_directory_dsn()
             if not dsn:
                 return JsonResponse({'error': 'KBC attendance is not configured.'}, status=503)
-            records = read_kbc_attendance_history(dsn, learner_id)
+            records = read_kbc_attendance_history(dsn, learner_id, learner_email)
         except psycopg.Error:
             # Driver errors can expose connection information.
             return JsonResponse({'error': 'Unable to load KBC attendance history. Please try again.'}, status=503)

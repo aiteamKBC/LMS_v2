@@ -4,6 +4,8 @@
   --purple: #7937ef;
   --line: #e5ddfa;
   --surface: #fff;
+  --link-ink: var(--purple);
+  --link-press: color-mix(in srgb, var(--purple) 80%, #180843);
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -18,7 +20,7 @@
 .page button, .page a { -webkit-tap-highlight-color: transparent; }
 .page button { cursor: pointer; }
 .page button:disabled { cursor: default; opacity: .4; }
-.page :is(a, button, input, select, [tabindex]):focus-visible { outline: 3px solid #9b6df0; outline-offset: 3px; }
+.page :is(a, button, input, select, [tabindex]):focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
 .page :is(h1, h2, h3, p) { margin: 0; }
 .page :is(h1, h2, h3) { color: var(--ink); }
 .page svg { flex-shrink: 0; }
@@ -45,7 +47,7 @@
 .heroMessage img { width: 126px; height: 96px; object-fit: contain; }
 .heroMessage p { font-weight: 650; font-size: 14px; line-height: 1.45; }
 .heroMessage p span { display: block; height: 3px; width: 72px; background: #efc448; border-radius: 2px; margin-top: 11px; }
-.backButton { position: absolute; bottom: 6px; right: 18px; display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent; color: var(--purple); font-size: 11px !important; }
+.backButton { position: absolute; bottom: 6px; right: 18px; display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent; color: var(--purple); font-size: 11px !important; text-decoration: none; }
 /* The compact header the two sidebar sections use instead of the home hero:
    the greeting belongs to the overview, these pages need the section name. */
 .sectionHero { position: relative; display: flex; align-items: center; gap: 18px; min-height: 96px; padding: 18px 24px; border: 1px solid #dacefc; border-radius: 14px; background: linear-gradient(110deg, #fff 5%, #fcfaff 65%, #efe8ff); }
@@ -92,6 +94,7 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 .filterLabel select { width: 100%; height: 34px; min-width: 0; padding: 0 22px 0 10px; border: 1px solid var(--line); border-radius: 7px; background-color: var(--surface); color: var(--ink); font-size: 11px; }
 .clearButton { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 10px 15px; border: 1px solid #dac9ff; border-radius: 10px; background: var(--surface); color: var(--purple); font-weight: 650; white-space: nowrap; cursor: pointer; }
 .clearButton:hover, .viewButton:hover { background: #f7f2ff; }
+.clearButton:active, .viewButton:active, .sectionBack:active { background: color-mix(in srgb, var(--purple) 13%, var(--surface)); }
 .dashboardGrid { display: grid; grid-template-columns: minmax(0, 2.36fr) minmax(315px, 1fr); align-items: start; gap: 14px; }
 .mainColumn, .sideColumn { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .panel { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); box-shadow: 0 7px 21px #42258203; }
@@ -99,8 +102,28 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 .panelHeader h2 { display: flex; align-items: center; min-width: 0; gap: 10px; font-size: 14px; font-weight: 750; line-height: 1.35; letter-spacing: -.3px; scroll-margin-top: 90px; }
 .panelHeader h2 svg { color: var(--purple); }
 :global(#employer-dashboard) .panelHeader h2 { font-size: 14px; }
+.panelHeaderActions { display: flex; align-items: center; justify-content: flex-end; gap: 9px; min-width: 0; }
+.panelNameFilter { display: flex; align-items: center; gap: 7px; width: 175px; height: 34px; min-width: 0; padding: 0 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--muted); transition: border-color 150ms ease, box-shadow 150ms ease; }
+.panelNameFilter:focus-within { border-color: var(--purple); box-shadow: 0 0 0 2px #7937ef12; }
+.panelNameFilter input { flex: 1; width: 0; min-width: 0; height: auto; padding: 0; border: 0; border-radius: 0; outline: 0; background: transparent; box-shadow: none; color: var(--ink); font-size: 11px; }
+:global(#employer-dashboard) .panelNameFilter input,
+:global(#employer-dashboard) .panelNameFilter input:focus {
+  min-height: 0 !important;
+  height: 100% !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-size: 11px !important;
+  appearance: none;
+}
+.panelNameFilter input::placeholder { color: var(--muted); opacity: 1; }
 .textButton { display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; padding: 0; border: 0; background: transparent; color: var(--purple); font-size: 11px !important; font-weight: 650; text-decoration: none; }
-.textButton:hover { text-decoration: underline; }
+.reviewActionLink { padding: 6px 9px !important; border: 1px solid transparent !important; border-radius: 7px; text-decoration: none !important; transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease; }
+.reviewActionLink:hover { border-color: color-mix(in srgb, var(--purple) 18%, transparent) !important; background: color-mix(in srgb, var(--purple) 6%, var(--surface)); color: color-mix(in srgb, var(--purple) 82%, #24134b); }
+.reviewActionLink:active { background: color-mix(in srgb, var(--purple) 14%, var(--surface)); }
 .caption, .unavailable { color: var(--muted); font-size: 10px; line-height: 1.45; }
 .tableScroll { overflow-x: auto; margin: 0 16px 8px; scrollbar-width: thin; scrollbar-color: #d7c9ef transparent; }
 .learnerTable { width: 100%; min-width: 900px; border-collapse: collapse; text-align: left; font-size: 11px; }
@@ -120,7 +143,6 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 .avatar { display: grid; place-items: center; width: 43px; height: 43px; flex: 0 0 43px; border-radius: 50%; color: #0862a7; background: #e2f1ff; font-size: 12px; font-weight: 750; }
 .avatar[data-tone='mint'] { color: #008863; background: #dcf7ed; }
 .learnerName { display: inline-block; color: var(--ink); font-size: 11px; line-height: 1.35; font-weight: 750; text-decoration: none; overflow-wrap: anywhere; }
-.learnerName:hover { color: var(--purple); text-decoration: underline; }
 .identity small, .journeyIdentity small { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; line-height: 1.35; overflow-wrap: anywhere; }
 .progressCell { min-width: 70px; }
 .progressCell strong { display: block; margin-bottom: 6px; font-size: 12px; }
@@ -139,7 +161,7 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 .viewButton { display: inline-flex; justify-content: center; align-items: center; gap: 5px; min-height: 33px; padding: 7px 10px; border: 1px solid #dac9ff; border-radius: 8px; color: var(--purple); font-size: 10px; font-weight: 650; white-space: nowrap; text-decoration: none; }
 .pagination { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 6px 16px 13px; color: var(--muted); }
 .pagination button { display: grid; place-items: center; width: 30px; height: 30px; color: var(--purple); background: var(--surface); border: 1px solid var(--line); border-radius: 7px; }
-.chartsGrid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.1fr) minmax(0, .85fr); gap: 13px; }
+.chartsGrid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.1fr); gap: 13px; }
 .chartsGrid .panelHeader { padding: 13px 14px; }
 .chartsGrid .panelHeader h2 { gap: 8px; font-size: 12px; }
 :global(#employer-dashboard) .chartsGrid .panelHeader h2 { font-size: 12px; }
@@ -156,18 +178,14 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 .programmes { display: flex; flex-direction: column; gap: 22px; padding: 23px 18px; max-height: 330px; overflow-y: auto; }
 .programmeHeading { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 9px; font-size: 11px; }
 .programmeHeading button { min-width: 0; border: 0; background: transparent; padding: 0; color: var(--ink); font-weight: 650; text-align: left; }
-.programmeHeading button:hover { text-decoration: underline; }
 .programmes .progressTrack { height: 16px; }
 .programmes .caption { display: block; margin-top: 6px; }
-.engagementEmpty { display: flex; min-height: 190px; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 18px 16px 25px; text-align: center; color: var(--muted); }
-.engagementEmpty svg { color: #c6b0eb; }
-.engagementEmpty strong { font-size: 12px; color: #79639d; }
-.engagementEmpty p { max-width: 170px; font-size: 11px; line-height: 1.6; }
 .actionsPanel { border-color: #f6e2eb; }
 .actionsPanel .panelHeader h2, .actionsPanel .panelHeader h2 svg { color: #f43779; }
 .actionList { display: flex; flex-direction: column; gap: 9px; padding: 0 12px 12px; }
 .actionItem { display: flex; align-items: center; gap: 12px; padding: 12px 11px; border: 1px solid #fae0eb; border-radius: 10px; text-decoration: none; background: linear-gradient(100deg, #fff, #fffafc); }
-.actionItem:hover { border-color: #efa8c2; }
+.actionItem:hover { border-color: #efa8c2; background: linear-gradient(100deg, #fffbfc, #fff0f5); }
+.actionItem:active { border-color: #e8789f; background: linear-gradient(100deg, #fff6f9, #ffe6ee); }
 .actionItem > span:nth-child(2) { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 5px; font-size: 11px; color: #e83b77; }
 .actionItem strong { color: var(--ink); font-size: 11px; overflow-wrap: anywhere; }
 .actionItem small { color: var(--muted); font-size: 10px; }
@@ -190,17 +208,29 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 .journeySteps li:first-child::before { left: 50%; }
 .journeySteps li:last-child::before { right: 50%; }
 .journeySteps a { position: relative; display: flex; align-items: center; flex-direction: column; gap: 4px; padding: 0 4px; color: var(--ink); font-size: 9px; line-height: 1.4; text-decoration: none; text-align: center; overflow-wrap: anywhere; }
-.journeySteps a:hover strong { color: var(--purple); text-decoration: underline; }
-.journeyMarker { display: grid; place-items: center; height: 21px; width: 21px; border: 1.5px solid #b7a5cf; border-radius: 50%; background: #f8f6fc; color: #9987b4; font-size: 12px; font-weight: 700; margin-bottom: 4px; }
-.journeySteps [data-status='completed'] .journeyMarker { border-color: #009b71; background: #009b71; color: #fff; }
-.journeySteps [data-status='signature'] .journeyMarker { border-color: #fa3d7e; background: #fa3d7e; color: #fff; }
-.journeySteps [data-status='signature'] small { color: #e73575; }
-.journeySteps small { color: var(--muted); font-size: 9px; }
+.journeySteps a { border-radius: 10px; transition: background-color 150ms ease; }
+.journeySteps a:hover { background: color-mix(in srgb, var(--purple) 5%, var(--surface)); }
+.journeySteps a:active { background: color-mix(in srgb, var(--purple) 12%, var(--surface)); }
+.journeySteps a:hover strong { color: var(--purple); }
+/* Status tones are the ones the learner's own review timeline uses
+   (learner/reviews/programmeReviewTimeline.module.css), so a review reads the
+   same here and inside the learner page. Before this, only completed and
+   "your signature needed" carried a colour and every other state fell back to
+   the same grey, which hid "Waiting for signatures" completely. */
+.journeySteps li { --tone: #e9eff6; --tone-ink: #405670; --tone-ring: #8293aa; }
+.journeySteps li[data-status='scheduled'] { --tone: #fff1c4; --tone-ink: #705300; --tone-ring: #dda900; }
+.journeySteps li[data-status='in-progress'] { --tone: #e8effc; --tone-ink: #315986; --tone-ring: #6e91c2; }
+.journeySteps li[data-status='signatures'] { --tone: #ede9fe; --tone-ink: #5b21b6; --tone-ring: #8b5cf6; }
+.journeySteps li[data-status='completed'] { --tone: #e4f5ea; --tone-ink: #24633d; --tone-ring: #4aaf70; }
+.journeySteps li[data-status='cancelled'] { --tone: #fce8e8; --tone-ink: #9d3535; --tone-ring: #e37474; }
+/* "Your signature needed" is the employer's own action, so it keeps the pink the Action required panel uses. */
+.journeySteps li[data-status='signature'] { --tone: #ffe3ee; --tone-ink: #a2134a; --tone-ring: #fa3d7e; }
+.journeyMarker { display: grid; place-items: center; height: 21px; width: 21px; border: 1.5px solid var(--tone-ring); border-radius: 50%; background: var(--tone); color: var(--tone-ink); font-size: 12px; font-weight: 700; margin-bottom: 4px; }
+.journeySteps small { color: var(--tone-ink); font-size: 9px; font-weight: 650; }
 /* The review that is due next keeps an outline; the compensating margin holds the timeline line in place. */
 .journeySteps a[aria-current]:not([data-selection='marker']) { border-radius: 10px; padding-block: 6px; margin-block: -6px; box-shadow: 0 0 0 1.5px var(--purple); }
-.journeySteps a[aria-current]:not([data-selection='marker']) .journeyMarker { border-color: var(--purple); color: var(--purple); }
-.journeyLink { display: flex; align-items: center; justify-content: flex-end; gap: 5px; margin-top: 10px; color: var(--purple); font-size: 10px; text-decoration: none; }
-.journeyLink:hover { text-decoration: underline; }
+.journeySteps a[aria-current]:not([data-selection='marker']) .journeyMarker { outline: 2px solid color-mix(in srgb, var(--purple) 55%, transparent); outline-offset: 4px; }
+.journeyLink { display: flex; align-items: center; justify-content: flex-end; gap: 5px; width: fit-content; margin: 10px 0 0 auto; color: var(--purple); font-size: 10px; text-decoration: none; }
 .journeyEmpty { padding: 16px 0 8px; color: var(--muted); font-size: 11px; }
 .emptyState, .errorState, .loading { display: flex; min-height: 220px; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; color: #7866a6; text-align: center; }
 .emptyState h3 { color: var(--ink); font-size: 15px; }
@@ -218,9 +248,6 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
   .heroMessage img { width: 108px; }
   .heroMessage p { font-size: 12px; }
   .chartsGrid { grid-template-columns: 1fr 1fr; }
-  .chartsGrid > :last-child { grid-column: 1 / -1; }
-  .engagementEmpty { min-height: 95px; flex-direction: row; text-align: left; padding: 12px 20px; }
-  .engagementEmpty p { max-width: none; }
 }
 @media (max-width: 1250px) {
   .dashboardGrid { grid-template-columns: minmax(0, 1fr); }
@@ -233,9 +260,7 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
   .statLabel { font-size: 10px; }
   .statCopy small { font-size: 10px; }
   .heroMessage { display: none; }
-  .chartsGrid { grid-template-columns: 1.35fr 1fr .85fr; }
-  .chartsGrid > :last-child { grid-column: auto; }
-  .engagementEmpty { min-height: 190px; flex-direction: column; text-align: center; }
+  .chartsGrid { grid-template-columns: 1.35fr 1fr; }
 }
 @media (max-width: 850px) {
   .page { padding: 13px; gap: 16px; }
@@ -244,8 +269,6 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
   .statCard { min-height: 100px; }
   .statArrow { display: grid; }
   .chartsGrid { grid-template-columns: 1fr 1fr; }
-  .chartsGrid > :last-child { grid-column: 1 / -1; }
-  .engagementEmpty { min-height: 110px; }
   .filters { gap: 9px; }
 }
 @media (max-width: 600px) {
@@ -267,7 +290,6 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
   .clearButton { grid-column: 1 / -1; grid-row: auto; min-height: 38px; }
   .filterLabel select { height: 40px; }
   .sideColumn, .chartsGrid { grid-template-columns: minmax(0, 1fr); }
-  .chartsGrid > :last-child { grid-column: auto; }
   .donutContent { gap: 22px; padding-top: 22px; }
   .donut { width: 120px; height: 120px; flex-basis: 120px; }
   .legend { flex-basis: 130px; }
@@ -283,7 +305,10 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 :global([data-theme='dark']) .sectionBack { background: #2b2138; border-color: #594270; }
 :global([data-theme='dark']) .journeys[data-wide] .journey { border-color: #3c3459; }
 :global([data-theme='dark']) .journeySteps a[aria-current]:not([data-selection='marker']) { box-shadow: 0 0 0 1.5px #a97dff; }
-:global([data-theme='dark']) .journeySteps a[aria-current]:not([data-selection='marker']) .journeyMarker { border-color: #a97dff; color: #c6a8ff; }
+:global([data-theme='dark']) .journeySteps a[aria-current]:not([data-selection='marker']) .journeyMarker { outline-color: #a97dff99; }
+/* The tone fills stay light in dark mode, as they do on the learner page, but the
+   label sits on the dark surface, so it takes the mid-tone ring colour instead of the ink. */
+:global([data-theme='dark']) .journeySteps small { color: var(--tone-ring); }
 :global([data-theme='dark']) .heroIcon { background: #35244e; border-color: #594270; }
 :global([data-theme='dark']) .statCard { --tint: #2c2440; --border: #4b3b65; }
 :global([data-theme='dark']) .panelHeader,
@@ -309,14 +334,15 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 @container (max-width: 760px) {
   .statsGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .chartsGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .chartsGrid > :last-child { grid-column: 1 / -1; }
+  .panelHeader { align-items: flex-start; flex-wrap: wrap; }
+  .panelHeaderActions { width: 100%; justify-content: space-between; }
+  .panelNameFilter { width: min(100%, 260px); }
 }
 @container (max-width: 560px) {
   .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .searchBox, .clearButton { grid-column: 1 / -1; }
   .clearButton { grid-row: auto; }
   .sideColumn, .chartsGrid { grid-template-columns: minmax(0, 1fr); }
-  .chartsGrid > :last-child { grid-column: auto; }
 }
 @container (max-width: 1300px) {
   .page[data-view='reviews'] .filters { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -409,12 +435,11 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 .page[data-view='home'] .progressCell strong { font-size: 14px; }
 .page[data-view='home'] :is(.reviewCell a, .reviewCell small, .statusBadge, .statusHelp, .viewButton, .unavailable, .caption) { font-size: 13px; }
 .page[data-view='home'] .viewButton { min-height: 38px; padding: 9px 12px; border-radius: 9px; }
-.page[data-view='home'] .chartsGrid { flex: 1 0 auto; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.1fr) minmax(0, .85fr); gap: 16px; }
-.page[data-view='home'] .chartsGrid > :last-child { grid-column: auto; }
+.page[data-view='home'] .chartsGrid { flex: 1 0 auto; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.1fr); gap: 16px; }
 :global(#employer-dashboard)[data-view='home'] .chartsGrid .panelHeader h2 { font-size: 16px; }
 .page[data-view='home'] .chartsGrid .panelHeader { padding: 16px; }
 .page[data-view='home'] .chartCaption { padding: 12px 18px 0; font-size: 13px; }
-.page[data-view='home'] :is(.donutContent, .programmes, .engagementEmpty) { flex: 1; }
+.page[data-view='home'] :is(.donutContent, .programmes) { flex: 1; }
 .page[data-view='home'] .donutContent { gap: 20px; padding: 24px 18px; }
 .page[data-view='home'] .donut { width: 142px; height: 142px; flex-basis: 142px; }
 .page[data-view='home'] .donut > div { width: 106px; height: 106px; }
@@ -423,9 +448,6 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 .page[data-view='home'] .programmes { justify-content: center; gap: 28px; padding: 24px 20px; max-height: none; }
 .page[data-view='home'] .programmeHeading { font-size: 14px; line-height: 1.5; }
 .page[data-view='home'] .programmes .progressTrack { height: 12px; }
-.page[data-view='home'] .engagementEmpty { flex-direction: column; text-align: center; gap: 12px; padding: 24px 18px; }
-.page[data-view='home'] .engagementEmpty strong { font-size: 15px; }
-.page[data-view='home'] .engagementEmpty p { font-size: 14px; max-width: 240px; }
 .page[data-view='home'] .actionList { padding: 14px; }
 .page[data-view='home'] .noActions { padding: 12px; border-radius: 10px; background: color-mix(in srgb, #009b71 7%, var(--surface)); font-size: 14px; }
 .page[data-view='home'] .actionItem { padding: 15px 12px; }
@@ -478,9 +500,6 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
   .page[data-view='home'] .sideColumn { align-items: stretch; }
   .page[data-view='home'] .hero { min-height: 138px; padding: 24px; }
   .page[data-view='home'] .chartsGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .page[data-view='home'] .chartsGrid > :last-child { grid-column: 1 / -1; }
-  .page[data-view='home'] .engagementEmpty { min-height: 90px; flex-direction: row; text-align: left; padding: 16px 20px; }
-  .page[data-view='home'] .engagementEmpty p { max-width: none; }
 }
 @media (max-width: 850px) {
   .page[data-view='home'] { padding: 16px; gap: 16px; }
@@ -495,8 +514,6 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
   .page[data-view='home'] .statCopy small { font-size: 13px; }
   .page[data-view='home'] .filters { padding: 12px; }
   .page[data-view='home'] .chartsGrid { grid-template-columns: minmax(0, 1fr); }
-  .page[data-view='home'] .chartsGrid > :last-child { grid-column: auto; }
-  .page[data-view='home'] .engagementEmpty { flex-direction: column; text-align: center; }
   .page[data-view='home'] .panelHeader { padding: 16px; }
   :global(#employer-dashboard)[data-view='home'] .panelHeader h2 { font-size: 16px; }
 }
@@ -506,12 +523,153 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 }
 
 .meetingList { display: grid; gap: 12px; padding: 16px 20px; }
-.meetingItem { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; }
+.meetingItem {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 15px 17px 15px 21px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--purple) 15%, var(--line));
+  border-radius: 13px;
+  background: linear-gradient(118deg, var(--surface) 58%, color-mix(in srgb, var(--purple) 5%, var(--surface)));
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+/* The purple spine marks the card as a booked meeting without adding a badge. */
+.meetingItem::before { position: absolute; inset: 0 auto 0 0; width: 4px; background: linear-gradient(180deg, #a97dff, var(--purple)); content: ''; }
+.meetingItem:hover { border-color: color-mix(in srgb, var(--purple) 34%, var(--line)); box-shadow: 0 8px 20px #4a1fa012; }
 .meetingItem > div:first-child { display: grid; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
 .meetingItem strong { font-size: 14px; }
+.page .meetingItem .learnerName { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0; }
+.reviewTitle { width: fit-content; color: var(--ink); font-size: 15px; font-weight: 750; line-height: 1.4; letter-spacing: -.2px; text-decoration: none; }
+.meetingWhen {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  gap: 7px;
+  margin-top: 1px;
+  padding: 5px 11px;
+  border: 1px solid color-mix(in srgb, var(--purple) 18%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--purple) 7%, var(--surface));
+  color: color-mix(in srgb, var(--ink) 85%, var(--purple));
+  font-size: 11px;
+  font-weight: 650;
+}
+.meetingWhen svg { color: var(--purple); }
 .meetingItem small { color: var(--muted); }
-.meetingActions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; }
+.meetingCoach { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; }
+.meetingCoach svg { color: color-mix(in srgb, var(--muted) 75%, var(--purple)); }
+.meetingActions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; }
+.page .meetingActions .viewButton {
+  min-height: 36px;
+  gap: 7px;
+  padding: 8px 15px;
+  border-color: transparent;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #8d4ef4, var(--purple));
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  box-shadow: 0 5px 13px #7937ef2e;
+  transition: box-shadow 150ms ease, filter 150ms ease;
+}
+.page .meetingActions .viewButton:hover { background: linear-gradient(135deg, #8d4ef4, var(--purple)); box-shadow: 0 7px 18px #7937ef45; filter: brightness(1.07); }
+.page .meetingActions .viewButton:active { box-shadow: 0 2px 6px #7937ef3d; filter: brightness(.94); }
+.page .meetingActions .reviewActionLink { padding: 8px 13px !important; border-color: color-mix(in srgb, var(--purple) 22%, transparent) !important; border-radius: 9px; background: var(--surface); font-size: 11px !important; font-weight: 700; }
+.page .meetingActions .reviewActionLink:hover { border-color: color-mix(in srgb, var(--purple) 45%, transparent) !important; background: color-mix(in srgb, var(--purple) 8%, var(--surface)); }
+.page .meetingActions .reviewActionLink:active { background: color-mix(in srgb, var(--purple) 16%, var(--surface)); }
+/* A missing join link is a state the employer must act on, so it reads as a notice, not as plain help text. */
+.page .meetingActions .unavailable {
+  max-width: 250px;
+  padding: 7px 11px;
+  border: 1px solid #f0d8b4;
+  border-radius: 9px;
+  background: #fff8ef;
+  color: #8a5a0b;
+  font-size: 10px;
+  font-weight: 600;
+}
+.page[data-view='home'] .meetingItem .learnerName { font-size: 12px; }
+.page[data-view='home'] .reviewTitle { font-size: 16px; }
+.page[data-view='home'] :is(.meetingWhen, .meetingCoach) { font-size: 12px; }
+.page[data-view='home'] .meetingActions :is(.viewButton, .reviewActionLink) { font-size: 12px !important; }
+.page[data-view='home'] .meetingActions .unavailable { font-size: 11px; }
+:global([data-theme='dark']) .meetingItem { border-color: #4a3c6b; background: linear-gradient(118deg, #262038 58%, #2f2648); }
+:global([data-theme='dark']) .meetingItem:hover { border-color: #6a4f9c; box-shadow: 0 8px 20px #0000003d; }
+:global([data-theme='dark']) .meetingWhen { border-color: #574473; background: #2f2748; color: #e3d8ff; }
+:global([data-theme='dark']) .meetingWhen svg { color: #b98cff; }
+:global([data-theme='dark']) .page .meetingActions .reviewActionLink { background: #2b2138; }
+:global([data-theme='dark']) .page .meetingActions .reviewActionLink:hover { background: #352a49; }
+:global([data-theme='dark']) .page .meetingActions .unavailable { border-color: #6a5330; background: #342818; color: #f0c98a; }
 @media (max-width: 600px) {
   .meetingItem { align-items: flex-start; flex-direction: column; }
   .meetingActions { justify-content: flex-start; }
 }
+
+/* --- Link states ----------------------------------------------------------
+   Every plain text link in the portal answers the pointer the same way: the
+   text alone shifts to purple, and deepens while it is held down. No underline
+   and no filled field, so a bold title stays readable and nothing moves. Links
+   that already own a pill or a card shape keep their own treatment above. The
+   radius is only there to round the keyboard focus ring. */
+.page :is(.learnerName, .reviewTitle, .journeyLink, .backButton, .reviewCell a, .programmeHeading button, .textButton:not(.reviewActionLink)) { border-radius: 5px; transition: color 150ms ease; }
+.page :is(.learnerName, .reviewTitle, .journeyLink, .backButton, .reviewCell a, .programmeHeading button, .textButton:not(.reviewActionLink)):hover { color: var(--link-ink); }
+.page :is(.learnerName, .reviewTitle, .journeyLink, .backButton, .reviewCell a, .programmeHeading button, .textButton:not(.reviewActionLink)):active { color: var(--link-press); }
+/* The resting purple is too dark to lift off the dark surface. */
+:global([data-theme='dark']) .page { --link-ink: #c3a4ff; --link-press: #e2d3ff; }
+/* The records behind a summary card (EmployerStatDialog). The dialog is
+   portalled to document.body, so it carries its own tokens rather than
+   inheriting the page's. */
+.statDialog {
+  --ink: #27106c;
+  --muted: #7565a9;
+  --purple: #7937ef;
+  --line: #e5ddfa;
+  --surface: #fff;
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(70vh, 620px);
+  padding: 0;
+  margin: auto;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  box-shadow: 0 24px 60px -20px #1c0b4f59;
+}
+.statDialog::backdrop { background: #1b0b4a5c; backdrop-filter: blur(2px); }
+.statDialog button { cursor: pointer; font: inherit; }
+.statDialog :is(h2, p) { margin: 0; }
+.statDialog :is(button):focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
+.statDialogHeader { display: flex; align-items: flex-start; gap: 12px; padding: 18px 20px 14px; border-bottom: 1px solid var(--line); }
+.statDialogHeader > div { flex: 1; min-width: 0; }
+.statDialogHeader h2 { font-size: 16px; font-weight: 700; color: var(--ink); }
+.statDialogHeader p { margin-top: 3px; color: var(--muted); font-size: 12px; }
+.statDialogHeader button { display: grid; place-items: center; width: 32px; height: 32px; flex-shrink: 0; border: 1px solid var(--line); border-radius: 50%; background: var(--surface); color: var(--muted); }
+.statDialogHeader button:hover { border-color: var(--purple); color: var(--purple); }
+.statDialogList { display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto; padding: 14px 20px; margin: 0; list-style: none; }
+.statDialogList li { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 11px; background: linear-gradient(130deg, var(--surface), #faf7ff); }
+.statDialogRow { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.statDialogRow strong { font-size: 13px; font-weight: 650; }
+.statDialogRow small { color: var(--muted); font-size: 11px; }
+.statDialogSide { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.statDialogMeta { flex-shrink: 0; color: var(--purple); font-size: 11px; font-weight: 650; text-align: right; }
+.statDialog .viewButton { min-height: 34px; gap: 6px; padding: 7px 11px; font-size: 11px; }
+.statDialog .reviewActionLink { border-color: color-mix(in srgb, var(--purple) 22%, transparent) !important; background: var(--surface); white-space: nowrap; }
+.statDialog .unavailable { max-width: 150px; text-align: right; }
+.statDialogEmpty { padding: 28px 20px; color: var(--muted); text-align: center; }
+.statDialogFooter { display: flex; justify-content: flex-end; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
+.statDialogFooter .clearButton { min-height: 40px; }
+:global([data-theme='dark']) .statDialog { --ink: #ede5ff; --muted: #b8acd0; --line: #3c3459; --surface: #211c36; }
+:global([data-theme='dark']) .statDialogList li { background: #2a2340; }
+@media (max-width: 600px) {
+  .statDialog { width: calc(100vw - 20px); font-size: 12px; }
+  .statDialogList li { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .statDialogSide { width: 100%; flex-wrap: wrap; justify-content: flex-start; }
+  .statDialogMeta { text-align: left; }
+  .statDialog .unavailable { max-width: none; text-align: left; }
+}
+

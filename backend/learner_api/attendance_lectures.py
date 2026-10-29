@@ -129,6 +129,7 @@ NATIVE_OCCURRENCES_SQL = f'''SELECT o.id AS session_id,o.id AS occurrence_id,
             COALESCE(replaced_attendance.occurrence_id,o.id) AS attendance_source_occurrence_id,
             s.id AS live_session_id,s.module_catalogue_id,m.title AS module_title,
             o.scheduled_start,o.scheduled_end,o.updated_at,o.session_number,
+            s.status AS live_session_status,o.status AS occurrence_status,
             COALESCE(NULLIF(o.join_url,''),s.join_url) AS join_url,
             CASE WHEN replaced_attendance.occurrence_id IS NOT NULL
                  THEN replaced_attendance.attendance_report_id ELSE o.attendance_report_id END AS attendance_report_id,
@@ -146,8 +147,9 @@ NATIVE_OCCURRENCES_SQL = f'''SELECT o.id AS session_id,o.id AS occurrence_id,
             {REPLACED_ATTENDANCE_LATERAL_SQL}
             WHERE s.module_catalogue_id=ANY(%s)
               AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
-              AND lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
-              AND lower(btrim(o.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
+              AND (lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
+                   AND lower(btrim(o.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
+                   OR lower(btrim(o.status)) IN ('cancelled','canceled'))
             ORDER BY o.scheduled_start,o.id'''
 
 # A module duplicated to share another module's Teams meeting deliberately has no
@@ -273,6 +275,92 @@ def read_native_occurrences(source, *, module_ids=None):
     return normalize_native_occurrences(source, result)
 
 
+def read_cancelled_native_occurrences(source, *, module_ids=None):
+    """Read cancellation tombstones used to suppress stale legacy mirrors.
+
+    Cancelled occurrences are intentionally absent from ``read_native_occurrences``
+    so they do not appear in the learner schedule.  A legacy KBC row can still
+    survive that omission, though, and would otherwise be counted as an
+    independent absence.  This narrow read supplies only the identity facts
+    needed to reconcile that mirror; it never exposes cancelled sessions.
+    """
+    if not getattr(source, 'email', None):
+        return []
+    with connections['enrolment'].cursor() as cur:
+        if module_ids is None:
+            cur.execute(ATTENDANCE_SUBJECTS_SQL, [effective_assigned_module_ids(source)])
+            module_ids = [row[0] for row in cur.fetchall()]
+        module_ids = [str(value or '').strip() for value in module_ids if str(value or '').strip()]
+        if not module_ids:
+            return []
+        cur.execute('''
+            SELECT o.id AS occurrence_id, s.module_catalogue_id,
+                   m.title AS module_title, o.scheduled_start,
+                   o.session_number
+            FROM curriculum.live_session_occurrences o
+            JOIN curriculum.live_sessions s ON s.id=o.live_session_id
+            JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
+            WHERE s.module_catalogue_id=ANY(%s)
+              AND m.deleted_at IS NULL
+              AND (lower(btrim(coalesce(s.status,''))) IN
+                       ('cancelled','canceled','deleted','failed','superseded')
+                   OR lower(btrim(coalesce(o.status,''))) IN
+                       ('cancelled','canceled','deleted','failed','superseded'))
+            ORDER BY o.scheduled_start,o.id
+        ''', [module_ids])
+        rows = dict_rows(cur)
+    result = []
+    for row in rows:
+        start = _aware(row.get('scheduled_start'))
+        if not start:
+            continue
+        result.append({
+            'occurrence_id': str(row.get('occurrence_id') or ''),
+            'module_catalogue_id': row.get('module_catalogue_id'),
+            'module_title': row.get('module_title') or '',
+            'session_date': timezone.localtime(start).date(),
+            'session_number': row.get('session_number'),
+        })
+    return result
+
+
+def _kbc_session_number(value):
+    match = re.search(r'\b(?:lecture|lec|session|l)\s*#?\s*(\d+)\b', _text(value), re.I)
+    return int(match.group(1)) if match else None
+
+
+def _exclude_cancelled_kbc_mirrors(records, scheduled, cancelled):
+    """Drop only an unambiguous KBC mirror of a cancelled live occurrence."""
+    if not cancelled:
+        return records
+    active = [row for row in scheduled if row.get('source') == 'microsoft-teams'
+              and str(row.get('attendance_status') or '').strip().lower() not in {'cancelled', 'canceled'}
+              and str(row.get('occurrence_status') or '').strip().lower() not in {'cancelled', 'canceled'}
+              and str(row.get('live_session_status') or '').strip().lower() not in {'cancelled', 'canceled'}]
+    cancelled_by_day = {}
+    for row in cancelled:
+        cancelled_by_day.setdefault((_module_key(row.get('module_title')), row.get('session_date')), []).append(row)
+    active_by_day = {}
+    for row in active:
+        active_by_day.setdefault((_module_key(row.get('module_title')), row.get('session_date')), []).append(row)
+    excluded = []
+    for row in records:
+        if row.get('source') != 'kbc-attendance':
+            excluded.append(row)
+            continue
+        key = (_module_key(row.get('module_title')), row.get('session_date'))
+        candidates = cancelled_by_day.get(key, [])
+        if not candidates or active_by_day.get(key):
+            excluded.append(row)
+            continue
+        number = _kbc_session_number(row.get('session_title'))
+        if number is not None:
+            candidates = [item for item in candidates if item.get('session_number') == number]
+        if len(candidates) != 1:
+            excluded.append(row)
+    return excluded
+
+
 def normalize_native_occurrences(source, result):
     now = timezone.now()
     for row in result:
@@ -281,12 +369,15 @@ def normalize_native_occurrences(source, result):
         row['updated_at'] = _aware(row['updated_at'])
         start = timezone.localtime(row['scheduled_start'])
         end = timezone.localtime(row['scheduled_end'])
+        cancelled = str(row.get('live_session_status') or '').strip().lower() in {'cancelled', 'canceled'} or \
+                    str(row.get('occurrence_status') or '').strip().lower() in {'cancelled', 'canceled'}
         row.update(
             learner_id=source.id, learner_name=source.username or '', learner_email=source.email,
             source='microsoft-teams', session_type='live_session',
             session_title=f"{row['module_title'] or 'Live session'} — Session {row['session_number']}",
             session_date=start.date(), session_start_time=start.time(), session_end_time=end.time(),
-            attendance_status='present' if row.get('attended') else
+            attendance_status='cancelled' if cancelled else
+                              'present' if row.get('attended') else
                               'upcoming' if row['scheduled_start'] > now else
                               'in_progress' if row['scheduled_end'] > now else
                               'absent' if row.get('attendance_report_id') else 'pending',
@@ -298,6 +389,7 @@ def normalize_native_occurrences(source, result):
 def lecture_register(source, *, module_ids=None, records=None, learner_profile_id=None, apply_adjustments=True, preloaded=None, scheduled=None, credit_projection=False):
     # Bulk consumers can preload source rows; all schedule, recovery and saved
     # confirmation rules still run through this same learner register.
+    loaded_schedule = scheduled is None
     if credit_projection and records is None:
         if scheduled is None:
             scheduled = projection_call('attendance_schedule', read_native_occurrences, source, module_ids=module_ids) if preloaded is None else preloaded['scheduled']
@@ -306,6 +398,9 @@ def lecture_register(source, *, module_ids=None, records=None, learner_profile_i
         records = combined_attendance_rows(source) if records is None else records
     if scheduled is None:
         scheduled = projection_call('attendance_schedule', read_native_occurrences, source, module_ids=module_ids) if preloaded is None else preloaded['scheduled']
+    if loaded_schedule and preloaded is None and any(row.get('source') == 'kbc-attendance' for row in records):
+        cancelled = projection_call('attendance_schedule', read_cancelled_native_occurrences, source, module_ids=module_ids)
+        records = _exclude_cancelled_kbc_mirrors(records, scheduled, cancelled)
     by_occurrence = {str(row['session_id']): row for row in scheduled}
     by_attendance_source = {}
     for row in scheduled:
@@ -328,7 +423,8 @@ def lecture_register(source, *, module_ids=None, records=None, learner_profile_i
                 # recovers the original absence; it is not a lecture of its own.
                 if row.get('eligibility_reason') == 'approved_recovery_guest' and row['attendance_status'] == 'present':
                     attended_alternatives.add(str(row['session_id']))
-                # A cancelled/deleted occurrence no longer belongs in the workspace.
+                # Evidence for an occurrence outside the current schedule does
+                # not create a second lecture row.
                 continue
             for target_id in target_ids:
                 schedule = by_occurrence.pop(target_id, None)
@@ -394,6 +490,10 @@ def lecture_register(source, *, module_ids=None, records=None, learner_profile_i
 
 def _ended_unmarked_status(row, now):
     """Use the shared backend rule without losing the source status."""
+    if str(row.get('attendance_status') or '').strip().lower() in {'cancelled', 'canceled'} or \
+            str(row.get('occurrence_status') or '').strip().lower() in {'cancelled', 'canceled'} or \
+            str(row.get('live_session_status') or '').strip().lower() in {'cancelled', 'canceled'}:
+        return {**row, 'attendance_status': 'cancelled'}
     status, _ = attendance_outcome(row, now)
     if status == 'unmarked':
         return {**row, 'raw_attendance_status': row.get('raw_attendance_status') or row.get('attendance_status'),
@@ -417,7 +517,12 @@ def attendance_read_contract(source, *, learner_profile_id, register=None, manua
     now = timezone.now()
     for row in rows:
         status = row.get('effective_attendance_status') or row['attendance_status']
-        outcome, counted = attendance_outcome(row, now)
+        cancelled = str(row.get('attendance_status') or '').strip().lower() in {'cancelled', 'canceled'} or \
+                    str(row.get('occurrence_status') or '').strip().lower() in {'cancelled', 'canceled'} or \
+                    str(row.get('live_session_status') or '').strip().lower() in {'cancelled', 'canceled'}
+        outcome, counted = ('cancelled', False) if cancelled else attendance_outcome(row, now)
+        if cancelled:
+            status = 'cancelled'
         start = _aware(row.get('scheduled_start'))
         report = reports.get(str(report_id(row)))
         component = _component_for(row, by_module.get(row.get('module_catalogue_id'), []))
@@ -430,7 +535,7 @@ def attendance_read_contract(source, *, learner_profile_id, register=None, manua
             'sessionDateLabel': row['session_date'].strftime('%d %b %Y'),
             'occurrenceStart': start.isoformat() if start else None,
             'startTime': row['session_start_time'].strftime('%H:%M') if row.get('session_start_time') else '',
-            'rawStatus': row.get('raw_attendance_status') or row['attendance_status'],
+            'rawStatus': 'cancelled' if cancelled else (row.get('raw_attendance_status') or row['attendance_status']),
             'effectiveStatus': status, 'status': outcome, 'counted': counted,
             'legacyAmbiguity': row.get('legacy_ambiguity', []),
             'absenceReport': {'id': str(report.id), 'status': report.status,
@@ -774,7 +879,10 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
         # Its UTC month can differ from the local date displayed in Attendance.
         log_date = (row.get('scheduled_start') or row['session_date']) if source == 'microsoft-teams' else row['session_date']
         module_id = f"native:{row['module_catalogue_id']}" if source == 'microsoft-teams' else f"legacy:{_key(row.get('module_title'))}"
-        outcome, counted = attendance_outcome(row)
+        cancelled = str(row.get('attendance_status') or '').strip().lower() in {'cancelled', 'canceled'} or \
+                    str(row.get('occurrence_status') or '').strip().lower() in {'cancelled', 'canceled'} or \
+                    str(row.get('live_session_status') or '').strip().lower() in {'cancelled', 'canceled'}
+        outcome, counted = ('cancelled', False) if cancelled else attendance_outcome(row)
         lecture = {
             'id': f"{session_key(row)}-{row['session_date'].isoformat()}",
             'sessionId': session_key(row), 'reportId': str(report_id(row)),
@@ -792,16 +900,16 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
             'attendanceConfirmed': bool(row.get('attendance_confirmed')),
             'creditedMinutes': row.get('credited_minutes'),
             'status': outcome, 'counted': counted,
-            'rawStatus': row.get('raw_attendance_status') or row['attendance_status'],
-            'effectiveStatus': row.get('effective_attendance_status') or row['attendance_status'],
-            'rawAttendanceStatus': row.get('raw_attendance_status') or row['attendance_status'],
-            'effectiveAttendanceStatus': row.get('effective_attendance_status') or row['attendance_status'],
+            'rawStatus': 'cancelled' if cancelled else (row.get('raw_attendance_status') or row['attendance_status']),
+            'effectiveStatus': 'cancelled' if cancelled else (row.get('effective_attendance_status') or row['attendance_status']),
+            'rawAttendanceStatus': 'cancelled' if cancelled else (row.get('raw_attendance_status') or row['attendance_status']),
+            'effectiveAttendanceStatus': 'cancelled' if cancelled else (row.get('effective_attendance_status') or row['attendance_status']),
             'effectiveAttendance': row.get('effective_attendance') if 'effective_attendance' in row else
                                    (1 if row['attendance_status'] in {'present', 'late'} else
                                     0 if row['attendance_status'] == 'absent' else None),
-            'finalOutcome': row.get('final_outcome') or row['attendance_status'],
+            'finalOutcome': 'cancelled' if cancelled else (row.get('final_outcome') or row['attendance_status']),
             'attendanceBasis': row.get('attendance_basis'),
-            'excused': bool(row.get('excused')), 'catchupStatus': 'completed' if row.get('catchup_completed') else None, 'updatedAt': row['updated_at'].isoformat() if row.get('updated_at') else None,
+            'excused': bool(row.get('excused')), 'catchupStatus': None if cancelled else ('completed' if row.get('catchup_completed') else None), 'updatedAt': row['updated_at'].isoformat() if row.get('updated_at') else None,
         }
         if source == 'kbc-attendance':
             meta = legacy_meta.get(row['session_id']) or {}

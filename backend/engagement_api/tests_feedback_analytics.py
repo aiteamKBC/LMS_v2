@@ -44,6 +44,8 @@ class FeedbackAnalyticsTests(SimpleTestCase):
         with (
             _patched(_account(role='staff', subject_type='staff')),
             mock.patch.object(feedback, 'sync_module_feedback'),
+            mock.patch.object(feedback, 'question_analytics', return_value={'questionMetrics': [], 'overallScore': {'score': None}}) as metrics,
+            mock.patch.object(feedback, 'lecture_analytics_options', return_value=[]) as lectures,
             mock.patch.object(feedback, '_forms_queryset', return_value=forms),
             mock.patch.object(feedback, '_assigned_count', return_value=10),
             mock.patch.object(feedback.FeedbackForm.objects, 'filter', return_value=family_forms),
@@ -53,6 +55,8 @@ class FeedbackAnalyticsTests(SimpleTestCase):
             response = feedback.analytics(self.factory.get('/?formType=post_lecture'))
 
         self.assertEqual(response.status_code, 200)
+        metrics.assert_called_once_with([19, 20])
+        lectures.assert_called_once_with([19, 20])
         forms.filter.assert_called_with(form_type='post_lecture')
         responses.filter.assert_called_once_with(form_id__in=[19, 20])
         payload = json.loads(response.content)['analytics']

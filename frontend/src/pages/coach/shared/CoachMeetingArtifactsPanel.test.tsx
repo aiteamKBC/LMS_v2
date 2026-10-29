@@ -53,6 +53,22 @@ describe('stored APTEM portal resources', () => {
     expect(screen.queryByRole('link', { name: 'Download' })).not.toBeInTheDocument();
     expect(fetchArtifacts).toHaveBeenCalledTimes(1);
   });
+
+  it('offers protected Teams playback without calling it an archived copy and reports playback failure', async () => {
+    const fetchArtifacts = vi.fn().mockResolvedValue({ resourceMode: 'stored', artifacts: [
+      { artifact_type: 'recording', graph_artifact_id: 'verified-video',
+        content_available: false, graph_playback_candidate: true },
+    ] });
+    const { container } = render(<CoachMeetingArtifactsPanel event={event}
+      fetchArtifacts={fetchArtifacts} storedOnly />);
+    expect(await screen.findByText(/Play from Teams/)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Download' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    const video = container.querySelector('video');
+    expect(video).not.toBeNull();
+    fireEvent.error(video!);
+    expect(screen.getByRole('alert')).toHaveTextContent('Teams could not play this recording');
+  });
 });
 
 it('preserves Native check execution and hidden defaults while allowing an inert visible action', async () => {

@@ -14,7 +14,7 @@ import threading
 import tempfile
 import time
 import uuid
-from collections import Counter, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from html import escape
 from pathlib import Path
@@ -368,24 +368,30 @@ def scoped_curriculum_read(fn):
     """
     signature = inspect.signature(fn)
 
+    def memo_key(*args, **kwargs):
+        bound = signature.bind(*args, **kwargs)
+        bound.apply_defaults()
+        key = (
+            fn.__qualname__,
+            _scope_memo_key(tuple(bound.arguments.items())),
+        )
+        hash(key)
+        return key
+
     @functools.wraps(fn)
     def wrapped(*args, **kwargs):
         memo = getattr(_CURRICULUM_READ_SCOPE, 'memo', None)
         if memo is None:
             return fn(*args, **kwargs)
         try:
-            bound = signature.bind(*args, **kwargs)
-            bound.apply_defaults()
-            key = (
-                fn.__qualname__,
-                _scope_memo_key(tuple(bound.arguments.items())),
-            )
-            hash(key)
+            key = memo_key(*args, **kwargs)
         except (TypeError, ValueError):
             return fn(*args, **kwargs)
         if key not in memo:
             memo[key] = fn(*args, **kwargs)
         return memo[key]
+    # The key a call would be memoised under, for prefetch_authoring_reads().
+    wrapped.memo_key = memo_key
     return wrapped
 
 
@@ -448,6 +454,35 @@ def remember_shared_curriculum_epoch(value):
     with _SHARED_EPOCH_LOCK:
         _SHARED_EPOCH_STATE['value'] = int(value)
         _SHARED_EPOCH_STATE['checked_at'] = time.monotonic()
+
+
+def note_read_shared_curriculum_epoch(value):
+    """A reading of the epoch row taken by another query (cache_scope's poll).
+
+    Taken as this worker's poll when it is not older than what is held. The
+    scope poll reads the epoch in the same statement, so this spares the
+    separate read -- and keeps the two polls from disagreeing: a scope
+    generation newer than the global one let a build pair post-write scope
+    keys with rows the rows cache still held from before the write.
+    """
+    with _SHARED_EPOCH_LOCK:
+        current = _SHARED_EPOCH_STATE['value']
+        if current is None or int(value) >= current:
+            _SHARED_EPOCH_STATE['value'] = int(value)
+            _SHARED_EPOCH_STATE['checked_at'] = time.monotonic()
+
+
+def refresh_curriculum_generations():
+    """Make this worker's next generation lookup read the database.
+
+    For a read straight after this client's own save, which may have been
+    taken by another worker less than a poll interval ago. Costs the one
+    epoch read; cached entries of the current generation still serve.
+    """
+    with _SHARED_EPOCH_LOCK:
+        _SHARED_EPOCH_STATE['checked_at'] = 0.0
+    from .cache_scope import forget_epochs
+    forget_epochs()
 
 
 def read_shared_curriculum_epoch_row():
@@ -741,6 +776,16 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
     taken from the shared cache carry no fingerprint and expire as before.
     """
     ttl = CURRICULUM_CACHE_TTL_SECONDS if ttl is None else ttl
+    # When this call began. A force caller may take a value whose build started
+    # later than this: every read that build made came after anything the
+    # caller had committed before asking (see the build-lock re-check below).
+    requested_at = time.monotonic()
+    # Not for a caller that has written in this request: its writes may still
+    # be uncommitted, invisible to a build on another thread.
+    shares_forced_builds = (
+        not getattr(_CURRICULUM_EPOCH_BUMP, 'pending', False)
+        and not connection.in_atomic_block
+    )
     scoped = scope is not None and programme_cache_generation(scope) is not None
     if scoped and getattr(_CURRICULUM_EPOCH_BUMP, 'pending', False):
         # This request has written and its bump is still owed: read its own
@@ -802,11 +847,16 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
         # queued behind it cost a cache read rather than another rebuild. A force
         # caller has written and is asking for its own state back, so it skips the
         # re-check: the value waiting here may predate that write.
-        if not force:
-            with _CURRICULUM_CACHE_LOCK:
-                entry = _CURRICULUM_CACHE.get(key)
-                if entry and entry['expires_at'] > now and entry.get('shared_epoch') == shared_epoch:
-                    return entry['value']
+        with _CURRICULUM_CACHE_LOCK:
+            entry = _CURRICULUM_CACHE.get(key)
+            if entry and entry['expires_at'] > now and entry.get('shared_epoch') == shared_epoch and (
+                not force
+                # Several forced reads queued on one key -- a save's reload
+                # and a Refresh, two tabs -- take the first build that began
+                # after they asked instead of each paying for its own.
+                or (shares_forced_builds and entry.get('build_started', float('-inf')) >= requested_at)
+            ):
+                return entry['value']
 
         # The lock above covers this process only. When the shared cache is
         # really shared (Redis), another worker may already be running this
@@ -838,6 +888,7 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
         try:
             with _CURRICULUM_CACHE_LOCK:
                 epoch = _CURRICULUM_CACHE_EPOCH
+            build_started = time.monotonic()
 
             # Taken before the factory and in the same read scope, so the
             # factory's own reads of that data are the ones fingerprinted.
@@ -858,6 +909,7 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
                         'shared_epoch': shared_epoch,
                         'value': value,
                         'scoped': scoped,
+                        'build_started': build_started,
                         **({'fingerprint': built_fingerprint} if fingerprint is not None else {}),
                     }
             if publish and shared:
@@ -974,6 +1026,12 @@ def _curriculum_warm_loop():
                 # A warm that fails must never take the process with it; the
                 # request path still rebuilds on demand.
                 logger.warning('Curriculum cache warm failed.', exc_info=True)
+            try:
+                # Apart from the warm above: that one is a single untargeted
+                # read scope, and a programme build needs its own targeted one.
+                warm_programme_detail_sections()
+            except Exception:
+                logger.warning('Programme section warm failed.', exc_info=True)
             finally:
                 # This thread opened its own connection. Neon counts it, and a
                 # warm runs rarely enough that holding one between runs is pure
@@ -2232,10 +2290,9 @@ def teams_event_payload(payload, graph_settings):
     occurrences = max(1, min(52, int(payload.get('repeatOccurrences') or 12)))
     co_organizers = teams_attendee_emails(payload.get('coOrganizers'))
     co_organizer_set = set(co_organizers)
-    presenters = [
-        email for email in teams_attendee_emails(payload.get('presenters'))
-        if email not in co_organizer_set
-    ]
+    # A co-organiser may also be listed as a presenter. Teams gives each person
+    # one role (co-organiser wins), so keeping both only keeps the author's list.
+    presenters = teams_attendee_emails(payload.get('presenters'))
     elevated = co_organizer_set | set(presenters)
     attendees = [
         email for email in teams_attendee_emails(payload.get('attendees'))
@@ -4228,13 +4285,10 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             if 'coOrganizers' in payload else stored_co_organizers
         )
         co_organizer_set = set(co_organizers)
-        presenters = [
-            email for email in (
-                teams_attendee_emails(payload['presenters'])
-                if 'presenters' in payload else stored_presenters
-            )
-            if email not in co_organizer_set
-        ]
+        presenters = (
+            teams_attendee_emails(payload['presenters'])
+            if 'presenters' in payload else stored_presenters
+        )
         elevated = co_organizer_set | set(presenters)
         attendees = [
             email for email in (
@@ -4871,6 +4925,30 @@ def stored_leftover_slots(live_session_id):
     return leftovers if isinstance(leftovers, list) else []
 
 
+def curriculum_teams_meeting_off_schedule_runs(request, live_session_id):
+    """The calls on this calendar's link that were not one of its sessions, per session. Read-only.
+
+    Light enough for the Module Builder to read for each of a module's
+    calendars: the stored sessions and the integrity log, nothing from Microsoft.
+    """
+    from .teams_calendar_integrity import off_schedule_runs, read_events
+
+    if request.method != 'GET':
+        return json_error('Method not allowed.', status=405)
+    series_rows = authoring_fetch_all(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])
+    if not series_rows:
+        return json_error('Live session series not found.', status=404)
+    logged = read_events([live_session_id])
+    occurrences = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_session_id],
+                                      'session_number asc') if logged else []
+    runs = {clean_str(row.get('id')): off_schedule_runs(row, logged) for row in occurrences}
+    return JsonResponse({
+        'liveSessionId': clean_str(live_session_id),
+        'timeZoneIana': graph_timezone_iana(teams_schedule_settings({}, series=series_rows[0])),
+        'occurrences': {key: value for key, value in runs.items() if value},
+    })
+
+
 def curriculum_teams_meeting_artifacts(request, live_session_id):
     """Read the tracked lecture plan or pull completed artifacts from Graph."""
     from coach_api.views import has_graph_credentials, microsoft_graph_request, get_graph_settings
@@ -4893,7 +4971,11 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
         'session_number asc',
     )
     if request.method == 'GET':
+        from .teams_calendar_integrity import off_schedule_runs, read_events
+        logged = read_events([live_session_id])
         for occurrence in occurrences:
+            # Calls on this link that were not this session, said with their dates.
+            occurrence['off_schedule_runs'] = off_schedule_runs(occurrence, logged)
             actual_attendance = authoring_fetch_all(
                 LIVE_SESSION_ATTENDANCE_TABLE, 'occurrence_id = %s', [occurrence['id']], 'display_name asc'
             )
@@ -6410,7 +6492,9 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
     A module starting mid-week owns only the delivery days from its start date
     on: the Monday and Tuesday before a Wednesday start are inside week 1's
     window but before the module began, so they belong to nobody and week 1 is
-    simply shorter than the weeks after it.
+    simply shorter than the weeks after it. A start date with no delivery day
+    left in its own week does not spend a week on nothing: week 1 is the week
+    of the first delivery day after it, so N weeks are N delivery weeks.
 
     ``week_count`` asks for whole weeks: the plan runs to the end of that many
     Mon-Sun windows, however many delivery days that turns out to be. Callers
@@ -6443,10 +6527,20 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
     holidays_by_date = holiday_details_by_date(holidays)
     guard_days = max(3650, max(session_count, week_target * 7) * 21)
 
-    # Monday of the week the module starts in. Every week number below is
-    # measured from here, which is what makes an authored week a calendar week
-    # rather than a run of dates that can straddle two of them.
-    anchor_monday = start - timedelta(days=start.weekday())
+    # Monday of the week the module first DELIVERS in. Every week number below
+    # is measured from here, which is what makes an authored week a calendar
+    # week rather than a run of dates that can straddle two of them. Measured
+    # from the first delivery day on or after the start date, not from the
+    # start date itself: a module starting on the Sunday of a Wednesday group
+    # has no delivery day left in its opening week, and counting that empty
+    # week as week 1 gave five authored weeks four sessions (agreed 2026-10-26:
+    # N weeks means N delivery weeks). A start date with a delivery day still
+    # ahead of it in its own week anchors exactly as before.
+    first_delivery = next(
+        (start + timedelta(days=offset) for offset in range(7) if (start + timedelta(days=offset)).weekday() in days),
+        start,
+    )
+    anchor_monday = first_delivery - timedelta(days=first_delivery.weekday())
     # The first day past the last week asked for, when asking by weeks.
     week_limit = anchor_monday + timedelta(days=week_target * 7) if week_target else None
 
@@ -9607,6 +9701,15 @@ def build_staff_profiles(profile_rows, role, modules=None, groups=None):
 
 
 def get_curriculum_rows(compact=False):
+    # The authoring reads the readers below make, in one round trip rather than
+    # five; each reader still makes its own call and finds its rows memoised.
+    prefetch_authoring_reads([
+        ((AUTHORING_MODULES_TABLE,), {'ensure_tables': True, 'exclude_columns': MODULE_INDEX_EXCLUDED_COLUMNS}),
+        ((GROUPS_TABLE,), {'order_sql': GROUP_ROWS_ORDER, 'ensure_tables': True}),
+        ((COHORT_AUTHORING_DETAILS_TABLE,), {'order_sql': COHORT_ROWS_ORDER, 'ensure_tables': True}),
+        *([] if table_exists('Modules') else [((AUTHORING_WEEKS_TABLE,), {'columns': WEEK_INDEX_COLUMNS})]),
+        ((AUTHORING_MODULES_TABLE,), {'order_sql': 'programme_id, title', 'exclude_columns': MODULE_INDEX_EXCLUDED_COLUMNS}),
+    ])
     rows = {
         'training': get_training_rows(),
         'modules': get_module_rows(),
@@ -15665,6 +15768,17 @@ def authoring_fetch_all(table, where_sql='', params=None, order_sql='', *, ensur
     reads most of the row: it drops only what is named, so a column added later
     still arrives.
     """
+    query = authoring_select_sql(
+        table, where_sql, order_sql,
+        ensure_tables=ensure_tables, columns=columns, exclude_columns=exclude_columns,
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(query, params or [])
+        return rows_as_dicts(cursor)
+
+
+def authoring_select_sql(table, where_sql='', order_sql='', *, ensure_tables=True, columns=None, exclude_columns=None):
+    """The statement authoring_fetch_all() runs; shared so a prefetch sends the same SQL."""
     if ensure_tables:
         ensure_module_authoring_tables()
     if columns:
@@ -15683,9 +15797,83 @@ def authoring_fetch_all(table, where_sql='', params=None, order_sql='', *, ensur
         query += f' where {where_sql}'
     if order_sql:
         query += f' order by {order_sql}'
-    with connection.cursor() as cursor:
-        cursor.execute(query, params or [])
-        return rows_as_dicts(cursor)
+    return query
+
+
+# Off unless set: measured 2026-10-21 against a Neon branch through the pooler,
+# it cut ~9 round trips from a PROG-PCP-L6 rebuild but showed no wall-clock gain
+# beyond Neon's run-to-run noise, and three of eighteen page bursts with it on
+# stalled (19-48s) where none did without. Enable only with fresh evidence.
+CURRICULUM_PIPELINED_READS = os.environ.get('CURRICULUM_PIPELINED_READS', 'false').lower() in {'true', '1', 'yes'}
+
+
+def prefetch_authoring_reads(calls):
+    """Send independent authoring_fetch_all() reads to the database together.
+
+    ``calls`` is ``[(args, kwargs), ...]``, exactly as the caller below will
+    make them. Each result goes into the read scope under the key that call is
+    memoised with, so the call itself then costs nothing. A builder's reads go
+    out one round trip at a time, and from a remote database each round trip,
+    not the rows, is most of what a programme build waits on; psycopg's
+    pipeline mode sends them all and waits once.
+
+    Only ever an optimisation: the SQL is authoring_select_sql()'s own, and a
+    call whose key does not match what was prefetched -- arguments spelled
+    differently, a pipeline that failed -- just reads as it always did. Outside
+    a read scope, inside an atomic block (a failed statement there would poison
+    the caller's transaction) or off PostgreSQL, nothing is sent.
+    """
+    memo = getattr(_CURRICULUM_READ_SCOPE, 'memo', None)
+    if (
+        memo is None or not CURRICULUM_PIPELINED_READS
+        or connection.vendor != 'postgresql' or connection.in_atomic_block
+    ):
+        return
+    try:
+        signature = inspect.signature(authoring_fetch_all.__wrapped__)
+    except (AttributeError, TypeError, ValueError):
+        return
+    pending = {}
+    for args, kwargs in calls:
+        try:
+            key = authoring_fetch_all.memo_key(*args, **kwargs)
+            if key in memo or key in pending:
+                continue
+            bound = signature.bind(*args, **kwargs)
+            bound.apply_defaults()
+            options = bound.arguments
+            query = authoring_select_sql(
+                options['table'], options['where_sql'], options['order_sql'],
+                ensure_tables=options['ensure_tables'], columns=options['columns'],
+                exclude_columns=options['exclude_columns'],
+            )
+        except Exception:
+            logger.debug('Skipping a curriculum read prefetch.', exc_info=True)
+            continue
+        pending[key] = (query, options['params'] or [])
+    if len(pending) < 2:
+        # One read gains nothing from a pipeline; let the call make it.
+        return
+    cursors = []
+    try:
+        connection.ensure_connection()
+        with connection.connection.pipeline():
+            for query, params in pending.values():
+                cursor = connection.cursor()
+                cursors.append(cursor)
+                cursor.execute(query, params)
+        results = [rows_as_dicts(cursor) for cursor in cursors]
+    except Exception:
+        logger.warning('Pipelined curriculum reads failed; they will be read one by one.', exc_info=True)
+        return
+    finally:
+        for cursor in cursors:
+            try:
+                cursor.close()
+            except Exception:
+                pass
+    for key, rows in zip(pending, results):
+        memo.setdefault(key, rows)
 
 
 def safe_authoring_module_rows():
@@ -16687,6 +16875,12 @@ COMPONENT_SETTINGS_SCHEMA = {
         'source': 'MIS allocation',
         'recordingUrl': '',
         'expectedAvailability': 'After live session',
+        # The live-session component this recording plays (any week), and the
+        # module holding it when that is another group's module ('' = this
+        # module). Empty id = not linked. Mirrors the browser's definition in
+        # module-builder/componentAuthoringModel.ts.
+        'linkedLiveSessionComponentId': '',
+        'linkedLiveSessionModuleId': '',
     },
     'video': {
         **BASE_COMPONENT_SETTINGS,
@@ -16836,6 +17030,7 @@ COMPONENT_SETTINGS_SCHEMA = {
 
 
 LEGACY_SETTING_KEYS = {'legacySettings', 'legacySourceType', 'legacyUnsupportedSource', 'shortcode'}
+RECORDING_SOURCE_SETTING_KEYS = {'recordingSeriesId', 'recordingSessionNumber', 'recordingDate'}
 LIVE_SESSION_TRACKING_SETTING_KEYS = {
     'teamsOccurrenceId', 'teamsSessionNumber', 'teamsOnlineMeetingId',
     'teamsMeetingUrl', 'teamsWebLink', 'teamsStartDateTimeUtc',
@@ -16908,6 +17103,8 @@ def component_settings_defaults(component_type):
 
 def allowed_component_setting_keys(component_type):
     allowed = set(component_settings_defaults(component_type)) | LEGACY_SETTING_KEYS
+    if frontend_component_type(component_type) in {'live-session', 'video', 'recording-placeholder'}:
+        allowed |= RECORDING_SOURCE_SETTING_KEYS
     if frontend_component_type(component_type) == 'live-session':
         allowed |= LIVE_SESSION_TRACKING_SETTING_KEYS
     return allowed
@@ -17017,7 +17214,10 @@ def validate_component_authoring_payload(component, path):
         recording_url = clean_str(settings.get('recordingUrl'))
         if recording_url and not http_url(recording_url):
             errors.append({'path': f'{path}.settings.recordingUrl', 'message': 'Enter a valid recording URL.'})
-        if status != 'Draft' and not recording_url:
+        # A linked recording plays its live session's Teams recording, so it
+        # has no URL of its own to require.
+        linked = clean_str(settings.get('linkedLiveSessionComponentId'))
+        if status != 'Draft' and not recording_url and not linked:
             errors.append({'path': f'{path}.settings.recordingUrl', 'message': 'Recording URL is required before QA or approval.'})
 
     if component_type == 'podcast':
@@ -20266,13 +20466,18 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                 None,
             )
             if first_numbered:
-                # The header follows its first numbered session, including a
-                # confirmed Teams date kept above, when its authored week moves.
-                first_planned = {
-                    **first_numbered,
-                    'date': format_date(first_settings.get('sessionDate')) or first_numbered.get('date'),
-                    'day': clean_str(first_settings.get('sessionDay')) or first_numbered.get('day'),
-                }
+                # Teams numbering can omit orientation and additional events.
+                # Keep a confirmed date that already fits this authored week's
+                # slots; a changed plan still moves the header when it no
+                # longer fits. Mirrors applyModuleWeekSessionPlan.
+                confirmed_date = (
+                    format_date(first_settings.get('sessionDate'))
+                    if clean_str(first_settings.get('teamsLiveSessionId')) else ''
+                )
+                first_planned = next(
+                    (slot for slot in slots if slot.get('date') == confirmed_date),
+                    first_numbered,
+                )
         # The week runs on the day its live session is delivered on. A closed
         # delivery slot is not this week -- it is a reading week of its own,
         # which the plan's `slots` spine keeps in the curriculum at the closed
@@ -21460,13 +21665,6 @@ def get_authoring_structure_payloads(
         ] if child_rows is not None else authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, f'module_catalogue_id in ({placeholders})', found_ids, 'created_at, id')),
         module_rows,
     )
-    completion_rows = authoring_fetch_all(AUTHORING_COMPLETION_TABLE, f'module_catalogue_id in ({placeholders})', found_ids) if include_extra else []
-    advanced_rows = authoring_fetch_all(AUTHORING_ADVANCED_TABLE, f'module_catalogue_id in ({placeholders})', found_ids) if include_extra else []
-    # Newest active live session per module, read once for the whole set. The
-    # single-module reader falls back to this when a module's weeks carry no
-    # Teams metadata, so a batched caller that skipped it would silently lose
-    # the meeting details for exactly those modules.
-    live_session_by_module = {}
     if include_extra:
         ensure_live_session_tracking_tables()
         shared_source_by_module = {
@@ -21476,6 +21674,20 @@ def get_authoring_structure_payloads(
         }
         session_lookup_ids = unique([*found_ids, *shared_source_by_module.values()])
         session_placeholders = ', '.join(['%s'] * len(session_lookup_ids))
+        # The three reads below in one round trip; each still runs as written.
+        prefetch_authoring_reads([
+            ((AUTHORING_COMPLETION_TABLE, f'module_catalogue_id in ({placeholders})', found_ids), {}),
+            ((AUTHORING_ADVANCED_TABLE, f'module_catalogue_id in ({placeholders})', found_ids), {}),
+            ((LIVE_SESSIONS_TABLE, f"module_catalogue_id in ({session_placeholders}) and status = 'active'", session_lookup_ids, 'updated_at desc, created_at desc'), {}),
+        ])
+    completion_rows = authoring_fetch_all(AUTHORING_COMPLETION_TABLE, f'module_catalogue_id in ({placeholders})', found_ids) if include_extra else []
+    advanced_rows = authoring_fetch_all(AUTHORING_ADVANCED_TABLE, f'module_catalogue_id in ({placeholders})', found_ids) if include_extra else []
+    # Newest active live session per module, read once for the whole set. The
+    # single-module reader falls back to this when a module's weeks carry no
+    # Teams metadata, so a batched caller that skipped it would silently lose
+    # the meeting details for exactly those modules.
+    live_session_by_module = {}
+    if include_extra:
         for row in authoring_fetch_all(
             LIVE_SESSIONS_TABLE,
             f"module_catalogue_id in ({session_placeholders}) and status = 'active'",
@@ -24629,12 +24841,42 @@ def curriculum_preview_tutor_availability(request):
     if requested:
         return JsonResponse({**window, **answer_for(requested)})
 
-    names = unique([
+    directory_names = unique([
         staff_profile_name(row)
         for row in tutor_rows
         if staff_profile_name(row) and not truthy(row.get('is_archived'))
     ])
-    results = [answer_for(name) for name in names]
+    # The save checks the name a module carries, whoever it is -- an archived
+    # tutor, or a name that was never in the directory at all. A picker lists
+    # those names too, so the roster answers for them: a name missing from here
+    # reached the picker unchecked and was shown as free while the save refused
+    # it. Spelt as the module has it, since that is the string the picker shows.
+    directory_keys = {staff_assignment_key(name) for name in directory_names}
+    listed = {name.lower() for name in directory_names}
+    module_names = []
+    for row in surviving_authoring_module_rows(module_rows):
+        name = clean_str(row.get('tutor_name'))
+        if not staff_assignment_key(name) or name.lower() in listed:
+            continue
+        listed.add(name.lower())
+        module_names.append(name)
+    # The verdict depends on the save's key alone, so two spellings of one
+    # person are asked once.
+    verdicts = {}
+
+    def roster_answer(name):
+        key = staff_assignment_key(name)
+        if key not in verdicts:
+            verdicts[key] = answer_for(name)
+        conflicts = verdicts[key]['conflicts']
+        return {
+            **verdicts[key],
+            'tutor': name,
+            'message': tutor_conflict_message({**slot, 'tutor_name': name}, conflicts) if conflicts else '',
+            'inDirectory': key in directory_keys,
+        }
+
+    results = [roster_answer(name) for name in directory_names + module_names]
     return JsonResponse({
         **window,
         'results': results,
@@ -24886,27 +25128,49 @@ def curriculum_programme_detail_section(request, identifier, section):
     workspace_view = section == 'modules' and request.GET.get('view') == 'workspace'
     programme_id = clean_str(identifier)
     repair_curriculum_parent_links(programme_id, allow_writes=False)
+    force = request_bypasses_curriculum_cache(request)
+    if not force and request_reads_after_write(request):
+        refresh_curriculum_generations()
+    entry = cached_programme_detail_section(identifier, visibility, section, workspace_view, force=force)
+    if section == 'modules':
+        note_programme_section_read(identifier, visibility, workspace_view)
+    return conditional_json_response(request, entry)
 
-    def build_section_entry():
-        payload = build_curriculum_programme_tree_detail_payload(
-            identifier, visibility, include_stats=False, include_components=False,
-            include_tree=False, include_week_components=False, section=section,
-            **({'workspace_view': True} if workspace_view else {}),
-        )
-        if not payload:
-            return encode_json_error_entry('Programme not found.', status=404)
-        if workspace_view:
-            payload = programme_modules_workspace_payload(payload)
-        return encode_json_entry(payload)
 
+def request_reads_after_write(request):
+    """``Cache-Control: max-age=0``: the client has just saved and wants that save.
+
+    Lighter than ``no-cache``, which rebuilds: the entry is served if it is of
+    the generation the database holds now, which this worker would otherwise
+    have polled up to SHARED_EPOCH_POLL_SECONDS ago -- before a save another
+    worker took. Only for saves that move the epoch, i.e. curriculum_api writes.
+    """
+    cache_control = clean_str(request.headers.get('Cache-Control')).lower()
+    return 'max-age=0' in cache_control.replace(' ', '')
+
+
+def programme_detail_section_entry(identifier, visibility, section, workspace_view):
+    payload = build_curriculum_programme_tree_detail_payload(
+        identifier, visibility, include_stats=False, include_components=False,
+        include_tree=False, include_week_components=False, section=section,
+        **({'workspace_view': True} if workspace_view else {}),
+    )
+    if not payload:
+        return encode_json_error_entry('Programme not found.', status=404)
+    if workspace_view:
+        payload = programme_modules_workspace_payload(payload)
+    return encode_json_entry(payload)
+
+
+def cached_programme_detail_section(identifier, visibility, section, workspace_view, *, force=False):
     # One read scope for the fingerprint and the build, so the two see the same
     # learner rows (see programme_shell_learner_fingerprint).
     with curriculum_read_scope(targeted_child_reads=True):
-        entry = cached_curriculum_value(
+        return cached_curriculum_value(
             f'programme-detail-{section}-response:{visibility}:{clean_str(identifier)}'
             + (':workspace-v1' if workspace_view else ''),
-            build_section_entry,
-            force=request_bypasses_curriculum_cache(request),
+            lambda: programme_detail_section_entry(identifier, visibility, section, workspace_view),
+            force=force,
             # The shell carries learner counts; the modules section none. Past
             # the 60s the shell is re-checked against the learner rows rather
             # than rebuilt, and rebuilt only when they have moved.
@@ -24914,7 +25178,45 @@ def curriculum_programme_detail_section(request, identifier, section):
             scope=clean_str(identifier),
             fingerprint=programme_shell_learner_fingerprint if section == 'shell' else None,
         )
-    return conditional_json_response(request, entry)
+
+
+# The modules sections this worker has served lately, rebuilt by the warm loop
+# after a write so the next reader finds them built. Bounded both ways: each is
+# a multi-second build, and one nobody has opened for a while is left to be
+# built on demand as before.
+PROGRAMME_SECTION_WARM_LIMIT = 3
+PROGRAMME_SECTION_WARM_WINDOW_SECONDS = 15 * 60
+_PROGRAMME_SECTION_WARM_TARGETS = OrderedDict()
+_PROGRAMME_SECTION_WARM_LOCK = threading.Lock()
+
+
+def note_programme_section_read(identifier, visibility, workspace_view):
+    target = (clean_str(identifier), visibility, bool(workspace_view))
+    with _PROGRAMME_SECTION_WARM_LOCK:
+        _PROGRAMME_SECTION_WARM_TARGETS.pop(target, None)
+        _PROGRAMME_SECTION_WARM_TARGETS[target] = time.monotonic()
+        while len(_PROGRAMME_SECTION_WARM_TARGETS) > PROGRAMME_SECTION_WARM_LIMIT:
+            _PROGRAMME_SECTION_WARM_TARGETS.popitem(last=False)
+
+
+def warm_programme_detail_sections():
+    """Rebuild the recently read modules sections a write has made stale.
+
+    Through cached_curriculum_value as a reader would, so a section the write
+    did not touch costs one generation check, and a build that a later write
+    overtakes is discarded rather than published.
+    """
+    now = time.monotonic()
+    with _PROGRAMME_SECTION_WARM_LOCK:
+        for target, seen in list(_PROGRAMME_SECTION_WARM_TARGETS.items()):
+            if now - seen > PROGRAMME_SECTION_WARM_WINDOW_SECONDS:
+                del _PROGRAMME_SECTION_WARM_TARGETS[target]
+        targets = list(reversed(_PROGRAMME_SECTION_WARM_TARGETS))
+    for identifier, visibility, workspace_view in targets:
+        try:
+            cached_programme_detail_section(identifier, visibility, 'modules', workspace_view)
+        except Exception:
+            logger.warning('Programme modules warm failed.', exc_info=True)
 
 
 # Marks what ``omit=weekComponents`` left out, so nothing mistakes an outline
@@ -32878,6 +33180,15 @@ def curriculum_cohort_detail(request, identifier):
                 continue
             unassign_authoring_modules_from_group(stored_group_id)
             authoring_soft_delete(GROUPS_TABLE, 'group_id = %s', [stored_group_id], via_parent=cohort_id, deleted_by='cohort-delete')
+        # Any module row still naming this cohort directly, rather than through
+        # one of its groups, is detached too: it has to be given a new cohort and
+        # group from the module drawer, never left on an archived cohort.
+        update_authoring_rows(AUTHORING_MODULES_TABLE, 'cohort_id = %s', [cohort_id], {
+            'cohort_id': None,
+            'cohort_name': '',
+            'group_id': None,
+            'group_name': '',
+        })
         authoring_soft_delete(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id], deleted_by='cohort-delete')
         log_curriculum_decision(
             'cohort.archive', outcome='soft_deleted', entity_id=cohort_id,

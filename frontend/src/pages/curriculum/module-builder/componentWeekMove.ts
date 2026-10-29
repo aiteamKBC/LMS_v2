@@ -2,6 +2,7 @@ import {
   getCalendarTimeZone, moduleWeekLiveSessionDates, parseUtcInstant, zonedNaiveToUtcIso,
   type ModuleCatalogueItem, type ModuleComponent, type ModuleWeekSessionPlan,
 } from './moduleAuthoringData';
+import { linkedGroupOf, moveComponentToWeek as moveLinkedComponentsToWeek } from '../shared/entities/liveSessionRecordingLink';
 
 const text = (value: unknown) => String(value ?? '').trim();
 
@@ -27,16 +28,21 @@ export function moveComponentToWeek(
   const component = source.components.find(item => item.id === componentId)!;
   if (source.id === target.id) throw new Error('Choose a different week.');
   if (target.components.some(item => item.id === componentId)) throw new Error('This component is already in the destination week.');
-  let moved = { ...component, weekId: target.id };
+  const linked = linkedGroupOf(module.weekStructure.flatMap(week => week.components), component, module.catalogueId || module.id);
+  const session = linked.find(item => item.type === 'live-session');
+  // A recording moves with its same-module session. Only a session arriving
+  // from another week needs the destination plan applied to its settings.
+  const planningComponent = session && session.weekId !== target.id ? session : component;
+  let moved = { ...planningComponent, weekId: target.id };
   let sessionDate = '';
-  if (component.type === 'live-session') {
+  if (planningComponent.type === 'live-session' && planningComponent.weekId !== target.id) {
     const dates = moduleWeekLiveSessionDates(module, plan?.sessions)[targetIndex] || [];
     const offset = target.components.filter(item => item.type === 'live-session').length;
     sessionDate = dates[offset] || dates.at(-1) || text(target.sessionDate);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(sessionDate) || !Number.isFinite(Date.parse(`${sessionDate}T12:00:00Z`))) {
       throw new Error('The destination week has no delivery date. Set its delivery dates before moving a live session here.');
     }
-    const settings = component.settings;
+    const settings = planningComponent.settings;
     const savedZone = text(settings.sessionTimeZone);
     const timeZone = savedZone === 'GMT Standard Time' ? 'Europe/London' : savedZone || getCalendarTimeZone();
     const oldInstant = text(settings.extraTeamsStartDateTimeUtc || settings.teamsStartDateTimeUtc || settings.sessionDateTimeUtc);
@@ -64,9 +70,10 @@ export function moveComponentToWeek(
     sourceWeekId: source.id, sessionDate, calendarPending: liveSessionCalendarMovePending(moved),
     module: {
       ...module,
-      weekStructure: module.weekStructure.map(week => week.id === source.id
-        ? { ...week, components: week.components.filter(item => item.id !== componentId) }
-        : week.id === target.id ? { ...week, components: [...week.components, moved] } : week),
+      weekStructure: moveLinkedComponentsToWeek(module.weekStructure, componentId, targetWeekId, module.catalogueId || module.id)
+        .map(week => week.id === target.id ? {
+          ...week, components: week.components.map(item => item.id === moved.id ? moved : item),
+        } : week),
     },
   };
 }

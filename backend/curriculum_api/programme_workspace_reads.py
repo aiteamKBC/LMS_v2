@@ -37,6 +37,11 @@ def programme_structure_child_rows(module_ids, *, component_text=True):
         where = f'({scope}) and ({live})' if live else scope
         return compact_authoring_rows(table, where, [*ids, *params], order, columns=columns, reuse_unchanged=True)
 
+    # The module and week reads at the end, sent together in one round trip.
+    views.prefetch_authoring_reads([
+        ((views.AUTHORING_MODULES_TABLE, scope, ids), {}),
+        ((views.AUTHORING_WEEKS_TABLE, scope, ids, 'display_order, week_number, id'), {}),
+    ])
     component_columns = views.CATALOGUE_SUMMARY_COMPONENT_COLUMNS
     if not component_text:
         text = workspace_component_text_columns()

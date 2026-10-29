@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import TimetablePage from './page';
 import { coachFetch } from '@/lib/coachFetch';
-import { bookMigratedReview, fetchReviewInstanceForm, rescheduleMigratedReview, startMigratedReview } from '@/api/reviewInstances';
+import { bookMigratedReview, fetchCoachReviewSlots, fetchReviewInstanceForm, rescheduleMigratedReview, startMigratedReview } from '@/api/reviewInstances';
 import { installDialogTestSupport, personalSupportBooking } from '../shared/__tests__/importedBookingFixtures';
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</> }));
@@ -13,15 +13,21 @@ vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => ({ email: '
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn() }));
 vi.mock('@/api/reviewInstances', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/reviewInstances')>(),
-  fetchReviewInstanceForm: vi.fn(), bookMigratedReview: vi.fn(), rescheduleMigratedReview: vi.fn(), startMigratedReview: vi.fn(),
+  fetchCoachReviewSlots: vi.fn(), fetchReviewInstanceForm: vi.fn(), bookMigratedReview: vi.fn(), rescheduleMigratedReview: vi.fn(), startMigratedReview: vi.fn(),
 }));
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(fetchCoachReviewSlots).mockResolvedValue(['09:00', '10:00', '15:00']);
   vi.stubGlobal('React', React);
   vi.stubGlobal('AppIcon', () => null);
   installDialogTestSupport();
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+async function selectTime(value = '09:00') {
+  await screen.findByRole('option', { name: value });
+  fireEvent.change(screen.getByLabelText('Time'), { target: { value } });
+}
 
 it.each(['header', 'card', 'scheduled button', 'in-progress header'])('uses the imported lifecycle operation from Calendar %s', async entry => {
   const event = { id: 'unrelated-display-id', eventKey: 'legacy-calendar:71', calendarEventKey: 'legacy-calendar:71',
@@ -67,6 +73,7 @@ it.each([false, true])('uses the PSP appointment API from the calendar (schedule
   } } }]}><TimetablePage /></MemoryRouter>);
   fireEvent.click(await screen.findByRole('button', { name: scheduled ? 'Reschedule' : 'Schedule' }));
   expect(await screen.findByRole('heading', { name: `${scheduled ? 'Reschedule' : 'Schedule'} Personal Support Plan` })).toBeVisible();
+  await selectTime(scheduled ? '10:00' : '09:00');
   fireEvent.click(await screen.findByRole('button', { name: scheduled ? 'Save new time' : 'Confirm booking' }));
   await waitFor(() => expect(scheduled ? rescheduleMigratedReview : bookMigratedReview).toHaveBeenCalledOnce());
   expect(await screen.findByRole('button', { name: 'Reschedule' })).toBeVisible();

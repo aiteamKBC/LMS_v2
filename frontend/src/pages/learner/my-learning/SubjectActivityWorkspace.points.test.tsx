@@ -20,6 +20,15 @@ const props = { subject, weeks, kind: 'commercial', learnerId: '132', progress: 
   renderWeekProgress: () => null };
 
 describe('catalogue point navigation', () => {
+  it.each(['commercial', 'apprenticeship'])('shows the supplied week dates in the subject sidebar (%s)', kind => {
+    const datedWeeks = [{ ...weeks[0], start: '2026-10-20', end: '2026-10-26' }];
+    const { rerender } = render(<MemoryRouter><SubjectActivityWorkspace {...props} kind={kind} weeks={datedWeeks} search="" /></MemoryRouter>);
+    const sidebar = screen.getByRole('complementary', { name: 'Module activities' });
+    expect(within(sidebar).getAllByText('20 Oct 2026 – 26 Oct 2026')).toHaveLength(2);
+    rerender(<MemoryRouter><SubjectActivityWorkspace {...props} kind={kind} search="" /></MemoryRouter>);
+    expect(within(sidebar).queryByText('20 Oct 2026 – 26 Oct 2026')).not.toBeInTheDocument();
+    expect(sidebar).not.toHaveTextContent('Invalid Date');
+  });
   it('opens the exact deep-linked activity inside its point without replacing its player', () => {
     render(<MemoryRouter><SubjectActivityWorkspace {...props} requestedActivity="Audio" search="" /></MemoryRouter>);
     expect(screen.getByRole('article', { name: 'Audio player' })).toBeVisible();

@@ -1,3 +1,4 @@
+import { initialReviewBookingDate, initialReviewBookingDuration } from './importedReviewBooking';
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 import { Link } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -12,6 +13,7 @@ import { ImportedValue } from '@/pages/learner/reviews/imported/ImportedReviewSe
 import {
   adoptMigratedReviewBooking,
   bookMigratedReview,
+  fetchCoachReviewSlots,
   rescheduleMigratedReview,
   calculateReviewInstanceProgress,
   calculateMigratedReviewProgress,
@@ -262,6 +264,7 @@ function ReviewInstanceContent({
   const editedFieldsRef = useRef(new Set<string>());
   const progressRequestRef = useRef(false);
   const [checkingSession, setCheckingSession] = useState(false);
+  const [generatingMigratedSummary, setGeneratingMigratedSummary] = useState(false);
   const [migratedIntelligenceRevision, setMigratedIntelligenceRevision] = useState(0);
   const reviewActive = useRef(true);
   useEffect(() => {
@@ -312,6 +315,10 @@ function ReviewInstanceContent({
   const [bookingDate, setBookingDate] = useState('');
   const [bookingTime, setBookingTime] = useState('09:00');
   const [bookingDuration, setBookingDuration] = useState(60);
+  const [bookingTimes, setBookingTimes] = useState<string[]>([]);
+  const [bookingAvailabilityLoading, setBookingAvailabilityLoading] = useState(false);
+  const [bookingAvailabilityError, setBookingAvailabilityError] = useState('');
+  const [bookingAvailabilityRetry, setBookingAvailabilityRetry] = useState(0);
   const bookingInFlightRef = useRef(false);
   const [reopening, setReopening] = useState(false);
   const [showReopenConfirmation, setShowReopenConfirmation] = useState(false);
@@ -474,6 +481,32 @@ function ReviewInstanceContent({
     };
   }, [instanceId, initializationRetry, coachIdentity.email, coachIdentity.isInitialized, isViewingAsCoach]);
 
+  useEffect(() => {
+    let active = true;
+    setBookingTimes([]);
+    setBookingAvailabilityError('');
+    if (!bookingOpen || !definition || definition.booking?.canAttach || !bookingDate
+        || !Number.isInteger(bookingDuration) || bookingDuration < 15 || bookingDuration > 480) {
+      setBookingAvailabilityLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setBookingAvailabilityLoading(true);
+    void fetchCoachReviewSlots(definition.instance.learnerId, bookingDate, bookingDuration, {
+      excludeEventKey: definition.booking?.canReschedule ? definition.booking.eventKey || undefined : undefined,
+      signal: controller.signal,
+    }).then(times => {
+      if (!active) return;
+      setBookingTimes(times);
+      setBookingTime(current => current && times.includes(current) ? current : '');
+    }).catch(reason => {
+      if (active) setBookingAvailabilityError(reason instanceof Error
+        ? reason.message : 'Could not check the coach calendar. Retry before booking.');
+    }).finally(() => { if (active) setBookingAvailabilityLoading(false); });
+    return () => { active = false; controller.abort(); };
+  }, [bookingOpen, definition?.instance.learnerId, definition?.booking?.canAttach,
+    definition?.booking?.canReschedule, definition?.booking?.eventKey, bookingDate, bookingDuration, bookingAvailabilityRetry]);
+
   const missingFieldIds = useMemo(
     () => (definition ? computeMissingRequiredFields(definition.sections, answers) : new Set<string>()),
     [definition, answers],
@@ -568,7 +601,7 @@ function ReviewInstanceContent({
   };
 
   const handleAnswerChange = (fieldId: string, value: unknown) => {
-    if (formReadOnly || checkingSession) return;
+    if (formReadOnly || (checkingSession && !generatingMigratedSummary)) return;
     if (definition?.migratedForm) editedFieldsRef.current.add(fieldId);
     setAnswers((current) => {
       const next = { ...current, [fieldId]: value };
@@ -696,6 +729,11 @@ function ReviewInstanceContent({
 
   const bookMigrated = async () => {
     if (!definition || !hasImportedBooking || !(definition.booking?.canBook || definition.booking?.canAttach || definition.booking?.canReschedule) || bookingReadOnly || bookingInFlightRef.current) return;
+    if (!definition.booking.canAttach && (bookingAvailabilityLoading || bookingAvailabilityError
+        || !bookingTimes.includes(bookingTime))) {
+      setError(bookingAvailabilityError || 'Choose an available UK time before booking.');
+      return;
+    }
     bookingInFlightRef.current = true;
     setSaving(true);
     setError(null);
@@ -707,7 +745,7 @@ function ReviewInstanceContent({
         scheduledDate: definition.booking.canAttach ? definition.booking.scheduledDate || '' : bookingDate,
         scheduledTime: definition.booking.canAttach ? definition.booking.scheduledTime || '' : bookingTime,
         durationMinutes: definition.booking.canAttach ? definition.booking.durationMinutes || 60 : bookingDuration,
-        timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+        timezoneOffsetMinutes: (12 - Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', hourCycle: 'h23' }).format(new Date(`${definition.booking.canAttach ? definition.booking.scheduledDate || '' : bookingDate}T12:00:00Z`)))) * 60,
       };
       const updated = definition.booking.canAttach
         ? await adoptMigratedReviewBooking(definition.instance.id, undefined, definition.bookingAdoptionVersion)
@@ -879,7 +917,7 @@ function ReviewInstanceContent({
           maxLength={meetingSummaryField.configuration?.migrated === true ? 4000 : undefined}
           value={answers[expandedSummaryFieldId]}
           onChange={(value) => handleAnswerChange(expandedSummaryFieldId, value)}
-          readOnly={formReadOnly || checkingSession}
+          readOnly={formReadOnly || (checkingSession && !generatingMigratedSummary)}
           invalid={showErrors && missingFieldIds.has(expandedSummaryFieldId)}
           draftSaved={summaryDraftSaved}
           onDone={closeExpandedSummary}
@@ -1039,6 +1077,7 @@ function ReviewInstanceContent({
               <MigratedMeetingIntelligence
                 key={`${definition.instance.id}:${migratedIntelligenceRevision}`}
                 instanceId={definition.instance.id}
+                resourceContextKey={JSON.stringify([definition.booking.eventKey, definition.booking.scheduledDate, definition.booking.scheduledTime, definition.booking.durationMinutes])}
                 family={definition.template.reviewTypeCode || ''}
                 status={definition.localStatus || ''}
                 viewAs={isViewingAsCoach}
@@ -1059,12 +1098,18 @@ function ReviewInstanceContent({
             ) : null}
             {hasImportedBooking && (definition.booking?.canBook || definition.booking?.canReschedule) && !bookingReadOnly ? (
               <section aria-label={definition.booking.canReschedule ? 'Reschedule migrated review meeting' : 'Book migrated review meeting'} className="rounded-xl border border-primary-200 bg-white p-4">
-                {!bookingOpen ? <button type="button" onClick={() => { setBookingDate(definition.booking?.scheduledDate || definition.instance.targetDate); setBookingTime(definition.booking?.scheduledTime || '09:00'); setBookingDuration(definition.booking?.durationMinutes || 60); setBookingOpen(true); }} disabled={busy} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{definition.booking.canReschedule ? 'Reschedule' : 'Book Meeting'}</button> : (
+                {!bookingOpen ? <button type="button" onClick={() => { setBookingDate(initialReviewBookingDate(definition, definition.template.reviewTypeCode === 'aptem_mcm' || definition.template.name.toLowerCase().includes('monthly coaching'))); setBookingTime(definition.booking?.scheduledTime || ''); setBookingDuration(initialReviewBookingDuration(definition)); setBookingOpen(true); }} disabled={busy} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{definition.booking.canReschedule ? 'Reschedule' : 'Book Meeting'}</button> : (
                   <div className="flex flex-wrap items-end gap-3">
-                    <label className="text-xs font-semibold">Date<input aria-label="Meeting date" type="date" required value={bookingDate} onChange={(event) => setBookingDate(event.target.value)} className="mt-1 block rounded-lg border px-3 py-2" /></label>
-                    <label className="text-xs font-semibold">Time<input aria-label="Meeting time" type="time" required value={bookingTime} onChange={(event) => setBookingTime(event.target.value)} className="mt-1 block rounded-lg border px-3 py-2" /></label>
-                    <label className="text-xs font-semibold">Minutes<input aria-label="Meeting duration" type="number" min={15} max={480} value={bookingDuration} onChange={(event) => setBookingDuration(Number(event.target.value))} className="mt-1 block w-24 rounded-lg border px-3 py-2" /></label>
-                    <button type="button" onClick={() => { void bookMigrated(); }} disabled={busy || !bookingDate || !bookingTime || bookingDuration < 15 || bookingDuration > 480} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving ? 'Saving...' : definition.booking.canReschedule ? 'Save new time' : 'Confirm booking'}</button>
+                    <label className="text-xs font-semibold">Date<input aria-label="Meeting date" type="date" required value={bookingDate} onChange={(event) => { setBookingDate(event.target.value); setBookingTime(''); }} className="mt-1 block rounded-lg border px-3 py-2" /></label>
+                    <label className="text-xs font-semibold">Time · UK time (Europe/London)<select aria-label="Meeting time" required value={bookingTime} disabled={bookingAvailabilityLoading || Boolean(bookingAvailabilityError) || !bookingTimes.length} onChange={(event) => setBookingTime(event.target.value)} className="mt-1 block rounded-lg border px-3 py-2">
+                      <option value="">{bookingAvailabilityLoading ? 'Checking availability…' : 'Select an available time'}</option>
+                      {bookingTimes.map(value => <option key={value} value={value}>{value}</option>)}
+                    </select></label>
+                    <label className="text-xs font-semibold">Minutes<input aria-label="Meeting duration" type="number" min={15} max={480} value={bookingDuration} onChange={(event) => { setBookingDuration(Number(event.target.value)); setBookingTime(''); }} className="mt-1 block w-24 rounded-lg border px-3 py-2" /></label>
+                    <button type="button" onClick={() => { void bookMigrated(); }} disabled={busy || !bookingDate || !bookingTime || bookingDuration < 15 || bookingDuration > 480 || bookingAvailabilityLoading || Boolean(bookingAvailabilityError) || !bookingTimes.includes(bookingTime)} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving ? 'Saving...' : definition.booking.canReschedule ? 'Save new time' : 'Confirm booking'}</button>
+                    {bookingAvailabilityLoading && <p role="status" className="w-full text-sm text-foreground-600">Checking coach working hours and calendar…</p>}
+                    {bookingAvailabilityError && <p role="alert" className="w-full text-sm text-red-700">{bookingAvailabilityError} <button type="button" onClick={() => setBookingAvailabilityRetry(value => value + 1)} className="font-semibold underline">Retry</button></p>}
+                    {!bookingAvailabilityLoading && !bookingAvailabilityError && !bookingTimes.length && <p role="status" className="w-full text-sm text-foreground-600">{bookingDate ? 'No available times fit this duration. Choose another date or duration.' : 'No permitted date is available in the supported booking calendar. Choose a supported date or contact your programme team.'}</p>}
                     <button type="button" onClick={() => setBookingOpen(false)} disabled={busy} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
                   </div>
                 )}
@@ -1306,7 +1351,7 @@ function ReviewInstanceContent({
               answers={answers}
               onAnswerChange={handleAnswerChange}
               errors={showErrors ? { missingFieldIds } : undefined}
-              readOnly={formReadOnly || checkingSession}
+              readOnly={formReadOnly || (checkingSession && !generatingMigratedSummary)}
               renderSectionContent={definition.source === 'aptem'
                 ? (section, renderFields) => renderImportedSection(section, answers, renderFields, (field) => (
                   // Retain editable inputs, local continuation/preview controls,
@@ -1325,7 +1370,9 @@ function ReviewInstanceContent({
                   showActions={showMigratedSummaryActions ? true : undefined}
                   teamsAvailable={Boolean(definition.booking?.booked && definition.booking.syncState === 'synced'
                     && !definition.booking.conflict && definition.booking.eventKey)}
-                  busy={busy} unsaved={hasUnsavedMigratedAnswers} onResult={onMigratedSummaryComplete} onBusyChange={setCheckingSession}
+                  busy={busy} unsaved={hasUnsavedMigratedAnswers} onResult={onMigratedSummaryComplete}
+                  onBusyChange={setCheckingSession} onGenerationBusyChange={setGeneratingMigratedSummary}
+                  onApplySuggestion={(text) => handleAnswerChange(field.id, text)}
                 /> : null) :
                 <div className="mb-3 space-y-3">
                   <p className="text-[13px] leading-5 text-foreground-500">

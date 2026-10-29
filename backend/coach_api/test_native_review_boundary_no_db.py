@@ -40,6 +40,10 @@ class NativeReviewBoundaryTests(SimpleTestCase):
         self.stack.enter_context(patch.object(views, "authenticated_coach_email", return_value="coach@example.invalid"))
         self.stack.enter_context(patch.object(views, "fetch_owner_active_learner_profiles", side_effect=lambda *_: [self.person]))
         self.graph = self.stack.enter_context(patch.object(views, "synchronize_reserved_calendar_event", side_effect=AssertionError("Unexpected Graph call")))
+        # This suite verifies Review source/ownership boundaries. Availability
+        # intersection is exercised against synthetic Graph responses in its
+        # dedicated tests; do not let these unrelated cases call Microsoft.
+        self.stack.enter_context(patch("coach_api.booking_availability.ensure_coach_review_slot_available"))
         self.factory = RequestFactory()
 
     def post(self, view, payload):
@@ -150,6 +154,7 @@ class NativeReviewBoundaryTests(SimpleTestCase):
                 records.return_value.first.return_value = stored
                 response = self.post(views.coach_timetable_schedule_event, {
                     "eventKey": "review:21:T-MCM:1", "scheduledDate": "2026-11-20", "scheduledTime": "10:00",
+                    "durationMinutes": 60,
                 })
                 self.assertEqual(response.status_code, 409, response.content)
                 self.assertEqual(json.loads(response.content)["code"], "APTEM_REVIEW_SOURCE_ONLY")
@@ -166,6 +171,7 @@ class NativeReviewBoundaryTests(SimpleTestCase):
              patch.object(views.CoachCalendarEvent.objects, "get_or_create", return_value=(record, False)), \
              patch.object(views, "resolve_review_display_title", return_value="Monthly Coaching"), \
              patch.object(views, "coach_learner_personal_calendar_conflicts", return_value=False), \
+             patch("coach_api.booking_availability.ensure_coach_outlook_available"), \
              patch.object(views, "persist_calendar_sync_reservation", side_effect=lambda row, **_: row), \
              patch.object(record, "save"), \
              patch.object(views, "overlay_calendar_record", return_value={"eventKey": record.event_key}), \
@@ -176,12 +182,35 @@ class NativeReviewBoundaryTests(SimpleTestCase):
             self.graph.return_value = (record, "", True)
             response = self.post(views.coach_timetable_schedule_event, {
                 "eventKey": record.event_key, "scheduledDate": "2026-11-20", "scheduledTime": "10:00",
+                "durationMinutes": 60,
             })
             self.assertEqual(response.status_code, 200, response.content)
             self.assertTrue(all(call.kwargs["owner_email__iexact"] == "coach@example.invalid" for call in records.call_args_list))
         self.assertEqual(record.review_instance_id, "EXISTING")
         self.assertEqual(record.graph_event_id, "synthetic-graph-id")
         create.assert_not_called()
+
+    def test_coach_review_booking_rejects_subminute_time_before_reservation(self):
+        self.make_native()
+        event = {"learnerId": "21", "reviewTemplateId": "T-MCM", "source": "mcr",
+                 "targetDate": "2026-11-20"}
+        with patch.object(views, "find_catchup_calendar_record", return_value=(None, "Coach")), \
+             patch.object(views, "find_catchup_template_event", return_value=(None, "Coach")), \
+             patch.object(views, "find_generated_timetable_event", return_value=(event, "Coach")), \
+             patch.object(views.CoachCalendarEvent.objects, "filter") as records, \
+             patch.object(views.CoachCalendarEvent.objects, "get_or_create") as create, \
+             patch.object(views, "coach_learner_personal_calendar_conflicts") as personal_calendar:
+            records.return_value.exclude.return_value.exclude.return_value.first.return_value = None
+            records.return_value.first.return_value = None
+            response = self.post(views.coach_timetable_schedule_event, {
+                "eventKey": "review:21:T-MCM:1", "scheduledDate": "2026-11-20",
+                "scheduledTime": "09:00:30", "durationMinutes": 60,
+            })
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(json.loads(response.content)["error"], "INVALID_REVIEW_TIME")
+        create.assert_not_called()
+        personal_calendar.assert_not_called()
+        self.graph.assert_not_called()
 
     def learner_book(self, **changes):
         payload = {"sessionType": "mcr", "eventKey": "review:21:T-MCM:1",
@@ -228,6 +257,7 @@ class NativeReviewBoundaryTests(SimpleTestCase):
             return row
         with patch.object(views, "find_generated_timetable_event", return_value=(event, "Coach")), \
              patch("learner_api.calendar_connections.booking_conflicts", return_value=False), \
+             patch.object(views.CoachCalendarEvent.objects, "filter") as existing, \
              patch.object(views.CoachCalendarEvent.objects, "get_or_create", return_value=(record, True)), \
              patch.object(views, "require_review_template_for_first_linkage"), \
              patch.object(views, "persist_calendar_sync_reservation", side_effect=reserve) as reservation, \
@@ -235,6 +265,7 @@ class NativeReviewBoundaryTests(SimpleTestCase):
              patch.object(calendar, "_booking_response_event", side_effect=lambda row, _: {"reviewInstanceId": row.review_instance_id}):
             self.graph.side_effect = None
             self.graph.return_value = (record, "", True)
+            existing.return_value.first.return_value = None
             response = self.learner_book()
         self.assertEqual(response.status_code, 201, response.content)
         self.assertEqual(record.review_template_id, "T-MCM")
@@ -250,9 +281,11 @@ class NativeReviewBoundaryTests(SimpleTestCase):
                 with patch.object(calendar, "coaching_events_for_learner", return_value=[event]), \
                      patch("learner_api.calendar_connections.booking_conflicts", return_value=False), \
                      patch.object(views, "microsoft_graph_request", return_value={"value": []}) as outlook, \
+                     patch("coach_api.booking_availability.ensure_coach_review_slot_available") as availability, \
                      patch.object(views.CoachCalendarEvent.objects, "filter") as existing, \
                      patch.object(views.CoachCalendarEvent.objects, "get_or_create", return_value=(record, True)) as create, \
                      patch("learner_api.imported_booking.reserve_imported_booking", side_effect=lambda row, *_args, **_kwargs: (row, True)) as reservation, \
+                     patch("learner_api.imported_booking.schedule_overlay_for_booking"), \
                      patch.object(calendar, "_mark_imported_review_scheduled") as mark_imported, \
                      patch.object(calendar, "_booking_response_event", return_value=event), \
                      patch.object(calendar, "require_native_review_creation", side_effect=AssertionError("Imported booking reached Native creation")) as native:
@@ -261,13 +294,15 @@ class NativeReviewBoundaryTests(SimpleTestCase):
                     self.graph.return_value = (record, "", True)
                     response = self.learner_book(sessionType=event["source"], eventKey=event["eventKey"])
                 self.assertEqual(response.status_code, 201, response.content)
-                self.assertEqual(create.call_args.kwargs["event_key"], event["eventKey"])
+                create.assert_not_called()
+                reserved_record = reservation.call_args.args[0]
+                self.assertEqual(reserved_record.event_key, event["eventKey"])
                 self.assertEqual(reservation.call_args.args[1]["importedReviewType"], family)
                 self.assertEqual(reservation.call_args.args[1]["eventKey"], event["eventKey"])
-                self.assertEqual(outlook.call_args.args[0], "GET")
-                self.assertTrue(outlook.call_args.args[1].startswith("users/coach%40example.invalid/calendarView?"))
+                availability.assert_called_once()
+                outlook.assert_not_called()
                 self.assertEqual(mark_imported.call_args.args[0], str(700 + index))
-                self.assertFalse(record.review_instance_id)
+                self.assertFalse(reserved_record.review_instance_id)
                 native.assert_not_called()
 
     def test_two_empty_aptem_profiles_never_generate_virtual_mcms(self):

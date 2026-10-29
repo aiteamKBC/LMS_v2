@@ -30,7 +30,7 @@ class LiveAttendanceTargetError(ValueError):
 
 
 def parse_live_attendance_request(body):
-    """Validate browser input; learner profiles and session ids remain server-owned."""
+    """Validate browser input; recheck the requested occurrence against the server's module and date."""
     if not isinstance(body, dict):
         raise ValueError("Invalid request.")
     learner_ids = body.get("learnerIds")
@@ -54,20 +54,27 @@ def parse_live_attendance_request(body):
     attendance = str(body.get("attendance") or "").strip().lower()
     if attendance not in LIVE_STATUSES:
         raise ValueError("Attendance must be present or absent.")
-    return {
+    occurrence_id = str(body.get("occurrenceId") or "").strip()
+    if len(occurrence_id) > 128:
+        raise ValueError("The selected live session is invalid.")
+    result = {
         "learner_ids": cleaned_ids,
         "module_catalogue_id": module_catalogue_id,
         "session_date": session_date,
         "attendance": attendance,
     }
+    if occurrence_id:
+        result["occurrence_id"] = occurrence_id
+    return result
 
 
-def matching_occurrence(occurrences, session_date, local_date):
+def matching_occurrence(occurrences, session_date, local_date, occurrence_id=""):
     """Return one scheduled occurrence on the requested local calendar date."""
     matches = [
         occurrence for occurrence in occurrences
         if occurrence.get("status") not in {"cancelled", "deleted"}
         and local_date(occurrence.get("scheduled_start")) == session_date
+        and (not occurrence_id or occurrence.get("id") == occurrence_id)
     ]
     if len(matches) != 1:
         raise LiveAttendanceTargetError(
@@ -81,7 +88,7 @@ def _local_date(value):
     return timezone.localtime(moment).date() if moment else None
 
 
-def live_occurrence_for_date(database, module_catalogue_id, session_date):
+def live_occurrence_for_date(database, module_catalogue_id, session_date, occurrence_id=""):
     sessions = list(
         LiveSession.objects.using(database)
         .filter(module_catalogue_id=module_catalogue_id, status="active")
@@ -97,7 +104,7 @@ def live_occurrence_for_date(database, module_catalogue_id, session_date):
         .filter(live_session_id=session["id"])
         .values("id", "live_session_id", "scheduled_start", "status")
     )
-    occurrence = matching_occurrence(occurrences, session_date, _local_date)
+    occurrence = matching_occurrence(occurrences, session_date, _local_date, occurrence_id)
     return session, occurrence
 
 
@@ -180,7 +187,8 @@ def bulk_attendance_live_day(request):
         profiles = profiles_for_kbc_ids(payload["learner_ids"])
         database = router.db_for_write(LiveSessionLearnerAttendance) or "default"
         session, occurrence = live_occurrence_for_date(
-            database, payload["module_catalogue_id"], payload["session_date"]
+            database, payload["module_catalogue_id"], payload["session_date"],
+            payload.get("occurrence_id", ""),
         )
         with transaction.atomic(using=database):
             existing = {

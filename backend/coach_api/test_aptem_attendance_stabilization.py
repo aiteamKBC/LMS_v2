@@ -8,6 +8,7 @@ import json
 from contextlib import ExitStack, nullcontext
 from copy import deepcopy
 from datetime import timedelta
+from urllib.error import HTTPError
 from unittest.mock import patch
 
 from django.test import RequestFactory, SimpleTestCase
@@ -29,6 +30,10 @@ class AptemAttendanceRefreshTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
         self.base = '/users/synthetic-organizer/onlineMeetings/synthetic-meeting'
+        self.organizer_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+        self.tenant_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+        self.event_override = None
+        self.meeting_override = None
 
     def prepare(self, family):
         self.family = family
@@ -36,7 +41,8 @@ class AptemAttendanceRefreshTests(SimpleTestCase):
         self.record = CoachCalendarEvent(id=7, event_key=fixtures.ID,
             idempotency_key=fixtures.ID, owner_email='coach@example.invalid', learner_id=42,
             event_type='mcr' if family == 'MCM' else 'progress-review', status='scheduled',
-            graph_event_id=fixture.graph_event_id, meeting_link=fixture.meeting_link,
+            graph_event_id=fixture.graph_event_id, graph_organizer_email='coach@example.invalid',
+            meeting_link=fixture.meeting_link,
             sync_state='synced', scheduled_date=fixture.scheduled_date,
             scheduled_time=fixture.scheduled_time, duration_minutes=60)
         self.overlay = fixtures.review('scheduled')
@@ -47,6 +53,8 @@ class AptemAttendanceRefreshTests(SimpleTestCase):
         self.reports = []
         self.details = {}
         self.attendance_error = None
+        self.target_error_code = None
+        self.transcripts = []
         self.collection_override = None
 
     def report(self, roles=('coach', 'learner'), *, key='report-1', days=0):
@@ -65,6 +73,23 @@ class AptemAttendanceRefreshTests(SimpleTestCase):
 
     def graph(self, method, path, *args, **kwargs):
         self.assertEqual(method, 'GET')
+        if path == 'users/coach%40example.invalid/events/' + self.record.graph_event_id:
+            if self.target_error_code:
+                raise RuntimeError('synthetic provider target failure') from HTTPError(
+                    path, self.target_error_code, 'synthetic', {}, None)
+            return deepcopy(self.event_override if self.event_override is not None else {
+                'id': self.record.graph_event_id,
+                'organizer': {'emailAddress': {'address': self.record.graph_organizer_email}},
+                'onlineMeeting': {'id': 'synthetic-meeting', 'joinUrl': self.record.meeting_link},
+            })
+        if path.startswith('users/coach%40example.invalid/onlineMeetings?'):
+            return deepcopy(self.meeting_override if self.meeting_override is not None else {
+                'value': [{'id': 'synthetic-meeting', 'joinWebUrl': self.record.meeting_link,
+                           'participants': {'organizer': {'identity': {'user': {
+                               'id': self.organizer_id, 'tenantId': self.tenant_id}}}}}],
+            })
+        if path == 'users/coach%40example.invalid?$select=id':
+            return {'id': self.organizer_id}
         if path == self.base + '/attendanceReports':
             if self.attendance_error:
                 raise self.attendance_error
@@ -77,6 +102,8 @@ class AptemAttendanceRefreshTests(SimpleTestCase):
             if isinstance(detail, Exception):
                 raise detail
             return deepcopy(detail)
+        if path == self.base + '/transcripts':
+            return {'value': deepcopy(self.transcripts)}
         self.assertIn(path, [self.base + '/transcripts', self.base + '/recordings'])
         return {'value': []}
 
@@ -103,11 +130,20 @@ class AptemAttendanceRefreshTests(SimpleTestCase):
                         'meetingLink': self.record.meeting_link},
         }
         with ExitStack() as stack:
+            # This synthetic snapshot fixture has no manually confirmed identity links.
+            stack.enter_context(patch('coach_api.review_attendance_links.saved_links', return_value=[]))
             def mock(name, **kwargs):
                 return stack.enter_context(patch(name, **kwargs))
             mock('coach_api.views.has_graph_credentials', return_value=True)
             mock('coach_api.views.coach_meeting_graph_target', return_value=(self.base, None))
             mock('coach_api.views.microsoft_graph_request', side_effect=self.graph)
+            mock('coach_api.views.fetch_coach_meeting_transcript_content',
+                 return_value={'transcript_text': 'Synthetic decisions', 'transcript_vtt': 'WEBVTT'})
+            mock('curriculum_api.views.teams_online_meeting_owner_id',
+                 return_value='coach@example.invalid')
+            mock('curriculum_api.views.teams_meeting_base_path', return_value=self.base)
+            duplicate_query = mock('coach_api.models.CoachCalendarEvent.objects.filter')
+            duplicate_query.return_value.exclude.return_value.exists.return_value = False
             mock('coach_api.views.coach_meeting_expected_attendees', return_value=EXPECTED)
             mock('coach_api.views.stored_coach_meeting_snapshot', side_effect=lambda record: deepcopy(self.stored))
             mock('coach_api.views.persist_coach_meeting_snapshots', side_effect=self.persist)
@@ -140,11 +176,11 @@ class AptemAttendanceRefreshTests(SimpleTestCase):
         report, detail = self.report(**kwargs)
         self.reports, self.details = [report], {report['id']: detail}
 
-    def assert_attended(self, roles=('coach', 'learner')):
+    def assert_attended(self, roles=('coach', 'learner'), *, seconds=600):
         rows = {r['role']: r for r in self.writes[-1]['tracker']['tracker']}
         for role in roles:
             self.assertEqual(rows[role]['status'], 'attended')
-            self.assertEqual(rows[role]['totalAttendanceSeconds'], 600)
+            self.assertEqual(rows[role]['totalAttendanceSeconds'], seconds)
 
     def test_coach_learner_and_both_are_persisted_without_form_mutation(self):
         for family in FAMILIES:
@@ -211,16 +247,20 @@ class AptemAttendanceRefreshTests(SimpleTestCase):
                 self.assert_attended()
                 self.assertEqual(response.status_code, 207)
 
-    def test_unrelated_report_window_does_not_mark_learner_present(self):
+    def test_early_report_from_verified_meeting_is_retained_for_imported_review(self):
         for family in FAMILIES:
             with self.subTest(family=family):
                 self.prepare(family)
                 self.load_report(days=-7)
                 self.assertEqual(self.call().status_code, 200)
-                self.assertEqual(self.writes[-1]['reports'], [])
-                self.assertTrue(all(r['status'] == 'pending' for r in self.writes[-1]['tracker']['tracker']))
+                if family == 'PSP':
+                    self.assertEqual(self.writes[-1]['reports'], [])
+                    self.assertTrue(all(r['status'] == 'pending' for r in self.writes[-1]['tracker']['tracker']))
+                else:
+                    self.assertEqual([r['id'] for r in self.writes[-1]['reports']], ['report-1'])
+                    self.assert_attended()
 
-    def test_multiple_reports_only_persist_the_booked_window(self):
+    def test_multiple_reports_from_verified_meeting_remain_distinct(self):
         for family in FAMILIES:
             with self.subTest(family=family):
                 self.prepare(family)
@@ -229,8 +269,106 @@ class AptemAttendanceRefreshTests(SimpleTestCase):
                 self.reports.append(old)
                 self.details['old-report'] = detail
                 self.assertEqual(self.call().status_code, 200)
+                self.assertEqual([r['id'] for r in self.writes[-1]['reports']],
+                                 ['report-1'] if family == 'PSP' else ['report-1', 'old-report'])
+                self.assert_attended(seconds=600 if family == 'PSP' else 1200)
+
+    def test_late_report_from_verified_meeting_is_retained(self):
+        for family in FAMILIES[:3]:
+            with self.subTest(family=family):
+                self.prepare(family)
+                self.load_report(days=7)
+                self.assertEqual(self.call().status_code, 200)
                 self.assertEqual([r['id'] for r in self.writes[-1]['reports']], ['report-1'])
                 self.assert_attended()
+
+    def test_wrong_provider_meeting_identity_cannot_write_attendance(self):
+        for conflict in ('event', 'meeting', 'organizer', 'tenant', 'ambiguous'):
+            with self.subTest(conflict=conflict):
+                self.prepare('PR')
+                self.load_report()
+                if conflict == 'event':
+                    self.event_override = {'id': 'another-event'}
+                elif conflict == 'organizer':
+                    self.event_override = {'id': self.record.graph_event_id,
+                        'organizer': {'emailAddress': {'address': 'other@example.invalid'}},
+                        'onlineMeeting': {'joinUrl': self.record.meeting_link}}
+                else:
+                    if conflict == 'tenant':
+                        self.record.meeting_link = (
+                            'https://teams.microsoft.com/test?context=%7B%22Tid%22%3A%22'
+                            + self.organizer_id + '%22%7D')
+                    meeting = {'id': 'another-meeting' if conflict == 'meeting' else 'synthetic-meeting',
+                        'joinWebUrl': self.record.meeting_link,
+                        'participants': {'organizer': {'identity': {'user': {
+                            'id': self.organizer_id, 'tenantId': self.tenant_id}}}}}
+                    if conflict == 'tenant':
+                        meeting['participants']['organizer']['identity']['user']['tenantId'] = self.tenant_id
+                    self.meeting_override = {'value': [meeting, meeting] if conflict == 'ambiguous' else [meeting]}
+                    if conflict == 'meeting':
+                        self.event_override = {'id': self.record.graph_event_id,
+                            'organizer': {'emailAddress': {'address': self.record.graph_organizer_email}},
+                            'onlineMeeting': {'id': 'synthetic-meeting', 'joinUrl': self.record.meeting_link}}
+                response = self.call()
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(self.writes, [])
+
+    def test_provider_target_errors_fail_without_writing_attendance(self):
+        for code, expected_status in ((403, 403), (404, 404), (429, 429)):
+            with self.subTest(code=code):
+                self.prepare('MCM')
+                self.load_report()
+                self.target_error_code = code
+                response = self.call()
+                self.assertEqual(response.status_code, expected_status)
+                self.assertEqual(self.writes, [])
+
+    def test_attendance_provider_errors_preserve_saved_evidence_independently(self):
+        for code in (403, 404, 429):
+            with self.subTest(code=code):
+                self.prepare('PR')
+                self.load_report()
+                self.assertEqual(self.call().status_code, 200)
+                saved = deepcopy(self.stored['attendanceReports'])
+                failure = RuntimeError('synthetic attendance resource failure')
+                failure.__cause__ = HTTPError(self.base + '/attendanceReports', code,
+                                              'synthetic', {}, None)
+                self.attendance_error = failure
+                response = self.call()
+                self.assertEqual(response.status_code, 207)
+                self.assertEqual(self.stored['attendanceReports'], saved)
+                self.assert_attended()
+
+    def test_transcript_succeeds_while_attendance_timeout_preserves_old_report(self):
+        self.prepare('PR')
+        self.load_report()
+        self.assertEqual(self.call().status_code, 200)
+        old_reports = deepcopy(self.stored['attendanceReports'])
+        self.attendance_error = TimeoutError('synthetic attendance timeout')
+        self.transcripts = [{'id': 'segment-1', 'callId': 'call-1',
+            'createdDateTime': old_reports[0]['meetingStartDateTime'],
+            'endDateTime': old_reports[0]['meetingEndDateTime']}]
+        response = self.call()
+        self.assertEqual(response.status_code, 207)
+        self.assertEqual(self.stored['attendanceReports'], old_reports)
+        self.assertEqual([row['graph_artifact_id'] for row in self.stored['artifacts']], ['segment-1'])
+        self.assertEqual(self.stored['artifacts'][0]['transcript_text'], 'Synthetic decisions')
+        self.assert_attended()
+
+    def test_changed_booking_identity_rejects_stale_saved_report(self):
+        self.prepare('MCM')
+        self.load_report()
+        self.assertEqual(self.call().status_code, 200)
+        saved = deepcopy(self.stored['attendanceReports'])
+        old_link = self.record.meeting_link
+        self.record.meeting_link = 'https://teams.microsoft.com/changed-booking'
+        self.event_override = {'id': self.record.graph_event_id,
+            'organizer': {'emailAddress': {'address': self.record.graph_organizer_email}},
+            'onlineMeeting': {'id': 'synthetic-meeting', 'joinUrl': old_link}}
+        write_count = len(self.writes)
+        self.assertEqual(self.call().status_code, 409)
+        self.assertEqual(len(self.writes), write_count)
+        self.assertEqual(self.stored['attendanceReports'], saved)
 
     def test_duplicate_fetch_is_idempotent_for_tracker_durations(self):
         for family in FAMILIES:
@@ -284,7 +422,7 @@ class AptemAttendanceRefreshTests(SimpleTestCase):
                 self.assertEqual(len(self.writes[-1]['reports']), 1)
                 self.assertTrue(all(r['status'] == 'absent' for r in self.writes[-1]['tracker']['tracker']))
 
-    def test_reschedule_does_not_reuse_outside_window_stored_attendance(self):
+    def test_reschedule_of_same_verified_meeting_retains_saved_attendance(self):
         for family in FAMILIES:
             with self.subTest(family=family):
                 self.prepare(family)
@@ -293,8 +431,12 @@ class AptemAttendanceRefreshTests(SimpleTestCase):
                 self.record.scheduled_date -= timedelta(days=7)
                 self.reports = []
                 self.assertEqual(self.call().status_code, 200)
-                self.assertEqual(self.writes[-1]['reports'], [])
-                self.assertTrue(all(r['status'] == 'pending' for r in self.writes[-1]['tracker']['tracker']))
+                if family == 'PSP':
+                    self.assertEqual(self.writes[-1]['reports'], [])
+                    self.assertTrue(all(r['status'] == 'pending' for r in self.writes[-1]['tracker']['tracker']))
+                else:
+                    self.assertEqual([r['id'] for r in self.writes[-1]['reports']], ['report-1'])
+                    self.assert_attended()
 
     def test_partial_report_failure_preserves_other_verified_report(self):
         for family in FAMILIES:

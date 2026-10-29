@@ -13,7 +13,7 @@ import { isLectureJoinable, lectureJoinUrl, useLectureClock } from '../liveLectu
 export type AttendanceFilter = 'all' | 'attended' | 'absent' | 'covered' | 'upcoming';
 const STATUS: Record<AttendanceLecture['status'], { label: string; tone: StatusTone }> = {
   completed: { label: 'Attended', tone: 'positive' }, late: { label: 'Late', tone: 'caution' },
-  absent: { label: 'Missed', tone: 'critical' }, upcoming: { label: 'Upcoming', tone: 'info' },
+  absent: { label: 'Missed', tone: 'critical' }, cancelled: { label: 'Cancelled', tone: 'neutral' }, upcoming: { label: 'Upcoming', tone: 'info' },
   unmarked: { label: 'Unmarked', tone: 'neutral' },
   awaiting_recording: { label: 'Awaiting recording', tone: 'neutral' },
   in_progress: { label: 'In progress', tone: 'info' }, pending: { label: 'Awaiting attendance', tone: 'neutral' },
@@ -274,10 +274,11 @@ function LectureRow({ now, row, onOpen, onReport, onCatchup }: { now: number; ro
         : <span className={styles.unmapped}>{row.absenceReport && !['completed', 'late'].includes(row.status) ? 'Absence reported' : '—'}</span>}
     </div>
     <div className={styles.lectureActions}>
-      {joinable ? joinUrl ? <a className={`primary-action ${styles.activityButton}`} href={joinUrl} target="_blank" rel="noopener noreferrer">Join session<AppIcon className="ri-video-chat-line" /></a>
+      {row.status === 'cancelled' ? <span className={styles.unmapped}>—</span>
+        : joinable ? joinUrl ? <a className={`primary-action ${styles.activityButton}`} href={joinUrl} target="_blank" rel="noopener noreferrer">Join session<AppIcon className="ri-video-chat-line" /></a>
         : <button type="button" className={`primary-action ${styles.activityButton}`} disabled title="The joining link is not available yet.">Join session</button>
         : <button type="button" className={`primary-action ${styles.activityButton}`} onClick={() => onOpen(row)}>Open Activities<AppIcon className="ri-arrow-right-s-line" /></button>}
-      {joinable && !joinUrl && <span className={styles.unmapped}>Joining link not available yet</span>}
+      {row.status !== 'cancelled' && joinable && !joinUrl && <span className={styles.unmapped}>Joining link not available yet</span>}
     </div>
   </article>;
 }

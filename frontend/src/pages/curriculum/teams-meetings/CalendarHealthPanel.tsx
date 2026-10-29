@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { DetailRow, InlineError } from '../shared/entities/ui';
+import { offScheduleRunLabel, offScheduleRunSentence } from './offScheduleRuns';
 import {
   EVENT_LABELS, FILTER_LABELS, INTEGRITY_EXPLANATIONS, INTEGRITY_LABELS, INTEGRITY_TONES, LIFECYCLE_LABELS,
   MEETING_TYPE_EXPLANATIONS, MEETING_TYPE_LABELS, MEMBERSHIP_LABELS, STATUS_LABELS, STATUS_TONES,
@@ -180,6 +181,12 @@ function SessionTable({ sessions, onView }: { sessions: HealthSession[]; onView:
                 {session.lifecycleIssues.some(issue => issue.confirmed)
                   ? <span className="block font-semibold text-red-700">Issue</span>
                   : session.lifecycleIssues.length > 0 && <span className="block text-amber-800">Check</span>}
+                {Boolean(session.offScheduleRuns?.length) && (
+                  <span className="block text-amber-800"
+                    title={(session.offScheduleRuns || []).map(run => offScheduleRunSentence(run, formatWhen)).join(' ')}>
+                    {offScheduleRunLabel(session.offScheduleRuns)}
+                  </span>
+                )}
               </td>
               <td className="py-1.5 pr-2">{session.auditIssues.length ? 'Unknown attribution' : 'Known or not required'}</td>
               <td className="py-1.5">
@@ -327,6 +334,12 @@ function SessionDetails({ detail }: { detail: SessionDetail }) {
         {detail.lifecycleIssues.filter(issue => !issue.confirmed).map(issue => (
           <p key={issue.code} role="note" className="mt-1 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-900">
             {issue.message}
+          </p>
+        ))}
+        {(detail.offScheduleRuns || []).map(run => (
+          <p key={`${run.runStartUtc}-${run.runEndUtc}`} role="note"
+            className="mt-1 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-900">
+            {offScheduleRunSentence(run, formatWhen)}
           </p>
         ))}
         <DetailRow label="Calendar membership" value={MEMBERSHIP_LABELS[detail.membership]} />

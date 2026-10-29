@@ -4,13 +4,13 @@ import type { CoachCalendarEvent } from './calendarEvents';
 import ImportedReviewBookingDialog from './ImportedReviewBookingDialog';
 import { importedBookingDefinition, installDialogTestSupport, personalSupportBooking, scheduledImportedBooking } from './__tests__/importedBookingFixtures';
 
-const { fetchForm, initializeForm, book, reschedule, adopt } = vi.hoisted(() => ({
-  fetchForm: vi.fn(), initializeForm: vi.fn(), book: vi.fn(), reschedule: vi.fn(), adopt: vi.fn(),
+const { fetchForm, initializeForm, book, reschedule, adopt, fetchSlots } = vi.hoisted(() => ({
+  fetchForm: vi.fn(), initializeForm: vi.fn(), book: vi.fn(), reschedule: vi.fn(), adopt: vi.fn(), fetchSlots: vi.fn(),
 }));
 vi.mock('@/api/reviewInstances', () => ({
   fetchReviewInstanceForm: fetchForm, initializeMigratedReview: initializeForm,
   bookMigratedReview: book, rescheduleMigratedReview: reschedule,
-  adoptMigratedReviewBooking: adopt,
+  adoptMigratedReviewBooking: adopt, fetchCoachReviewSlots: fetchSlots,
 }));
 const event: CoachCalendarEvent = {
   id: 'row-31', eventKey: 'imported-review:31', reviewSource: 'aptem', aptemReviewId: '31',
@@ -22,16 +22,38 @@ const onClose = vi.fn();
 const mount = (overrides: Partial<Parameters<typeof ImportedReviewBookingDialog>[0]> = {}) => render(
   <ImportedReviewBookingDialog event={event} viewingAsCoach={false} onSaved={onSaved} onClose={onClose} {...overrides} />,
 );
+async function selectTime(value = '09:00') {
+  await screen.findByRole('option', { name: value });
+  fireEvent.change(screen.getByLabelText('Time'), { target: { value } });
+}
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-09-01T09:00:00Z'));
   installDialogTestSupport();
   fetchForm.mockResolvedValue(importedBookingDefinition());
+  fetchSlots.mockResolvedValue(['09:00', '10:00', '14:30', '15:00']);
   book.mockResolvedValue(scheduledImportedBooking());
   reschedule.mockResolvedValue(scheduledImportedBooking());
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('Aptem booking from a coach list', () => {
+  it.each(['Monthly Coaching Meeting', 'Progress Review', 'Progress Review (+ Skills Radar)', 'Personal Support Plan'])('defaults a new %s to an editable hour and sends the chosen duration', async type => {
+    const current = type === 'Personal Support Plan' ? personalSupportBooking() : importedBookingDefinition();
+    current.booking = { ...current.booking!, durationMinutes: 90 };
+    fetchForm.mockResolvedValue(current);
+    mount({ event: { ...event, importedReviewType: type, source: type === 'Monthly Coaching Meeting' ? 'mcr' : 'progress-review' } });
+    await selectTime();
+    const duration = screen.getByLabelText('Duration (minutes)');
+    expect(duration).toBeEnabled();
+    expect(duration).toHaveValue(60);
+    fireEvent.change(duration, { target: { value: '90' } });
+    await waitFor(() => expect(fetchSlots).toHaveBeenLastCalledWith(31, expect.any(String), 90, expect.anything()));
+    await selectTime();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm booking' }));
+    await waitFor(() => expect(book).toHaveBeenCalledWith('imported-review:31', expect.objectContaining({ durationMinutes: 90 })));
+  });
   it.each([false, true])('books a PSP summary independently of its read-only form (scheduled=%s)', async scheduled => {
     const current = personalSupportBooking(scheduled);
     fetchForm.mockResolvedValue(current);
@@ -39,6 +61,7 @@ describe('Aptem booking from a coach list', () => {
     reschedule.mockResolvedValue(personalSupportBooking(true));
     mount({ event: { ...event, importedReviewType: 'Personal Support Plan', hasReviewForm: false } });
     expect(await screen.findByRole('heading', { name: `${scheduled ? 'Reschedule' : 'Schedule'} Personal Support Plan` })).toBeVisible();
+    await selectTime();
     fireEvent.click(await screen.findByRole('button', { name: scheduled ? 'Save new time' : 'Confirm booking' }));
     await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({
       eventKey: event.eventKey, calendarEventKey: 'imported-review:31', status: 'scheduled',
@@ -64,12 +87,13 @@ describe('Aptem booking from a coach list', () => {
   it('initializes an eligible summary then books its own review without changing its row identity', async () => {
     fetchForm.mockResolvedValueOnce(importedBookingDefinition({ migratedForm: false, formAvailable: false, canInitialize: true }));
     mount();
+    await selectTime();
     fireEvent.click(await screen.findByRole('button', { name: 'Confirm booking' }));
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
     expect(initializeForm).toHaveBeenCalledExactlyOnceWith('imported-review:31');
     expect(book).toHaveBeenCalledExactlyOnceWith('imported-review:31', {
       scheduledDate: '2026-09-22', scheduledTime: '09:00', durationMinutes: 60,
-      timezoneOffsetMinutes: new Date('2026-09-22T09:00').getTimezoneOffset(),
+      timezoneOffsetMinutes: -60,
     });
     expect(reschedule).not.toHaveBeenCalled();
     expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({
@@ -85,14 +109,14 @@ describe('Aptem booking from a coach list', () => {
     const save = await screen.findByRole('button', { name: 'Save new time' });
     expect(screen.getByLabelText('Duration (minutes)')).toHaveValue(75);
     fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-12-03' } });
-    fireEvent.change(screen.getByLabelText('Time'), { target: { value: '14:30' } });
     fireEvent.change(screen.getByLabelText('Duration (minutes)'), { target: { value: '90' } });
+    await selectTime('14:30');
     fireEvent.click(save);
     await waitFor(() => expect(reschedule).toHaveBeenCalled());
     expect(fetchForm).toHaveBeenCalledWith('imported-review:31', expect.any(AbortSignal));
     expect(reschedule).toHaveBeenCalledExactlyOnceWith('imported-review:31', {
       scheduledDate: '2026-12-03', scheduledTime: '14:30', durationMinutes: 90,
-      timezoneOffsetMinutes: new Date('2026-12-03T14:30').getTimezoneOffset(),
+      timezoneOffsetMinutes: 0,
     }, current.booking);
     expect(book).not.toHaveBeenCalled();
   });
@@ -112,6 +136,7 @@ describe('Aptem booking from a coach list', () => {
     expect(screen.queryByRole('button', { name: 'Use existing meeting' })).not.toBeInTheDocument();
     expect(book).not.toHaveBeenCalled();
     expect(reschedule).not.toHaveBeenCalled();
+    await selectTime('14:30');
     fireEvent.change(screen.getByLabelText('Time'), { target: { value: '14:30' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save new time' }));
     await waitFor(() => expect(reschedule).toHaveBeenCalledWith('imported-review:31',
@@ -127,6 +152,7 @@ describe('Aptem booking from a coach list', () => {
     mount();
     await screen.findByText('Temporary adoption failure');
     fireEvent.click(screen.getByRole('button', { name: 'Retry linking meeting' }));
+    await selectTime('10:00');
     expect(await screen.findByRole('button', { name: 'Save new time' })).toBeEnabled();
     expect(screen.getByLabelText('Time')).toBeEnabled();
     expect(onSaved).toHaveBeenCalledWith(expect.anything(), 'Existing meeting linked.', { keepOpen: true });
@@ -171,6 +197,7 @@ describe('Aptem booking from a coach list', () => {
     expect(book).not.toHaveBeenCalled();
     fetchForm.mockResolvedValue(importedBookingDefinition());
     fireEvent.click(screen.getByRole('button', { name: 'Refresh booking' }));
+    await selectTime();
     expect(await screen.findByRole('button', { name: 'Confirm booking' })).toBeEnabled();
   });
 
@@ -179,7 +206,7 @@ describe('Aptem booking from a coach list', () => {
     book.mockReturnValue(new Promise((_, fail) => { reject = fail; }));
     mount();
     const submit = await screen.findByRole('button', { name: 'Confirm booking' });
-    fireEvent.change(screen.getByLabelText('Time'), { target: { value: '15:00' } });
+    await selectTime('15:00');
     fireEvent.click(submit);
     fireEvent.click(submit);
     fireEvent(screen.getByRole('dialog'), new Event('cancel', { cancelable: true }));
@@ -197,6 +224,7 @@ describe('Aptem booking from a coach list', () => {
     const saved = scheduledImportedBooking();
     book.mockResolvedValue({ ...saved, booking: { ...saved.booking, booked: false, syncState, meetingLink: null } });
     mount({ event: { ...event, meetingLink: 'https://example.invalid/old-meeting', graphWebLink: 'https://example.invalid/old-event' } });
+    await selectTime();
     fireEvent.click(await screen.findByRole('button', { name: 'Confirm booking' }));
     await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ syncState, meetingLink: undefined, graphWebLink: undefined }), expect.stringContaining('Booking saved in LMS. Microsoft calendar sync')));
   });
@@ -211,4 +239,35 @@ describe('Aptem booking from a coach list', () => {
     expect(onClose).toHaveBeenCalledOnce();
     expect(book).not.toHaveBeenCalled();
   });
+});
+
+
+it('normalizes an unreserved MCM Sunday without changing source data', async () => {
+  const definition = importedBookingDefinition();
+  definition.instance.targetDate = '2027-02-28';
+  definition.booking = { ...definition.booking!, scheduledDate: '2027-02-28', scheduledTime: null, reserved: false };
+  definition.bookingCalendar = { division: 'england-and-wales', today: '2026-09-01', coveredYears: [2026, 2027], bankHolidays: [] };
+  const original = JSON.stringify(definition);
+  fetchForm.mockResolvedValue(definition);
+  render(<ImportedReviewBookingDialog event={{ ...event, source: 'mcr', importedReviewType: 'Monthly Coaching Meeting' }} viewingAsCoach={false} onClose={onClose} onSaved={onSaved} />);
+  await screen.findByRole('option', { name: '09:00' });
+  expect(screen.getByLabelText('Date')).toHaveValue('2027-03-01');
+  expect(fetchSlots).toHaveBeenLastCalledWith(31, '2027-03-01', 60, expect.anything());
+  expect(JSON.stringify(definition)).toBe(original);
+  expect(book).not.toHaveBeenCalled();
+});
+
+it('retries availability without discarding the selected date or duration', async () => {
+  fetchSlots.mockRejectedValue(new Error('Synthetic provider failure'));
+  render(<ImportedReviewBookingDialog event={event} viewingAsCoach={false} onClose={onClose} onSaved={onSaved} />);
+  await screen.findByText(/Synthetic provider failure/);
+  fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2027-03-01' } });
+  fireEvent.change(screen.getByLabelText('Duration (minutes)'), { target: { value: '30' } });
+  await screen.findByText(/Synthetic provider failure/);
+  fetchSlots.mockResolvedValue(['16:30']);
+  fireEvent.click(screen.getByRole('button', { name: 'Retry availability' }));
+  await selectTime('16:30');
+  expect(screen.getByLabelText('Date')).toHaveValue('2027-03-01');
+  expect(screen.getByLabelText('Duration (minutes)')).toHaveValue(30);
+  expect(book).not.toHaveBeenCalled();
 });

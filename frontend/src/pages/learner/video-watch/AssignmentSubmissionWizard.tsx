@@ -1,4 +1,5 @@
 import type { ComponentProps } from 'react';
+import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
 import { presentTopic, type AssignmentResourceLink, type AssignmentTopic } from '@/lib/assignmentTopics';
 import { TopicAssignment } from './TopicAssignment';
 import { AssignmentGuidance, briefLabelClass } from './AssignmentBriefSections';
@@ -37,6 +38,11 @@ export type AssignmentAnswers = {
   whatYouLearned: string;
   businessImpact: string;
   assignmentTopicId?: string;
+};
+
+export type AssignmentCompletion = AssignmentAnswers & {
+  timeTakenSeconds: number;
+  timeEntrySource: 'timer' | 'input';
 };
 
 const EMPTY_ANSWERS: AssignmentAnswers = {
@@ -118,7 +124,7 @@ export function AssignmentSubmissionForm({
   submittingProgress: boolean;
   onEvidenceChanged: (files: EvidenceRecord[]) => void;
   onRestoreTime: (seconds: number, source: 'timer' | 'input') => void;
-  onSubmitProgress: (answers: AssignmentAnswers) => Promise<void>;
+  onSubmitProgress: (answers: AssignmentCompletion) => Promise<void>;
   historicalReadOnly?: boolean;
   resolveEvidenceUrl?: (file: EvidenceRecord) => Promise<string>;
   renderEvidencePreview?: (file: EvidenceRecord, url: string) => ReactNode;
@@ -176,6 +182,7 @@ export function AssignmentSubmissionForm({
   const loadedRef = useRef(false);
   const saveVersionRef = useRef(0);
   const submittingRef = useRef(false);
+  const { confirmTime, timeConfirmation } = useManualTimeConfirmation();
   const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const latestDraftRef = useRef<LearningReflectionSubmissionInput | null>(null);
   const lockedRef = useRef(false);
@@ -449,6 +456,11 @@ export function AssignmentSubmissionForm({
       return;
     }
     submittingRef.current = true;
+    if ((detailedSeconds !== null || timeSource === 'input') && !await confirmTime(claimedSeconds)) {
+      submittingRef.current = false;
+      setStep(2);
+      return;
+    }
     // Invalidate any autosave already in flight so it cannot overwrite the
     // final submitted status with an older draft response.
     saveVersionRef.current += 1;
@@ -465,7 +477,8 @@ export function AssignmentSubmissionForm({
         return;
       }
       setSavedTimeSeconds(claimedSeconds);
-      await onSubmitProgress({ ...answers, ...(assignmentTopicId ? { assignmentTopicId } : {}) });
+      await onSubmitProgress({ ...answers, ...(assignmentTopicId ? { assignmentTopicId } : {}),
+        timeTakenSeconds: claimedSeconds, timeEntrySource: detailedSeconds !== null ? 'input' : timeSource });
       setStatus('submitted_for_tutor_review');
       try {
         const saved = await loadLearningReflectionSubmission({ learnerKind: kind, learnerId, activityType: 'assignment', activityId: componentId, ...(assignmentTopicId ? { assignmentTopicId } : {}) });
@@ -513,6 +526,7 @@ export function AssignmentSubmissionForm({
 
   return (
     <AssignmentAiCheckContext.Provider value={{ learnerId, learnerKind: kind, enabled: !readOnly }}>
+      {timeConfirmation}
       <AssignmentAttemptHistory attempts={submissionAttempts} />
       <section ref={wizardRef} className={`${styles.assignmentWizard} overflow-hidden rounded-2xl border border-slate-200 bg-white font-sans shadow-sm`}>
         <div className="border-b border-slate-200 bg-sky-50/50 px-5 py-4">

@@ -103,6 +103,43 @@ class KbcHistoryTests(unittest.TestCase):
     def tearDown(self):
         patch.stopall()
 
+    def test_session_date_is_a_calendar_day_for_date_or_timestamp_values(self):
+        self.assertEqual(history._session_date(date(2026, 10, 12)), '2026-10-12')
+        self.assertEqual(history._session_date('2026-10-12 00:00:00+00'), '2026-10-12')
+
+    def test_month_read_uses_calendar_day_prefix_for_timestamp_shaped_source_dates(self):
+        with closing(sqlite3.connect(':memory:')) as database:
+            database.row_factory = sqlite3.Row
+            database.execute("ATTACH DATABASE ':memory:' AS public")
+            database.execute('''CREATE TABLE public.kbc_attendance (
+                "key" TEXT, "ID" TEXT, "date" TEXT, module TEXT,
+                lecture_name TEXT, "Attendance" INTEGER, attendance_status TEXT
+            )''')
+            database.executemany('INSERT INTO public.kbc_attendance VALUES (?, ?, ?, ?, ?, ?, ?)', [
+                ('oct', '301', '2026-10-12 00:00:00+00', 'Module', 'Lecture 2', 1, None),
+                ('nov', '301', '2026-11-01 00:00:00+00', 'Module', 'Lecture 3', 1, None),
+            ])
+            connection = MagicMock()
+            connection.__enter__.return_value = connection
+            cursor = connection.cursor.return_value.__enter__.return_value
+
+            def execute(sql, params):
+                # The prefix is text, so Postgres needs text bounds; a date
+                # parameter fails there with "operator does not exist".
+                self.assertFalse(any(isinstance(value, date) for value in params))
+                adapted = sql.replace('::text', '').replace('%s', '?')
+                result = database.execute(adapted, params)
+                cursor.fetchall.return_value = [dict(row) for row in result.fetchall()]
+
+            cursor.execute.side_effect = execute
+            with patch.object(history.psycopg, 'connect', return_value=connection):
+                records = history.read_kbc_month_attendance(
+                    'synthetic', date(2026, 10, 1), date(2026, 11, 1), None,
+                )
+
+        self.assertEqual([record['recordKey'] for record in records], ['oct'])
+        self.assertEqual(records[0]['sessionDate'], '2026-10-12')
+
     def test_day_membership_unions_both_sources_without_recent_limits(self):
         request = SimpleNamespace(GET={'date': '2020-01-02'})
         with patch.object(history, 'read_kbc_day_learner_ids', return_value={'301', '302'}) as kbc, \
@@ -369,9 +406,18 @@ class KbcHistoryTests(unittest.TestCase):
                 {'source': 'kbc', 'recordKey': 'k-1', 'attendance': 'absent'},
             ]}))
         self.assertEqual(response.status_code, 200)
-        live.assert_called_once_with({7: 'present', 9: 'absent'})
+        live.assert_called_once_with({7: 'present', 9: 'absent'}, actor='')
         kbc.assert_called_once_with('synthetic', {'k-1': 'absent'})
         self.assertEqual(json.loads(response.content), {'updated': ['live:7', 'live:9', 'k-1']})
+
+    def test_live_save_passes_authenticated_actor_not_body_identity(self):
+        request = self._post({'changes': [{'source': 'live', 'recordKey': 'live:7', 'attendance': 'present'}],
+                              'actor': 'untrusted@example.invalid'})
+        request.login_account = SimpleNamespace(email='staff@example.invalid')
+        with patch.object(history, '_save_live_attendance', return_value=[7]) as live:
+            response = history.bulk_attendance_save_attendance(request)
+        self.assertEqual(response.status_code, 200)
+        live.assert_called_once_with({7: 'present'}, actor='staff@example.invalid')
 
     def test_save_rejects_bad_sources_statuses_and_json_without_writing(self):
         for body in (
@@ -470,8 +516,34 @@ class KbcHistoryTests(unittest.TestCase):
             )
         self.assertEqual(json.loads(response.content), {'records': [], 'warnings': []})
         self.assertEqual(response['Cache-Control'], 'private, no-store')
-        read.assert_called_once_with('synthetic', '301')
+        read.assert_called_once_with('synthetic', '301', '')
         self.live.assert_called_once_with('301')
+
+    def test_history_accepts_directory_email_as_an_old_id_fallback(self):
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.side_effect = [[], [{
+            'recordKey': 'legacy-row', 'learnerId': '998', 'sessionDate': '2026-10-12',
+            'moduleName': 'Legacy module', 'lectureName': 'Lecture 4',
+            'attendance_value': 1, 'source_status': None,
+        }]]
+        with patch.object(history.psycopg, 'connect', return_value=connection):
+            records = history.read_kbc_attendance_history(
+                'synthetic', '301', 'fatlinda@example.invalid',
+            )
+
+        self.assertEqual([record['recordKey'] for record in records], ['legacy-row'])
+        self.assertEqual(cursor.execute.call_count, 2)
+        self.assertEqual(cursor.execute.call_args.args[1], ['fatlinda@example.invalid'])
+
+    def test_history_rejects_an_invalid_optional_email(self):
+        with patch.object(history, 'read_kbc_attendance_history') as read:
+            response = history.bulk_attendance_kbc_history(SimpleNamespace(
+                method='GET', GET={'learner_id': '301', 'learner_email': 'not-an-email'},
+            ))
+        self.assertEqual(response.status_code, 400)
+        read.assert_not_called()
 
     def test_history_live_source_does_not_read_legacy_kbc_attendance(self):
         live = [self._record('live:9', '2026-10-08', 'present', 'live')]

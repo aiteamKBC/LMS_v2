@@ -4,6 +4,7 @@ All database readers are mocked; no schema setup or external calls are needed.
 """
 import json
 from datetime import date
+from threading import Barrier
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -33,6 +34,11 @@ class EmployerDashboardMetricsTests(SimpleTestCase):
             102: {'completed_hours': 70, 'planned_hours': 400},
             103: {'completed_hours': 0, 'planned_hours': 200},
         }
+        self.home_progress = {
+            101: {'actual': 12.5, 'submitted': 2, 'planned': 25, 'percent': 50},
+            102: {'actual': 70, 'submitted': 0, 'planned': 400, 'percent': 17.5},
+            103: {'actual': 0, 'submitted': 0, 'planned': 200, 'percent': 0},
+        }
         self.attendance_rows = {key: [self.attendance_row('present'), self.attendance_row('late'),
                                      self.attendance_row('absent')] for key in (101, 102, 103)}
         patches = [
@@ -54,7 +60,33 @@ class EmployerDashboardMetricsTests(SimpleTestCase):
         ]
         home_patch = patch('learner_api.overview_week.read_week')
         self.home_reader = home_patch.start()
+        self.home_reader.side_effect = lambda source, **kwargs: {
+            'homeProgress': {'otjh': self.home_progress.get(source.pk)},
+        }
         self.addCleanup(home_patch.stop)
+        from learner_api import journal_sources
+        self.metrics_source_modes = []
+
+        def bulk_metrics(learner_ids, *, learner_workspace=False):
+            self.metrics_source_modes.append(journal_sources.enabled())
+            if not learner_workspace:
+                raise AssertionError('Employer summary must use the learner workspace projection')
+            return {learner_id: {'otjh': {
+                'actual': self.home_progress[learner_id]['actual'],
+                'completed_actual': self.home_progress[learner_id]['actual'],
+                'planned': self.home_progress[learner_id]['planned'],
+            }} for learner_id in learner_ids}
+
+        metrics_patch = patch('learner_api.canonical_learning.metrics_bulk', side_effect=bulk_metrics)
+        self.home_metrics_reader = metrics_patch.start()
+        self.addCleanup(metrics_patch.stop)
+        self.plan_fallbacks = {102: 313.5, 103: 464.7}
+        fallback_patch = patch(
+            'learner_api.training_plan_dashboard.plan_planned_hours',
+            side_effect=lambda source, _owner: self.plan_fallbacks.get(source.pk),
+        )
+        self.plan_fallback_reader = fallback_patch.start()
+        self.addCleanup(fallback_patch.stop)
         attendance_patch = patch('learner_api.attendance_lectures.lecture_register',
                                  side_effect=lambda source: self.attendance_rows[source.pk])
         self.attendance_reader = attendance_patch.start()
@@ -77,14 +109,14 @@ class EmployerDashboardMetricsTests(SimpleTestCase):
             )
         return response, metrics, hours
 
-    def test_uses_only_owned_profiles_and_saved_otj_status_instead_of_recalculating(self):
+    def test_uses_student_home_progress_and_total_plan_not_saved_snapshots(self):
         response, metrics, hours = self.call()
         self.model.all_learners.filter.assert_called_once_with(employer_id=7)
         self.assertEqual([call.args[0] for call in metrics.call_args_list], self.learners)
         self.assertEqual([(call.args[1].pk, call.args[1].enrolment_id) for call in metrics.call_args_list],
                          [(1101, 101), (1102, 102), (1103, 103)])
         self.status_reader.assert_called_once_with(enrolment_id__in=[101, 102, 103])
-        self.status_reader.return_value.values.assert_called_once_with('id', 'enrolment_id', 'email', 'aptem_id', 'completed_hours', 'planned_hours', 'otjh_status')
+        self.status_reader.return_value.values.assert_called_once_with('id', 'enrolment_id', 'email', 'aptem_id', 'otjh_status')
         hours.assert_not_called()
         self.assertEqual(response.status_code, 200)
         body = json.loads(response.content)
@@ -93,10 +125,12 @@ class EmployerDashboardMetricsTests(SimpleTestCase):
         self.assertEqual(body["learners"]["101"]["programme"],
                          {"completed": 1, "total": 900, "percent": 0.11, "status": "ready"})
         self.assertEqual(set(body["learners"]["101"]), {"programme", "otjh", "attendance", "risk"})
-        self.assertEqual(body['learners']['101']['otjh'], {'actual': 90, 'planned': 200, 'percent': 45})
+        self.assertEqual(body['learners']['101']['otjh'], {'actual': 12.5, 'planned': 25, 'percent': 50})
         self.assertEqual(body['learners']['102']['otjh'], {'actual': 70, 'planned': 400, 'percent': 17.5})
         self.assertEqual(body['learners']['103']['otjh'], {'actual': 0, 'planned': 200, 'percent': 0})
-        self.home_reader.assert_not_called()
+        self.assertEqual(self.home_reader.call_count, 3)
+        for learner in self.learners:
+            self.home_reader.assert_any_call(learner, home_kind=learner.learner_type, home_summary=True)
         self.assertEqual([call.args[0] for call in self.attendance_reader.call_args_list], self.learners)
         self.assertEqual(body["asOf"], "2026-10-21")
         self.assertEqual(response["Cache-Control"], "private, no-store")
@@ -127,12 +161,12 @@ class EmployerDashboardMetricsTests(SimpleTestCase):
         self.assertEqual(rows['103']['attendance'],
                          {'sessions': 1, 'present': 0, 'absent': 1, 'late': 0, 'attendanceRate': 0})
 
-    def test_missing_planned_hours_preserve_completed_hours_without_inventing_percentage(self):
-        self.saved_hours[101] = {'completed_hours': 12.5, 'planned_hours': None}
+    def test_unavailable_home_progress_does_not_fall_back_to_saved_snapshots(self):
+        self.home_progress[101] = None
         response, _, _ = self.call()
         rows = json.loads(response.content)['learners']
-        self.assertEqual(rows['101']['otjh'], {'actual': 12.5, 'planned': None, 'percent': None})
-        self.assertEqual(rows['102']['otjh']['percent'], 17.5)
+        self.assertIsNone(rows['101']['otjh'])
+        self.assertEqual(rows['102']['otjh'], {'actual': 70, 'planned': 400, 'percent': 17.5})
 
     def test_new_metric_read_failures_are_visible_and_never_report_zero(self):
         for reader in (self.attendance_reader,):
@@ -185,17 +219,101 @@ class EmployerDashboardMetricsTests(SimpleTestCase):
         self.assertEqual(response.status_code, 503)
         modules.assert_not_called()
 
-    def test_summary_reads_saved_totals_without_catalogue_home_or_attendance(self):
+    def test_summary_reads_student_home_progress_without_catalogue_or_attendance(self):
         response, modules, hours = self.call(section='summary')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.content)['learners']['101'], {
             'programme': None, 'attendance': None, 'risk': 'at-risk',
-            'otjh': {'actual': 90, 'planned': 200, 'percent': 45},
+            'otjh': {'actual': 12.5, 'planned': 25, 'percent': 50},
         })
-        self.model.all_learners.filter.return_value.only.assert_called_once_with('id', 'email', 'aptem_id', 'learner_type')
+        self.model.all_learners.filter.return_value.only.assert_called_once_with(
+            'id', 'email', 'aptem_id', 'programme', 'cohort', 'group', 'group_name',
+            'programme_id', 'cohort_id', 'group_id', 'training_plan', 'learning_plan',
+        )
         modules.assert_not_called()
         hours.assert_not_called()
+        self.home_metrics_reader.assert_called_once_with([101, 102, 103], learner_workspace=True)
+        self.assertEqual(self.metrics_source_modes, [True])
         self.home_reader.assert_not_called()
+        from learner_api import journal_sources
+        self.assertFalse(journal_sources.enabled())
+        self.attendance_reader.assert_not_called()
+
+    def test_summary_uses_exact_student_home_projection_when_bulk_result_is_missing(self):
+        self.home_metrics_reader.side_effect = lambda _ids, **_kwargs: {}
+
+        response, modules, hours = self.call(section='summary')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)['learners']['101']['otjh'],
+                         {'actual': 12.5, 'planned': 25, 'percent': 50})
+        self.assertEqual(self.home_reader.call_count, 3)
+        modules.assert_not_called()
+        hours.assert_not_called()
+
+    def test_summary_uses_group_plan_fallback_only_for_missing_ssot_target(self):
+        self.home_progress[102]['planned'] = None
+        self.home_progress[103]['planned'] = None
+
+        response, modules, hours = self.call(section='summary')
+
+        self.assertEqual(response.status_code, 200)
+        rows = json.loads(response.content)['learners']
+        self.assertEqual(rows['102']['otjh'], {'actual': 70, 'planned': 313.5, 'percent': 22.33})
+        self.assertEqual(rows['103']['otjh'], {'actual': 0, 'planned': 464.7, 'percent': 0})
+        self.assertEqual(self.plan_fallback_reader.call_count, 2)
+        self.assertEqual({call.args[0].pk for call in self.plan_fallback_reader.call_args_list}, {102, 103})
+        modules.assert_not_called()
+        hours.assert_not_called()
+        self.attendance_reader.assert_not_called()
+
+    def test_summary_keeps_explicit_zero_target_without_fallback(self):
+        self.home_progress[101]['planned'] = 0
+
+        response, modules, hours = self.call(section='summary')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)['learners']['101']['otjh'],
+                         {'actual': 12.5, 'planned': 0, 'percent': None})
+        self.plan_fallback_reader.assert_not_called()
+        modules.assert_not_called()
+        hours.assert_not_called()
+
+    def test_missing_group_plan_does_not_discard_canonical_actual_hours(self):
+        self.home_progress[102]['planned'] = None
+        self.home_progress[103]['planned'] = None
+
+        def fallback(source, _owner):
+            if source.pk == 102:
+                raise DatabaseError('synthetic plan lookup failure')
+            return self.plan_fallbacks.get(source.pk)
+
+        self.plan_fallback_reader.side_effect = fallback
+
+        response, modules, hours = self.call(section='summary')
+
+        self.assertEqual(response.status_code, 200)
+        rows = json.loads(response.content)['learners']
+        self.assertEqual(rows['102']['otjh'], {'actual': 70, 'planned': None, 'percent': None})
+        self.assertEqual(rows['103']['otjh'], {'actual': 0, 'planned': 464.7, 'percent': 0})
+        modules.assert_not_called()
+        hours.assert_not_called()
+
+    def test_programme_reads_independent_learners_concurrently(self):
+        barrier = Barrier(3)
+
+        def wait_for_other_learners(source, _profile):
+            barrier.wait(timeout=5)
+            return self.modules[source.pk]
+
+        response, modules, hours = self.call(section='programme', error=wait_for_other_learners)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(modules.call_count, 3)
+        self.assertEqual(json.loads(response.content)['learners']['101']['programme']['percent'], 0.11)
+        hours.assert_not_called()
+        self.home_reader.assert_not_called()
+        self.home_metrics_reader.assert_not_called()
         self.attendance_reader.assert_not_called()
 
     def test_programme_read_keeps_activity_calculation_without_loading_attendance(self):
@@ -205,21 +323,45 @@ class EmployerDashboardMetricsTests(SimpleTestCase):
         self.home_reader.assert_not_called()
         self.attendance_reader.assert_not_called()
 
+    def test_progress_read_combines_student_home_and_programme_without_waiting_for_attendance(self):
+        response, modules, hours = self.call(section='progress')
+        self.assertEqual(response.status_code, 200)
+        rows = json.loads(response.content)['learners']
+        self.assertEqual(rows['101']['otjh'], {'actual': 12.5, 'planned': 25, 'percent': 50})
+        self.assertEqual(rows['101']['programme']['percent'], 0.11)
+        self.assertIsNone(rows['101']['attendance'])
+        self.assertEqual(modules.call_count, 3)
+        self.assertEqual(self.home_reader.call_count, 3)
+        hours.assert_not_called()
+        self.attendance_reader.assert_not_called()
+
+    def test_status_read_returns_risk_without_waiting_for_learner_progress(self):
+        response, modules, hours = self.call(section='status')
+        self.assertEqual(response.status_code, 200)
+        rows = json.loads(response.content)['learners']
+        self.assertEqual(rows['101'], {
+            'programme': None, 'otjh': None, 'attendance': None, 'risk': 'at-risk',
+        })
+        self.assertEqual(rows['102']['risk'], 'need-attention')
+        modules.assert_not_called()
+        self.home_reader.assert_not_called()
+        hours.assert_not_called()
+        self.attendance_reader.assert_not_called()
+
     def test_invalid_section_does_not_read_learner_data(self):
         response, modules, _ = self.call(section='invalid')
         self.assertEqual(response.status_code, 400)
         self.status_reader.assert_not_called()
         modules.assert_not_called()
 
-    def test_saved_hours_preserve_zero_missing_and_above_plan(self):
-        for actual, planned, percent in ((0, 100, 0), (125, 100, 125), (3, 0, None),
-                                         (None, 100, None), (float('nan'), 100, None),
-                                         (3, -1, None), (3, float('inf'), None)):
+    def test_legacy_saved_hours_do_not_override_student_home_progress(self):
+        for actual, planned in ((0, 100), (125, 100), (3, 0), (None, 100),
+                                (float('nan'), 100), (3, -1), (3, float('inf'))):
             with self.subTest(actual=actual, planned=planned):
                 self.saved_hours[101] = {'completed_hours': actual, 'planned_hours': planned}
                 response, _, _ = self.call(section='summary')
                 value = json.loads(response.content)['learners']['101']['otjh']
-                self.assertEqual(value['percent'], percent)
+                self.assertEqual(value, {'actual': 12.5, 'planned': 25, 'percent': 50})
                 self.assertNotIn('NaN', response.content.decode())
                 self.assertNotIn('Infinity', response.content.decode())
 
@@ -307,3 +449,69 @@ class EmployerDashboardMetricsTests(SimpleTestCase):
         self.assertEqual(response.status_code, 401)
         metrics.assert_not_called()
         self.status_reader.assert_not_called()
+
+
+class EmployerLearnerListProgressTests(SimpleTestCase):
+    def test_list_progress_uses_one_canonical_batch_and_learner_plan_semantics(self):
+        learners = [SimpleNamespace(pk=1526), SimpleNamespace(pk=1527), SimpleNamespace(pk=1528)]
+        cards = [{'id': str(learner.pk)} for learner in learners]
+        metrics = {
+            1526: {'otjh': {'actual': 5, 'completed_actual': 5, 'planned': 568.73}},
+            1527: {'otjh': {'actual': 3, 'completed_actual': 3, 'planned': 0}},
+            1528: {'otjh': {'actual': 0, 'completed_actual': 0, 'planned': None}},
+        }
+        profile_query = patch.object(employer_portal.LearnerProfile.objects, 'filter')
+        profile_filter = profile_query.start()
+        profile_filter.return_value.values.return_value = [
+            {'id': 1117, 'enrolment_id': 1526},
+            {'id': 1118, 'enrolment_id': 1527},
+            {'id': 1119, 'enrolment_id': 1528},
+        ]
+        self.addCleanup(profile_query.stop)
+        bulk = patch('learner_api.canonical_learning.metrics_bulk', return_value=metrics)
+        bulk_reader = bulk.start()
+        self.addCleanup(bulk.stop)
+        plan = patch('learner_api.training_plan_dashboard.plan_planned_hours', return_value=250)
+        plan_reader = plan.start()
+        self.addCleanup(plan.stop)
+
+        employer_portal._attach_learner_otjh_progress(cards, learners)
+
+        bulk_reader.assert_called_once_with([1526, 1527, 1528], learner_workspace=True)
+        plan_reader.assert_called_once_with(learners[2], {'id': 1119, 'enrolment_id': 1528})
+        self.assertEqual(cards, [
+            {'id': '1526', 'otjhProgress': {'actual': 5, 'planned': 568.73, 'percent': 0.88}},
+            {'id': '1527', 'otjhProgress': {'actual': 3, 'planned': 0, 'percent': None}},
+            {'id': '1528', 'otjhProgress': {'actual': 0, 'planned': 250, 'percent': 0}},
+        ])
+
+    def test_unresolved_canonical_metric_stays_unavailable_in_initial_list(self):
+        learners = [SimpleNamespace(pk=1526)]
+        cards = [{'id': '1526'}]
+        profile_query = patch.object(employer_portal.LearnerProfile.objects, 'filter')
+        profile_filter = profile_query.start()
+        profile_filter.return_value.values.return_value = []
+        self.addCleanup(profile_query.stop)
+        bulk = patch('learner_api.canonical_learning.metrics_bulk', return_value={1526: None})
+        bulk_reader = bulk.start()
+        self.addCleanup(bulk.stop)
+
+        employer_portal._attach_learner_otjh_progress(cards, learners)
+
+        self.assertEqual(cards, [{'id': '1526', 'otjhProgress': None}])
+        bulk_reader.assert_called_once_with([1526], learner_workspace=True)
+
+    def test_initial_portal_response_keeps_progress_and_rejects_other_employer(self):
+        cards = [{'id': '1526', 'outstandingCount': 0,
+                  'otjhProgress': {'actual': 5, 'planned': 568.73, 'percent': 0.88}}]
+        with patch.dict('os.environ', {'LEARNER_API_REQUIRE_AUTH': '1'}), \
+                patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='employer', subject_id=9)), \
+                patch.object(employer_portal, '_employer_or_404', return_value=(SimpleNamespace(pk=9, id=9), None)), \
+                patch.object(employer_portal, 'to_employer_row', return_value={'id': '9', 'name': 'Test employer'}), \
+                patch.object(employer_portal, '_learner_cards', return_value=cards) as read_cards:
+            response = employer_portal.employer_portal(RequestFactory().get('/employer-portal/9/'), employer_id=9)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(json.loads(response.content)['learners'][0]['otjhProgress']['percent'], 0.88)
+            response = employer_portal.employer_portal(RequestFactory().get('/employer-portal/8/'), employer_id=8)
+            self.assertEqual(response.status_code, 404)
+            read_cards.assert_called_once_with(9)

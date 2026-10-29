@@ -92,6 +92,9 @@ def start(enrolment_id, aptem_id, group_id, activity_id, definition, *, attempt_
     attempt_id = attempt_id or str(uuid4())
     snapshot = {key: definition.get(key) for key in ('title', 'quiz', 'has_reading', 'available')}
     snapshot['catalogue_kind'] = definition.get('catalogue_kind', 'material')
+    if definition.get('retakeTimeChoice') is not None:
+        from .retake_timing import choice
+        snapshot['retakeTimeChoice'] = choice(definition['retakeTimeChoice'])
     if timing_session is not None:
         snapshot['studyTimingSession'] = timing_session
     if snapshot['catalogue_kind'] not in {'material', 'quiz'}:
@@ -110,6 +113,8 @@ def start(enrolment_id, aptem_id, group_id, activity_id, definition, *, attempt_
 
 
 def finish(enrolment_id, aptem_id, group_id, activity_id, attempt_id, answers, reading_confirmed, *, catalogue_kind='material', learner_kind=None, timing_payload=None):
+    from .retake_timing import choice
+    retake_choice = choice((timing_payload or {}).get('retakeTimeChoice'))
     from .progress_transfer_store import lock_learner, assert_legacy_writable
     with lock_learner(enrolment_id):
         with connections[ALIAS].cursor() as cur:
@@ -144,6 +149,10 @@ def finish(enrolment_id, aptem_id, group_id, activity_id, attempt_id, answers, r
             measured = completion_time(definition, timing_payload or {}, kind=learner_kind,
                 learner_id=enrolment_id, group_id=group_id, activity_id=activity_id, attempt_id=attempt_id)
             if measured is not None:
+                if retake_choice is not None:
+                    measured['retakeTimeChoice'] = retake_choice
+                if definition.get('retakeTimeChoice') is not None:
+                    measured['retakeTimeChoice'] = definition['retakeTimeChoice']
                 # Same locked attempt and transaction as grading: retrying a
                 # Finish cannot award time twice or leave time without a result.
                 cur.execute(f'''UPDATE {ATTEMPTS} SET definition=jsonb_set(definition,'{{studyTime}}',%s::jsonb)

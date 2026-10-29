@@ -15,7 +15,7 @@ from . import canonical_learning as canonical
 from . import progress_transfer_store as store
 from .journal_sources import learner_journal_reads
 from .progress_transfer_policy import eligible_pairs, public_item, record_courses, is_old_record
-from .progress_transfer_matching import build_review, module_review, validate_decisions, manual_completion
+from .progress_transfer_matching import build_review, module_review, validate_decisions, manual_completion, component_counts
 
 
 def endpoint(role):
@@ -154,7 +154,46 @@ def review_request(request_id):
     items = [item for item in store.read_state(pk)['items'] if item['requestId'] == str(request_id)]
     if not items or any(item['status'] != 'pending' for item in items):
         raise ServiceError('This request is no longer pending. Refresh the requests.', 'transfer_not_pending', 409)
-    return build_review(request_id, items, with_planned_hours(load_context(source, owner), items))
+    from .progress_transfer_content import verified_source_types
+    context = with_source_weeks(load_context(source, owner), items)
+    context = verified_source_types(with_planned_hours(context, items), items)
+    # Review suggestions use the names in this review snapshot. Loading old
+    # documents/question banks is not needed to match completed components.
+    return build_review(request_id, items, context)
+
+
+def with_source_weeks(context, items):
+    """Recover missing old weeks from owned source sections, only for this transfer."""
+    from .course_catalogue_display import catalogue_display_context, read_export_placements
+    completed = {(item['courseRef'][7:], ref) for item in items
+                 for ref in item.get('completedSourceActivities',
+                     [ref for course, ref in context[6] if str(course) == item['courseRef'][7:]])}
+    missing = {(str(d['source_course_ref']), d['source_activity_id']) for d in context[5]
+               if (str(d['source_course_ref']), d['source_activity_id']) in completed
+               and not (d.get('source_section_title') or '').strip()}
+    missing_courses = {course for course, _ in missing}
+    courses = [course for course in context[4] if str(course['source_course_ref']) in missing_courses]
+    if not courses:
+        return context
+    course_refs = {str(course['source_course_ref']) for course in courses}
+    # Include unfinished parents/siblings as section evidence; only frozen
+    # completed references are returned by module_review or receive credit.
+    definitions = [d for d in context[5] if str(d['source_course_ref']) in course_refs]
+    enriched = catalogue_display_context(definitions, read_export_placements(canonical.query, courses))
+    weeks = {}
+    for definition in enriched:
+        section_title = (definition.get('source_section') or {}).get('title')
+        if not section_title and definition['_display_schedule']['date_source'] == 'section_needs_review':
+            continue
+        weeks[(str(definition['source_course_ref']), definition['source_activity_id'])] = (
+            section_title or definition.get('source_section_title') or '')
+    result = list(context)
+    result[5] = []
+    for definition in context[5]:
+        key = (str(definition['source_course_ref']), definition['source_activity_id'])
+        result[5].append({**definition, 'source_section_title': weeks[key]}
+                         if key in missing and key in weeks else definition)
+    return tuple(result)
 
 
 def with_planned_hours(context, items):
@@ -200,7 +239,9 @@ def approve_request(request_id, account, decisions=None):
         if any(pairs.get('current:' + item['moduleId']) != item['courseRef'] for item in items):
             raise ServiceError('A module assignment or course mapping changed. Review it before approving this request.',
                                'transfer_mapping_changed', 409)
-        context = with_planned_hours(context, items)
+        from .progress_transfer_content import verified_source_types
+        context = with_source_weeks(context, items)
+        context = verified_source_types(with_planned_hours(context, items), items)
         review = build_review(request_id, items, context)
         manual = validate_decisions(review, decisions)
         for item in items:
@@ -221,6 +262,7 @@ def approve_request(request_id, account, decisions=None):
                     'manual': not bool(source_component['automaticTargetId']),
                     **({'plannedHours': target['plannedHours']} if not source_component['automaticTargetId'] else {})})
             item['matchedComponents'] = matches
+            item['componentCounts'] = component_counts(module, matches)
             cursor.execute(f'UPDATE {store.ITEMS} SET snapshot=%s::jsonb WHERE request_id=%s AND enrolment_id=%s AND module_id=%s',
                 [store.dumps({key: value for key, value in item.items() if key not in ('requestId','status','requestedAt','approvedAt')}), request_id, pk, item['moduleId']])
         cursor.execute(f"UPDATE {store.REQUESTS} SET status='approved',approved_by=%s,approved_at=now() WHERE id=%s AND status='pending'",

@@ -1,3 +1,4 @@
+import type { BookingCalendarRules } from './learnerCalendar';
 /**
  * Client for the Curriculum-driven Review instance API (see
  * backend/curriculum_api/review_instances.py + coach_api's
@@ -200,10 +201,12 @@ export interface ReviewInstanceFormDefinition {
   canInitialize?: boolean;
   sourceStatus?: string;
   localStatus?: string | null;
+  bookingCalendar?: BookingCalendarRules;
   booking?: {
     /** Aptem PSP appointments do not require an editable review form. */
     formRequired?: boolean;
     status?: string;
+    reserved?: boolean;
     booked: boolean;
     conflict: boolean;
     canAttach?: boolean;
@@ -273,7 +276,9 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
       typeof data.code === 'string' ? `Code: ${data.code}` : '',
       typeof data.request_id === 'string' ? `Reference: ${data.request_id}` : '',
     ].filter(Boolean);
-    throw new Error(diagnostics.length ? `${message} (${diagnostics.join(' · ')})` : message);
+    throw Object.assign(new Error(diagnostics.length ? `${message} (${diagnostics.join(' · ')})` : message), {
+      status: response.status, code: typeof data.code === 'string' ? data.code : undefined,
+    });
   }
   return data as T;
 }
@@ -284,12 +289,16 @@ const migratedUrl = (instanceId: string) => `/coach_api/migrated-reviews/${encod
 export async function fetchMigratedReviewIntelligence(
   instanceId: string,
   signal?: AbortSignal,
-  options: { refresh?: boolean } = {},
+  options: { refresh?: boolean; generateSummary?: boolean } = {},
 ): Promise<CoachMeetingArtifactsResponse> {
   const path = options.refresh ? 'check-session' : 'intelligence';
   return readJsonResponse<CoachMeetingArtifactsResponse>(await coachFetch(`${migratedUrl(instanceId)}/${path}`, {
     signal,
     ...(options.refresh ? { method: 'POST' } : {}),
+    ...(options.refresh && options.generateSummary ? {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ generateSummary: true }),
+    } : {}),
   }));
 }
 
@@ -623,6 +632,19 @@ export async function fetchLearnerAdditionReviewTemplates(learnerId: number | st
     { signal },
   );
   return readJsonResponse<{ learnerId: number; programmeId: string | null; templates: LearnerAdditionReviewTemplate[]; reviewSource: 'curriculum' | 'aptem' | 'conflict' | 'unavailable'; canAddReview: boolean; detail?: string; code?: string }>(response);
+}
+
+export async function fetchCoachReviewSlots(
+  learnerId: number | string,
+  date: string,
+  durationMinutes: number,
+  options: { excludeEventKey?: string; signal?: AbortSignal } = {},
+): Promise<string[]> {
+  const query = new URLSearchParams({ learnerId: String(learnerId), date, durationMinutes: String(durationMinutes) });
+  if (options.excludeEventKey) query.set('excludeEventKey', options.excludeEventKey);
+  const response = await coachFetch(`/coach_api/coach/reviews/availability?${query}`, { signal: options.signal });
+  const result = await readJsonResponse<{ times?: string[] }>(response);
+  return Array.isArray(result.times) ? result.times : [];
 }
 
 /**

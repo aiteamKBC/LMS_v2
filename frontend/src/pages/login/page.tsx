@@ -3,7 +3,6 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { AuthError, PasswordSetupRequired, apiMicrosoftStart, type AuthUser } from '@/api/auth';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { RouteLoadingSkeleton } from '@/components/feature/RouteLoadingSkeleton';
 // Shared with RequireAuth, so the page you are sent to after signing in and
 // the page you are sent back to when refused are decided by one definition.
 import { postLoginRouteFor } from '@/lib/routeAccess';
@@ -35,7 +34,7 @@ export default function LoginPage() {
   const lectureFeedbackIntent = !androidDownload && new URLSearchParams(location.search).get('lectureFeedback') === '1';
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
+  const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [ssoLoading, setSsoLoading] = useState(false);
 
@@ -123,11 +122,7 @@ export default function LoginPage() {
     }
   };
 
-  if (!isInitialized || (auth.account && !(androidDownload && canDownloadAndroid(auth.account)))) {
-    return <RouteLoadingSkeleton />;
-  }
-
-  if (androidDownload && canDownloadAndroid(auth.account)) {
+  if (androidDownload && isInitialized && canDownloadAndroid(auth.account)) {
     return (
       <main className={styles.downloadPage}>
         <section className={styles.downloadCard} aria-labelledby="download-heading">

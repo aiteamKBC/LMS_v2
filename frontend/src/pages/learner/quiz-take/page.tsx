@@ -1,4 +1,5 @@
 import { archiveTimingDraft, timingSessionExpired } from '@/lib/timingRecovery';
+import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { observeRewardInterval, flushRewardObservations, clearRewardObservations } from '@/lib/rewardTracking';
 import { createPortal } from 'react-dom';
@@ -35,6 +36,7 @@ import { startTimeTracking, checkpointTimeTracking, type TimeTrackingSession } f
 import { ComponentAccessNotice } from '@/components/feature/ComponentAccessNotice';
 import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
 import { CompletionTimeDialog } from '@/components/feature/CompletionTimeDialog';
+import { RetakeTimeDialog, type RetakeTimeChoice } from '@/components/feature/RetakeTimeDialog';
 import { CompletionValidationError, type WorkingRuleReason } from '@/lib/completionValidation';
 
 const learnerNav = roleNavMap.learner;
@@ -185,7 +187,7 @@ export default function QuizTakePage() {
   const [correction, setCorrection] = useState<{ reason: WorkingRuleReason | ''; holidayName: string } | null>(null);
   const [correctionError, setCorrectionError] = useState('');
   const lastSubmissionRef = useRef<{
-    reflection: { ksbs: string[]; feedback: string; reportedTime: string };
+    reflection: { ksbs: string[]; feedback: string; reportedTime: string; timeTakenSeconds?: number };
     skipReflection: boolean;
   } | null>(null);
   const [result, setResult] = useState<QuizAttemptResult | null>(null);
@@ -319,7 +321,14 @@ export default function QuizTakePage() {
   // moment to offer a way out of it, and leaving mid-attempt loses the answers.
   const showSidebar = Boolean(placement) && (phase === 'intro' || phase === 'results');
 
+  const [retakeTimeOpen, setRetakeTimeOpen] = useState(false);
+  const retakeTimeChoice = useRef<RetakeTimeChoice | undefined>(undefined);
   const startQuiz = () => {
+    if (latestAttempt || result) { setRetakeTimeOpen(true); return; }
+    retakeTimeChoice.current = undefined;
+    beginQuiz();
+  };
+  const beginQuiz = () => {
     if (!quiz || quiz.unavailableReason || !kind || !id || !canUseComponent || detailLoading || detailError) return;
     setSubmitError(null);
     setReflectionChoiceOpen(false);
@@ -388,7 +397,7 @@ export default function QuizTakePage() {
     : undefined;
 
   const finalizeSubmit = async (
-    reflection: { ksbs: string[]; feedback: string; reportedTime: string },
+    reflection: { ksbs: string[]; feedback: string; reportedTime: string; timeTakenSeconds?: number },
     options: { skipReflection?: boolean; declaredCompletedAt?: string } = {},
   ) => {
     if (!quiz || !kind || !id || completionInFlightRef.current || !canUseComponent) return;
@@ -411,7 +420,7 @@ export default function QuizTakePage() {
       if (tracking.rewardTracking) await flushRewardObservations(tracking,'quiz',String(quiz.id), Boolean(tracking.persistent));
       const res = await submitQuizAttempt(quiz.id, kind as 'commercial' | 'apprenticeship', id, {
         answers,
-        timeTakenSeconds: elapsedSeconds,
+        timeTakenSeconds: reflection.timeTakenSeconds ?? elapsedSeconds,
         startedAt: tracking.startedAt,
         trackingToken: tracking.trackingToken,
         module: moduleTitle,
@@ -421,6 +430,7 @@ export default function QuizTakePage() {
         reportedTime: reflection.reportedTime,
         skipReflection: options.skipReflection === true,
         declaredCompletedAt: options.declaredCompletedAt,
+        retakeTimeChoice: retakeTimeChoice.current,
       });
       setReflectionChoiceOpen(false);
       setResult(res);
@@ -516,6 +526,9 @@ export default function QuizTakePage() {
             plannedHours={quizPlannedHours}
             actualTimeUnit="minutes"
             learnerKsbs={learnerKsbs}
+            autoKsbs={detail?.components?.find(component => String(component.quizMeta?.quizId ?? '') === String(quizId)
+              && (!moduleTitle || component.module === moduleTitle)
+              && (!weekTitle || component.week === weekTitle))?.ksbMappings ?? []}
             elapsedSeconds={elapsedSeconds}
             submitting={submitting}
             submitError={submitError}
@@ -561,6 +574,9 @@ export default function QuizTakePage() {
             accessOpen={componentAccess.open}
           />
         )}
+        {retakeTimeOpen && <RetakeTimeDialog onClose={() => setRetakeTimeOpen(false)} onChoose={selection => {
+          retakeTimeChoice.current = selection; setRetakeTimeOpen(false); beginQuiz();
+        }} />}
         {correction && (
           <CompletionTimeDialog
             reason={correction.reason}
@@ -1151,6 +1167,7 @@ function QuizReadingPanel({ quizId, attemptNumber, kind, learnerId, quizTimeSeco
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [finishing, setFinishing] = useState(false);
+  const { confirmTime, timeConfirmation } = useManualTimeConfirmation();
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [confirmationReadingSeconds, setConfirmationReadingSeconds] = useState(0);
   const [showTimeConfirmation, setShowTimeConfirmation] = useState(false);
@@ -1243,6 +1260,10 @@ function QuizReadingPanel({ quizId, attemptNumber, kind, learnerId, quizTimeSeco
     setFinishing(true);
     setConfirmationError(null);
     try {
+      if (timeEntryMode === 'manual' && !await confirmTime(claimedSeconds)) {
+        requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[aria-label="Reading time (minutes)"]')?.focus());
+        return;
+      }
       if (tracking.persistent) {
         trackingRef.current = await checkpointTimeTracking(tracking, 'component', `quiz-reading:${quizId}:${attemptNumber}`,
           kind, learnerId, elapsedSeconds);
@@ -1269,6 +1290,7 @@ function QuizReadingPanel({ quizId, attemptNumber, kind, learnerId, quizTimeSeco
 
   return (
     <section className="overflow-hidden rounded-2xl border border-primary-200 bg-background-50 card-premium">
+      {timeConfirmation}
       <div className="flex flex-col gap-4 bg-gradient-to-r from-primary-50 to-violet-50 p-5 sm:flex-row sm:items-center sm:justify-between md:p-6">
         <div className="flex items-start gap-3">
           <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary-600 text-white shadow-sm">

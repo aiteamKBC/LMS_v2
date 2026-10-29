@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { loadRecordingsLibrary, type RecordingsLibrary } from '@/api/sessionResults';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
@@ -12,7 +13,6 @@ import SearchAndFilters from './components/SearchAndFilters';
 import LibrarySummary from './components/LibrarySummary';
 import DayAgenda from './components/DayAgenda';
 import styles from './RecordingsPage.module.css';
-import { Link } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import RecordingDownloadButton from './components/RecordingDownloadButton';
 import ModuleDirectory from './components/ModuleDirectory';
@@ -194,6 +194,10 @@ export default function CurriculumRecordingsPage() {
       workspaceLabel="Curriculum Studio" pageTitle="Session Recordings"
       pageSubtitle="Find a lecture and download its saved recordings">
       <main id="curriculum-recordings-page" className={styles.page}>
+        <nav aria-label="Recording libraries" className="mb-5 flex flex-wrap gap-2 text-sm font-semibold">
+          <span aria-current="page" className="rounded-lg bg-primary-600 px-3 py-2 text-white">Lecture recordings</span>
+          <Link to="/curriculum/coaching-recordings" className="rounded-lg border border-background-200 bg-white px-3 py-2 hover:bg-primary-50">Coach Meetings &amp; Recordings</Link>
+        </nav>
         <div className="mx-auto w-full min-w-0">
           <section className={styles.intro}>
             <nav className={styles.breadcrumb} aria-label="Breadcrumb"><Link to="/workspace/curriculum">Curriculum</Link><span aria-hidden="true">/</span><Link to="/curriculum/module-builder">Modules</Link><span aria-hidden="true">/</span><span>Recordings</span></nav>

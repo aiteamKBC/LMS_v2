@@ -247,15 +247,16 @@ describe('WeekComponentRail add flow', () => {
     await user.click(screen.getByRole('button', { name: 'Add 3 components' }));
     expect(onChange).toHaveBeenCalledOnce();
     const next = onChange.mock.calls[0][0];
-    expect(next).toHaveLength(5);
-    expect(next[0]).toEqual(first); expect(next[4]).toEqual(last);
-    expect(next.slice(1, 4)).toMatchObject([
+    expect(next).toHaveLength(6);
+    expect(next[0]).toEqual(first); expect(next[5]).toEqual(last);
+    expect(next.slice(1, 5)).toMatchObject([
       { weekId: 'WEEK-1', type: 'live-session', points: 11, expectedOtjh: 2 },
+      { weekId: 'WEEK-1', type: 'recording-placeholder', settings: { linkedLiveSessionComponentId: next[1].id } },
       { weekId: 'WEEK-1', type: 'video', points: 17, expectedOtjh: 0 },
       { weekId: 'WEEK-1', type: 'reading', points: 0, expectedOtjh: 2 },
     ]);
-    expect(next.slice(1, 4).map((component: { title: string }) => component.title)).toEqual(['Live Teams Session 3', 'Video 4', 'Reading Material 5']);
-    expect(new Set(next.map((component: { id: string }) => component.id)).size).toBe(5);
+    expect([next[1].title, next[3].title, next[4].title]).toEqual(['Live Teams Session 3', 'Video 4', 'Reading Material 5']);
+    expect(new Set(next.map((component: { id: string }) => component.id)).size).toBe(6);
     expect(onSelectId).toHaveBeenCalledWith(next[1].id);
     expect(screen.queryByRole('dialog', { name: 'Add a component' })).not.toBeInTheDocument();
   });
@@ -281,7 +282,7 @@ describe('WeekComponentRail add flow', () => {
     await user.click(screen.getByRole('button', { name: 'Add component' }));
     expect(screen.getByText('0 selected')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Select all' }));
-    expect(screen.getAllByRole('button', { pressed: true })).toHaveLength(7);
+    expect(screen.getAllByRole('button', { pressed: true })).toHaveLength(8);
     await user.click(screen.getByRole('button', { name: 'Clear' }));
     expect(screen.queryAllByRole('button', { pressed: true })).toHaveLength(0);
     expect(screen.getByRole('button', { name: 'Add components' })).toBeDisabled();

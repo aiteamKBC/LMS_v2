@@ -28,6 +28,7 @@ const JOIN_EARLY_MS = JOIN_EARLY_MINUTES * 60_000;
 
 /** Join is offered from shortly before a timed lecture starts until it ends. */
 export function isLectureJoinable(lecture: AttendanceLecture, now: number): boolean {
+  if (lecture.status === 'cancelled') return false;
   const start = Date.parse(lecture.startsAt || '');
   const end = Date.parse(lecture.endsAt || '');
   return Number.isFinite(start) && Number.isFinite(end) && start < end && start - JOIN_EARLY_MS <= now && now < end;

@@ -25,10 +25,11 @@ from .bulk_attendance_kbc_history import (
     bulk_attendance_kbc_history,
     bulk_attendance_kbc_recent,
     bulk_attendance_day_learners,
+    bulk_attendance_kbc_month_records,
     bulk_attendance_save_attendance,
 )
 from .bulk_attendance_live_day import bulk_attendance_live_day
-from .bulk_attendance_live_day_records import bulk_attendance_live_day_records
+from .bulk_attendance_live_day_records import bulk_attendance_live_day_records, bulk_attendance_live_month_records
 from .teams_calendar_actions import calendar_action
 from .teams_week_meeting import (
     curriculum_live_session_meeting_scope,
@@ -46,10 +47,12 @@ urlpatterns = [
     path('curriculum/bulk-attendance/learners/', bulk_attendance_learners, name='curriculum-bulk-attendance-learners'),
     path('curriculum/bulk-attendance/kbc-history/', bulk_attendance_kbc_history, name='curriculum-bulk-attendance-kbc-history'),
     path('curriculum/bulk-attendance/kbc-recent/', bulk_attendance_kbc_recent, name='curriculum-bulk-attendance-kbc-recent'),
+    path('curriculum/bulk-attendance/kbc-month-records/', bulk_attendance_kbc_month_records, name='curriculum-bulk-attendance-kbc-month-records'),
     path('curriculum/bulk-attendance/day-learners/', bulk_attendance_day_learners, name='curriculum-bulk-attendance-day-learners'),
     path('curriculum/bulk-attendance/attendance/', bulk_attendance_save_attendance, name='curriculum-bulk-attendance-save-attendance'),
     path('curriculum/bulk-attendance/live-day/', bulk_attendance_live_day, name='curriculum-bulk-attendance-live-day'),
     path('curriculum/bulk-attendance/live-day-records/', bulk_attendance_live_day_records, name='curriculum-bulk-attendance-live-day-records'),
+    path('curriculum/bulk-attendance/live-month-records/', bulk_attendance_live_month_records, name='curriculum-bulk-attendance-live-month-records'),
     path('curriculum/modules/<str:module_id>/learners/<int:learner_id>/activities/<str:component_id>/status/', activity_status),
     path('curriculum/migrated-review-templates/', migrated_template_views.collection),
     path('curriculum/migrated-review-templates/preview/', migrated_template_views.preview),
@@ -209,6 +212,7 @@ urlpatterns = [
     path('curriculum/teams-meetings/summary/', views.curriculum_teams_meeting_summary, name='curriculum-teams-meeting-summary'),
     path('curriculum/live-sessions/occurrences/', views.curriculum_live_session_occurrences, name='curriculum-live-session-occurrences'),
     path('curriculum/teams-meetings/<str:live_session_id>/schedule/', teams_staff_required(views.curriculum_teams_meeting_schedule), name='curriculum-teams-meeting-schedule'),
+    path('curriculum/teams-meetings/<str:live_session_id>/off-schedule-runs/', teams_staff_required(views.curriculum_teams_meeting_off_schedule_runs), name='curriculum-teams-meeting-off-schedule-runs'),
     path('curriculum/teams-meetings/<str:live_session_id>/schedule-email/', schedule_email, name='curriculum-teams-schedule-email'),
     path('curriculum/teams-meetings/<str:live_session_id>/forward-email/', forward_schedule_email, name='curriculum-teams-forward-email'),
     path('curriculum/teams-meetings/<str:live_session_id>/calendar-state/', sync_calendar_state, name='curriculum-teams-calendar-state'),

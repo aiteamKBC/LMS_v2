@@ -65,10 +65,28 @@ import { KsbExcelPanel } from '@/pages/curriculum/module-builder/KsbExcelPanel';
 import { GroupPlacementPanel, type PlacementResult } from './PlaceComponentDrawer';
 import { moduleCountForGroup } from '../shared/entities/groupModuleMatch';
 import { loadModuleStructure, saveModuleStructure, type LiveSessionDateDrift } from '@/pages/curriculum/module-builder/moduleAuthoringData';
+import { liveSessionDriftCause } from '@/pages/curriculum/shared/entities/liveSessionDriftCause';
 import { LiveSessionScheduleEditor } from '@/pages/curriculum/module-builder/LiveSessionScheduleEditor';
 import { LiveSessionArtifactsPanel, ModuleLiveSessionResults } from '@/pages/curriculum/shared/entities/liveSessionArtifacts';
 import { RichTextDraft } from '@/pages/curriculum/module-builder/RichTextEditor';
 import { formatDateLabel } from '@/pages/curriculum/shared/entities/model';
+import {
+  describeRecordingLink,
+  isSessionRecording,
+  keepRecordingsWithTheirSession,
+  linkedRecordingsByPlace,
+  linkedRecordingsOf,
+  liveSessionsByWeek,
+  movingPartnersOf,
+  recordingLinkTarget,
+  relinkCopiedComponents,
+  removeComponentFromWeek,
+  withLinkedRecordings,
+  withRecordingLink,
+  type LinkableModule,
+  type RecordingLinkContext,
+  type RecordingLinkWeek,
+} from '@/pages/curriculum/shared/entities/liveSessionRecordingLink';
 import { showFullTextWhenTruncated } from '@/pages/curriculum/shared/entities/truncationTitle';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '@/pages/curriculum/shared/componentUploadPolicy';
 // Both panels are heavy and only mount when their modal opens — GuidedQuizUpload
@@ -193,7 +211,7 @@ export default function WeekBuilderPage() {
       await createWeekTemplate(toWeekTemplateInput({
         ...detail,
         title: `${detail.title} (copy)`,
-        components: detail.components.map(component => ({ ...component, id: makeAuthoringId('component') })),
+        components: relinkCopiedComponents(detail.components, detail.components.map(component => ({ ...component, id: makeAuthoringId('component') }))),
       }));
       loadTemplates();
       showCurriculumAlert({ title: 'Template duplicated', icon: 'success', timer: 1500 });
@@ -680,6 +698,24 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
     update(prev => ({ ...prev, components: prev.components.map(c => (c.id === id ? { ...c, ...patch } : c)) }));
   };
 
+  // A template is one week with no module, so its recordings link only to its
+  // own live sessions.
+  const templateRecordingLinks: RecordingLinkContext = {
+    moduleId: '',
+    weeks: [{ id: template.id, label: 'This week', components: template.components }],
+    setLink: (recordingId, liveSessionId) => update(prev => ({
+      ...prev,
+      components: prev.components.map(c => (c.id === recordingId ? withRecordingLink(c, liveSessionId) : c)),
+    })),
+    addLinkedRecording: liveSession => update(prev => {
+      const index = prev.components.findIndex(c => c.id === liveSession.id);
+      const [, recording] = withLinkedRecordings([liveSession], () => createEmptyComponent(template.id, 'recording-placeholder', prev.components.length + 1));
+      const components = [...prev.components];
+      components.splice(index + 1, 0, recording);
+      return { ...prev, components };
+    }),
+  };
+
   const save = async () => {
     if (!template.title.trim()) {
       showCurriculumAlert({ title: 'Add a week title', text: 'A template needs a title before saving.', icon: 'warning' });
@@ -892,7 +928,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
         {/* Inspector — the wide working canvas */}
         <div>
           {selected ? (
-            <ComponentEditor key={selected.id} component={selected} onChange={patch => patchComponent(selected.id, patch)} onBack={() => setSelectedId(null)} groupOptions={groupOptions} rulePoints={pointsByType[selected.type]} weekScope={weekScope} />
+            <ComponentEditor key={selected.id} component={selected} onChange={patch => patchComponent(selected.id, patch)} onBack={() => setSelectedId(null)} groupOptions={groupOptions} rulePoints={pointsByType[selected.type]} weekScope={weekScope} recordingLinks={templateRecordingLinks} />
           ) : (
             <WeekOverviewPanel
               components={template.components}
@@ -1042,6 +1078,10 @@ interface RailNodeProps {
   onCopyToWeek?: (weekId: string) => void;
   onMoveToWeek?: (weekId: string) => void;
   onReviewTeamsCalendar?: () => void;
+  /** The live-session/recording link, in words; empty for a component that has none. */
+  linkLabel?: string;
+  /** What else moves with this component, in words; empty when it moves alone. */
+  moveNote?: string;
 }
 
 // Sortable wrapper — @dnd-kit gives smooth transforms + keyboard support, and
@@ -1056,7 +1096,7 @@ function SortableRailNode(props: RailNodeProps) {
   );
 }
 
-function RailNodeCard({ component, index, selected, compact = false, onDeselect, focused = false, issues, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, otherWeeks, onCopyToWeek, onMoveToWeek, onReviewTeamsCalendar, handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
+function RailNodeCard({ component, index, selected, compact = false, onDeselect, focused = false, issues, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, otherWeeks, onCopyToWeek, onMoveToWeek, onReviewTeamsCalendar, linkLabel = '', moveNote = '', handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
   const isLiveSession = component.type === 'live-session';
@@ -1084,7 +1124,23 @@ function RailNodeCard({ component, index, selected, compact = false, onDeselect,
   // it is a hint and nothing else, and it disappears on the first real edit.
   const unedited = componentLooksUnedited(component, weekAutoTitleLabels(component.type));
   const sessionDetails = <>
-    {calendarMovePending && <span className="inline-flex flex-wrap items-center gap-1 text-amber-800" title="This component has moved to a new planned date. Its existing Teams booking still needs to be updated through the Teams calendar.">
+            {linkLabel && (
+              <span
+                data-testid="component-link-label"
+                title={linkLabel === 'Not linked'
+                  ? 'This recording is not linked to a live session. It needs its own recording link and moves on its own.'
+                  : linkLabel === 'Linked session missing'
+                    ? 'The live session this recording was linked to no longer exists, so it plays nothing. Open the recording to link it again.'
+                    : moveNote
+                      ? 'Linked: the recording plays the live session’s recording and takes its date. Moving either one to another week moves both, whichever weeks they are in now.'
+                      : 'Linked to a live session in another module: the recording plays that session’s recording. Moving this recording never moves that session, and they stay linked.'}
+                className={`inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border px-1.5 py-px text-[9px] font-bold ${linkLabel === 'Not linked' ? 'border-background-300 bg-background-100 text-foreground-500' : linkLabel === 'Linked session missing' ? 'border-amber-300 bg-amber-100 text-amber-800' : 'border-purple-200 bg-purple-50 text-purple-700'}`}
+              >
+                <AppIcon className={`${linkLabel === 'Not linked' || linkLabel === 'Linked session missing' ? 'ri-link-unlink-m' : 'ri-link-m'} text-[10px]`}></AppIcon>
+                <span className="truncate">{linkLabel}</span>
+              </span>
+            )}
+        {calendarMovePending && <span className="inline-flex flex-wrap items-center gap-1 text-amber-800" title="This component has moved to a new planned date. Its existing Teams booking still needs to be updated through the Teams calendar.">
       <AppIcon className="ri-calendar-schedule-line" /><span>Teams calendar update needed</span>
       {onReviewTeamsCalendar && <button type="button" className="underline" onClick={event => { event.stopPropagation(); onReviewTeamsCalendar(); }}>Update Teams calendar</button>}
     </span>}
@@ -1145,7 +1201,7 @@ function RailNodeCard({ component, index, selected, compact = false, onDeselect,
     onSelect={onSelect} onDeselect={onDeselect} onDuplicate={onDuplicate} onDelete={onDelete}
     otherWeeks={otherWeeks} onCopyToWeek={onCopyToWeek} onMoveToWeek={onMoveToWeek} handleProps={handleProps}
     scheduledDate={scheduledDate} unedited={unedited}
-    notices={isLiveSession && (calendarMovePending || !scheduledDate || onHoliday || dateDrift || ['missing', 'ambiguous'].includes(String(component.settings.teamsCalendarBinding || ''))) ? sessionDetails : null}
+    notices={linkLabel || isLiveSession && (calendarMovePending || !scheduledDate || onHoliday || dateDrift || ['missing', 'ambiguous'].includes(String(component.settings.teamsCalendarBinding || ''))) ? sessionDetails : null}
   />;
   return (
     <div id={`node-${component.id}`} data-component-type={component.type} data-focused={focused || undefined} className="group/node">
@@ -1171,7 +1227,7 @@ function RailNodeCard({ component, index, selected, compact = false, onDeselect,
         </SpineGutter>
         <div
           onClick={onSelect}
-          className={`min-w-0 flex-1 my-1 flex items-center gap-2 rounded-xl border px-2.5 py-2.5 transition-all cursor-pointer ${dragging ? 'border-primary-300 bg-background-50 shadow-xl ring-2 ring-primary-200' : focused ? 'border-primary-400 bg-primary-50 shadow-md ring-4 ring-primary-200/70' : selected ? `${tone.border} ${tone.soft} shadow-sm` : 'border-background-200 bg-background-50 hover:border-background-300 hover:shadow-sm'}`}
+          className={`min-w-0 flex-1 my-1 flex flex-wrap items-center gap-2 rounded-xl border px-2.5 py-2.5 transition-all cursor-pointer ${dragging ? 'border-primary-300 bg-background-50 shadow-xl ring-2 ring-primary-200' : focused ? 'border-primary-400 bg-primary-50 shadow-md ring-4 ring-primary-200/70' : selected ? `${tone.border} ${tone.soft} shadow-sm` : 'border-background-200 bg-background-50 hover:border-background-300 hover:shadow-sm'}`}
         >
           <button type="button" {...(handleProps || {})} onClick={e => e.stopPropagation()} aria-label="Drag to reorder" className="grid place-items-center w-5 h-8 -ml-0.5 shrink-0 text-foreground-300 hover:text-foreground-600 cursor-grab active:cursor-grabbing touch-none rounded"><AppIcon className="ri-draggable"></AppIcon></button>
           <span data-authoring-type-icon className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip}`}><AppIcon className={`${definition.icon} text-base`}></AppIcon></span>
@@ -1199,8 +1255,40 @@ function RailNodeCard({ component, index, selected, compact = false, onDeselect,
                 onMoveToWeek={onMoveToWeek}
               />
             )}
+            {onMoveToWeek && otherWeeks && otherWeeks.length > 0 && (
+              <MoveComponentButton
+                label={component.title || weekTypeLabel(component.type)}
+                moveNote={moveNote}
+                otherWeeks={otherWeeks}
+                onMoveToWeek={onMoveToWeek}
+              />
+            )}
             <button type="button" aria-label={`Delete ${component.title || weekTypeLabel(component.type)}`} title="Delete component" onClick={e => { e.stopPropagation(); onDelete?.(); }} className="grid h-7 w-7 place-items-center rounded-lg text-foreground-400 hover:bg-red-100 hover:text-red-600"><AppIcon className="ri-delete-bin-line text-[13px]"></AppIcon></button>
           </span>
+        )}
+        {/* The session and its week disagree about when this runs, and the
+            session's date is the one that wins everywhere downstream. Its own
+            full-width line under the row: in the narrow meta line the cause,
+            both dates and the action wrapped into a tall pill. */}
+        {dateDrift && (
+          <div
+            data-testid="live-session-date-drift"
+            title={`${liveSessionDriftCause(dateDrift)?.sentence ? `${liveSessionDriftCause(dateDrift)?.sentence} ` : ''}Teams calendar currently has this meeting on ${formatDateLabel(dateDrift.storedDate)}. This week is now planned for ${dateDrift.weekDates.map(formatDateLabel).join(' and ')}. ${externalTeamsCalendar
+              ? 'This is an imported Teams series. Open Update Teams meeting to review and re-match its saved dates. If the planned date is missing, the organizer must update the original series in Teams before its dates can be imported. The LMS keeps the existing link and does not reschedule this series.'
+              : 'This session keeps its confirmed date because attendees were invited to it. Open the Teams Meetings page and run Update to move the Microsoft meeting to the planned date and notify attendees.'}`}
+            className="basis-full rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[10px] leading-snug text-amber-900"
+          >
+            <p className="flex items-center gap-1 font-bold">
+              <AppIcon className="ri-calendar-schedule-line text-[11px] text-amber-600"></AppIcon>
+              {liveSessionDriftCause(dateDrift)?.short || 'Teams date differs from the plan'}
+            </p>
+            <p className="mt-0.5 tabular-nums">
+              Teams: {formatDateLabel(dateDrift.storedDate)} <span className="text-amber-600">→</span> planned: {formatDateLabel(dateDrift.weekDates[0])}
+            </p>
+            <p className="mt-0.5 font-semibold text-amber-700">
+              {externalTeamsCalendar ? 'Review the imported calendar' : 'Update Teams to match'}
+            </p>
+          </div>
         )}
         </div>
       </div>
@@ -1326,8 +1414,68 @@ function CloneComponentButton({ label, otherWeeks, onDuplicateSameWeek, onCopyTo
   );
 }
 
+// Moves the component to another week of the module. A linked live session and
+// its recordings go together from whatever weeks they are in, and the menu
+// names them before anything moves.
+function MoveComponentButton({ label, moveNote, otherWeeks, onMoveToWeek }: {
+  label: string;
+  moveNote: string;
+  otherWeeks: { id: string; label: string }[];
+  onMoveToWeek: (weekId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutsideClick);
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        aria-label={`Move ${label} to another week`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={e => { e.stopPropagation(); setOpen(prev => !prev); }}
+        className="inline-flex h-7 items-center gap-1 rounded-lg px-1.5 text-[10px] font-semibold text-foreground-500 hover:bg-background-100 hover:text-primary-600"
+      >
+        <AppIcon className="ri-drag-move-2-line text-[13px]"></AppIcon>
+        Move
+      </button>
+      {open && (
+        <div role="menu" onClick={e => e.stopPropagation()} className="absolute right-0 top-full z-20 mt-1 w-60 overflow-hidden rounded-xl border border-background-200 bg-background-50 py-1 shadow-xl">
+          <p className="px-3 pb-1 pt-1.5 text-[9px] font-bold uppercase tracking-wide text-foreground-400">Move to another week</p>
+          {moveNote && (
+            <p data-testid="move-component-note" className="px-3 pb-1.5 text-[10px] leading-snug text-purple-700">{moveNote}</p>
+          )}
+          <div className="max-h-48 overflow-y-auto">
+            {otherWeeks.map(week => (
+              <button key={week.id} type="button" role="menuitem" onClick={() => { setOpen(false); onMoveToWeek(week.id); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-semibold text-foreground-700 hover:bg-primary-50 hover:text-primary-700">
+                <AppIcon className="ri-arrow-right-line text-[13px] text-foreground-400"></AppIcon>
+                <span className="truncate">{week.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const COMPONENT_PICKER_DESCRIPTIONS: Partial<Record<ModuleComponentType, string>> = {
   'live-session': 'Schedule a tutor-led Teams session.',
+  'recording-placeholder': 'Play a live session’s Teams recording. Link it to any session, in any week or module.',
   video: 'Add a recorded lesson or external video.',
   reading: 'Share written guidance, a document or PDF.',
   podcast: 'Add audio learners can listen to in their own time.',
@@ -1505,9 +1653,10 @@ export interface WeekComponentRailProps {
   /** Moves the existing component rather than making a copy; owned by Module Builder. */
   onMoveComponentToWeek?: (component: ModuleComponent, weekId: string) => void;
   onReviewTeamsCalendar?: () => void;
+  recordingLinks?: RecordingLinkContext;
 }
 
-export function WeekComponentRail({ weekId, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, onReviewTeamsCalendar }: WeekComponentRailProps) {
+export function WeekComponentRail({ weekId, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, onReviewTeamsCalendar, recordingLinks }: WeekComponentRailProps) {
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [componentSearch, setComponentSearch] = useState('');
@@ -1518,13 +1667,18 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
 
   const addComponentsAt = (types: ModuleComponentType[], index: number) => {
     if (!types.length) return;
-    const added = types.map((type, offset) => {
+    const created = types.map((type, offset) => {
       const number = components.length + offset + 1;
       const component = createEmptyComponent(weekId, type, number);
       component.title = `${weekTypeLabel(type)} ${number}`;
       const rulePoints = pointsByType[type];
       if (typeof rulePoints === 'number') component.points = rulePoints;
       return component;
+    });
+    const added = withLinkedRecordings(created, () => {
+      const recording = createEmptyComponent(weekId, 'recording-placeholder', components.length + created.length + 1);
+      const rulePoints = pointsByType['recording-placeholder'];
+      return typeof rulePoints === 'number' ? { ...recording, points: rulePoints } : recording;
     });
     const next = [...components];
     next.splice(index, 0, ...added);
@@ -1542,9 +1696,50 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
     onSelectId(clone.id);
   };
 
+  // What the row says about its link, in words: the recording names its
+  // session (and its week or module when elsewhere), the session says it has a
+  // recording, and an unlinked recording says so rather than looking like an
+  // ordinary one. Without the module's context the rail reads this week alone.
+  const linkContext = recordingLinks || { moduleId: '', weeks: [{ id: weekId, label: 'This week', components }] };
+  const linkLabel = (component: ModuleComponent) => describeRecordingLink(component, linkContext, weekId);
+  // What else a Move takes along, named with the week each sits in now.
+  const moveNote = (component: ModuleComponent) => {
+    const partners = movingPartnersOf(component, linkContext);
+    if (!partners.length) return '';
+    const names = partners.map(item => `${item.component.title || weekTypeLabel(item.component.type)} (${item.week.id === weekId ? 'this week' : item.week.label})`);
+    return `Linked, so this also moves: ${names.join(', ')}. Unlink them first to move one alone.`;
+  };
+
+  // Deleting a live session asks about every recording linked to it in this
+  // module, in this week or another: delete them too, or keep them unlinked.
+  // Recordings in other weeks are changed through the module-wide context; a
+  // surface without one (a template) only ever holds this week.
   const removeComponent = (id: string) => {
-    onChange(components.filter(c => c.id !== id));
-    if (selectedId === id) onSelectId(null);
+    const component = components.find(c => c.id === id);
+    const { sameWeek, otherWeeks: elsewhere } = component
+      ? linkedRecordingsByPlace(linkContext, component, weekId)
+      : { sameWeek: [], otherWeeks: [] };
+    const recordings = [...sameWeek, ...elsewhere.map(item => item.recording)];
+    const remove = (withRecordings: boolean) => {
+      onChange(removeComponentFromWeek(components, id, withRecordings));
+      if (elsewhere.length && withRecordings && recordingLinks?.removeComponents) {
+        recordingLinks.removeComponents(elsewhere.map(item => item.recording.id));
+      } else {
+        elsewhere.forEach(({ recording }) => recordingLinks?.setLink(recording.id, '', ''));
+      }
+      if (selectedId === id || (withRecordings && recordings.some(item => item.id === selectedId))) onSelectId(null);
+    };
+    if (!recordings.length) { remove(false); return; }
+    const where = elsewhere.length ? ` (${Array.from(new Set(elsewhere.map(item => item.week.label))).join(', ')}${sameWeek.length ? ' and this week' : ''})` : '';
+    const one = recordings.length === 1;
+    void showCurriculumConfirm({
+      title: one ? 'Delete the session recording too?' : 'Delete the session recordings too?',
+      text: `“${component?.title || 'This live session'}” is linked to ${one ? 'a session recording' : `${recordings.length} session recordings`}${where}. ${one ? 'Delete both, or keep the recording as a separate component' : 'Delete them all, or keep the recordings as separate components'} that ${one ? 'is' : 'are'} no longer linked. Neither choice touches the Teams meeting, its recording files or attendance.`,
+      confirmButtonText: one ? 'Delete both' : 'Delete all',
+      denyButtonText: one ? 'Keep the recording' : 'Keep the recordings',
+      onConfirm: () => remove(true),
+      onDeny: () => remove(false),
+    });
   };
 
   const onDragStart = (event: DragStartEvent) => setActiveDragId(String(event.active.id));
@@ -1552,7 +1747,8 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
     setActiveDragId(null);
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    onChange(reorderComponents(components, String(active.id), String(over.id)));
+    // A linked recording follows its live session wherever the session is dropped.
+    onChange(keepRecordingsWithTheirSession(reorderComponents(components, String(active.id), String(over.id))));
   };
   const activeComponent = components.find(c => c.id === activeDragId) || null;
   const searchTerm = componentSearch.trim().toLocaleLowerCase();
@@ -1651,6 +1847,8 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
                     onCopyToWeek={targetWeekId => onCopyComponentToWeek?.(component, targetWeekId)}
                     onMoveToWeek={onMoveComponentToWeek ? targetWeekId => onMoveComponentToWeek(component, targetWeekId) : undefined}
                     onReviewTeamsCalendar={onReviewTeamsCalendar}
+                    linkLabel={linkLabel(component)}
+                    moveNote={moveNote(component)}
                     issues={validateWeekComponent(component).length}
                     weekSessionDate={weekSessionDate}
                     holidayDates={holidayDates}
@@ -1999,9 +2197,13 @@ export interface ComponentBodyProps {
   // session saved without its own Teams series reads its recording from the
   // module's saved sessions, the same list Sessions & Recordings shows.
   moduleId?: string;
+  // The module's weeks (and other modules) for the live-session/recording
+  // link: linking or unlinking edits the recording wherever it sits, and a
+  // live session can add one. A surface that does not pass it cannot link.
+  recordingLinks?: RecordingLinkContext;
 }
 
-export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, initializeGroupSelection = true }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string; initializeGroupSelection?: boolean }) {
+export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, initializeGroupSelection = true, recordingLinks }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string; initializeGroupSelection?: boolean; recordingLinks?: RecordingLinkContext }) {
   const editorRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const editor = editorRef.current;
@@ -2013,7 +2215,7 @@ export function ComponentEditor({ component, onChange, onBack, groupOptions, rul
   const tone = toneFor(component.type);
   const issues = validateWeekComponent(component);
   const setSetting = (key: string, value: ComponentSettingValue) => onChange({ settings: { ...component.settings, [key]: value } });
-  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId };
+  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks };
 
   return (
     <div ref={editorRef} tabIndex={-1} role="region" aria-label="Component editor" className="scroll-mt-6 rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
@@ -2037,6 +2239,7 @@ export function ComponentEditor({ component, onChange, onBack, groupOptions, rul
           : component.type === 'powerpoint' ? <PowerPointBody {...bodyProps} />
           : component.type === 'quiz' ? <QuizBody {...bodyProps} />
           : component.type === 'assignment' ? <AssignmentBody {...bodyProps} />
+          : component.type === 'recording-placeholder' ? <SessionRecordingBody {...bodyProps} />
           : <GenericComponentBody {...bodyProps} />}
 
         {/* Group assignment applies to every component type — scoped to the
@@ -2092,9 +2295,315 @@ function GenericComponentBody({ component, onChange, setSetting, rulePoints }: C
   );
 }
 
+// A module's programme, cohort or group as a filter key: its id, or its name
+// when the module carries no id for that level.
+function placementKey(module: LinkableModule | undefined, level: 'programme' | 'cohort' | 'group'): string {
+  if (!module) return '';
+  return String(module[`${level}Id`] || module[level] || '');
+}
+
+// The distinct programmes, cohorts or groups among these modules, by name.
+function placementOptions(modules: LinkableModule[], level: 'programme' | 'cohort' | 'group'): [string, string][] {
+  const options = new Map<string, string>();
+  modules.forEach(module => {
+    const key = placementKey(module, level);
+    if (key && !options.has(key)) options.set(key, module[level] || key);
+  });
+  return [...options.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+}
+
+// Session recording editor. Linked, it has no recording of its own to set: it
+// plays its live session's Teams recording, on that session's date. The
+// session may be in any week of this module or in another group's module.
+// Unlinked, it is a recording like any other and needs its own link.
+function SessionRecordingBody({ component, onChange, setSetting, rulePoints, weekSessionDate, moduleId, recordingLinks }: ComponentBodyProps) {
+  const ownModuleId = recordingLinks?.moduleId || '';
+  const target = recordingLinkTarget(component, ownModuleId);
+  const otherModules = recordingLinks?.otherModules || [];
+  const canLinkElsewhere = Boolean(recordingLinks?.loadModuleWeeks && otherModules.length);
+  const [scope, setScope] = useState<'this' | 'other'>(target?.moduleId ? 'other' : 'this');
+  const [pickedModuleId, setPickedModuleId] = useState(target?.moduleId || '');
+  // Programme → cohort → group narrow the module list. They start on the
+  // linked module's own placement; changing one clears the ones below it, and
+  // drops a picked module it no longer covers (the link itself is untouched).
+  const pickedPlacement = otherModules.find(item => item.id === pickedModuleId);
+  const [filters, setFilters] = useState(() => ({
+    programme: placementKey(pickedPlacement, 'programme'),
+    cohort: placementKey(pickedPlacement, 'cohort'),
+    group: placementKey(pickedPlacement, 'group'),
+  }));
+  const inProgramme = otherModules.filter(item => !filters.programme || placementKey(item, 'programme') === filters.programme);
+  const inCohort = inProgramme.filter(item => !filters.cohort || placementKey(item, 'cohort') === filters.cohort);
+  const filteredModules = inCohort.filter(item => !filters.group || placementKey(item, 'group') === filters.group);
+  const setFilter = (level: 'programme' | 'cohort' | 'group', value: string) => {
+    const next = level === 'programme' ? { programme: value, cohort: '', group: '' }
+      : level === 'cohort' ? { ...filters, cohort: value, group: '' }
+        : { ...filters, group: value };
+    setFilters(next);
+    const still = otherModules.some(item => item.id === pickedModuleId
+      && (!next.programme || placementKey(item, 'programme') === next.programme)
+      && (!next.cohort || placementKey(item, 'cohort') === next.cohort)
+      && (!next.group || placementKey(item, 'group') === next.group));
+    if (!still) setPickedModuleId('');
+  };
+  const [otherWeeks, setOtherWeeks] = useState<{ moduleId: string; status: 'loading' | 'ready' | 'error'; weeks: RecordingLinkWeek[]; message?: string } | null>(null);
+
+  useEffect(() => {
+    const loader = recordingLinks?.loadModuleWeeks;
+    if (scope !== 'other' || !pickedModuleId || !loader) return undefined;
+    let cancelled = false;
+    setOtherWeeks({ moduleId: pickedModuleId, status: 'loading', weeks: [] });
+    loader(pickedModuleId)
+      .then(weeks => { if (!cancelled) setOtherWeeks({ moduleId: pickedModuleId, status: 'ready', weeks }); })
+      .catch((error: unknown) => {
+        if (!cancelled) setOtherWeeks({ moduleId: pickedModuleId, status: 'error', weeks: [], message: error instanceof Error ? error.message : 'That module could not be loaded.' });
+      });
+    return () => { cancelled = true; };
+  }, [scope, pickedModuleId, recordingLinks?.loadModuleWeeks]);
+
+  const ownSessions = liveSessionsByWeek(recordingLinks?.weeks || []);
+  const otherSessions = otherWeeks?.moduleId === pickedModuleId ? liveSessionsByWeek(otherWeeks.weeks) : [];
+  const linked = target
+    ? (target.moduleId ? otherSessions : ownSessions).find(item => item.liveSession.id === target.componentId) || null
+    : null;
+  const brokenLink = Boolean(target && !linked && (!target.moduleId || otherWeeks?.status === 'ready'));
+  // `weekSessionDate` is the date of the week this recording sits in, so it
+  // only stands in for an undated session that sits in that same week.
+  const sessionWeekDate = linked && !target?.moduleId && linked.week.components.some(item => item.id === component.id) ? weekSessionDate : undefined;
+  const liveDate = linked ? String(linked.liveSession.settings.sessionDate || sessionWeekDate || '') : '';
+  const linkedModuleLabel = target?.moduleId ? (otherModules.find(item => item.id === target.moduleId)?.label || 'another module') : '';
+  const sessionOption = ({ week, liveSession }: { week: RecordingLinkWeek; liveSession: ModuleComponent }) => (
+    <option key={liveSession.id} value={liveSession.id}>
+      {week.label} · {liveSession.title || 'Live session'}{liveSession.settings.sessionDate ? ` · ${formatDateLabel(String(liveSession.settings.sessionDate))}` : ''}
+    </option>
+  );
+
+  return (
+    <>
+      <Section title="Recording details">
+        <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
+        <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What learners will watch…" className={`${inputClass} resize-none`} /></Field>
+      </Section>
+
+      <Section title="Linked live session" hint={target ? (linked ? 'Linked' : 'Link needs attention') : 'Not linked'}>
+        {!recordingLinks ? (
+          <p className="text-[12px] text-foreground-500">Open this recording from its module or week to link it to a live session.</p>
+        ) : (
+          <>
+            {canLinkElsewhere && (
+              <div role="radiogroup" aria-label="Where the live session is" className="mb-3 inline-flex rounded-lg border border-background-200 p-0.5">
+                {([['this', 'This module'], ['other', 'Another module']] as const).map(([value, label]) => (
+                  <button key={value} type="button" role="radio" aria-checked={scope === value} onClick={() => setScope(value)}
+                    className={`h-7 rounded-md px-3 text-[11px] font-semibold ${scope === value ? 'bg-primary-500 text-white' : 'text-foreground-600 hover:bg-background-100'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {scope === 'this' ? (
+              <Field label="Live session in this module">
+                <select
+                  value={target && !target.moduleId ? target.componentId : ''}
+                  onChange={e => recordingLinks.setLink(component.id, e.target.value, '')}
+                  className={inputClass}
+                >
+                  <option value="">Not linked</option>
+                  {ownSessions.map(sessionOption)}
+                </select>
+              </Field>
+            ) : (
+              <>
+              <div className="mb-4 grid gap-4 sm:grid-cols-3">
+                <Field label="Programme">
+                  <select value={filters.programme} onChange={e => setFilter('programme', e.target.value)} className={inputClass}>
+                    <option value="">All programmes</option>
+                    {placementOptions(otherModules, 'programme').map(([key, name]) => <option key={key} value={key}>{name}</option>)}
+                  </select>
+                </Field>
+                <Field label="Cohort">
+                  <select value={filters.cohort} onChange={e => setFilter('cohort', e.target.value)} className={inputClass}>
+                    <option value="">All cohorts</option>
+                    {placementOptions(inProgramme, 'cohort').map(([key, name]) => <option key={key} value={key}>{name}</option>)}
+                  </select>
+                </Field>
+                <Field label="Group">
+                  <select value={filters.group} onChange={e => setFilter('group', e.target.value)} className={inputClass}>
+                    <option value="">All groups</option>
+                    {placementOptions(inCohort, 'group').map(([key, name]) => <option key={key} value={key}>{name}</option>)}
+                  </select>
+                </Field>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Module">
+                  <select value={pickedModuleId} onChange={e => setPickedModuleId(e.target.value)} className={inputClass}>
+                    <option value="">{filteredModules.length ? 'Choose a module…' : 'No modules match these filters'}</option>
+                    {filteredModules.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+                  </select>
+                </Field>
+                <Field label="Live session in that module">
+                  <select
+                    value={target?.moduleId && target.moduleId === pickedModuleId ? target.componentId : ''}
+                    disabled={!pickedModuleId || otherWeeks?.status !== 'ready'}
+                    onChange={e => recordingLinks.setLink(component.id, e.target.value, e.target.value ? pickedModuleId : '')}
+                    className={inputClass}
+                  >
+                    <option value="">{otherWeeks?.status === 'loading' ? 'Loading sessions…' : 'Not linked'}</option>
+                    {otherSessions.map(sessionOption)}
+                  </select>
+                </Field>
+              </div>
+              </>
+            )}
+            {otherWeeks?.status === 'error' && <p className="mt-2 text-[11px] text-red-700">{otherWeeks.message}</p>}
+            {scope === 'other' && otherWeeks?.status === 'ready' && otherSessions.length === 0 && (
+              <p className="mt-2 text-[11px] text-foreground-500">That module has no live sessions to link to.</p>
+            )}
+            {brokenLink && (
+              <p className="mt-2 text-[11px] text-amber-700">The live session this recording was linked to no longer exists, so it plays nothing. Choose a session above, or set it to Not linked and add a recording link.</p>
+            )}
+            {target?.moduleId && (
+              <p className="mt-2 text-[11px] text-purple-700">Linked to a session in {linkedModuleLabel}. Learners on this module can watch that session’s recording and transcript only — they can’t join that meeting, and watching does not count as their attendance.</p>
+            )}
+            <p className="mt-2 text-[11px] text-foreground-500">
+              {linked
+                ? `Plays “${linked.liveSession.title || 'the live session'}”’s Teams recording and takes its date${liveDate ? ` (${formatDateLabel(liveDate)})` : ', which it does not have yet'}. ${target?.moduleId ? 'That session is in another module, so moving this recording never moves it; they stay linked.' : 'Moving either one to another week moves both, whichever weeks they are in now.'}`
+                : 'Not linked: this recording needs its own recording link below, and it moves between weeks on its own.'}
+            </p>
+          </>
+        )}
+      </Section>
+
+      <Section title="Recording">
+        {linked ? (
+          <LiveSessionResults liveSession={linked.liveSession} weekSessionDate={sessionWeekDate} moduleId={target?.moduleId || moduleId} />
+        ) : (
+          <Field label="Recording link"><input value={String(component.settings.recordingUrl ?? '')} onChange={e => setSetting('recordingUrl', e.target.value)} placeholder="https://…" className={inputClass} /></Field>
+        )}
+      </Section>
+
+      <Section title="Effort & reward">
+        <div className="grid gap-4 sm:grid-cols-2 max-w-md">
+          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
+          <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
+        </div>
+        <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for ${weekTypeLabel(component.type)} (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
+      </Section>
+
+      <Section title="Assurance">
+        <div className="flex flex-wrap gap-2">
+          <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+          <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <CoachValidationToggle component={component} onChange={onChange} />
+        </div>
+        {component.reflectionRequired && (
+          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after watching?" className={`${inputClass} resize-none`} /></Field>
+        )}
+      </Section>
+    </>
+  );
+}
+
+// The saved recording, transcript and attendance of one live session, read
+// the way its own editor always has. A linked session recording shows the same
+// panel for the session it is linked to.
+function LiveSessionResults({ liveSession, weekSessionDate, moduleId }: { liveSession: ModuleComponent; weekSessionDate?: string; moduleId?: string }) {
+  const s = (key: string) => String(liveSession.settings[key] ?? '');
+  const sessionDate = s('sessionDate') || weekSessionDate || '';
+  const hasMeeting = Boolean(s('liveSessionUrl') || s('teamsMeetingUrl'));
+  // A live session delivered by its own additional meeting reads that
+  // meeting's results (a single event, so always session 1); every other live
+  // session reads its occurrence of the module's calendar.
+  const additionalLiveSessionId = s('extraTeamsMeetingUrl') ? s('extraTeamsLiveSessionId') : '';
+  const teamsLiveSessionId = additionalLiveSessionId || s('teamsLiveSessionId');
+  if (teamsLiveSessionId) {
+    return (
+      <LiveSessionArtifactsPanel
+        moduleId={moduleId}
+        session={{
+          liveSessionId: teamsLiveSessionId,
+          title: liveSession.title,
+          dateIso: (additionalLiveSessionId && s('extraTeamsStartDateTimeUtc')) || s('sessionDateTimeUtc') || s('teamsStartDateTimeUtc') || sessionDate,
+          date: sessionDate,
+          actualStart: '',
+          artifactsSyncedAt: '',
+        }}
+        sessionNumber={additionalLiveSessionId ? 1 : Number(s('teamsSessionNumber')) || undefined}
+        occurrenceId={additionalLiveSessionId ? undefined : s('teamsOccurrenceId') || undefined}
+      />
+    );
+  }
+  if (moduleId && hasMeeting) {
+    return (
+      <ModuleLiveSessionResults
+        moduleId={moduleId}
+        date={sessionDate}
+        unmatched={sessionDate
+          ? 'No saved Teams session for this module is held on this session’s date yet. Its recording and attendance will appear here once Teams has them.'
+          : 'This session has no date, so its saved Teams session can’t be found. Set a session date to see its recording and attendance.'}
+      />
+    );
+  }
+  return (
+    <p className="rounded-xl border border-background-200 bg-background-50/60 p-4 text-[12px] text-foreground-500">
+      {hasMeeting
+        ? 'This session’s Teams link was entered by hand, so it isn’t connected to a Teams calendar session. Its recording and attendance will appear here once the session is linked to its module’s Teams meeting.'
+        : 'No Teams meeting is linked to this session yet. Its recording and attendance will appear here once one is.'}
+    </p>
+  );
+}
+
+// The live session's side of the link: the recordings in this module that
+// play it (any week), with Unlink on each; this week's unlinked recordings
+// with Link; and Add when it has none. A recording in another week or module
+// is linked from that recording's own editor.
+function LinkedRecordingsSection({ component, recordingLinks }: Pick<ComponentBodyProps, 'component' | 'recordingLinks'>) {
+  if (!recordingLinks) return null;
+  const linked = recordingLinks.weeks.flatMap(week => linkedRecordingsOf(week.components, component, recordingLinks.moduleId)
+    .map(recording => ({ week, recording })));
+  const thisWeek = recordingLinks.weeks.find(week => week.components.some(item => item.id === component.id));
+  const unlinked = (thisWeek?.components || []).filter(item => isSessionRecording(item) && !recordingLinkTarget(item, recordingLinks.moduleId));
+  return (
+    <Section title="Session recording" hint={linked.length ? 'Linked: plays this session’s recording' : 'Not linked'}>
+      {linked.length === 0 && (
+        <p className="text-[12px] text-foreground-500">No session recording in this module is linked to this live session.</p>
+      )}
+      <ul className="mt-2 space-y-2">
+        {linked.map(({ week, recording }) => (
+          <li key={recording.id} className="flex items-center justify-between gap-3 rounded-xl border border-purple-200 bg-purple-50/60 px-3 py-2">
+            <span className="flex min-w-0 items-center gap-2 text-[12px] font-semibold text-purple-800">
+              <AppIcon className="ri-link-m shrink-0"></AppIcon>
+              <span className="truncate">{recording.title || 'Session Recording'}{week.id !== thisWeek?.id && <span className="font-normal text-purple-600"> · {week.label}</span>}</span>
+            </span>
+            <button type="button" onClick={() => recordingLinks.setLink(recording.id, '', '')} className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg border border-purple-200 bg-background-50 px-2 text-[11px] font-semibold text-purple-700 hover:bg-purple-100">
+              <AppIcon className="ri-link-unlink-m"></AppIcon>Unlink
+            </button>
+          </li>
+        ))}
+        {unlinked.map(recording => (
+          <li key={recording.id} className="flex items-center justify-between gap-3 rounded-xl border border-background-200 bg-background-50 px-3 py-2">
+            <span className="flex min-w-0 items-center gap-2 text-[12px] font-semibold text-foreground-600">
+              <AppIcon className="ri-link-unlink-m shrink-0"></AppIcon>
+              <span className="truncate">{recording.title || 'Session Recording'} <span className="font-normal text-foreground-400">· not linked</span></span>
+            </span>
+            <button type="button" onClick={() => recordingLinks.setLink(recording.id, component.id, '')} className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg border border-background-200 px-2 text-[11px] font-semibold text-foreground-700 hover:bg-background-100">
+              <AppIcon className="ri-link-m"></AppIcon>Link to this session
+            </button>
+          </li>
+        ))}
+      </ul>
+      {recordingLinks.addLinkedRecording && linked.length === 0 && unlinked.length === 0 && (
+        <button type="button" onClick={() => recordingLinks.addLinkedRecording?.(component)} className="mt-2 inline-flex h-8 items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50 px-3 text-[11px] font-semibold text-purple-700 hover:bg-purple-100">
+          <AppIcon className="ri-add-line"></AppIcon>Add a linked session recording
+        </button>
+      )}
+      <p className="mt-2 text-[11px] text-foreground-400">To link a recording in another week or module, open that recording and choose this session.</p>
+    </Section>
+  );
+}
+
 // Bespoke Live Teams Session editor. (Group assignment is rendered once for
 // every component type by ComponentEditor, so it isn't repeated here.)
-function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSessionDate, weekSessionTime, moduleId }: ComponentBodyProps) {
+function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSessionDate, weekSessionTime, moduleId, recordingLinks }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   // An explicit edit always wins; otherwise default to the date/time the week is
   // actually scheduled on (the group-creation clock), so the fields read
@@ -2103,11 +2612,6 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
   const sessionDate = s('sessionDate') || weekSessionDate || '';
   const sessionTime = s('sessionTime') || String(weekSessionTime || '').slice(0, 5) || '';
   const hasMeeting = Boolean(s('liveSessionUrl') || s('teamsMeetingUrl'));
-  // A live session delivered by its own additional meeting reads that
-  // meeting's results (a single event, so always session 1); every other live
-  // session reads its occurrence of the module's calendar.
-  const additionalLiveSessionId = s('extraTeamsMeetingUrl') ? s('extraTeamsLiveSessionId') : '';
-  const teamsLiveSessionId = additionalLiveSessionId || s('teamsLiveSessionId');
 
   return (
     <>
@@ -2133,36 +2637,10 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
           panel used by the module workspace and learner preview. The section
           always shows, so a missing link reads as a reason, not an absence. */}
       <Section title="Recording & attendance">
-        {teamsLiveSessionId ? (
-          <LiveSessionArtifactsPanel
-            moduleId={moduleId}
-            session={{
-              liveSessionId: teamsLiveSessionId,
-              title: component.title,
-              dateIso: (additionalLiveSessionId && s('extraTeamsStartDateTimeUtc')) || s('sessionDateTimeUtc') || s('teamsStartDateTimeUtc') || sessionDate,
-              date: sessionDate,
-              actualStart: '',
-              artifactsSyncedAt: '',
-            }}
-            sessionNumber={additionalLiveSessionId ? 1 : Number(s('teamsSessionNumber')) || undefined}
-            occurrenceId={additionalLiveSessionId ? undefined : s('teamsOccurrenceId') || undefined}
-          />
-        ) : moduleId && hasMeeting ? (
-          <ModuleLiveSessionResults
-            moduleId={moduleId}
-            date={sessionDate}
-            unmatched={sessionDate
-              ? 'No saved Teams session for this module is held on this session’s date yet. Its recording and attendance will appear here once Teams has them.'
-              : 'This session has no date, so its saved Teams session can’t be found. Set a session date to see its recording and attendance.'}
-          />
-        ) : (
-          <p className="rounded-xl border border-background-200 bg-background-50/60 p-4 text-[12px] text-foreground-500">
-            {hasMeeting
-              ? 'This session’s Teams link was entered by hand, so it isn’t connected to a Teams calendar session. Its recording and attendance will appear here once the session is linked to its module’s Teams meeting.'
-              : 'No Teams meeting is linked to this session yet. Its recording and attendance will appear here once one is.'}
-          </p>
-        )}
+        <LiveSessionResults liveSession={component} weekSessionDate={weekSessionDate} moduleId={moduleId} />
       </Section>
+
+      <LinkedRecordingsSection component={component} recordingLinks={recordingLinks} />
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">

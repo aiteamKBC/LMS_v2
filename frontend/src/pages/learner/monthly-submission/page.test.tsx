@@ -4,14 +4,16 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { MemoryRouter } from 'react-router-dom';
 import type { LearnerComponentEntry, LearnerDetail } from '@/api/learnerDetail';
 import type { ExtraActivity } from '@/api/extraActivities';
+import type { SubmissionAttempt } from '@/api/assignmentAttempts';
 import type { CoverMetadata } from '../my-learning/SubjectWorkspace';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
+import { useResolvedLearner } from '@/hooks/useMyLearner';
 import MonthlySubmissionPage from './page';
 import { assignmentToday, defaultAssignmentMonth, groupMonthlyAssignments, isOverdueAssignment, trainingPlanAssignments } from './model';
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</> }));
-vi.mock('@/hooks/useMyLearner', () => ({ useResolvedLearner: () => ({ kind: 'commercial', id: '125' }) }));
+vi.mock('@/hooks/useMyLearner', () => ({ useResolvedLearner: vi.fn() }));
 vi.mock('@/hooks/useLearnerDetailParam', () => ({ useLearnerDetailParam: vi.fn() }));
 vi.mock('../video-watch/page', () => ({ InlineAttachmentPreview: ({ url }: { url: string }) => <div data-testid="attachment-preview" data-url={url}>Document preview</div> }));
 
@@ -31,9 +33,11 @@ const metadata = { covers: {}, activity_dates: {
 const contract = { months: { '2026-09': { label: 'Month 4 — Martech', topics: ['Data, Insight and Analytics'], planned: 42, source: 'contract' },
   '2026-10': { label: '', topics: ['Marketing strategy'], planned: 30, source: 'contract' } }, contractStatus: 'ready' };
 
-function mockRequests(options: { failed?: 'dates' | 'statuses' | 'contract'; statuses?: Record<string, string>; counts?: Record<string, number>; extras?: ExtraActivity[]; dates?: CoverMetadata; contract?: unknown } = {}) {
+function mockRequests(options: { failed?: 'dates' | 'statuses' | 'contract' | 'history' | 'extras'; statuses?: Record<string, string>; counts?: Record<string, number>; attempts?: Record<string, SubmissionAttempt[]>; extras?: ExtraActivity[]; dates?: CoverMetadata; contract?: unknown } = {}) {
   const fetcher = vi.fn(async (url: string) => {
-    if (url.includes('/reflection/extra-activities/')) return { ok: true, json: async () => ({ activities: options.extras || [] }) };
+    if (url.includes('/reflection/extra-activities/')) return { ok: options.failed !== 'extras', json: async () => ({ activities: options.extras || [] }) };
+    const activityId = new URL(url, 'http://localhost').searchParams.get('activityId');
+    if (url.includes('/reflection/submissions/') && activityId) return { ok: options.failed !== 'history', json: async () => ({ submission: { submissionAttempts: options.attempts?.[activityId] || [] } }) };
     const source = url.includes('/subject-covers/') ? 'dates' : url.includes('/training-plan-dashboard/') ? 'contract' : 'statuses';
     const data = source === 'dates' ? options.dates || metadata : source === 'contract' ? options.contract || contract : { statuses: [
       { activityType: 'assignment', activityId: 'A1', status: options.statuses?.A1 || 'draft', submissionCount: options.counts?.A1 },
@@ -52,10 +56,74 @@ function mount(search = '?month=2026-09') {
 
 beforeEach(() => {
   sessionStorage.clear();
+  vi.mocked(useResolvedLearner).mockReturnValue({ kind: 'commercial', id: '125' });
   vi.mocked(useLearnerDetailParam).mockReturnValue({ real, loading: false, loadError: null, isRealMode: true, refresh: vi.fn() });
   mockRequests();
 });
 afterEach(() => { cleanup(); clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+const uploadedExtra: ExtraActivity = { activityId: 'extra:pending', title: 'Independent workshop',
+  status: 'submitted_for_tutor_review', month: '2026-09', submittedAt: '2026-10-23T13:00:00Z',
+  answer: 'Workshop evidence and learning', reflection: '', ksbs: ['K1'], hours: '1.25',
+  coachFeedback: null, reviewedBy: null, reviewedAt: null };
+
+it.each(['commercial', 'apprenticeship'] as const)('lists uploaded extra activities and their actual review states for %s learners', async kind => {
+  vi.mocked(useResolvedLearner).mockReturnValue({ kind, id: '125' });
+  const states = ['submitted_for_tutor_review', 'accepted', 'partial', 'rejected', 'referred', 'escalated'] as const;
+  mockRequests({ extras: [
+    ...states.map(status => ({ ...uploadedExtra, activityId: `extra:${status}`, title: `Workshop ${status}`, status })),
+    { ...uploadedExtra, activityId: 'extra:draft', title: 'Unsubmitted draft', status: 'draft' },
+    { ...uploadedExtra, activityId: 'extra:other-month', title: 'Other month workshop', month: '2026-10' },
+  ] });
+  mount();
+  const filters = within(await screen.findByRole('group', { name: 'Filter submissions' }));
+  fireEvent.click(filters.getByRole('button', { name: 'Extra activities' }));
+  expect(filters.getByRole('button', { name: 'Extra activities' })).toHaveAttribute('aria-pressed', 'true');
+  const list = within(screen.getByRole('region', { name: /Extra activities for/ }));
+  expect(await list.findByText('6 extra activities submitted')).toBeVisible();
+  for (const label of ['Submitted for review', 'Accepted', 'Partially accepted', 'Rejected', 'Changes requested', 'Escalated']) {
+    expect(list.getByText(label)).toBeVisible();
+  }
+  expect(list.queryByText(/Unsubmitted draft|Other month workshop|Assignment 22/)).toBeNull();
+  fireEvent.click(list.getByRole('button', { name: /Extra Activity · Workshop rejected/ }));
+  const detail = within(screen.getByRole('region', { name: 'Extra activity details' }));
+  expect(detail.getByText('Rejected')).toBeVisible();
+  expect(detail.queryByText('Accepted')).toBeNull();
+  expect(detail.getByText('1.25 hours')).toBeVisible();
+  expect(filters.getByRole('button', { name: 'Extra activities' })).toHaveAttribute('aria-pressed', 'true');
+});
+
+it('keeps the Extra activities tab selected across months with only pending uploads', async () => {
+  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: { ...real, components: [] }, loading: false, loadError: null, isRealMode: true, refresh: vi.fn() });
+  mockRequests({ extras: [uploadedExtra, { ...uploadedExtra, activityId: 'extra:later', title: 'Later workshop', month: '2026-11' }] });
+  mount('?month=2026-09&view=extras&assignment=extra%3Apending');
+  expect(await screen.findByRole('region', { name: 'Extra activity details' })).toBeVisible();
+  expect(within(screen.getByRole('region', { name: 'Extra activity details' })).getByText('Submitted for review')).toBeVisible();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Choose month' }), { target: { value: '2026-11' } });
+  expect(await screen.findByText('Later workshop')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Extra activities' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.queryByText('Independent workshop')).toBeNull();
+  expect(screen.getByText('1 extra activity submitted')).toBeVisible();
+});
+
+it('shows an empty Extra activities tab and returns to the assignment brief', async () => {
+  mount('?month=2026-09&view=extras');
+  expect(await screen.findByText('No extra activities submitted this month.')).toBeVisible();
+  expect(screen.queryByText('Explain how data informs your marketing decisions.')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'This month' }));
+  expect(await screen.findByText('Explain how data informs your marketing decisions.')).toBeVisible();
+});
+
+it('keeps a failed Extra activities read visible and retries it without claiming the list is empty', async () => {
+  mockRequests({ failed: 'extras' });
+  mount('?month=2026-09&view=extras');
+  expect(await screen.findByRole('alert')).toHaveTextContent('Could not load extra activities.');
+  expect(screen.queryByText('No extra activities submitted this month.')).toBeNull();
+  mockRequests({ extras: [uploadedExtra] });
+  fireEvent.click(screen.getByRole('button', { name: 'Retry extra activities' }));
+  expect(await screen.findByRole('button', { name: /Extra Activity · Independent workshop/ })).toBeVisible();
+  expect(screen.queryByRole('alert')).toBeNull();
+});
 
 function mockOverdueAssignments() {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -100,7 +168,7 @@ it('shows accepted extra activities in their submission month, including months 
   expect(section.queryByText('Later research')).toBeNull();
   expect(section.queryByText('Pending research')).toBeNull();
   expect(section.queryByText('Rejected research')).toBeNull();
-  const filters = within(screen.getByRole('group', { name: 'Filter assignments by time' }));
+  const filters = within(screen.getByRole('group', { name: 'Filter submissions' }));
   fireEvent.click(filters.getByRole('button', { name: 'Overdue' }));
   expect(screen.queryByRole('button', { name: /Extra Activity · Additional research/ })).toBeNull();
   expect(screen.queryByRole('region', { name: 'Extra activity details' })).toBeNull();
@@ -109,6 +177,16 @@ it('shows accepted extra activities in their submission month, including months 
   fireEvent.change(screen.getByRole('combobox', { name: 'Choose month' }), { target: { value: '2026-11' } });
   expect(await screen.findByText('Later research')).toBeVisible();
   expect(screen.queryByText('Additional research')).toBeNull();
+});
+
+it('shows a backdated extra activity in its selected month while keeping the real submission date', async () => {
+  mockRequests({ extras: [{ activityId: 'extra:backdated', title: 'Earlier workshop', status: 'accepted',
+    submittedAt: '2026-10-23T13:00:00Z', month: '2026-08', answer: 'Learning completed in August',
+    reflection: '', ksbs: [], hours: '1.25', coachFeedback: null, reviewedBy: null, reviewedAt: null }] });
+  mount('?month=2026-08');
+  expect(await screen.findByRole('button', { name: /Extra Activity · Earlier workshop/ })).toBeVisible();
+  expect(screen.getByRole('combobox', { name: 'Choose month' })).toHaveValue('2026-08');
+  expect(within(screen.getByRole('region', { name: 'Extra activity details' })).getByText(/23\/10\/2026/)).toBeVisible();
 });
 
 it('opens an extra activity directly from its saved selection', async () => {
@@ -123,7 +201,7 @@ it('opens an extra activity directly from its saved selection', async () => {
 it('defaults to the chosen month and shows only overdue work requiring learner action across months', async () => {
   mockOverdueAssignments();
   mount('');
-  const filters = within(await screen.findByRole('group', { name: 'Filter assignments by time' }));
+  const filters = within(await screen.findByRole('group', { name: 'Filter submissions' }));
   expect(filters.getByRole('button', { name: 'This month' })).toHaveAttribute('aria-pressed', 'true');
   expect(screen.getByRole('combobox', { name: 'Choose month' })).toHaveValue('2026-09');
   expect(screen.getByRole('region', { name: 'Assignments for Month 4 — Martech' })).toBeVisible();
@@ -148,7 +226,7 @@ it('defaults to the chosen month and shows only overdue work requiring learner a
 it('opens an overdue assignment from its original month and returns to the chosen month', async () => {
   mockOverdueAssignments();
   mount('?month=2026-09&view=overdue&assignment=A1');
-  const filters = within(await screen.findByRole('group', { name: 'Filter assignments by time' }));
+  const filters = within(await screen.findByRole('group', { name: 'Filter submissions' }));
   expect(filters.getByRole('button', { name: 'Overdue' })).toHaveAttribute('aria-pressed', 'true');
   fireEvent.click(screen.getByRole('button', { name: /Older assignment/ }));
   expect(await screen.findByText('Work from August.')).toBeVisible();
@@ -162,7 +240,7 @@ it('opens an overdue assignment from its original month and returns to the chose
 
 it('shows an empty overdue state when no assignments have an authored due date', async () => {
   mount();
-  fireEvent.click(within(await screen.findByRole('group', { name: 'Filter assignments by time' })).getByRole('button', { name: 'Overdue' }));
+  fireEvent.click(within(await screen.findByRole('group', { name: 'Filter submissions' })).getByRole('button', { name: 'Overdue' }));
   expect(screen.getByRole('status')).toHaveTextContent('No overdue assignments with a confirmed due date.');
   expect(screen.queryByRole('link', { name: 'Continue assignment' })).toBeNull();
 });
@@ -200,6 +278,30 @@ it.each([
   expect(within(cards).getByRole('button', { name: /Data and insight/, pressed: true })).toHaveTextContent(label);
   expect(within(screen.getByRole('complementary', { name: 'Assignment information' })).getByText(label)).toBeVisible();
   expect(screen.getAllByText('3 submissions')).toHaveLength(1);
+});
+
+it('shows the latest submission hours beside history without adding retry hours or changing planned hours', async () => {
+  const attempt: SubmissionAttempt = { number: 1, status: 'rejected', actualTimeHours: '0.5',
+    submittedAt: '2026-09-10T12:00:00Z', reviewedAt: null, reviewedBy: '', coachFeedback: '', answer: 'Earlier work' };
+  mockRequests({ statuses: { A1: 'accepted' }, counts: { A1: 2, A3: 0 }, attempts: { A1: [attempt,
+    { ...attempt, number: 2, status: 'accepted', actualTimeHours: '1.25', answer: 'Updated work' }] } });
+  mount('?month=2026-09&assignment=A1');
+  const information = await screen.findByRole('complementary', { name: 'Assignment information' });
+  expect(await within(information).findByText('1 hour 15 minutes')).toBeVisible();
+  expect(within(information).getByText('Submission 2 · Latest submission')).toBeVisible();
+  expect(within(information).getByText('7 hours')).toBeVisible();
+  expect(within(screen.getByRole('article', { name: 'Submission 1' })).getByText('30 minutes')).toBeVisible();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Choose month' }), { target: { value: '2026-10' } });
+  expect(within(information).getByText('Not submitted yet')).toBeVisible();
+  expect(within(information).queryByText('1 hour 15 minutes')).toBeNull();
+});
+
+it('shows unavailable actual hours when submission history cannot load', async () => {
+  mockRequests({ statuses: { A1: 'accepted' }, counts: { A1: 1 }, failed: 'history' });
+  mount('?month=2026-09&assignment=A1');
+  const information = await screen.findByRole('complementary', { name: 'Assignment information' });
+  expect(await within(information).findByText('Unavailable')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Retry submissions' })).toBeVisible();
 });
 
 it('groups distinct assignments by plan month, deduplicates IDs and switches the full brief', async () => {
@@ -387,7 +489,7 @@ it('distinguishes an unmarked draft from an assignment awaiting review', async (
 
 it('places the selected brief before the month assignment choices', async () => {
   mount();
-  const choices = await screen.findByRole('group', { name: 'Filter assignments by time' });
+  const choices = await screen.findByRole('group', { name: 'Filter submissions' });
   const brief = screen.getByText('Explain how data informs your marketing decisions.');
   expect(brief.compareDocumentPosition(choices) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(screen.queryByText('Assignments this month')).not.toBeInTheDocument();

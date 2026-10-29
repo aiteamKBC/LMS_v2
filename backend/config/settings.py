@@ -469,16 +469,10 @@ PERFORMANCE_DIAGNOSTIC_ACCOUNT_IDS = frozenset(
 )
 PERFORMANCE_SAMPLE_RETENTION_DAYS = int(os.environ.get('PERFORMANCE_SAMPLE_RETENTION_DAYS', '14'))
 
-# Legacy feedback switches retained for deployment compatibility. Learner
-# feedback is currently local-only (DEBUG) in engagement_api.feedback;
-# these switches cannot enable it in production. Staff reporting is separate.
-LEARNER_FEEDBACK_ENABLED = (
-    os.environ.get("LEARNER_FEEDBACK_ENABLED", "false").lower() == "true"
-)
-# Retained alongside the older broad switch; no production learner exception.
-LEARNER_NON_LECTURE_FEEDBACK_ENABLED = (
-    os.environ.get("LEARNER_NON_LECTURE_FEEDBACK_ENABLED", "false").lower() == "true"
-)
+# Release Live Sessions Feedback for learners in production; other types stay
+# local-only. Publication, ownership, assignment and dates are still enforced.
+LEARNER_FEEDBACK_ENABLED = True
+LEARNER_NON_LECTURE_FEEDBACK_ENABLED = False
 
 ROOT_URLCONF = 'config.urls'
 
@@ -738,6 +732,17 @@ elif USE_SQLITE_FOR_TESTS:
     # Neon-branch provisioning never runs.
     DATABASES['enrolment'] = dict(DATABASES['default'])
     DATABASES['enrolment']['TEST'] = {'MIRROR': 'default'}
+
+# Optional cross-project sink for LMS support-ticket submissions.  The ticket
+# workflow remains on the enrolment database; this separate alias is only used
+# for the idempotent copy into public.assistant_conversations.  Keep the URL in
+# the deployment environment rather than in source or the repository .env.
+_assistant_conversations_database_url = (
+    os.environ.get('ASSISTANT_CONVERSATIONS_DATABASE_URL')
+    or os.environ.get('TICKETING_DATABASE_URL')
+)
+if _assistant_conversations_database_url and not USE_SQLITE_FOR_TESTS and 'test' not in sys.argv:
+    DATABASES['assistant_conversations'] = database_from_url(_assistant_conversations_database_url)
 
 # Learner Log Pro reads Audit.mre from its own Neon branch. Keeping it on a
 # separate alias prevents the imported audit workspace from changing the LMS's

@@ -53,6 +53,7 @@ export const CONTENT_STATUSES = ['Draft', 'Ready for QA', 'Needs changes', 'Appr
 function advancedDefaults(type: ModuleComponentType): ComponentSettings {
   const completionRules: Partial<Record<ModuleComponentType, string>> = {
     'live-session': 'Attend or watch recording',
+    'recording-placeholder': 'Mark complete after watching',
     video: 'Watch video and mark complete',
     podcast: 'Listen and mark complete',
     reading: 'Read the material and confirm completion',
@@ -149,6 +150,39 @@ const definitions: ComponentAuthoringDefinition[] = [
       reflectionQuestions: '',
       attendanceRequired: true,
       recordingExpected: true,
+    },
+  },
+  {
+    // Made beside every new live session and linked to it, or added by hand and
+    // linked to any live session -- another week, or another group's module
+    // (see shared/entities/liveSessionRecordingLink.ts). Linked, it plays that
+    // session's Teams recording and takes its date; unlinked, it is a recording
+    // of its own and needs `recordingUrl`. No OTJH or points of its own: the
+    // session it records already carries them, and counting both would claim
+    // the same hour twice.
+    type: 'recording-placeholder',
+    label: 'Session Recording',
+    icon: 'ri-record-circle-line',
+    group: 'Live & recorded',
+    tone: 'purple',
+    defaultOtjh: 0,
+    defaultPoints: 0,
+    reflectionDefault: false,
+    workplaceEvidenceDefault: false,
+    tutorValidationDefault: false,
+    supportedSources: [],
+    requiredSettings: [],
+    capabilities: ['ksb-mapping', 'reflection', 'tutor-validation'],
+    // Same keys and defaults as COMPONENT_SETTINGS_SCHEMA['recording-placeholder']
+    // in curriculum_api/views.py.
+    defaultSettings: {
+      ...advancedDefaults('recording-placeholder'),
+      recordingPurpose: '',
+      source: 'MIS allocation',
+      recordingUrl: '',
+      expectedAvailability: 'After live session',
+      linkedLiveSessionComponentId: '',
+      linkedLiveSessionModuleId: '',
     },
   },
   {
@@ -391,7 +425,8 @@ export const componentAuthoringDefinitions = Object.freeze(definitions);
 // keeps the module builder's "Add component" picker in lockstep with the
 // week builder's palette. The others (reflection/checkpoint/monthly-ksb-quiz/
 // coaching-preparation) stay defined (existing data may still use them) but
-// hidden from the picker.
+// hidden from the picker. A session recording is offered too: one is made
+// with every live session, and an author can add more by hand and link them.
 const hiddenComponentTypes = new Set<ModuleComponentType>([
   'reflection',
   'checkpoint',
@@ -462,6 +497,10 @@ const LIVE_SESSION_TRACKING_SETTING_KEYS = [
   'teamsMainLinkInherited',
 ] as const;
 
+// These fields route a recording to its dated component, independently of
+// which Teams occurrence currently stores the file.
+const RECORDING_SOURCE_SETTING_KEYS = ['recordingSeriesId', 'recordingSessionNumber', 'recordingDate'] as const;
+
 /**
  * The one-off meeting booked onto a single week, under its own keys.
  *
@@ -484,6 +523,7 @@ export function allowedSettingKeysForType(type: ModuleComponentType) {
   return new Set([
     ...Object.keys(definition.defaultSettings),
     ...WEEK_BUILDER_SHARED_KEYS,
+    ...(['live-session', 'video', 'recording-placeholder'].includes(type) ? RECORDING_SOURCE_SETTING_KEYS : []),
     ...(type === 'live-session' ? [...LIVE_SESSION_TRACKING_SETTING_KEYS, ...ADDITIONAL_TEAMS_MEETING_SETTING_KEYS] : []),
     'legacySettings',
     'legacySourceType',

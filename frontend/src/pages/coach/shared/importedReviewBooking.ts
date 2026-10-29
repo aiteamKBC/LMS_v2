@@ -1,3 +1,4 @@
+import { firstAvailableBookingDate } from '@/pages/learner/reviews/bookingDates';
 /** Shared eligibility + load path for an imported Aptem review's own booking.
  *
  * The Review workspace and the Meeting Details page both offer the same
@@ -76,4 +77,18 @@ export async function loadImportedReviewForBooking(
   }
   if (updated !== data && !options.signal?.aborted) options.onAdopted?.(updated);
   return updated;
+}
+
+/** The server decides whether this is a booking; a planned date is only a suggestion. */
+export function initialReviewBookingDate(definition: ReviewInstanceFormDefinition, monthly: boolean): string {
+  const booking = definition.booking;
+  if (booking?.reserved || booking?.booked || booking?.canReschedule || booking?.canAttach) return booking.scheduledDate || '';
+  return firstAvailableBookingDate(booking?.scheduledDate || definition.instance.targetDate, definition.bookingCalendar, monthly);
+}
+
+/** Default new appointments to one hour; keep the duration of an existing reservation. */
+export function initialReviewBookingDuration(definition: ReviewInstanceFormDefinition): number {
+  const booking = definition.booking;
+  return booking?.reserved || booking?.booked || booking?.canReschedule || booking?.canAttach
+    ? booking.durationMinutes || 60 : 60;
 }

@@ -658,6 +658,7 @@ export default function CoachMeetingDetail() {
                 <MigratedMeetingIntelligence
                   key={importedReview.instance.id}
                   instanceId={importedReview.instance.id}
+                  resourceContextKey={JSON.stringify([coach.email, importedBooking?.eventKey, importedBooking?.scheduledDate, importedBooking?.scheduledTime, importedBooking?.durationMinutes])}
                   family={importedReview.template.reviewTypeCode || ''}
                   status={importedReview.localStatus || importedReview.instance.status}
                   viewAs={coach.isViewingAsCoach}
@@ -683,7 +684,8 @@ export default function CoachMeetingDetail() {
                       : importedReviewError ? 'Refresh the booking to load this review’s meeting resources.' : 'Loading review meeting resources…'}
                   </p>
                 </Panel>
-              ) : <CoachMeetingArtifactsPanel event={event} onEventStatusChange={handleArtifactsStatusChange} />
+              ) : <CoachMeetingArtifactsPanel event={event} onEventStatusChange={handleArtifactsStatusChange}
+                attendanceLinkKey={!coach.isViewingAsCoach && ['mcr', 'progress-review'].includes(event.source) ? event.eventKey : undefined} />
             ) : (
               <Panel className="bg-white">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

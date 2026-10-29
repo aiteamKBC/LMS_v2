@@ -379,7 +379,9 @@ def apply_imported_state(event, record=None, overlay=None, *, compact=False):
     """Pure read adapter. Never changes source evidence or a meeting identity."""
     event = dict(event)
     from learner_api.review_history import _normalise_status
+    from .booking_reservations import review_occupies_slot
 
+    event["bookingReserved"] = review_occupies_slot(record)
     source_status = _normalise_status(event.get("sourceStatus") or event.get("status"))
     historical = source_status == "completed" or bool(event.get("sourceCompletedDate"))
     effective = "completed" if historical else source_status

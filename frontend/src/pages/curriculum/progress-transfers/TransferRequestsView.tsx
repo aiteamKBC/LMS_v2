@@ -8,6 +8,11 @@ import { formatHoursMinutes } from '@/utils/learnerJourney';
 import { useTransferRequests } from './useTransferRequests';
 import { useTransferReview } from './useTransferReview';
 import styles from './TransferProgress.module.css';
+import matchingStyles from './progressTransfers.module.css';
+import { componentSuggestions, suggestedMappings } from './componentSuggestions';
+import { previewComponentCounts } from './componentCounts';
+import { SourceWeekReview } from './SourceWeekReview';
+import { WeekComponentChoices } from './WeekComponentChoices';
 
 const description = 'Review learner requests to move saved module progress and recorded hours from the old LMS.';
 const date = (value: string | null, full = false) => value && Number.isFinite(Date.parse(value))
@@ -62,39 +67,75 @@ const plannedHours = (value: number | null | undefined) => `New component planne
 function ComponentMatching({ review, mappings, disabled, onChange }: {
   review: TransferReview; mappings: TransferMapping[]; disabled: boolean; onChange: (value: TransferMapping[]) => void;
 }) {
-  const unmatched = review.modules.reduce((count, module) => count + module.sources.filter(source => !source.automaticTargetId).length, 0);
-  return <section className={styles.matching} aria-label="Component matching">
-    <h3>Component matching</h3>
-    <p role="status" className={`${styles.matchStatus} ${unmatched ? styles.matchWarning : ''}`}>{unmatched
-      ? `${unmatched} completed old ${unmatched === 1 ? 'component has' : 'components have'} no automatic match. Review each item below before confirming.`
-      : 'All completed source components with recorded activity progress have been matched.'}</p>
-    <p className={styles.matchIntro}>Every completed old component needs a match before approval. Choose the equivalent component in the new module. Matched completions are included in the transferred percentage; actual transferred hours stay unchanged.</p>
-    {review.modules.map(module => <div key={module.moduleId} className={styles.matchModule}>
-      <h4>{module.title}</h4>
+  const proposed = useMemo(() => suggestedMappings(review), [review]);
+  const selectedTarget = (moduleId: string, sourceRef: string) => mappings.find(mapping => mapping.moduleId === moduleId && mapping.sourceActivityRef === sourceRef)?.targetComponentId;
+  const unmatched = review.modules.reduce((count, module) => count + module.sources.filter(source => !source.automaticTargetId && !selectedTarget(module.moduleId, source.sourceActivityRef)).length, 0);
+  const matched = review.modules.flatMap(module => module.sources.flatMap(source => {
+    const target = module.targets.find(row => row.componentId === (source.automaticTargetId || selectedTarget(module.moduleId, source.sourceActivityRef)));
+    return target ? [{ module, source, target }] : [];
+  }));
+  return <section className={matchingStyles.matching} aria-label="Component matching">
+    <h2>Component matching</h2>
+    <p role="status" className={unmatched ? matchingStyles.matchWarning : matchingStyles.guidance}>{unmatched
+      ? `${unmatched} completed old ${unmatched === 1 ? 'component needs' : 'components need'} a match. Choose each destination below before confirming.`
+      : 'All completed old components have a match. Check the review list before confirming.'}</p>
+    <p>Only completed old components transfer. Unfinished old components are excluded. Similar names are suggested for your review; unclear matches need a manual choice. Matched completions are included in the transferred percentage; actual transferred hours stay unchanged.</p>
+    <p>Name matches are already selected for transfer. Review them before confirming. Open a component selector to browse by week; closing it keeps your match. Each destination can be used once.</p>
+    {matched.length > 0 && <details className={matchingStyles.matchReview}>
+      <summary>Matched components — quick review ({matched.length})</summary>
+      <div className={matchingStyles.tableScroll} tabIndex={0} role="region" aria-label="Matched components review"><table className={matchingStyles.moduleTable} aria-label="Matched components review">
+        <thead><tr><th scope="col">Completed old component</th><th scope="col">New component</th><th scope="col">Match</th></tr></thead>
+        <tbody>{matched.map(({ module, source, target }) => <tr key={`${module.moduleId}:${source.sourceActivityRef}`}>
+          <td>{source.title}<small className={matchingStyles.matchContext}>{module.title} · {source.week || 'No week specified'}</small></td>
+          <td>{target.title}<small className={matchingStyles.matchContext}>{target.week || 'No week specified'}</small></td>
+          <td>{source.automaticTargetId ? 'Verified source link' : proposed.some(row => row.moduleId === module.moduleId && row.sourceActivityRef === source.sourceActivityRef && row.targetComponentId === target.componentId) ? 'Matched by name — review' : 'Manual selection'}</td>
+        </tr>)}</tbody>
+      </table></div>
+    </details>}
+    {review.modules.map(module => <div key={module.moduleId} className={matchingStyles.matchModule}>
+      <h3>{module.title}</h3>
+      <ComponentCounts title={module.title} counts={previewComponentCounts(module, mappings)} preview />
       {!module.sources.length && <p>No individual completed activities were recorded for this module. Its saved percentage and hours will still transfer.</p>}
-      {module.sources.map(source => {
+      <SourceWeekReview moduleTitle={module.title} sources={module.sources} disabled={disabled}
+        isMatched={source => Boolean(source.automaticTargetId || selectedTarget(module.moduleId, source.sourceActivityRef))}>
+        {sources => sources.map(source => {
         const value = mappings.find(mapping => mapping.moduleId === module.moduleId && mapping.sourceActivityRef === source.sourceActivityRef);
-        // Each destination takes one source: automatic matches and the other manual choices are used up.
         const used = new Set([...module.sources.flatMap(row => row.automaticTargetId ? [row.automaticTargetId] : []),
           ...mappings.filter(mapping => mapping.moduleId === module.moduleId && mapping.sourceActivityRef !== source.sourceActivityRef).map(mapping => mapping.targetComponentId)]);
         const automatic = module.targets.find(target => target.componentId === source.automaticTargetId);
         const manualTarget = module.targets.find(target => target.componentId === value?.targetComponentId);
-        const candidates = module.targets.filter(target => target.type === source.type && source.type !== 'unknown');
-        return <div className={styles.matchRow} key={source.sourceActivityRef}>
+        const nameMatched = proposed.some(row => row.moduleId === module.moduleId && row.sourceActivityRef === source.sourceActivityRef && row.targetComponentId === value?.targetComponentId);
+        const { candidates, suggestedId } = componentSuggestions(source, module.targets, used);
+        return <div className={matchingStyles.matchRow} key={source.sourceActivityRef}>
           <div><strong>{source.title}</strong><small>{source.week || 'No week specified'} · {source.type} · {source.sourceActivityRef}</small></div>
-          {source.automaticTargetId ? <div><Badge approved>Automatically matched</Badge><strong>{automatic?.title || source.automaticTargetId}</strong><small>{automatic?.week}</small></div>
-            : <label><span>Match in new module</span><select aria-label={`Match ${source.title} (${source.sourceActivityRef}) in ${module.title}`} disabled={disabled} value={value?.targetComponentId ?? ''}
-              onChange={event => onChange([...mappings.filter(mapping => mapping.moduleId !== module.moduleId || mapping.sourceActivityRef !== source.sourceActivityRef),
-                ...(event.target.value ? [{ moduleId: module.moduleId, sourceActivityRef: source.sourceActivityRef, targetComponentId: event.target.value }] : [])])}>
-              <option value="">Choose a matching component</option>
-              {candidates.map(target => <option key={target.componentId} value={target.componentId} disabled={used.has(target.componentId)}>{target.week ? `${target.week} · ` : ''}{target.title} ({target.type} · {target.componentId})</option>)}
-            </select><small>Choose only an equivalent activity. Each destination can be used once.</small>
-              {!candidates.length && <small className={styles.matchError}>No compatible component is available. Check the source type or add the equivalent component to the new module, then reload matches.</small>}
-              {manualTarget && <small>{plannedHours(manualTarget.plannedHours)}</small>}
-            </label>}
+          {source.automaticTargetId ? <div><span className={matchingStyles.approvedBadge}>Automatically matched</span><strong>{automatic?.title || source.automaticTargetId}</strong><small>{automatic?.week}</small></div>
+            : <div>{manualTarget && <span className={matchingStyles.approvedBadge}>{nameMatched ? 'Matched by name — review' : 'Match selected'}</span>}
+              <WeekComponentChoices label={`Match ${source.title} (${source.sourceActivityRef}) in ${module.title}`}
+                candidates={candidates} selectedId={value?.targetComponentId ?? ''} suggestedId={suggestedId} used={used} disabled={disabled}
+                onChange={targetComponentId => onChange([...mappings.filter(mapping => mapping.moduleId !== module.moduleId || mapping.sourceActivityRef !== source.sourceActivityRef),
+                  ...(targetComponentId ? [{ moduleId: module.moduleId, sourceActivityRef: source.sourceActivityRef, targetComponentId }] : [])])} />
+              {!candidates.length && <small className={matchingStyles.error}>No compatible component is available. Check the source type or add the equivalent component to the new module, then reload matches.</small>}
+              {manualTarget && <small>New component planned hours: {manualTarget.plannedHours == null ? 'Not specified' : formatHoursMinutes(manualTarget.plannedHours)}. Actual transferred hours are unchanged.</small>}
+            </div>}
         </div>;
-      })}
+      })}</SourceWeekReview>
     </div>)}
+  </section>;
+}
+
+function ComponentCounts({ title, counts, preview = false }: {
+  title: string; counts: ReturnType<typeof previewComponentCounts>; preview?: boolean;
+}) {
+  return <section className={matchingStyles.componentCounts} aria-label={`Component counts for ${title}`}>
+    <h4>{preview ? 'Components after transfer (preview)' : 'Components at transfer'}</h4>
+    <dl>
+      <div><dt>Total components</dt><dd>{counts.total}</dd></div>
+      <div><dt>Matched from old LMS</dt><dd>{counts.matched}</dd></div>
+      <div><dt>Completed components</dt><dd>{counts.completed ?? 'Not available'}</dd></div>
+      <div><dt>Remaining components</dt><dd>{counts.remaining ?? 'Not available'}</dd></div>
+    </dl>
+    <p>{preview ? 'Preview based on the current matches. ' : 'Recorded when this transfer was approved. '}
+      Counts cover available components in the new module. Existing and transferred completions count once; the saved percentage and hours stay unchanged.</p>
   </section>;
 }
 
@@ -139,8 +180,9 @@ function RequestDetails({ request, saving, busy, canApprove, error, onClose, onA
         {!pending && <div><dt>Approved</dt><dd>{date(request.approvedAt, true)}</dd></div>}
       </dl></section>
       <section className={styles.detailHours} aria-label="Request hours"><span>{pending ? 'Recorded hours in request' : 'Hours carried over'}</span><strong>{hoursLabel(hours(request.modules))}</strong><p>Saved recorded hours across all {request.modules.length} modules in this request. Withheld hours and overlapping weeks are not provided.</p></section>
+      <p>Progress moves to the learner's assigned new LMS module; their group membership does not change. The old and new modules can have the same name. All components in the new module remain available for the learner to continue.</p>
       <section><h3>{request.modules.length} modules in this request</h3><ul className={styles.moduleDetails}>{request.modules.map(item => <li key={moduleKey(item)}>
-        <div className={styles.mapping}><div><strong>{item.oldTitle}</strong><small>Old LMS · {item.courseRef}</small></div><ArrowRight size={14} aria-hidden="true" /><div><strong>{item.newTitle}</strong><small>New LMS · {item.moduleId}</small></div></div>
+        <div className={styles.mapping}><div><strong>{item.oldTitle}</strong><small>Old LMS course: {item.courseRef.replace(/^legacy:/, '')}</small></div><ArrowRight size={14} aria-hidden="true" /><div><strong>{item.newTitle}</strong><small>New LMS module: {item.moduleId}</small></div></div>
         <div className={styles.moduleFacts}><Badge>{percent(item.percent) === null ? 'Progress unavailable' : `${item.percent}% saved progress`}</Badge><span>{hoursLabel(validHours(item.hours) ? item.hours : null)} recorded</span>{item.demoProgress && <Badge>Demo progress</Badge>}</div><SavedProgress item={item} />
       </li>)}</ul></section>
       {pending && <>
@@ -149,6 +191,14 @@ function RequestDetails({ request, saving, busy, canApprove, error, onClose, onA
             : <ComponentMatching review={review} mappings={matching.mappings} disabled={saving} onChange={matching.setMappings} />}
         {(review || error) && <button type="button" className={styles.button} disabled={saving} onClick={() => { matching.reload(); onClearError(); }}><RefreshCw size={13} aria-hidden="true" />Reload component matches</button>}
       </>}
+      {!pending && <section className={styles.matching} aria-label="Component counts at approval">
+        <h3>Component counts at approval</h3>
+        {request.modules.map(module => <div key={moduleKey(module)} className={styles.matchModule}>
+          <h4>{module.newTitle}</h4>
+          {module.componentCounts ? <ComponentCounts title={module.newTitle} counts={module.componentCounts} />
+            : <p>Component counts were not recorded for this earlier transfer.</p>}
+        </div>)}
+      </section>}
       {!pending && <ApprovedMatches request={request} />}
       <div className={styles.information}><Layers size={16} aria-hidden="true" /><div><strong>Matched activity credit</strong>Completed activities with verified matching source identities stay completed within the transferred percentage. New progress is added up to 100%.</div></div>
       <p className={styles.historyNote}><ShieldCheck size={14} aria-hidden="true" /> Historic learning records and evidence are retained. Programme versions, decision actors and request notes are not provided with this request.</p>

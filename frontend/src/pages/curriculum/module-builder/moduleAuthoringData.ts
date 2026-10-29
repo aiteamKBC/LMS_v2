@@ -11,8 +11,10 @@ import {
   uploadComponentFile,
 } from '@/pages/curriculum/shared/componentUploadPolicy';
 import { hoursToRoundedMinutes, roundedMinutesToHours } from '@/lib/format';
+import { relinkCopiedComponents, withoutRecordingLink } from '@/pages/curriculum/shared/entities/liveSessionRecordingLink';
 import { reviewCalendar } from '../teams-meetings/calendarReview';
 import { normalizedClock } from '../teams-meetings/calendarTime';
+import type { OffScheduleRun } from '../teams-meetings/offScheduleRuns';
 import {
   ADDITIONAL_TEAMS_MEETING_SETTING_KEYS,
   componentTypeGroups,
@@ -943,17 +945,29 @@ export function moduleLiveSessionDateDrift(
   (module.weekStructure || []).forEach((week, weekIndex) => {
     // The week's whole run, not just its first date: a Mon+Fri week delivers on
     // two days, and a session on the Friday is exactly where it belongs.
-    const weekDates = datesByWeek[weekIndex] || [];
-    if (!weekDates.length) return;
+    const positionalDates = datesByWeek[weekIndex] || [];
     (week.components || []).forEach(component => {
       if (component.type !== 'live-session') return;
       const settings = component.settings || {};
       const storedDate = trimmed(settings.sessionDate);
+      // A numbered session is compared with ITS planned date, as
+      // `applyModuleWeekSessionPlan` dates it and the week header shows it. By
+      // position alone, a module starting after its opening week's delivery day
+      // gave week 1 no slot at all, and its booked session lost its warning.
+      const explicitNumber = Number(settings.teamsSessionNumber || 0);
+      const numbered = explicitNumber > 0
+        ? sessions.find(session => session.sessionNumber === explicitNumber)
+        : undefined;
+      // An explicit occurrence move still needs synchronization even if its
+      // former date happens to be another delivery slot in the same week.
+      const weekDates = !numbered?.rescheduled && positionalDates.includes(storedDate)
+        ? positionalDates : numbered?.date ? [numbered.date] : positionalDates;
+      if (!weekDates.length) return;
       // An undated session is a different story with its own mark on the rail.
       if (!storedDate || weekDates.includes(storedDate)) return;
       // Anything else the planner has already moved onto its week's date; only
       // a confirmed booking can still be sitting here.
-      if (!(trimmed(settings.teamsLiveSessionId) && Number(settings.teamsSessionNumber || 0) > 0)) return;
+      if (!(trimmed(settings.teamsLiveSessionId) && explicitNumber > 0)) return;
       drift.set(component.id, { componentId: component.id, weekId: week.id, storedDate, weekDates });
     });
   });
@@ -1111,10 +1125,15 @@ export function applyModuleWeekSessionPlan(
         ? sessions.find(session => session.sessionNumber === firstNumber)
         : undefined;
       if (firstNumberedSession) {
-        // A numbered session can stay on its original date after its week moves.
-        // Read the resulting settings so a confirmed Teams date is also preserved.
-        sessionDate = trimmed(firstLive?.settings?.sessionDate) || firstNumberedSession.date || '';
-        sessionDay = trimmed(firstLive?.settings?.sessionDay) || firstNumberedSession.day || '';
+        // Teams numbers can omit orientation and separately booked events.
+        // A confirmed date already fitting this authored week's slots wins
+        // over that unrelated index. A changed plan still moves the header
+        // when the confirmed date no longer fits, preserving its drift notice.
+        const confirmedDate = trimmed(firstLive?.settings?.teamsLiveSessionId)
+          ? trimmed(firstLive?.settings?.sessionDate) : '';
+        const headerSession = slots.find(slot => slot.date === confirmedDate) || firstNumberedSession;
+        sessionDate = headerSession.date || '';
+        sessionDay = headerSession.day || '';
       }
     }
     if (
@@ -1705,7 +1724,7 @@ export async function duplicateModuleStructure(
         // is a fresh question -- unless this copy IS the source's dates.
         holidayNoteEnabled: keepDates ? week.holidayNoteEnabled : false,
         ksbMappings: cloneMappings(week.ksbMappings, `week-${weekIndex + 1}`),
-        components: week.components.map((component, componentIndex) => ({
+        components: relinkCopiedComponents(week.components, week.components.map((component, componentIndex) => ({
           ...component,
           id: makeId(`component-copy-${weekIndex + 1}-${componentIndex + 1}`),
           weekId,
@@ -1717,7 +1736,7 @@ export async function duplicateModuleStructure(
           // so an edit through the copy would reach both the original on screen
           // and everything else reading that cache entry.
           settings: independentCopySettings(structuredClone(component.settings || {}), { keepDates }),
-        })),
+        }))),
       };
     }),
   });
@@ -1947,10 +1966,10 @@ export function copyComponentIntoWeek(
         weight_class: weightClass,
       };
     }),
-    settings: normaliseComponentSettings(type, withoutGroupAssignmentSettings({
+    settings: normaliseComponentSettings(type, withoutRecordingLink(withoutGroupAssignmentSettings({
       ...getDefaultComponentSettings(type),
       ...((source.settings || {}) as ComponentSettings),
-    })),
+    }))),
   };
 }
 
@@ -1995,7 +2014,7 @@ export function copyComponentToWeek(
     // learner-facing session title. Keeping the source title unchanged also
     // avoids turning every placement into a different session name.
     title: source.title,
-    settings: copiedSettings,
+    settings: withoutRecordingLink(copiedSettings),
     ksbMappings: source.ksbMappings.map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
   };
 }
@@ -2030,7 +2049,7 @@ export function copyWeekToModule(
     summary: source.summary || '',
     learningOutcomes: [...(source.learningOutcomes || [])],
     ksbMappings: (source.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('KSB') })),
-    components: (source.components || []).map(component => ({
+    components: relinkCopiedComponents(source.components || [], (source.components || []).map(component => ({
       ...component,
       id: makeAuthoringId('COMP'),
       copiedFromId: component.id,
@@ -2038,7 +2057,7 @@ export function copyWeekToModule(
       weekId: copyId,
       ksbMappings: (component.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('KSB') })),
       settings: independentCopySettings(structuredClone(component.settings || {})),
-    })),
+    }))),
   };
 }
 
@@ -2091,7 +2110,7 @@ export function duplicateWeekInModule(module: ModuleCatalogueItem, weekId: strin
     summary: source.summary || '',
     learningOutcomes: [...(source.learningOutcomes || [])],
     ksbMappings: (source.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('KSB') })),
-    components: (source.components || []).map(component => ({
+    components: relinkCopiedComponents(source.components || [], (source.components || []).map(component => ({
       ...component,
       id: makeAuthoringId('COMP'),
       copiedFromId: component.id,
@@ -2099,7 +2118,7 @@ export function duplicateWeekInModule(module: ModuleCatalogueItem, weekId: strin
       weekId: copyId,
       ksbMappings: (component.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('KSB') })),
       settings: independentCopySettings(structuredClone(component.settings || {})),
-    })),
+    })), { sameModule: true }),
   };
   const weekStructure = [
     ...module.weekStructure.slice(0, sourceIndex + 1),
@@ -3944,6 +3963,8 @@ export interface TeamsMeetingOccurrence {
   status: string;
   attendance: TeamsAttendanceRecord[];
   artifacts: TeamsMeetingArtifact[];
+  /** Calls on this link that were not this session, ignored by the attendance sync. */
+  off_schedule_runs?: OffScheduleRun[];
 }
 
 export interface TeamsMeetingArtifactsResult {
@@ -3987,6 +4008,19 @@ export interface TeamsLeftoverSlot {
 
 export function syncTeamsMeetingArtifacts(liveSessionId: string): Promise<TeamsArtifactSyncResult | { state: 'queued'; message: string }> {
   return requestSessionSync(liveSessionId);
+}
+
+/** The calls on a calendar's link that were not one of its sessions, by occurrence id. Read-only. */
+export interface TeamsOffScheduleRunsResult {
+  liveSessionId: string;
+  timeZoneIana?: string;
+  occurrences: Record<string, OffScheduleRun[]>;
+}
+
+export function loadTeamsOffScheduleRuns(liveSessionId: string) {
+  return apiJson<TeamsOffScheduleRunsResult>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/off-schedule-runs/`, {
+    timeoutMs: 30000,
+  });
 }
 
 export function loadTeamsMeetingArtifacts(liveSessionId: string) {

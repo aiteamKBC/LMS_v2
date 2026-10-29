@@ -7,8 +7,10 @@ from django.utils import timezone
 
 from coach_api.models import CoachCalendarEvent
 from coach_api.background_meeting_sync import imported_context
-from coach_api.migrated_session_scope import snapshot_version, validate_attendance_response
+from coach_api.migrated_session_scope import (meeting_artifacts, meeting_reports,
+                                              snapshot_version, validate_attendance_response)
 from coach_api.migrated_intelligence_views import _graph_target_failure
+from coach_api.bound_actual_session import BoundSessionConflict, bound_session
 from coach_api.views import (
     apply_teams_attendance_status_transition,
     coach_meeting_snapshot_tables_ready,
@@ -154,6 +156,16 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.WARNING('Skipped meeting: source association could not be verified.'))
                 continue
             if context:
+                try:
+                    from coach_api.models import ImportedReviewInstance
+                    overlay = (ImportedReviewInstance.objects.filter(pk=context['overlayId']).first()
+                               if context.get('overlayId') else None)
+                    bound = bound_session(record, overlay=overlay) if (
+                        context['family'] in {'MCM', 'PR', 'PR_SKILLS_RADAR'} and overlay) else None
+                except (BoundSessionConflict, DatabaseError):
+                    skipped += 1
+                    self.stdout.write(f"APTEM {context['family']}: claimed session changed; refresh skipped.")
+                    continue
                 previous = stored_coach_meeting_snapshot(record, database=database, safe_diagnostics=True)
                 if not (previous.get('storage') or {}).get('stored') or previous.get('partial'):
                     failed += 1
@@ -162,6 +174,52 @@ class Command(BaseCommand):
                 expected_version = snapshot_version(previous)
             options = {'attendance_response_validator': validate_attendance_response,
                        'target_error_handler': _graph_target_failure, 'safe_diagnostics': True} if context else {}
+            meeting_target = {}
+            meeting_scoped = bool(context and not bound and context['family'] in {
+                'MCM', 'PR', 'PR_SKILLS_RADAR'})
+            if context and bound:
+                from coach_api.actual_session_resolution import strict_imported_meeting_target
+                from coach_api.migrated_intelligence_views import _transcript_collection
+                from coach_api.migrated_session_scope import select_artifacts
+                def owned_target(current):
+                    identity = {}
+                    base, error = strict_imported_meeting_target(current, identity_out=identity)
+                    if not error and base:
+                        try:
+                            bound_session(current, overlay=overlay, target=identity.get('target'))
+                        except BoundSessionConflict:
+                            return '', {'code': 'ACTUAL_SESSION_CLAIM_CONFLICT',
+                                        'detail': 'Claimed meeting context changed.'}
+                    return base, error
+                def selected_transcripts(current, attendance, metadata):
+                    rows, error = select_artifacts(current,
+                        {'attendanceReports': attendance, 'artifacts': metadata}, session=bound.context)
+                    return [] if error else [row['graph_artifact_id'] for row in rows
+                                             if row.get('artifact_type') == 'transcript']
+                options.update(target_resolver=owned_target,
+                    transcript_collection_fetcher=_transcript_collection,
+                    transcript_content_selector=selected_transcripts,
+                    independent_resources=True)
+            elif meeting_scoped:
+                from coach_api.actual_session_resolution import review_meeting_target
+                from coach_api.migrated_intelligence_views import _transcript_collection
+
+                def owned_target(current):
+                    return review_meeting_target(current, identity_out=meeting_target)
+
+                def selected_transcripts(current, _reports, metadata):
+                    target = meeting_target.get('target')
+                    if target is None:
+                        return []
+                    rows, _error = meeting_artifacts(current, {'artifacts': metadata},
+                        target.online_meeting_id, trusted_fetch=True)
+                    return [row['graph_artifact_id'] for row in rows
+                            if row.get('artifact_type') == 'transcript']
+
+                options.update(target_resolver=owned_target,
+                    transcript_collection_fetcher=_transcript_collection,
+                    transcript_content_selector=selected_transcripts,
+                    independent_resources=True)
             try:
                 snapshot, error_payload, status_code = fetch_coach_meeting_graph_snapshot(record, **options)
             except (RuntimeError, TimeoutError, ValueError):
@@ -184,6 +242,28 @@ class Command(BaseCommand):
                 )
                 continue
 
+            meeting_id = None
+            if meeting_scoped:
+                target = meeting_target.get('target')
+                if target is None:
+                    failed += 1
+                    self.stdout.write('APTEM meeting target unavailable; refresh skipped.')
+                    continue
+                meeting_id = target.online_meeting_id
+                artifacts, media_error = meeting_artifacts(record, snapshot, meeting_id,
+                    trusted_fetch=True)
+                reports, report_error = meeting_reports(snapshot,
+                    meeting_id=meeting_id, graph_event_id=record.graph_event_id)
+                snapshot['artifacts'] = [{**row, 'metadata': {**(row.get('metadata') or {}),
+                    '_lms_graph_event_id': record.graph_event_id,
+                    '_lms_verified_online_meeting_id': meeting_id}} for row in artifacts]
+                snapshot['attendanceReports'] = [{**row, '_lms_graph_event_id': record.graph_event_id,
+                    '_lms_verified_online_meeting_id': meeting_id} for row in reports]
+                snapshot['partial'] = bool(snapshot.get('partial') or media_error or report_error)
+                if media_error or report_error:
+                    snapshot.setdefault('errors', []).append(
+                        'Some Teams evidence had conflicting identity and was skipped.')
+
             # This is the primary, cron-friendly path for the scheduled ->
             # in-progress transition: a linked MCM/Progress Review only moves
             # once this sync actually sees a real Teams join, using the
@@ -200,6 +280,8 @@ class Command(BaseCommand):
                     attendance_tracker=snapshot["attendanceTracker"],
                     **({'imported_refresh': {'snapshot': snapshot, 'expected_version': expected_version,
                         'preserve_existing': True, 'context': context,
+                        'session': bound.context if context and bound else None,
+                        'meeting_id': meeting_id,
                         'revalidate': lambda current: imported_context(current) == context}}
                        if context else {}),
                 )

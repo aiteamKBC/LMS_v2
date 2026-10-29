@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { lecturePresentationSections } from './lecturePresentation';
+import { previewQuestionScore, scoringReadiness } from './scorePreview';
 import { parsePostLectureQuestionBank, POST_LECTURE_BANK_TEMPLATE, QUESTION_BANK_TYPES, QUESTION_BANK_ANSWER_TYPES } from './postLectureQuestionBank';
 
 const headings = ['Category', 'Question', 'Questions per lecture', 'Type'];
@@ -25,6 +26,100 @@ function spreadsheet(rows: unknown[][], name = 'bank.xlsx') {
 }
 
 describe('post-lecture question bank import', () => {
+  it('reuses the same scored spreadsheet for fixed forms without dropping questions or settings', async () => {
+    const file = spreadsheet([
+      ['Category', 'Question', 'Answer type', 'Yes score', 'No score', 'Include in overall score', 'Required', 'Help text'],
+      ['Teaching', 'Clear explanation?', '5 Stars', '', '', 'Yes', 'Yes', 'Rate this session.'],
+      ['Teaching', 'Enough support?', 'Yes / No', 75, 0, 'No', 'No', 'Choose one.'],
+      ['Comments', 'Any comments?', 'Written answer'],
+    ]);
+    const lecture = await parsePostLectureQuestionBank(file);
+    const fixed = await parsePostLectureQuestionBank(file, { fixedQuestions: true });
+    expect(fixed).toEqual({ ...lecture, sections: lecture.sections.map(section => ({ ...section, questionsPerDelivery: null })) });
+    expect(fixed.questionCount).toBe(3);
+  });
+
+  it('ignores legacy draw counts only for fixed forms', async () => {
+    const file = spreadsheet([
+      headings,
+      ['Teaching', 'Clear explanation?', 99, 'stars'],
+      ['Teaching', 'Useful examples?', 2, 'stars'],
+      ['', 'Any comments?', 1, 'text'],
+    ]);
+    const fixed = await parsePostLectureQuestionBank(file, { fixedQuestions: true });
+    expect(fixed.sections.map(section => section.questionsPerDelivery)).toEqual([null, null]);
+    expect(fixed.questionCount).toBe(3);
+    await expect(parsePostLectureQuestionBank(file)).rejects.toThrow(/same draw count/);
+  });
+
+  it('imports answer scores, directions and numeric reporting ranges while preserving draw quotas', async () => {
+    const parsed = await parsePostLectureQuestionBank(spreadsheet([
+      ['Category', 'Question', 'Answer type', 'Option 1', 'Option 2', 'Option 1 score', 'Option 2 score', 'Yes score', 'No score', 'Scoring', 'Score min', 'Score max', 'Include in overall score', 'Required', 'Help text'],
+      ['Teaching', 'Support?', 'Yes / No', '', '', '', '', '75%', 0, 'Per answer', '', '', 'No', 'No', 'Explain your answer.'],
+      ['Teaching', 'Which methods helped?', 'Choose several', 'Good', 'Poor', 100, 0, '', '', 'Per answer'],
+      ['Practice', 'Difficulty count?', 'Number', '', '', '', '', '', '', 'Lower is better', 0, 10],
+      ['General', 'Comment?', 'Written answer'],
+    ]));
+    const [yesNo, multiple] = parsed.sections[0].questions;
+    expect(yesNo).toMatchObject({ required: false, helpText: 'Explain your answer.', config: { analytics: { scoring: 'options', optionScores: { yes: 75, no: 0 }, includeInOverall: false } } });
+    expect(previewQuestionScore(yesNo, true)).toBe(75);
+    expect(previewQuestionScore(multiple, ['Good', 'Poor'])).toBe(50);
+    expect(previewQuestionScore(parsed.sections[1].questions[0], 100)).toBe(0);
+    expect(parsed.sections.map(section => section.questionsPerDelivery)).toEqual([1, 1, 1]);
+    expect(scoringReadiness(parsed.sections[2].questions[0]).state).toBe('not_scored');
+  });
+
+  it('reads native Excel percentage cells as percentage points, including a real zero', async () => {
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ['Category', 'Question', 'Type', 'Option 1', 'Option 2', 'Option 1 score', 'Option 2 score'],
+      ['Teaching', 'Support?', 'single_choice', 'Good', 'Poor', 0.75, 0],
+    ]);
+    sheet.F2.z = '0%'; sheet.G2.z = '0%';
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Questions');
+    const bytes = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
+    const parsed = await parsePostLectureQuestionBank({ name: 'scores.xlsx', size: bytes.byteLength, arrayBuffer: async () => bytes });
+    expect(parsed.sections[0].questions[0].config.analytics?.optionScores).toEqual({ Good: 75, Poor: 0 });
+  });
+
+  it('keeps missing scores incomplete in a draft and reports the true spreadsheet row for invalid scores', async () => {
+    const header = ['Category', 'Question', 'Type', 'Option 1', 'Option 2', 'Option 1 score', 'Option 2 score'];
+    const parsed = await parsePostLectureQuestionBank(spreadsheet([header, ['Teaching', 'Support?', 'single_choice', 'A', 'B', 0, '']]));
+    expect(parsed.sections[0].questions[0].config.analytics?.optionScores).toEqual({ A: 0 });
+    expect(scoringReadiness(parsed.sections[0].questions[0]).state).toBe('incomplete');
+    await expect(parsePostLectureQuestionBank(spreadsheet([header, [], ['Teaching', 'Support?', 'single_choice', 'A', 'B', 101, 0]]))).rejects.toThrow(/Row 3: Option 1 score must be from 0 to 100/);
+  });
+
+  it.each([
+    ['rating', 'Not scored', '', '', /Higher is better/],
+    ['number', 'Higher is better', 10, 5, /Score max/],
+    ['long_text', 'Higher is better', '', '', /no automatic score/],
+    ['yes_no', 'Lower is better', '', '', /Per answer/],
+  ])('rejects incompatible scoring for %s', async (type, scoring, min, max, error) => {
+    await expect(parsePostLectureQuestionBank(spreadsheet([
+      ['Category', 'Question', 'Type', 'Scoring', 'Score min', 'Score max'], ['Survey', 'Question?', type, scoring, min, max],
+    ]))).rejects.toThrow(error);
+  });
+
+  it('imports optional importance without changing question counts, types or rating labels', async () => {
+    const parsed = await parsePostLectureQuestionBank(spreadsheet([
+      ['Category', 'Question', 'Type', 'Importance', 'Scale labels'],
+      ['Teaching', 'Clear?', 'stars', 'Critical', 'Low | Basic | Moderate | Good | Great'],
+      ['Teaching', 'Supported?', 'yes_no', 'high'],
+      ['Resources', 'Useful?', 'stars', ''],
+    ]));
+    expect(parsed.sections.map(section => section.questionsPerDelivery)).toEqual([1, 1]);
+    expect(parsed.sections[0].questions[0].config).toMatchObject({ display: 'stars', labels: ['Low', 'Basic', 'Moderate', 'Good', 'Great'], analytics: { importance: 'critical' } });
+    expect(parsed.sections[0].questions[1].config.analytics).toEqual({ importance: 'high' });
+    expect(parsed.sections[1].questions[0].config.analytics).toBeUndefined();
+  });
+
+  it('rejects invalid importance instead of silently assigning a weight', async () => {
+    await expect(parsePostLectureQuestionBank(spreadsheet([
+      ['Category', 'Question', 'Type', 'Importance'], ['Teaching', 'Clear?', 'stars', 'Urgent'],
+    ]))).rejects.toThrow(/Importance must be Critical, High, Medium or Low/);
+  });
+
   it('creates grouped five-star banks and a fixed final text question', async () => {
     const parsed = await parsePostLectureQuestionBank(spreadsheet(validRows));
     expect(parsed.questionCount).toBe(6);
@@ -90,7 +185,7 @@ describe('post-lecture question bank import', () => {
     const array = Uint8Array.from(bytes);
     const parsed = await parsePostLectureQuestionBank({ name: 'template.xlsx', size: array.byteLength, arrayBuffer: async () => array.buffer });
     expect(parsed.sections.map(section => [section.title, section.questionsPerDelivery, section.questions.length])).toEqual([
-      ['Teaching', 1, 3], ['Resources', 1, 3], ['General', 1, 1],
+      ['Teaching', 1, 3], ['Resources', 1, 3], ['General', 1, 1], ['Practice', 1, 1],
     ]);
     expect(parsed.sections[1].questions[2]).toMatchObject({ type: 'single_choice', config: { options: ['Slides', 'Workbook', 'Practice'] } });
     const archive = await JSZip.loadAsync(array);
@@ -105,6 +200,13 @@ describe('post-lecture question bank import', () => {
     expect(choices!.join(',').length).toBeLessThanOrEqual(255);
     expect(document.querySelector('pane')?.getAttribute('xSplit')).toBe('2');
     expect(document.querySelector('pane')?.getAttribute('ySplit')).toBe('1');
+    const importance = Array.from(document.querySelectorAll('dataValidation')).find(item => item.getAttribute('sqref') === 'J2:J1001');
+    expect(importance?.querySelector('formula1')?.textContent).toBe('"Critical,High,Medium,Low"');
+    expect(parsed.sections[0].questions[0].config.analytics?.importance).toBe('medium');
+    expect(parsed.sections[0].questions[2].config.analytics?.optionScores).toEqual({ yes: 100, no: 0 });
+    expect(parsed.sections[1].questions[2].config.analytics?.optionScores).toEqual({ Slides: 100, Workbook: 100, Practice: 100 });
+    expect(parsed.sections[3].questions[0].config.analytics).toMatchObject({ scoring: 'higher', scoreMin: 0, scoreMax: 10 });
+    expect(parsed.sections.flatMap(section => section.questions).filter(question => scoringReadiness(question).state === 'incomplete')).toHaveLength(0);
   });
 
   it('accepts a legacy count once per category and permits drawing the entire category', async () => {

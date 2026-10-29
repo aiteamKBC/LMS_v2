@@ -20,18 +20,16 @@ import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 import { formatHoursMinutes } from '@/lib/format';
 import { curriculumNavItems } from '@/mocks/navigation';
-import { applyCurriculumLearnerAssignments, fetchLearnerAssignments, unassignCurriculumLearners, type LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
+import { fetchLearnerAssignments, unassignCurriculumLearners, type LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
 import {
   curriculumErrorMessage,
   fetchCurriculumHolidays,
   fetchCurriculumKsbSets,
   fetchCurriculumDeliveryScope,
-  fetchCurriculumScopeLearnerRoster,
   fetchCurriculumScopeLearnerKsbImpact,
   fetchCurriculumStandards,
   fetchCurriculumTeamsMeetingSummaries,
   fetchCurriculumTutors,
-  curriculumLearnerAssignmentId,
   type CurriculumCohort,
   type CurriculumGroup,
   type CurriculumHoliday,
@@ -197,6 +195,10 @@ import {
 } from './componentAuthoringModel';
 import { RichTextDraft } from './RichTextEditor';
 import { componentTypeCounts, mergeFilteredComponents } from './courseStructureFilter';
+import { useOffScheduleRuns } from './useOffScheduleRuns';
+import { offScheduleRunLabel, offScheduleRunSentence } from '../teams-meetings/offScheduleRuns';
+import { reviewDateLabel } from '../teams-meetings/calendarTime';
+import { linkedRecordingsOf, relinkCopiedComponents, withLinkedRecordings, withRecordingLink, type RecordingLinkContext } from '../shared/entities/liveSessionRecordingLink';
 
 // Course structure accordion: whether expanding a week collapses the others.
 // false = classic single-open accordion (the current default look/feel).
@@ -567,7 +569,7 @@ async function showDuplicateModuleSwal(
   const destination = await Swal.fire({
     title: `Duplicate ${module.title}`,
     html: `
-      <p style="margin:0 0 12px;text-align:left">Choose where the new module will run. The current learners of the selected Group will be assigned, and future Group learners will inherit it.</p>
+      <p style="margin:0 0 12px;text-align:left">Choose where the new module will run. The new module starts with no learners; assign them on it afterwards.</p>
       <p style="margin:0 0 12px;text-align:left">Progress, submissions, attendance and files are never copied.</p>
       <label style="display:block;text-align:left;font-weight:700;margin:10px 0 4px">Programme</label>
       <select id="duplicate-programme" class="swal2-select" style="display:flex;width:100%;margin:0">${programmeOptions}</select>
@@ -619,9 +621,14 @@ async function showDuplicateModuleSwal(
   });
   if (!destination.isConfirmed || !destination.value) return null;
   const selected = destination.value as DuplicateDestination;
+  // Independent is the default: a copy usually runs for another group, and a
+  // shared join link would put that group in the original's sessions. Sharing
+  // stays a deliberate choice for groups that really attend together -- it is
+  // the only path that credits both groups' attendance and shows both the
+  // recording.
   const teams = await Swal.fire({
     title: 'Teams meeting and dates',
-    html: '<p style="margin:0 0 12px;text-align:left">Choose whether the duplicate shares the original Teams meeting.</p><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-shared" type="radio" name="duplicate-teams" value="shared" checked> Share the same Teams meeting and record</label><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-independent" type="radio" name="duplicate-teams" value="independent"> Create an independent Teams meeting later</label><div id="duplicate-start-date-wrap" style="display:none;text-align:left;margin-top:12px"><label style="font-weight:700">Start Date</label><input id="duplicate-start-date" type="date" class="swal2-input" style="width:100%;margin:4px 0"></div>',
+    html: '<p style="margin:0 0 12px;text-align:left">By default the new module has no Teams meeting link; create its own meeting from the new module once it is set up. Share the original meeting only when both groups attend the same sessions together.</p><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-independent" type="radio" name="duplicate-teams" value="independent" checked> Independent: no meeting link, create its own meeting later</label><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-shared" type="radio" name="duplicate-teams" value="shared"> Share the same Teams meeting (both groups attend together)</label><div id="duplicate-start-date-wrap" style="text-align:left;margin-top:12px"><label style="font-weight:700">Start Date</label><input id="duplicate-start-date" type="date" class="swal2-input" style="width:100%;margin:4px 0"></div>',
     icon: 'question',
     width: 560,
     showCancelButton: true,
@@ -634,18 +641,21 @@ async function showDuplicateModuleSwal(
     didOpen: () => {
       const popup = Swal.getPopup();
       const independent = popup?.querySelector<HTMLInputElement>('#duplicate-teams-independent');
+      const shared = popup?.querySelector<HTMLInputElement>('#duplicate-teams-shared');
       const wrap = popup?.querySelector<HTMLElement>('#duplicate-start-date-wrap');
-      independent?.addEventListener('change', () => { if (wrap) wrap.style.display = independent.checked ? 'block' : 'none'; });
+      const sync = () => { if (wrap) wrap.style.display = independent?.checked ? 'block' : 'none'; };
+      independent?.addEventListener('change', sync);
+      shared?.addEventListener('change', sync);
     },
     preConfirm: () => {
       const popup = Swal.getPopup();
       const independent = popup?.querySelector<HTMLInputElement>('#duplicate-teams-independent')?.checked;
       const startDate = popup?.querySelector<HTMLInputElement>('#duplicate-start-date')?.value || '';
       if (independent && !startDate) {
-        Swal.showValidationMessage('Choose the Start Date for the independent module.');
+        Swal.showValidationMessage('Choose the Start Date for the new module.');
         return false;
       }
-      return { teamsCopyMode: independent ? 'independent' : 'shared', startDate };
+      return { teamsCopyMode: independent ? 'independent' : 'shared', startDate: independent ? startDate : '' };
     },
   });
   if (!teams.isConfirmed || !teams.value) return null;
@@ -653,7 +663,7 @@ async function showDuplicateModuleSwal(
   if (teamsValue.teamsCopyMode === 'shared') {
     const accepted = await showCurriculumConfirm({
       title: 'Share the Teams meeting?',
-      text: 'The original and duplicate will use the same meeting identity. Links, attendees, invitations, attendance, recordings and later meeting changes can affect both modules.',
+      text: 'Both groups will join the same meeting on the original dates. Links, attendees, invitations, attendance, recordings and later meeting changes affect both modules. Choose this only when the two groups attend together.',
       icon: 'warning',
       confirmButtonText: 'Yes, share the meeting',
       cancelButtonText: 'Go back',
@@ -813,6 +823,11 @@ export default function ModuleBuilder() {
   const liveSyncRef = useRef<(trigger?: 'return' | 'live') => void | Promise<void>>(() => undefined);
   // A live read that arrived while a save was in flight, run once it settles.
   const liveSyncAfterSaveRef = useRef<'return' | 'live' | ''>('');
+  // Module settings is open: its own save is read back by its onSaved as this
+  // author's write, so a live read heard meanwhile waits for the drawer to close
+  // rather than reporting that save as somebody else's.
+  const placementOpenRef = useRef(false);
+  const liveSyncAfterPlacementRef = useRef<'return' | 'live' | ''>('');
   /** The live merge, reachable from the save path that is declared above it. */
   const mergeStoredRef = useRef<(structureId: string) => Promise<boolean>>(async () => false);
   /**
@@ -1201,11 +1216,28 @@ export default function ModuleBuilder() {
       module,
       deliveryUsageForModuleScope(module as ModuleBuilderListItem, programmeFilter, curriculumProgrammes),
     );
+    placementOpenRef.current = true;
     setPlacementModule(target);
   }, [curriculumProgrammes, programmeFilter]);
 
   const closePlacementForm = useCallback(() => {
+    placementOpenRef.current = false;
     setPlacementModule(null);
+    const deferred = liveSyncAfterPlacementRef.current;
+    liveSyncAfterPlacementRef.current = '';
+    // After the drawer's onSaved has started its own read (it runs in the same
+    // tick as this close), so this one finds the module already up to date.
+    if (deferred) setTimeout(() => { void liveSyncRef.current(deferred); }, 0);
+  }, []);
+
+  // The copy this workspace last agreed on with the server: what Module
+  // settings' PATCH will resize, so the drawer can say what that does first.
+  const storedStructureForPlacement = useCallback((): ModuleCatalogueItem | null => {
+    try {
+      return savedModuleSnapshotRef.current ? JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem : null;
+    } catch {
+      return null;
+    }
   }, []);
 
   const moduleFormOpen = createOpen || Boolean(placementModule);
@@ -2147,23 +2179,99 @@ export default function ModuleBuilder() {
   // session's Teams meeting and date (`copyComponentToWeek` says why). Client
   // state only, same as `duplicateWeek` -- the normal module save writes the
   // whole week structure.
+  //
+  // A live session copies with its same-week linked recordings, and the copies
+  // are linked to each other. A recording copied on its own keeps its link:
+  // the session it names is still in this module.
   const copyComponentToAnotherWeek = useCallback((component: ModuleComponent, targetWeekId: string) => {
     let copyId = '';
-    updateWorkingModule(module => ({
-      ...module,
-      weekStructure: module.weekStructure.map(week => {
-        if (week.id !== targetWeekId) return week;
-        const copy = cloneComponentToWeek(component, targetWeekId, module.id);
-        copyId = copy.id;
-        return { ...week, components: [...week.components, copy] };
-      }),
-    }));
+    updateWorkingModule(module => {
+      const sourceWeek = module.weekStructure.find(week => week.components.some(item => item.id === component.id));
+      const sources = component.type === 'live-session' && sourceWeek
+        ? [component, ...linkedRecordingsOf(sourceWeek.components, component)]
+        : [component];
+      return {
+        ...module,
+        weekStructure: module.weekStructure.map(week => {
+          if (week.id !== targetWeekId) return week;
+          const copies = relinkCopiedComponents(sources, sources.map(source => cloneComponentToWeek(source, targetWeekId, module.id)), { sameModule: true });
+          copyId = copies[0].id;
+          return { ...week, components: [...week.components, ...copies] };
+        }),
+      };
+    });
     if (!copyId) return;
     // Open the target week and select the copy -- the point of a clone is the
     // edit you make to it, and here that edit happens on a different week.
     setExpandedWeekIds(prev => new Set(prev).add(targetWeekId));
     setSelection({ kind: 'component', weekId: targetWeekId, componentId: copyId });
   }, [updateWorkingModule]);
+
+  // Everything the recording/live-session link needs beyond one week: this
+  // module's weeks, the other modules a recording may link into (read on
+  // demand, only when an author picks one), and the writes that set a link on
+  // a recording wherever it sits or add one after a live session.
+  const workingModuleLinkId = workingModule ? (workingModule.catalogueId || workingModule.id) : '';
+  const linkWeeks = useMemo(() => (workingModule?.weekStructure || []).map(week => ({
+    id: week.id, label: week.title || `Week ${week.weekNumber}`, components: week.components,
+  })), [workingModule?.weekStructure]);
+  const linkableModules = useMemo(() => catalogueModules
+    .filter(module => module.catalogueId && module.catalogueId !== workingModuleLinkId)
+    .map(module => ({
+      id: module.catalogueId,
+      label: [module.title, module.group || module.cohort || module.programmeName].filter(Boolean).join(' · '),
+      programmeId: module.programmeId || '',
+      programme: module.programmeName || '',
+      cohortId: module.cohortId || '',
+      cohort: module.cohort || '',
+      groupId: module.groupId || '',
+      group: module.group || '',
+    })), [catalogueModules, workingModuleLinkId]);
+  const loadLinkableModuleWeeks = useCallback(async (moduleId: string) => {
+    const structure = await loadModuleStructure(moduleId);
+    if (!structure) throw new Error('That module could not be found.');
+    return structure.weekStructure.map(week => ({ id: week.id, label: week.title || `Week ${week.weekNumber}`, components: week.components }));
+  }, []);
+  const setRecordingLink = useCallback((recordingId: string, liveSessionId: string, moduleId: string) => {
+    updateWorkingModule(module => ({
+      ...module,
+      weekStructure: module.weekStructure.map(week => ({
+        ...week,
+        components: week.components.map(component => (component.id === recordingId ? withRecordingLink(component, liveSessionId, moduleId) : component)),
+      })),
+    }));
+  }, [updateWorkingModule]);
+  const addLinkedRecording = useCallback((liveSession: ModuleComponent) => {
+    updateWorkingModule(module => ({
+      ...module,
+      weekStructure: module.weekStructure.map(week => {
+        const index = week.components.findIndex(component => component.id === liveSession.id);
+        if (index < 0) return week;
+        const [, recording] = withLinkedRecordings([liveSession], () => createNamedComponent(week, 'recording-placeholder'));
+        const components = [...week.components];
+        components.splice(index + 1, 0, recording);
+        return { ...week, components };
+      }),
+    }));
+  }, [updateWorkingModule]);
+  const removeLinkedComponents = useCallback((componentIds: string[]) => {
+    const removing = new Set(componentIds);
+    updateWorkingModule(module => ({
+      ...module,
+      weekStructure: module.weekStructure.map(week => (week.components.some(component => removing.has(component.id))
+        ? { ...week, components: week.components.filter(component => !removing.has(component.id)) }
+        : week)),
+    }));
+  }, [updateWorkingModule]);
+  const recordingLinks = useMemo<RecordingLinkContext>(() => ({
+    moduleId: workingModuleLinkId,
+    weeks: linkWeeks,
+    otherModules: linkableModules,
+    loadModuleWeeks: loadLinkableModuleWeeks,
+    setLink: setRecordingLink,
+    addLinkedRecording,
+    removeComponents: removeLinkedComponents,
+  }), [workingModuleLinkId, linkWeeks, linkableModules, loadLinkableModuleWeeks, setRecordingLink, addLinkedRecording, removeLinkedComponents]);
 
   const moveComponentToAnotherWeek = useCallback(async (component: ModuleComponent, targetWeekId: string) => {
     const current = workingModuleRef.current;
@@ -2628,14 +2736,6 @@ export default function ModuleBuilder() {
       if (dialog.teamsCopyMode === 'shared' && source.endDate && dialog.cohort.endDate && source.endDate > dialog.cohort.endDate) {
         throw new Error('The original dates end after the selected Cohort. Choose an independent Teams meeting or a Cohort that contains the original dates.');
       }
-      const roster = await fetchCurriculumScopeLearnerRoster('group', dialog.group.id, { learnerStatus: 'active' });
-      // The scope roster is sourced from LearnerProfile rows.  Assignment
-      // endpoints write the enrolment record, so always prefer the explicit
-      // bridge id; falling back to the profile id keeps old environments
-      // readable while they are being backfilled.
-      const learnerIds = roster.assignedLearners
-        .map(curriculumLearnerAssignmentId)
-        .filter(Boolean);
       let ksbSource: DuplicateKsbSource | undefined;
       if (!sameProgramme) {
         const [allKsbSets, allStandards] = await Promise.all([
@@ -2645,8 +2745,12 @@ export default function ModuleBuilder() {
         ksbSource = duplicateTargetKsbSource(dialog.programme, allKsbSets, allStandards)
           || { sourceType: '', sourceId: '', programmeId: curriculumProgrammeId(dialog.programme), programmeName: dialog.programme.name, entries: [] };
       }
+      // A copy starts with no learners. The original's learners already meet
+      // this content on the original; inheriting or re-assigning them put the
+      // same module on their plan twice, doubling progress and hours. The
+      // manual roster holds only learners someone assigns to the copy later.
       const duplicate = await duplicateModuleStructure(source, {
-        learnerRosterMode: 'inherited',
+        learnerRosterMode: 'manual',
         teamsCopyMode: dialog.teamsCopyMode,
         keepDates: dialog.teamsCopyMode === 'shared',
         startDate: dialog.startDate,
@@ -2670,52 +2774,13 @@ export default function ModuleBuilder() {
             }
           : undefined,
       });
-      const moduleTarget: LearnerAssignmentTarget = { scope: 'module', id: duplicate.catalogueId, name: duplicate.title };
-      const applyAssignments = async (ids: string[]) => applyCurriculumLearnerAssignments(moduleTarget, { add: ids, remove: [] });
-      const assignment = learnerIds.length
-        ? await applyAssignments(learnerIds)
-        : { added: [], removed: [], failed: [], failureMessage: null, abandoned: false, changedCount: 0, moduleCount: 1 };
       const report = duplicate.ksbRemapReport as KsbRemapReport | null | undefined;
       const ksbMessage = report && report.unmatched?.length
         ? ` ${report.matchedCount} KSBs matched; ${report.unmatched.length} need review in the saved remap report.`
         : '';
-      if (assignment.failed.length) {
-        const failed = [...assignment.failed];
-        const retryAssignments = async (failedIds: string[]) => {
-          // Re-read the Group before retrying.  This also upgrades failures
-          // from an older bundle that sent profile ids to the enrolment ids
-          // now accepted by the assignment endpoint.
-          const latestRoster = await fetchCurriculumScopeLearnerRoster(
-            'group', dialog.group.id, { learnerStatus: 'active' },
-          );
-          const wanted = new Set(failedIds.map(String));
-          const retryIds = latestRoster.assignedLearners
-            .filter(learner => wanted.has(String(learner.id)) || wanted.has(String(learner.enrolmentId)))
-            .map(curriculumLearnerAssignmentId);
-          if (!retryIds.length) {
-            throw new Error('No active learners from the selected Group are available to retry.');
-          }
-          return applyAssignments([...new Set(retryIds)]);
-        };
-        setActionMessage(`Module created, but ${failed.length} learner assignment${failed.length === 1 ? '' : 's'} failed.${assignment.failureMessage ? ` ${assignment.failureMessage}` : ''}`);
-        setActionMessageRetry(() => () => {
-          void retryAssignments(failed).then(retry => {
-            if (retry.failed.length) {
-              setActionMessage(`Retry completed with ${retry.failed.length} learner assignment failure${retry.failed.length === 1 ? '' : 's'}.`);
-              setActionMessageRetry(() => () => {
-                void retryAssignments(retry.failed).catch(error => setActionMessage(error instanceof Error ? error.message : 'Unable to retry learner assignments.'));
-              });
-            } else {
-              setActionMessage(null);
-              setActionMessageRetry(null);
-              void reload({ silent: true });
-            }
-          }).catch(error => setActionMessage(error instanceof Error ? error.message : 'Unable to retry learner assignments.'));
-        });
-      }
       setNoticeAlert({
         title: 'Module duplicated',
-        message: `${duplicate.title} was created in ${dialog.programme.name} / ${dialog.cohort.name} / ${dialog.group.name}. ${assignment.added.length} active Group learner${assignment.added.length === 1 ? '' : 's'} assigned.${ksbMessage}`,
+        message: `${duplicate.title} was created in ${dialog.programme.name} / ${dialog.cohort.name} / ${dialog.group.name} with no learners. Use Assign learners on the new module to add them.${ksbMessage}`,
       });
       reload();
       await finishLoadingProgress(setDuplicatingModuleComplete);
@@ -3013,7 +3078,12 @@ export default function ModuleBuilder() {
    * Returns false when nothing was read, so a caller can leave the workspace
    * exactly as it was.
    */
-  const mergeStoredIntoWorkspace = useCallback(async (structureId: string): Promise<boolean> => {
+  const mergeStoredIntoWorkspace = useCallback(async (
+    structureId: string,
+    // The write being read back is this author's own (Module settings): it is
+    // folded in without "someone else" being said anywhere.
+    options: { ownWrite?: boolean } = {},
+  ): Promise<boolean> => {
     liveSyncReadAtRef.current = Date.now();
     const sequence = liveSyncSequenceRef.current + 1;
     liveSyncSequenceRef.current = sequence;
@@ -3044,7 +3114,7 @@ export default function ModuleBuilder() {
     const base = savedModuleSnapshotRef.current
       ? JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem
       : null;
-    const { module: merged, adopted, collisions } = mergeModuleStructures(base, current, stored);
+    const { module: merged, adopted, collisions } = mergeModuleStructures(base, current, stored, { ownWrite: options.ownWrite });
     // What the server holds is the stored copy, so that is what "saved" means
     // from here: the difference between it and the merged copy is exactly the
     // reader's outstanding work, which is what keeps the footer honest.
@@ -3072,7 +3142,7 @@ export default function ModuleBuilder() {
     setSaveFailure(null);
     // The disagreements have their own panel; this line only says that their
     // other changes arrived.
-    if (adopted) setRemoteUpdate({ revision, notices: [], adopted });
+    if (adopted && !options.ownWrite) setRemoteUpdate({ revision, notices: [], adopted });
     return true;
   }, [applySelectionSafely, readStoredModule, selection, setModuleConflicts]);
   mergeStoredRef.current = mergeStoredIntoWorkspace;
@@ -3134,7 +3204,7 @@ export default function ModuleBuilder() {
       await adoptStoredModule().catch(() => undefined);
       return;
     }
-    await mergeStoredIntoWorkspace(structureId);
+    await mergeStoredIntoWorkspace(structureId, { ownWrite: true });
   }, [adoptStoredModule, mergeStoredIntoWorkspace, workingModule]);
 
   /**
@@ -3166,6 +3236,10 @@ export default function ModuleBuilder() {
     // being dropped with a colleague's write in it.
     if (savingRef.current) {
       liveSyncAfterSaveRef.current = trigger;
+      return;
+    }
+    if (placementOpenRef.current) {
+      liveSyncAfterPlacementRef.current = trigger;
       return;
     }
     const sinceLastRead = Date.now() - liveSyncReadAtRef.current;
@@ -3472,6 +3546,7 @@ export default function ModuleBuilder() {
                     uploadResource={uploadComponentForModule}
                     moduleId={workingModule.catalogueId || workingModule.id}
                     initializeGroupSelection={false}
+                    recordingLinks={recordingLinks}
                   />
     ) : null;
     return (
@@ -3678,6 +3753,7 @@ export default function ModuleBuilder() {
               onCopyComponentToWeek={copyComponentToAnotherWeek}
               onMoveComponentToWeek={moveComponentToAnotherWeek}
               onReviewTeamsCalendar={() => { void requestDirtyNavigation(() => navigate('/curriculum/teams-meetings')); }}
+              recordingLinks={recordingLinks}
               onWeekHolidayNoteChange={(weekId, next) => updateWorkingModule(module => ({
                 ...module,
                 weekStructure: module.weekStructure.map(week => (week.id === weekId
@@ -3804,6 +3880,7 @@ export default function ModuleBuilder() {
           holidays={moduleFormScope.holidays}
           tutorNames={tutorNames}
           onClose={closePlacementForm}
+          storedStructure={storedStructureForPlacement}
           onSaved={async () => {
             await syncWorkingModuleFromStore();
             await reload({ silent: true });
@@ -3826,7 +3903,8 @@ export default function ModuleBuilder() {
             onAdd={async types => {
               const week = workingModule.weekStructure.find(item => item.id === lessonPickerWeekId);
               if (!week) return;
-              const components = createNamedComponents(week, types);
+              // Each live session arrives with its session recording right after it, linked.
+              const components = withLinkedRecordings(createNamedComponents(week, types), () => createNamedComponent(week, 'recording-placeholder'));
               if (!components.length) return;
               const liveSessions = components.filter(component => component.type === 'live-session').length;
               if (!(await confirmLiveSessionSlotOverflow(weekSlotOverflow(week.id, liveSessions)))) return;
@@ -4194,6 +4272,7 @@ export default function ModuleBuilder() {
           holidays={moduleFormScope.holidays}
           tutorNames={tutorNames}
           onClose={closePlacementForm}
+          storedStructure={storedStructureForPlacement}
           onSaved={async () => {
             await reload({ silent: true });
           }}
@@ -4550,7 +4629,7 @@ function WorkspaceActionFooter({ saving, saved, status, autoSave, onToggleAutoSa
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onCopyComponentToWeek, onMoveComponentToWeek, onReviewTeamsCalendar, onWeekHolidayNoteChange, onReuseComponents, onCreateTeamsMeeting, onReplaceTeamsLinks, onRestoreTeamsData, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onCopyComponentToWeek, onMoveComponentToWeek, onReviewTeamsCalendar, recordingLinks, onWeekHolidayNoteChange, onReuseComponents, onCreateTeamsMeeting, onReplaceTeamsLinks, onRestoreTeamsData, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -4567,6 +4646,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   onCopyComponentToWeek: (component: ModuleComponent, targetWeekId: string) => void;
   onMoveComponentToWeek: (component: ModuleComponent, targetWeekId: string) => void;
   onReviewTeamsCalendar: () => void;
+  recordingLinks: RecordingLinkContext;
   /**
    * The curriculum author's hint for a week a holiday lands on, and whether
    * learners see it. Only this rail passes an editor to `WeekHolidayNotice`,
@@ -4602,6 +4682,8 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   allowMultipleExpanded?: boolean;
 }) {
   const totalComponents = module.weekStructure.reduce((total, week) => total + week.components.length, 0);
+  // Teams calls on a week's link that were not its session, shown on the week.
+  const offScheduleByWeek = useOffScheduleRuns(module);
   const actualWeekCount = module.weekStructure.length;
   // How many live sessions this module delivers: the live-session components
   // authored into it, and nothing else. A module can run fourteen weeks and
@@ -4933,6 +5015,21 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                         <span className="truncate">{formatDateLabel(week.sessionDate)}</span>
                       </>
                     )}
+                    {!hasDeliveryDate && (
+                      <>
+                        <span className="h-1 w-1 rounded-full bg-amber-400"></span>
+                        <span className="font-semibold text-amber-700">No delivery date this week</span>
+                      </>
+                    )}
+                    {offScheduleByWeek.has(week.id) && (
+                      <>
+                        <span className="h-1 w-1 rounded-full bg-amber-400"></span>
+                        <span className="truncate font-semibold text-amber-700"
+                          title={offScheduleByWeek.get(week.id)!.runs.map(run => offScheduleRunSentence(run, iso => reviewDateLabel(iso, offScheduleByWeek.get(week.id)!.timeZone))).join(' ')}>
+                          {offScheduleRunLabel(offScheduleByWeek.get(week.id)!.runs)}
+                        </span>
+                      </>
+                    )}
                   </p>
                 </button>
                 {/* Duplicating copies the week's components in full. The live
@@ -5030,6 +5127,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                     onCopyComponentToWeek={onCopyComponentToWeek}
                     onMoveComponentToWeek={onMoveComponentToWeek}
                     onReviewTeamsCalendar={onReviewTeamsCalendar}
+                    recordingLinks={recordingLinks}
                   />
                   <p className={editorStyles.structureWeekHours}><AppIcon className="ri-time-line" />{Number(totalOtjh.toFixed(1))}h OTJH{totalOtjh > 0 && <> · {formatHoursMinutes(totalOtjh)}</>}</p>
                 </div>
@@ -5439,9 +5537,17 @@ function ModuleWeekPanel({ week, module, groupOptions, onChange, onOpenSessionKs
   onReuseComponents: () => void;
 }) {
   const totalOtjh = weekExpectedOtjhTotal(week);
+  const offSchedule = useOffScheduleRuns(module).get(week.id);
 
   return (
     <section className="space-y-4">
+      {offSchedule && (
+        <div role="note" className="space-y-1 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] text-amber-900">
+          {offSchedule.runs.map(run => (
+            <p key={`${run.runStartUtc}-${run.runEndUtc}`}>{offScheduleRunSentence(run, iso => reviewDateLabel(iso, offSchedule.timeZone))}</p>
+          ))}
+        </div>
+      )}
       <div className={weekToolbarStyles.toolbar} data-selected-week-header>
         <div className={weekToolbarStyles.layout}>
           <span className={weekToolbarStyles.weekBadge}>Week {week.weekNumber}</span>

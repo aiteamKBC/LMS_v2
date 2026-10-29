@@ -3,6 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { useAuth } from '@/hooks/useAuth';
+import { useMyLearner } from '@/hooks/useMyLearner';
+import { useDashboardHeader } from '@/hooks/useDashboardHeader';
 import { createSupportTicket, loadSupportTickets, updateSupportTicket, ticketDate, type SupportTicket, type TicketReply } from '@/api/supportTickets';
 import TicketFilePicker from '@/components/support/TicketFilePicker';
 import TicketAttachments from '@/components/support/TicketAttachments';
@@ -67,11 +69,11 @@ const AI_SUGGESTIONS = [
 ];
 
 const CONTACT_OPTIONS = [
-  { name: 'Med Maher', role: 'Your Coach', email: 'med.maher@kbc.ac.uk', phone: '01227 811 234', icon: 'ri-chat-smile-2-line', availability: 'Mon–Fri, 9am–5pm' },
-  { name: 'Crispin Jones', role: 'Your Tutor', email: 'crispin.jones@kbc.ac.uk', phone: '01227 811 235', icon: 'ri-user-settings-line', availability: 'Tue–Thu, 10am–4pm' },
-  { name: 'Learner Support', role: 'KBC Support Team', email: 'learnersupport@kbc.ac.uk', phone: '01227 811 200', icon: 'ri-customer-service-2-line', availability: 'Mon–Fri, 8am–6pm' },
-  { name: 'IT Helpdesk', role: 'Technical Support', email: 'ithelp@kbc.ac.uk', phone: '01227 811 299', icon: 'ri-computer-line', availability: 'Mon–Fri, 8am–8pm' },
-  { name: 'Safeguarding', role: 'Confidential Support', email: 'safeguarding@kbc.ac.uk', phone: '01227 811 250', icon: 'ri-shield-check-line', availability: '24/7 urgent line' },
+  { name: 'Med Maher', role: 'Your Coach', email: 'med.maher@kentbusinesscollege.com', phone: '', icon: 'ri-chat-smile-2-line', availability: 'Mon–Fri, 9am–5pm' },
+  { name: 'Crispin Reed', role: 'Your Tutor', email: 'Crispin@kentbusinesscollege.com', phone: '', icon: 'ri-user-settings-line', availability: 'Tue–Thu, 10am–4pm' },
+  { name: 'Learner Support', role: 'KBC Support Team', email: 'learnersupport@kbc.ac.uk', phone: '', icon: 'ri-customer-service-2-line', availability: 'Mon–Fri, 8am–6pm' },
+  { name: 'IT Helpdesk', role: 'Technical Support', email: 'ithelp@kbc.ac.uk', phone: '', icon: 'ri-computer-line', availability: 'Mon–Fri, 8am–8pm' },
+  { name: 'Safeguarding', role: 'Confidential Support', email: 'safeguarding@kbc.ac.uk', phone: '', icon: 'ri-shield-check-line', availability: '24/7 urgent line' },
 ];
 
 function getSLA(priority: string): string {
@@ -96,6 +98,23 @@ function getSLAColor(priority: string): string {
 
 export default function SupportPage() {
   const { auth } = useAuth();
+  const learner = useMyLearner();
+  const isSignedInLearner = auth.account?.subjectType === 'learner';
+  const coachHeader = useDashboardHeader(
+    isSignedInLearner ? learner.kind : undefined,
+    isSignedInLearner ? learner.id : undefined,
+    isSignedInLearner,
+  );
+  const realCoach = coachHeader.data?.coach;
+  const contactOptions = isSignedInLearner ? [
+    {
+      ...CONTACT_OPTIONS[0],
+      name: realCoach?.name || 'Your Coach',
+      email: realCoach?.email || '',
+      phone: '',
+    },
+    ...CONTACT_OPTIONS.slice(1),
+  ] : CONTACT_OPTIONS;
   const fullName = auth.account?.displayName?.trim() || '';
   const firstName = fullName.split(/\s+/)[0];
   const accountRef = useRef(auth.account?.id);
@@ -777,7 +796,7 @@ export default function SupportPage() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {CONTACT_OPTIONS.map(contact => (
+              {contactOptions.map(contact => (
                 <div key={contact.name} className="bg-background-50 rounded-xl border border-background-200/50 p-5 text-center">
                   <span className="w-12 h-12 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center mx-auto mb-3">
                     <AppIcon className={`${contact.icon} text-lg`}></AppIcon>
@@ -785,29 +804,30 @@ export default function SupportPage() {
                   <h4 className="text-sm font-semibold text-foreground-900">{contact.name}</h4>
                   <p className="text-xs text-foreground-400 mb-3">{contact.role}</p>
                   <div className="space-y-1.5 mb-4 text-left">
-                    <p className="text-xs text-foreground-500 flex items-center gap-1.5">
+                    {contact.email && <p className="text-xs text-foreground-500 flex items-center gap-1.5">
                       <AppIcon className="ri-mail-line text-xs text-foreground-300"></AppIcon> {contact.email}
-                    </p>
-                    <p className="text-xs text-foreground-500 flex items-center gap-1.5">
+                    </p>}
+                    {contact.phone && <p className="text-xs text-foreground-500 flex items-center gap-1.5">
                       <AppIcon className="ri-phone-line text-xs text-foreground-300"></AppIcon> {contact.phone}
-                    </p>
+                    </p>}
                     <p className="text-xs text-foreground-400 flex items-center gap-1.5">
                       <AppIcon className="ri-time-line text-xs text-foreground-300"></AppIcon> {contact.availability}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
+                      disabled={!contact.email}
                       onClick={() => handleOpenEmail(contact.name, contact.email)}
-                      className="flex-1 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
+                      className={`${contact.phone ? 'flex-1' : 'w-full'} px-3 py-1.5 bg-primary-500 text-white rounded-lg text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50`}
                     >
                       <AppIcon className="ri-mail-send-line mr-1"></AppIcon> Email
                     </button>
-                    <button
+                    {contact.phone && <button
                       onClick={() => handleOpenCall(contact.name, contact.phone)}
                       className="flex-1 px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-xs font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"
                     >
                       <AppIcon className="ri-phone-line mr-1"></AppIcon> Call
-                    </button>
+                    </button>}
                   </div>
                 </div>
               ))}

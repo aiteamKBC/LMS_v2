@@ -1065,7 +1065,7 @@ function useProgrammeDetailData(programmeId: string) {
   const lastLoadSettledAtRef = useRef(0);
   const load = useCallback((
     signal?: AbortSignal,
-    options: { silent?: boolean; skipCache?: boolean; revalidate?: boolean } = {},
+    options: { silent?: boolean; skipCache?: boolean; revalidate?: boolean; readAfterWrite?: boolean } = {},
   ): Promise<CurriculumOverview | null> => {
     const generation = ++generationRef.current;
     loadInFlightRef.current = true;
@@ -1098,7 +1098,7 @@ function useProgrammeDetailData(programmeId: string) {
       // titles and order and nothing else. Nothing here saves a module from these
       // rows: the module drawer gets a moduleFormTarget, and a Teams push
       // re-reads the module's structure.
-      const sectionOptions = { visibility: 'all' as const, skipCache: options.skipCache, revalidate: options.revalidate };
+      const sectionOptions = { visibility: 'all' as const, skipCache: options.skipCache, revalidate: options.revalidate, readAfterWrite: options.readAfterWrite };
       const modulesRequest = fetchCurriculumProgrammeDetailModules(programmeId, signal, { ...sectionOptions, view: 'workspace' });
       // The learner KSB aggregates are expensive on a cold read, so they come
       // from their own endpoint, started now rather than after the shell.
@@ -1145,7 +1145,7 @@ function useProgrammeDetailData(programmeId: string) {
           sessions,
           stats: { ...current.stats, modules: modules.length, sessions: sessions.length },
         } : current));
-        if (options.silent || options.skipCache) setReadRevision(value => value + 1);
+        if (options.silent || options.skipCache || options.readAfterWrite) setReadRevision(value => value + 1);
         setModulesLoading(false);
         return programmeDetailToOverview({ ...shell, cohorts: [], flat: { ...shell.flat, modules, sessions } });
       } catch (err) {
@@ -1211,6 +1211,11 @@ function useProgrammeDetailData(programmeId: string) {
     readRevision,
     receiveReference,
     reload: (options?: { silent?: boolean }) => load(undefined, { skipCache: true, ...options }),
+    // After a save through the curriculum API, which moves the server's cache
+    // generation: the server checks that generation in the database and
+    // rebuilds only what the save made stale. Refresh keeps `reload`, which
+    // also picks up writes made outside the curriculum API.
+    reloadAfterSave: (options?: { silent?: boolean }) => load(undefined, { readAfterWrite: true, ...options }),
   };
 }
 
@@ -2444,12 +2449,17 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
   const { id: routeId } = useParams();
   const id = programmeId ?? routeId;
   const navigate = useNavigate();
-  const { data, loading, modulesLoading, refreshing, error, reload: reloadDetail, readRevision, receiveReference } = useProgrammeDetailData(id || '');
+  const { data, loading, modulesLoading, refreshing, error, reload: reloadDetail, reloadAfterSave: reloadSavedDetail, readRevision, receiveReference } = useProgrammeDetailData(id || '');
   const reload = useCallback(async (options?: { silent?: boolean }) => {
     const result = await reloadDetail(options);
     if (result) await onReloaded?.();
     return result;
   }, [reloadDetail, onReloaded]);
+  const reloadAfterSave = useCallback(async (options?: { silent?: boolean }) => {
+    const result = await reloadSavedDetail(options);
+    if (result) await onReloaded?.();
+    return result;
+  }, [reloadSavedDetail, onReloaded]);
   const snapshotRevision = programmePresentationRevision(programmeSnapshot);
   const observedPresentation = useRef({ snapshotRevision, refreshVersion });
   useEffect(() => {
@@ -3612,7 +3622,7 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
       // behind this takes seconds, and a cohort still listed after "Archive"
       // reads as though nothing happened.
       setArchivedCohortIds(previous => new Set(previous).add(cohortItem.id));
-      await reload({ silent: true });
+      await reloadAfterSave({ silent: true });
       setArchivedCohortIds(previous => {
         const next = new Set(previous);
         next.delete(cohortItem.id);
@@ -3630,7 +3640,7 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
   const archiveGroup = async (group: Group) => {
     await archiveGroupWithConfirm(group, group.modules.length, async () => {
       setArchivedGroupIds(previous => new Set(previous).add(group.id));
-      await reload({ silent: true });
+      await reloadAfterSave({ silent: true });
       setArchivedGroupIds(previous => {
         const next = new Set(previous);
         next.delete(group.id);
@@ -3678,7 +3688,7 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
       // Off the table now; the reload behind this takes seconds and a module
       // still listed after "Archive" reads as though nothing happened.
       setArchivedModuleIds(previous => new Set(previous).add(mod.id));
-      await reload({ silent: true });
+      await reloadAfterSave({ silent: true });
       setArchivedModuleIds(previous => {
         const next = new Set(previous);
         next.delete(mod.id);
@@ -5145,7 +5155,7 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
         open={programmeDrawerOpen}
         programme={drawerProgramme}
         onClose={() => setProgrammeDrawerOpen(false)}
-        onSaved={() => reload({ silent: true })}
+        onSaved={() => reloadAfterSave({ silent: true })}
       />
       {pendingEditorReference && (
         <EntityDrawer open title="Loading editor options" submitLabel="Retry"
@@ -5168,7 +5178,7 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
         programmes={drawerProgrammes}
         holidays={data?.holidays || []}
         onClose={() => { setCohortDrawerOpen(false); setEditingCohort(null); }}
-        onSaved={() => reload({ silent: true })}
+        onSaved={() => reloadAfterSave({ silent: true })}
       />
       <GroupFormDrawer
         open={groupDrawerCohortId !== null && !pendingEditorReference}
@@ -5178,7 +5188,7 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
         cohorts={data?.cohorts || []}
         coachNames={drawerCoachNames}
         onClose={() => { setGroupDrawerCohortId(null); setEditingGroup(null); }}
-        onSaved={() => reload({ silent: true })}
+        onSaved={() => reloadAfterSave({ silent: true })}
       />
       <ModuleFormDrawer
         open={Boolean(editingModule) && !pendingEditorReference}
@@ -5190,7 +5200,7 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
         holidays={data?.holidays || []}
         tutorNames={drawerTutorNames}
         onClose={() => setEditingModule(null)}
-        onSaved={() => reload({ silent: true })}
+        onSaved={() => reloadAfterSave({ silent: true })}
       />
       {placementPreview && (
         <KsbPlacementPreviewModal

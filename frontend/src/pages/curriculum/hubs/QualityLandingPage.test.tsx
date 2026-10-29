@@ -81,7 +81,7 @@ describe('Curriculum Quality landing', () => {
     show();
     await screen.findByRole('link', { name: 'Open Version Control workspace' });
     expect(fetchCurriculumVersions).toHaveBeenCalledWith({ limit: 1, signal: expect.any(AbortSignal), skipCache: false });
-    for (const [name, href] of [['Published Content', '/curriculum/published'], ['Curriculum Reports', '/curriculum/reports'], ['Version Control', '/curriculum/version-control']]) {
+    for (const [name, href] of [['Published Content', '/curriculum/published'], ['Curriculum Reports', '/curriculum/reports'], ['Version Control', '/curriculum/version-control'], ['Quality Forms', '/curriculum/quality/forms'], ['Quality Checks', '/curriculum/coaching-recordings/reviews']]) {
       expect(screen.getByRole('link', { name: `Open ${name} workspace` })).toHaveAttribute('href', href);
     }
     expect(screen.getByRole('link', { name: 'Audit Trail' })).toHaveAttribute('href', '/curriculum/audit-trail');

@@ -17,6 +17,8 @@
   { "name": "Live Session with spaces in type and a date", "expected": true, "component": { "type": "Live Session", "sessionDate": "2026-10-15" } },
   { "name": "live-session with Teams id", "expected": true, "component": { "type": "live-session", "teamsLiveSessionId": "LS-1" } },
   { "name": "live session with nothing scheduled", "expected": false, "component": { "type": "live_session", "liveSessionUrl": " " } },
+  { "name": "session recording linked to a recorded session", "expected": true, "component": { "type": "recording_placeholder", "recordingSeriesId": "LS-1", "recordingSessionNumber": 3, "recordingDate": "2026-10-15" } },
+  { "name": "session recording whose session has not run", "expected": false, "component": { "type": "Recording Placeholder", "recordingSeriesId": "LS-1", "recordingSessionNumber": null, "recordingDate": "2026-10-15" } },
   { "name": "assignment with a topic resource", "expected": true, "component": { "type": "assignment", "assignmentTopics": [{ "id": "1", "name": "", "question": "", "instructions": "", "resources": [{ "url": "/x" }] }] } },
   { "name": "assignment topic with only #160 text", "expected": false, "component": { "type": "assignment", "assignmentTopics": [{ "id": "1", "name": "", "question": "<p>&#160;</p>", "instructions": "", "resources": [] }] } },
   { "name": "assignment with a brief", "expected": true, "component": { "type": "assignment", "assignmentTopics": [], "assignmentBrief": "Write 500 words" } },

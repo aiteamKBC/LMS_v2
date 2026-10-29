@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { suggestedMappings } from './componentSuggestions';
 import { getTransferReview, type TransferMapping, type TransferReview } from '@/api/progressTransfer';
 
 /**
@@ -17,7 +18,7 @@ export function useTransferReview(requestId: string, pending: boolean) {
     if (!requestId || !pending) return;
     const controller = new AbortController();
     void getTransferReview(requestId, controller.signal)
-      .then(value => { if (!controller.signal.aborted) setReview(value); })
+      .then(value => { if (!controller.signal.aborted) { setReview(value); setMappings(suggestedMappings(value)); } })
       .catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : 'Could not load component matches.'); });
     return () => controller.abort();
   }, [requestId, pending, reloads]);

@@ -121,4 +121,32 @@ describe('component moves between module weeks', () => {
     expect(() => moveComponentToWeek(module, 'C1', 'W2')).toThrow('no delivery date');
     expect(module.weekStructure[0].components).toHaveLength(1);
   });
+
+  it('moves a booked session and its recording together across weeks while retaining the confirmed booking', () => {
+    const module = liveFixture(true);
+    const recording = { ...createEmptyComponent('W3', 'recording-placeholder', 1), id: 'REC',
+      settings: { linkedLiveSessionComponentId: 'C1', linkedLiveSessionModuleId: '' } };
+    module.weekStructure[2].components = [recording];
+    const before = JSON.stringify(module);
+    const result = moveComponentToWeek(module, 'REC', 'W2');
+    expect(result.module.weekStructure.map(week => week.components.map(item => item.id))).toEqual([[], ['C2', 'C1', 'REC'], []]);
+    const moved = result.module.weekStructure[1].components;
+    expect(moved[1].settings).toMatchObject({ teamsEventId: 'EVENT-1', teamsOccurrenceId: 'OCC-1',
+      teamsStartDateTimeUtc: '2026-10-20T08:00:00Z', sessionDate: '2026-10-27' });
+    expect(moved[2]).toEqual({ ...recording, weekId: 'W2' });
+    expect(result.calendarPending).toBe(true);
+    expect(JSON.stringify(module)).toBe(before);
+  });
+
+  it('keeps a recording linked to another module without moving the same-named local session', () => {
+    const module = liveFixture(true), session = module.weekStructure[0].components[0];
+    const recording = { ...createEmptyComponent('W3', 'recording-placeholder', 1), id: 'EXTERNAL-REC',
+      settings: { linkedLiveSessionComponentId: 'C1', linkedLiveSessionModuleId: 'OTHER-MODULE' } };
+    module.weekStructure[2].components = [recording];
+    const result = moveComponentToWeek(module, recording.id, 'W2');
+    expect(result.module.weekStructure[0].components).toEqual([session]);
+    expect(result.module.weekStructure[1].components.map(item => item.id)).toEqual(['C2', 'EXTERNAL-REC']);
+    expect(result.module.weekStructure[1].components[1].settings).toEqual(recording.settings);
+    expect(result.calendarPending).toBe(false);
+  });
 });

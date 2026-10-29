@@ -89,6 +89,8 @@ const CurriculumLibraryHub = lazyRoute(() => import("../pages/curriculum/hubs/pa
 const MigratedReviewTemplates = lazyRoute(() => import("../pages/curriculum/review-templates/page"));
 const CurriculumBulkAttendance = lazyRoute(() => import("../pages/curriculum/bulk-attendance/page"));
 const CurriculumQualityHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumQualityHub })));
+const CoachingQualityReviewsPage = lazyRoute(() => import("../pages/coaching-recordings/QualityReviewsPage"));
+const CoachingQualityFormsPage = lazyRoute(() => import("../pages/coaching-recordings/QualityFormsPage"));
 const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/courses/page"));
 const CoachAuditTrailPage = lazyRoute(() => import("../pages/coach/audit-trail/page"));
 const CoachAuditTrailPersonPage = lazyRoute(() => import("../pages/coach/audit-trail/person/page"));
@@ -103,6 +105,7 @@ const CurriculumEnglandHolidays = lazyRoute(() => import("../pages/curriculum/en
 const CurriculumModuleWorkspace = lazyRoute(() => import("../pages/curriculum/module-workspace/page"));
 const CurriculumTeamsMeetings = lazyRoute(() => import("../pages/curriculum/teams-meetings/page"));
 const CurriculumRecordings = lazyRoute(() => import("../pages/curriculum/recordings/page"));
+const CoachingRecordings = lazyRoute(() => import("../pages/coaching-recordings/page"));
 const CurriculumProgrammes = lazyRoute(() => import("../pages/curriculum/programmes/page"));
 const CurriculumPublishedPage = lazyRoute(() => import("../pages/curriculum/published/page"));
 const CurriculumQAPage = lazyRoute(() => import("../pages/curriculum/curriculum-qa/page"));
@@ -631,10 +634,6 @@ const routes: RouteObject[] = [
     path: "/learner/component/:kind/:id/:componentId",
     element: <VideoWatchPage />,
   },
-  {
-    path: "/learner/component/:kind/:id/:componentId",
-    element: <VideoWatchPage />,
-  },
 
   {
     path: "/learner/modules",
@@ -954,6 +953,10 @@ const routes: RouteObject[] = [
     element: <CoachMonthlyCoaching />,
   },
   {
+    path: "/coach/recordings",
+    element: <CoachingRecordings workspace="coach" />,
+  },
+  {
     path: "/coach/meetings/:eventKey",
     element: <CoachMeetingDetail />,
   },
@@ -1241,6 +1244,18 @@ const routes: RouteObject[] = [
     // Every saved live-session recording, by module, group and week. Read only.
     path: "/curriculum/recordings",
     element: <CurriculumRecordings />,
+  },
+  {
+    path: "/curriculum/coaching-recordings",
+    element: <CoachingRecordings />,
+  },
+  {
+    path: "/curriculum/coaching-recordings/reviews",
+    element: <CoachingQualityReviewsPage />,
+  },
+  {
+    path: "/curriculum/quality/forms",
+    element: <CoachingQualityFormsPage />,
   },
   {
     // The bank holiday calendar: GOV.UK holidays stay synced here, and extra

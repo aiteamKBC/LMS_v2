@@ -15,9 +15,11 @@ import logging
 import types
 import unittest
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
+from zoneinfo import ZoneInfo
+import re
 
 ROOT = Path(__file__).resolve().parent
 
@@ -96,14 +98,28 @@ class McmBookingWindowTests(unittest.TestCase):
         availability = types.ModuleType('coach_api.booking_availability')
         availability.ensure_coach_calendar_available = Mock()
         availability.ensure_coach_outlook_available = Mock()
+        availability.ensure_coach_review_slot_available = Mock()
         availability.CoachAvailabilityUnavailable = type('CoachAvailabilityUnavailable', (Exception,), {})
+        booking_hours = types.ModuleType('coach_api.booking_hours')
+        booking_hours.__dict__.update(datetime=datetime, time=time, timedelta=timedelta,
+                                      timezone=timezone, re=re, ZoneInfo=ZoneInfo)
+        load(ROOT.parent / 'coach_api/booking_hours.py', {
+            'REVIEW_TIME_ZONE', 'REVIEW_DAY_START', 'REVIEW_DAY_END',
+            'REVIEW_BOOKING_ERROR', 'REVIEW_DURATION_ERROR',
+            'validate_review_duration', 'validate_review_interval',
+            'validate_review_time_precision',
+        }, booking_hours.__dict__)
         imported_booking = types.ModuleType('learner_api.imported_booking')
         imported_booking.booking_slot = lambda record: (record.scheduled_date, record.scheduled_time, record.duration_minutes)
         imported_booking.reserve_imported_booking = Mock(side_effect=lambda record, event, *_args, **_kwargs:
             (self.coach.persist_calendar_sync_reservation(record, review_event=event), True))
+        # Booking-window rules do not depend on the review lifecycle; the
+        # overlay transition after a confirmed booking has its own suites.
+        imported_booking.schedule_overlay_for_booking = Mock(return_value=False)
         modules = patch.dict(sys.modules, {
             'coach_api': types.ModuleType('coach_api'), 'coach_api.views': self.coach,
             'coach_api.booking_availability': availability,
+            'coach_api.booking_hours': booking_hours,
             'learner_api': types.ModuleType('learner_api'), 'learner_api.monthly_assignment': self.monthly,
             'learner_api.calendar_connections': connections,
             'learner_api.imported_booking': imported_booking,
@@ -132,14 +148,19 @@ class McmBookingWindowTests(unittest.TestCase):
                        _mark_imported_review_scheduled=Mock(), _friendly_sync_warning=lambda value: value,
                        _follow_first_session_start_date=Mock(), _record_enrolment_review=Mock(),
                        _booking_response_event=lambda record, *_: {'eventKey': record.event_key},
-                       CoachCalendarEvent=types.SimpleNamespace(objects=self.manager, STATUS_AWAITING_SIGNATURE='awaiting-signature',
+                       # An Aptem booking now builds an unsaved candidate and
+                       # lets the reservation commit it under its own lock, so
+                       # the stub has to be constructible as well as queryable.
+                       CoachCalendarEvent=Mock(
+                           side_effect=lambda **_fields: self.record,
+                           objects=self.manager, STATUS_AWAITING_SIGNATURE='awaiting-signature',
                            STATUS_COMPLETED='completed', STATUS_SCHEDULED='scheduled', SYNC_SYNCED='synced'))
-        load(ROOT / 'calendar.py', {'BOOKABLE_TYPES', 'ONBOARDING_REVIEW_TYPES', 'COACH_APPROVAL_TYPES',
+        load(ROOT / 'calendar.py', {'BOOKABLE_TYPES', 'ONBOARDING_REVIEW_TYPES', 'REVIEW_BOOKING_TYPES', 'COACH_APPROVAL_TYPES',
                                     '_error', 'learner_calendar_book', 'learner_calendar_reschedule'}, self.ns)
 
-    def request(self, day, *, kind='commercial', path='assignment', session_type='mcr'):
+    def request(self, day, *, kind='commercial', path='assignment', session_type='mcr', duration=60):
         payload = dict(sessionType=session_type, eventKey=self.event['eventKey'], scheduledDate=day,
-                       scheduledTime='11:00', durationMinutes=60, timezoneOffsetMinutes=0)
+                       scheduledTime='11:00', durationMinutes=duration, timezoneOffsetMinutes=0)
         if path in {'assignment', 'imported-assignment'}:
             payload.update(bookingContext='monthly-assignment', assignmentMonth='2026-10')
         if path.startswith('imported'):
@@ -194,6 +215,17 @@ class McmBookingWindowTests(unittest.TestCase):
         for day in ('2026-02-20', '2026-04-20', '2028-02-29', '2026-12-31', '2027-01-05'):
             with self.subTest(day=day):
                 self.assertEqual(self.request(day).status_code, 201)
+
+    def test_editable_duration_keeps_mcm_windows_and_existing_meeting_identity(self):
+        for path in ('assignment', 'curriculum', 'generic', 'reschedule', 'imported', 'imported-assignment'):
+            for duration in (30, 90, 120):
+                with self.subTest(path=path, duration=duration):
+                    response = self.request('2026-10-20', path=path, duration=duration)
+                    self.assertIn(response.status_code, (200, 201), response)
+                    self.assertEqual(self.record.duration_minutes, duration)
+                    self.assertEqual(self.record.graph_event_id, 'GRAPH-1')
+                    self.assertEqual(self.record.meeting_link, 'https://example.invalid/meeting')
+                    self.assertEqual(self.request('2026-10-19', path=path, duration=duration).status_code, 400)
 
     def test_weekends_holidays_and_past_dates_stay_closed(self):
         for day in ('2026-09-20', '2026-12-25', '2025-12-31'):

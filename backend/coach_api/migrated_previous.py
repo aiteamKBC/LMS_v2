@@ -169,7 +169,17 @@ def previous_review(owner, event_key):
         if record:
             if record.owner_email.casefold() != owner or record.event_type != booking_event_type(family):
                 return unavailable("The previous session's calendar association could not be verified.")
-            stored = views.stored_coach_meeting_transcript_for_summary(record)
+            # Previous imported Reviews are bound to a verified Teams meeting,
+            # not to the appointment's planned time window. Keep source/event
+            # identity checks, then read only transcript IDs selected for this
+            # exact saved meeting. Native callers keep the legacy selector.
+            from .migrated_session_scope import stored_transcript_selection
+
+            snapshot = views.stored_coach_meeting_snapshot(record)
+            selection = stored_transcript_selection(record, snapshot, meeting_scoped=True)
+            stored = (views.stored_coach_meeting_transcript_for_summary(
+                record, artifact_ids=selection['artifactIds'])
+                if selection['code'] is None and selection['artifactIds'] else None)
             transcript = _text(stored.get("text")) if stored else ""
             if binding.get('status') == 'no-binding':
                 from .migrated_session_scope import summary_matches_session

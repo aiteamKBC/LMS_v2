@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { LearnerKind } from '@/api/learnerDetail';
-import { fetchEmployerLearnerPhoto, type EmployerLearnerDetail } from '@/api/employerPortal';
+import { fetchEmployerLearnerPhoto, fetchEmployerLearnerSchedule, type EmployerLearnerDetail } from '@/api/employerPortal';
+import { useQuery } from '@tanstack/react-query';
+import { useAuth } from '@/hooks/useAuth';
 import { displayValue, EMPTY_VALUE, initialsFor } from '@/lib/format';
-import type { DashboardPlanState } from '@/pages/workspace/learner/useDashboardPlan';
+import { learnerRecordedDates } from '@/lib/learnerRecordedDates';
 import { formatProgrammeStartDate, learnerHeaderPlan } from '@/pages/workspace/learner/learnerHeaderPlan';
 import { LearnerDashboardHero } from '@/pages/workspace/learner/LearnerDashboardHero';
 import overviewStyles from '@/pages/workspace/learner/Overview.module.css';
@@ -13,8 +15,8 @@ import photoStyles from '@/components/feature/LearnerProfilePhoto.module.css';
 // the employer portal. The module timeline lives in Learning plan.
 //
 // The learner's dashboard endpoints admit only the learner and staff, so the
-// same payloads are fetched from the portal's /overview/<part>/ routes (see
-// useEmployerDashboardPlan), which check the learner belongs to this employer.
+// same schedule is fetched from the portal's /overview/schedule/ route,
+// which checks the learner belongs to this employer.
 // Everything is read-only: no photo upload, no links into the learner's
 // workspace, no meeting links.
 // ============================================================================
@@ -52,21 +54,32 @@ function LearnerAvatar({ employerId, kind, learnerId, name }: {
 }
 
 /** The learner dashboard's profile header, as their employer sees it. */
-export function EmployerLearnerHeader({ employerId, kind, learner, plan, onBack }: {
+export function EmployerLearnerHeader({ employerId, kind, learner, onBack }: {
   employerId: string;
   kind: LearnerKind;
   learner: EmployerLearnerDetail['learner'];
-  plan: DashboardPlanState;
   onBack: () => void;
 }) {
-  const schedule = plan.schedule;
+  const { auth } = useAuth();
+  const query = useQuery({
+    queryKey: ['employer-learner-header-schedule', auth.account?.id, employerId, kind, learner.id],
+    queryFn: ({ signal }) => fetchEmployerLearnerSchedule(employerId, kind, learner.id, signal),
+    staleTime: 30_000,
+  });
+  const schedule = { data: query.data, loading: query.isPending, error: query.error };
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
   const current = learnerHeaderPlan(schedule.data?.modules || [], { programme: learner.programme, cohort: learner.cohort }, today);
   const placeholder = schedule.loading ? 'Loading...' : schedule.error ? 'Unavailable' : EMPTY_VALUE;
   const coachName = schedule.data?.coach.name || (schedule.data ? 'Not yet assigned' : placeholder);
   const modulesLabel = current.modules.map((module) => module.title).join(' · ') || placeholder;
-  const startDate = formatProgrammeStartDate(plan.data?.programmeStartDate ?? learner.startDate) || EMPTY_VALUE;
-  const plannedEnd = formatProgrammeStartDate(plan.data?.programmeEndDate ?? learner.endDate) || EMPTY_VALUE;
+  // The same two dates the learner's own header shows: the dates recorded
+  // against the learner, with no programme-plan fallback. The schedule's
+  // programmeStartDate/EndDate come from the canonical plan and the detail's
+  // startDate/endDate from the enrolment's Start_date/End_date columns, so
+  // neither matches what the learner sees.
+  const recorded = learnerRecordedDates(learner);
+  const startDate = formatProgrammeStartDate(recorded.start) || EMPTY_VALUE;
+  const plannedEnd = formatProgrammeStartDate(recorded.end) || EMPTY_VALUE;
   const description = [learner.programme, learner.employer].filter(Boolean).join(' · ');
 
   return (

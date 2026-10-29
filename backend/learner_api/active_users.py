@@ -1202,6 +1202,13 @@ def save_progress_record(learner, record, activity=None):
             ),
             component_link_source="direct" if component_id else ("quiz_ref" if _s(record.get("quizId")) else "none"),
         )
+        if record.get('retakeTimeChoice') is not None:
+            from .retake_timing import choice
+            selected = choice(record['retakeTimeChoice'])
+            with connections['enrolment'].cursor() as cursor:
+                cursor.execute('''UPDATE "Learner".learner_progress_entries
+                    SET source_payload=coalesce(source_payload,'{}'::jsonb) || jsonb_build_object('retakeTimeChoice',%s::text)
+                    WHERE id=%s AND learner_id=%s''', [selected, progress.pk, learner.pk])
         LearnerProgressKsb.objects.bulk_create(
             [
                 LearnerProgressKsb(
@@ -1460,42 +1467,56 @@ def _coerce_ksb_items(value):
 
 
 def _resolve_programme_id(programme="", training_plan=None):
+    # Shared modules can belong to a different catalogue programme. Resolve the
+    # enrolled programme first so a safeguarding module cannot select its KSBs.
+    programme = _s(programme)
     module_ids = _plan_module_ids(training_plan)
+    if programme:
+        try:
+            with connections["enrolment"].cursor() as cursor:
+                cursor.execute(
+                    "SELECT COALESCE(NULLIF(programme_id, ''), NULLIF(name, '')) AS programme_id "
+                    "FROM curriculum.programmes "
+                    "WHERE lower(btrim(COALESCE(name, ''))) = lower(%s) "
+                    "   OR lower(btrim(COALESCE(programme_id, ''))) = lower(%s) "
+                    "   OR lower(%s) LIKE lower(btrim(COALESCE(name, ''))) || ' %%' "
+                    "ORDER BY CASE "
+                    "    WHEN lower(btrim(COALESCE(programme_id, ''))) = lower(%s) THEN 0 "
+                    "    WHEN lower(btrim(COALESCE(name, ''))) = lower(%s) THEN 1 "
+                    "    ELSE 2 END, "
+                    # Retain plan identity when multiple programmes share a
+                    # name, but never let an unrelated module win the lookup.
+                    "    CASE WHEN programme_id IN ("
+                    "        SELECT module.programme_id FROM curriculum.modules module "
+                    "        WHERE module.module_catalogue_id = ANY(%s)"
+                    "    ) THEN 0 ELSE 1 END, updated_at DESC NULLS LAST LIMIT 1",
+                    [programme, programme, programme, programme, programme, module_ids],
+                )
+                row = cursor.fetchone()
+        except DatabaseError as exc:
+            logger.warning("Could not resolve programme id for %s: %s", programme, exc)
+            return ""
+        if row and _s(row[0]):
+            return _s(row[0])
+
     if module_ids:
         try:
             with connections["enrolment"].cursor() as cursor:
                 cursor.execute(
                     "SELECT DISTINCT programme_id FROM curriculum.modules "
                     "WHERE module_catalogue_id = ANY(%s) AND programme_id IS NOT NULL AND programme_id <> '' "
-                    "ORDER BY programme_id LIMIT 1",
+                    "ORDER BY programme_id LIMIT 2",
                     [module_ids],
                 )
-                row = cursor.fetchone()
+                rows = cursor.fetchall()
         except DatabaseError as exc:
             logger.warning("Could not resolve programme id from module snapshot for %s: %s", module_ids, exc)
         else:
-            if row and _s(row[0]):
-                return _s(row[0])
-
-    programme = _s(programme)
-    if not programme:
-        return ""
-    try:
-        with connections["enrolment"].cursor() as cursor:
-            cursor.execute(
-                "SELECT COALESCE(NULLIF(programme_id, ''), NULLIF(name, '')) AS programme_id "
-                "FROM curriculum.programmes "
-                "WHERE lower(btrim(COALESCE(name, ''))) = lower(%s) "
-                "   OR lower(btrim(COALESCE(programme_id, ''))) = lower(%s) "
-                "   OR lower(%s) LIKE lower(btrim(COALESCE(name, ''))) || ' %%' "
-                "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
-                [programme, programme, programme],
-            )
-            row = cursor.fetchone()
-    except DatabaseError as exc:
-        logger.warning("Could not resolve programme id for %s: %s", programme, exc)
-        return ""
-    return _s(row[0]) if row else ""
+            # Without an enrolment match, only an unambiguous module programme
+            # can supply a fallback. Alphabetical order is not learner identity.
+            if len(rows) == 1 and _s(rows[0][0]):
+                return _s(rows[0][0])
+    return ""
 
 
 def _resolve_linkable_programme_id(programme="", training_plan=None):
@@ -1756,8 +1777,12 @@ def _resolve_ksb_profile_source_id(programme_id="", programme="", training_plan=
                 "WHERE (%s <> '' AND programme_id = %s) "
                 "   OR name = %s "
                 "   OR %s LIKE name || ' %%' "
-                "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
-                [programme_id, programme_id, programme, programme],
+                "ORDER BY CASE "
+                "    WHEN %s <> '' AND programme_id = %s THEN 0 "
+                "    WHEN name = %s THEN 1 "
+                "    ELSE 2 END, updated_at DESC NULLS LAST LIMIT 1",
+                [programme_id, programme_id, programme, programme,
+                 programme_id, programme_id, programme],
             )
             row = cursor.fetchone()
             source_id = _clean_ksb_profile_source_id(row[0]) if row else ""

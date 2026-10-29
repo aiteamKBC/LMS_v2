@@ -6,4 +6,5 @@ export interface SubmissionAttempt {
   reviewedBy: string;
   coachFeedback: string;
   answer: string;
+  actualTimeHours?: string | number | null;
 }
