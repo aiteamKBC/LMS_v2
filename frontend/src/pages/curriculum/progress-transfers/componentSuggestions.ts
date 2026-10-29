@@ -53,12 +53,17 @@ export function componentSuggestions(
 export function suggestedMappings(review: TransferReview): TransferMapping[] {
   return review.modules.flatMap(module => {
     const used = new Set(module.sources.flatMap(source => source.automaticTargetId ? [source.automaticTargetId] : []));
-    const proposals = module.sources.filter(source => !source.automaticTargetId).flatMap(source => {
+    const saved = module.sources.filter(source => !source.automaticTargetId && source.savedTargetId && source.type !== 'unknown'
+      && !used.has(source.savedTargetId) && module.targets.some(target => target.componentId === source.savedTargetId && target.type === source.type))
+      .map(source => ({ moduleId: module.moduleId, sourceActivityRef: source.sourceActivityRef, targetComponentId: source.savedTargetId! }));
+    const uniqueSaved = saved.filter(row => saved.filter(other => other.targetComponentId === row.targetComponentId).length === 1);
+    uniqueSaved.forEach(row => used.add(row.targetComponentId));
+    const proposals = module.sources.filter(source => !source.automaticTargetId && !uniqueSaved.some(row => row.sourceActivityRef === source.sourceActivityRef)).flatMap(source => {
       const { suggestedId } = componentSuggestions(source, module.targets, used);
       return suggestedId ? [{ moduleId: module.moduleId, sourceActivityRef: source.sourceActivityRef, targetComponentId: suggestedId }] : [];
     });
     // Competing old components need a human decision, regardless of source order.
-    return proposals.filter(proposal => proposals.filter(row => row.targetComponentId === proposal.targetComponentId).length === 1);
+    return [...uniqueSaved, ...proposals.filter(proposal => proposals.filter(row => row.targetComponentId === proposal.targetComponentId).length === 1)];
   });
 }
 

@@ -30,6 +30,52 @@ def context():
 
 
 class TransferMatchingReviewTests(SimpleTestCase):
+    def test_saved_proposals_restore_only_this_requests_matches_without_awarding_completion(self):
+        data = context()
+        snapshot = item(completedSourceActivities=['material:7', 'material:8'])
+        original = build_review('R1', [snapshot], data)
+        target = next(t for t in original['modules'][0]['targets'] if t['componentId'] == 'MANUAL')
+        proposal = {'sourceActivityRef': 'material:8', 'targetComponentId': 'MANUAL',
+                    'sourceType': 'reading', 'targetFingerprint': target['fingerprint']}
+        snapshot['reviewMatches'] = [proposal]
+        before = deepcopy((snapshot, data))
+        review = build_review('R1', [snapshot], data)
+        self.assertEqual(review['modules'][0]['sources'][1]['savedTargetId'], 'MANUAL')
+        self.assertNotEqual(review['reviewToken'], original['reviewToken'])
+        self.assertNotIn('savedTargetId', build_review('R2', [item(completedSourceActivities=['material:8'])], data)['modules'][0]['sources'][0])
+        self.assertEqual(module_review(snapshot, data)[1].keys(), {'AUTO'})
+        self.assertEqual(project_approved_learning(data[3]['components'], data[9]['replacement_settings'],
+                                                 [{**snapshot, 'status': 'pending'}]), data[3]['components'])
+        with self.assertRaises(ServiceError):
+            validate_decisions(review, {'reviewToken': review['reviewToken'], 'mappings': []})
+        chosen = validate_decisions(review, {'reviewToken': review['reviewToken'], 'mappings': [
+            {'moduleId': 'M1', 'sourceActivityRef': 'material:8', 'targetComponentId': 'MANUAL'}]})
+        self.assertIn(('M1', 'material:8'), chosen)
+        self.assertEqual((snapshot, data), before)
+
+    def test_saved_proposals_reject_stale_foreign_unfinished_wrong_type_and_duplicate_matches(self):
+        data = context()
+        snapshot = item(completedSourceActivities=['material:7', 'material:8'])
+        target = next(t for t in module_review(snapshot, data)[0]['targets'] if t['componentId'] == 'MANUAL')
+        valid = {'sourceActivityRef': 'material:8', 'targetComponentId': 'MANUAL',
+                 'sourceType': 'reading', 'targetFingerprint': target['fingerprint']}
+        for rows in [None, {}, [None], [{**valid, 'sourceActivityRef': []}],
+                     [{**valid, 'sourceActivityRef': 'material:9'}],
+                     [{**valid, 'sourceActivityRef': 'material:7'}],
+                     [{**valid, 'targetComponentId': 'AUTO'}],
+                     [{**valid, 'targetComponentId': 'FOREIGN'}],
+                     [{**valid, 'targetComponentId': 'RETIRED'}],
+                     [{**valid, 'targetComponentId': 'QUIZ'}],
+                     [{**valid, 'sourceType': 'video'}],
+                     [{**valid, 'targetFingerprint': 'stale'}], [valid, valid]]:
+            with self.subTest(rows=rows):
+                module = module_review({**snapshot, 'reviewMatches': rows}, data)[0]
+                self.assertTrue(all('savedTargetId' not in s for s in module['sources']))
+        # Two distinct completed sources must not share a saved destination.
+        snapshot.update(completedSourceActivities=['material:8', 'material:9'],
+                        reviewMatches=[valid, {**valid, 'sourceActivityRef': 'material:9'}])
+        self.assertTrue(all('savedTargetId' not in s for s in module_review(snapshot, data)[0]['sources']))
+
     def test_preview_retains_previously_passed_archived_quizzes_without_making_them_destinations(self):
         data = context()
         data[3]['retiredQuizComponents'] = [component('PASSED', retired=True, isQuiz=True, quizMeta={'quizId': 12}),

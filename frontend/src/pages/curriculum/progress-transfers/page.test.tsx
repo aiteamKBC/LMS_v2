@@ -20,6 +20,32 @@ function openChoices(choices: ReturnType<typeof within>) {
 }
 
 describe('admin progress transfers', () => {
+  it('restores request-local matches as editable selections without approving or awarding progress', async () => {
+    vi.mocked(api.getTransferRequests).mockResolvedValue({ requests: [request], nextOffset: null, csrfToken: 'csrf' });
+    vi.mocked(api.getTransferReview).mockResolvedValue({ reviewToken: 'review', csrfToken: 'csrf', modules: [{
+      moduleId: 'M1', courseRef: 'legacy:50', title: 'New module', completedTargetIds: ['NATIVE'],
+      sources: [{ sourceActivityRef: 'material:7', title: 'Old video title', type: 'video', week: 'Week 1', automaticTargetId: null, savedTargetId: 'SAVED' }],
+      targets: [
+        { componentId: 'SAVED', title: 'P1-VID', type: 'video', week: 'Week 2', plannedHours: 1 },
+        { componentId: 'NATIVE', title: 'Already completed video', type: 'video', week: 'Week 2', plannedHours: 1 },
+      ],
+    }] });
+    render(<MemoryRouter><TransferRequests /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Review transfer' }));
+    const choices = within(await screen.findByRole('group', { name: 'Match Old video title (material:7) in New module' }));
+    expect(choices.getByRole('button', { name: 'Choose component' })).toHaveTextContent('P1-VID');
+    expect(screen.getByText('Saved match — review', { selector: 'span' })).toBeVisible();
+    const counts = within(screen.getByRole('region', { name: 'Component counts for New module' }));
+    expect(counts.getByText('Completed components').parentElement).toHaveTextContent('2');
+    const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm' });
+    expect(confirm).toBeEnabled();
+    fireEvent.click(choices.getByRole('button', { name: 'Clear match' }));
+    expect(confirm).toBeDisabled();
+    expect(counts.getByText('Completed components').parentElement).toHaveTextContent('1');
+    fireEvent.click(screen.getByRole('button', { name: 'Reload component matches' }));
+    await waitFor(() => expect(confirm).toBeEnabled());
+    expect(api.approveTransferRequest).not.toHaveBeenCalled();
+  });
   it('shows one old week at a time, supports keyboard and mobile selection, and keeps modules independent', async () => {
     vi.mocked(api.getTransferRequests).mockResolvedValue({ requests: [request], nextOffset: null, csrfToken: 'csrf' });
     vi.mocked(api.getTransferReview).mockResolvedValue({ reviewToken: 'review', csrfToken: 'csrf', modules: [{
@@ -156,7 +182,7 @@ describe('admin progress transfers', () => {
     expect(matched.getByText(title)).toBeVisible();
     expect(matched.getByText('Project fundamentals & value delivery')).toBeVisible();
     expect(matched.getByText('Matched by name — review')).toBeVisible();
-    expect(screen.getByText(/Name matches are already selected for transfer/)).toBeVisible();
+    expect(screen.getByText(/Saved matches and name matches are already selected for transfer/)).toBeVisible();
     const counts = within(screen.getByRole('region', { name: 'Component counts for New module' }));
     expect(counts.getByText('Total components').parentElement).toHaveTextContent('4');
     expect(counts.getByText('Completed components').parentElement).toHaveTextContent('2');

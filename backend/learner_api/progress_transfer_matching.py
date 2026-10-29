@@ -2,6 +2,7 @@
 import hashlib
 import json
 import re
+from collections import Counter
 
 from old_otjh.service import ServiceError
 
@@ -27,6 +28,31 @@ def target_fingerprint(component, settings):
     return digest({'type': activity_type(component.get('type'), quiz=component.get('isQuiz')),
                    'quizId': (component.get('quizMeta') or {}).get('quizId'),
                    'legacySettings': {key: legacy.get(key) for key in ('sourceLessonId', 'sourceMaterialKey')}})
+
+
+def saved_review_matches(item, sources, targets):
+    """Restore request-local proposals, never completion or shared provenance."""
+    rows = item.get('reviewMatches', [])
+    if not isinstance(rows, list):
+        return {}
+    source_by_ref = {source['sourceActivityRef']: source for source in sources}
+    target_by_id = {target['componentId']: target for target in targets}
+    used = {source['automaticTargetId'] for source in sources if source['automaticTargetId']}
+    candidates = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        ref, ident = row.get('sourceActivityRef'), row.get('targetComponentId')
+        if not isinstance(ref, str) or not isinstance(ident, str):
+            continue
+        source, target = source_by_ref.get(ref), target_by_id.get(ident)
+        if (source and target and not source['automaticTargetId'] and ident not in used
+                and source['type'] != 'unknown' and source['type'] == target['type'] == row.get('sourceType')
+                and target['fingerprint'] == row.get('targetFingerprint')):
+            candidates.append((ref, ident))
+    source_uses = Counter(ref for ref, _ in candidates)
+    target_uses = Counter(ident for _, ident in candidates)
+    return {ref: ident for ref, ident in candidates if source_uses[ref] == target_uses[ident] == 1}
 
 
 def module_review(item, context):
@@ -59,6 +85,10 @@ def module_review(item, context):
                 'plannedHours': c.get('expectedOtjh'),
                 'fingerprint': target_fingerprint(c, metadata['replacement_settings'].get(c['componentId']))}
                for c in components if c.get('componentId') and not c.get('retired')]
+    saved_matches = saved_review_matches(item, sources, targets)
+    for source in sources:
+        if source['sourceActivityRef'] in saved_matches:
+            source['savedTargetId'] = saved_matches[source['sourceActivityRef']]
     target_ids = {target['componentId'] for target in targets}
     # native_done caches its facts; keep this read-only review from mutating context.
     completion_context = dict(native)

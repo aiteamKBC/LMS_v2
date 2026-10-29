@@ -11,6 +11,25 @@ const review = { reviewToken: 'review', csrfToken: 'csrf', modules: [module] };
 
 // The requested matching policy now uses names rather than body content.
 describe('component name recommendations', () => {
+  it('restores saved matches before name suggestions without claiming their destinations twice', () => {
+    const saved = { ...source, savedTargetId: 'A' };
+    const second = { ...source, sourceActivityRef: 'material:8', title: 'Budget planning' };
+    const input = { ...review, modules: [{ ...module, sources: [saved, second] }, { ...module, moduleId: 'M2' }] };
+    const before = structuredClone(input);
+    expect(suggestedMappings(input)).toEqual([
+      { moduleId: 'M1', sourceActivityRef: 'material:7', targetComponentId: 'A' },
+      { moduleId: 'M2', sourceActivityRef: 'material:7', targetComponentId: 'B' },
+    ]);
+    expect(input).toEqual(before);
+  });
+  it('does not restore saved destinations that are invalid, incompatible, occupied or duplicated', () => {
+    const saved = { ...source, title: 'Unrelated old title', savedTargetId: 'A' };
+    for (const sources of [
+      [{ ...saved, savedTargetId: 'FOREIGN' }], [{ ...saved, type: 'video' }], [{ ...saved, type: 'unknown' }],
+      [saved, { ...saved, sourceActivityRef: 'material:8' }],
+      [saved, { ...saved, sourceActivityRef: 'material:8', automaticTargetId: 'A' }],
+    ]) expect(suggestedMappings({ ...review, modules: [{ ...module, sources }] })).toEqual([]);
+  });
   it('preselects an equivalent title with a spaced numeric export prefix', () => {
     const original = { ...source, title: 'Welcome to the scheduling module', type: 'video' };
     for (const prefix of ['00 - ', '00-', '00 : ', '00. ']) {

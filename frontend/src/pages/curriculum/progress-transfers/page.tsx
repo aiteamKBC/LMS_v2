@@ -155,7 +155,7 @@ function ComponentMatching({ review, mappings, disabled, onChange }: {
       ? `${unmatched} completed old ${unmatched === 1 ? 'component needs' : 'components need'} a match. Choose each destination below before confirming.`
       : 'All completed old components have a match. Check the review list before confirming.'}</p>
     <p>Only completed old components transfer. Unfinished old components are excluded. Similar names are suggested for your review; unclear matches need a manual choice. Existing new completions are kept, and shared completions count once. Actual transferred hours stay unchanged.</p>
-    <p>Name matches are already selected for transfer. Review them before confirming. Open a component selector to browse by week; closing it keeps your match. Each destination can be used once.</p>
+    <p>Saved matches and name matches are already selected for transfer. Review them before confirming. Open a component selector to browse by week; closing it keeps your match. Each destination can be used once.</p>
     {matched.length > 0 && <details className={styles.matchReview}>
       <summary>Matched components — quick review ({matched.length})</summary>
       <div className={styles.tableScroll} tabIndex={0} role="region" aria-label="Matched components review"><table className={styles.moduleTable} aria-label="Matched components review">
@@ -163,7 +163,7 @@ function ComponentMatching({ review, mappings, disabled, onChange }: {
         <tbody>{matched.map(({ module, source, target }) => <tr key={`${module.moduleId}:${source.sourceActivityRef}`}>
           <td>{source.title}<small className={styles.matchContext}>{module.title} · {source.week || 'No week specified'}</small></td>
           <td>{target.title}<small className={styles.matchContext}>{target.week || 'No week specified'}</small></td>
-          <td>{source.automaticTargetId ? 'Verified source link' : proposed.some(row => row.moduleId === module.moduleId && row.sourceActivityRef === source.sourceActivityRef && row.targetComponentId === target.componentId) ? 'Matched by name — review' : 'Manual selection'}</td>
+          <td>{source.automaticTargetId ? 'Verified source link' : source.savedTargetId === target.componentId ? 'Saved match — review' : proposed.some(row => row.moduleId === module.moduleId && row.sourceActivityRef === source.sourceActivityRef && row.targetComponentId === target.componentId) ? 'Matched by name — review' : 'Manual selection'}</td>
         </tr>)}</tbody>
       </table></div>
     </details>}
@@ -179,12 +179,13 @@ function ComponentMatching({ review, mappings, disabled, onChange }: {
           ...mappings.filter(mapping => mapping.moduleId === module.moduleId && mapping.sourceActivityRef !== source.sourceActivityRef).map(mapping => mapping.targetComponentId)]);
         const automatic = module.targets.find(target => target.componentId === source.automaticTargetId);
         const manualTarget = module.targets.find(target => target.componentId === value?.targetComponentId);
+        const savedMatch = Boolean(manualTarget && source.savedTargetId === manualTarget.componentId);
         const nameMatched = proposed.some(row => row.moduleId === module.moduleId && row.sourceActivityRef === source.sourceActivityRef && row.targetComponentId === value?.targetComponentId);
         const { candidates, suggestedId } = componentSuggestions(source, module.targets, used);
         return <div className={styles.matchRow} key={source.sourceActivityRef}>
           <div><strong>{source.title}</strong><small>{source.week || 'No week specified'} · {source.type} · {source.sourceActivityRef}</small></div>
           {source.automaticTargetId ? <div><span className={styles.approvedBadge}>Automatically matched</span><strong>{automatic?.title || source.automaticTargetId}</strong><small>{automatic?.week}</small></div>
-            : <div>{manualTarget && <span className={styles.approvedBadge}>{nameMatched ? 'Matched by name — review' : 'Match selected'}</span>}
+            : <div>{manualTarget && <span className={styles.approvedBadge}>{savedMatch ? 'Saved match — review' : nameMatched ? 'Matched by name — review' : 'Match selected'}</span>}
               <WeekComponentChoices label={`Match ${source.title} (${source.sourceActivityRef}) in ${module.title}`}
                 candidates={candidates} selectedId={value?.targetComponentId ?? ''} suggestedId={suggestedId} used={used} disabled={disabled}
                 onChange={targetComponentId => onChange([...mappings.filter(mapping => mapping.moduleId !== module.moduleId || mapping.sourceActivityRef !== source.sourceActivityRef),
