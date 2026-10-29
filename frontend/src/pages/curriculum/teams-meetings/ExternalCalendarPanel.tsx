@@ -17,15 +17,20 @@ export function ExternalCalendarPanel({ calendar, row, onReattach, onUpdated, on
   disabled: boolean;
 }) {
   const [peopleRevision, setPeopleRevision] = useState(0);
+  const [editorRevision, setEditorRevision] = useState(0);
+  const [editorConnectionKind, setEditorConnectionKind] = useState<'user' | 'group' | null>(null);
+  const originalSeriesId = calendar.originalSeriesId;
   const refreshed = async () => { await onUpdated(); setPeopleRevision(value => value + 1); };
-  const savedStarts = calendar.canReattach ? row.summary?.occurrenceDates || [] : [];
-  const matched = (start: string) => {
+  const savedStarts = originalSeriesId ? row.summary?.occurrenceDates || [] : [];
+  const conflictingIds = new Set(calendar.conflictingComponentIds || []);
+  const matched = (start: string, componentId?: string | null) => {
     const instant = Date.parse(start);
     return Number.isFinite(instant)
+      && (!conflictingIds.size || Boolean(componentId && !conflictingIds.has(componentId)))
       && row.plannedStarts.filter(planned => Date.parse(planned) === instant).length === 1
       && savedStarts.filter(saved => Date.parse(saved) === instant).length === 1;
   };
-  const pending = row.plannedStarts.filter(start => !matched(start)).length;
+  const pending = row.sessions.filter((session, index) => !matched(row.plannedStarts[index] || '', session.componentId)).length;
   return (
     <section aria-label="Existing Teams link management" className="space-y-4">
       <div className="rounded-xl border border-primary-200 bg-primary-50 p-4">
@@ -57,14 +62,16 @@ export function ExternalCalendarPanel({ calendar, row, onReattach, onUpdated, on
         </div>
       </div>
 
-      {calendar.canReattach && row.summary && (
-        <ImportedParticipantsPanel key={`${row.summary.liveSessionId}:${peopleRevision}`} liveSessionId={row.summary.liveSessionId} savedOrganizer={row.summary.organizerEmail} />
+      {originalSeriesId && (
+        <ImportedParticipantsPanel key={`${originalSeriesId}:${peopleRevision}`} liveSessionId={originalSeriesId} savedOrganizer={row.summary?.organizerEmail} />
       )}
-      {calendar.canReattach && row.summary && <>
-        <ImportedMeetingEditor key={row.summary.liveSessionId} liveSessionId={row.summary.liveSessionId}
-          disabled={disabled || busy} onUpdated={refreshed} onEditingChange={onEditingChange} />
-        <ImportedCalendarUpdatePanel key={`calendar:${row.summary.liveSessionId}`} liveSessionId={row.summary.liveSessionId}
-          disabled={disabled || busy} onUpdated={refreshed} />
+      {originalSeriesId && <>
+        <ImportedMeetingEditor key={`${originalSeriesId}:${editorRevision}`} liveSessionId={originalSeriesId}
+          disabled={disabled || busy} onUpdated={refreshed} onEditingChange={onEditingChange}
+          onConnectionRequired={setEditorConnectionKind} />
+        <ImportedCalendarUpdatePanel key={`calendar:${originalSeriesId}`} liveSessionId={originalSeriesId}
+          disabled={disabled || busy} onUpdated={refreshed} editorConnectionKind={editorConnectionKind}
+          onEditorConnected={() => { setEditorConnectionKind(null); setEditorRevision(value => value + 1); }} />
       </>}
 
       <div className="rounded-xl border border-background-200 bg-background-50 p-4 text-[12px] leading-5 text-foreground-600">
@@ -79,7 +86,9 @@ export function ExternalCalendarPanel({ calendar, row, onReattach, onUpdated, on
 
       {!calendar.canReattach && (
         <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[12px] leading-5 text-amber-900">
-          {calendar.source === 'replacement' && row.summary
+          {originalSeriesId
+            ? 'Some sessions use a different join link. You can edit the original meeting above; reconnecting all sessions or extending its schedule requires resolving their calendar choices. Existing links are preserved.'
+            : calendar.source === 'replacement' && row.summary
             ? 'The pasted link differs from the saved module calendar. Its old dates cannot confirm this link. An administrator needs to connect the original meeting before its calendar can be matched.'
             : 'The original calendar has not been connected to these links yet. The links are preserved, but their dates are not confirmed. An administrator needs to connect the existing meeting; do not create a replacement.'}
         </p>
@@ -95,7 +104,7 @@ export function ExternalCalendarPanel({ calendar, row, onReattach, onUpdated, on
         </div>
         <ul className="divide-y divide-background-200">
           {row.sessions.map((session, index) => {
-            const confirmed = matched(row.plannedStarts[index] || '');
+            const confirmed = matched(row.plannedStarts[index] || '', session.componentId);
             return (
               <li key={session.componentId || `${session.id}:${index}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5 text-[12px]">
                 <div>

@@ -31,7 +31,7 @@ describe('existing Teams link protection', () => {
     { calendarManagement: 'external' as const },
   ])('protects an imported series even before component links arrive: %j', metadata => {
     expect(externalCalendarFor(summary(metadata))).toEqual({
-      source: 'imported', joinUrls: [originalLink], canReattach: true,
+      source: 'imported', joinUrls: [originalLink], originalSeriesId: 'LIVE-1', canReattach: true,
     });
   });
 
@@ -44,14 +44,15 @@ describe('existing Teams link protection', () => {
   it('does not use dates from the old calendar to confirm a replacement link', () => {
     expect(externalCalendarFor(summary({ meetingType: 'linked-external' }), [component({
       liveSessionUrl: originalLink, liveSessionLinkOverride: separateLink,
-    })])).toEqual({ source: 'replacement', joinUrls: [separateLink], canReattach: false });
+    })])).toEqual({ source: 'replacement', joinUrls: [separateLink], originalSeriesId: 'LIVE-1',
+      conflictingComponentIds: ['COMP-1'], canReattach: false });
   });
 
   it('allows reattachment when every main link still belongs to the imported series', () => {
     expect(externalCalendarFor(summary({ meetingType: 'linked-external' }), [
       component({ liveSessionUrl: originalLink }),
       component({ liveSessionLinkOverride: originalLink, teamsMeetingUrl: originalLink }),
-    ])).toEqual({ source: 'imported', joinUrls: [originalLink], canReattach: true });
+    ])).toEqual({ source: 'imported', joinUrls: [originalLink], originalSeriesId: 'LIVE-1', canReattach: true });
   });
 
   it('keeps a booked additional meeting out of the main link and calendar comparison', () => {
@@ -62,7 +63,7 @@ describe('existing Teams link protection', () => {
     expect(externalCalendarFor(undefined, [extra])).toBeNull();
     expect(externalCalendarFor(summary({ meetingType: 'linked-external' }), [
       component({ liveSessionUrl: originalLink }), extra,
-    ])).toEqual({ source: 'imported', joinUrls: [originalLink], canReattach: true });
+    ])).toEqual({ source: 'imported', joinUrls: [originalLink], originalSeriesId: 'LIVE-1', canReattach: true });
   });
 
   it('excludes an explicitly additional session before it has been booked', () => {
@@ -80,14 +81,15 @@ describe('existing Teams link protection', () => {
 
   it('does not reattach a mixture of imported and unrelated main links', () => {
     expect(externalCalendarFor(summary({ meetingType: 'linked-external' }), [
-      component({ liveSessionUrl: originalLink }), component({ liveSessionUrl: separateLink }),
-    ])).toEqual({ source: 'imported', joinUrls: [originalLink, separateLink], canReattach: false });
+      component({ liveSessionUrl: originalLink }), { ...component({ liveSessionUrl: separateLink }), id: 'COMP-2' },
+    ])).toEqual({ source: 'imported', joinUrls: [originalLink, separateLink], originalSeriesId: 'LIVE-1',
+      conflictingComponentIds: ['COMP-2'], canReattach: false });
   });
 
   it('recognises imported ownership from matching raw series details when the summary omits it', () => {
     const series = { id: 'LIVE-1', meeting_type: 'linked-external' };
     expect(externalCalendarFor(summary(), [component({ liveSessionUrl: originalLink })], series)).toEqual({
-      source: 'imported', joinUrls: [originalLink], canReattach: true,
+      source: 'imported', joinUrls: [originalLink], originalSeriesId: 'LIVE-1', canReattach: true,
     });
     expect(calendarOwnershipKnown(summary(), series)).toBe(true);
   });

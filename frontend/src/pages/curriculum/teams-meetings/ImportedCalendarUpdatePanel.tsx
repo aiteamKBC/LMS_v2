@@ -22,10 +22,12 @@ function sessionTime(value: string, timeZone?: string) {
   }
 }
 
-export function ImportedCalendarUpdatePanel({ liveSessionId, disabled, onUpdated }: {
+export function ImportedCalendarUpdatePanel({ liveSessionId, disabled, onUpdated, editorConnectionKind, onEditorConnected }: {
   liveSessionId: string;
   disabled: boolean;
   onUpdated: () => Promise<void>;
+  editorConnectionKind?: 'user' | 'group' | null;
+  onEditorConnected?: () => void;
 }) {
   const [preview, setPreview] = useState<ImportedCalendarPreview | null>(null);
   const [result, setResult] = useState<ImportedCalendarUpdateResult | null>(null);
@@ -134,6 +136,10 @@ export function ImportedCalendarUpdatePanel({ liveSessionId, disabled, onUpdated
           setFailure(message || connection.message || 'Microsoft calendar access was not connected. Sign in with an account authorised to edit this original calendar.');
           return;
         }
+        if (editorConnectionKind && !uncertain) {
+          onEditorConnected?.();
+          return;
+        }
         inFlight.current = false;
         if (uncertain) await check();
         else await review();
@@ -151,7 +157,7 @@ export function ImportedCalendarUpdatePanel({ liveSessionId, disabled, onUpdated
     };
     disconnectPopup.current = cleanup;
     try {
-      const connection = await connectImportedCalendar(liveSessionId, result?.connectionKind || preview?.connectionKind || 'user');
+      const connection = await connectImportedCalendar(liveSessionId, editorConnectionKind || result?.connectionKind || preview?.connectionKind || 'user');
       if (!active.current) { popup.close(); return; }
       const authorization = new URL(connection.authorizationUrl);
       if (authorization.protocol !== 'https:' || authorization.hostname !== 'login.microsoftonline.com') throw new Error('Unsupported Microsoft sign-in address.');
@@ -183,7 +189,7 @@ export function ImportedCalendarUpdatePanel({ liveSessionId, disabled, onUpdated
       </p>
       {failure && <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-900">{failure}</p>}
       {(preview || result) && <p role="status" className="text-[12px] leading-5 text-foreground-700">{result?.message || preview?.message}</p>}
-      {(result?.connectionRequired || preview?.connectionRequired) && <div className="space-y-2 text-[12px]">
+      {(editorConnectionKind || result?.connectionRequired || preview?.connectionRequired) && <div className="space-y-2 text-[12px]">
         <p>Connect a Microsoft account authorised to edit the original calendar. Microsoft may require your administrator's consent. Connecting does not send invitations.</p>
         <button type="button" onClick={() => void connect()} disabled={disabled || Boolean(busy)}
           className="rounded-lg border border-primary-200 px-3 py-2 font-bold text-primary-700 disabled:opacity-50">

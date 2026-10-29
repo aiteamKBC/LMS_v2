@@ -488,7 +488,9 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                   </p>
                 )}
             {externalCalendar ? (
-              <p className="text-[12px] font-semibold text-primary-800">Existing Teams links are protected. Use the original meeting editor above.</p>
+              <p className="text-[12px] font-semibold text-primary-800">{externalCalendar.originalSeriesId
+                ? 'Existing Teams links are protected. Use the original meeting editor above.'
+                : 'Existing Teams links are protected. Connect the original meeting before editing its calendar.'}</p>
             ) : selected.summary ? (
                   <div className="flex w-full flex-wrap items-center justify-end gap-2">
                     <button type="button" onClick={() => openCalendarAction('reschedule')}
@@ -673,6 +675,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
 
             {externalCalendar ? (
               <ExternalCalendarPanel
+                key={selected.catalogueId}
                 calendar={externalCalendar}
                 row={selectedForDisplay || selected}
                 onReattach={() => void reattach(selected)}

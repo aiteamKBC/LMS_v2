@@ -12,9 +12,10 @@ import { EntraPeopleInput } from './EntraPeopleInput';
 import { FormField } from '../shared/entities/ui';
 
 /** Reads the organiser's original calendar before exposing any imported edit. */
-export function ImportedMeetingEditor({ liveSessionId, disabled, onUpdated, onEditingChange }: {
+export function ImportedMeetingEditor({ liveSessionId, disabled, onUpdated, onEditingChange, onConnectionRequired }: {
   liveSessionId: string; disabled: boolean; onUpdated: () => Promise<void>;
   onEditingChange?: (dirty: boolean, busy: boolean) => void;
+  onConnectionRequired?: (kind: 'user' | 'group' | null) => void;
 }) {
   const [data, setData] = useState<EditorData | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
@@ -54,6 +55,7 @@ export function ImportedMeetingEditor({ liveSessionId, disabled, onUpdated, onEd
     const value = await readImportedMeetingEditor(liveSessionId);
     if (!active.current) return;
     setData(value); setMessage(value.message); setReview(null);
+    onConnectionRequired?.(value.connectionRequired ? value.connectionKind || 'user' : null);
     operation.current = value.operationId;
     setUncertain(value.status === 'verification_pending');
     if (value.status === 'editable') {

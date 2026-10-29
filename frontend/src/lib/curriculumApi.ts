@@ -3783,6 +3783,7 @@ export function checkImportedCalendarUpdate(liveSessionId: string, operationId?:
 export interface ImportedMeetingEditor {
   status: 'editable' | 'blocked' | 'verification_pending';
   message: string;
+  code?: string;
   sourceToken?: string;
   operationId?: string;
   organizer?: string;
@@ -3796,6 +3797,7 @@ export interface ImportedMeetingEditor {
     lobbyBypassSettings?: { scope?: string }; meetingSpokenLanguageTag?: string } | null;
   sessions?: { sessionNumber: number; start: string; end: string; editable: boolean }[];
   connectionRequired?: boolean;
+  connectionKind?: 'group' | 'user';
 }
 
 export interface ImportedMeetingEdits {
