@@ -2,7 +2,8 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, CalendarDays, CheckCircle2, Headphones, Users, Video } from 'lucide-react';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { reviewDate } from './model';
-import { dateLabel, State } from './presentation';
+import { State } from './presentation';
+import { dateLabel } from "./presentation.helpers";
 import styles from './trainingPlan.module.css';
 import layout from './TrainingPlanDetails.module.css';
 

@@ -12,7 +12,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, FileText, LoaderCircle, Paperclip, Plus, Search, X } from "lucide-react";
 import Swal from "sweetalert2";
 import { DurationInput } from "@/features/audit/learner-log-pro-copy/components/DurationInput";
-import { completionNoteForHours } from "@/features/audit/learner-log-pro-copy/components/ManualActivityRow";
+import { completionNoteForHours } from "@/features/audit/learner-log-pro-copy/components/ManualActivityRow.helpers";
 import { Button } from "@/features/audit/learner-log-pro-copy/components/ui/button";
 import {
   durationAsHours,

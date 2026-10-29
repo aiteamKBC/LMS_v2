@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { emailList } from '../module-builder/EmailChipsInput';
+import { emailList } from "../module-builder/EmailChipsInput.helpers";
 import { searchEntraPeople, type EntraPerson } from './entraDirectory';
 
 const isEmail = (value: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value);

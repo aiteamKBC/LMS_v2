@@ -50,7 +50,8 @@ import {
 } from '../shared/entities/model';
 import { ModuleFormDrawer } from '../shared/entities/moduleForm';
 import { ScopeAchievementPanel } from '../shared/entities/scopeAchievement';
-import { buildHolidayShiftPlan, CompactSchedulePreview, WeekHolidayNotice } from '../shared/entities/sessionShiftPreview';
+import { CompactSchedulePreview, WeekHolidayNotice } from '../shared/entities/sessionShiftPreview';
+import { buildHolidayShiftPlan } from "../shared/entities/sessionShiftPreview.helpers";
 import { liveSessionDriftCause } from '../shared/entities/liveSessionDriftCause';
 import {
   DetailRow,

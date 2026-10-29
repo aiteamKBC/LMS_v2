@@ -193,7 +193,7 @@ export function SelectMenu({
       window.removeEventListener('resize', position);
       window.removeEventListener('scroll', position, true);
     };
-  }, [open, rows.length]);
+  }, [open, rows.length, menuMinWidth]);
 
   useEffect(() => {
     if (!open) return undefined;

@@ -4,7 +4,7 @@
 // scope left open — so this shows every visit they made anywhere, not only the
 // ones inside one workspace.
 import AuditTrailPersonView from '@/features/audit-trail/AuditTrailPersonView';
-import { systemAuditScope } from '../page';
+import { systemAuditScope } from "../page.helpers";
 
 export default function SystemAuditTrailPersonPage() {
   return <AuditTrailPersonView scope={systemAuditScope} />;

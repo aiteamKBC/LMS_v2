@@ -22,6 +22,8 @@ vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: (
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock('@/components/feature/ReflectionWindow', () => ({
   ReflectionWindow: ({ onSubmit, onClose }: { onSubmit: (value: { ksbs: string[]; feedback: string; reportedTime: string; timeTakenSeconds?: number }) => void; onClose?: () => void }) => <div>My Learning Evidence and Reflection<button onClick={onClose}>Close reflection</button><button onClick={() => onSubmit({ ksbs: ['K1'], feedback: 'Reflection', reportedTime: '1', ...(mocks.reflectionTimeSeconds == null ? {} : { timeTakenSeconds: mocks.reflectionTimeSeconds }) })}>Submit reflection</button></div>,
+}));
+vi.mock('@/components/feature/ReflectionWindow.helpers', () => ({
   formatClock: (seconds: number) => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`,
 }));
 const detail = { modules: [], week: [], ksbs: [], componentProgress: [], videoProgress: [], quizAttempts: [], components: [{ quizMeta: { quizId: 1 }, reflectionRequired: false }] };

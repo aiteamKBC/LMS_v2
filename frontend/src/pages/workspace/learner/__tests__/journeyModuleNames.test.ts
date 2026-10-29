@@ -14,7 +14,7 @@
  * were confusing under one "Overall progress" heading.
  */
 import { describe, expect, it } from 'vitest';
-import { buildStations } from '@/components/feature/RealLearningJourneyView';
+import { buildStations } from "@/components/feature/RealLearningJourneyView.helpers";
 import type { JourneyModule } from '@/utils/learnerJourney';
 
 // A video component is "trackable" only with a real id and a URL, and is

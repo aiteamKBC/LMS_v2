@@ -294,7 +294,8 @@ export function suggestPlanMembers(groupId: number) {
 }
 
 export type MatrixCell = {
-  progress?: {
+  // Optimistic cache entries contain only the fields changed by the action.
+  progress?: Partial<{
     status: string;
     completion_date: string | null;
     actual_hours: number | null;
@@ -305,7 +306,7 @@ export type MatrixCell = {
     note: string | null;
     rejected: boolean;
     suggestion_accepted: boolean;
-  };
+  }>;
   suggestion?: {
     kind: "lms" | "attendance" | "assignment";
     completed?: boolean;
@@ -455,6 +456,7 @@ export type AttendanceGrid = {
     session_ref: string;
     date: string;
     module: string;
+    lecture?: string;
     default_hours: number;
     member_attended: number;
     member_rows: number;

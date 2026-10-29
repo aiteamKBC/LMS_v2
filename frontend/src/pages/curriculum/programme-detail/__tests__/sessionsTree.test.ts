@@ -1,11 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import {
-  attendanceSheetGroups,
-  attendanceSheetRows,
-  buildSessionTree,
-  parseTeamsTranscriptVtt,
-  sessionMonthBucket,
-} from '../SessionsTree';
+import { attendanceSheetGroups, attendanceSheetRows, parseTeamsTranscriptVtt } from '../../shared/entities/liveSessionArtifacts.helpers';
+import { buildSessionTree, sessionMonthBucket } from "../SessionsTree.helpers";
 import type { DeliverySession } from '../page';
 
 function makeSession(overrides: Partial<DeliverySession>): DeliverySession {

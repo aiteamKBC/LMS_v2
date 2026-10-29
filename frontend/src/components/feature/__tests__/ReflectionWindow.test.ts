@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatClock, formatRecordedClock } from '../ReflectionWindow';
+import { formatClock, formatRecordedClock } from "../ReflectionWindow.helpers";
 
 describe('formatClock', () => {
   it.each([

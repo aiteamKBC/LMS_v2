@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { emptyTeamsCalendarForm, teamsUpdateChanges, type TeamsCalendarForm } from '../createCalendarForm';
+import { type TeamsCalendarForm } from '../createCalendarForm';
+import { emptyTeamsCalendarForm, teamsUpdateChanges } from "../createCalendarForm.helpers";
 import { savedEmails } from '../useTeamsMeetingsWorkspace';
 
 // The invitation fields opened empty because the calendar's saved lists

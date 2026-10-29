@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { formatDate } from '../page';
+import { formatDate } from "../page.helpers";
 
 describe('session calendar date keys', () => {
   it('keeps a calendar cell on its local day instead of shifting it through UTC', () => {

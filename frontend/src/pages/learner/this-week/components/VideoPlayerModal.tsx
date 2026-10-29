@@ -181,62 +181,6 @@ export function VideoPlayerModal({
     };
   }, [isOpen]);
 
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (!isOpen) return;
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-
-      switch (e.key) {
-        case ' ':
-          e.preventDefault();
-          togglePlay();
-          break;
-        case 'ArrowRight':
-          e.preventDefault();
-          seekTo(Math.min(currentTime + 10, totalDuration));
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          seekTo(Math.max(currentTime - 10, 0));
-          break;
-        case 'ArrowUp':
-          e.preventDefault();
-          setVolume(v => Math.min(v + 10, 100));
-          break;
-        case 'ArrowDown':
-          e.preventDefault();
-          setVolume(v => Math.max(v - 10, 0));
-          break;
-        case 'f':
-        case 'F':
-          e.preventDefault();
-          toggleFullscreen();
-          break;
-        case 'm':
-        case 'M':
-          e.preventDefault();
-          setIsMuted(m => !m);
-          break;
-        case 'Escape':
-          if (isFullscreen) {
-            e.preventDefault();
-            setIsFullscreen(false);
-          } else {
-            e.preventDefault();
-            handleSaveAndClose();
-          }
-          break;
-        case '?':
-          e.preventDefault();
-          setShowShortcuts(s => !s);
-          break;
-      }
-    }
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, currentTime, totalDuration, isFullscreen]);
-
   const togglePlay = useCallback(() => {
     if (completedManually) return;
     if (showCompletion) return;
@@ -385,6 +329,64 @@ export function VideoPlayerModal({
       onClose();
     }
   }, [hasStarted, onSaveProgress, onClose]);
+
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (!isOpen) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      switch (e.key) {
+        case ' ':
+          e.preventDefault();
+          togglePlay();
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          seekTo(Math.min(currentTime + 10, totalDuration));
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          seekTo(Math.max(currentTime - 10, 0));
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          setVolume(v => Math.min(v + 10, 100));
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          setVolume(v => Math.max(v - 10, 0));
+          break;
+        case 'f':
+        case 'F':
+          e.preventDefault();
+          toggleFullscreen();
+          break;
+        case 'm':
+        case 'M':
+          e.preventDefault();
+          setIsMuted(m => !m);
+          break;
+        case 'Escape':
+          if (isFullscreen) {
+            e.preventDefault();
+            setIsFullscreen(false);
+          } else {
+            e.preventDefault();
+            handleSaveAndClose();
+          }
+          break;
+        case '?':
+          e.preventDefault();
+          setShowShortcuts(s => !s);
+          break;
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, currentTime, totalDuration, isFullscreen, handleSaveAndClose, seekTo, toggleFullscreen, togglePlay]);
+
 
   const handleCompletionClose = useCallback(() => {
     setShowCompletion(false);

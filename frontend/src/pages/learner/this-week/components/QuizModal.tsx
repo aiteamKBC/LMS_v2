@@ -43,18 +43,6 @@ export function QuizModal({ isOpen, onClose, onComplete, quizData }: QuizModalPr
   }, [isOpen, quizData]);
 
   useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape' && isOpen && phase !== 'quiz') onClose();
-      if (e.key >= '1' && e.key <= '4' && phase === 'quiz' && !showFeedback) {
-        const idx = parseInt(e.key) - 1;
-        if (idx < quizData.questions[currentQ].options.length) selectAnswer(idx);
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose, phase, showFeedback, currentQ, quizData]);
-
-  useEffect(() => {
     if (phase !== 'quiz' || timeLeft <= 0) return;
     const timer = setInterval(() => {
       setTimeLeft(prev => {
@@ -94,14 +82,28 @@ export function QuizModal({ isOpen, onClose, onComplete, quizData }: QuizModalPr
     });
   };
 
-  const selectAnswer = (idx: number) => {
+  const selectAnswer = useCallback((idx: number) => {
     if (showFeedback) return;
     setSelected(idx);
     setShowFeedback(true);
     const newAnswers = [...answers];
     newAnswers[currentQ] = idx;
     setAnswers(newAnswers);
-  };
+  }, [showFeedback, answers, currentQ]);
+
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape' && isOpen && phase !== 'quiz') onClose();
+      if (e.key >= '1' && e.key <= '4' && phase === 'quiz' && !showFeedback) {
+        const idx = parseInt(e.key) - 1;
+        if (idx < quizData.questions[currentQ].options.length) selectAnswer(idx);
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose, phase, showFeedback, currentQ, quizData, selectAnswer]);
+
 
   const goNext = () => {
     if (currentQ < quizData.questions.length - 1) {

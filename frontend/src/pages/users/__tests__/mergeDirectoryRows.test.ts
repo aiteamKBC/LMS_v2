@@ -12,7 +12,7 @@
  * to offer.
  */
 import { describe, expect, it } from 'vitest';
-import { matches, mergeDirectoryRows } from '../page';
+import { matches, mergeDirectoryRows } from "../page.helpers";
 import type { UserListRow } from '../types';
 
 function row(over: Partial<UserListRow>): UserListRow {
