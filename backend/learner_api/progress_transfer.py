@@ -263,6 +263,8 @@ def approve_request(request_id, account, decisions=None):
                     **({'plannedHours': target['plannedHours']} if not source_component['automaticTargetId'] else {})})
             item['matchedComponents'] = matches
             item['componentCounts'] = component_counts(module, matches)
+            counts = item['componentCounts']
+            item['mergedPercent'] = round(100 * counts['completed'] / counts['total'], 2) if counts['total'] else 0
             cursor.execute(f'UPDATE {store.ITEMS} SET snapshot=%s::jsonb WHERE request_id=%s AND enrolment_id=%s AND module_id=%s',
                 [store.dumps({key: value for key, value in item.items() if key not in ('requestId','status','requestedAt','approvedAt')}), request_id, pk, item['moduleId']])
         cursor.execute(f"UPDATE {store.REQUESTS} SET status='approved',approved_by=%s,approved_at=now() WHERE id=%s AND status='pending'",

@@ -68,15 +68,16 @@ export function TransferRequests() {
     if (!selected || selected.status !== 'pending' || !data || saving || !review || unresolved) return;
     setSaving(true); setSaveError('');
     try {
-      await approveTransferRequest(selected.requestId, review.csrfToken, { reviewToken: review.reviewToken, mappings });
-      setSelected(null); setNotice('Transfer approved. The learner can now open the new modules.'); setRefresh(value => value+1);
+      const result = await approveTransferRequest(selected.requestId, review.csrfToken, { reviewToken: review.reviewToken, mappings });
+      if (result.status !== 'approved') throw new Error('The merge was not confirmed. Reload the request before trying again.');
+      setSelected(null); setNotice('Progress merged successfully. Completed matches from the old LMS and existing completions in the new LMS now count together, once per component. The old percentage and recorded hours are retained in the transfer record.'); setRefresh(value => value+1);
     } catch (reason) { setSaveError(reason instanceof Error ? reason.message : 'Could not approve this request. Please try again.'); }
     finally { setSaving(false); }
   }
   const pending = data?.requests.filter(row => row.status === 'pending') || [];
   const approved = data?.requests.filter(row => row.status === 'approved') || [];
   const hasMore = data?.nextOffset != null;
-  const openRequest = (row: AdminTransfer) => { setSelected(row); setSaveError(''); };
+  const openRequest = (row: AdminTransfer) => { setSelected(row); setSaveError(''); setNotice(''); };
 
   return <section className={styles.page} aria-label="Progress transfer requests" aria-busy={loading}>
     <header className={styles.pageHeader}>
@@ -88,7 +89,7 @@ export function TransferRequests() {
         <RefreshCw size={16} aria-hidden="true" />Refresh
       </button>
     </header>
-    <div className={styles.guidance}><Info size={19} aria-hidden="true" /><p>Review the modules, progress and hours before confirming a request. Matching activities already completed stay complete within the transferred percentage, without counting twice.</p></div>
+    <div className={styles.guidance}><Info size={19} aria-hidden="true" /><p>Review completed component matches before confirming. Progress in the new module combines existing completions and matched old completions, counting each component once.</p></div>
     {notice && <p role="status" className={styles.success}><CheckCircle2 size={18} aria-hidden="true" />{notice}</p>}
     {error && <p role="alert" className={styles.error}>{error}</p>}
     {loading && <p role="status" className={styles.loading}>Loading requests…</p>}
@@ -104,15 +105,15 @@ export function TransferRequests() {
       <div className={styles.dialogBody}>
         <div className={styles.dialogSummary}><div><strong>{selected.programme || 'Programme not specified'}</strong><span>Requested {requestDate(selected.requestedAt)}</span></div><span className={selected.status === 'pending' ? styles.pendingBadge : styles.approvedBadge}>{selected.status === 'pending' ? 'Pending approval' : 'Approved'}</span></div>
         {selected.status === 'pending'
-          ? <p>This transfers the saved percentage and hours for every module below. Old LMS progress has been frozen since the learner submitted the request. Verified matching activities stay complete within the transferred percentage, without counting twice.</p>
-          : <p>Approved {requestDate(selected.approvedAt)}. These are the progress percentages and hours saved at the time of transfer.</p>}
+          ? <p>Old LMS progress has been frozen since the learner submitted the request. The table below records the old percentage and hours. After approval, the new percentage is based on completed components in the new module, including matched old completions and existing new completions counted once. It can differ from the old percentage because the modules may contain different components.</p>
+          : <p>Approved {requestDate(selected.approvedAt)}. The table shows the old LMS percentage and hours saved before the merge, not the learner's current percentage.</p>}
         <ModuleTable request={selected} />
         <p>Progress moves to the learner's assigned new LMS module; their group membership does not change. The old and new modules can have the same name. All components in the new module remain available for the learner to continue.</p>
         {selected.status === 'approved' && <section className={styles.matching} aria-label="Component counts at approval">
           <h2>Component counts at approval</h2>
           {selected.modules.map(module => <div key={module.moduleId} className={styles.matchModule}>
             <h3>{module.newTitle}</h3>
-            {module.componentCounts ? <ComponentCounts title={module.newTitle} counts={module.componentCounts} />
+            {module.componentCounts ? <ComponentCounts title={module.newTitle} counts={module.componentCounts} mergedPercent={module.mergedPercent} />
               : <p>Component counts were not recorded for this earlier transfer.</p>}
           </div>)}
         </section>}
@@ -153,7 +154,7 @@ function ComponentMatching({ review, mappings, disabled, onChange }: {
     <p role="status" className={unmatched ? styles.matchWarning : styles.guidance}>{unmatched
       ? `${unmatched} completed old ${unmatched === 1 ? 'component needs' : 'components need'} a match. Choose each destination below before confirming.`
       : 'All completed old components have a match. Check the review list before confirming.'}</p>
-    <p>Only completed old components transfer. Unfinished old components are excluded. Similar names are suggested for your review; unclear matches need a manual choice. Matched completions are included in the transferred percentage; actual transferred hours stay unchanged.</p>
+    <p>Only completed old components transfer. Unfinished old components are excluded. Similar names are suggested for your review; unclear matches need a manual choice. Existing new completions are kept, and shared completions count once. Actual transferred hours stay unchanged.</p>
     <p>Name matches are already selected for transfer. Review them before confirming. Open a component selector to browse by week; closing it keeps your match. Each destination can be used once.</p>
     {matched.length > 0 && <details className={styles.matchReview}>
       <summary>Matched components — quick review ({matched.length})</summary>
@@ -169,7 +170,7 @@ function ComponentMatching({ review, mappings, disabled, onChange }: {
     {review.modules.map(module => <div key={module.moduleId} className={styles.matchModule}>
       <h3>{module.title}</h3>
       <ComponentCounts title={module.title} counts={previewComponentCounts(module, mappings)} preview />
-      {!module.sources.length && <p>No individual completed activities were recorded for this module. Its saved percentage and hours will still transfer.</p>}
+      {!module.sources.length && <p>No individual completed activities were recorded in the old module. The new module keeps its existing completions; the old percentage and hours remain in the transfer record.</p>}
       <SourceWeekReview moduleTitle={module.title} sources={module.sources} disabled={disabled}
         isMatched={source => Boolean(source.automaticTargetId || selectedTarget(module.moduleId, source.sourceActivityRef))}>
         {sources => sources.map(source => {
@@ -197,9 +198,10 @@ function ComponentMatching({ review, mappings, disabled, onChange }: {
   </section>;
 }
 
-function ComponentCounts({ title, counts, preview = false }: {
-  title: string; counts: ReturnType<typeof previewComponentCounts>; preview?: boolean;
+function ComponentCounts({ title, counts, preview = false, mergedPercent }: {
+  title: string; counts: ReturnType<typeof previewComponentCounts>; preview?: boolean; mergedPercent?: number;
 }) {
+  const percent = preview ? (counts.completed === null ? null : counts.total ? Math.round(counts.completed / counts.total * 10000) / 100 : 0) : mergedPercent;
   return <section className={styles.componentCounts} aria-label={`Component counts for ${title}`}>
     <h4>{preview ? 'Components after transfer (preview)' : 'Components at transfer'}</h4>
     <dl>
@@ -208,8 +210,9 @@ function ComponentCounts({ title, counts, preview = false }: {
       <div><dt>Completed components</dt><dd>{counts.completed ?? 'Not available'}</dd></div>
       <div><dt>Remaining components</dt><dd>{counts.remaining ?? 'Not available'}</dd></div>
     </dl>
+    {percent != null && <p><strong>{preview ? 'Progress after merge (preview)' : 'Progress at merge'}: {percent}%</strong> — {counts.completed} of {counts.total} completed.</p>}
     <p>{preview ? 'Preview based on the current matches. ' : 'Recorded when this transfer was approved. '}
-      Counts cover available components in the new module. Existing and transferred completions count once; the saved percentage and hours stay unchanged.</p>
+      Counts use the same components as learner progress. Existing and transferred completions count once. The old percentage is kept as history; recorded hours are preserved.</p>
   </section>;
 }
 
@@ -264,7 +267,7 @@ function RequestTable({ status, requests, busy, hasMore, onOpen }: {
 
 function ModuleTable({ request }: { request: AdminTransfer }) {
   return <div className={styles.tableScroll} tabIndex={0} role="region" aria-label="Module transfer details"><table className={styles.moduleTable} aria-label="Module transfer details">
-    <thead><tr><th scope="col">Old LMS module</th><th scope="col">New LMS module</th><th scope="col">Progress</th><th scope="col">Hours</th></tr></thead>
+    <thead><tr><th scope="col">Old LMS module</th><th scope="col">New LMS module</th><th scope="col">Old LMS progress</th><th scope="col">Recorded old hours</th></tr></thead>
     <tbody>{request.modules.map(item => <tr key={item.courseRef}>
       <td>{item.oldTitle}<small className={styles.matchContext}>Old LMS course: {item.courseRef.replace(/^legacy:/, '')}</small>{item.demoProgress && <span className={styles.demoBadge}>Demo progress</span>}</td>
       <td>{item.newTitle}<small className={styles.matchContext}>New LMS module: {item.moduleId}</small></td><td className={styles.numeric}>{item.percent}%</td><td className={styles.numeric}>{formatHoursMinutes(item.hours)}</td>

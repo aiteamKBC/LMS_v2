@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 from django.test import SimpleTestCase, RequestFactory
 from old_otjh.service import ServiceError
 from . import progress_transfer as api, progress_transfer_store as store
-from .progress_transfer_policy import eligible_pairs, frozen_records, credited_percent
+from .progress_transfer_policy import eligible_pairs, frozen_records, merged_percent
 from . import tests_my_learning_no_db as catalogue_tests
 from .tests_my_learning_no_db import component, native, metadata
 
@@ -27,20 +27,14 @@ def saved(status='pending', modules=None):
 
 class TransferPolicyTests(SimpleTestCase):
     def test_same_component_completed_in_both_systems_is_never_credited_twice(self):
-        for course, module in [('50', 'M1'), ('91', 'OTHER-MODULE')]:
-            for baseline, start in [(10, 40), (60, 60)]:
-                with self.subTest(course=course, module=module, baseline=baseline):
-                    transfer = item(course, module, baselineCompletedIds=['shared'],
-                        baselinePercent=baseline, matchedComponents={'shared': {'completed': True}})
-                    original = deepcopy(transfer)
-                    self.assertEqual(credited_percent(transfer, ['shared', 'shared'], 10), start)
-                    self.assertEqual(credited_percent(transfer, ['shared', 'new', 'new'], 10), start + 10)
-                    self.assertEqual(transfer, original)
+        self.assertEqual(merged_percent(['shared', 'shared'], 10), 10)
+        self.assertEqual(merged_percent(['shared', 'new', 'new'], 10), 20)
 
-    def test_matched_completion_is_included_in_transferred_percent_not_added_again(self):
-        transfer = item(baselineCompletedIds=['before'], baselinePercent=10, matchedComponents={'matched': {'completed': True}})
-        self.assertEqual(credited_percent(transfer, ['before', 'matched'], 10), 40)
-        self.assertEqual(credited_percent(transfer, ['before', 'matched', 'new'], 10), 50)
+    def test_disjoint_completions_add_but_overlapping_completions_only_count_once(self):
+        matched = list(map(str, range(6)))
+        self.assertEqual(merged_percent([*matched, '6', '7'], 10), 80)
+        self.assertEqual(merged_percent([*matched, '0', '1'], 10), 60)
+        self.assertEqual(merged_percent([*matched, '0', '1', 'new'], 10), 70)
 
     def test_only_owned_assigned_unambiguous_courses_without_previous_transfer(self):
         links = {'current:M1': 'legacy:50', 'current:M2': 'legacy:51', 'current:M3': 'legacy:51',
@@ -49,14 +43,13 @@ class TransferPolicyTests(SimpleTestCase):
                          {'current:M1': 'legacy:50'})
         self.assertEqual(eligible_pairs({}, links, {'legacy:50'}, {'M1'}, [item()]), {})
 
-    def test_additive_credit_caps_at_100_without_completing_any_activity(self):
-        transfer = item(baselineCompletedIds=['before'], baselinePercent=10)
-        original = deepcopy(transfer)
-        self.assertEqual(credited_percent(transfer, ['before'], 10), 40)
-        self.assertEqual(credited_percent(transfer, ['before', 'new'], 10), 50)
-        self.assertEqual(credited_percent(transfer, ['before', *map(str, range(9))], 10), 100)
-        self.assertEqual(credited_percent(transfer, [], 0), 40)
-        self.assertEqual(transfer, original)
+    def test_current_total_controls_the_percentage_and_empty_modules_are_not_complete(self):
+        self.assertEqual(merged_percent(['before'], 10), 10)
+        self.assertEqual(merged_percent(['before', 'new'], 10), 20)
+        self.assertEqual(merged_percent(['before', 'new'], 20), 10)
+        self.assertEqual(merged_percent(['before', *map(str, range(9))], 10), 100)
+        self.assertEqual(merged_percent([], 0), 0)
+        self.assertEqual(merged_percent([], 10), 0)
 
     def test_freeze_preserves_history_and_other_courses_and_excludes_later_imports(self):
         def record(ident, course, **values):
@@ -306,6 +299,40 @@ class TransferWorkflowTests(SimpleTestCase):
 
 
 class TransferCatalogueTests(SimpleTestCase):
+    def test_merge_keeps_a_started_native_attempt_in_progress_without_marking_it_complete(self):
+        meta = metadata()
+        meta['progress_transfers'] = saved('approved', [item(matchedComponents={})])['items']
+        content = native([component('QUIZ', isQuiz=True, quizMeta={'quizId': 9})])
+        attempt = {'componentId': 'QUIZ', 'quizId': 9, 'passed': False, 'grade': 0.2}
+        content['quizAttempts'] = [attempt]
+        cards, _ = catalogue_tests.MyLearningAggregateTests().cards(content, [], [], meta=meta)
+        self.assertEqual((cards[0]['progress'], cards[0]['completedActivityCount'], cards[0]['status']), (0, 0, 'In progress'))
+        self.assertEqual(content['quizAttempts'], [attempt])
+
+    def test_merge_keeps_disjoint_native_progress_and_deduplicates_overlap_without_rewriting_history(self):
+        harness = catalogue_tests.MyLearningAggregateTests()
+        old = [{'source_course_ref': '50', 'source_course_title': 'Old'}]
+        matched = {str(i): {'courseRef': 'legacy:50', 'activityId': f'catalogue:50:material:{i + 1}',
+                           'sourceActivityId': i + 1, 'catalogueKind': 'material', 'completed': True}
+                   for i in range(6)}
+        for native_ids, expected in [(['6', '7'], 80), (['0', '1'], 60), (['0', '1', '6'], 70)]:
+            with self.subTest(native_ids=native_ids):
+                meta = metadata()
+                meta['replacement_courses'] = {'current:M1': 'legacy:50'}
+                meta['replacement_settings'] = {str(i): {'legacySettings': {'sourceLessonId': i + 1}} for i in range(6)}
+                snapshot = item(matchedComponents=matched, baselineCompletedIds=native_ids, baselinePercent=20)
+                snapshot['percent'] = 60
+                original = deepcopy(snapshot)
+                meta['progress_transfers'] = saved('approved', [snapshot])['items']
+                content = native([*[component(str(i)) for i in range(10)], component('0'), component('OTHER', module='M2')])
+                content['componentProgress'] = [{'componentId': ident, 'kind': 'component'} for ident in [*native_ids, 'OTHER']]
+                cards, _ = harness.cards(content, old, [], meta=meta)
+                card = next(row for row in cards if row['id'] == 'current:M1')
+                self.assertEqual((card['progress'], card['activityCount'], card['completedActivityCount']), (expected, 10, expected // 10))
+                self.assertEqual((card['transferredProgress'], card['actualHours']), (60, 2))
+                self.assertEqual(next(row for row in cards if row['id'] == 'current:M2')['progress'], 100)
+                self.assertEqual(snapshot, original)
+
     def test_old_components_before_approval_and_aggregate_credit_after_approval(self):
         harness=catalogue_tests.MyLearningAggregateTests()
         meta=metadata();meta['replacement_courses']={'current:M1':'legacy:50'}
@@ -323,7 +350,8 @@ class TransferCatalogueTests(SimpleTestCase):
         cards,summary=harness.cards(content,courses,definitions,meta=meta)
         self.assertEqual([card['id'] for card in cards],['current:M1'])
         self.assertEqual(cards[0]['completedActivityCount'],1)
-        self.assertEqual(cards[0]['progress'],50)
+        self.assertEqual(cards[0]['progress'],10)
+        self.assertEqual(cards[0]['transferredProgress'],40)
         self.assertEqual(cards[0]['actualHours'],2)
-        self.assertEqual(summary['current']['percent'],50)
+        self.assertEqual(summary['current']['percent'],10)
         self.assertFalse(any('previousLearning' in row for row in content['components']))

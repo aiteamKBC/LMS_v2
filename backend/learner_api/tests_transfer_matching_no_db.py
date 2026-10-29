@@ -10,7 +10,7 @@ from old_otjh.service import ServiceError
 
 from .progress_transfer_matching import build_review, module_review, validate_decisions, manual_completion, target_fingerprint, component_counts
 from .replacement_learning import project_approved_learning
-from .progress_transfer_policy import credited_percent, public_item
+from .progress_transfer_policy import merged_percent, public_item
 from . import progress_transfer as api
 from .tests_my_learning_no_db import component, native, metadata
 from .tests_progress_transfer_no_db import item, saved
@@ -30,6 +30,16 @@ def context():
 
 
 class TransferMatchingReviewTests(SimpleTestCase):
+    def test_preview_retains_previously_passed_archived_quizzes_without_making_them_destinations(self):
+        data = context()
+        data[3]['retiredQuizComponents'] = [component('PASSED', retired=True, isQuiz=True, quizMeta={'quizId': 12}),
+                                          component('OTHER', module='M2', retired=True, isQuiz=True, quizMeta={'quizId': 13})]
+        data[3]['quizAttempts'] = [{'componentId': ident, 'passed': True} for ident in ['PASSED', 'OTHER']]
+        module, _, _ = module_review(item(completedSourceActivities=['material:7']), data)
+        self.assertEqual(module['retainedCompletedIds'], ['PASSED'])
+        self.assertNotIn('PASSED', [target['componentId'] for target in module['targets']])
+        self.assertEqual(component_counts(module, ['AUTO']), {'total': 4, 'matched': 1, 'completed': 2, 'remaining': 2})
+
     def test_counts_include_existing_completion_once_and_exclude_retired_or_foreign_components(self):
         data = context()
         data[3]['componentProgress'] = [{'componentId': ident, 'kind': 'component'}
@@ -51,6 +61,7 @@ class TransferMatchingReviewTests(SimpleTestCase):
 
     def test_saved_counts_are_exposed_without_reconstructing_history_or_inventing_missing_counts(self):
         self.assertNotIn('componentCounts', public_item(item()))
+        self.assertNotIn('mergedPercent', public_item(item()))
         counts = {'total': 0, 'matched': 0, 'completed': 0, 'remaining': 0}
         self.assertEqual(component_counts({'targets': [], 'completedTargetIds': []}, []), counts)
         snapshot = item(componentCounts=counts)
@@ -90,8 +101,8 @@ class TransferMatchingReviewTests(SimpleTestCase):
             self.assertEqual({k: v for k, v in component_row.items() if k != 'previousLearning'}, original)
             if component_row['componentId'] != 'AUTO':
                 self.assertNotIn('previousLearning', component_row)
-        self.assertEqual(credited_percent(snapshot, ['AUTO'], 10), 40)
-        self.assertEqual(credited_percent(snapshot, ['AUTO', 'MANUAL'], 10), 50)
+        self.assertEqual(merged_percent(['AUTO'], 10), 10)
+        self.assertEqual(merged_percent(['AUTO', 'MANUAL'], 10), 20)
         self.assertEqual(data, before)
 
     def test_authored_hours_read_is_limited_to_request_destinations_and_keeps_actual_hours(self):
@@ -182,8 +193,8 @@ class TransferMatchingReviewTests(SimpleTestCase):
         self.assertEqual(destination['previousLearning'], match)
         self.assertEqual(destination['expectedOtjh'], 1.5)
         self.assertEqual(snapshot['hours'], 2)
-        self.assertEqual(credited_percent(snapshot, ['MANUAL'], 10), 40)
-        self.assertEqual(credited_percent(snapshot, ['MANUAL', 'NEW'], 10), 50)
+        self.assertEqual(merged_percent(['MANUAL'], 10), 10)
+        self.assertEqual(merged_percent(['MANUAL', 'NEW'], 10), 20)
         self.assertEqual([data, snapshot], original)
         for change in [{'status': 'pending'}, {'moduleId': 'M2'}, {'courseRef': 'legacy:90'}, {'completedSourceActivities': []}]:
             projected = project_approved_learning(data[3]['components'], data[9]['replacement_settings'], [{**snapshot, **change}])
@@ -217,6 +228,7 @@ class TransferMatchingReviewTests(SimpleTestCase):
         self.assertTrue(snapshot['matchedComponents']['MANUAL']['manualMatch'])
         self.assertEqual(snapshot['componentMatches'][1]['plannedHours'], 1.5)
         self.assertEqual(snapshot['componentCounts'], {'total': 3, 'matched': 2, 'completed': 2, 'remaining': 1})
+        self.assertEqual(public_item(snapshot)['mergedPercent'], 66.67)
         self.assertEqual(write.args[1][1:], [request_id, 7, 'M1'])
         self.assertEqual([call.args[0].split()[1] for call in cursor.execute.call_args_list
                           if call.args[0].startswith('UPDATE')], [api.store.ITEMS, api.store.REQUESTS])

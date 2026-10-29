@@ -64,17 +64,25 @@ def module_review(item, context):
     completion_context = dict(native)
     completed_ids = sorted({c['componentId'] for c in components
                             if c.get('componentId') in target_ids and native_done(c, completion_context)})
+    # My Learning retains passed quizzes removed from the current plan. Keep
+    # that existing credit in the preview, without offering them as destinations.
+    retained_ids = sorted({c['componentId'] for c in native.get('retiredQuizComponents', [])
+                           if c.get('moduleId') == item['moduleId'] and c.get('componentId')
+                           and c['componentId'] not in target_ids and native_done(c, completion_context)})
     return {'moduleId': item['moduleId'], 'courseRef': item['courseRef'], 'title': item['newTitle'],
-            'sources': sources, 'targets': targets, 'completedTargetIds': completed_ids}, matches, components
+            'sources': sources, 'targets': targets, 'completedTargetIds': completed_ids,
+            'retainedCompletedIds': retained_ids}, matches, components
 
 
 def component_counts(module, matched_ids):
-    """Count active destination components once, without changing module credit."""
+    """Count unique destinations and retained native quiz completions."""
     target_ids = {target['componentId'] for target in module['targets']}
     matched = target_ids.intersection(matched_ids)
-    completed = target_ids.intersection(module['completedTargetIds']) | matched
-    return {'total': len(target_ids), 'matched': len(matched), 'completed': len(completed),
-            'remaining': len(target_ids - completed)}
+    retained = set(module.get('retainedCompletedIds', [])) - target_ids
+    completed = target_ids.intersection(module['completedTargetIds']) | matched | retained
+    all_ids = target_ids | retained
+    return {'total': len(all_ids), 'matched': len(matched), 'completed': len(completed),
+            'remaining': len(all_ids - completed)}
 
 
 def build_review(request_id, items, context):

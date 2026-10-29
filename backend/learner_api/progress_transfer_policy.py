@@ -1,4 +1,4 @@
-"""Module-level transfer credit. Never manufacture activity completion or hours."""
+"""Merged completion totals, retaining the old percentage and hours as history."""
 from collections import Counter
 from copy import deepcopy
 import json
@@ -76,11 +76,15 @@ def public_item(item):
         result['componentMatches'] = item['componentMatches']
     if 'componentCounts' in item:
         result['componentCounts'] = item['componentCounts']
+    if 'mergedPercent' in item:
+        result['mergedPercent'] = item['mergedPercent']
     return result
 
 
-def credited_percent(item, completed_ids, total):
-    baseline = set(item.get('baselineCompletedIds', [])) | set(item.get('matchedComponents', {}))
-    newly_completed = len(set(completed_ids) - baseline)
-    start = max(float(item['percent']), float(item.get('baselinePercent', 0)))
-    return round(min(100, start + (100 * newly_completed / total if total else 0)), 2)
+def merged_percent(completed_ids, total):
+    """Use verified native + projected matches in the current module, once.
+
+    Callers supply scoped current completions, after validating saved matches.
+    Old percentages and baseline snapshots are historical facts, not extra credit.
+    """
+    return round(min(100, 100 * len(set(completed_ids)) / total), 2) if total else 0

@@ -25,6 +25,14 @@ def stamp(value):
     return (value if value.tzinfo else value.replace(tzinfo=uk)).astimezone(uk)
 
 
+def attempt_order(submitted_at, ident):
+    """Order saved attempts by the real submission instant, then their stable ID."""
+    ident = str(ident)
+    submitted = stamp(submitted_at)
+    return (submitted.astimezone(ZoneInfo('UTC')) if submitted else datetime.min.replace(tzinfo=ZoneInfo('UTC')),
+            (0, int(ident)) if ident.isdigit() else (1, ident))
+
+
 def native_key(record):
     # Match the existing native quiz identity; never cross learner ownership.
     return (record.get('learner_id'), str(record['quiz_ref'])) if record.get('quiz_ref') else None
@@ -42,19 +50,14 @@ def native_choices(baseline, candidates):
             continue
         selected = latest = None
         explicit = False
-        for row in sorted(rows, key=lambda item: (str(item.get('submitted_at') or ''), str(item['id']))):
+        for row in sorted(rows, key=lambda item: attempt_order(item.get('submitted_at'), item['id'])):
             if row.get('accepted') is not True or row.get('passed') is False or row.get('actual_seconds') is None:
                 continue
             mode = metadata(row).get('retakeTimeChoice')
-            if mode in ('keep', 'new'):
-                explicit = True
-                latest = row
-                if mode == 'new' or selected is None:
-                    selected = row
-            elif not explicit:
-                if selected is None or (row['actual_seconds'], str(row.get('submitted_at') or '')) >= (
-                        selected['actual_seconds'], str(selected.get('submitted_at') or '')):
-                    selected = row
+            explicit = explicit or mode in ('keep', 'new')
+            latest = row
+            if mode != 'keep' or selected is None:
+                selected = row
         if not explicit or selected is None:
             continue
         end = stamp(selected.get('declared_completed_at') or selected.get('reporting_ended_at')
@@ -80,16 +83,13 @@ def measured_choice(candidates, has_accepted_history=False):
     """Keep the currently selected successful local attempt across later retakes."""
     selected = None
     replace_history = False
-    explicit = False
-    for row in sorted(candidates, key=lambda item: (str(item['timing'].get('submittedAt') or ''), str(item['id']))):
+    for row in sorted(candidates, key=lambda item: attempt_order(item['timing'].get('submittedAt'), item['id'])):
         mode = row['timing'].get('retakeTimeChoice')
         if mode in ('keep', 'new'):
-            explicit = True
             if mode == 'new':
                 selected, replace_history = row, True
             elif selected is None and not has_accepted_history:
                 selected = row
-        elif not explicit and (selected is None or (row['timing']['verifiedSeconds'], str(row['id'])) > (
-                selected['timing']['verifiedSeconds'], str(selected['id']))):
+        else:
             selected = row
     return selected, replace_history
