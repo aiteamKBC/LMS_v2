@@ -577,7 +577,7 @@ export function SupportChatWidget() {
             }}>
               <span>✅ Ticket <strong>{ticketId}</strong> opened</span>
               <a
-                href={`${SUPPORT_PORTAL_BASE}/support/status`}
+                href={`${SUPPORT_PORTAL_BASE}/support/status?ticket=${encodeURIComponent(ticketId)}${email ? `&email=${encodeURIComponent(email)}` : ''}`}
                 target="_blank" rel="noopener noreferrer"
                 style={{ color: '#5A2A7D', fontWeight: 600, whiteSpace: 'nowrap' }}
               >Open →</a>
