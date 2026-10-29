@@ -129,7 +129,7 @@ class ImportedCalendarGuardTests(unittest.TestCase):
                      'as_json_value': lambda value, fallback: json.loads(value) if isinstance(value, str) else value or fallback}
         for node in tree.body:
             if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id in
-                    {'LEGACY_SETTING_KEYS', 'LIVE_SESSION_TRACKING_SETTING_KEYS'} for target in node.targets):
+                    {'LEGACY_SETTING_KEYS', 'RECORDING_SOURCE_SETTING_KEYS', 'LIVE_SESSION_TRACKING_SETTING_KEYS'} for target in node.targets):
                 namespace[node.targets[0].id] = ast.literal_eval(node.value)
         nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), 'views.py', 'exec'), namespace)

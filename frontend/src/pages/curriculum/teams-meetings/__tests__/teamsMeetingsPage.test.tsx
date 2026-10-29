@@ -346,6 +346,17 @@ describe('Teams Meetings page', () => {
     expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
   });
 
+  it('retains the original people and silent-save form for an LMS-owned calendar', async () => {
+    await renderPage();
+    await screen.findByText('Data Foundations');
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(await dialog.findByRole('region', { name: 'Invitations and meeting settings' })).toBeVisible();
+    expect(dialog.queryByRole('button', { name: 'Edit people and settings' })).not.toBeInTheDocument();
+    expect(dialog.getByRole('button', { name: 'Save without notifying' })).toBeVisible();
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+  });
+
   it('checks future calendars for cancellation without creating or updating Microsoft meetings', async () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-08-01T08:00:00Z'));
     try {
@@ -882,6 +893,8 @@ describe('Teams Meetings page', () => {
     expect(dialog.getByText(/Creating a new module meeting is blocked/)).toBeVisible();
     expect(dialog.getByText('When a week is inserted')).toBeVisible();
     expect(dialog.getByRole('button', { name: 'Reattach saved Teams data' })).toBeVisible();
+    expect(dialog.getByRole('button', { name: 'Edit existing Teams meeting' })).toBeVisible();
+    expect(dialog.getByRole('button', { name: 'Review Teams calendar update' })).toBeVisible();
     for (const name of ['Create', 'Update Teams calendar', 'Cancel series', 'Edit session dates', 'Save without notifying']) {
       expect(dialog.queryByRole('button', { name })).not.toBeInTheDocument();
     }
