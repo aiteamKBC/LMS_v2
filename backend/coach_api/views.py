@@ -8145,9 +8145,48 @@ def coach_meeting_transcript_selection(record: CoachCalendarEvent) -> dict:
     return stored_transcript_selection(record, stored_coach_meeting_snapshot(record))
 
 
+def native_review_summary_transcript_ids(record: CoachCalendarEvent) -> list[str] | None:
+    """Select all transcripts from a native review's current Teams event.
+
+    None delegates to the existing session-based selection (including imported
+    reviews); an empty list means the native event has no usable transcripts.
+    """
+    if (not clean_text(getattr(record, 'review_instance_id', ''))
+            or not clean_text(getattr(record, 'event_key', '')).startswith('review:')
+            or clean_text(getattr(record, 'event_type', '')).lower() not in {'mcr', 'progress-review'}):
+        return None
+    from .reconciliation_links import for_calendar
+    if for_calendar(record):
+        return None
+    graph_event_id = clean_text(getattr(record, 'graph_event_id', ''))
+    if not graph_event_id:
+        return []
+    snapshot = stored_coach_meeting_snapshot(record)
+    transcripts = {}
+    conflicts = set()
+    for artifact in snapshot.get('artifacts') or []:
+        if not isinstance(artifact, dict) or artifact.get('artifact_type') != 'transcript':
+            continue
+        metadata = artifact.get('metadata')
+        if not isinstance(metadata, dict) or metadata.get('_lms_graph_event_id') != graph_event_id:
+            continue
+        artifact_id = clean_text(artifact.get('graph_artifact_id'))
+        if not artifact_id:
+            continue
+        identity = (artifact.get('call_id'), artifact.get('created_datetime'), artifact.get('end_datetime'))
+        if artifact_id in transcripts and transcripts[artifact_id] != identity:
+            conflicts.add(artifact_id)
+        transcripts[artifact_id] = identity
+    return [] if conflicts else sorted(transcripts)
+
+
 def stored_coach_meeting_transcript_for_summary(record: CoachCalendarEvent, *, artifact_ids=None) -> dict | None:
+    require_all_native_transcripts = False
     if artifact_ids is None:
-        artifact_ids = coach_meeting_transcript_selection(record)['artifactIds']
+        artifact_ids = native_review_summary_transcript_ids(record)
+        require_all_native_transcripts = artifact_ids is not None
+        if artifact_ids is None:
+            artifact_ids = coach_meeting_transcript_selection(record)['artifactIds']
     if not artifact_ids:
         return None
     artifact_filter = (" AND graph_artifact_id IN (" + ",".join(["%s"] * len(artifact_ids)) + ")") if artifact_ids is not None else ""
@@ -8176,6 +8215,8 @@ def stored_coach_meeting_transcript_for_summary(record: CoachCalendarEvent, *, a
             rows = cursor.fetchall()
     except Exception:
         logger.exception("Unable to read stored coach Teams transcript text for event_key=%s", record.event_key)
+        return None
+    if require_all_native_transcripts and {clean_text(row[0]) for row in rows} != set(artifact_ids):
         return None
     return combine_coach_meeting_transcript_rows(rows)
 
@@ -8307,6 +8348,9 @@ def ensure_coach_meeting_summary(
     transcript = stored_coach_meeting_transcript_for_summary(record)
     if not transcript:
         return stored_coach_meeting_summary(record)
+    if (len(transcript['text']) > COACH_MEETING_SUMMARY_TRANSCRIPT_CHARS
+            and native_review_summary_transcript_ids(record) is not None):
+        return None
     transcript_hash = hashlib.sha256(transcript["text"].encode("utf-8")).hexdigest()
 
     try:
@@ -16701,7 +16745,8 @@ def coach_review_instance_meeting_summary(request, instance_id):
         attendance_reports=snapshot["attendanceReports"],
         attendance_tracker=snapshot["attendanceTracker"],
     )
-    if not stored_coach_meeting_transcript_for_summary(record):
+    summary_transcript = stored_coach_meeting_transcript_for_summary(record)
+    if not summary_transcript:
         selection = coach_meeting_transcript_selection(record)
         if selection['code'] == 'TRANSCRIPT_SESSION_AMBIGUOUS':
             return summary_error(code=selection['code'],
@@ -16716,6 +16761,14 @@ def coach_review_instance_meeting_summary(request, instance_id):
                 "Wait for Teams transcription to finish, upload the .vtt transcript, or enter the summary manually. "
                 "Your current Review answer has not been changed."
             ),
+            status=409,
+        )
+
+    if (len(summary_transcript['text']) > COACH_MEETING_SUMMARY_TRANSCRIPT_CHARS
+            and native_review_summary_transcript_ids(record) is not None):
+        return summary_error(
+            code="teams_transcript_too_long",
+            detail="The combined Teams transcripts are too long to analyse together. Your Review answer has not been changed.",
             status=409,
         )
 
