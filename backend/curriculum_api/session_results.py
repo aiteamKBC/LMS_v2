@@ -151,7 +151,11 @@ def college_tenant_id():
 
 
 def replaced_module_register_rows(module_catalogue_id, source_occurrence_ids):
-    """Destination roster rows whose replaced link resolves to these source occurrences."""
+    """Destination roster rows whose replaced link resolves to these source occurrences.
+
+    A separately booked one-off uses this module's roster, while the original
+    meeting's saved attendance stays attached to its own historical occurrence.
+    """
 
     if not module_catalogue_id or not source_occurrence_ids:
         return []
@@ -164,6 +168,7 @@ def replaced_module_register_rows(module_catalogue_id, source_occurrence_ids):
         JOIN curriculum.live_sessions s ON s.id=o.live_session_id
         {REPLACED_ATTENDANCE_LATERAL_SQL}
         LEFT JOIN curriculum.live_session_learner_attendance r ON r.occurrence_id=o.id
+          AND NOT coalesce(replaced_attendance.additional_meeting,false)
         WHERE s.module_catalogue_id=%s
           AND replaced_attendance.occurrence_id=ANY(%s)
         ORDER BY r.learner_name,r.learner_profile_id''', [
@@ -890,6 +895,11 @@ def learner_series(kind, learner_id, series_id, linked_recordings=False):
     shared = sorted(alias for alias, sources in shared_teams_sources(modules).items() if owner in sources)
     if shared:
         return learner, {**series, 'learner_shared_module_ids': shared}
+    from learner_api.replaced_teams_attendance import additional_module_context
+    additional = additional_module_context(modules, series, read)
+    if additional:
+        return learner, {**series, 'learner_shared_module_ids': additional,
+                         'linked_session_numbers': {1}, 'additional_meeting_access': True}
     if linked_recordings:
         from .linked_recording_access import linked_session_numbers
         numbers = linked_session_numbers(modules, series_id)
@@ -903,8 +913,9 @@ def learner_series(kind, learner_id, series_id, linked_recordings=False):
 def learner_results(request, kind, learner_id, series_id, session_number):
     try:
         learner, series = learner_series(kind, learner_id, series_id, linked_recordings=True)
-        linked = bool(series) and 'linked_session_numbers' in series
-        if not series or (linked and session_number not in series['linked_session_numbers']):
+        restricted = bool(series) and 'linked_session_numbers' in series
+        linked = restricted and not series.get('additional_meeting_access')
+        if not series or (restricted and session_number not in series['linked_session_numbers']):
             return JsonResponse({'error': 'Session not found.'}, status=404)
         sessions = result_rows(series, session_number=session_number, email=str(learner.email or '').strip().casefold())
         if linked:
@@ -1006,6 +1017,8 @@ def learner_join(request, kind, learner_id, series_id, session_number):
     import uuid
     try:
         learner, series = learner_series(kind, learner_id, series_id)
+        if series and 'linked_session_numbers' in series and session_number not in series['linked_session_numbers']:
+            return learner_join_failure(kind, learner_id, 'not-found')
         rows = read('SELECT * FROM curriculum.live_session_occurrences WHERE live_session_id=%s AND session_number=%s', [series_id, session_number]) if series else []
         if len(rows) != 1:
             return learner_join_failure(kind, learner_id, 'not-found')

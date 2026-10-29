@@ -128,7 +128,8 @@ def can_report_absence_status(status, session_date):
 NATIVE_OCCURRENCES_SQL = f'''SELECT o.id AS session_id,o.id AS occurrence_id,
             COALESCE(replaced_attendance.occurrence_id,o.id) AS attendance_source_occurrence_id,
             s.id AS live_session_id,s.module_catalogue_id,m.title AS module_title,
-            o.scheduled_start,o.scheduled_end,o.updated_at,o.session_number,
+            COALESCE(replaced_attendance.scheduled_start,o.scheduled_start) AS scheduled_start,
+            COALESCE(replaced_attendance.scheduled_end,o.scheduled_end) AS scheduled_end,o.updated_at,o.session_number,
             s.status AS live_session_status,o.status AS occurrence_status,
             COALESCE(NULLIF(o.join_url,''),s.join_url) AS join_url,
             CASE WHEN replaced_attendance.occurrence_id IS NOT NULL

@@ -1332,17 +1332,20 @@ class EndpointTests(unittest.TestCase):
             response = self.ns['learner_join'](self.req('learner'), kind='commercial', learner_id=7, series_id='S', session_number=1)
         self.assertJoinError(response, 'unavailable')
 
-    def learner_series(self, assigned, shared, series_row):
+    def learner_series(self, assigned, shared, series_row, additional=(), kind='commercial'):
         learner = types.SimpleNamespace(email='a@example.invalid')
         model = types.SimpleNamespace(all_learners=types.SimpleNamespace(
             filter=lambda **kwargs: types.SimpleNamespace(first=lambda: learner)))
-        detail = types.ModuleType('learner_api.learner_detail'); detail.SOURCE_MODELS = {'commercial': model}
+        detail = types.ModuleType('learner_api.learner_detail'); detail.SOURCE_MODELS = {kind: model}
         lectures = types.ModuleType('learner_api.attendance_lectures')
         lectures.read_assigned_modules = lambda source: [{'id': module_id} for module_id in assigned]
         lectures.shared_teams_sources = Mock(return_value=shared)
-        self.ns['read'].return_value = [series_row] if series_row else []
+        self.ns['read'].side_effect = lambda sql, params=(): (
+            [{'module_catalogue_id': module_id} for module_id in additional]
+            if "c.settings_json->>'extraTeamsLiveSessionId'=%s" in sql
+            else [series_row] if series_row else [])
         with patch.dict(sys.modules, {'learner_api.learner_detail': detail, 'learner_api.attendance_lectures': lectures}):
-            return self.ns['learner_series']('commercial', 7, 'S'), lectures.shared_teams_sources
+            return self.ns['learner_series'](kind, 7, 'S'), lectures.shared_teams_sources
 
     def test_learner_series_accepts_a_learner_on_a_shared_teams_duplicate(self):
         series = {'id': 'S', 'module_catalogue_id': 'SOURCE', 'status': 'Active'}
@@ -1359,6 +1362,68 @@ class EndpointTests(unittest.TestCase):
         self.assertIs(found, series)
         shared.assert_not_called()
         self.assertEqual(self.learner_series(['SOURCE'], {}, None)[0], (None, None))
+
+    def test_booked_shared_additional_meeting_is_limited_to_its_single_session(self):
+        series = {'id': 'S', 'module_catalogue_id': 'SOURCE', 'status': 'week-meeting',
+                  'meeting_type': 'week-additional', 'join_url': 'https://teams.example/masterclass'}
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind):
+                (learner, found), _ = self.learner_series(['ALIAS'], {}, series, additional=['ALIAS'], kind=kind)
+                self.assertIsNotNone(learner)
+                self.assertEqual(found, {**series, 'learner_shared_module_ids': ['ALIAS'],
+                                       'linked_session_numbers': {1}, 'additional_meeting_access': True})
+        self.assertEqual(self.learner_series(['OTHER'], {}, series)[0], (None, None))
+        regular = {**series, 'status': 'active', 'meeting_type': 'linked-external'}
+        self.assertEqual(self.learner_series(['ALIAS'], {}, regular, additional=['ALIAS'])[0], (None, None))
+
+    def test_booked_additional_results_keep_only_the_learners_own_attendance(self):
+        learner = types.SimpleNamespace(email=' A@EXAMPLE.invalid ')
+        series = {'id': 'S', 'learner_shared_module_ids': ['ALIAS'],
+                  'linked_session_numbers': {1}, 'additional_meeting_access': True}
+        self.ns['learner_series'] = Mock(return_value=(learner, series))
+        self.ns['result_rows'] = Mock(return_value=[{'attendance': [{'email': 'a@example.invalid'}]}])
+        recorded = types.ModuleType('learner_api.recorded_attendance')
+        recorded.saved_delivery_mode = Mock(return_value='live')
+        recorded.apply_recorded_attendance = Mock()
+        rules = types.ModuleType('learner_api.attendance_rules'); rules.attendance_outcome = Mock()
+        with patch.dict(sys.modules, {'learner_api.recorded_attendance': recorded, 'learner_api.attendance_rules': rules}):
+            response = self.ns['learner_results'](self.req('learner'), kind='commercial', learner_id=7, series_id='S', session_number=1)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['sessions'][0]['attendance'], [{'email': 'a@example.invalid'}])
+        self.ns['result_rows'].assert_called_once_with(series, session_number=1, email='a@example.invalid')
+        self.ns['result_rows'].reset_mock()
+        response = self.ns['learner_results'](self.req('learner'), kind='commercial', learner_id=7, series_id='S', session_number=2)
+        self.assertEqual(response.status_code, 404)
+        self.ns['result_rows'].assert_not_called()
+
+    def test_booked_additional_join_cannot_open_a_different_session(self):
+        self.ns['learner_series'] = Mock(return_value=(object(), {
+            'id': 'S', 'linked_session_numbers': {1}, 'additional_meeting_access': True}))
+        self.ns['read'].reset_mock()
+        response = self.ns['learner_join'](self.req('learner'), kind='commercial', learner_id=7, series_id='S', session_number=2)
+        self.assertJoinError(response, 'not-found')
+        self.ns['read'].assert_not_called()
+
+    def test_booked_additional_join_keeps_the_verified_oneoff_link(self):
+        response = self.join(series={'linked_session_numbers': {1}, 'additional_meeting_access': True},
+                             occurrence={'join_url': 'https://teams.microsoft.com/meet/masterclass'})
+        self.assertEqual(response['location'], 'https://teams.microsoft.com/meet/masterclass')
+        self.assertIn('live_session_join_launches', self.cursor.execute.call_args.args[0])
+
+    def test_booked_additional_content_does_not_grant_another_sessions_artifact(self):
+        access = types.ModuleType('curriculum_api.linked_recording_access')
+        access.linked_artifact_allowed = Mock(return_value=False)
+        series = {'id': 'S', 'linked_session_numbers': {1}, 'additional_meeting_access': True}
+        self.ns['learner_series'] = Mock(return_value=(object(), series))
+        self.ns['stored_content'] = Mock(return_value=Response({'url': 'https://storage.invalid/recording'}))
+        with patch.dict(sys.modules, {'curriculum_api.linked_recording_access': access}):
+            self.assertEqual(self.ns['learner_content'](self.req('learner'), kind='commercial', learner_id=7,
+                                                      series_id='S', artifact_id='OTHER').status_code, 404)
+            self.ns['stored_content'].assert_not_called()
+            access.linked_artifact_allowed.return_value = True
+            self.assertEqual(self.ns['learner_content'](self.req('learner'), kind='commercial', learner_id=7,
+                                                      series_id='S', artifact_id='OWN').status_code, 200)
+            self.ns['stored_content'].assert_called_once()
 
     def test_linked_recording_grants_only_the_linked_sessions_and_never_join(self):
         access = types.ModuleType('curriculum_api.linked_recording_access')
