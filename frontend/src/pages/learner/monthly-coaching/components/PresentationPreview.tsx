@@ -49,6 +49,18 @@ export default function PresentationPreview({ open, onClose }: PresentationPrevi
     return () => { if (animTimerRef.current) clearTimeout(animTimerRef.current); };
   }, []);
 
+  const handleClose = useCallback(() => {
+    if (animTimerRef.current) clearTimeout(animTimerRef.current);
+    setMounted(false);
+    setTimeout(() => {
+      setCurrentSlide(0);
+      setSlideMode('overview');
+      setAnimState(null);
+      onClose();
+    }, 300);
+  }, [onClose]);
+
+
   useEffect(() => {
     if (!open) return;
     const handleKey = (e: KeyboardEvent) => {
@@ -70,18 +82,8 @@ export default function PresentationPreview({ open, onClose }: PresentationPrevi
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [open, goNext, goPrev, slideMode]);
+  }, [open, goNext, goPrev, slideMode, handleClose]);
 
-  const handleClose = () => {
-    if (animTimerRef.current) clearTimeout(animTimerRef.current);
-    setMounted(false);
-    setTimeout(() => {
-      setCurrentSlide(0);
-      setSlideMode('overview');
-      setAnimState(null);
-      onClose();
-    }, 300);
-  };
 
   if (!open) return null;
 

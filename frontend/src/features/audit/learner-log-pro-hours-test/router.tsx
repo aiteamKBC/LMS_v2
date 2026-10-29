@@ -1,4 +1,3 @@
-// @ts-nocheck -- imported TanStack Router app uses strictNullChecks; the host LMS does not.
 import { QueryClient } from "@tanstack/react-query";
 import { createHashHistory, createRouter } from "@tanstack/react-router";
 import { routeTree } from "./routeTree.gen";
@@ -12,6 +11,7 @@ export const getRouter = () => {
   // in the URL hash (…/auditor-hours-test#/activity?…), which the host react-router
   // ignores for path matching, so the two routers don't fight. An empty hash
   // lands on "/", which redirects to "/search".
+  // @ts-expect-error TanStack requires strictNullChecks; the host application has it disabled.
   const router = createRouter({
     routeTree,
     history: createHashHistory(),

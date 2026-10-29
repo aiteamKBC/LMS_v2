@@ -1,3 +1,4 @@
+import { formatDate } from './page.helpers';
 import { type CSSProperties, type FormEvent, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
@@ -121,13 +122,6 @@ function getWeekStart(date: Date): Date {
 
 function getMonthStart(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), 1);
-}
-
-export function formatDate(d: Date) {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
 }
 
 function addDays(d: Date, n: number) {

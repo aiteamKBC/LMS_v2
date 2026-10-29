@@ -1,10 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { ageFromDob, useWizard } from '../WizardContext';
+import { ageFromDob, useWizard } from "../WizardContext";
 import { fetchIlrLearnerRecord, type IlrLearnerRecord } from '@/api/ilrLearnerRecord';
 import { FieldRow, YesNoRadio, inputClass } from '../../components/ui';
 import { LabeledInput, LabeledSelect, SignatureField, StepHeading } from './fields';
 import { ILR_SIGNATURE_LABEL, ilrDetailsMissing } from '../validation';
-import { FieldError, invalidClass, requiredMessage, useMissing, useMissingCheck } from '../stepErrors';
+import { FieldError, invalidClass } from '../stepErrors';
+import { requiredMessage, useMissing, useMissingCheck } from "../stepErrors";
 import { NI_OR_APPLIED_KEY, NI_RE } from '../layout/registry';
 import { StepItems, type ItemRenderer } from '../layout/StepItems';
 import { useStepTitle } from '../layout/useLayout';

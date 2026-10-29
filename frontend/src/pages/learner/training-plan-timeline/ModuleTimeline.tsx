@@ -4,7 +4,7 @@ import { ArrowRight, CalendarDays, CheckCircle2, LocateFixed, Maximize2, Message
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { Modal } from '@/pages/users/components/Modal';
 import { barPosition, dateKey, moduleVisualEnd, reviewDate, sessionDay, timelineMonthKeys, timelinePeriodYear, timelineWeekKeys, timelineYears, type DisplayTimelineModule, weeklyPosition } from './model';
-import { dateLabel, moduleStatus, monthLabel } from './presentation';
+import { dateLabel, moduleStatus, monthLabel } from "./presentation.helpers";
 import { TimelineInspector } from './TimelineInspector';
 import styles from './trainingPlan.module.css';
 import layout from './ModuleTimeline.module.css';

@@ -128,7 +128,7 @@ export default function ImportedReviewBookingDialog({ event, viewingAsCoach, onC
       if (active) setAvailabilityError(reason instanceof Error ? reason.message : 'Could not check the coach calendar. Retry before booking.');
     }).finally(() => { if (active) setAvailabilityLoading(false); });
     return () => { active = false; controller.abort(); };
-  }, [eligible, attaching, definition?.instance.learnerId, date, duration, rescheduling, booking?.eventKey, reload, availabilityRetry]);
+  }, [eligible, attaching, definition, date, duration, rescheduling, booking?.eventKey, reload, availabilityRetry]);
 
   const save = async () => {
     if (!eligible || !definition || !booking || savingRef.current) return;

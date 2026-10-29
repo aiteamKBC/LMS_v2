@@ -1,4 +1,3 @@
-// @ts-nocheck -- imported TanStack Router app uses strictNullChecks; the host LMS does not.
 //
 // One learner's graded quiz attempt, merged by the Last_audit API from the
 // shared quiz definition and this Aptem learner's result row. Shared by the

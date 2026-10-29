@@ -5,7 +5,7 @@
 // pasted into a message. Same component as `/admin/audit-trail/people/:email`,
 // scoped to curriculum and drawn inside Curriculum Studio's chrome.
 import AuditTrailPersonView from '@/features/audit-trail/AuditTrailPersonView';
-import { curriculumAuditScope } from '../page';
+import { curriculumAuditScope } from "../page.helpers";
 
 export default function CurriculumAuditTrailPersonPage() {
   return <AuditTrailPersonView scope={curriculumAuditScope} />;

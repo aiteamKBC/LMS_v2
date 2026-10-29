@@ -540,7 +540,7 @@ describe('Programme workspace', { timeout: 15000 }, () => {
 
   it('loads the workspace module projection and retains canonical links and edit metadata', async () => {
     const api = await import('@/lib/curriculumApi');
-    const { moduleFormTarget } = await import('@/pages/curriculum/shared/entities/moduleForm');
+    const { moduleFormTarget } = await import('@/pages/curriculum/shared/entities/moduleForm.helpers');
     const projectedModule = {
       ...modules[0], sourceType: 'delivery', notes: 'Saved description', color: '#123456',
       weeklySchedule: [{ day: 'Monday', startTime: '09:00', endTime: '10:00' }],

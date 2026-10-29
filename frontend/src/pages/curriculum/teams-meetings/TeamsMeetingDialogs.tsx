@@ -13,7 +13,7 @@ import { AttendeeComparisonPanel } from './AttendeeComparisonPanel';
 import { MeetingScopePanel } from './MeetingScopePanel';
 import { ExternalCalendarPanel } from './ExternalCalendarPanel';
 import { pendingInvitations } from './attendeeComparison';
-import { emailList } from '../module-builder/EmailChipsInput';
+import { emailList } from '../module-builder/EmailChipsInput.helpers';
 import { forwardScheduleEmail } from './forwardScheduleEmail';
 import { updateProgressSteps } from './updateProgress';
 import { reviewDateLabel } from './calendarTime';
@@ -30,15 +30,8 @@ import {
   type TeamsMeetingArtifact,
   type TeamsRecordingEventInput,
 } from '../module-builder/moduleAuthoringData';
-import {
-  TEAMS_LANGUAGE_OPTIONS,
-  TEAMS_LOBBY_OPTIONS,
-  TEAMS_RECORDING_OPTIONS,
-  ModuleSessionSchedulePreview,
-  TeamsCalendarFormBody,
-  TeamsMeetingOptionFields,
-  TeamsPeopleFields,
-} from './createCalendarForm';
+import { ModuleSessionSchedulePreview, TeamsCalendarFormBody, TeamsMeetingOptionFields, TeamsPeopleFields } from './createCalendarForm';
+import { TEAMS_LANGUAGE_OPTIONS, TEAMS_LOBBY_OPTIONS, TEAMS_RECORDING_OPTIONS } from './createCalendarForm.helpers';
 import {
   EntityDrawer,
   FormField,

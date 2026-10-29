@@ -12,8 +12,8 @@ type JournalActivity = {
   delivery_method: string;
   activity_category: string;
   time_from_to: string | null;
-  time_from: string | null;
-  time_to: string | null;
+  time_from?: string | null;
+  time_to?: string | null;
   actual_lms_hours: number | null;
   not_accepted?: boolean; // progress-review row → "Accepted: No"
   // In-system page for this activity (ledger with participants + document

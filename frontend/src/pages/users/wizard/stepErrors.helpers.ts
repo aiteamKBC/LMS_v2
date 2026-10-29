@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 
+
 /**
  * What the current step is still missing, once the learner has pressed Next.
  *
@@ -13,18 +14,22 @@ export interface StepErrors {
   missing: string[];
 }
 
+
 export const StepErrorsContext = createContext<StepErrors>({ show: false, missing: [] });
 
+
 /** The step's outstanding entry for `key`, or null. Matches `key` itself and `key — <why>`. */
-function findEntry({ show, missing }: StepErrors, key?: string): string | null {
+export function findEntry({ show, missing }: StepErrors, key?: string): string | null {
   if (!show || !key) return null;
   return missing.find((m) => m === key || m.startsWith(`${key} — `)) ?? null;
 }
+
 
 /** The outstanding entry for one field's validation label, or null. */
 export function useMissing(key?: string): string | null {
   return findEntry(useContext(StepErrorsContext), key);
 }
+
 
 /** For steps that check several hand-built fields: key → outstanding entry, or null. */
 export function useMissingCheck(): (key: string) => string | null {
@@ -32,16 +37,20 @@ export function useMissingCheck(): (key: string) => string | null {
   return (key) => findEntry(errors, key);
 }
 
+
 /** Whether the learner has tried to leave the step with something outstanding. */
 export function useShowStepErrors(): boolean {
   const { show, missing } = useContext(StepErrorsContext);
   return show && missing.length > 0;
 }
 
-type Verb = 'enter' | 'select' | 'choose';
+
+export type Verb = 'enter' | 'select' | 'choose';
+
 
 // Keep acronyms (ULN, CV) as they are; lower-case the rest for mid-sentence use.
-const lowerWords = (s: string) => s.split(' ').map((w) => (w.length > 1 && w === w.toUpperCase() ? w : w.toLowerCase())).join(' ');
+export const lowerWords = (s: string) => s.split(' ').map((w) => (w.length > 1 && w === w.toUpperCase() ? w : w.toLowerCase())).join(' ');
+
 
 /**
  * "Please enter line manager name." for a field's label. A label that is a
@@ -58,6 +67,7 @@ export function requiredMessage(label: string, verb: Verb): string {
   return `Please ${verb} ${lowerWords(plain)}.`;
 }
 
+
 /**
  * The message under a red field: why this entry is outstanding. A bare key
  * means "not answered"; `key — <why>` carries its own reason (a bad format).
@@ -67,14 +77,4 @@ export function missingMessage(entry: string, key: string, label: string, verb: 
   const why = entry.slice(key.length + 3).trim();
   const sentence = why.charAt(0).toUpperCase() + why.slice(1);
   return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
-}
-
-/** Red outline for an outstanding box; appended to the box's own classes. */
-export const invalidClass = ' !border-red-500 focus:!border-red-500 focus:!ring-red-100';
-
-/** The note under an outstanding box. */
-export function FieldError({ message }: { message: string }) {
-  return (
-    <p className="mt-1.5 inline-block rounded-md bg-red-50 px-2 py-0.5 text-[12px] text-red-600">{message}</p>
-  );
 }
