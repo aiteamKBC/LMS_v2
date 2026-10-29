@@ -6,7 +6,8 @@ import { readImportedMeetingEditor, previewImportedMeetingEdit, confirmImportedM
 import { ImportedMeetingEditor } from '../ImportedMeetingEditor';
 
 vi.mock('@/lib/curriculumApi', () => ({ readImportedMeetingEditor: vi.fn(), previewImportedMeetingEdit: vi.fn(),
-  confirmImportedMeetingEdit: vi.fn(), checkImportedMeetingEdit: vi.fn() }));
+  confirmImportedMeetingEdit: vi.fn(), checkImportedMeetingEdit: vi.fn(),
+  searchEntraPeople: vi.fn(async () => ({ people: [], hasMore: false })) }));
 
 const original = (): EditorData => ({ status: 'editable', sourceToken: 'verified-original', message: 'Original calendar verified.',
   organizer: 'owner@example.invalid', attendees: ['old@example.invalid'], presenters: ['presenter@example.invalid'],
@@ -31,7 +32,12 @@ function open() {
 
 async function edit() {
   await userEvent.click(screen.getByRole('button', { name: 'Edit existing Teams meeting' }));
-  await screen.findByLabelText(/Calendar invitees/);
+  await screen.findByRole('combobox', { name: 'Attendees' });
+}
+
+async function changeInvitee() {
+  await userEvent.click(screen.getByRole('button', { name: 'Remove old@example.invalid' }));
+  await userEvent.type(screen.getByRole('combobox', { name: 'Attendees' }), 'new@example.invalid{Enter}');
 }
 
 describe('editing a verified imported meeting', () => {
@@ -40,8 +46,8 @@ describe('editing a verified imported meeting', () => {
     expect(readImportedMeetingEditor).not.toHaveBeenCalled();
     await edit();
     expect(readImportedMeetingEditor).toHaveBeenCalledExactlyOnceWith('LIVE');
-    expect(screen.getByLabelText(/Calendar invitees/)).toHaveValue('old@example.invalid');
-    expect(screen.getByLabelText('Recording')).toHaveValue('record-transcribe');
+    expect(screen.getByRole('button', { name: 'Remove old@example.invalid' })).toBeVisible();
+    expect(screen.getByRole('combobox', { name: /Recording/ })).toHaveTextContent('Record and transcribe');
     expect(screen.getByLabelText('Session 1 start')).toBeDisabled();
     expect(screen.getByLabelText('Session 2 start')).toHaveValue('2030-11-01T12:00');
     expect(previewImportedMeetingEdit).not.toHaveBeenCalled();
@@ -51,7 +57,7 @@ describe('editing a verified imported meeting', () => {
   it('reviews an attendee removal with silence requested, without resending options or dates', async () => {
     const { onUpdated } = open();
     await edit();
-    fireEvent.change(screen.getByLabelText(/Calendar invitees/), { target: { value: 'new@example.invalid' } });
+    await changeInvitee();
     await userEvent.click(screen.getByRole('button', { name: 'Save without notifying' }));
     expect(previewImportedMeetingEdit).toHaveBeenCalledExactlyOnceWith('LIVE', 'verified-original', { attendees: ['new@example.invalid'] }, false);
     expect(await screen.findByRole('button', { name: 'Confirm meeting edits' })).toBeDisabled();
@@ -64,7 +70,8 @@ describe('editing a verified imported meeting', () => {
 
   it('keeps the notification choice separate from an options-only change', async () => {
     open(); await edit();
-    await userEvent.selectOptions(screen.getByLabelText('Spoken language'), 'ar-EG');
+    await userEvent.click(screen.getByRole('combobox', { name: /Spoken language/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Arabic (Egypt)' }));
     await userEvent.click(screen.getByRole('button', { name: 'Review update and notify' }));
     expect(previewImportedMeetingEdit).toHaveBeenCalledExactlyOnceWith('LIVE', 'verified-original', { language: 'ar-EG' }, true);
   });
@@ -80,10 +87,10 @@ describe('editing a verified imported meeting', () => {
 
   it('keeps edits after cancelling a review and never confirms it', async () => {
     open(); await edit();
-    fireEvent.change(screen.getByLabelText(/Calendar invitees/), { target: { value: 'new@example.invalid' } });
+    await changeInvitee();
     await userEvent.click(screen.getByRole('button', { name: 'Save without notifying' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Cancel edit review' }));
-    expect(screen.getByLabelText(/Calendar invitees/)).toHaveValue('new@example.invalid');
+    expect(screen.getByRole('button', { name: 'Remove new@example.invalid' })).toBeVisible();
     expect(confirmImportedMeetingEdit).not.toHaveBeenCalled();
   });
 
@@ -107,7 +114,7 @@ describe('editing a verified imported meeting', () => {
     open();
     await userEvent.click(screen.getByRole('button', { name: 'Edit existing Teams meeting' }));
     expect(await screen.findByRole('status')).toHaveTextContent('Original calendar unavailable.');
-    expect(screen.queryByLabelText(/Calendar invitees/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Attendees' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save without notifying' })).not.toBeInTheDocument();
   });
 

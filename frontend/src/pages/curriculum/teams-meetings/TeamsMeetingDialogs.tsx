@@ -374,7 +374,6 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
   const [forwardError, setForwardError] = useState('');
   const [forwardNotice, setForwardNotice] = useState('');
   const [updateConfirmOpen, setUpdateConfirmOpen] = useState(false);
-  const invitationsSection = useRef<HTMLElement | null>(null);
   const importedEditing = useRef({ dirty: false, busy: false });
   const onSecondTab = Boolean(secondTab) && activeTab === 'second';
   // Coming back from the additional-meeting tab: a week may have been booked or
@@ -499,10 +498,6 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
               <p className="text-[12px] font-semibold text-primary-800">Existing Teams links are protected. Use the original meeting editor above.</p>
             ) : selected.summary ? (
                   <div className="flex w-full flex-wrap items-center justify-end gap-2">
-                    <button type="button" onClick={() => invitationsSection.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-                      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-white px-3 text-[12px] font-bold text-primary-700">
-                      Edit people and settings
-                    </button>
                     <button type="button" onClick={() => openCalendarAction('reschedule')}
                       disabled={Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason) || detailLoading || detail?.series.id !== selected.summary.liveSessionId || !graphConfigured}
                       className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-colors hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-calendar-line text-sm"></AppIcon>Edit session dates</button>
@@ -927,7 +922,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                 {/* Under the dates, the same fields the create form asks for,
                     filled with what the calendar holds. Update sends them with
                     the dates; the two buttons below send them alone. */}
-                <section ref={invitationsSection} aria-labelledby="teams-invitations-heading" className="space-y-4 rounded-xl border border-background-200 p-4">
+                <section aria-labelledby="teams-invitations-heading" className="space-y-4 rounded-xl border border-background-200 p-4">
                   <div>
                     <h3 id="teams-invitations-heading" className="text-[11px] font-bold uppercase tracking-wider text-foreground-400">Invitations and meeting settings</h3>
                     <p className="mt-1 text-[11px] text-foreground-500">

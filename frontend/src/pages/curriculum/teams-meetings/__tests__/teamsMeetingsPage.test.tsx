@@ -346,16 +346,13 @@ describe('Teams Meetings page', () => {
     expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
   });
 
-  it('makes the existing people and silent-save form reachable from the calendar footer', async () => {
+  it('retains the original people and silent-save form for an LMS-owned calendar', async () => {
     await renderPage();
     await screen.findByText('Data Foundations');
     await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
     const dialog = within(await screen.findByRole('dialog'));
-    const people = await dialog.findByRole('region', { name: 'Invitations and meeting settings' });
-    const scroll = vi.fn();
-    Object.defineProperty(people, 'scrollIntoView', { configurable: true, value: scroll });
-    await userEvent.click(dialog.getByRole('button', { name: 'Edit people and settings' }));
-    expect(scroll).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
+    expect(await dialog.findByRole('region', { name: 'Invitations and meeting settings' })).toBeVisible();
+    expect(dialog.queryByRole('button', { name: 'Edit people and settings' })).not.toBeInTheDocument();
     expect(dialog.getByRole('button', { name: 'Save without notifying' })).toBeVisible();
     expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
   });

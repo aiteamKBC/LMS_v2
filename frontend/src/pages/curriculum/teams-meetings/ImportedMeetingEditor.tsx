@@ -5,15 +5,10 @@ import {
 } from '@/lib/curriculumApi';
 import { zonedNaiveToUtcIso } from '../module-builder/moduleAuthoringData';
 import { emailList } from '../module-builder/EmailChipsInput';
-
-function localTime(iso: string, timeZone: string) {
-  const parts = new Intl.DateTimeFormat('en-GB', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(iso));
-  const part = (name: string) => parts.find(value => value.type === name)?.value || '';
-  return `${part('year')}-${part('month')}-${part('day')}T${part('hour')}:${part('minute')}`;
-}
-
-const control = 'w-full rounded-lg border border-background-300 bg-white px-3 py-2 text-sm';
+import { naiveLocalFromUtc as localTime, TeamsPeopleFields, TeamsMeetingOptionFields,
+  type TeamsCalendarForm } from './createCalendarForm';
+import { EntraPeopleInput } from './EntraPeopleInput';
+import { FormField } from '../shared/entities/ui';
 
 /** Reads the organiser's original calendar before exposing any imported edit. */
 export function ImportedMeetingEditor({ liveSessionId, disabled, onUpdated, onEditingChange }: {
@@ -113,9 +108,21 @@ export function ImportedMeetingEditor({ liveSessionId, disabled, onUpdated, onEd
   });
   const locked = disabled || busy || uncertain || review?.status === 'ready';
   const editable = data?.status === 'editable';
-  const field = (key: string, value: string) => setForm(current => ({ ...current, [key]: value }));
+  // Reuse the existing calendar editor's fields and choices from before the
+  // imported-calendar restriction, rather than maintaining another form UI.
+  const calendarForm = { attendees: form.attendees || '', presenters: form.presenters || '', coOrganizers: form.coOrganizers || '',
+    recording: form.recording || 'none', lobbyBypass: form.lobby === 'organizationExcludingGuests' ? 'organization-excluding-guests' : form.lobby || '',
+    spokenLanguage: form.language || '' };
+  const patch = (values: Partial<TeamsCalendarForm>) => setForm(current => ({ ...current,
+    ...('attendees' in values ? { attendees: values.attendees! } : {}),
+    ...('presenters' in values ? { presenters: values.presenters! } : {}),
+    ...('coOrganizers' in values ? { coOrganizers: values.coOrganizers! } : {}),
+    ...('recording' in values ? { recording: values.recording! } : {}),
+    ...('lobbyBypass' in values ? { lobby: values.lobbyBypass === 'organization-excluding-guests' ? 'organizationExcludingGuests' : values.lobbyBypass! } : {}),
+    ...('spokenLanguage' in values ? { language: values.spokenLanguage! } : {}),
+  }));
   return <section aria-label="Edit original Teams meeting" className="space-y-3 rounded-xl border border-background-200 p-4">
-    <h3 className="text-sm font-bold text-foreground-800">Edit original Teams meeting</h3>
+    <h3 className="text-sm font-bold text-foreground-800">Invitations and meeting settings</h3>
     <p className="text-xs text-foreground-600">Update the verified original meeting while keeping its join link. Historical sessions, recordings and attendance are preserved.</p>
     {message && <p role="status" className="text-xs text-foreground-700">{message}</p>}
     {error && <p role="alert" className="text-xs text-red-700">{error}</p>}
@@ -128,24 +135,12 @@ export function ImportedMeetingEditor({ liveSessionId, disabled, onUpdated, onEd
     {data?.connectionRequired && <p className="text-xs text-amber-800">Connect the original organiser’s calendar using the calendar review below, then refresh this editor.</p>}
     {editable && <fieldset disabled={locked} className="space-y-3 disabled:opacity-70">
       <p className="break-words text-xs"><strong>Original organiser:</strong> {data.organizer}</p>
-      {(['attendees', 'presenters', 'coOrganizers'] as const).map(key => (key === 'attendees' || data.rolesEditable) && <label key={key} className="block text-xs font-semibold">
-        {key === 'attendees' ? 'Calendar invitees' : key === 'presenters' ? 'Presenters' : 'Co-organisers'}
-        <textarea className={`${control} mt-1`} rows={3} value={form[key] || ''} onChange={event => field(key, event.target.value)} />
-        <span className="font-normal text-foreground-500">Separate email addresses with commas or new lines.</span>
-      </label>)}
-      {data.options ? <div className="grid gap-3 sm:grid-cols-3">
-        <label className="text-xs font-semibold">Recording<select className={control} value={form.recording} onChange={event => field('recording', event.target.value)}>
-          <option value="none">Do not start automatically</option><option value="record">Record automatically</option><option value="record-transcribe">Record and transcribe</option>
-        </select></label>
-        <label className="text-xs font-semibold">Lobby<select className={control} value={form.lobby} onChange={event => field('lobby', event.target.value)}>
-          {!['invited', 'organization', 'organizationExcludingGuests', 'everyone', 'organizer'].includes(form.lobby) && <option value={form.lobby}>Keep existing setting</option>}
-          <option value="invited">Invited people</option><option value="organization">Organisation</option><option value="organizationExcludingGuests">Organisation, excluding guests</option><option value="everyone">Everyone</option><option value="organizer">Organisers only</option>
-        </select></label>
-        <label className="text-xs font-semibold">Spoken language<select className={control} value={form.language} onChange={event => field('language', event.target.value)}>
-          {!['en-GB', 'en-US', 'ar-EG', 'fr-FR'].includes(form.language) && <option value={form.language}>Keep existing language</option>}
-          <option value="en-GB">English (UK)</option><option value="en-US">English (US)</option><option value="ar-EG">Arabic (Egypt)</option><option value="fr-FR">French</option>
-        </select></label>
-      </div> : <p className="text-xs text-amber-800">Online meeting settings could not be verified for editing. Calendar invitees can still be updated.</p>}
+      <div className="grid gap-4 sm:grid-cols-2">
+        {data.options && <TeamsMeetingOptionFields form={calendarForm} patch={patch} />}
+        {data.rolesEditable ? <TeamsPeopleFields form={calendarForm} patch={patch} />
+          : <FormField label="Attendees"><EntraPeopleInput label="Attendees" includeGuests value={calendarForm.attendees} onChange={attendees => patch({ attendees })} /></FormField>}
+      </div>
+      {!data.options && <p className="text-xs text-amber-800">Online meeting settings could not be verified for editing. Calendar invitees can still be updated.</p>}
       <details><summary className="cursor-pointer text-xs font-bold">Edit future session times ({data.timeZone})</summary>
         <p className="my-2 text-xs">Historical or attended sessions cannot be moved. Future moves must keep the session order and avoid selected holidays.</p>
         <div className="space-y-2">{data.sessions?.map(session => <label key={session.sessionNumber} className="flex flex-wrap items-center gap-2 text-xs">
