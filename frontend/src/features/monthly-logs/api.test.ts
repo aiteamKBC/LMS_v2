@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readLearnerJson } from '@/api/learnerRead';
 import { clearCoachViewAs, setCoachViewAs } from '@/lib/coachViewAs';
-import { completeLogMonth, getLogContent, getLogMonth, getLogSummary, signLogMonth } from './api';
+import { completeLogMonth, correctLogManualTime, getLogContent, getLogMonth, getLogSummary, signLogMonth } from './api';
+import { invalidateLearnerDetailCache } from '@/api/learnerDetail';
 
 vi.mock('@/api/learnerRead', () => ({ readLearnerJson: vi.fn(), invalidateLearnerReads: vi.fn() }));
+vi.mock('@/api/learnerDetail', () => ({ invalidateLearnerDetailCache: vi.fn() }));
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -11,6 +13,26 @@ beforeEach(() => {
   vi.mocked(readLearnerJson).mockResolvedValue({ parts: [] });
 });
 afterEach(() => { clearCoachViewAs(); vi.unstubAllGlobals(); window.history.pushState({}, '', '/'); });
+
+it('corrects a scoped manual entry with CSRF and invalidates only that learner after success', async () => {
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    correction: { learner_kind: 'apprenticeship', learner_id: '7' }, detail: { month: '2026-10' },
+  }), { status: 200 }));
+  vi.stubGlobal('fetch', fetch);
+  const input = { seconds: 1800, revision: 'original-revision', reason: 'Hours entered instead of minutes' };
+  await correctLogManualTime('7', '2026-10', 44, input, 'csrf-value', 'learner');
+  expect(fetch).toHaveBeenCalledWith('/learner_api/monthly-logs/7/2026-10/manual-time/44/?perspective=learner', expect.objectContaining({
+    method: 'POST', credentials: 'include', body: JSON.stringify(input), headers: expect.objectContaining({ 'X-CSRFToken': 'csrf-value' }),
+  }));
+  expect(invalidateLearnerDetailCache).toHaveBeenCalledWith('apprenticeship', '7');
+});
+
+it('keeps a failed correction visible without invalidating caches or fabricating success', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'This monthly log is signed.' }), { status: 409 })));
+  await expect(correctLogManualTime('7', '2026-10', 44,
+    { seconds: 1800, revision: 'original', reason: 'Correct units' }, 'csrf-value', 'learner')).rejects.toThrow('This monthly log is signed.');
+  expect(invalidateLearnerDetailCache).not.toHaveBeenCalled();
+});
 
 describe('monthly log workspace scope', () => {
   it('does not carry a previous coach selection into any learner record request', async () => {

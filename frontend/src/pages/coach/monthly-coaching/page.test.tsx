@@ -7,7 +7,8 @@ import CoachMonthlyCoaching from './page';
 import { importedBookingDefinition, installDialogTestSupport, scheduledImportedBooking } from '../shared/__tests__/importedBookingFixtures';
 import CoachMeetingDetail from '../meeting-detail/page';
 
-const { fetchEvents, scheduleEvent, savePptx, openReview, fetchForm, book, reschedule, adopt, coach, start } = vi.hoisted(() => ({
+const { fetchEvents, scheduleEvent, savePptx, openReview, fetchForm, book, reschedule, adopt, coach, start, fetchSlots } = vi.hoisted(() => ({
+  fetchSlots: vi.fn(),
   start: vi.fn(),
   fetchForm: vi.fn(), book: vi.fn(), reschedule: vi.fn(), adopt: vi.fn(),
   fetchEvents: vi.fn(),
@@ -38,6 +39,7 @@ vi.mock('../progress-reviews/components/ProgressReviewPptxModal', () => ({
 vi.mock('@/api/reviewInstances', () => ({ openReviewInstanceForEvent: openReview,
   startMigratedReview: start,
   adoptMigratedReviewBooking: adopt,
+  fetchCoachReviewSlots: fetchSlots,
   fetchReviewInstanceForm: fetchForm, bookMigratedReview: book, rescheduleMigratedReview: reschedule, initializeMigratedReview: vi.fn(),
 }));
 
@@ -79,6 +81,10 @@ function mount(path = '/coach/monthly-coaching') {
 }
 
 const statusFilters = () => within(screen.getByRole('navigation', { name: 'Filter coaching meetings by status' }));
+async function selectBookingTime(value = '09:00') {
+  await screen.findByRole('option', { name: value });
+  fireEvent.change(screen.getByLabelText('Time'), { target: { value } });
+}
 function rowMenu(learner: string) {
   fireEvent.click(screen.getByRole('button', { name: 'More actions for ' + learner }));
   return within(screen.getByRole('menu', { name: 'Actions for ' + learner }));
@@ -87,6 +93,7 @@ const visibleLearners = () => Array.from(document.querySelectorAll('.ui-action-r
   .map(row => row.textContent);
 
 beforeEach(() => {
+  fetchSlots.mockReset().mockResolvedValue(['09:00', '10:00', '14:30', '15:00']);
   start.mockReset();
   adopt.mockReset();
   installDialogTestSupport();
@@ -137,7 +144,7 @@ describe('restored monthly coaching list', () => {
     const save = await screen.findByRole('button', { name: 'Save new time' });
     expect(screen.getByRole('dialog')).toBeVisible();
     expect(adopt).toHaveBeenCalledOnce();
-    fireEvent.change(screen.getByLabelText('Time'), { target: { value: '14:30' } });
+    await selectBookingTime('14:30');
     fireEvent.click(save);
     await screen.findByText('Review rescheduled.');
     expect(reschedule).toHaveBeenCalledWith('imported-review:31', expect.objectContaining({ scheduledTime: '14:30' }), scheduled.booking);
@@ -320,6 +327,7 @@ describe('restored monthly coaching list', () => {
     mount();
     await screen.findByText('Imported booking');
     fireEvent.click(rowMenu('Imported booking').getByRole('menuitem', { name: 'Reschedule' }));
+    await selectBookingTime('10:00');
     fireEvent.click(await screen.findByRole('button', { name: 'Save new time' }));
     expect(await screen.findByText('Review rescheduled.')).toBeVisible();
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/monthly-coaching');
@@ -338,6 +346,7 @@ describe('restored monthly coaching list', () => {
     await screen.findByText('Imported learner');
     fireEvent.click(rowMenu('Imported learner').getByRole('menuitem', { name: 'Schedule' }));
     expect(await screen.findByRole('dialog', { name: 'Schedule monthly coaching meeting' })).toBeVisible();
+    await selectBookingTime();
     fireEvent.click(await screen.findByRole('button', { name: 'Confirm booking' }));
     await screen.findByText(/Microsoft calendar sync is not yet confirmed/);
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -386,6 +395,24 @@ describe('restored monthly coaching list', () => {
     fireEvent.click(row.getByRole('button', { name: 'View form' }));
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A21');
     expect(screen.getByTestId('route')).not.toHaveTextContent('/coach/learner-case-file');
+  });
+
+  it.each(['completed', 'in-progress', 'awaiting-signature'] as const)(
+  'opens a saved LMS MCM form when its current status is %s and Aptem is completed', async status => {
+    fetchEvents.mockResolvedValue({ events: [meeting(61, {
+      id: 'imported-review:61', eventKey: 'imported-review:61', learner: 'Saved LMS MCM',
+      reviewSource: 'aptem', aptemReviewId: '61', importedReviewType: 'Monthly Coaching Meeting',
+      reviewTemplateId: null, reviewInstanceId: null, hasReviewForm: true,
+      sourceStatus: 'completed', status, scheduledDate: '2026-09-10',
+      reviewCompletedAt: status === 'completed' ? '2026-09-10T10:00:00Z' : null,
+    })] });
+    mount('/coach/monthly-coaching?filter=all');
+    const row = within((await screen.findByText('Saved LMS MCM')).closest('tr')!);
+    expect(row.getByText({ completed: 'Completed', 'in-progress': 'In Progress',
+      'awaiting-signature': 'Awaiting Signature' }[status])).toBeVisible();
+    fireEvent.click(row.getByRole('button', { name: 'View form' }));
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A61');
+    expect(openReview).not.toHaveBeenCalled();
   });
 
   it('opens Curriculum questions for a non-terminal imported Aptem meeting', async () => {

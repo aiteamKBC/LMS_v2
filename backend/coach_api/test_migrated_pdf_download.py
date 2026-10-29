@@ -200,7 +200,10 @@ class MigratedLazyPdfTests(TestCase):
             cursor.execute.side_effect = None
             cursor.fetchone.return_value = ("Completed", AT)
             with patch.object(endpoints, "authenticate_request", return_value=SimpleNamespace(role="learner", subject_id=71)):
-                self.assertEqual(endpoints.migrated_review_party_pdf(RequestFactory().get("/"), overlay.event_key).status_code, 404)
+                # A completed LMS document remains readable after source completion;
+                # this exception does not authorize participant mutations.
+                self.assertEqual(endpoints.migrated_review_party_pdf(RequestFactory().get("/"), overlay.event_key).status_code, 200)
+                self.assertIsNone(endpoints._party_overlay(overlay.event_key, SimpleNamespace(role="learner", subject_id=71)))
             self.assertEqual(render.call_count, 1)
 
     def test_anonymous_and_unrelated_roles_cannot_reach_coach_pdf_preparation(self):

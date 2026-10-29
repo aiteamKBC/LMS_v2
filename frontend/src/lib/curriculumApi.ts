@@ -3745,7 +3745,7 @@ async function importedCalendarPost<T>(liveSessionId: string, action: string, bo
     });
     const data = await response.json();
     if (!response.ok) throw new CurriculumApiError(data?.error || data?.message || 'The calendar request could not be completed.', response.status, path, data);
-    if (action === 'confirm' || action === 'status') {
+    if (action === 'confirm' || action === 'status' || action === 'edit-confirm' || action === 'edit-status') {
       mutationEpoch += 1;
       clearCurriculumGetCache();
     }
@@ -3778,6 +3778,50 @@ export function confirmImportedCalendarUpdate(liveSessionId: string, previewToke
 /** Recover a result by reading Microsoft; never repeats the calendar update. */
 export function checkImportedCalendarUpdate(liveSessionId: string, operationId?: string) {
   return importedCalendarPost<ImportedCalendarUpdateResult>(liveSessionId, 'status', { operationId });
+}
+
+export interface ImportedMeetingEditor {
+  status: 'editable' | 'blocked' | 'verification_pending';
+  message: string;
+  sourceToken?: string;
+  operationId?: string;
+  organizer?: string;
+  joinUrl?: string;
+  timeZone?: string;
+  attendees?: string[];
+  presenters?: string[];
+  coOrganizers?: string[];
+  rolesEditable?: boolean;
+  options?: { recordAutomatically?: boolean; allowTranscription?: boolean;
+    lobbyBypassSettings?: { scope?: string }; meetingSpokenLanguageTag?: string } | null;
+  sessions?: { sessionNumber: number; start: string; end: string; editable: boolean }[];
+  connectionRequired?: boolean;
+}
+
+export interface ImportedMeetingEdits {
+  attendees?: string[];
+  presenters?: string[];
+  coOrganizers?: string[];
+  recording?: string;
+  lobby?: string;
+  language?: string;
+  sessions?: { sessionNumber: number; start: string; durationMinutes: number }[];
+}
+
+export function readImportedMeetingEditor(liveSessionId: string) {
+  return importedCalendarPost<ImportedMeetingEditor>(liveSessionId, 'edit-read', {});
+}
+
+export function previewImportedMeetingEdit(liveSessionId: string, sourceToken: string, changes: ImportedMeetingEdits, notify: boolean) {
+  return importedCalendarPost<ImportedCalendarPreview>(liveSessionId, 'edit-preview', { sourceToken, changes, notify });
+}
+
+export function confirmImportedMeetingEdit(liveSessionId: string, previewToken: string) {
+  return importedCalendarPost<ImportedCalendarUpdateResult>(liveSessionId, 'edit-confirm', { previewToken, acknowledge: true }, 120000);
+}
+
+export function checkImportedMeetingEdit(liveSessionId: string, operationId?: string) {
+  return importedCalendarPost<ImportedCalendarUpdateResult>(liveSessionId, 'edit-status', { operationId });
 }
 
 export function fetchCurriculumTeamsMeetingSummaries(

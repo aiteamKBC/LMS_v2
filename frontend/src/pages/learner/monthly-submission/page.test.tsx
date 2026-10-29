@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import type { LearnerComponentEntry, LearnerDetail } from '@/api/learnerDetail';
 import type { ExtraActivity } from '@/api/extraActivities';
 import type { SubmissionAttempt } from '@/api/assignmentAttempts';
@@ -52,6 +52,14 @@ function mockRequests(options: { failed?: 'dates' | 'statuses' | 'contract' | 'h
 }
 function mount(search = '?month=2026-09') {
   return render(<MemoryRouter initialEntries={['/learner/monthly-submission' + search]}><MonthlySubmissionPage /></MemoryRouter>);
+}
+
+function SelectionAddress() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  return <><output aria-label="Submission address">{location.search}</output>
+    <button type="button" onClick={() => navigate(-1)}>Previous selection</button>
+    <button type="button" onClick={() => navigate(1)}>Next selection</button></>;
 }
 
 beforeEach(() => {
@@ -257,6 +265,9 @@ it('starts on the current UK month even when its assignments have not been sched
 });
 
 it('keeps undated work available through the month chooser', async () => {
+  // This scenario's default month is September; it must not depend on today's date.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-09-15T12:00:00Z'));
   vi.mocked(useLearnerDetailParam).mockReturnValue({ real: { ...real, components: [component('A4', { component: 'Undated assignment' })] },
     loading: false, loadError: null, isRealMode: true, refresh: vi.fn() });
   mount('');
@@ -502,6 +513,41 @@ it('remembers the selected assignment when returning without query parameters', 
   mount('');
   expect(await screen.findByText('Evaluate the analytics tools.')).toBeVisible();
   expect(screen.getByRole('button', { name: /Digital analytics/ })).toHaveAttribute('aria-pressed', 'true');
+});
+
+it.each(['commercial', 'apprenticeship'] as const)('preserves an explicit %s choice while extra activities are still arriving', async kind => {
+  vi.mocked(useResolvedLearner).mockReturnValue({ kind, id: '125' });
+  const normalReads = mockRequests();
+  let finishExtras!: (response: unknown) => void;
+  const pendingExtras = new Promise(resolve => { finishExtras = resolve; });
+  vi.stubGlobal('fetch', vi.fn((url: string) => url.includes('/reflection/extra-activities/') ? pendingExtras : normalReads(url)));
+  const first = render(<MemoryRouter initialEntries={['/learner/monthly-submission?month=2026-09']}>
+    <MonthlySubmissionPage /><SelectionAddress />
+  </MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: /Digital analytics/ }));
+  expect(await screen.findByText('Evaluate the analytics tools.')).toBeVisible();
+  await act(async () => { finishExtras({ ok: true, json: async () => ({ activities: [uploadedExtra] }) }); });
+  expect(screen.getByLabelText('Submission address')).toHaveTextContent('assignment=A2');
+  expect(screen.getByRole('button', { name: /Digital analytics/ })).toHaveAttribute('aria-pressed', 'true');
+  expect(JSON.parse(sessionStorage.getItem(`monthly-assignment-selection:${kind}:125`)!)).toEqual({ month: '2026-09', assignment: 'A2' });
+  expect(sessionStorage.getItem(`monthly-assignment-selection:${kind}:999`)).toBeNull();
+  first.unmount();
+  mount('');
+  expect(await screen.findByText('Evaluate the analytics tools.')).toBeVisible();
+});
+
+it('does not navigate just to select a default and respects browser history for explicit choices', async () => {
+  render(<MemoryRouter initialEntries={[
+    '/learner/monthly-submission?month=2026-09',
+    '/learner/monthly-submission?month=2026-09&assignment=A2',
+  ]} initialIndex={0}><MonthlySubmissionPage /><SelectionAddress /></MemoryRouter>);
+  expect(await screen.findByText('Explain how data informs your marketing decisions.')).toBeVisible();
+  expect(screen.getByLabelText('Submission address')).toHaveTextContent(/^\?month=2026-09$/);
+  fireEvent.click(screen.getByRole('button', { name: 'Next selection' }));
+  expect(await screen.findByText('Evaluate the analytics tools.')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Previous selection' }));
+  expect(await screen.findByText('Explain how data informs your marketing decisions.')).toBeVisible();
+  expect(screen.getByLabelText('Submission address')).toHaveTextContent(/^\?month=2026-09$/);
 });
 
 it('honours explicit links over saved selection and ignores another learner selection', async () => {

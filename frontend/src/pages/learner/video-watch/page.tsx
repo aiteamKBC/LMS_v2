@@ -156,6 +156,8 @@ function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange:
     { key: 'hours', label: 'Hours', ariaLabel: 'Hours spent' },
     { key: 'minutes', label: 'Minutes', ariaLabel: 'Minutes spent' },
   ];
+  const helpId = useId();
+  const [selectedHours, selectedMinutes, selectedRemainder] = formatClock(initialSeconds ?? 0).split(':').map(Number);
 
   return (
     <div
@@ -173,6 +175,7 @@ function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange:
       <div className={manualTimeStyles.fields}>
         {fields.map((field) => (
           <label key={field.key} className={manualTimeStyles.field}>
+            <span className={manualTimeStyles.label}>{field.label}</span>
             <input
               type="text"
               inputMode="numeric"
@@ -187,14 +190,18 @@ function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange:
                   onChange(null);
                 }
               }}
-              placeholder="00"
+              placeholder={field.key === 'hours' ? '0' : '30'}
               aria-label={field.ariaLabel}
+              aria-describedby={helpId}
               className={manualTimeStyles.input}
             />
-            <span className={manualTimeStyles.label}>{field.label}</span>
           </label>
         ))}
       </div>
+      <p id={helpId} className={manualTimeStyles.hint}>For 30 minutes: enter 0 in Hours and 30 in Minutes.</p>
+      <p className={manualTimeStyles.summary} aria-live="polite" aria-atomic="true">
+        {initialSeconds !== null && `Selected time: ${selectedHours} ${selectedHours === 1 ? 'hour' : 'hours'} and ${selectedMinutes} ${selectedMinutes === 1 ? 'minute' : 'minutes'}${selectedRemainder > 0 ? ` and ${selectedRemainder} ${selectedRemainder === 1 ? 'second' : 'seconds'}` : ''}.`}
+      </p>
     </div>
   );
 }
@@ -230,7 +237,7 @@ function nextActivityRoute(detail: LearnerDetail | null, currentComponentId: str
 export default function ComponentViewPage() {
   const { kind, id, componentId } = useParams<{ kind: string; id: string; componentId: string }>();
   const timerStorageKey = activityTimerStorageKey(kind, id, componentId);
-  const [readyContent, setReadyContent] = useState<string | null>(null);
+  const [readyContent, setReadyContent] = useState<{ key: string } | null>(null);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   useEffect(() => { rememberLearner(kind, id); }, [kind, id]);
@@ -356,8 +363,14 @@ export default function ComponentViewPage() {
   const component = ctx?.component ?? null;
   const recordedEvent = Boolean(component?.recordingSeriesId && component.recordingSessionNumber && component.recordingDate);
   const contentReadyKey = `${timerStorageKey}:${component?.resourceUrl || ''}`;
-  const onContentReady = useCallback(() => setReadyContent(contentReadyKey), [contentReadyKey]);
-  useEffect(() => () => setReadyContent(null), [contentReadyKey]);
+  // A cached preview can load before passive cleanup runs. Give each visit a
+  // fresh identity instead of clearing an already received readiness event.
+  const previewInstance = useMemo(() => ({ key: contentReadyKey }), [contentReadyKey]);
+  const currentPreview = useRef(previewInstance);
+  currentPreview.current = previewInstance;
+  const onContentReady = useCallback(() => {
+    if (currentPreview.current === previewInstance) setReadyContent(previewInstance);
+  }, [previewInstance]);
   // Where this activity stands with the coach. Only meaningful for an activity
   // the author sent for validation: everything else is finished when the
   // learner completes it. Without this the page said "Ready to complete" on
@@ -669,7 +682,7 @@ export default function ComponentViewPage() {
     const activeMedia = isVideo || isAudio;
     if (phase !== 'consume' || !recordingAttempt || !canUseComponent || expiredTiming) return;
     // Downloading/parsing a document is not study time; wait for its first page.
-    if (waitsForPreview && (loading || loadError || !openable || readyContent !== contentReadyKey)) return;
+    if (waitsForPreview && (loading || loadError || !openable || readyContent !== previewInstance)) return;
     if (activeMedia ? !playerPlaying : (!unsupported && !playerPlaying)) return;
     const clock = startActivityClock({
       onInterval: (start,end) => {
@@ -689,7 +702,7 @@ export default function ComponentViewPage() {
     });
     timerRef.current = clock;
     return () => clock.stop();
-  }, [phase, recordingAttempt, canUseComponent, unsupported, playerPlaying, isVideo, isAudio, timerStorageKey, contentKind, loading, loadError, openable, waitsForPreview, readyContent, contentReadyKey, expiredTiming]);
+  }, [phase, recordingAttempt, canUseComponent, unsupported, playerPlaying, isVideo, isAudio, timerStorageKey, contentKind, loading, loadError, openable, waitsForPreview, readyContent, previewInstance, expiredTiming]);
 
   const finishConsuming = () => {
     if (!recordingAttempt) return;
@@ -1493,7 +1506,7 @@ function CompletionConfirmPopup({
           >
             <span className="inline-flex items-center gap-2 text-sm font-semibold">
               <AppIcon className="ri-edit-2-line" />
-              Input
+              Input (hours / minutes)
             </span>
             <span className="font-mono text-sm font-bold tabular-nums">{inputLabel || '--:--:--'}</span>
           </button>

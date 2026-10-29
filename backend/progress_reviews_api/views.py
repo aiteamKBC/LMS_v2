@@ -252,6 +252,10 @@ def _generate_for_learner(
 
     if is_mcm:
         mcm.label_pack(pack)
+        if uploaded_pptx is None:
+            from learner_api.standard_mcm_presentation import FORMAT
+            pack.setdefault('review', {})['presentation_format'] = FORMAT
+            pack['manual_slides'] = []
 
     if not pack["learner"]["active_status"]:
         raise GenerationError(

@@ -103,11 +103,14 @@ describe('monthly assignment drafts', () => {
   it('shows the personal booking exemption while keeping presentation and validation', async () => {
     render(<AssignmentSubmissionWizard {...props} learnerId="pl.7.study.MOD-A" />);
     fireEvent.click(await screen.findByRole('button', { name: /Presentation/ }));
-    expect(screen.getByText('Step 8 of 8 — Presentation')).toBeVisible();
+    expect(screen.getByText('Step 7 of 8 — Presentation')).toBeVisible();
     expect(screen.getByText(/Coaching booking is not required for personal learning/)).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Recheck submission requirements' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Export PowerPoint (.pptx)' })).toBeVisible();
+    // Presentation is Step 7; the separate final quality-check step remains required.
+    fireEvent.click(screen.getByRole('button', { name: /Quality checks/ }));
+    expect(screen.getByText('Step 8 of 8 — Quality checks')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Run quality checks' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeDisabled();
     expect(fetchLearnerCalendarEvents).not.toHaveBeenCalled();
   });
 

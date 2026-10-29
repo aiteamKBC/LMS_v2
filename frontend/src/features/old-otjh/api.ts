@@ -40,6 +40,7 @@ export type Summary = {
   message?: string;
 };
 export type Activity = {
+  manual_time?: { progress_id: number; seconds: number; revision: string };
   id: number; category: string; title: string; activity_date: string | null;
   activity_time: string | null; planned_hours: string | number; actual_hours: string | number;
   actual_pending?: boolean;
@@ -141,6 +142,12 @@ const viewAsParams = (params: URLSearchParams) => {
 
 const query = (aptemId?: number, month?: string) => {
   const params = new URLSearchParams({ transition: '1' });
+  // Preserve the read-only perspective on every record request, including
+  // downloads and signatures. The server verifies the monitoring grant.
+  if (window.location.pathname.startsWith('/old-otjh/coach/')
+    && new URLSearchParams(window.location.search).get('workspace') === 'monitor') {
+    params.set('workspace', 'monitor');
+  }
   if (aptemId !== undefined) params.set('aptem_id', String(aptemId));
   if (month) params.set('month', month);
   return `?${viewAsParams(params)}`;

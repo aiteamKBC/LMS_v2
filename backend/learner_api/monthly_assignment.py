@@ -349,6 +349,11 @@ def export_presentation(request):
             if len(text(mapping(slide).get("body"))) > 12000:
                 raise ValueError(f"Slide {index}: split the content across more slides (maximum 12,000 characters per slide).")
         from .presentation_design import build_deck
+        from .compact_presentation import build_compact_deck, FORMAT
+        from .standard_mcm_presentation import build_standard_deck, FORMAT as STANDARD_FORMAT
+        presentation_format = mapping(payload.get("monthlyAssignment")).get("presentationFormat")
+        compact = presentation_format in (FORMAT, STANDARD_FORMAT)
+        renderer = build_standard_deck if presentation_format == STANDARD_FORMAT else build_compact_deck
         design = mapping(mapping(payload.get("monthlyAssignment")).get("presentationDesign"))
         if design and not design.get("evidenceId"):
             raise ValueError("This saved reference contains colours only. Upload the original PPTX again to use its full template, or choose the default KBC design.")
@@ -358,13 +363,13 @@ def export_presentation(request):
             try:
                 _, reference = load_owned_template(payload["learnerKind"], payload["learnerId"], design["evidenceId"])
                 extract_design(reference)
-                content = build_from_template(slides, reference, design)
+                content = renderer(slides, reference, design) if compact else build_from_template(slides, reference, design)
             except ValueError:
                 raise
             except Exception:
                 return JsonResponse({"error": "Could not load or apply the saved PowerPoint template. Try uploading it again."}, status=503)
         else:
-            content = build_deck(slides)
+            content = renderer(slides) if compact else build_deck(slides)
         response = HttpResponse(content, content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation")
         response["Content-Disposition"] = 'attachment; filename="monthly-assignment.pptx"'
         response["X-Presentation-Token"] = signing.dumps(presentation_fingerprint(payload), salt="monthly-assignment-pptx")

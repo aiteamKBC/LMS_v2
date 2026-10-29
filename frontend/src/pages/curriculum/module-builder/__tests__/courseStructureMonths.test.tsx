@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
 import type { ModuleCatalogueItem, ModuleWeek } from '../moduleAuthoringData';
+import ModuleBuilder from '../page';
 
 /**
  * The Course structure rail, read as a timetable.
@@ -97,6 +98,7 @@ vi.mock('@/pages/curriculum/shared/components/weekAuthoringLazy', () => ({
 vi.mock('../moduleAuthoringData', async importOriginal => ({
   ...(await importOriginal<typeof import('../moduleAuthoringData')>()),
   loadModuleStructure: (...args: unknown[]) => loadModuleStructure(...(args as [])),
+  loadModuleWeekSessionPlan: vi.fn(async () => null),
 }));
 
 const programmes = [
@@ -138,7 +140,6 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
 
 async function openBuilder() {
   window.history.replaceState({}, '', '/curriculum/module-builder?module=MOD-WEEKS');
-  const { default: ModuleBuilder } = await import('../page');
   return render(
     <MemoryRouter initialEntries={['/curriculum/module-builder?module=MOD-WEEKS']}>
       <ModuleBuilder />
@@ -153,7 +154,7 @@ describe('Course structure months', () => {
 
   it('heads each stretch of weeks with the month it runs in', async () => {
     await openBuilder();
-    await waitFor(() => expect(loadModuleStructure).toHaveBeenCalledWith('MOD-WEEKS'));
+    await waitFor(() => expect(loadModuleStructure).toHaveBeenCalledWith('MOD-WEEKS', { revalidate: true }));
 
     expect(await screen.findByText('December 2026')).toBeInTheDocument();
     expect(await screen.findByText('January 2027')).toBeInTheDocument();

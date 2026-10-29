@@ -443,8 +443,12 @@ def detail_data(learner, month, *, include_open=False, include_future=False, dem
         'start_date': profile.get('start_date'), 'planned_end_date': profile.get('end_date'),
         'first_evidence_date': None if consolidated else sources.first_evidence_date(learner['id'])}
     target = canonical.targets(learner['id']).get(month, 0 if journal_sources.enabled() else None) if consolidated else sources.monthly_target(learner, month)
-    return {**month_state(month, rows, signs, target, learner_id=learner['id']), 'rows': rows,
-            'profile': report_profile}
+    report = {**month_state(month, rows, signs, target, learner_id=learner['id']), 'rows': rows,
+              'profile': report_profile}
+    if consolidated:
+        from .manual_time_corrections import annotate
+        report = annotate(learner, report)
+    return report
 
 
 def _canonical_signature_scope(learner, owner):
@@ -575,6 +579,22 @@ def detail(request, learner_id, month):
 def content(request, learner_id, month, row_id):
     learner, _ = scope(request, learner_id)
     return content_response(learner, month, row_id)
+
+
+@endpoint('POST')
+def correct_manual_time(request, learner_id, month, progress_id):
+    learner, role = scope(request, learner_id)
+    valid_month(month)
+    try:
+        payload = json.loads(request.body)
+    except (TypeError, ValueError):
+        raise old.ServiceError('Supply a valid time correction.') from None
+    from .manual_time_corrections import correct
+    with transaction.atomic(using='enrolment'):
+        correction = correct(learner, role, request.login_account, month, progress_id, payload,
+                             authorize=lambda: scope(request, learner_id))
+        report = detail_data(learner, month, include_open=True)
+        return JsonResponse({'correction': correction, 'detail': report})
 
 
 def content_response(learner, month, row_id):

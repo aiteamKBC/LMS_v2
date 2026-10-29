@@ -316,6 +316,16 @@ export default function DeckEditor({
               )}
             </Section>
 
+            {fields.manual_slides && <Section title="My additional slides" hint="Generated slides stay short. Add your own slides when you need more detail; full accounts can go in speaker notes.">
+              {fields.manual_slides.map((slide, index) => <div key={index} className="grid gap-3 rounded-lg border border-foreground-200 p-3">
+                <Field label={`Additional slide ${index + 1} title`}><input className={inputClass} maxLength={100} value={slide.title} onChange={e => update('manual_slides', fields.manual_slides!.map((s, i) => i === index ? { ...s, title: e.target.value } : s))} /></Field>
+                <Field label={`Additional slide ${index + 1} content`}><textarea className={inputClass} rows={4} maxLength={600} value={slide.body} onChange={e => update('manual_slides', fields.manual_slides!.map((s, i) => i === index ? { ...s, body: e.target.value } : s))} /></Field>
+                <Field label={`Additional slide ${index + 1} speaker notes`}><textarea className={inputClass} rows={3} value={slide.notes || ''} onChange={e => update('manual_slides', fields.manual_slides!.map((s, i) => i === index ? { ...s, notes: e.target.value } : s))} /></Field>
+                <button type="button" className={smallButton} onClick={() => update('manual_slides', fields.manual_slides!.filter((_, i) => i !== index))}>Remove slide</button>
+              </div>)}
+              <button type="button" className={smallButton} disabled={fields.manual_slides.length >= 188} onClick={() => update('manual_slides', [...fields.manual_slides!, { title: '', body: '', notes: '' }])}>Add slide</button>
+            </Section>}
+
             {fields.manager_questions && (
               <Section title="Questions for the line manager" hint={`Up to ${MAX_QUESTIONS}.`}>
                 {fields.manager_questions.map((question, index) => (

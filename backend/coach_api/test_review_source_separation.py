@@ -266,7 +266,7 @@ class ReviewSourceSeparationTests(SimpleTestCase):
                          patch("learner_api.imported_review_calendar._sections_by_review", return_value={}), \
                          patch("coach_api.models.ImportedReviewInstance.objects.filter") as overlays:
                         db["default"].cursor.return_value.__enter__.return_value = cursor
-                        overlays.return_value.filter.return_value = []
+                        overlays.return_value.filter.return_value.annotate.return_value = []
                         coach, _ = views.fetch_aptem_review_events([profile(aptem_id)], {21: aptem_id},
                             owner_email="coach@example.invalid", owner_name="Synthetic coach")
                         learner = imported_events_for_learner(source(aptem_id), profile(aptem_id), aptem_id, [])
