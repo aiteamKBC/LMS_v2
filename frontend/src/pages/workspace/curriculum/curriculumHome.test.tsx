@@ -10,6 +10,8 @@ vi.mock('@/lib/curriculumApi', () => ({ fetchCurriculumJson: mocks.fetch }));
 vi.mock('@/hooks/useRefreshOnReturn', () => ({ useLiveRefresh: (refresh: () => void) => { mocks.refresh = refresh; } }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div> }));
 
+vi.mock('./LiveTotalsSection', () => ({ LiveTotalsSection: () => <div data-testid="live-totals" /> }));
+
 import CurriculumStudio from './page';
 
 const summary: CurriculumHomeSummary = {
@@ -33,11 +35,13 @@ describe('Curriculum Home summary', () => {
     mocks.fetch.mockResolvedValue(summary);
     showHome();
     expect(await screen.findByText('174 open actions')).toBeInTheDocument();
-    expect(screen.getByText('113 groups across all cohorts')).toBeInTheDocument();
+    expect(screen.getByTestId('live-totals')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Synthetic module/ })).toHaveAttribute('href', '/curriculum/module-builder?module=M%2F1');
     expect(screen.getByRole('link', { name: /Synthetic programme.*26 mapping gaps/ })).toHaveAttribute('href', '/curriculum/programmes/P%2F1');
     expect(screen.getByRole('link', { name: /Modules have no KSB mappings/ })).toHaveAttribute('href', '/curriculum/ksb-mapping');
     expect(screen.getByRole('link', { name: /Groups have no coach/ })).toHaveAttribute('href', '/curriculum/groups');
+    expect(screen.getByRole('link', { name: /Modules have no tutor/ })).toHaveAttribute('href', '/curriculum/module-builder');
+    expect(screen.getByRole('link', { name: /Set up cohorts/ })).toHaveAttribute('href', '/curriculum/cohorts');
     expect(screen.queryByText('Modules are still in draft')).not.toBeInTheDocument();
     expect(mocks.fetch).toHaveBeenCalledTimes(1);
     expect(mocks.fetch).toHaveBeenCalledWith('/curriculum/home-summary/', {
@@ -76,15 +80,15 @@ describe('Curriculum Home summary', () => {
 
   it('retains the last summary during refresh failures and updates after a remote write', async () => {
     mocks.fetch.mockResolvedValueOnce(summary).mockRejectedValueOnce(new Error('Offline')).mockResolvedValueOnce({
-      ...summary, stats: { ...summary.stats, groups: 114 },
+      ...summary, stats: { ...summary.stats, openIssues: 175 },
     });
     showHome();
-    await screen.findByText('113 groups across all cohorts');
+    await screen.findByText('174 open actions');
     await act(async () => { mocks.refresh?.(); });
-    expect(screen.getByText('113 groups across all cohorts')).toBeInTheDocument();
+    expect(screen.getByText('174 open actions')).toBeInTheDocument();
     expect(screen.getByText(/Curriculum data could not be refreshed: Offline/)).toBeInTheDocument();
     await act(async () => { mocks.refresh?.(); });
-    expect(screen.getByText('114 groups across all cohorts')).toBeInTheDocument();
+    expect(screen.getByText('175 open actions')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
   });
 

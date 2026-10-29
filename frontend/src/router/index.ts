@@ -4,7 +4,7 @@ import { RouteErrorBoundary } from "@/components/feature/RouteErrorBoundary";
 import { RouteLoadingSkeleton } from "@/components/feature/RouteLoadingSkeleton";
 import { useAuth } from "@/hooks/useAuth";
 import routes from "./config";
-import { installLearnerRoutePreloading } from './preload';
+import { installCurriculumRoutePreloading, installLearnerRoutePreloading } from './preload';
 import { recordPageView } from '@/lib/activityTrail';
 import { installActivityCapture } from '@/lib/activityCapture';
 import { recordPerformanceNavigation } from '@/lib/performanceDiagnostics';
@@ -45,6 +45,7 @@ export function AppRoutes() {
   const { pathname } = location;
   const { auth } = useAuth();
   useEffect(() => installLearnerRoutePreloading(routes), []);
+  useEffect(() => installCurriculumRoutePreloading(routes), []);
 
   useEffect(() => {
     window.REACT_APP_NAVIGATE = navigate;

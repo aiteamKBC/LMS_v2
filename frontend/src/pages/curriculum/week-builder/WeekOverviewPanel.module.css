@@ -1,0 +1,41 @@
+.panel { min-width: 0; border: 1px solid #e2e3e9; border-radius: 8px; background: #fff; }
+.summary { container-type: inline-size; display: grid; gap: 12px; min-width: 0; padding: 12px 14px; border-bottom: 1px solid #e2e3e9; }
+.heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px; }
+.caption, :global(#curriculum-module-editor) .caption { margin: 0; color: #847b86; font-size: 9px; font-weight: 500; line-height: 1.5; letter-spacing: .12em; text-transform: uppercase; }
+.partCount { padding: 2px 10px; border: 1px solid #a7f3d0; border-radius: 20px; background: #ecfdf5; color: #047857; font-size: 11px; line-height: 16px; }
+.metrics { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; margin: 0; }
+.metric, .assuranceTile { --tile-border: #d9c4ff; --tile-background: #f8f5ff; --tile-color: #7546a1; border: 1px solid var(--tile-border); border-radius: 6px; background: var(--tile-background); color: var(--tile-color); }
+.metric[data-tone="mint"], .assuranceTile[data-tone="mint"] { --tile-border: #99ebc8; --tile-background: #ecfdf5; --tile-color: #09846c; }
+.metric[data-tone="amber"], .assuranceTile[data-tone="amber"] { --tile-border: #f8d995; --tile-background: #fffbf2; --tile-color: #a57b20; }
+.metric[data-tone="teal"], .assuranceTile[data-tone="teal"] { --tile-border: #bbdfe6; --tile-background: #f1f9fa; --tile-color: #527d86; }
+.assuranceTile[data-tone="aqua"] { --tile-border: #a4ecda; --tile-background: #f0fdfa; --tile-color: #538d89; }
+.metric { min-width: 0; padding: 9px 11px; }
+.metric dt { display: flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 500; line-height: 13px; letter-spacing: .08em; text-transform: uppercase; }
+.metric dt svg { width: 11px; height: 11px; }
+.metric dd { margin: 3px 0 0; color: #16333a; font-size: 16px; font-weight: 500; line-height: 20px; font-variant-numeric: tabular-nums; }
+.composition { display: grid; gap: 8px; min-width: 0; padding: 10px; border: 1px solid #e1e2e8; border-radius: 6px; background: #f5f5f8; }
+.compositionHeading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
+.typeList { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.typePill, .compositionBar > span { --type-color: #9772bc; --type-background: #faf5ff; }
+.typePill[data-type="live-session"], .compositionBar > [data-type="live-session"] { --type-color: #10b981; --type-background: #ecfdf5; }
+.typePill[data-type="video"], .compositionBar > [data-type="video"] { --type-color: #f43f70; --type-background: #fff1f5; }
+.typePill[data-type="reading"], .compositionBar > [data-type="reading"] { --type-color: #f59e0b; --type-background: #fffbeb; }
+.typePill[data-type="podcast"], .compositionBar > [data-type="podcast"] { --type-color: #f97316; --type-background: #fff7ed; }
+.typePill[data-type="powerpoint"], .compositionBar > [data-type="powerpoint"] { --type-color: #14b8a6; --type-background: #f0fdfa; }
+.typePill[data-type="quiz"], .compositionBar > [data-type="quiz"] { --type-color: #f43f5e; --type-background: #fff1f2; }
+.typePill[data-type="assignment"], .compositionBar > [data-type="assignment"] { --type-color: #84cc16; --type-background: #f7fee7; }
+.typePill { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; padding: 2px 6px; border: 1px solid color-mix(in srgb,var(--type-color),white 60%); border-radius: 20px; background: var(--type-background); color: color-mix(in srgb,var(--type-color),#263344 40%); font-size: 9px; line-height: 15px; }
+.typePill svg { width: 11px; height: 11px; flex-shrink: 0; color: var(--type-color); }
+.compositionBar { display: flex; height: 8px; overflow: hidden; border-radius: 20px; background: #e1e2e8; }
+.compositionBar > span { height: 100%; background: var(--type-color); }
+.emptyComposition { margin: 0; color: #817985; font-size: 11px; line-height: 18px; }
+.assurance { display: grid; align-content: start; gap: 6px; min-width: 0; }
+.assuranceTiles { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 6px; margin: 0; }
+.assuranceTile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 0; padding: 10px 4px 6px; text-align: center; }
+.assuranceTile > svg { width: 12px; height: 12px; }
+.assuranceTile dd { order: 1; margin: 2px 0 0; color: #16333a; font-size: 12px; line-height: 15px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.assuranceTile dt { order: 2; font-size: 8px; line-height: 12px; }
+@container (max-width: 420px) {
+  .metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .assuranceTiles { grid-template-columns: repeat(3,minmax(0,1fr)); }
+}

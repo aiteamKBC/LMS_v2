@@ -14,6 +14,7 @@ import { EntityEmptyState, InlineError, NamedActions, WorkspacePanel } from '@/p
 import { ReviewFormModal } from './ReviewForm';
 import { CloneReviewsModal } from './CloneReviewsModal';
 import { ReviewSchedulePanel } from './ReviewSchedule';
+import styles from './ReviewsTab.module.css';
 
 const RECURRENCE_UNIT_LABEL: Record<string, string> = { days: 'day', weeks: 'week', months: 'month' };
 
@@ -78,7 +79,8 @@ export function ReviewsTab({ programmeId, programmeName, defaultStartDate }: {
   const loading = reviews === null && !error;
 
   return (
-    <div className="space-y-5">
+    <div id="curriculum-programme-reviews" className={styles.root}>
+      <div className={styles.templatePanel}>
       <WorkspacePanel
         title="Reviews ID"
         description="Reusable review templates configured for this programme -- recurrence, eligibility, participants and the questions each review asks. Reviews here are templates only; nothing is sent to a learner yet."
@@ -122,40 +124,44 @@ export function ReviewsTab({ programmeId, programmeName, defaultStartDate }: {
         )}
 
         {!loading && !error && reviews && reviews.length > 0 && (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <div className={styles.grid}>
             {reviews.map(review => (
-              <div key={review.id} className="flex flex-col gap-3 rounded-xl border border-background-200 bg-background-50 p-4">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-[13px] font-bold text-foreground-950">{review.name}</p>
-                    <p className="mt-0.5 truncate text-[11px] text-foreground-400" title={review.id}>{review.id}</p>
+              <div key={review.id} className={styles.card}>
+                <div className={styles.cardHeader}>
+                  <span className={styles.reviewIcon}><AppIcon className="ri-file-list-3-line" aria-hidden="true" /></span>
+                  <div className={styles.identity}>
+                    <p className={styles.name}>{review.name}</p>
+                    <p className={styles.recordId} title={review.id}>{review.id}</p>
                   </div>
-                  <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
+                  <span className={`${styles.badge} shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
                     review.enabled ? 'border-green-200 bg-green-50 text-green-700' : 'border-background-300 bg-background-100 text-foreground-500'
                   }`}
                   >
                     {review.enabled ? 'Enabled' : 'Disabled'}
                   </span>
                 </div>
-                <div className="space-y-1 text-[12px] text-foreground-600">
-                  <p><AppIcon className="ri-repeat-line mr-1.5 text-foreground-400"></AppIcon>{recurrenceLabel(review)}</p>
-                  <p className="truncate" title={statusesLabel(review.applicableStatuses)}>
-                    <AppIcon className="ri-user-follow-line mr-1.5 text-foreground-400"></AppIcon>{statusesLabel(review.applicableStatuses)}
-                  </p>
-                  <p><AppIcon className="ri-list-check-2 mr-1.5 text-foreground-400"></AppIcon>{review.fieldCount} field{review.fieldCount === 1 ? '' : 's'}</p>
-                </div>
-                <div className="mt-auto flex justify-end">
-                  <NamedActions actions={[
-                    { icon: 'ri-edit-line', label: 'Edit', title: `Edit ${review.name}`, onClick: () => setFormTarget(review) },
-                    { icon: 'ri-delete-bin-line', label: 'Delete', title: `Delete ${review.name}`, onClick: () => handleDelete(review), disabled: busyReviewId === review.id, busy: busyReviewId === review.id },
-                  ]}
-                  />
+                <div className={styles.cardFooter}>
+                  <div className={styles.metadata}>
+                    <p><AppIcon className="ri-refresh-line" aria-hidden="true" /><span>{recurrenceLabel(review)}</span></p>
+                    <p title={statusesLabel(review.applicableStatuses)}>
+                      <AppIcon className="ri-user-follow-line" aria-hidden="true" /><span>{statusesLabel(review.applicableStatuses)}</span>
+                    </p>
+                    <p><AppIcon className="ri-list-check-2" aria-hidden="true" /><span>{review.fieldCount} field{review.fieldCount === 1 ? '' : 's'}</span></p>
+                  </div>
+                  <div className={styles.cardActions}>
+                    <NamedActions actions={[
+                      { icon: 'ri-edit-line', label: 'Edit', title: `Edit ${review.name}`, onClick: () => setFormTarget(review) },
+                      { icon: 'ri-delete-bin-line', label: 'Delete', title: `Delete ${review.name}`, onClick: () => handleDelete(review), disabled: busyReviewId === review.id, busy: busyReviewId === review.id },
+                    ]}
+                    />
+                  </div>
                 </div>
               </div>
             ))}
           </div>
         )}
       </WorkspacePanel>
+      </div>
 
       {!loading && !error && reviews && reviews.length > 0 && (
         <ReviewSchedulePanel programmeId={programmeId} />
