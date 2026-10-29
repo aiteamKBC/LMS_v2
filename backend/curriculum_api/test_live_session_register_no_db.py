@@ -38,7 +38,7 @@ class LiveSessionRegisterTests(unittest.TestCase):
 
         self.assertEqual(count, 1)
         sql, params = cursor.executemany.call_args.args
-        self.assertIn('ON CONFLICT (occurrence_id, learner_profile_id) DO UPDATE', sql)
+        self.assertIn('ON CONFLICT ON CONSTRAINT curriculum_live_learner_attendance_uniq DO UPDATE', sql)
         self.assertNotIn('DELETE', sql.upper())
         self.assertEqual(params[0][4], 'learner@example.test')
         self.assertEqual(params[0][6], 'absent')

@@ -30,6 +30,9 @@ def upsert_live_session_register(cursor, rows):
     params = [register_params(row) for row in rows]
     if not params:
         return 0
+    # The installed register key may also include module_catalogue_id for
+    # shared sessions. Use its stable constraint name so both schema versions
+    # can sync, without collapsing another module's attendance into this row.
     cursor.executemany(
         f'''INSERT INTO {REGISTER_TABLE} (
             occurrence_id, live_session_id, module_catalogue_id,
@@ -37,7 +40,7 @@ def upsert_live_session_register(cursor, rows):
             attendance_status, recovery_status, attended_seconds, attendance_report_id,
             first_join_at, last_leave_at, calculated_at
         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (occurrence_id, learner_profile_id) DO UPDATE SET
+        ON CONFLICT ON CONSTRAINT curriculum_live_learner_attendance_uniq DO UPDATE SET
             live_session_id = EXCLUDED.live_session_id,
             module_catalogue_id = EXCLUDED.module_catalogue_id,
             learner_email = EXCLUDED.learner_email,
