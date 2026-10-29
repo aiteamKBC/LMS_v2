@@ -20,6 +20,7 @@ import { reviewDateLabel } from './calendarTime';
 import { offScheduleRunSentence } from './offScheduleRuns';
 import { createPortal } from 'react-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { formatSystemTimestamp } from '@/lib/format';
 import { Modal } from '@/pages/users/components/Modal';
 import {
@@ -373,6 +374,8 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
   const [forwardError, setForwardError] = useState('');
   const [forwardNotice, setForwardNotice] = useState('');
   const [updateConfirmOpen, setUpdateConfirmOpen] = useState(false);
+  const invitationsSection = useRef<HTMLElement | null>(null);
+  const importedEditing = useRef({ dirty: false, busy: false });
   const onSecondTab = Boolean(secondTab) && activeTab === 'second';
   // Coming back from the additional-meeting tab: a week may have been booked or
   // cancelled there, which changes which calendar runs it.
@@ -449,7 +452,13 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
             /* The comparison table needs the width; the empty state does not,
                and a wide box around two sentences is what made this look bare. */
             size={selected.summary && teamsLoaded ? 'max-w-5xl' : 'max-w-3xl'}
-            onClose={requestCloseSelected}
+            onClose={() => {
+              if (importedEditing.current.busy) return;
+              if (!importedEditing.current.dirty) { requestCloseSelected(); return; }
+              void showCurriculumConfirm({ title: 'Discard unsaved meeting edits?',
+                text: 'Your changes to the original Teams meeting have not been saved.',
+                icon: 'warning', confirmButtonText: 'Discard edits', onConfirm: requestCloseSelected });
+            }}
             /* The footer drives the module's own calendar. The second tab has
                its own button inside it, so this is hidden rather than left
                there acting on a calendar the reader is not looking at. */
@@ -487,9 +496,13 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                   </p>
                 )}
             {externalCalendar ? (
-              <p className="text-[12px] font-semibold text-primary-800">Existing Teams links are protected. Manage the original meeting in Teams.</p>
+              <p className="text-[12px] font-semibold text-primary-800">Existing Teams links are protected. Use the original meeting editor above.</p>
             ) : selected.summary ? (
                   <div className="flex w-full flex-wrap items-center justify-end gap-2">
+                    <button type="button" onClick={() => invitationsSection.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-white px-3 text-[12px] font-bold text-primary-700">
+                      Edit people and settings
+                    </button>
                     <button type="button" onClick={() => openCalendarAction('reschedule')}
                       disabled={Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason) || detailLoading || detail?.series.id !== selected.summary.liveSessionId || !graphConfigured}
                       className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-colors hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-calendar-line text-sm"></AppIcon>Edit session dates</button>
@@ -675,6 +688,8 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                 calendar={externalCalendar}
                 row={selectedForDisplay || selected}
                 onReattach={() => void reattach(selected)}
+                onEditingChange={(dirty, busy) => { importedEditing.current = { dirty, busy }; }}
+                onUpdated={async () => { await loadTeamsState(); if (selected.summary) await loadDetail(selected.summary.liveSessionId); notifyChanged(selected.catalogueId); }}
                 busy={Boolean(busy)}
                 disabled={Boolean(blockedReason)}
               />
@@ -912,7 +927,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                 {/* Under the dates, the same fields the create form asks for,
                     filled with what the calendar holds. Update sends them with
                     the dates; the two buttons below send them alone. */}
-                <section aria-labelledby="teams-invitations-heading" className="space-y-4 rounded-xl border border-background-200 p-4">
+                <section ref={invitationsSection} aria-labelledby="teams-invitations-heading" className="space-y-4 rounded-xl border border-background-200 p-4">
                   <div>
                     <h3 id="teams-invitations-heading" className="text-[11px] font-bold uppercase tracking-wider text-foreground-400">Invitations and meeting settings</h3>
                     <p className="mt-1 text-[11px] text-foreground-500">

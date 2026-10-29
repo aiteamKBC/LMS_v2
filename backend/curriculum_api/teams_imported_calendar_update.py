@@ -584,6 +584,9 @@ def persist_verified(live_id, operation_id, events):
 def execute(live_id, operation_id, actor, access, *, send=False):
     _series, _rows, snapshot = load_calendar_state(live_id)
     operation = snapshot.get(KEY) or {}
+    if operation.get('kind') == 'meeting-edit':
+        from .teams_imported_meeting_edit import execute_edit
+        return execute_edit(live_id, operation_id, actor, access, send=send)
     if operation.get('id') != operation_id or operation.get('actor') != actor:
         raise Blocked('wrong_operation_owner', 'No pending calendar operation belongs to this account and series.')
     same_access(operation, access)
@@ -654,7 +657,19 @@ def imported_calendar_update(request, live_session_id, stage):
             if not (snapshot.get(KEY) or {}).get('id'):
                 return JsonResponse({'status': 'blocked', 'code': 'no_operation', 'message': 'No calendar update was committed. Open a new review.'})
         access = access_for(request, live_session_id)
-        if stage == 'preview':
+        if stage in {'edit-read', 'edit-preview', 'edit-confirm', 'edit-status'}:
+            from .teams_imported_meeting_edit import read_edit, review_edit, confirm_edit
+            if stage == 'edit-read':
+                result = read_edit(live_session_id, actor, access)
+            elif stage == 'edit-preview':
+                result = review_edit(live_session_id, payload, actor, access)
+            elif stage == 'edit-confirm':
+                result = confirm_edit(live_session_id, payload, actor, access)
+            else:
+                _s, _r, snapshot = load_calendar_state(live_session_id)
+                wanted = text(payload.get('operationId')) or text((snapshot.get(KEY) or {}).get('id'))
+                result = execute(live_session_id, wanted, actor, access, send=False)
+        elif stage == 'preview':
             result = review(live_session_id, actor, access)
         elif stage == 'confirm':
             result = confirm(live_session_id, payload, actor, access)

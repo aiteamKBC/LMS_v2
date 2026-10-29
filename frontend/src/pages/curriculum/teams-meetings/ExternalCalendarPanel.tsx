@@ -1,16 +1,23 @@
 import { AppIcon } from '@/components/feature/AppIcon';
+import { useState } from 'react';
 import { formatDateLabel } from '../shared/entities/model';
 import type { ExternalCalendar } from './externalCalendar';
 import type { MeetingRow } from './useTeamsMeetingsWorkspace';
 import { ImportedParticipantsPanel } from './ImportedParticipantsPanel';
+import { ImportedMeetingEditor } from './ImportedMeetingEditor';
+import { ImportedCalendarUpdatePanel } from './ImportedCalendarUpdatePanel';
 
-export function ExternalCalendarPanel({ calendar, row, onReattach, busy, disabled }: {
+export function ExternalCalendarPanel({ calendar, row, onReattach, onUpdated, onEditingChange, busy, disabled }: {
   calendar: ExternalCalendar;
   row: MeetingRow;
   onReattach: () => void;
+  onUpdated: () => Promise<void>;
+  onEditingChange?: (dirty: boolean, busy: boolean) => void;
   busy: boolean;
   disabled: boolean;
 }) {
+  const [peopleRevision, setPeopleRevision] = useState(0);
+  const refreshed = async () => { await onUpdated(); setPeopleRevision(value => value + 1); };
   const savedStarts = calendar.canReattach ? row.summary?.occurrenceDates || [] : [];
   const matched = (start: string) => {
     const instant = Date.parse(start);
@@ -32,8 +39,8 @@ export function ExternalCalendarPanel({ calendar, row, onReattach, busy, disable
           so it cannot replace this link.
         </p>
         <p className="mt-2 text-[12px] leading-5 text-primary-900">
-          Add sessions or change dates, attendees and presenters directly in Teams using the original
-          meeting organiser&rsquo;s account.
+          Edit the original meeting below after verifying its organiser calendar. Existing meeting links
+          stay in place; creating a replacement meeting remains blocked.
         </p>
         <div className="mt-3 space-y-2">
           {calendar.joinUrls.map((link, index) => (
@@ -51,16 +58,22 @@ export function ExternalCalendarPanel({ calendar, row, onReattach, busy, disable
       </div>
 
       {calendar.canReattach && row.summary && (
-        <ImportedParticipantsPanel liveSessionId={row.summary.liveSessionId} savedOrganizer={row.summary.organizerEmail} />
+        <ImportedParticipantsPanel key={`${row.summary.liveSessionId}:${peopleRevision}`} liveSessionId={row.summary.liveSessionId} savedOrganizer={row.summary.organizerEmail} />
       )}
+      {calendar.canReattach && row.summary && <>
+        <ImportedMeetingEditor key={row.summary.liveSessionId} liveSessionId={row.summary.liveSessionId}
+          disabled={disabled || busy} onUpdated={refreshed} onEditingChange={onEditingChange} />
+        <ImportedCalendarUpdatePanel key={`calendar:${row.summary.liveSessionId}`} liveSessionId={row.summary.liveSessionId}
+          disabled={disabled || busy} onUpdated={refreshed} />
+      </>}
 
       <div className="rounded-xl border border-background-200 bg-background-50 p-4 text-[12px] leading-5 text-foreground-600">
         <p className="font-bold text-foreground-800">When a week is inserted</p>
         <p className="mt-1">
           Choose Module calendar to reuse the existing main link. The LMS matches each week to the saved
           Teams session on its planned date; moving weeks does not move the original Teams calendar.
-          A date without a matching session stays awaiting confirmation. The organiser must add any missing
-          session to the existing series in Teams. Additional meetings keep their own links and are excluded from this calendar.
+          A date without a matching session stays awaiting confirmation. Review the original series update
+          above to verify and add supported missing dates. Additional meetings keep their own links and are excluded from this calendar.
         </p>
       </div>
 
