@@ -927,11 +927,13 @@ class TeamsAttendanceSyncTests(SimpleTestCase):
              patch.object(teams_attendance_module, '_verified_occurrence_ids', return_value=[]), \
              patch.object(teams_attendance_module.transaction, 'atomic', side_effect=lambda **kwargs: nullcontext()), \
              patch.object(teams_attendance_module, 'upsert_live_session_register') as save, \
+             patch('engagement_api.feedback_delivery.reconcile_feedback_after_attendance_commit') as feedback, \
              patch.object(teams_attendance_module, '_award_attendance_points') as award:
             self.assertEqual(sync_verified_teams_attendance_reporting(module_refs=['SHARED']), 1)
         save.assert_called_once_with(cursor, rows)
         cursor.executemany.assert_not_called()  # Shared deliveries do not duplicate the legacy report.
         award.assert_called_once_with([])
+        feedback.assert_called_once_with(['O'], using='default')
         self.shared_rows.assert_called_once_with(database='default', module_refs=['SHARED'],
                                                  learner_ids=None, learner_emails=None, all_learners=False)
 

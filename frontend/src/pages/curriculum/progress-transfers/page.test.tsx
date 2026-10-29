@@ -229,7 +229,7 @@ describe('admin progress transfers', () => {
     expect(counts.getByText('Completed components').parentElement).toHaveTextContent('2');
     expect(counts.getByText('Remaining components').parentElement).toHaveTextContent('2');
     expect(counts.getByText('Progress after merge (preview): 50%')).toBeVisible();
-    expect(screen.getByRole('columnheader', { name: 'Old LMS progress' })).toBeVisible();
+    expect(dialog().getByText('40% saved progress')).toBeVisible();
     expect(screen.getByText(/their group membership does not change/)).toBeVisible();
     expect(screen.getByText('Old LMS course: 50')).toBeVisible();
     expect(screen.getByText('New LMS module: M1')).toBeVisible();
@@ -271,7 +271,7 @@ describe('admin progress transfers', () => {
     await waitFor(() => expect(api.approveTransferRequest).toHaveBeenCalledExactlyOnceWith('R1', 'csrf', {
       reviewToken: 'review', mappings: [{ moduleId: 'M1', sourceActivityRef: 'material:7', targetComponentId: 'MATCH' }],
     }));
-    expect(await screen.findByText(/Progress merged successfully/)).toBeVisible();
+    expect(await screen.findByText(/Transfer approved/)).toBeVisible();
     await waitFor(() => expect(api.getTransferRequests).toHaveBeenCalledTimes(2));
   });
 
@@ -382,12 +382,12 @@ describe('admin progress transfers', () => {
     vi.mocked(api.approveTransferRequest).mockReturnValue(new Promise(resolve => { finish = resolve; }));
     render(<MemoryRouter><TransferRequests /></MemoryRouter>);
     fireEvent.click(await screen.findByRole('button', { name: 'Review details' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve transfer' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Approve transfer' }));
-    expect(screen.queryByText(/Progress merged successfully/)).not.toBeInTheDocument();
+    await waitFor(() => expect(dialog().getByRole('button', { name: 'Approve transfer' })).toBeEnabled());
+    fireEvent.click(dialog().getByRole('button', { name: 'Approve transfer' }));
+    expect(screen.queryByText(/Transfer approved/)).not.toBeInTheDocument();
     finish(request);
-    expect(await screen.findByRole('alert')).toHaveTextContent('The merge was not confirmed');
-    expect(screen.queryByText(/Progress merged successfully/)).not.toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('The service did not confirm this request');
+    expect(screen.queryByText(/Transfer approved/)).not.toBeInTheDocument();
     expect(screen.getByRole('dialog')).toBeVisible();
   });
 

@@ -289,7 +289,7 @@ async function openTab(name: RegExp) {
 describe('Programme workspace', { timeout: 15000 }, () => {
   it('keeps timeline details and its editor on the chosen placement when two groups share a catalogue module', async () => {
     const api = await import('@/lib/curriculumApi');
-    const moduleForm = await import('@/pages/curriculum/shared/entities/moduleForm');
+    const moduleForm = await import('@/pages/curriculum/shared/entities/moduleForm.helpers');
     vi.clearAllMocks();
     const secondGroup = { ...groups[0], id: 'GROUP-2', name: 'Group B', coach: 'Coach Two' };
     const placements = [groups[0], secondGroup].map((group, index) => ({
