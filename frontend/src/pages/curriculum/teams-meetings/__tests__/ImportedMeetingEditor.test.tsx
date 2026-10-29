@@ -1,9 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRef } from 'react';
 import { readImportedMeetingEditor, previewImportedMeetingEdit, confirmImportedMeetingEdit, checkImportedMeetingEdit,
   type ImportedMeetingEditor as EditorData } from '@/lib/curriculumApi';
-import { ImportedMeetingEditor } from '../ImportedMeetingEditor';
+import { ImportedMeetingEditor, type ImportedMeetingEditorActions } from '../ImportedMeetingEditor';
 
 vi.mock('@/lib/curriculumApi', () => ({ readImportedMeetingEditor: vi.fn(), previewImportedMeetingEdit: vi.fn(),
   confirmImportedMeetingEdit: vi.fn(), checkImportedMeetingEdit: vi.fn(),
@@ -40,7 +41,50 @@ async function changeInvitee() {
   await userEvent.type(screen.getByRole('combobox', { name: 'Attendees' }), 'new@example.invalid{Enter}');
 }
 
+function openWithSharedUpdate(disabled = false) {
+  const updateRef = createRef<ImportedMeetingEditorActions>();
+  return render(<>
+    <button type="button" onClick={() => updateRef.current?.update()}>Update Teams calendar</button>
+    <ImportedMeetingEditor liveSessionId="LIVE" disabled={disabled} onUpdated={async () => undefined}
+      updateRef={updateRef} hideEntryButton />
+  </>);
+}
+
 describe('editing a verified imported meeting', () => {
+  it('uses the shared Update Teams button to read first and then review the edited original', async () => {
+    openWithSharedUpdate();
+    expect(screen.queryByRole('button', { name: 'Edit existing Teams meeting' })).not.toBeInTheDocument();
+    expect(readImportedMeetingEditor).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Update Teams calendar' }));
+    await screen.findByRole('combobox', { name: 'Attendees' });
+    expect(readImportedMeetingEditor).toHaveBeenCalledExactlyOnceWith('LIVE');
+    await changeInvitee();
+    await userEvent.click(screen.getByRole('button', { name: 'Update Teams calendar' }));
+    await screen.findByRole('button', { name: 'Confirm meeting edits' });
+    expect(readImportedMeetingEditor).toHaveBeenCalledOnce();
+    expect(previewImportedMeetingEdit).toHaveBeenCalledExactlyOnceWith('LIVE', 'verified-original', { attendees: ['new@example.invalid'] }, true);
+    expect(confirmImportedMeetingEdit).not.toHaveBeenCalled();
+  });
+
+  it('keeps the no-notification action after entering through the shared Update Teams button', async () => {
+    openWithSharedUpdate();
+    await userEvent.click(screen.getByRole('button', { name: 'Update Teams calendar' }));
+    await screen.findByRole('combobox', { name: 'Attendees' });
+    await changeInvitee();
+    await userEvent.click(screen.getByRole('button', { name: 'Save without notifying' }));
+    await screen.findByRole('button', { name: 'Confirm meeting edits' });
+    expect(previewImportedMeetingEdit).toHaveBeenCalledExactlyOnceWith('LIVE', 'verified-original', { attendees: ['new@example.invalid'] }, false);
+    expect(confirmImportedMeetingEdit).not.toHaveBeenCalled();
+  });
+
+  it('does not let the shared Update Teams button bypass unsaved-module blocking', async () => {
+    openWithSharedUpdate(true);
+    await userEvent.click(screen.getByRole('button', { name: 'Update Teams calendar' }));
+    expect(readImportedMeetingEditor).not.toHaveBeenCalled();
+    expect(previewImportedMeetingEdit).not.toHaveBeenCalled();
+    expect(confirmImportedMeetingEdit).not.toHaveBeenCalled();
+  });
+
   it('does not write or read Microsoft until asked to open the editor', async () => {
     open();
     expect(readImportedMeetingEditor).not.toHaveBeenCalled();

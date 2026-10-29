@@ -12,6 +12,7 @@ import { LeftoverSlotsPanel } from './LeftoverSlotsPanel';
 import { AttendeeComparisonPanel } from './AttendeeComparisonPanel';
 import { MeetingScopePanel } from './MeetingScopePanel';
 import { ExternalCalendarPanel } from './ExternalCalendarPanel';
+import type { ImportedMeetingEditorActions } from './ImportedMeetingEditor';
 import { pendingInvitations } from './attendeeComparison';
 import { emailList } from '../module-builder/EmailChipsInput.helpers';
 import { forwardScheduleEmail } from './forwardScheduleEmail';
@@ -368,6 +369,14 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
   const [forwardNotice, setForwardNotice] = useState('');
   const [updateConfirmOpen, setUpdateConfirmOpen] = useState(false);
   const importedEditing = useRef({ dirty: false, busy: false });
+  const importedEditor = useRef<ImportedMeetingEditorActions>(null);
+  const [importedUpdateBlocked, setImportedUpdateBlocked] = useState(false);
+  const [importedEditorBusy, setImportedEditorBusy] = useState(false);
+  const importedEditingChanged = useCallback((dirty: boolean, busy: boolean, updateBlocked = busy) => {
+    importedEditing.current = { dirty, busy };
+    setImportedUpdateBlocked(updateBlocked);
+    setImportedEditorBusy(busy);
+  }, []);
   const onSecondTab = Boolean(secondTab) && activeTab === 'second';
   // Coming back from the additional-meeting tab: a week may have been booked or
   // cancelled there, which changes which calendar runs it.
@@ -488,9 +497,15 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                   </p>
                 )}
             {externalCalendar ? (
-              <p className="text-[12px] font-semibold text-primary-800">{externalCalendar.originalSeriesId
-                ? 'Existing Teams links are protected. Use the original meeting editor above.'
-                : 'Existing Teams links are protected. Connect the original meeting before editing its calendar.'}</p>
+              <button type="button" onClick={() => importedEditor.current?.update()}
+                disabled={!externalCalendar.originalSeriesId || Boolean(blockedReason) || Boolean(busy) || importedUpdateBlocked}
+                title={externalCalendar.originalSeriesId
+                  ? 'Edit and update the original Teams meeting. Existing links are preserved.'
+                  : 'Connect the saved original meeting before its calendar can be updated.'}
+                className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-40">
+                <AppIcon className={importedEditorBusy ? 'ri-loader-4-line animate-spin text-sm' : 'ri-check-line text-sm'} />
+                Update Teams calendar
+              </button>
             ) : selected.summary ? (
                   <div className="flex w-full flex-wrap items-center justify-end gap-2">
                     <button type="button" onClick={() => openCalendarAction('reschedule')}
@@ -679,7 +694,9 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                 calendar={externalCalendar}
                 row={selectedForDisplay || selected}
                 onReattach={() => void reattach(selected)}
-                onEditingChange={(dirty, busy) => { importedEditing.current = { dirty, busy }; }}
+                onEditingChange={importedEditingChanged}
+                editorUpdateRef={importedEditor}
+                hideEditorEntry
                 onUpdated={async () => { await loadTeamsState(); if (selected.summary) await loadDetail(selected.summary.liveSessionId); notifyChanged(selected.catalogueId); }}
                 busy={Boolean(busy)}
                 disabled={Boolean(blockedReason)}
