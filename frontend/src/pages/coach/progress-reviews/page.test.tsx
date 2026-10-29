@@ -6,7 +6,8 @@ import type { CoachCalendarEvent } from '../shared/calendarEvents';
 import CoachProgressReviews from './page';
 import { importedBookingDefinition, installDialogTestSupport, personalSupportBooking, scheduledImportedBooking } from '../shared/__tests__/importedBookingFixtures';
 
-const { fetchEvents, openReview, scheduleEvent, fetchForm, book, reschedule, adopt, coach, start } = vi.hoisted(() => ({
+const { fetchEvents, openReview, scheduleEvent, fetchForm, book, reschedule, adopt, coach, start, fetchSlots } = vi.hoisted(() => ({
+  fetchSlots: vi.fn(),
   start: vi.fn(),
   fetchForm: vi.fn(), book: vi.fn(), reschedule: vi.fn(), adopt: vi.fn(),
   fetchEvents: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock('@/api/progressReviews', () => ({
 vi.mock('@/api/reviewInstances', () => ({ openReviewInstanceForEvent: openReview,
   startMigratedReview: start,
   adoptMigratedReviewBooking: adopt,
+  fetchCoachReviewSlots: fetchSlots,
   fetchReviewInstanceForm: fetchForm, bookMigratedReview: book, rescheduleMigratedReview: reschedule, initializeMigratedReview: vi.fn(),
 }));
 
@@ -55,6 +57,10 @@ function LocationOutput() {
   const location = useLocation();
   return <output data-testid="route">{location.pathname}{location.search}</output>;
 }
+async function selectBookingTime(value = '09:00') {
+  await screen.findByRole('option', { name: value });
+  fireEvent.change(screen.getByLabelText('Time'), { target: { value } });
+}
 
 it.each([false, true])('offers PSP booking from its Review row (scheduled=%s)', async scheduled => {
   fetchEvents.mockResolvedValue({ owner: { name: 'Coach' }, events: [review(31, {
@@ -67,6 +73,7 @@ it.each([false, true])('offers PSP booking from its Review row (scheduled=%s)', 
   mount('/coach/reviews');
   fireEvent.click(await screen.findByRole('button', { name: 'More actions for Learner 31' }));
   fireEvent.click(screen.getByRole('menuitem', { name: scheduled ? 'Reschedule' : 'Schedule' }));
+  await selectBookingTime();
   fireEvent.click(await screen.findByRole('button', { name: scheduled ? 'Save new time' : 'Confirm booking' }));
   expect(await screen.findByText(scheduled ? 'Review rescheduled.' : 'Review scheduled.')).toBeVisible();
   expect(scheduleEvent).not.toHaveBeenCalled();
@@ -82,6 +89,7 @@ it('includes an Aptem PSP summary in the page schedule picker', async () => {
   await screen.findByText('Learner 31');
   fireEvent.click(screen.getByRole('button', { name: 'Schedule review' }));
   fireEvent.click(screen.getByRole('button', { name: 'Continue to booking' }));
+  await selectBookingTime();
   expect(await screen.findByRole('button', { name: 'Confirm booking' })).toBeEnabled();
   expect(scheduleEvent).not.toHaveBeenCalled();
 });
@@ -99,6 +107,7 @@ function mount(initialPath = '/coach/progress-reviews') {
 }
 
 beforeEach(() => {
+  fetchSlots.mockReset().mockResolvedValue(['09:00', '10:00', '14:30', '15:00']);
   start.mockReset();
   adopt.mockReset();
   installDialogTestSupport();
@@ -146,7 +155,7 @@ describe('progress review list navigation and filters', () => {
     const save = await screen.findByRole('button', { name: 'Save new time' });
     expect(screen.getByRole('dialog')).toBeVisible();
     expect(adopt).toHaveBeenCalledOnce();
-    fireEvent.change(screen.getByLabelText('Time'), { target: { value: '14:30' } });
+    await selectBookingTime('14:30');
     fireEvent.click(save);
     await screen.findByText('Review rescheduled.');
     expect(reschedule).toHaveBeenCalledWith('imported-review:31', expect.objectContaining({ scheduledTime: '14:30' }), scheduled.booking);
@@ -390,6 +399,7 @@ describe('progress review list navigation and filters', () => {
     await screen.findByText('Imported booking');
     fireEvent.click(screen.getByRole('button', { name: 'More actions for Imported booking' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Reschedule' }));
+    await selectBookingTime('10:00');
     fireEvent.click(await screen.findByRole('button', { name: 'Save new time' }));
     expect(await screen.findByText('Review rescheduled.')).toBeVisible();
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/progress-reviews');
@@ -406,6 +416,7 @@ describe('progress review list navigation and filters', () => {
     await screen.findByText('Imported learner');
     fireEvent.click(screen.getByRole('button', { name: 'More actions for Imported learner' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Schedule' }));
+    await selectBookingTime();
     fireEvent.click(await screen.findByRole('button', { name: 'Confirm booking' }));
     await screen.findByText('Review scheduled.');
     expect(within(screen.getByText('Imported learner').closest('tr')!).getByText('Scheduled')).toBeVisible();
