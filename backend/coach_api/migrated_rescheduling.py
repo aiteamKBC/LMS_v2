@@ -40,6 +40,11 @@ def reschedule(request, instance_id):
             validator.error("scheduledDate", "Choose today or a future date.")
         if not isinstance(payload.get("expectedBooking"), dict):
             validator.error("expectedBooking", "Reload the existing booking before rescheduling.")
+        from .booking_hours import validate_review_time_precision
+        try:
+            validate_review_time_precision(payload.get("scheduledTime"))
+        except ValueError as exc:
+            validator.error("scheduledTime", str(exc))
         validator.check()
         expected = v.ObjectValidator(payload["expectedBooking"])
         previous_slot = (
@@ -62,11 +67,23 @@ def reschedule(request, instance_id):
                         if int(getattr(row, "id", 0) or 0) == preview_overlay.learner_id), None)
         if learner is None:
             return conflict("The learner is no longer assigned to this coach.")
-        if ((preview_record.scheduled_date, preview_record.scheduled_time, preview_record.duration_minutes)
-                != (scheduled_date, scheduled_time, duration)
-                and v.coach_learner_personal_calendar_conflicts(
-                    learner, scheduled_date, scheduled_time, duration, offset, exclude_record=preview_record)):
-            return conflict("This learner is busy at that time.")
+        desired_slot = (scheduled_date, scheduled_time, duration)
+        current_slot = (preview_record.scheduled_date, preview_record.scheduled_time,
+                        preview_record.duration_minutes)
+        same_persisted_slot = current_slot == desired_slot
+        if not same_persisted_slot:
+            from .booking_hours import validate_review_interval
+            try:
+                validate_review_interval(scheduled_date, scheduled_time, duration)
+            except ValueError as exc:
+                return conflict(str(exc))
+            if v.coach_learner_personal_calendar_conflicts(
+                    learner, scheduled_date, scheduled_time, duration, offset,
+                    exclude_record=preview_record, business_time_zone="Europe/London"):
+                return conflict("This learner is busy at that time.")
+            from .booking_availability import ensure_coach_review_slot_available
+            ensure_coach_review_slot_available(owner, scheduled_date, scheduled_time, duration,
+                                               record=preview_record)
         with transaction.atomic():
             v.lock_learner_calendar(definition["instance"]["learnerId"])
             # Ownership, source lifecycle and local state may have changed since GET.
@@ -113,6 +130,11 @@ def reschedule(request, instance_id):
     except (v.LearnerCalendarConflict, ReviewIdentityConflict, v.CalendarSyncInProgress,
             ReconciliationConflict, meeting_ownership.MeetingOwnershipError) as exc:
         return conflict(str(exc))
+    except Exception as exc:
+        from .booking_availability import CoachAvailabilityUnavailable
+        if isinstance(exc, CoachAvailabilityUnavailable):
+            return v.coach_error(request, code="AVAILABILITY_UNAVAILABLE", message=str(exc), status=503)
+        raise
 
     try:
         record, warning, _ = v.synchronize_reserved_calendar_event(record.pk, base_event)

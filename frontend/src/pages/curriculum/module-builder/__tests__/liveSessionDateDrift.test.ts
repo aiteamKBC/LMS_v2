@@ -134,6 +134,27 @@ describe('applyModuleWeekSessionPlan re-dates a live session with its week', () 
 });
 
 describe('moduleLiveSessionDateDrift reports only what the planner could not move', () => {
+  it('still reports an explicitly rescheduled session even when its old date is another slot in the same week', () => {
+    const module = moduleWith([{ id: 'WEEK-1', sessions: [{ id: 'BOOKED', settings: {
+      sessionDate: '2026-10-05', teamsLiveSessionId: 'SERIES', teamsSessionNumber: 1,
+    } }] }]);
+    const plan = { sessions: [
+      { sessionNumber: 1, weekNumber: 1, date: '2026-10-09', day: 'Friday', skippedHolidays: [], rescheduled: true },
+      { sessionNumber: 2, weekNumber: 1, date: '2026-10-05', day: 'Monday', skippedHolidays: [] },
+    ] };
+    expect(moduleLiveSessionDateDrift(module, plan).get('BOOKED')).toMatchObject({
+      storedDate: '2026-10-05', weekDates: ['2026-10-09'],
+    });
+  });
+
+  it('does not report drift when the booked date fits its authored slot but the Teams number omits another week', () => {
+    const module = moduleWith([
+      { id: 'WELCOME', sessions: [] },
+      { id: 'TEACHING', sessions: [{ id: 'LIVE', settings: { sessionDate: '2026-10-09', teamsLiveSessionId: 'SERIES', teamsSessionNumber: 1 } }] },
+    ]);
+    expect(moduleLiveSessionDateDrift(module, planOf([1, '2026-10-02'], [2, '2026-10-09'])).size).toBe(0);
+  });
+
   it('names a confirmed Teams booking whose week has moved on', () => {
     const drift = moduleLiveSessionDateDrift(
       moduleWith([{ id: 'WEEK-1', sessions: [{ id: 'COMP-BOOKED', settings: {

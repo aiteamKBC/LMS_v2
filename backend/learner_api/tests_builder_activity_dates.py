@@ -74,14 +74,18 @@ class BuilderActivityDatesTests(SimpleTestCase):
         self.assertEqual(dates['C0']['date'], '2026-10-08')
         self.assertEqual(dates['C31']['date'], '2027-05-13')
 
-    def test_selected_holidays_move_components_into_the_correct_month(self):
+    def test_selected_holidays_preserve_authored_dates_and_month_boundaries(self):
+        # The shared holiday planner flags closures without moving authored
+        # weeks (tests_holiday_reading_weeks). Learner placement must agree.
         dates = self.read([('W1', 'Week 1'), ('W2', 'Week 2')], [
             ('READING', 'W1', 'Reading', 'reading', {}),
             ('ASSIGNMENT', 'W2', 'Assignment', 'assignment', {}),
         ], start='2026-10-26', holidays=[{'startDate': '2026-10-26', 'endDate': '2026-10-30'}])
-        self.assertEqual(dates['READING']['date'], '2026-11-02')
-        self.assertEqual(dates['ASSIGNMENT']['date'], '2026-11-09')
-        self.assertEqual(dates['ASSIGNMENT']['week_end'], '2026-11-15')
+        self.assertEqual(dates['READING']['date'], '2026-10-26')
+        self.assertEqual(dates['READING']['month'], '2026-10')
+        self.assertEqual(dates['ASSIGNMENT']['date'], '2026-11-02')
+        self.assertEqual(dates['ASSIGNMENT']['month'], '2026-11')
+        self.assertEqual(dates['ASSIGNMENT']['week_end'], '2026-11-08')
 
     def test_explicit_session_dates_win_over_titles_and_week_plan(self):
         dates = self.read([('W1', 'Lecture 05/10/26')], [

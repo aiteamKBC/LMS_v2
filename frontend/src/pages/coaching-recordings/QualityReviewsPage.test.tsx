@@ -8,7 +8,7 @@ vi.mock('@/api/coachingQualityReviews', async () => ({ ...await vi.importActual<
 vi.mock('./QualityReviewDialog', () => ({ default: ({ reviewId, onDirtyChange, onClose }: { reviewId: string; onDirtyChange: (dirty: boolean) => void; onClose: () => void }) => <div role="dialog">Saved form {reviewId}<button onClick={() => onDirtyChange(true)}>Edit saved form</button><button onClick={onClose}>Close saved form</button></div> }));
 const uuid = (id: string) => `00000000-0000-4000-8000-${id.padStart(12, '0')}`;
 const row = (id: string): QualitySummary => ({ id: uuid(id), coachEmail: 'coach@example.invalid', coachName: 'Synthetic Coach', learnerId: id, learnerName: `Learner ${id}`, startsAt: '2026-10-20T09:00:00Z',
-  status: 'completed', version: 2, updatedAt: '2026-10-20T12:00:00Z', title: 'Synthetic MCM', actionCount: 1 });
+  status: 'completed', version: 2, updatedAt: '2026-10-20T12:00:00Z', title: 'Synthetic MCM', actionCount: 1, reviewerName: 'Quality Reviewer' });
 const data = { reviews: [row('1')], coaches: [{ email: 'coach@example.invalid', name: 'Synthetic Coach' }], nextOffset: null };
 describe('Saved quality reviews dashboard', () => {
   beforeEach(() => { vi.mocked(qualityForms).mockReset().mockResolvedValue({ forms: [] }); vi.mocked(qualityReviews).mockReset().mockResolvedValue(data); });
@@ -16,6 +16,7 @@ describe('Saved quality reviews dashboard', () => {
   const open = (url = '/') => render(<MemoryRouter initialEntries={[url]}><History /><QualityReviewsPage /></MemoryRouter>);
   it('loads summaries once and only applies filters on submit', async () => {
     open(); await screen.findByText('Learner 1');
+    expect(screen.getByText('Saved by: Quality Reviewer')).toBeInTheDocument();
     expect(qualityReviews).toHaveBeenCalledOnce();
     expect(vi.mocked(qualityReviews).mock.calls[0][0]).toMatchObject({ status: 'completed' });
     fireEvent.change(screen.getByRole('searchbox', { name: 'Learner or meeting' }), { target: { value: 'Learner' } });

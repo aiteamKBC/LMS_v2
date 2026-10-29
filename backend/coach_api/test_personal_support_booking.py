@@ -5,7 +5,7 @@ from datetime import date, time, timedelta
 from inspect import unwrap
 import json
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from django.test import RequestFactory, SimpleTestCase
 
@@ -132,6 +132,14 @@ class PersonalSupportBookingTests(SimpleTestCase):
         self.persist = self._patch("coach_api.views.persist_calendar_sync_reservation", side_effect=lambda row, **kw: row)
         self.sync = self._patch("coach_api.views.synchronize_reserved_calendar_event", side_effect=self.synchronize)
         self.conflicts = self._patch("coach_api.views.coach_learner_personal_calendar_conflicts", return_value=False)
+        # Availability is a separate read before the mocked reservation/sync.
+        # Exercise the real hours/intersection logic with synthetic provider data.
+        self._patch("coach_api.models.CoachCalendarEvent.objects.filter", return_value=MagicMock())
+        self._patch("coach_api.views.microsoft_graph_request", return_value={"value": [{
+            "scheduleId": OWNER, "availabilityView": "0" * 96,
+            "workingHours": {"timeZone": {"name": "Europe/London"}, "startTime": "09:00", "endTime": "17:00",
+                             "daysOfWeek": ["monday", "tuesday", "wednesday", "thursday", "friday"]},
+        }]})
         self.payload = {"scheduledDate": self.day.isoformat(), "scheduledTime": "10:00", "durationMinutes": 60}
 
     def _patch(self, target, **kwargs):

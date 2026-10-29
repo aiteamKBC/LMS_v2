@@ -36,6 +36,8 @@ export interface LearnerCalendarEvent {
   reviewTypeIsSystem?: boolean;
   occurrenceNumber?: number | null;
   bookingStatus?: string;
+  /** Read-only occupancy of the canonically linked booking, independent of form status. */
+  bookingReserved?: boolean;
   status: 'not-scheduled' | 'scheduled' | 'in-progress' | 'completed' | 'cancelled' | string;
   date: string | null;
   targetDate: string | null;
@@ -522,6 +524,29 @@ export async function fetchCatchupSlots(kind: LearnerKind, id: string, date: str
   const response = await fetch(`${BASE}/${kind}/${id}/coach-availability/?${query}`, { credentials: 'include', signal });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result.error || 'Could not check your coach’s calendar.');
+  return Array.isArray(result.times) ? result.times as string[] : [];
+}
+
+/** Verified coach availability for a Review, in Europe/London wall time. */
+export async function fetchReviewSlots(
+  kind: LearnerKind,
+  id: string,
+  date: string,
+  durationMinutes: number,
+  options: { excludeEventKey?: string; signal?: AbortSignal } = {},
+): Promise<string[]> {
+  const query = new URLSearchParams({
+    date,
+    timezoneOffsetMinutes: String(ukOffsetForDate(date)),
+    durationMinutes: String(durationMinutes),
+    purpose: 'review',
+  });
+  if (options.excludeEventKey) query.set('excludeEventKey', options.excludeEventKey);
+  const response = await fetch(`${BASE}/${kind}/${id}/coach-availability/?${query}`, {
+    credentials: 'include', signal: options.signal,
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || 'Could not check the coach calendar. Please retry.');
   return Array.isArray(result.times) ? result.times as string[] : [];
 }
 

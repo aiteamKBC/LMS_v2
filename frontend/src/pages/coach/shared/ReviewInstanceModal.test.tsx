@@ -8,7 +8,7 @@ import { personalSupportBooking } from './__tests__/importedBookingFixtures';
 import { metricParityExample, progressExample, skillsExample } from '@/pages/learner/reviews/imported/presentationFixtures';
 import { ImportedReviewSection } from '@/pages/learner/reviews/imported/ImportedReviewSection';
 import { LearnerReviewInstanceForm } from '@/pages/learner/reviews/LearnerReviewInstanceForm';
-import { adoptMigratedReviewBooking, calculateMigratedReviewProgress, rescheduleMigratedReview } from '@/api/reviewInstances';
+import { adoptMigratedReviewBooking, calculateMigratedReviewProgress, fetchCoachReviewSlots, rescheduleMigratedReview } from '@/api/reviewInstances';
 import { reopenMigratedReview, downloadMigratedReviewRevision } from '@/api/reviewInstances';
 import { bookMigratedReview, calculateReviewInstanceProgress, completeMigratedReview, completeReviewInstance, downloadReviewInstancePdf, fetchPreviousReviewSession, fetchReviewInstanceForm, generateMigratedReviewPdf, generateReviewMeetingSummary, initializeMigratedReview, reopenReviewInstance, saveReviewInstanceAnswers, signMigratedReviewAsCoach, signReviewInstance, startMigratedReview, submitMigratedReview, type ReviewInstanceFormDefinition, type ReviewProgressSnapshot } from '@/api/reviewInstances';
 
@@ -23,6 +23,7 @@ vi.mock('@/api/reviewInstances', async (importOriginal) => ({
   downloadReviewInstancePdf: vi.fn(), calculateReviewInstanceProgress: vi.fn(), generateReviewMeetingSummary: vi.fn(), fetchPreviousReviewSession: vi.fn(),
   initializeMigratedReview: vi.fn(), startMigratedReview: vi.fn(), bookMigratedReview: vi.fn(), rescheduleMigratedReview: vi.fn(), adoptMigratedReviewBooking: vi.fn(),
   calculateMigratedReviewProgress: vi.fn(),
+  fetchCoachReviewSlots: vi.fn(),
   reopenMigratedReview: vi.fn(), downloadMigratedReviewRevision: vi.fn(),
   submitMigratedReview: vi.fn(), signMigratedReviewAsCoach: vi.fn(), completeMigratedReview: vi.fn(), generateMigratedReviewPdf: vi.fn(),
 }));
@@ -105,6 +106,7 @@ function mount(instanceId = 'instance-1') {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(fetchCoachReviewSlots).mockResolvedValue(['09:00', '10:00', '10:30', '11:00', '12:00', '14:30', '15:00']);
   account.name = 'Sam Coach';
   coachMode.email = 'coach@example.invalid';
   coachMode.isInitialized = true;
@@ -124,6 +126,11 @@ beforeEach(() => {
     transcriptTruncated: false,
   });
 });
+
+async function chooseCoachTime(value: string) {
+  await screen.findByRole('option', { name: value });
+  fireEvent.change(screen.getByLabelText('Meeting time'), { target: { value } });
+}
 
 describe('Personal Support Plan completion and optional signatures', () => {
   function psp(status = 'not-scheduled') {
@@ -199,8 +206,8 @@ describe('Personal Support Plan booking controls', () => {
     const { onStatusChange } = mount(pending.instance.id);
     fireEvent.click(await screen.findByRole('button', { name: 'Book Meeting' }));
     fireEvent.change(screen.getByLabelText('Meeting date'), { target: { value: '2026-09-22' } });
-    fireEvent.change(screen.getByLabelText('Meeting time'), { target: { value: '10:00' } });
     fireEvent.change(screen.getByLabelText('Meeting duration'), { target: { value: '75' } });
+    await chooseCoachTime('10:00');
     fireEvent.click(screen.getByRole('button', { name: 'Confirm booking' }));
     expect(await screen.findByRole('link', { name: 'Join Teams' })).toHaveAttribute('href', 'https://example.invalid/meeting');
     expect(bookMigratedReview).toHaveBeenCalledExactlyOnceWith(pending.instance.id, expect.objectContaining({
@@ -223,10 +230,10 @@ describe('Personal Support Plan booking controls', () => {
     mount(current.instance.id);
     fireEvent.click(await screen.findByRole('button', { name: 'Reschedule' }));
     expect(screen.getByLabelText('Meeting date')).toHaveValue('2026-09-22');
-    expect(screen.getByLabelText('Meeting time')).toHaveValue('10:00');
+    await chooseCoachTime('10:00');
     expect(screen.getByLabelText('Meeting duration')).toHaveValue(75);
     fireEvent.change(screen.getByLabelText('Meeting date'), { target: { value: '2026-11-03' } });
-    fireEvent.change(screen.getByLabelText('Meeting time'), { target: { value: '12:00' } });
+    await chooseCoachTime('12:00');
     fireEvent.click(screen.getByRole('button', { name: 'Save new time' }));
     await waitFor(() => expect(rescheduleMigratedReview).toHaveBeenCalledExactlyOnceWith(current.instance.id,
       expect.objectContaining({ scheduledDate: '2026-11-03', scheduledTime: '12:00', durationMinutes: 75 }), current.booking));
@@ -259,7 +266,7 @@ describe('Personal Support Plan booking controls', () => {
       .mockResolvedValueOnce(personalSupportBooking(true));
     mount(current.instance.id);
     fireEvent.click(await screen.findByRole('button', { name: 'Book Meeting' }));
-    fireEvent.change(screen.getByLabelText('Meeting time'), { target: { value: '10:00' } });
+    await chooseCoachTime('10:00');
     fireEvent.click(screen.getByRole('button', { name: 'Confirm booking' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Teams could not confirm');
     expect(screen.getByLabelText('Meeting time')).toHaveValue('10:00');
@@ -950,7 +957,7 @@ describe('review reopen flow', () => {
     vi.mocked(bookMigratedReview).mockResolvedValue(booked);
     mount('imported-review:pending');
     fireEvent.click(await screen.findByRole('button', { name: 'Book Meeting' }));
-    fireEvent.change(screen.getByLabelText('Meeting time'), { target: { value: '10:00' } });
+    await chooseCoachTime('10:00');
     fireEvent.click(screen.getByRole('button', { name: 'Confirm booking' }));
     await waitFor(() => expect(bookMigratedReview).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole('link', { name: 'Join Teams' })).toHaveAttribute('href', 'https://example.invalid/teams');
@@ -972,6 +979,7 @@ describe('review reopen flow', () => {
     mount('imported-review:double-click');
     fireEvent.click(await screen.findByRole('button', { name: 'Book Meeting' }));
     const confirm = screen.getByRole('button', { name: 'Confirm booking' });
+    await chooseCoachTime('10:00');
     fireEvent.click(confirm);
     fireEvent.click(confirm);
     expect(bookMigratedReview).toHaveBeenCalledTimes(1);
@@ -1463,9 +1471,9 @@ describe('coach review signature workflow', () => {
     const answer = await screen.findByRole('textbox');
     fireEvent.change(answer, { target: { value: 'Unsaved coach draft' } });
     fireEvent.click(screen.getByRole('button', { name: 'Reschedule' }));
-    expect(screen.getByLabelText('Meeting time')).toHaveValue('10:00');
+    await chooseCoachTime('10:00');
     expect(screen.getByLabelText('Meeting duration')).toHaveValue(45);
-    fireEvent.change(screen.getByLabelText('Meeting time'), { target: { value: '11:00' } });
+    await chooseCoachTime('11:00');
     fireEvent.click(screen.getByRole('button', { name: 'Save new time' }));
     await waitFor(() => expect(rescheduleMigratedReview).toHaveBeenCalledWith(initial.instance.id,
       expect.objectContaining({ scheduledTime: '11:00', durationMinutes: 45 }), initial.booking));

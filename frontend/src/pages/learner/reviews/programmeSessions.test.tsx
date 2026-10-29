@@ -9,6 +9,7 @@ import { rememberLearner, rememberSignedInLearner } from '@/hooks/useMyLearner';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import type { ImportedReview } from '@/api/reviewHistory';
 import type { MeetingAttendance } from '@/api/meetingAttendance';
+import { AuthProvider } from '@/hooks/useAuth';
 import { ToastProvider } from '@/hooks/useToast';
 import ProgressReviewPage, { ProgressReviewsListPage } from '../progress-reviews/page';
 import MonthlyCoachingPage, { MonthlyCoachingListPage } from '../monthly-coaching/page';
@@ -16,6 +17,13 @@ import { CurriculumReviewPage, CurriculumReviewsListPage } from './curriculumRev
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock('@/pages/coach/progress-reviews/page', () => ({ buildProgressReviewSlidesDeck: vi.fn() }));
+vi.mock('@/api/auth', async importOriginal => ({
+  ...await importOriginal<typeof import('@/api/auth')>(),
+  apiMe: vi.fn(async () => ({ id: 999, email: 'staff@example.test', displayName: 'Test staff', role: 'staff', subjectType: 'staff', subjectId: 999, permissions: [], hasPassword: true, lastLoginAt: null })),
+}));
+vi.mock('@/lib/sessionExpiry', async importOriginal => ({
+  ...await importOriginal<typeof import('@/lib/sessionExpiry')>(), installSessionExpiryHandler: vi.fn(() => vi.fn()),
+}));
 const access = vi.hoisted(() => ({ canProgress: true }));
 vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => access }));
 
@@ -90,6 +98,14 @@ beforeEach(() => {
     if (url.includes('/curriculum/cache-epoch/')) body = { epoch: 0, changes: [] };
     else if (url.includes('/learner-detail/')) { body = { ...detail, studentActivityAvailable: detailActivityAvailable }; failed = detailFails; }
     else if (url.includes('/review-history/')) { body = { reviews: historyReviews }; failed = archiveFails; }
+    else if (url.includes('/coach-availability/')) {
+      const query = new URL(url, 'http://test.invalid').searchParams;
+      const duration = Number(query.get('durationMinutes') || 60);
+      body = { times: Array.from({ length: 32 }, (_, index) => 9 * 60 + index * 15)
+        .filter(minutes => minutes + duration <= 17 * 60)
+        .map(minutes => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`) };
+    }
+    else if (url.includes('/connections/')) body = { connections: [] };
     else if (url.includes('/calendar/') || url.includes('/review-sessions/')) {
       body = { events: url.includes('content=summary')
         ? events.map(event => event.importedReview ? { ...event, importedReview: { ...event.importedReview, sections: [] } } : event)
@@ -176,6 +192,11 @@ describe.each(['apprenticeship', 'commercial'])('%s Aptem progress review detail
     const submit = within(dialog).getByRole('button', { name: 'Book session' });
     await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-11-02' } });
+    await waitFor(() => expect(within(dialog).getByLabelText('Time')).toBeEnabled());
+    if (!(within(dialog).getByLabelText('Time') as HTMLSelectElement).value) {
+      fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '09:00' } });
+    }
+    await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.click(submit);
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(bookings).toEqual([expect.objectContaining({ reviewId: '11', sessionType: 'progress-review', scheduledDate: '2026-11-02' })]);
@@ -204,7 +225,13 @@ describe.each(['apprenticeship', 'commercial'])('%s Aptem progress review detail
     expect(within(dialog).getByLabelText('Day')).toHaveValue('2026-10-20');
     expect(within(dialog).getByLabelText('Time')).toHaveValue('09:00');
     fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-10-21' } });
+    await waitFor(() => expect(within(dialog).getByLabelText('Time')).toBeEnabled());
     fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '14:30' } });
+    await waitFor(() => expect(within(dialog).getByLabelText('Time')).toBeEnabled());
+    if (!(within(dialog).getByLabelText('Time') as HTMLSelectElement).value) {
+      fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '09:00' } });
+    }
+    await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.click(submit);
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(reschedules).toEqual([expect.objectContaining({ eventKey: 'booking:11', reviewId: '11',
@@ -215,7 +242,7 @@ describe.each(['apprenticeship', 'commercial'])('%s Aptem progress review detail
     fireEvent.click(await screen.findByRole('button', { name: 'Reschedule meeting' }));
     const refreshed = await screen.findByRole('dialog');
     await waitFor(() => expect(within(refreshed).getByLabelText('Day')).toHaveValue('2026-10-21'));
-    expect(within(refreshed).getByLabelText('Time')).toHaveValue('14:30');
+    await waitFor(() => expect(within(refreshed).getByLabelText('Time')).toHaveValue('14:30'));
   });
 
   it.each(['completed', 'awaiting-signature', 'in-progress', 'cancelled', 'attended'])('keeps a %s detail read-only for scheduling', async status => {
@@ -356,14 +383,15 @@ function SwitchLearner({ path }: { path: string }) {
 function mount(item: typeof cases[number] | typeof reviewsCase, suffix = '?kind=apprenticeship&learner=125', view: 'all' | 'current' = 'all') {
   const allView = view === 'all' && !suffix.startsWith('/');
   const target = `/learner/${item.path}${suffix}${allView ? `${suffix.includes('?') ? '&' : '?'}view=all` : ''}`;
-  return render(<React.StrictMode><ToastProvider><MemoryRouter initialEntries={[target]}>
+  const Auth = item.source === 'review' ? AuthProvider : React.Fragment;
+  return render(<React.StrictMode><ToastProvider><MemoryRouter initialEntries={[target]}><Auth>
     <SwitchLearner path={item.path} />
     <Routes>
       <Route path={`/learner/${item.path}`} element={<item.Page />} />
       <Route path={`/learner/${item.path}/:${item.source === 'mcr' ? 'sessionId' : 'reviewId'}`} element={<item.Detail />} />
       <Route path="/learner/calendar" element={<Destination />} />
     </Routes>
-  </MemoryRouter></ToastProvider></React.StrictMode>);
+  </Auth></MemoryRouter></ToastProvider></React.StrictMode>);
 }
 function bookingAction(_item: typeof cases[number]) { return 'Book a time'; }
 function viewAction(item: typeof cases[number]) { return item.source === 'mcr' ? 'View meeting' : /^Progress Review/; }
@@ -395,6 +423,11 @@ describe.each(cases)('$path programme sessions', item => {
     const submit = within(dialog).getByRole('button', { name: 'Book session' });
     await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-11-02' } });
+    await waitFor(() => expect(within(dialog).getByLabelText('Time')).toBeEnabled());
+    if (!(within(dialog).getByLabelText('Time') as HTMLSelectElement).value) {
+      fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '09:00' } });
+    }
+    await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.click(submit);
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(bookings).toEqual([expect.objectContaining({ reviewId: '11', sessionType: item.source, scheduledDate: '2026-11-02' })]);
@@ -422,7 +455,13 @@ describe.each(cases)('$path programme sessions', item => {
     const submit = within(dialog).getByRole('button', { name: 'Save new time' });
     await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-10-21' } });
+    await waitFor(() => expect(within(dialog).getByLabelText('Time')).toBeEnabled());
     fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '14:30' } });
+    await waitFor(() => expect(within(dialog).getByLabelText('Time')).toBeEnabled());
+    if (!(within(dialog).getByLabelText('Time') as HTMLSelectElement).value) {
+      fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '09:00' } });
+    }
+    await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.click(submit);
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(reschedules).toEqual([expect.objectContaining({ eventKey: imported.calendarEventKey, reviewId: '11',
@@ -435,7 +474,7 @@ describe.each(cases)('$path programme sessions', item => {
     fireEvent.click(screen.getByRole('button', { name: item.source === 'mcr' ? 'Reschedule' : 'Reschedule meeting' }));
     const refreshed = await screen.findByRole('dialog');
     await waitFor(() => expect(within(refreshed).getByLabelText('Day')).toHaveValue('2026-10-21'));
-    expect(within(refreshed).getByLabelText('Time')).toHaveValue('14:30');
+    await waitFor(() => expect(within(refreshed).getByLabelText('Time')).toHaveValue('14:30'));
   });
 
   it('uses server-owned Native occurrences without merging the legacy history stream', async () => {
@@ -454,6 +493,11 @@ describe.each(cases)('$path programme sessions', item => {
     await waitFor(() => expect(submit).toBeEnabled());
     expect(within(dialog).getByLabelText('Session')).toHaveValue(events[0].eventKey);
     fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-10-05' } });
+    await waitFor(() => expect(within(dialog).getByLabelText('Time')).toBeEnabled());
+    if (!(within(dialog).getByLabelText('Time') as HTMLSelectElement).value) {
+      fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '09:00' } });
+    }
+    await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.click(submit);
     await waitFor(() => expect(bookings).toHaveLength(1));
     expect(bookings[0]).toEqual(expect.objectContaining({ eventKey: events[0].eventKey, sessionType: item.source }));
@@ -478,11 +522,22 @@ describe.each(cases)('$path programme sessions', item => {
     await waitFor(() => expect(requests.length).toBeGreaterThan(readCount));
     expect(within(dialog).getByLabelText('Day')).toHaveValue(editedDay);
     bookingError = 'That time overlaps another calendar event. Please choose another time.';
+    await waitFor(() => expect(within(dialog).getByLabelText('Time')).toBeEnabled());
+    if (!(within(dialog).getByLabelText('Time') as HTMLSelectElement).value) {
+      fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '09:00' } });
+    }
+    await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.click(submit);
     expect(await within(dialog).findByRole('alert')).toHaveTextContent(bookingError);
     expect(within(dialog).getByLabelText('Day')).toHaveValue(editedDay);
     bookingError = '';
+    await waitFor(() => expect(within(dialog).getByLabelText('Time')).toBeEnabled());
     fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '13:30' } });
+    await waitFor(() => expect(within(dialog).getByLabelText('Time')).toBeEnabled());
+    if (!(within(dialog).getByLabelText('Time') as HTMLSelectElement).value) {
+      fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '09:00' } });
+    }
+    await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.click(submit);
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(bookings.at(-1)).toMatchObject({ scheduledDate: editedDay, scheduledTime: '13:30' });
@@ -513,7 +568,13 @@ describe.each(cases)('$path programme sessions', item => {
     const submit = within(dialog).getByRole('button', { name: 'Book session' });
     await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-11-02' } });
+    await waitFor(() => expect(within(dialog).getByLabelText('Time')).toBeEnabled());
     fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '14:30' } });
+    await waitFor(() => expect(within(dialog).getByLabelText('Time')).toBeEnabled());
+    if (!(within(dialog).getByLabelText('Time') as HTMLSelectElement).value) {
+      fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '09:00' } });
+    }
+    await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.click(submit);
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(bookings).toEqual([expect.objectContaining({ eventKey: target.eventKey, sessionType: item.source,
@@ -538,6 +599,11 @@ describe.each(cases)('$path programme sessions', item => {
     expect(within(dialog).getByLabelText('Day')).toHaveValue('2026-10-02');
     expect(within(dialog).getByLabelText('Time')).toHaveValue('09:00');
     fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-10-05' } });
+    await waitFor(() => expect(within(dialog).getByLabelText('Time')).toBeEnabled());
+    if (!(within(dialog).getByLabelText('Time') as HTMLSelectElement).value) {
+      fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '09:00' } });
+    }
+    await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.click(submit);
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(reschedules).toEqual([expect.objectContaining({ eventKey: events[0].eventKey, durationMinutes: 90, scheduledDate: '2026-10-05' })]);

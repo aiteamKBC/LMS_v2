@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allowedSettingKeysForType, validateComponentAuthoring } from '../componentAuthoringModel';
+import { allowedSettingKeysForType, normaliseComponentSettings, validateComponentAuthoring } from '../componentAuthoringModel';
 
 // A live-session component must be saveable in exactly the shape the rest of the
 // system stores on it. The settings schema is both the default shape and the
@@ -29,6 +29,15 @@ const KEYS_THE_CODE_WRITES = {
 };
 
 describe('the live-session settings schema covers what the code stores', () => {
+  it.each(['live-session', 'video', 'recording-placeholder'] as const)('preserves the dated recording source through repeated %s saves', type => {
+    const source = { recordingDate: '2026-10-28', recordingSeriesId: 'SERIES', recordingSessionNumber: 3 };
+    const restored = normaliseComponentSettings(type, { legacySettings: JSON.stringify(source) });
+    const saved = normaliseComponentSettings(type, restored);
+    expect(saved).toMatchObject(source);
+    expect(saved.legacySettings).toBeUndefined();
+    expect(normaliseComponentSettings(type, { ...restored, recordingDate: '' }).recordingDate).toBe('');
+  });
+
   it.each(Object.entries(KEYS_THE_CODE_WRITES))('accepts every key the %s writes', (_group, keys) => {
     const allowed = allowedSettingKeysForType('live-session');
     expect(keys.filter(key => !allowed.has(key))).toEqual([]);

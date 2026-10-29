@@ -126,6 +126,7 @@ COACH_APPROVAL_TYPES = frozenset(("student-support", "gateway", "other"))
 # an Active mirror + assigned coach first would be circular. They are booked with
 # the learner's case owner (the enrolment officer) instead.
 ONBOARDING_REVIEW_TYPES = ("eligibility-review", "workspace", "training-plan", "uln-privacy")
+REVIEW_BOOKING_TYPES = frozenset(("mcr", "progress-review", "review", *ONBOARDING_REVIEW_TYPES))
 
 # Same wording the calendar shows for these events.
 ONBOARDING_REVIEW_LABELS = {type_: EVENT_TITLES[type_] for type_ in ONBOARDING_REVIEW_TYPES}
@@ -426,12 +427,13 @@ def _serialize_event(record, *, review_types_by_template=None, templates_by_id=N
     template = (templates_by_id or {}).get(template_id)
     if template_id and templates_by_id is None:
         template = reviews.get_review_template_row(template_id, include_deleted=True)
+    from coach_api.booking_reservations import review_occupies_slot
     display_date = record.scheduled_date or record.target_date
     if compact:
         return {'id': record.event_key, 'eventKey': record.event_key,
                 'title': (template or {}).get('name') or EVENT_TITLES.get(event_type, 'Coaching Session'),
                 'source': event_type, 'type': EVENT_JSON_TYPES.get(event_type, 'coaching'),
-                'status': record.status,
+                'status': record.status, 'bookingReserved': review_occupies_slot(record),
                 'date': display_date.isoformat() if display_date else None,
                 'targetDate': record.target_date.isoformat() if record.target_date else None,
                 'scheduledDate': record.scheduled_date.isoformat() if record.scheduled_date else None,
@@ -475,7 +477,7 @@ def _serialize_event(record, *, review_types_by_template=None, templates_by_id=N
         "source": event_type,
         "type": EVENT_JSON_TYPES.get(event_type, "coaching"),
         "sequence": record.sequence,
-        "status": record.status,
+        "status": record.status, "bookingReserved": review_occupies_slot(record),
         "date": display_date.isoformat() if display_date else None,
         "targetDate": record.target_date.isoformat() if record.target_date else None,
         "scheduledDate": record.scheduled_date.isoformat() if record.scheduled_date else None,
@@ -1294,6 +1296,7 @@ def learner_calendar_event_review_pdf(request, kind, pk, event_key):
 
 @learner_self_or_staff(kwarg="pk")
 def learner_calendar_event_artifacts(request, kind, pk, event_key):
+    from coach_api.review_attendance_links import attendance_for_display
     if request.method != "GET":
         return _error("Method not allowed.", 405)
     record = _learner_calendar_record(kind, pk, event_key)
@@ -1328,7 +1331,7 @@ def learner_calendar_event_artifacts(request, kind, pk, event_key):
     ]
     return JsonResponse({
         "artifacts": learner_artifacts,
-        "attendance": snapshot["attendance"],
+        "attendance": attendance_for_display(record, snapshot["attendance"]),
         # Mutable AI drafts never cross the learner boundary. The lifecycle-
         # gated formal answer is returned by learner_calendar_event_review.
         "meetingSummary": None,
@@ -1818,9 +1821,19 @@ def learner_calendar_book(request, kind, pk):
             return _error("No coach has been assigned to you yet. Please contact your programme team.", 400)
 
     try:
+        if session_type in REVIEW_BOOKING_TYPES:
+            from coach_api.booking_hours import validate_review_time_precision
+            validate_review_time_precision(payload.get("scheduledTime"))
         scheduled_date = parse_date_value(payload.get("scheduledDate"))
         scheduled_time = parse_time_value(payload.get("scheduledTime"))
-        duration_minutes = normalize_duration_minutes(payload.get("durationMinutes") or 60)
+        duration_value = payload.get("durationMinutes")
+        if session_type in REVIEW_BOOKING_TYPES and duration_value in (None, ""):
+            raise ValueError("durationMinutes is required for Review bookings.")
+        if session_type in REVIEW_BOOKING_TYPES:
+            from coach_api.booking_hours import validate_review_duration
+            duration_minutes = validate_review_duration(duration_value)
+        else:
+            duration_minutes = normalize_duration_minutes(duration_value or 60)
         timezone_offset_minutes = int(payload.get("timezoneOffsetMinutes") or 0)
         if not -840 <= timezone_offset_minutes <= 840:
             raise ValueError("timezoneOffsetMinutes is outside the supported range.")
@@ -1837,6 +1850,12 @@ def learner_calendar_book(request, kind, pk):
         date_restriction = mcm_booking_date_restriction(scheduled_date)
     if date_restriction is not None:
         return _error(date_restriction.message, 400)
+    if session_type in REVIEW_BOOKING_TYPES:
+        try:
+            from coach_api.booking_hours import validate_review_interval
+            validate_review_interval(scheduled_date, scheduled_time, duration_minutes)
+        except ValueError as exc:
+            return _error(str(exc), 400)
     if session_type == "catch-up":
         busy_error = _catchup_time_error(owner_email, scheduled_date, scheduled_time, duration_minutes)
         if busy_error:
@@ -1965,12 +1984,12 @@ def learner_calendar_book(request, kind, pk):
             # Assignment bookings use the recurring MCM window checked above;
             # their submission month does not change the Review's identity.
             if assignment_booking:
-                if duration_minutes != 60 or not month_bounds(assignment_month)[0]:
-                    return _error("Book a 60-minute MCM for a valid assignment month.", 400)
+                if not month_bounds(assignment_month)[0]:
+                    return _error("Choose a valid assignment month for the MCM.", 400)
             else:
                 start, end = coaching_booking_bounds(assignment_month)
-                if duration_minutes != 60 or not (start and start <= scheduled_date <= end):
-                    return _error("Book a 60-minute MCM from the 20th of the submission month through the 5th of the following month.", 400)
+                if not (start and start <= scheduled_date <= end):
+                    return _error("Book an MCM from the 20th of the submission month through the 5th of the following month.", 400)
             # A validated imported Aptem MCM is already the Review's identity
             # (see _assignment_imported_mcm_month) and books on the imported path below.
             if not _s(payload.get("eventKey")) and not (assignment_booking and imported_review_id):
@@ -2052,21 +2071,29 @@ def learner_calendar_book(request, kind, pk):
 
         try:
             from .calendar_connections import booking_conflicts
-            existing_booking = (CoachCalendarEvent.objects.filter(event_key=event_key).first()
-                                if aptem_target is not None else None)
+            review_booking = session_type in REVIEW_BOOKING_TYPES
+            existing_booking = (CoachCalendarEvent.objects.filter(
+                event_key=event_key, owner_email__iexact=owner_email,
+                learner_id=int(getattr(mirror, "id", pk) or pk),
+            ).first() if review_booking else None)
+            unchanged_review_replay = bool(
+                existing_booking and existing_booking.status == CoachCalendarEvent.STATUS_SCHEDULED
+                and (existing_booking.scheduled_date, existing_booking.scheduled_time,
+                     existing_booking.duration_minutes) == (scheduled_date, scheduled_time, duration_minutes)
+            )
             personal_exclusion = ({
                 "exclude_scheduled_date": existing_booking.scheduled_date,
                 "exclude_scheduled_time": existing_booking.scheduled_time,
                 "exclude_duration_minutes": existing_booking.duration_minutes,
             } if existing_booking else {})
-            if booking_conflicts(
+            if not unchanged_review_replay and booking_conflicts(
                 kind,
                 pk,
                 scheduled_date,
                 scheduled_time,
                 duration_minutes,
                 timezone_offset_minutes,
-                **({"business_time_zone": "Europe/London"} if aptem_target is not None else {}),
+                **({"business_time_zone": "Europe/London"} if review_booking else {}),
                 **personal_exclusion,
             ):
                 return _error(
@@ -2074,11 +2101,10 @@ def learner_calendar_book(request, kind, pk):
                     409,
                 )
 
-            if aptem_target is not None:
-                from coach_api.booking_availability import ensure_coach_calendar_available, ensure_coach_outlook_available
-                ensure_coach_calendar_available(owner_email, scheduled_date, scheduled_time, duration_minutes,
-                                                exclude_record_id=existing_booking.pk if existing_booking else None)
-                ensure_coach_outlook_available(owner_email, scheduled_date, scheduled_time, duration_minutes, record=existing_booking)
+            if review_booking and not unchanged_review_replay:
+                from coach_api.booking_availability import ensure_coach_review_slot_available
+                ensure_coach_review_slot_available(owner_email, scheduled_date, scheduled_time,
+                                                   duration_minutes, record=existing_booking)
 
             if aptem_target is not None:
                 # An Aptem row is created inside the reservation's own
@@ -2442,7 +2468,8 @@ def learner_calendar_reschedule(request, kind, pk):
     try:
         scheduled_date = parse_date_value(payload.get("scheduledDate"))
         scheduled_time = parse_time_value(payload.get("scheduledTime"))
-        duration_minutes = normalize_duration_minutes(payload.get("durationMinutes") or 60)
+        duration_value = payload.get("durationMinutes")
+        duration_minutes = normalize_duration_minutes(duration_value or 60)
         timezone_offset_minutes = int(payload.get("timezoneOffsetMinutes") or 0)
         if not -840 <= timezone_offset_minutes <= 840:
             raise ValueError("timezoneOffsetMinutes is outside the supported range.")
@@ -2454,6 +2481,7 @@ def learner_calendar_reschedule(request, kind, pk):
         return _error("scheduledDate is required.", 400)
     if not scheduled_time:
         return _error("scheduledTime is required.", 400)
+    desired_slot = (scheduled_date, scheduled_time, duration_minutes)
 
     try:
         record = _learner_booking_record(kind, pk, event_key)
@@ -2462,6 +2490,20 @@ def learner_calendar_reschedule(request, kind, pk):
         if record.status != CoachCalendarEvent.STATUS_SCHEDULED:
             return _error("Only an upcoming scheduled session can be rescheduled.", 409)
         imported_event = getattr(record, '_imported_review_event', None)
+        review_reschedule = _s(record.event_type).lower() in REVIEW_BOOKING_TYPES
+        if review_reschedule:
+            try:
+                from coach_api.booking_hours import (
+                    validate_review_duration, validate_review_interval, validate_review_time_precision,
+                )
+                validate_review_time_precision(payload.get("scheduledTime"))
+                duration_minutes = validate_review_duration(duration_value)
+                if (record.scheduled_date, record.scheduled_time, record.duration_minutes) != (
+                    scheduled_date, scheduled_time, duration_minutes
+                ):
+                    validate_review_interval(scheduled_date, scheduled_time, duration_minutes)
+            except ValueError as exc:
+                return _error(str(exc), 400)
         if imported_event:
             from .imported_booking import booking_slot, expected_booking, reserve_imported_booking
             from coach_api.validation import ValidationError
@@ -2512,13 +2554,14 @@ def learner_calendar_reschedule(request, kind, pk):
 
         from .calendar_connections import booking_conflicts
         imported_event = getattr(record, '_imported_review_event', None)
-        unchanged_imported_slot = bool(imported_event and booking_slot(record) == desired_slot
-                                       and record.sync_state == CoachCalendarEvent.SYNC_SYNCED)
-        if imported_event and not unchanged_imported_slot:
-            from coach_api.booking_availability import ensure_coach_calendar_available, ensure_coach_outlook_available
-            ensure_coach_calendar_available(record.owner_email, scheduled_date, scheduled_time, duration_minutes, exclude_record_id=record.pk)
-            ensure_coach_outlook_available(record.owner_email, scheduled_date, scheduled_time, duration_minutes, record=record)
-        if not unchanged_imported_slot and booking_conflicts(
+        unchanged_review_slot = bool(review_reschedule and (
+            record.scheduled_date, record.scheduled_time, record.duration_minutes
+        ) == desired_slot)
+        if review_reschedule and not unchanged_review_slot:
+            from coach_api.booking_availability import ensure_coach_review_slot_available
+            ensure_coach_review_slot_available(record.owner_email, scheduled_date, scheduled_time,
+                                               duration_minutes, record=record)
+        if not unchanged_review_slot and booking_conflicts(
             kind,
             pk,
             scheduled_date,
@@ -2528,7 +2571,7 @@ def learner_calendar_reschedule(request, kind, pk):
             exclude_scheduled_date=record.scheduled_date,
             exclude_scheduled_time=record.scheduled_time,
             exclude_duration_minutes=record.duration_minutes,
-            **({"business_time_zone": "Europe/London"} if imported_event else {}),
+            **({"business_time_zone": "Europe/London"} if review_reschedule else {}),
         ):
             return _error(
                 "That time overlaps an event in your connected personal calendar. Please choose another time.",

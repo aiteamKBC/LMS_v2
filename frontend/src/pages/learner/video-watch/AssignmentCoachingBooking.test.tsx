@@ -3,9 +3,9 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { loadAssignmentTopicStates } from '@/api/assignmentTopics';
 import { AssignmentCoachingBooking } from './AssignmentCoachingBooking';
-import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, fetchLearnerMeetingArtifacts, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, fetchLearnerMeetingArtifacts, fetchReviewSlots, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
-vi.mock('@/api/learnerCalendar', () => ({ bookLearnerCalendarSession: vi.fn(), fetchLearnerCalendarEvents: vi.fn(), fetchLearnerMeetingArtifacts: vi.fn(), learnerMeetingArtifactContentUrl: vi.fn() }));
+vi.mock('@/api/learnerCalendar', () => ({ bookLearnerCalendarSession: vi.fn(), fetchLearnerCalendarEvents: vi.fn(), fetchLearnerMeetingArtifacts: vi.fn(), fetchReviewSlots: vi.fn(), learnerMeetingArtifactContentUrl: vi.fn() }));
 vi.mock('@/api/assignmentTopics', () => ({ loadAssignmentTopicStates: vi.fn() }));
 vi.mock('@/api/reviewHistory', () => ({ fetchReviewHistory: vi.fn() }));
 function chooseDate(value: string) {
@@ -28,6 +28,7 @@ const props = { kind: 'commercial' as const, learnerId: '1', month: '2026-09', t
 beforeEach(() => {
   vi.mocked(loadAssignmentTopicStates).mockResolvedValue([]);
   vi.mocked(fetchLearnerMeetingArtifacts).mockResolvedValue({ artifacts: [] });
+  vi.mocked(fetchReviewSlots).mockResolvedValue(['09:00', '10:00']);
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ times: ['09:00', '10:00'] }) }));
   vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind: 'commercial', id: 1 }, events: [slot], bookingCalendar: { division: 'england-and-wales', today: '2026-09-12', coveredYears: [2026], bankHolidays: [] } });
   vi.mocked(bookLearnerCalendarSession).mockResolvedValue({ event: { ...slot, status: 'scheduled', scheduledDate: '2026-09-22', scheduledTime: '09:00' } });
@@ -64,6 +65,23 @@ it('books the official MCM key and links the returned meeting after saving the d
   expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeDisabled();
   expect(screen.getByLabelText('Date')).toHaveTextContent('Select a date');
   expect(screen.getByLabelText('Time')).toHaveValue('');
+});
+
+it('defaults to one hour and rechecks availability before booking a different duration', async () => {
+  render(<AssignmentCoachingBooking {...props} />);
+  fireEvent.change(await screen.findByLabelText('Monthly Coaching Meeting slot'), { target: { value: slot.eventKey } });
+  expect(screen.getByLabelText('Duration')).toHaveValue('60');
+  chooseDate('2026-09-22');
+  await screen.findByRole('option', { name: '09:00' });
+  fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:00' } });
+  fireEvent.change(screen.getByLabelText('Duration'), { target: { value: '90' } });
+  await waitFor(() => expect(fetchReviewSlots).toHaveBeenLastCalledWith('commercial', '1', '2026-09-22', 90, expect.anything()));
+  expect(screen.getByLabelText('Time')).toHaveValue('');
+  expect(screen.getByRole('button', { name: 'Book 90-minute MCM' })).toBeDisabled();
+  await screen.findByRole('option', { name: '09:00' });
+  fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:00' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Book 90-minute MCM' }));
+  await waitFor(() => expect(bookLearnerCalendarSession).toHaveBeenCalledWith('commercial', '1', expect.objectContaining({ durationMinutes: 90 })));
 });
 it('prevents weekend booking and booking without an official slot', async () => {
   render(<AssignmentCoachingBooking {...props} />);
@@ -162,7 +180,7 @@ it('closes the window after the 5th while allowing the 5th itself', async () => 
 });
 
 it('blocks booking when the coach has no available appointments', async () => {
-  vi.mocked(fetch).mockResolvedValue({ ok: true, json: async () => ({ times: [] }) } as Response);
+  vi.mocked(fetchReviewSlots).mockResolvedValue([]);
   render(<AssignmentCoachingBooking {...props} />);
   await screen.findByLabelText('Date');
   chooseDate('2026-09-22');
@@ -170,7 +188,7 @@ it('blocks booking when the coach has no available appointments', async () => {
   expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeDisabled();
 });
 it('blocks booking when the coach calendar cannot be checked', async () => {
-  vi.mocked(fetch).mockResolvedValue({ ok: false, json: async () => ({ error: 'Calendar unavailable' }) } as Response);
+  vi.mocked(fetchReviewSlots).mockRejectedValue(new Error('Calendar unavailable'));
   render(<AssignmentCoachingBooking {...props} />);
   await screen.findByLabelText('Date');
   chooseDate('2026-09-22');

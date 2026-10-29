@@ -21,13 +21,13 @@ import ProgressReviewPptxModal from '../progress-reviews/components/ProgressRevi
 import { slidesTargetFromEvent } from '../progress-reviews/components/slidesTarget';
 import { reviewInstancePath, reviewInstanceRouteState } from '../shared/reviewInstanceNavigation';
 import { ReviewAge } from '../shared/ReviewAge';
+import { ReviewCompletedDate, ReviewScheduledDate } from '../shared/ReviewDates';
 import {
   type CoachCalendarEvent,
   eventDisplayDate,
   eventIdentity,
   fetchCoachCalendarEvents,
   formatDateLabel,
-  formatTimeRangeLabel,
   isAtRiskEvent,
   isCompletedEvent,
   isDueSoonEvent,
@@ -591,8 +591,8 @@ export default function CoachMonthlyCoaching() {
             <div className={styles.tableScroll} role="region" aria-label="Coaching meetings table; scroll horizontally on smaller screens" tabIndex={0}>
               <table className={`${styles.table} ${styles.mcmTable}`}>
                 <caption className="sr-only">Coaching meetings for {selectedMonthLabel}</caption>
-                <colgroup><col /><col /><col /><col /><col /><col /><col /></colgroup>
-                <thead><tr><th scope="col">Learner</th><th scope="col">Programme</th><th scope="col">Cohort</th><th scope="col">Last MCM</th><th scope="col">Date &amp; time</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+                <colgroup><col /><col /><col /><col /><col /><col /><col /><col /></colgroup>
+                <thead><tr><th scope="col">Learner</th><th scope="col">Programme</th><th scope="col">Cohort</th><th scope="col" title="Latest recorded completion across this learner's monthly coaching reviews, not just this row." tabIndex={0}>Last MCM</th><th scope="col">Scheduled for (UK time)</th><th scope="col" title="When this review form was completed, not when the meeting took place." tabIndex={0}>Completed on</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
                 <tbody>{paginatedEvents.map(event => {
                   const actions = reviewActionMatrix(event);
                   const statusIcon = event.status === 'completed' ? 'ri-checkbox-circle-line' : event.status === 'scheduled' ? 'ri-calendar-line' : event.status === 'awaiting-signature' ? 'ri-edit-line' : 'ri-time-line';
@@ -602,7 +602,8 @@ export default function CoachMonthlyCoaching() {
                       <td>{event.programme || '--'}</td>
                       <td>{event.cohort || event.group || '--'}</td>
                       <td><ReviewAge value={event.learnerId ? lastMcmByLearner.get(event.learnerId) : undefined} label="MCM" /></td>
-                      <td><span className={styles.date}><span>{formatDateLabel(event.scheduledDate || event.targetDate)}</span><span>{formatTimeRangeLabel(event)}</span></span></td>
+                      <td><ReviewScheduledDate event={event} /></td>
+                      <td><ReviewCompletedDate event={event} /></td>
                       <td>
                         <span className={styles.status} data-status={event.status}><AppIcon className={statusIcon} />{statusLabel(event.status)}</span>
                         {isAtRiskEvent(event) || isDueSoonEvent(event) ? <div className={styles.alerts}>{isAtRiskEvent(event) ? <StatusBadge tone="critical" label="Overdue" dot={false} size="sm" /> : null}{isDueSoonEvent(event) ? <StatusBadge tone="upcoming" label="Due Soon" dot={false} size="sm" /> : null}</div> : null}

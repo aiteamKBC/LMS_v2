@@ -684,7 +684,8 @@ export default function CoachMeetingDetail() {
                       : importedReviewError ? 'Refresh the booking to load this review’s meeting resources.' : 'Loading review meeting resources…'}
                   </p>
                 </Panel>
-              ) : <CoachMeetingArtifactsPanel event={event} onEventStatusChange={handleArtifactsStatusChange} />
+              ) : <CoachMeetingArtifactsPanel event={event} onEventStatusChange={handleArtifactsStatusChange}
+                attendanceLinkKey={!coach.isViewingAsCoach && ['mcr', 'progress-review'].includes(event.source) ? event.eventKey : undefined} />
             ) : (
               <Panel className="bg-white">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

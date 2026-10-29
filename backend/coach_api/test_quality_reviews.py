@@ -212,6 +212,23 @@ class ReviewApiTests(SimpleTestCase):
             self.assertEqual(response.status_code,400)
             self.assertEqual(listing.call_count,1)
 
+    def test_list_summaries_expose_saved_account_name_without_form_or_email(self):
+        row = {'id':str(uuid4()), 'learner_id':'1', 'learner_name':'Synthetic Learner',
+          'status':'completed', 'version':1, 'pdf_version':None,
+          'updated_at':datetime(2026,10,20,tzinfo=timezone.utc), 'reviewer_name':'Quality Reviewer',
+          'coach_email':'coach@example.invalid', 'coach_name':'Coach',
+          'starts_at':datetime(2026,10,20,tzinfo=timezone.utc), 'title':'Synthetic MCM', 'action_count':0}
+        with patch.object(store,'reviews_for_meeting',return_value=([row],None)):
+            response=api.reviews(self.factory.get('/quality',{'meetingId':'a'*32}))
+        self.assertEqual(response.status_code,200)
+        summary=json.loads(response.content)['reviews'][0]
+        self.assertEqual(summary['reviewerName'],'Quality Reviewer')
+        self.assertNotIn('form',summary)
+        self.assertNotIn('reviewer',summary)
+        with patch.object(store,'list_reviews',return_value=([row],None)),patch.object(api,'_coaches',return_value=[]):
+            response=api.reviews(self.factory.get('/quality?start=2026-10-20&end=2026-10-20'))
+        self.assertEqual(json.loads(response.content)['reviews'][0]['reviewerName'],'Quality Reviewer')
+
     def test_context_uses_verified_occurrence_and_caseload_not_browser_identity(self):
         from .recordings_calendar_media import calendar_context,calendar_record
         record=calendar_record(calendar_context('coach@example.invalid','event-one',
