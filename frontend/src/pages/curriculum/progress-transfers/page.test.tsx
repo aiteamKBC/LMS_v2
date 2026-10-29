@@ -20,6 +20,44 @@ function openChoices(choices: ReturnType<typeof within>) {
 }
 
 describe('admin progress transfers', () => {
+  it('shows different-type recommendations without selecting or counting them until the admin chooses', async () => {
+    vi.mocked(api.getTransferRequests).mockResolvedValue({ requests: [request], nextOffset: null, csrfToken: 'csrf' });
+    vi.mocked(api.getTransferReview).mockResolvedValue({ reviewToken: 'review', csrfToken: 'csrf', modules: [{
+      moduleId: 'M1', courseRef: 'legacy:50', title: 'New module', completedTargetIds: ['NATIVE'],
+      sources: [{ sourceActivityRef: 'material:7', title: 'Narrated walkthrough', type: 'video', week: 'Week 1', automaticTargetId: null, recommendedTargetId: 'REC' }],
+      targets: [
+        { componentId: 'REC', title: 'W00 - Narrated walkthrough', type: 'reading', week: 'Week 2', plannedHours: 1 },
+        { componentId: 'NATIVE', title: 'Existing reading', type: 'reading', week: 'Week 2', plannedHours: 1 },
+      ],
+    }] });
+    render(<MemoryRouter><TransferRequests /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Review transfer' }));
+    const choices = within(await screen.findByRole('group', { name: 'Match Narrated walkthrough (material:7) in New module' }));
+    expect(screen.getByText('Recommended: W00 - Narrated walkthrough')).toBeVisible();
+    expect(screen.getByText(/Old LMS: video; new LMS: reading/)).toBeVisible();
+    const counts = within(screen.getByRole('region', { name: 'Component counts for New module' }));
+    expect(counts.getByText('Matched from old LMS').parentElement).toHaveTextContent('0');
+    expect(counts.getByText('Completed components').parentElement).toHaveTextContent('1');
+    const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm' });
+    expect(confirm).toBeDisabled();
+    openChoices(choices);
+    fireEvent.click(choices.getByRole('button', { name: /^Week 2/ }));
+    expect(choices.getByText('Recommended')).toBeVisible();
+    const option = choices.getByRole('radio', { name: /W00 - Narrated walkthrough/ });
+    expect(option).not.toBeChecked();
+    expect(choices.queryByRole('radio', { name: /Existing reading/ })).not.toBeInTheDocument();
+    fireEvent.click(option);
+    expect(confirm).toBeEnabled();
+    expect(counts.getByText('Matched from old LMS').parentElement).toHaveTextContent('1');
+    expect(screen.getByText('Manual selection')).toBeInTheDocument();
+    expect(api.approveTransferRequest).not.toHaveBeenCalled();
+    fireEvent.click(choices.getByRole('button', { name: 'Clear match' }));
+    expect(confirm).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Reload component matches' }));
+    await waitFor(() => expect(api.getTransferReview).toHaveBeenCalledTimes(2));
+    expect(confirm).toBeDisabled();
+    expect(counts.getByText('Matched from old LMS').parentElement).toHaveTextContent('0');
+  });
   it('restores request-local matches as editable selections without approving or awarding progress', async () => {
     vi.mocked(api.getTransferRequests).mockResolvedValue({ requests: [request], nextOffset: null, csrfToken: 'csrf' });
     vi.mocked(api.getTransferReview).mockResolvedValue({ reviewToken: 'review', csrfToken: 'csrf', modules: [{

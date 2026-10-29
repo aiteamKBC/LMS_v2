@@ -11,6 +11,22 @@ const review = { reviewToken: 'review', csrfToken: 'csrf', modules: [module] };
 
 // The requested matching policy now uses names rather than body content.
 describe('component name recommendations', () => {
+  it('offers only the recorded different-type recommendation and never preselects it', () => {
+    const original = { ...source, title: 'Narrated walkthrough', type: 'video', recommendedTargetId: 'A' };
+    const destinations = targets.map(target => ({ ...target, type: 'reading', title: original.title }));
+    const result = componentSuggestions(original, destinations, new Set());
+    expect(result.candidates.map(t => t.componentId)).toEqual(['A']);
+    expect(result.suggestedId).toBe('A');
+    expect(componentSuggestions(original, destinations, new Set(['A'])).suggestedId).toBeNull();
+    for (const type of ['video', 'reading']) {
+      expect(suggestedMappings({ ...review, modules: [{ ...module, sources: [{ ...original, type }], targets: destinations }] })).toEqual([]);
+    }
+    expect(componentSuggestions({ ...original, recommendedTargetId: 'FOREIGN' }, destinations, new Set()).candidates).toEqual([]);
+    expect(componentSuggestions({ ...original, type: 'unknown' }, destinations, new Set()).candidates).toEqual([]);
+    // Existing saved selections are not replaced by recommendations on another source.
+    expect(suggestedMappings({ ...review, modules: [{ ...module, sources: [original, { ...source, sourceActivityRef: 'material:8', savedTargetId: 'B' }], targets: [...destinations.slice(0, 1), targets[1]] }] }))
+      .toEqual([{ moduleId: 'M1', sourceActivityRef: 'material:8', targetComponentId: 'B' }]);
+  });
   it('restores saved matches before name suggestions without claiming their destinations twice', () => {
     const saved = { ...source, savedTargetId: 'A' };
     const second = { ...source, sourceActivityRef: 'material:8', title: 'Budget planning' };

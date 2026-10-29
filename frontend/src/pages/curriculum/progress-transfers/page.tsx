@@ -178,6 +178,7 @@ function ComponentMatching({ review, mappings, disabled, onChange }: {
         const used = new Set([...module.sources.flatMap(row => row.automaticTargetId ? [row.automaticTargetId] : []),
           ...mappings.filter(mapping => mapping.moduleId === module.moduleId && mapping.sourceActivityRef !== source.sourceActivityRef).map(mapping => mapping.targetComponentId)]);
         const automatic = module.targets.find(target => target.componentId === source.automaticTargetId);
+        const recommendation = module.targets.find(target => target.componentId === source.recommendedTargetId);
         const manualTarget = module.targets.find(target => target.componentId === value?.targetComponentId);
         const savedMatch = Boolean(manualTarget && source.savedTargetId === manualTarget.componentId);
         const nameMatched = proposed.some(row => row.moduleId === module.moduleId && row.sourceActivityRef === source.sourceActivityRef && row.targetComponentId === value?.targetComponentId);
@@ -185,7 +186,10 @@ function ComponentMatching({ review, mappings, disabled, onChange }: {
         return <div className={styles.matchRow} key={source.sourceActivityRef}>
           <div><strong>{source.title}</strong><small>{source.week || 'No week specified'} · {source.type} · {source.sourceActivityRef}</small></div>
           {source.automaticTargetId ? <div><span className={styles.approvedBadge}>Automatically matched</span><strong>{automatic?.title || source.automaticTargetId}</strong><small>{automatic?.week}</small></div>
-            : <div>{manualTarget && <span className={styles.approvedBadge}>{savedMatch ? 'Saved match — review' : nameMatched ? 'Matched by name — review' : 'Match selected'}</span>}
+            : <div>{recommendation && <small><strong>Recommended: {recommendation.title}</strong>{' '}
+                {recommendation.week || 'No week specified'}. Old LMS: {source.type}; new LMS: {recommendation.type}. Similar name; review the content and choose manually. This recommendation is not selected automatically.
+              </small>}
+              {manualTarget && <span className={styles.approvedBadge}>{savedMatch ? 'Saved match — review' : nameMatched ? 'Matched by name — review' : 'Match selected'}</span>}
               <WeekComponentChoices label={`Match ${source.title} (${source.sourceActivityRef}) in ${module.title}`}
                 candidates={candidates} selectedId={value?.targetComponentId ?? ''} suggestedId={suggestedId} used={used} disabled={disabled}
                 onChange={targetComponentId => onChange([...mappings.filter(mapping => mapping.moduleId !== module.moduleId || mapping.sourceActivityRef !== source.sourceActivityRef),

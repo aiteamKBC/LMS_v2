@@ -30,6 +30,90 @@ def context():
 
 
 class TransferMatchingReviewTests(SimpleTestCase):
+    def test_type_recommendation_requires_an_explicit_choice_and_is_limited_to_its_request_pair(self):
+        data = context()
+        data[5][1]['source_activity_type'] = 'video'
+        data[3]['components'].append(component('ALTERNATIVE'))
+        snapshot = item(completedSourceActivities=['material:8'])
+        before_review = build_review('R1', [snapshot], data)
+        target = next(t for t in before_review['modules'][0]['targets'] if t['componentId'] == 'MANUAL')
+        proposal = {'sourceActivityRef': 'material:8', 'targetComponentId': 'MANUAL', 'sourceType': 'video',
+                    'targetType': 'reading', 'targetFingerprint': target['fingerprint'], 'allowDifferentType': True}
+        snapshot['reviewRecommendations'] = [proposal]
+        original = deepcopy((snapshot, data))
+        review = build_review('R1', [snapshot], data)
+        source = review['modules'][0]['sources'][0]
+        self.assertEqual(source['recommendedTargetId'], 'MANUAL')
+        self.assertIsNone(source['automaticTargetId'])
+        self.assertNotIn('savedTargetId', source)
+        self.assertEqual(module_review(snapshot, data)[1], {})
+        self.assertNotEqual(review['reviewToken'], before_review['reviewToken'])
+        mapping = {'moduleId': 'M1', 'sourceActivityRef': 'material:8', 'targetComponentId': 'MANUAL'}
+        decisions = {'reviewToken': review['reviewToken'], 'mappings': [mapping]}
+        self.assertEqual(validate_decisions(review, decisions)[('M1', 'material:8')]['componentId'], 'MANUAL')
+        for choices in [[], [{**mapping, 'targetComponentId': 'ALTERNATIVE'}], [mapping, mapping],
+                        [{**mapping, 'moduleId': 'M2'}], [{**mapping, 'allowDifferentType': True}]]:
+            with self.subTest(choices=choices), self.assertRaises(ServiceError):
+                validate_decisions(review, {**decisions, 'mappings': choices})
+        other = build_review('R2', [item(completedSourceActivities=['material:8'])], data)
+        with self.assertRaises(ServiceError):
+            validate_decisions(other, {**decisions, 'reviewToken': other['reviewToken']})
+        self.assertEqual((snapshot, data), original)
+
+    def test_type_recommendations_are_invalidated_by_changed_identity_types_or_conflicts(self):
+        data = context()
+        data[5][1]['source_activity_type'] = 'video'
+        snapshot = item(completedSourceActivities=['material:7', 'material:8'])
+        target = next(t for t in module_review(snapshot, data)[0]['targets'] if t['componentId'] == 'MANUAL')
+        proposal = {'sourceActivityRef': 'material:8', 'targetComponentId': 'MANUAL', 'sourceType': 'video',
+                    'targetType': 'reading', 'targetFingerprint': target['fingerprint'], 'allowDifferentType': True}
+        for rows in [None, {}, [None], [proposal, proposal],
+                     [{**proposal, 'allowDifferentType': 'true'}], [{**proposal, 'allowDifferentType': False}],
+                     [{**proposal, 'sourceActivityRef': 'material:9'}], [{**proposal, 'sourceActivityRef': []}],
+                     [{**proposal, 'targetComponentId': 'FOREIGN'}], [{**proposal, 'targetComponentId': 'RETIRED'}],
+                     [{**proposal, 'targetComponentId': 'AUTO'}], [{**proposal, 'sourceType': 'reading'}],
+                     [{**proposal, 'targetType': 'video'}], [{**proposal, 'targetFingerprint': 'stale'}]]:
+            with self.subTest(rows=rows):
+                sources = module_review({**snapshot, 'reviewRecommendations': rows}, data)[0]['sources']
+                self.assertTrue(all('recommendedTargetId' not in source for source in sources))
+        data[5][2]['source_activity_type'] = 'video'
+        snapshot.update(completedSourceActivities=['material:8', 'material:9'],
+                        reviewRecommendations=[proposal, {**proposal, 'sourceActivityRef': 'material:9'}])
+        self.assertTrue(all('recommendedTargetId' not in s for s in module_review(snapshot, data)[0]['sources']))
+
+    def test_explicit_type_recommendation_approval_preserves_native_credit_and_records_manual_match(self):
+        data = context()
+        data[5][1]['source_activity_type'] = 'video'
+        data[3]['componentProgress'] = [{'componentId': 'AUTO', 'kind': 'component'}]
+        target = next(t for t in module_review(item(completedSourceActivities=['material:8']), data)[0]['targets'] if t['componentId'] == 'MANUAL')
+        pending = saved(modules=[item(completedSourceActivities=['material:8'], reviewRecommendations=[{
+            'sourceActivityRef': 'material:8', 'targetComponentId': 'MANUAL', 'sourceType': 'video',
+            'targetType': 'reading', 'targetFingerprint': target['fingerprint'], 'allowDifferentType': True}])])
+        request_id = pending['items'][0]['requestId']
+        review = build_review(request_id, pending['items'], data)
+        decisions = {'reviewToken': review['reviewToken'], 'mappings': [
+            {'moduleId': 'M1', 'sourceActivityRef': 'material:8', 'targetComponentId': 'MANUAL'}]}
+        cursor = MagicMock(); cursor.fetchone.return_value = (7, 'commercial')
+        connection = MagicMock(); connection.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(api, 'connections', {'enrolment': connection}), \
+                patch.object(api.store, 'lock_learner', return_value=nullcontext(cursor)), \
+                patch.object(api.store, 'read_state', return_value=pending), \
+                patch.object(api, 'source_owner', return_value=(SimpleNamespace(pk=7), {'id': 9})), \
+                patch('learner_api.my_learning.load_context', return_value=data):
+            with self.assertRaises(ServiceError):
+                api.approve_request(request_id, SimpleNamespace(id=11), {**decisions, 'mappings': []})
+            self.assertTrue(all(not call.args[0].startswith('UPDATE') for call in cursor.execute.call_args_list))
+            api.approve_request(request_id, SimpleNamespace(id=11), decisions)
+        write = next(call for call in cursor.execute.call_args_list if 'SET snapshot=' in call.args[0])
+        snapshot = json.loads(write.args[1][0])
+        self.assertTrue(snapshot['matchedComponents']['MANUAL']['manualMatch'])
+        self.assertTrue(snapshot['componentMatches'][0]['manual'])
+        self.assertEqual(snapshot['baselineCompletedIds'], ['AUTO'])
+        self.assertEqual(snapshot['componentCounts'], {'total': 3, 'matched': 1, 'completed': 2, 'remaining': 1})
+        self.assertEqual((snapshot['hours'], snapshot['percent']), (2, 40))
+        projected = project_approved_learning(data[3]['components'], data[9]['replacement_settings'], [{**snapshot, 'status': 'approved'}])
+        self.assertTrue(next(c for c in projected if c['componentId'] == 'MANUAL')['previousLearning']['completed'])
+
     def test_saved_proposals_restore_only_this_requests_matches_without_awarding_completion(self):
         data = context()
         snapshot = item(completedSourceActivities=['material:7', 'material:8'])

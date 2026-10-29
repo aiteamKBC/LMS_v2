@@ -55,6 +55,33 @@ def saved_review_matches(item, sources, targets):
     return {ref: ident for ref, ident in candidates if source_uses[ref] == target_uses[ident] == 1}
 
 
+def review_recommendations(item, sources, targets):
+    """Allow only recorded request-local type exceptions, after explicit selection."""
+    rows = item.get('reviewRecommendations', [])
+    if not isinstance(rows, list):
+        return {}
+    source_by_ref = {source['sourceActivityRef']: source for source in sources}
+    target_by_id = {target['componentId']: target for target in targets}
+    used = {source.get('automaticTargetId') or source.get('savedTargetId') for source in sources}
+    candidates = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        ref, ident = row.get('sourceActivityRef'), row.get('targetComponentId')
+        if not isinstance(ref, str) or not isinstance(ident, str):
+            continue
+        source, target = source_by_ref.get(ref), target_by_id.get(ident)
+        if (source and target and not source['automaticTargetId'] and not source.get('savedTargetId')
+                and ident not in used and row.get('allowDifferentType') is True
+                and source['type'] == row.get('sourceType') and target['type'] == row.get('targetType')
+                and 'unknown' not in (source['type'], target['type'])
+                and target['fingerprint'] == row.get('targetFingerprint')):
+            candidates.append((ref, ident))
+    source_uses = Counter(ref for ref, _ in candidates)
+    target_uses = Counter(ident for _, ident in candidates)
+    return {ref: ident for ref, ident in candidates if source_uses[ref] == target_uses[ident] == 1}
+
+
 def module_review(item, context):
     from .my_learning import native_done
     native, definitions, done, metadata = context[3], context[5], context[6], context[9]
@@ -89,6 +116,10 @@ def module_review(item, context):
     for source in sources:
         if source['sourceActivityRef'] in saved_matches:
             source['savedTargetId'] = saved_matches[source['sourceActivityRef']]
+    recommendations = review_recommendations(item, sources, targets)
+    for source in sources:
+        if source['sourceActivityRef'] in recommendations:
+            source['recommendedTargetId'] = recommendations[source['sourceActivityRef']]
     target_ids = {target['componentId'] for target in targets}
     # native_done caches its facts; keep this read-only review from mutating context.
     completion_context = dict(native)
@@ -121,7 +152,7 @@ def build_review(request_id, items, context):
 
 
 def validate_decisions(review, decisions):
-    """Require one explicit same-type destination for every unmatched completion."""
+    """Require explicit unique choices; type exceptions are request-local pairs."""
     needed = {(module['moduleId'], source['sourceActivityRef']): (module, source)
               for module in review['modules'] for source in module['sources'] if not source['automaticTargetId']}
     if decisions is None and not needed:
@@ -144,7 +175,8 @@ def validate_decisions(review, decisions):
             raise ServiceError('A source component is invalid or selected more than once.', 'invalid_transfer_match', 400)
         module, source = needed[key]
         target = next((target for target in module['targets'] if target['componentId'] == row['targetComponentId']), None)
-        if (target is None or source['type'] == 'unknown' or source['type'] != target['type']
+        if (target is None or source['type'] == 'unknown'
+                or (source['type'] != target['type'] and source.get('recommendedTargetId') != row['targetComponentId'])
                 or (row['moduleId'], row['targetComponentId']) in used):
             raise ServiceError('Choose a unique component of the same type in the destination module.', 'invalid_transfer_match', 400)
         used.add((row['moduleId'], row['targetComponentId']))

@@ -15,7 +15,7 @@ export type TransferReview = {
   reviewToken: string; csrfToken: string;
   modules: {
     moduleId: string; courseRef: string; title: string; completedTargetIds?: string[]; retainedCompletedIds?: string[];
-    sources: { sourceActivityRef: string; title: string; week: string; type: string; automaticTargetId: string | null; savedTargetId?: string;
+    sources: { sourceActivityRef: string; title: string; week: string; type: string; automaticTargetId: string | null; savedTargetId?: string; recommendedTargetId?: string;
       contentAvailable?: boolean; contentScores?: { componentId: string; score: number | null; contentAvailable?: boolean }[] }[];
     targets: { componentId: string; title: string; week: string; type: string; plannedHours: number | null }[];
   }[];

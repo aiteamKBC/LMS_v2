@@ -39,14 +39,15 @@ export function componentSuggestions(
   targets: ModuleReview['targets'],
   used: ReadonlySet<string>,
 ) {
-  const ranked = targets.filter(target => source.type !== 'unknown' && target.type === source.type)
+  const recommended = targets.find(target => target.componentId === source.recommendedTargetId && target.type !== 'unknown');
+  const ranked = targets.filter(target => source.type !== 'unknown' && (target.type === source.type || target === recommended))
     .map(target => ({ target, score: nameSimilarity(source.title, target.title), used: used.has(target.componentId) }))
     .sort((a, b) => Number(a.used) - Number(b.used) || b.score - a.score);
   const available = ranked.filter(row => !row.used);
   const best = available[0];
   // Do not label weak or ambiguous similarities as a single recommendation.
-  const suggestedId = best && best.score >= 0.84 && best.score - (available[1]?.score ?? 0) >= 0.1
-    ? best.target.componentId : null;
+  const suggestedId = recommended && source.type !== 'unknown' && !used.has(recommended.componentId) ? recommended.componentId
+    : best && best.score >= 0.84 && best.score - (available[1]?.score ?? 0) >= 0.1 ? best.target.componentId : null;
   return { candidates: ranked.map(row => row.target), suggestedId };
 }
 
@@ -58,7 +59,8 @@ export function suggestedMappings(review: TransferReview): TransferMapping[] {
       .map(source => ({ moduleId: module.moduleId, sourceActivityRef: source.sourceActivityRef, targetComponentId: source.savedTargetId! }));
     const uniqueSaved = saved.filter(row => saved.filter(other => other.targetComponentId === row.targetComponentId).length === 1);
     uniqueSaved.forEach(row => used.add(row.targetComponentId));
-    const proposals = module.sources.filter(source => !source.automaticTargetId && !uniqueSaved.some(row => row.sourceActivityRef === source.sourceActivityRef)).flatMap(source => {
+    // Recorded recommendations always require a click, even if their names match exactly.
+    const proposals = module.sources.filter(source => !source.automaticTargetId && !source.recommendedTargetId && !uniqueSaved.some(row => row.sourceActivityRef === source.sourceActivityRef)).flatMap(source => {
       const { suggestedId } = componentSuggestions(source, module.targets, used);
       return suggestedId ? [{ moduleId: module.moduleId, sourceActivityRef: source.sourceActivityRef, targetComponentId: suggestedId }] : [];
     });
