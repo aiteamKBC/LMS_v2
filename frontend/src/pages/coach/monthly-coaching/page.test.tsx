@@ -388,6 +388,24 @@ describe('restored monthly coaching list', () => {
     expect(screen.getByTestId('route')).not.toHaveTextContent('/coach/learner-case-file');
   });
 
+  it.each(['completed', 'in-progress', 'awaiting-signature'] as const)(
+  'opens a saved LMS MCM form when its current status is %s and Aptem is completed', async status => {
+    fetchEvents.mockResolvedValue({ events: [meeting(61, {
+      id: 'imported-review:61', eventKey: 'imported-review:61', learner: 'Saved LMS MCM',
+      reviewSource: 'aptem', aptemReviewId: '61', importedReviewType: 'Monthly Coaching Meeting',
+      reviewTemplateId: null, reviewInstanceId: null, hasReviewForm: true,
+      sourceStatus: 'completed', status, scheduledDate: '2026-09-10',
+      reviewCompletedAt: status === 'completed' ? '2026-09-10T10:00:00Z' : null,
+    })] });
+    mount('/coach/monthly-coaching?filter=all');
+    const row = within((await screen.findByText('Saved LMS MCM')).closest('tr')!);
+    expect(row.getByText({ completed: 'Completed', 'in-progress': 'In Progress',
+      'awaiting-signature': 'Awaiting Signature' }[status])).toBeVisible();
+    fireEvent.click(row.getByRole('button', { name: 'View form' }));
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A61');
+    expect(openReview).not.toHaveBeenCalled();
+  });
+
   it('opens Curriculum questions for a non-terminal imported Aptem meeting', async () => {
     fetchEvents.mockResolvedValue({ events: [
       meeting(22, { id: 'imported-review:22', eventKey: 'imported-review:22', learner: 'Imported Draft', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00', reviewSource: 'aptem', aptemReviewId: '22', hasReviewForm: true, reviewTemplateId: undefined }),

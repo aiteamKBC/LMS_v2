@@ -199,6 +199,8 @@ export interface ReviewInstanceFormDefinition {
   noApprovedMigratedTemplate?: boolean;
   migratedPreviewError?: boolean;
   canInitialize?: boolean;
+  /** Server eligibility for the assigned coach's correction workflow. */
+  canReopen?: boolean;
   sourceStatus?: string;
   localStatus?: string | null;
   bookingCalendar?: BookingCalendarRules;

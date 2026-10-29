@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import re
+from types import SimpleNamespace
 from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
@@ -66,23 +67,30 @@ def resolve_authenticated_learner(account):
     return learner
 
 
-def coach_actor(account):
+def _staff_grants(staff):
+    from login.identity import accesses_for_staff
+    return accesses_for_staff(SimpleNamespace(**(staff or {})))
+
+
+def coach_actor(account, *, monitoring=False):
     if not account or not account.is_active or account.role not in {'admin', 'staff'} or account.subject_type != 'staff':
         raise ServiceError('Coach access is required.', 'forbidden', 403)
     staff = repo.staff(account.subject_id)
-    access = normalize(staff.get('access')) if staff else ''
-    if access not in {'coach', 'super-admin', 'record-monitor'} or not normalize(staff.get('email')):
+    grants = _staff_grants(staff)
+    allowed = {'super-admin', 'record-monitor'} if monitoring else {'coach', 'super-admin', 'record-monitor'}
+    if not (grants & allowed) or not normalize((staff or {}).get('email')):
         raise ServiceError('Coach access is required.', 'forbidden', 403)
-    return {'email': normalize(staff['email']), 'role': {'super-admin': 'admin', 'record-monitor': 'monitor'}.get(access, 'coach')}
+    role = 'admin' if 'super-admin' in grants else 'coach' if 'coach' in grants and not monitoring else 'monitor'
+    return {'email': normalize(staff['email']), 'role': role}
 
 
 def is_monitor(account):
     if not account or account.subject_type != 'staff':
         return False
-    if hasattr(account, '_staff_access'):
-        return account._staff_access == 'record-monitor'
-    staff = repo.staff(account.subject_id)
-    return bool(staff and normalize(staff.get('access')) == 'record-monitor')
+    grants = getattr(account, '_staff_accesses', None)
+    if grants is None:
+        grants = _staff_grants(repo.staff(account.subject_id))
+    return 'record-monitor' in grants and not (grants & {'coach', 'super-admin'})
 
 
 def require_writer(actor_role):
@@ -90,8 +98,8 @@ def require_writer(actor_role):
         raise ServiceError('This account can view records only.', 'read_only', 403)
 
 
-def coach_learner(account, aptem_id):
-    actor = coach_actor(account)
+def coach_learner(account, aptem_id, *, monitoring=False):
+    actor = coach_actor(account, monitoring=monitoring)
     try:
         aptem_id = int(aptem_id)
     except (ValueError, TypeError):

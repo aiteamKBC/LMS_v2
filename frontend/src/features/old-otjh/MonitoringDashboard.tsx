@@ -140,6 +140,8 @@ export function MonitoringDashboard() {
 }
 
 function LearnerRow({ learner: row }: { learner: MonitoredLearner }) {
+  const { auth } = useAuth();
+  const perspective = auth.account?.role === 'admin' || auth.account?.access === 'super-admin' ? '' : '?workspace=monitor';
   return <tr><td data-label="Learner"><div className={styles.learnerName}>{row.name || 'Unnamed learner'}</div><div className={styles.email}>{row.email || 'No email recorded'}</div>
     <small>{row.programme || 'No programme recorded'}</small><div className={styles.sourceStates}><span>Aptem {row.id}</span><span>Enrolment: {row.enrolment_status || 'Unset'}</span></div></td>
     <td data-label="Coach"><span>{row.coach_name || 'Unassigned'}</span></td>
@@ -148,7 +150,7 @@ function LearnerRow({ learner: row }: { learner: MonitoredLearner }) {
     <td data-label="Coach signed"><SignatureCount count={row.coach_signed_months} total={row.total_months} /></td>
     <td data-label="Review state"><RecordBadge tone={row.can_access_lms ? 'positive' : 'pending'}>{statuses[row.status] || row.status}</RecordBadge>
       {!!row.pending_revisions && <small>{row.pending_revisions} pending revisions</small>}{row.last_signed_at && <small>Last signature {displayDate(row.last_signed_at)}</small>}</td>
-    <td data-label="Open record">{row.can_open ? <Link className={design.secondaryButton} to={`/old-otjh/coach/${row.id}`} aria-label={`Open record for ${row.name}`}>Open<AppIcon className="ri-arrow-right-line" /></Link> : <span className={styles.muted}>Check identity link</span>}</td></tr>;
+    <td data-label="Open record">{row.can_open ? <Link className={design.secondaryButton} to={`/old-otjh/coach/${row.id}${perspective}`} aria-label={`Open record for ${row.name}`}>Open<AppIcon className="ri-arrow-right-line" /></Link> : <span className={styles.muted}>Check identity link</span>}</td></tr>;
 }
 
 function SignatureCount({ count, total }: { count: number; total: number }) {

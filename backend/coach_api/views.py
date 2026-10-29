@@ -54,6 +54,7 @@ from coach_api import imported_booking_state
 from coach_api.migrated_reviews import (
     EDITABLE_STATUSES as MIGRATED_EDITABLE_STATUSES,
     booking_event_type as migrated_booking_event_type,
+    has_lms_completion_history,
     initial_local_status, programme_key as migrated_programme_key,
     render_sections as render_migrated_sections,
     review_family as migrated_review_family,
@@ -15421,7 +15422,7 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         review,
         has_normalized_sections=bool(normalized_sections),
     )
-    historical_completed = migrated_source_is_completed(review)
+    source_completed = migrated_source_is_completed(review)
     canonical_event_key = f"{prefix}{review['aptemReviewId']}"
     canonical_owner = owner_email.strip().casefold()
     saved_instance = requested_overlay
@@ -15444,6 +15445,9 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     if saved_instance and isinstance(getattr(saved_instance, "event_key", None), str):
         canonical_event_key = saved_instance.event_key
     snapshot = getattr(saved_instance, "template_snapshot", None)
+    # Keep completed LMS forms and their archived correction cycles accessible.
+    # Source-only history and drafts without LMS completion remain historical.
+    historical_completed = source_completed and not has_lms_completion_history(saved_instance)
     migrated_form = not historical_completed and isinstance(snapshot, dict) and bool(snapshot.get("sections"))
     if migrated_form and not getattr(saved_instance, "source_review_id", None):
         return None
@@ -15454,6 +15458,8 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         return {
             **_review_learner_identity(learner),
             "migratedForm": migrated_form,
+            "canReopen": bool(migrated_form and not preview_only
+                              and saved_instance.status in {"completed", "awaiting-signature"}),
             "instance": {"id": canonical_event_key, "learnerId": profile_id,
                          "targetDate": review.get("plannedDate") or ""},
             "historicalReview": review,
@@ -15620,6 +15626,8 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         "formAvailable": form_available,
         "summaryOnly": summary_only,
         "migratedForm": migrated_form,
+        "canReopen": bool(migrated_form and not preview_only
+                          and saved_instance.status in {"completed", "awaiting-signature"}),
         "previewOnly": is_template_preview,
         "noApprovedMigratedTemplate": no_approved_template,
         "migratedPreviewError": preview_error,
@@ -15696,7 +15704,7 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         "reason": "",
         "source": "aptem",
         }
-    if not historical_completed and (migrated_form or can_initialize or is_template_preview):
+    if not source_completed and (migrated_form or can_initialize or is_template_preview):
         from .review_sources import booking_for_imported_review, ReviewIdentityConflict
         booking_conflict = False
         try:

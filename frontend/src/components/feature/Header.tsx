@@ -320,10 +320,9 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
       {/* The shared workspace controls stay visible on every desktop page so
           the dashboard and its child pages have the same navigation chrome. */}
 
-      {/* Keep the workspace switcher available in the shared top bar so
-          administrators can return to the workspace list from any page. */}
+      {/* Multi-access accounts can return to their workspaces from personal learning too. */}
       {headerExtras && <div className="kbc-header-extras min-w-0 shrink-0">{headerExtras}</div>}
-      {!personalLearning && <WorkspaceSwitcher />}
+      {(!personalLearning || (auth.account?.accessWorkspaces?.length ?? 0) > 1) && <WorkspaceSwitcher />}
 
       {/* Profile and its existing account actions. */}
       <div className="flex shrink-0 items-center gap-0.5 lg:border-l lg:border-white/15 lg:pl-4">
