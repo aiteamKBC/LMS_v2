@@ -5,7 +5,7 @@ type ModuleReview = TransferReview['modules'][number];
 function normalizedTitle(title: string) {
   return title.normalize('NFKD').replace(/\p{M}/gu, '').toLocaleLowerCase('en')
     .replace(/&/g, ' and ')
-    .replace(/^(?:(?:p\d+|pptx?|pdf|docx?)\b[\s\p{P}]*|\d+[.)\-:]\s*)+/u, '')
+    .replace(/^(?:(?:p\d+|pptx?|pdf|docx?)\b[\s\p{P}]*|\d+\s*[.)\-:]\s*)+/u, '')
     .replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
 

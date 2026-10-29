@@ -11,6 +11,16 @@ const review = { reviewToken: 'review', csrfToken: 'csrf', modules: [module] };
 
 // The requested matching policy now uses names rather than body content.
 describe('component name recommendations', () => {
+  it('preselects an equivalent title with a spaced numeric export prefix', () => {
+    const original = { ...source, title: 'Welcome to the scheduling module', type: 'video' };
+    for (const prefix of ['00 - ', '00-', '00 : ', '00. ']) {
+      const target = { ...targets[0], title: `${prefix}${original.title}`, type: 'video' };
+      expect(nameSimilarity(original.title, target.title)).toBe(1);
+      expect(suggestedMappings({ ...review, modules: [{ ...module, sources: [original], targets: [target] }] }))
+        .toEqual([{ moduleId: 'M1', sourceActivityRef: 'material:7', targetComponentId: 'A' }]);
+    }
+    expect(nameSimilarity('Session 1 Part 1: Scheduling', '00 - Session 1 Part 2: Scheduling')).toBe(0);
+  });
   it('preselects the matching podcast despite dash/spacing differences and a different week', () => {
     const oldTitle = 'AUD–Overview of the Programme and assignment';
     const newTitle = 'AUD - Overview of the Programme and assignment';
