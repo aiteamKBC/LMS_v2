@@ -16,7 +16,7 @@ import MonthlyCoachingPage, { MonthlyCoachingListPage } from '../monthly-coachin
 import { CurriculumReviewPage, CurriculumReviewsListPage } from './curriculumReviews';
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
-vi.mock('@/pages/coach/progress-reviews/page', () => ({ buildProgressReviewSlidesDeck: vi.fn() }));
+vi.mock("@/pages/coach/progress-reviews/page.helpers", () => ({ buildProgressReviewSlidesDeck: vi.fn() }));
 vi.mock('@/api/auth', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/auth')>(),
   apiMe: vi.fn(async () => ({ id: 999, email: 'staff@example.test', displayName: 'Test staff', role: 'staff', subjectType: 'staff', subjectId: 999, permissions: [], hasPassword: true, lastLoginAt: null })),

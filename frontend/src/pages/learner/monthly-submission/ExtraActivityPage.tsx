@@ -13,7 +13,7 @@ import { loadLearningReflectionSubmission, saveLearningReflectionSubmission, typ
 import { checkMonthlyAssignment, emptyMonthlyAssignment, type AssignmentQualityCheck } from '@/api/monthlyAssignment';
 import { MonthlyAnswerField, MonthlyAssignmentSteps } from '../video-watch/MonthlyAssignmentSteps';
 import { AssignmentAiCheckContext } from '../video-watch/AssignmentAiCheckContext';
-import { assignmentTimeHours } from '../video-watch/AssignmentTimeEntries';
+import { assignmentTimeHours } from "../video-watch/AssignmentTimeEntries.helpers";
 import { useLearningStatements } from '@/hooks/useLearningStatements';
 import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
 import { useAuth } from '@/hooks/useAuth';

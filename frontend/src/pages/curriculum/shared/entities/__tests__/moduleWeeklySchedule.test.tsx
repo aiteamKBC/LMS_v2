@@ -4,7 +4,8 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createGroupModule, previewModuleSessionPlan, previewTutorAvailabilityRoster, updateCurriculumModule } from '@/lib/curriculumApi';
 import type { CurriculumGroup, CurriculumModule } from '@/lib/curriculumApi';
-import { ModuleFormDrawer, moduleFormTarget, type ModuleFormTarget } from '../moduleForm';
+import { ModuleFormDrawer, type ModuleFormTarget } from '../moduleForm';
+import { moduleFormTarget } from "../moduleForm.helpers";
 
 // Out of the concurrency path, which drawerRecordConcurrency covers: the server
 // reports no version for these records, so their saves go unguarded.

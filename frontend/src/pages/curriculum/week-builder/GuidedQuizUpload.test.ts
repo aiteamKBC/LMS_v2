@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { XML_QUESTION_TEMPLATE, validateXml } from './GuidedQuizUpload';
+import { XML_QUESTION_TEMPLATE } from './GuidedQuizUpload';
+import { validateXml } from "./GuidedQuizUpload.helpers";
 
 describe('GuidedQuizUpload XML validation', () => {
   it('ships a valid downloadable template containing all eight question types', () => {

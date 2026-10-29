@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { ModuleSessionSchedulePreview, teamsCalendarOccurrences } from '../createCalendarForm';
+import { ModuleSessionSchedulePreview } from '../createCalendarForm';
+import { teamsCalendarOccurrences } from "../createCalendarForm.helpers";
 import { calendarReviewHtml } from '../calendarReview';
 import { pairHeldDates } from '../calendarTime';
 

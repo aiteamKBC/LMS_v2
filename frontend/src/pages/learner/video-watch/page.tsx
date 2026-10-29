@@ -1,3 +1,4 @@
+import { fileProbe } from './page.helpers';
 import { archiveTimingDraft, timingSessionExpired } from '@/lib/timingRecovery';
 import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
 import { ManualTimeSummary } from '@/components/feature/ManualTimeConfirmation';
@@ -30,7 +31,8 @@ import {
   type JourneyComponent,
 } from '@/utils/learnerJourney';
 import { fetchEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
-import { ReflectionWindow, formatClock, formatRecordedClock } from '@/components/feature/ReflectionWindow';
+import { ReflectionWindow } from '@/components/feature/ReflectionWindow';
+import { formatClock, formatRecordedClock } from '@/components/feature/ReflectionWindow.helpers';
 import { ReflectionChoicePopup } from '@/components/feature/ReflectionChoicePopup';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
@@ -1595,12 +1597,7 @@ function directAudioSource(url: string, fileName?: string | null): string | null
   return null;
 }
 
-export function fileProbe(url: string, fileName?: string | null): string {
-  const named = fileName?.trim().split(/[?#]/)[0];
-  // Protected file endpoints have no extension in their path. Use the known
-  // filename instead of appending the URL and hiding its extension.
-  return named && /\.[a-z0-9]{1,8}$/i.test(named) ? named : url.split(/[?#]/)[0];
-}
+
 
 function fileLabelFrom(url: string, fileName?: string | null): string {
   if (fileName) return decodeInlineText(fileName);

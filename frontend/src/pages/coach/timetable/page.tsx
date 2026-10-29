@@ -1672,7 +1672,7 @@ export default function CoachTimetablePage() {
     }
 
     setPendingScheduleIntent(null);
-  }, [focusEventOnCalendar, loading, pendingScheduleIntent, schedulableEvents, setCalendarDate]);
+  }, [focusEventOnCalendar, loading, pendingScheduleIntent, schedulableEvents, setCalendarDate, calendarEvents]);
 
   useEffect(() => {
     if (!pendingFocusIntent || loading) return;

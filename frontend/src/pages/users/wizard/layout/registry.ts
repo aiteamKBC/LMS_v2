@@ -15,7 +15,7 @@
  */
 import { POLICY_DOCS_KBC, SEX_OPTIONS, YES_NO_SELECT } from '@/mocks/enrolment-console';
 import { COUNTRY_OPTIONS, NATIONALITY_OPTIONS } from '@/lib/countries';
-import { formatError } from '../steps/fields';
+import { formatError } from "../steps/fields.helpers";
 import { IlrText } from '../steps/ilrAdditionalText';
 import { CvJobText } from '../steps/cvJobText';
 import {

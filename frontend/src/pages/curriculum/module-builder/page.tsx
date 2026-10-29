@@ -59,7 +59,7 @@ import { AiMaterialModal } from './AiMaterialModal';
 import { ModuleLearnerProgressDialog } from './ModuleLearnerProgressDialog';
 import { LearnerAssignmentDrawer } from '../shared/entities/LearnerAssignmentDrawer';
 import { PersonalLearningEntry } from '@/components/feature/PersonalLearningEntry';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { SessionResultsDialog } from '../module-workspace/ModuleSessions';
 import { ModuleFormDrawer, ModuleSessionPreview, type ModuleFormTarget, type SavedModuleRef } from '../shared/entities/moduleForm';
 // The holiday notice, shared with the module workspace so a week touched by a
@@ -5585,16 +5585,15 @@ function WeekAssignedGroupsSection({ week, module, groupOptions }: {
     .filter(option => !programmeFilter || option.programmeId === programmeFilter || option.programme === programmeFilter)
     .map(option => [option.cohortId || option.cohort || '', option.cohort || option.cohortId || ''] as const)
     .filter(([id]) => Boolean(id))).entries()).map(([id, name]) => ({ id, name })), [groupOptions, programmeFilter]);
-  const visibleGroups = groupOptions.filter(option => (
+  const visibleGroups = useMemo(() => groupOptions.filter(option => (
     (!programmeFilter || option.programmeId === programmeFilter || option.programme === programmeFilter)
     && (!cohortFilter || option.cohortId === cohortFilter || option.cohort === cohortFilter)
-  ));
+  )), [groupOptions, programmeFilter, cohortFilter]);
   const sourceGroup = groupOptions.find(option => (
     normalise(option.key) === normalise(module.groupId)
     || normalise(option.name) === normalise(module.group)
   ));
   const placingGroup = groupOptions.find(option => option.key === placingGroupKey) || null;
-  const visibleGroupKey = visibleGroups.map(option => option.key).join('|');
 
   // The destination stores an independent week with its source `copiedFromId`.
   // Read that provenance once a programme/cohort is narrowed so the section
@@ -5624,7 +5623,7 @@ function WeekAssignedGroupsSection({ week, module, groupOptions }: {
       if (active) setSavedPlacedGroupKeys(matches.filter(Boolean));
     }).catch(() => { if (active) setSavedPlacedGroupKeys([]); });
     return () => { active = false; };
-  }, [cohortFilter, programmeFilter, visibleGroupKey, week.id]);
+  }, [cohortFilter, programmeFilter, visibleGroups, week.id]);
 
   return (
     <section className="rounded-2xl border border-background-200 bg-background-50 p-4 shadow-sm">

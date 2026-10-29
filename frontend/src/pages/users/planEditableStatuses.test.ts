@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PLAN_EDITABLE_STATUSES } from './page';
+import { PLAN_EDITABLE_STATUSES } from "./page.helpers";
 
 /**
  * Which learners an enrolment officer may still change the plan for.

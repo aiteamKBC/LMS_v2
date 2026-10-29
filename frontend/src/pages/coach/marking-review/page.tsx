@@ -187,8 +187,9 @@ export default function CoachMarkingReviewPage() {
   }, [selected, personal]);
 
   useEffect(() => {
+    const counter = loadSequence;
     void load();
-    return () => { ++loadSequence.current; };
+    return () => { ++counter.current; };
   }, [load]);
 
   useEffect(() => {

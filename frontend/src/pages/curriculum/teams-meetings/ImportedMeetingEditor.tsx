@@ -4,8 +4,9 @@ import {
   type ImportedMeetingEditor as EditorData, type ImportedMeetingEdits, type ImportedCalendarPreview,
 } from '@/lib/curriculumApi';
 import { zonedNaiveToUtcIso } from '../module-builder/moduleAuthoringData';
-import { emailList } from '../module-builder/EmailChipsInput';
-import { naiveLocalFromUtc as localTime, TeamsPeopleFields, TeamsMeetingOptionFields,
+import { emailList } from '../module-builder/EmailChipsInput.helpers';
+import { naiveLocalFromUtc as localTime } from './createCalendarForm.helpers';
+import { TeamsPeopleFields, TeamsMeetingOptionFields,
   type TeamsCalendarForm } from './createCalendarForm';
 import { EntraPeopleInput } from './EntraPeopleInput';
 import { FormField } from '../shared/entities/ui';
