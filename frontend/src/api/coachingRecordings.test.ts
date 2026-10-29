@@ -22,6 +22,15 @@ const roster = (): CoachLearners => ({ ...query, coach: { email: 'coach@example.
 describe('Coaching calendar client', () => {
   beforeEach(() => { clearAllCachedResources(); vi.mocked(learningFetch).mockReset(); vi.mocked(coachFetch).mockReset(); });
 
+  it('reads the coach directory only without starting a background calendar request', async () => {
+    vi.mocked(learningFetch).mockResolvedValueOnce(response(page()));
+    await loadCoachingCalendar(query, undefined, { directoryOnly: true, background: true });
+    expect(learningFetch).toHaveBeenCalledOnce();
+    const params = new URL(vi.mocked(learningFetch).mock.calls[0][0], 'http://localhost').searchParams;
+    expect(params.get('directoryOnly')).toBe('1');
+    expect(params.has('background')).toBe(false);
+  });
+
   it('accepts completed empty recording checks while rejecting invalid check metadata', async () => {
     const payload = { eventKey: 'one', media: { state: 'pending', readyCount: 0, recordings: [],
       check: { state: 'complete', checkedAt: '2026-10-20T09:00:00Z', reason: 'no-recordings-returned' } },

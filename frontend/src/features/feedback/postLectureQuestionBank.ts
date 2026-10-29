@@ -164,7 +164,7 @@ function questionConfig(type: FeedbackQuestionType, originalType: string, read: 
     : { min: 1, max: Number(maximum), display, minLabel: read('Min label'), maxLabel: read('Max label') };
 }
 
-export async function parsePostLectureQuestionBank(file: Pick<File, 'name' | 'size' | 'arrayBuffer'>): Promise<ParsedPostLectureBank> {
+export async function parsePostLectureQuestionBank(file: Pick<File, 'name' | 'size' | 'arrayBuffer'>, { fixedQuestions = false }: { fixedQuestions?: boolean } = {}): Promise<ParsedPostLectureBank> {
   const extension = file.name.split('.').pop()?.toLowerCase();
   if (extension !== 'xlsx' && extension !== 'csv') throw new Error('Upload an Excel .xlsx or CSV file.');
   if (file.size < 1 || file.size > MAX_FILE_BYTES) throw new Error('The spreadsheet must be between 1 byte and 2 MB.');
@@ -220,7 +220,8 @@ export async function parsePostLectureQuestionBank(file: Pick<File, 'name' | 'si
     const read = (header: string) => String(row[columns.get(header) ?? -1] ?? '').trim();
     const category = read('Category');
     const text = read('Question');
-    const countValue = read('Questions per lecture');
+    // Fixed forms can reuse older lecture sheets, but their draw counts do not apply.
+    const countValue = fixedQuestions ? '' : read('Questions per lecture');
     const originalType = typeCode(read('Type'));
     if (!row.some(value => String(value ?? '').trim())) continue;
     const rowNumber = index + 2;
@@ -269,7 +270,7 @@ export async function parsePostLectureQuestionBank(file: Pick<File, 'name' | 'si
       legacyDrawCounts.set(key, count);
     }
     const section: FeedbackSection = categories.get(key) || {
-      title: category, icon: 'ri-file-list-3-line', description: '', questionsPerDelivery: 1, questions: [],
+      title: category, icon: 'ri-file-list-3-line', description: '', questionsPerDelivery: fixedQuestions ? null : 1, questions: [],
     };
     section.questions.push(question);
     categories.set(key, section);
@@ -277,8 +278,8 @@ export async function parsePostLectureQuestionBank(file: Pick<File, 'name' | 'si
 
   if (!categories.size) throw new Error('Include at least one question category.');
   for (const [key, section] of categories) {
-    section.questionsPerDelivery = legacyDrawCounts.get(key) ?? 1;
-    if (section.questionsPerDelivery > section.questions.length) throw new Error(`"${section.title}" cannot draw more questions than its bank contains.`);
+    section.questionsPerDelivery = fixedQuestions ? null : legacyDrawCounts.get(key) ?? 1;
+    if (section.questionsPerDelivery !== null && section.questionsPerDelivery > section.questions.length) throw new Error(`"${section.title}" cannot draw more questions than its bank contains.`);
   }
   const sections = [...categories.values()];
   if (closing) sections.push({

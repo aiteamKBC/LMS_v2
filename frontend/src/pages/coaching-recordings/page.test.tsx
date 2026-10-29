@@ -21,12 +21,12 @@ const fixture = (): CoachingCalendar => ({
     { calendarEventId: 'one', coachEmail: 'one@example.invalid', eventKey: 'mcr:1', candidateEventKeys: [], learnerIds: ['1'], family: 'MCM',
       startsAt: '2026-10-20T09:00:00Z', endsAt: '2026-10-20T10:00:00Z', phase: 'ended', match: 'matched', readyToAction: true,
       media: { state: 'ready', readyCount: 1, recordings: [{ id: 'file/one+', state: 'ready' }] } },
-    { calendarEventId: 'two', coachEmail: 'two@example.invalid', eventKey: 'pr:2', candidateEventKeys: [], learnerIds: ['2'], family: 'PR',
+    { calendarEventId: 'two', coachEmail: 'one@example.invalid', eventKey: 'pr:2', candidateEventKeys: [], learnerIds: ['2'], family: 'PR',
       startsAt: '2026-10-20T15:00:00Z', endsAt: '2026-10-20T16:00:00Z', phase: 'upcoming', match: 'mismatch', readyToAction: false,
       media: { state: 'pending', readyCount: 0, recordings: [] } },
   ], lmsOnly: [], cancelledBookings: [], coverage: { checkedCoachEmails: ['one@example.invalid', 'two@example.invalid'], totalCoaches: 2, nextOffset: null },
 });
-const mount = (workspace: 'coach' | 'curriculum' = 'curriculum') => render(<MemoryRouter><CoachingRecordingsPage workspace={workspace} /></MemoryRouter>);
+const mount = (workspace: 'coach' | 'curriculum' = 'curriculum') => render(<MemoryRouter initialEntries={['/?coach=one%40example.invalid']}><CoachingRecordingsPage workspace={workspace} /></MemoryRouter>);
 const details = (): CoachingSessionDetails => ({ eventKey: 'mcr:1', media: fixture().meetings[0].media, partial: false,
   attendance: { state: 'available', reportCount: 1, rows: [{ name: 'Verified Participant', status: 'attended', role: 'learner', totalAttendanceSeconds: 600 }] } });
 
@@ -56,7 +56,7 @@ describe('Coaching recordings calendar', () => {
     vi.mocked(loadCoachingCalendar).mockResolvedValue(data);
     mount();
     const notice = within(await screen.findByRole('region', { name: 'Ready to action summary' }));
-    expect(notice.getByText('4 ended meetings · 1 with playable recordings')).toBeInTheDocument();
+    expect(notice.getByText('4 meetings ready to review · 1 with playable recordings')).toBeInTheDocument();
     for (const label of ['1 · Recording available', '1 · No recording returned at last check', '1 · Recording check failed', '1 · No Teams link on this calendar entry']) {
       expect(notice.getByText(label)).toBeInTheDocument();
     }
@@ -161,7 +161,7 @@ describe('Coaching recordings calendar', () => {
     data.cancelledBookings = [
       { eventKey: 'mcr:1', learnerId: '1', coachEmail: 'one@example.invalid', family: 'MCM',
         startsAt: '2026-10-20T09:00:00Z', endsAt: '2026-10-20T10:00:00Z', dateBasis: 'session', sources: ['lms'], recordUpdatedAt: null },
-      { eventKey: 'pr:old', learnerId: '2', coachEmail: 'two@example.invalid', family: 'PR', startsAt: null, endsAt: null,
+      { eventKey: 'pr:old', learnerId: '2', coachEmail: 'one@example.invalid', family: 'PR', startsAt: null, endsAt: null,
         dateBasis: 'record-updated', sources: ['lms'], recordUpdatedAt: '2026-10-20T11:00:00Z' },
     ];
     vi.mocked(loadCoachingCalendar).mockResolvedValue(data);
@@ -178,6 +178,7 @@ describe('Coaching recordings calendar', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-10-20T12:00:00Z'));
+    window.localStorage.clear();
     vi.mocked(loadCoachingCalendar).mockReset().mockResolvedValue(fixture());
     vi.mocked(loadCoachingSession).mockReset().mockResolvedValue(details());
     vi.mocked(loadSavedCoachingEvidence).mockReset();
@@ -266,26 +267,18 @@ describe('Coaching recordings calendar', () => {
     expect(within(dayList).queryByText(/Showing 30/)).not.toBeInTheDocument();
   });
 
-  it('shows all coaches in calendar columns with local access to every meeting', async () => {
-    const data = fixture();
-    data.coaches = Array.from({ length: 6 }, (_, index) => ({ email: `coach-${index}@example.invalid`, name: `Coach ${index}` }));
-    data.meetings = Array.from({ length: 38 }, (_, index) => ({ ...data.meetings[0], calendarEventId: `meeting-${index}`,
-      eventKey: `mcr:${index}`, coachEmail: data.coaches[Math.floor(index / 7)].email, title: `Meeting ${index}` }));
-    vi.mocked(loadCoachingCalendar).mockResolvedValue(data);
-    mount();
-    const list = await screen.findByRole('region', { name: 'Coaching meetings' });
-    expect(within(list).getByText(/38 meetings match the filters/)).toBeInTheDocument();
-    expect(within(list).getAllByRole('article')).toHaveLength(28);
-    expect(screen.getByRole('region', { name: 'Hourly coach meeting calendar' })).toBeInTheDocument();
-    expect(screen.queryByRole('region', { name: 'All coach meeting agenda' })).not.toBeInTheDocument();
-    const requests = vi.mocked(loadCoachingCalendar).mock.calls.length;
-    fireEvent.click(within(list).getByRole('button', { name: 'Next coaches' }));
-    expect(within(list).getAllByRole('article')).toHaveLength(10);
-    expect(within(list).getByText(/38 meetings match the filters/)).toBeInTheDocument();
-    fireEvent.click(within(list).getByRole('button', { name: /^View Meeting 37 on / }));
-    expect(await screen.findByRole('dialog', { name: 'Meeting details' })).toHaveTextContent('Meeting 37');
-    expect(vi.mocked(loadCoachingSession).mock.lastCall?.[0]).toBe('mcr:37');
-    expect(loadCoachingCalendar).toHaveBeenCalledTimes(requests);
+  it('loads only the directory until a coach is selected, with searchable choices', async () => {
+    render(<MemoryRouter><CoachingRecordingsPage /></MemoryRouter>);
+    await screen.findByText(/Calendars load only after a coach is selected/);
+    expect(loadCoachingCalendar).toHaveBeenCalledOnce();
+    expect(vi.mocked(loadCoachingCalendar).mock.lastCall?.[2]).toEqual({ directoryOnly: true });
+    expect(screen.queryByRole('option', { name: 'All coaches' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Coaching meetings' })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search coaches' }), { target: { value: 'Two' } });
+    expect(screen.queryByRole('option', { name: 'Coach One' })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Coach' }), { target: { value: 'two@example.invalid' } });
+    await waitFor(() => expect(loadCoachingCalendar).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(loadCoachingCalendar).mock.lastCall?.[0].coachEmail).toBe('two@example.invalid');
   });
 
   it('shows Ready to action by default and links to the lecture library', async () => {
@@ -299,7 +292,7 @@ describe('Coaching recordings calendar', () => {
 
   it('opens learners only for one selected coach and returns to all of the chosen learner meetings', async () => {
     mount(); await screen.findByRole('heading', { name: 'Monthly Coaching Meeting' });
-    expect(screen.getByRole('button', { name: 'Coach learners' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Coach learners' })).toBeEnabled();
     expect(loadCoachLearners).not.toHaveBeenCalled();
     fireEvent.change(screen.getByRole('combobox', { name: 'Coach' }), { target: { value: 'one@example.invalid' } });
     await screen.findByRole('heading', { name: 'Monthly Coaching Meeting' });
@@ -309,7 +302,7 @@ describe('Coaching recordings calendar', () => {
     expect(vi.mocked(loadCoachLearners).mock.lastCall?.[0].coachEmail).toBe('one@example.invalid');
     fireEvent.click(within(dialog).getByRole('button', { name: 'View learner meetings' }));
     expect(screen.getByRole('combobox', { name: 'Learner' })).toHaveValue('1');
-    expect(loadCoachingCalendar).toHaveBeenCalledTimes(2);
+    expect(loadCoachingCalendar).toHaveBeenCalledOnce();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'All meetings', pressed: true })).toBeInTheDocument();
   });
@@ -345,6 +338,8 @@ describe('Coaching recordings calendar', () => {
   });
 
   it('shows only the chosen coach meetings in both the calendar and the review list', async () => {
+    const data = fixture(); data.meetings[1].coachEmail = 'two@example.invalid';
+    vi.mocked(loadCoachingCalendar).mockResolvedValue(data);
     mount(); await screen.findByRole('heading', { name: 'Monthly Coaching Meeting' });
     fireEvent.click(screen.getByRole('button', { name: 'All meetings' }));
     fireEvent.change(screen.getByRole('combobox', { name: 'Coach' }), { target: { value: 'two@example.invalid' } });
@@ -438,7 +433,7 @@ describe('Coaching recordings calendar', () => {
     data.meetings[0].readyToAction = false;
     vi.mocked(loadCoachingCalendar).mockResolvedValueOnce(data);
     mount();
-    expect(await screen.findByText('1 ended meeting · 0 with playable recordings')).toBeInTheDocument();
+    expect(await screen.findByText('1 meeting ready to review · 0 with playable recordings')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Monthly Coaching Meeting' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Ready to action', pressed: true })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Show all loaded meetings' }));
@@ -482,7 +477,7 @@ describe('Coaching recordings calendar', () => {
     vi.mocked(loadCoachingCalendar).mockResolvedValue({ ...fixture(), scope: 'own', coaches: fixture().coaches.slice(0, 1) });
     mount('coach'); await screen.findByRole('heading', { name: 'Monthly Coaching Meeting' });
     expect(screen.queryByRole('link', { name: 'Lecture recordings' })).not.toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'My calendar' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Coach' })).toHaveValue('one@example.invalid');
     expect(screen.getByRole('region', { name: 'Hourly coach meeting calendar' })).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'All coach meeting agenda' })).not.toBeInTheDocument();
   });
@@ -503,6 +498,16 @@ describe('Coaching recordings calendar', () => {
     expect(meetingPhase(upcoming, Date.parse('2026-10-20T15:30:00Z'))).toBe('in-progress');
     expect(meetingPhase(upcoming, Date.parse('2026-10-20T16:00:00Z'))).toBe('ended');
     expect(meetingPhase({ ...upcoming, phase: 'cancelled' }, Date.parse('2026-10-29T10:00:00Z'))).toBe('cancelled');
+  });
+
+  it('makes an already published recording ready during the scheduled window without marking the call ended', () => {
+    const row = fixture().meetings[0], now = Date.parse('2026-10-20T09:30:00Z');
+    expect(meetingPhase(row, now)).toBe('in-progress');
+    expect(hasPlayableRecording(row, now)).toBe(true);
+    expect(filterMeetings([row], 'ready', 'all', 'all', now)).toEqual([row]);
+    expect(filterMeetings([row], 'ended', 'all', 'all', now)).toEqual([]);
+    expect(hasPlayableRecording(row, Date.parse('2026-10-20T08:59:00Z'))).toBe(false);
+    expect(hasPlayableRecording({ ...row, phase:'cancelled' }, now)).toBe(false);
   });
 
   it('separates all ended review appointments from playable recordings and excludes future/cancelled appointments', () => {
@@ -560,6 +565,19 @@ describe('Coaching recordings calendar', () => {
     expect(screen.getByRole('heading', { name: 'Progress Review' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Combined support discussion' })).toBeInTheDocument();
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens playable recording and transcript controls before the scheduled end without claiming the call ended', async () => {
+    vi.setSystemTime(new Date('2026-10-20T09:30:00Z'));
+    mount();
+    const event = await screen.findByRole('button', { name: /^View Monthly Coaching Meeting on / });
+    fireEvent.click(event);
+    const drawer = within(screen.getByRole('dialog', { name: 'Meeting details' }));
+    expect(await drawer.findByRole('button', { name:'Play recording 1' })).toBeInTheDocument();
+    expect(drawer.getByRole('button', { name:'Transcript' })).toBeInTheDocument();
+    expect(drawer.getByText('Within scheduled time')).toBeInTheDocument();
+    expect(drawer.queryByText('Ended')).not.toBeInTheDocument();
+    expect(loadCoachingSession).toHaveBeenCalledOnce();
   });
 
   it('keeps attendance pending when a report has not arrived', async () => {
@@ -728,10 +746,10 @@ describe('Coaching recordings calendar', () => {
     mount();
     for (let second = 0; second < 100; second++) await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(4);
-    fireEvent.change(screen.getByRole('combobox', { name: /^Coach$/ }), { target: { value: 'one@example.invalid' } });
+    fireEvent.change(screen.getByRole('combobox', { name: /^Coach$/ }), { target: { value: 'two@example.invalid' } });
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(5);
-    expect(vi.mocked(loadCoachingCalendar).mock.lastCall?.[0].coachEmail).toBe('one@example.invalid');
+    expect(vi.mocked(loadCoachingCalendar).mock.lastCall?.[0].coachEmail).toBe('two@example.invalid');
     expect(screen.getByRole('region', { name: 'Calendar data status' })).not.toHaveTextContent('Automatic updates stopped');
     for (let second = 0; second < 100; second++) await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(8);
@@ -903,7 +921,7 @@ describe('Coaching recordings calendar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Upcoming' }));
     fireEvent.click(screen.getByRole('button', { name: 'View Progress Review on 2026-10-20' }));
     const drawer = screen.getByRole('dialog', { name: 'Meeting details' });
-    expect(within(drawer).getByText(/after this meeting ends/)).toBeInTheDocument();
+    expect(within(drawer).getByText(/once the scheduled meeting begins/)).toBeInTheDocument();
     expect(loadCoachingSession).not.toHaveBeenCalled();
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(1);
   });
@@ -917,23 +935,46 @@ describe('Coaching recordings calendar', () => {
     fireEvent.click(event);
     await screen.findByRole('dialog', { name: 'Meeting details' });
     expect(loadCoachingSession).toHaveBeenCalledWith('mcr:1', expect.any(AbortSignal), undefined, 'attendance');
-    expect(loadCoachingCalendar).toHaveBeenCalledTimes(3);
+    expect(loadCoachingCalendar).toHaveBeenCalledTimes(2);
     expect(screen.getByRole('combobox', { name: 'Calendar period' })).toHaveValue('month');
   });
 
-  it('keeps calendar presentation for all coaches and one coach while retaining the Ready filter', async () => {
+  it('remembers the selected coach for the signed-in account and validates it against the directory', async () => {
+    window.localStorage.setItem('kbc_auth_email', 'staff@example.invalid');
+    window.localStorage.setItem('coaching-calendar:coach:staff@example.invalid', 'two@example.invalid');
+    render(<MemoryRouter><CoachingRecordingsPage /></MemoryRouter>);
+    await waitFor(() => expect(loadCoachingCalendar).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(loadCoachingCalendar).mock.calls[0][2]).toEqual({ directoryOnly: true });
+    expect(vi.mocked(loadCoachingCalendar).mock.lastCall?.[0].coachEmail).toBe('two@example.invalid');
+  });
+
+  it('does not load a remembered coach removed from the current directory', async () => {
+    window.localStorage.setItem('kbc_auth_email', 'staff@example.invalid');
+    window.localStorage.setItem('coaching-calendar:coach:staff@example.invalid', 'removed@example.invalid');
+    render(<MemoryRouter><CoachingRecordingsPage /></MemoryRouter>);
+    await screen.findByText(/Calendars load only after a coach is selected/);
+    expect(loadCoachingCalendar).toHaveBeenCalledOnce();
+    expect(screen.getByRole('combobox', { name: 'Coach' })).toHaveValue('');
+  });
+
+  it('opens the sole authorised calendar automatically for an own-scope coach', async () => {
+    const data = { ...fixture(), scope: 'own' as const, coaches: [fixture().coaches[0]] };
+    vi.mocked(loadCoachingCalendar).mockResolvedValue(data);
+    render(<MemoryRouter><CoachingRecordingsPage workspace="coach" /></MemoryRouter>);
+    await screen.findByRole('heading', { name: 'Monthly Coaching Meeting' });
+    expect(loadCoachingCalendar).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(loadCoachingCalendar).mock.lastCall?.[0].coachEmail).toBe('one@example.invalid');
+    expect(screen.queryByRole('searchbox', { name: 'Search coaches' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the Ready filter when switching between selected coaches', async () => {
     mount();
     await screen.findByRole('region', { name: 'Hourly coach meeting calendar' });
-    fireEvent.change(screen.getByRole('combobox', { name: /^Coach$/ }), { target: { value: 'one@example.invalid' } });
-    await screen.findByRole('region', { name: 'Hourly coach meeting calendar' });
-    expect(screen.queryByRole('region', { name: 'All coach meeting agenda' })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Coach' }), { target: { value: 'two@example.invalid' } });
+    await waitFor(() => expect(loadCoachingCalendar).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(loadCoachingCalendar).mock.lastCall?.[0].coachEmail).toBe('two@example.invalid');
     expect(screen.getByRole('button', { name: 'Coach learners' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Ready to action', pressed: true })).toBeInTheDocument();
-    fireEvent.change(screen.getByRole('combobox', { name: /^Coach$/ }), { target: { value: '' } });
-    await screen.findByRole('region', { name: 'Hourly coach meeting calendar' });
-    expect(screen.queryByRole('region', { name: 'All coach meeting agenda' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Ready to action', pressed: true })).toBeInTheDocument();
-    expect(loadCoachingCalendar).toHaveBeenCalledTimes(3);
   });
 
   it('keeps partial-data issues visible in a compact summary and opens their accessible drawer without new requests', async () => {

@@ -5,7 +5,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { CalendarFilterScrollRow } from '@/components/feature/CalendarFilterScrollRow';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
-import { type CalendarEvent } from '@/pages/learner/clubs/data';
+import { type CalendarEvent as SharedCalendarEvent } from '@/pages/learner/clubs/data';
 import { downloadICS, downloadAllICS, createPublicFeedBlob, type ICSEvent } from '@/utils/ics-generator';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { invalidateLearnerReads } from '@/api/learnerRead';
@@ -44,6 +44,8 @@ import { LearnerReviewInstanceForm } from '../reviews/LearnerReviewInstanceForm'
 import { useLearnerReviewInstance } from "../reviews/LearnerReviewInstanceForm.helpers";
 import { bookingInstant, firstAvailableBookingDate, mcmBookingDateRestrictionMessage, parseBookingDay } from '../reviews/bookingDates';
 import CoachSessionTypePicker, { COACH_APPROVAL_SESSION_TYPES } from './CoachSessionTypePicker';
+
+type CalendarEvent = SharedCalendarEvent & { needsInitialReviewBooking?: boolean };
 
 /** The header's secondary-actions menu — everything that isn't booking a
  * coach session (the primary action) moves in here so the toolbar stays a
@@ -180,6 +182,11 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
   // Without a local reservation, that time must not block another booking.
   const unbookedImportedPlan = (ev.reviewSource === 'aptem' || Boolean(ev.importedReview))
     && ev.status === 'not-scheduled' && !ev.calendarEventKey && !ev.calendarEventId;
+  // An imported Scheduled status is history, not proof of an LMS reservation.
+  // Preserve its displayed date/status, but use first booking until linked.
+  const needsInitialReviewBooking = isAptemReview(ev)
+    && ['not-scheduled', 'scheduled'].includes(ev.status)
+    && !ev.calendarEventKey && !ev.calendarEventId;
   const scheduledTime = unbookedImportedPlan ? null : ev.scheduledTime;
   // Sorting helpers expect a time string; timeToBeConfirmed keeps this fallback
   // out of booking conflict checks and the hourly grid.
@@ -232,9 +239,12 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
       ? ev.source as CalendarEvent['bookingSessionType']
       : undefined,
     timeToBeConfirmed: !scheduledTime,
-    syncWarning: meetingBookingWarning(ev),
+    syncWarning: needsInitialReviewBooking && ev.status === 'scheduled' && !ev.syncWarning && !ev.syncError
+      ? 'This review has an imported appointment date, but no linked calendar booking.'
+      : meetingBookingWarning(ev),
     bookingReviewId: ev.reviewId,
     bookingSnapshot: aptemBookingSnapshot(ev),
+    needsInitialReviewBooking,
     assignmentMonth: ev.assignmentMonth,
     changeClosed: Boolean(ev.changeClosed),
   };
@@ -867,6 +877,10 @@ function LearnerCalendarBody() {
     setShowBookModal(true);
   }, [bookingToday, bookingCalendar]);
   const openRescheduleSession = useCallback((event: CalendarEvent) => {
+    if (event.needsInitialReviewBooking) {
+      openBookSession(event.isoDate, event);
+      return;
+    }
     if (!event.bookingSessionType || !event.isoDate || event.timeToBeConfirmed) return;
     const range = getEventTimeRange(event.time);
     const calculatedDuration = range.end <= range.start
@@ -884,7 +898,7 @@ function LearnerCalendarBody() {
     setShowDayDrawer(false);
     setShowEventDetails(null);
     setShowBookModal(true);
-  }, []);
+  }, [openBookSession]);
   const handledScheduleRef = useRef('');
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -927,7 +941,9 @@ function LearnerCalendarBody() {
     }
     handledScheduleRef.current = requestKey;
     setSchedulingError('');
-    if (action === 'reschedule' && event.bookingStatus === 'scheduled' && !event.timeToBeConfirmed) {
+    if (event.needsInitialReviewBooking) {
+      openBookSession(event.isoDate, event);
+    } else if (action === 'reschedule' && event.bookingStatus === 'scheduled' && !event.timeToBeConfirmed) {
       openRescheduleSession(event);
     } else if (['schedule', 'reschedule'].includes(action || '') && event.bookingStatus === 'not-scheduled') {
       openBookSession(event.isoDate, event);
@@ -1091,7 +1107,7 @@ function LearnerCalendarBody() {
       return Number.isFinite(otherStart) && Number.isFinite(otherEnd) && start < otherEnd && end > otherStart;
     });
     const lmsConflict = myEvents.some(event => {
-      if (!event.isoDate || event.timeToBeConfirmed || event.id === rescheduleEvent?.id
+      if (!event.isoDate || event.timeToBeConfirmed || event.needsInitialReviewBooking || event.id === rescheduleEvent?.id
           || event.id === bookingSourceEvent?.id || event.bookingStatus === 'cancelled'
           || !event.bookingSessionType) return false;
       const range = getEventTimeRange(event.time);
@@ -1107,7 +1123,7 @@ function LearnerCalendarBody() {
     const requestedStart = reviewSlotBooking ? bookingInstant(bookDate, bookTime) : new Date(`${bookDate}T${bookTime}:00`).getTime();
     const requestedEnd = requestedStart + parseInt(bookDuration || '60') * 60_000;
     return myEvents.find((event) => {
-      if (!event.isoDate || event.timeToBeConfirmed || event.id === rescheduleEvent?.id || event.id === bookingSourceEvent?.id) return false;
+      if (!event.isoDate || event.timeToBeConfirmed || event.needsInitialReviewBooking || event.id === rescheduleEvent?.id || event.id === bookingSourceEvent?.id) return false;
       const range = getEventTimeRange(event.time);
       const existingStart = reviewSlotBooking
         ? bookingInstant(event.isoDate, `${String(Math.floor(range.start / 60)).padStart(2, '0')}:${String(range.start % 60).padStart(2, '0')}`)
@@ -1125,6 +1141,7 @@ function LearnerCalendarBody() {
       event.id !== rescheduleEvent?.id
       && event.id !== bookingSourceEvent?.id
       && !event.timeToBeConfirmed
+      && !event.needsInitialReviewBooking
       && (event.bookingStatus === 'scheduled' || event.bookingStatus === 'not-scheduled')
       && event.bookingSessionType === bookType
       && Boolean(event.isoDate)
@@ -1487,6 +1504,11 @@ function LearnerCalendarBody() {
                   : 'No coach has been assigned to you yet — please contact your programme team.'}
             </p>
             <div className="space-y-4">
+              {bookingSourceEvent?.needsInitialReviewBooking && bookingSourceEvent.bookingStatus === 'scheduled' && (
+                <p role="note" className="rounded-xl border border-primary-200 bg-primary-50 px-3 py-2.5 text-sm text-primary-800">
+                  This review has an imported appointment date, but no linked calendar booking. If you already have a meeting invitation, check with your coach before booking here. An existing invitation will not be changed.
+                </p>
+              )}
               {bookingSourceEvent && (
                 <div className="rounded-xl border border-primary-200 bg-primary-50 px-3 py-2.5 text-primary-800">
                   <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-primary-500">Selected programme slot</p>
@@ -1667,7 +1689,7 @@ function LearnerCalendarBody() {
           </>}
           actions={<>
 
-              {showEventDetails.timeToBeConfirmed && showEventDetails.bookingSessionType && (
+              {(showEventDetails.timeToBeConfirmed || showEventDetails.needsInitialReviewBooking) && showEventDetails.bookingSessionType && (
                 <button
                   type="button"
                   onClick={() => {
@@ -1687,7 +1709,7 @@ function LearnerCalendarBody() {
               {showEventDetails.meetingLink && !showEventDetails.meetingOutcome && (
                 <a href={showEventDetails.meetingLink} target="_blank" rel="noreferrer" className="meeting-join-action inline-flex flex-1 items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap text-center"><AppIcon className="ri-video-chat-line h-4 w-4 shrink-0"></AppIcon><span>Join Meeting</span></a>
               )}
-              {showEventDetails.bookingStatus === 'scheduled' && showEventDetails.bookingSessionType && (
+              {showEventDetails.bookingStatus === 'scheduled' && !showEventDetails.needsInitialReviewBooking && showEventDetails.bookingSessionType && (
                 <button type="button" disabled={showEventDetails.changeClosed} title={showEventDetails.changeClosed ? 'Catch-ups can be changed up to 12 hours before they start.' : undefined} onClick={() => openRescheduleSession(showEventDetails)} className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 py-2.5 text-sm font-semibold text-primary-700 transition-smooth hover:bg-primary-100 cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-calendar-schedule-line h-4 w-4 shrink-0" /><span>Reschedule</span></button>
               )}
               {showEventDetails.bookingStatus === 'scheduled' && showEventDetails.source === 'catch-up' && (

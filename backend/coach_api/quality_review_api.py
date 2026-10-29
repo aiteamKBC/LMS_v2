@@ -168,6 +168,7 @@ def reviews(request):
             rows,next_offset=store.reviews_for_meeting(identity,offset)
             return _response({'reviews':[{'id':str(row['id']),'learnerId':row['learner_id'],
               'learnerName':row['learner_name'],'status':row['status'],'version':row['version'],
+              'reviewerName':row.get('reviewer_name') or '',
               'reviewType':row.get('review_type',''),'formTitle':row.get('form_title'),'pdfVersion':row['pdf_version'],'updatedAt':row['updated_at'].isoformat()} for row in rows],'nextOffset':next_offset})
         from zoneinfo import ZoneInfo,ZoneInfoNotFoundError
         try:
@@ -190,6 +191,7 @@ def reviews(request):
         return _response({'reviews':[{'id':str(row['id']),'coachEmail':row['coach_email'],'coachName':row['coach_name'],
           'learnerId':row['learner_id'],'learnerName':row['learner_name'],'startsAt':row['starts_at'].isoformat(),
           'status':row['status'],'version':row['version'],'updatedAt':row['updated_at'].isoformat(),
+          'reviewerName':row.get('reviewer_name') or '',
           'title':row['title'],'reviewType':row.get('review_type',''),'formTitle':row.get('form_title'),'actionCount':row['action_count'],'pdfVersion':row.get('pdf_version')} for row in rows], 'nextOffset':next_offset,'coaches':_coaches()})
     value = body(request)
     data,failure = context(request,value.get('learnerId',''),value.get('reviewType'))

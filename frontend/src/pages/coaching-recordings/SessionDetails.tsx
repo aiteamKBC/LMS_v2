@@ -37,12 +37,13 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
   }, [eventKey, revision, reference]);
 
   const attendancePending = data?.attendance.state === 'pending';
+  const evidencePending = attendancePending || data?.media.check?.state === 'pending';
   const clock = new Intl.DateTimeFormat('en-GB', { timeZone, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
   const stamp = (value: string) => clock.format(new Date(value));
   const starts = (data?.media.recordings ?? []).flatMap(file => file.startsAt && Number.isFinite(Date.parse(file.startsAt)) ? [Date.parse(file.startsAt)] : []);
   const firstRecording = starts.length ? Math.min(...starts) : null;
   useEffect(() => {
-    if (!attendancePending) return;
+    if (!evidencePending) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     let attempts = 0;
@@ -51,7 +52,7 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
         const value = await loadCoachingSession(eventKey, controller.signal, reference, 'attendance');
         if (controller.signal.aborted) return;
         setData(value);
-        if (value.attendance.state === 'pending') {
+        if (value.attendance.state === 'pending' || value.media.check?.state === 'pending') {
           if (++attempts < 2) timer = setTimeout(check, 20000);
           else setAttendancePaused(true);
         }
@@ -61,7 +62,7 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
     };
     timer = setTimeout(check, 20000);
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [attendancePending, eventKey, reference, revision]);
+  }, [evidencePending, eventKey, reference, revision]);
 
   return <section aria-label="Recordings and attendance" className="mt-4 border-t border-background-200 pt-4">
     <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-bold">Recordings</h3>
@@ -69,6 +70,7 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
     {!data && !error && <p role="status" className="mt-3 text-sm">Loading saved recordings and attendance…</p>}
     {error && <p role="alert" className="mt-3 text-sm text-rose-800">{error} <button onClick={refresh} className="font-semibold underline">Retry details</button></p>}
     {data && <>
+      {evidencePending && attendancePaused && <p className="mt-2 text-xs text-foreground-500">Automatic checks have stopped. Use Refresh details to check again.</p>}
       {data.partial && data.media.check?.state !== 'failed' && <p role="alert" className="mt-3 text-sm text-amber-900">Some saved evidence could not be checked. Refresh details to try again.</p>}
       {data.media.check?.state === 'failed' && <p role="alert" className="mt-3 text-xs text-amber-900">The latest recording check failed. These are the last saved parts; additional parts could not be checked. Use Refresh calendars to request another check.</p>}
       {!data.media.recordings.length && <p className="mt-3 text-xs text-foreground-600">{recordingLabel(data.media)}{data.media.check?.state === 'complete' && data.media.check.reason === 'no-recordings-returned' ? '. This does not prove the meeting was not recorded. Use Refresh calendars to request another check.' : ''}</p>}
@@ -96,7 +98,6 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
       {data.attendance.source === 'coaching-session' && <p className="mt-1 text-xs text-foreground-500">From the saved Coaching Session attendance report.</p>}
       {data.attendance.state === 'available' && reference && <a className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-primary-700" href={coachingEvidenceUrl(data.eventKey, 'attendance', reference)}><Download size={12} />Download attendance</a>}
       {data.attendance.state === 'pending' && <p className="mt-2 text-sm text-foreground-600">The attendance report is not available yet. Attendance remains pending.</p>}
-      {attendancePending && attendancePaused && <p className="mt-2 text-xs text-foreground-500">Automatic checks have stopped. Use Refresh details to check again.</p>}
       {data.attendance.state === 'unavailable' && <p role="alert" className="mt-2 text-sm text-amber-900">Saved attendance could not be loaded. No absence is inferred.</p>}
       {data.attendance.state === 'available' && <div className="mt-2 overflow-x-auto">
         <table className="w-full text-left text-xs"><caption className="sr-only">Saved meeting attendance</caption>

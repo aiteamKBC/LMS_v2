@@ -19,7 +19,7 @@ interface Props {
   selected?: string | null;
 }
 
-const phaseLabels = { ended: 'Ended', upcoming: 'Upcoming', 'in-progress': 'In progress', cancelled: 'Cancelled' };
+const phaseLabels = { ended: 'Ended', upcoming: 'Upcoming', 'in-progress': 'Within scheduled time', cancelled: 'Cancelled' };
 
 export default function MeetingCalendar({ date, period, timeZone, meetings, totalMeetings = meetings.length, now, coachName, learnerName, onSelectDay, onSelectMeeting, selected }: Props) {
   const month = parseIsoDate(date);

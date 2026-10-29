@@ -247,6 +247,7 @@ export default function ComponentViewPage() {
   const [detail, setDetail] = useState<LearnerDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadRevision, setLoadRevision] = useState(0);
 
   const [phase, setPhase] = useState<Phase>('consume');
   // Real playback state (video only), driven by the player.
@@ -340,7 +341,7 @@ export default function ComponentViewPage() {
       .catch((e) => { if (!cancelled) setLoadError(e instanceof Error ? e.message : 'Could not load component'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [kind, id, componentId]);
+  }, [kind, id, componentId, loadRevision]);
 
   // Keep completion state derived from the same progress records used by the
   // learner journey. This is also needed by the sidebar's done counts.
@@ -891,7 +892,13 @@ export default function ComponentViewPage() {
         {loading ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} avatar={false} /></div>
         ) : loadError ? (
-          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text={loadError} /></div>
+          <div role="alert" className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6">
+            <EmptyState text={loadError} />
+            <button type="button" onClick={() => setLoadRevision(value => value + 1)}
+              className="mt-4 rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white">
+              Try again
+            </button>
+          </div>
         ) : !component ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Component not found in this learner's plan." /></div>
         ) : !canProgress ? (
@@ -969,7 +976,7 @@ export default function ComponentViewPage() {
                 component.teamsSessionNumber ? <SessionResults
                   seriesId={component.teamsLiveSessionId}
                   sessionNumber={component.teamsSessionNumber}
-                  recordingDate={component.recordingDate}
+                  recordingDate={component.recordingDate || component.sessionDate}
                   learner={{ kind: kind as LearnerKind, id: id || '' }}
                   attendanceType={detail?.attendanceType}
                   onRecordingWatchTimeChange={setRecordingWatchSeconds}

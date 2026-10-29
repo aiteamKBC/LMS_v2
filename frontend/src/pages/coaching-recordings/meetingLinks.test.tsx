@@ -14,7 +14,7 @@ const coach = { email: meeting.coachEmail, name: 'Synthetic Coach' };
 const calendar: CoachingCalendar = { start: '2026-10-20', end: '2026-10-20', timeZone: 'UTC', scope: 'all', coaches: [coach], learners: [{ id: '1', name: 'Synthetic Learner', coachEmail: coach.email, learnerType: 'apprenticeship' }],
   meetings: [meeting], lmsOnly: [], cancelledBookings: [], errors: [], partial: false, coverage: { checkedCoachEmails: [coach.email], totalCoaches: 1, nextOffset: null } };
 function History() { const location = useLocation(), navigate = useNavigate(); return <><output data-testid="url">{location.search}</output><button onClick={() => navigate(-1)}>Browser Back</button><button onClick={() => navigate(1)}>Browser Forward</button></>; }
-const mount = (url = '/curriculum/coaching-recordings?date=2026-10-20&zone=UTC') => render(<MemoryRouter initialEntries={[url]}><History /><Page /></MemoryRouter>);
+const mount = (url = '/curriculum/coaching-recordings?date=2026-10-20&zone=UTC&coach=coach%40example.invalid') => render(<MemoryRouter initialEntries={[url]}><History /><Page /></MemoryRouter>);
 describe('Meeting deep links', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-20T12:00:00Z'));

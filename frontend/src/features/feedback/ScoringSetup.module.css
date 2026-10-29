@@ -56,7 +56,23 @@
 .table th,.table td { padding: 8px; border-bottom: 1px solid #ede7f5; }
 .optionScore { display: grid; grid-template-columns: minmax(0,1fr) 76px; gap: 8px; align-items: start; font-size: 12px; }
 .optionScore > span { padding-top: 10px; overflow-wrap: anywhere; }
-.optionScore small { grid-column: 1 / -1; display: flex; justify-content: flex-end; margin-top: -4px; }
+.scoreControl { display: grid; gap: 4px; min-width: 0; }
+.scoreControl input { margin-top: 0; min-width: 0; font-size: 14px; line-height: 20px; }
+.scoreControl small { display: flex; justify-content: flex-end; }
+.optionEditorHeading,.scoredOptionRow { display: grid; grid-template-columns: minmax(0,1fr) 82px; gap: 6px 8px; align-items: start; }
+.optionEditorHeading { font-size: 11px; font-weight: 650; }
+.scoredOptionRow > input { min-width: 0; }
+.scoredOptionRow > .scoreControl { grid-column: 2; grid-row: 1 / 3; }
+.optionActions { grid-column: 1; display: flex; justify-content: flex-end; gap: 8px; }
+.dragHandle,.deleteOption { display: inline-flex; width: 30px; height: 30px; align-items: center; justify-content: center; border: 1px solid #e7e0ee; border-radius: 8px; background: white; font-size: 16px; transition: color .15s ease, border-color .15s ease, background .15s ease; }
+.dragHandle { cursor: grab; color: #796c87; }
+.dragHandle:active { cursor: grabbing; }
+.dragHandle:hover { border-color: #cbb8e5; background: #faf7ff; color: #6530b3; }
+.deleteOption { color: #d33c5f; }
+.deleteOption:hover { border-color: #f4bdca; background: #fff2f5; color: #b91f45; }
+.dragHandle:focus-visible,.deleteOption:focus-visible { outline: 2px solid #9569c9; outline-offset: 2px; }
+.dragHandle:disabled,.deleteOption:disabled { cursor: default; opacity: .3; }
+.dragging { opacity: .45; }
 .scale { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 5px; list-style: none; margin: 8px 0 0; padding: 0; }
 .scale li { border: 1px solid #e5ddef; background: white; padding: 7px 2px; border-radius: 7px; text-align: center; color: #795b95; font-size: 9px; line-height: 1.7; }
 .scale li strong { display: block; font-size: 13px; color: #4b2d69; }

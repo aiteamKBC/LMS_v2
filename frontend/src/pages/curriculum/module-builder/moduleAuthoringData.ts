@@ -958,7 +958,10 @@ export function moduleLiveSessionDateDrift(
       const numbered = explicitNumber > 0
         ? sessions.find(session => session.sessionNumber === explicitNumber)
         : undefined;
-      const weekDates = numbered?.date ? [numbered.date] : positionalDates;
+      // An explicit occurrence move still needs synchronization even if its
+      // former date happens to be another delivery slot in the same week.
+      const weekDates = !numbered?.rescheduled && positionalDates.includes(storedDate)
+        ? positionalDates : numbered?.date ? [numbered.date] : positionalDates;
       if (!weekDates.length) return;
       // An undated session is a different story with its own mark on the rail.
       if (!storedDate || weekDates.includes(storedDate)) return;
@@ -1122,14 +1125,15 @@ export function applyModuleWeekSessionPlan(
         ? sessions.find(session => session.sessionNumber === firstNumber)
         : undefined;
       if (firstNumberedSession) {
-        // The header follows the plan's date for its numbered session, even when
-        // that session is booked in Teams and kept its confirmed date above. A
-        // new start date moves the week at once; the booked session inside it
-        // stays put and says so (`moduleLiveSessionDateDrift`) until Update
-        // Teams moves the meeting. Reading the session's own date here left
-        // every week of a booked module on its old dates.
-        sessionDate = firstNumberedSession.date || '';
-        sessionDay = firstNumberedSession.day || '';
+        // Teams numbers can omit orientation and separately booked events.
+        // A confirmed date already fitting this authored week's slots wins
+        // over that unrelated index. A changed plan still moves the header
+        // when the confirmed date no longer fits, preserving its drift notice.
+        const confirmedDate = trimmed(firstLive?.settings?.teamsLiveSessionId)
+          ? trimmed(firstLive?.settings?.sessionDate) : '';
+        const headerSession = slots.find(slot => slot.date === confirmedDate) || firstNumberedSession;
+        sessionDate = headerSession.date || '';
+        sessionDay = headerSession.day || '';
       }
     }
     if (
