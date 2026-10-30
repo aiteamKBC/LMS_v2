@@ -35,6 +35,9 @@ def attempt_order(submitted_at, ident):
 
 def native_key(record):
     # Match the existing native quiz identity; never cross learner ownership.
+    # Reading time belongs to its own activity, outside quiz retake choices.
+    if record.get('kind') == 'quiz_reading':
+        return None
     return (record.get('learner_id'), str(record['quiz_ref'])) if record.get('quiz_ref') else None
 
 

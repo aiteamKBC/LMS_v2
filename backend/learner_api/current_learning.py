@@ -107,7 +107,12 @@ def project_current(records, markings):
         candidates.append(p)
         # Count the latest eligible attempt, even when its duration decreases.
         # Failed retries cannot displace an accepted completion.
-        key = ('quiz', p['quiz_ref']) if p.get('quiz_ref') else ('component', component) if component else ('entry', p['id'])
+        if p.get('quiz_ref') and p.get('kind') == 'quiz_reading':
+            # Each reading is completed on its own existing progress row.
+            # Use that identity even in compact reads without attempt numbers.
+            key = ('quiz-reading', p['id'])
+        else:
+            key = ('quiz', p['quiz_ref']) if p.get('quiz_ref') else ('component', component) if component else ('entry', p['id'])
         key = (p.get('learner_id'), *key)
         previous = native.get(key)
         if previous is None or (accepted, attempt_order(p['submitted_at'], p['id'])) > (

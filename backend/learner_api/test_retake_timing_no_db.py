@@ -70,6 +70,63 @@ class RetakeTimingTests(unittest.TestCase):
         metrics = self.reporting['metrics_from_records'](rows, {})
         self.assertEqual(metrics['otjh']['actual'], round(600 / 3600, 4))
 
+    def test_quiz_and_remedial_reading_both_reach_hours_and_monthly_log(self):
+        for reverse in (False, True):
+            with self.subTest(reverse=reverse):
+                saved = [attempt(1, 300), {**attempt(2, 120), 'kind': 'quiz_reading',
+                         'passed': None, 'component_type': 'reading', 'attempt': 1}]
+                rows = self.records(list(reversed(saved)) if reverse else saved)
+                self.assertEqual(self.reporting['metrics_from_records'](rows, {})['otjh']['actual'],
+                                 round(420 / 3600, 4))
+                logs = self.reporting['rows_for']({'id': 1}, rows)
+                self.assertAlmostEqual(sum(row['actual_hours'] for row in logs), 420 / 3600)
+                self.assertEqual({row['id']: row['actual_seconds'] for row in rows}, {1: 300, 2: 120})
+
+    def test_quiz_time_choice_does_not_replace_or_absorb_reading_time(self):
+        for mode, quiz_seconds in (('keep', 300), ('new', 60)):
+            with self.subTest(mode=mode):
+                saved = [attempt(1, 300),
+                         {**attempt(2, 120), 'kind': 'quiz_reading', 'passed': None, 'attempt': 1},
+                         attempt(3, 60, mode),
+                         {**attempt(4, 90), 'kind': 'quiz_reading', 'passed': None, 'attempt': 2}]
+                rows = self.records(saved)
+                self.assertEqual({row['id']: row['actual_seconds'] for row in rows},
+                                 {2: 120, 3: quiz_seconds, 4: 90})
+                self.assertAlmostEqual(sum(row['actual_hours'] for row in
+                                           self.reporting['rows_for']({'id': 1}, rows)),
+                                       (quiz_seconds + 210) / 3600)
+
+    def test_readings_remain_separate_without_attempt_numbers_in_compact_reads(self):
+        readings = [{**attempt(ident, seconds, learner=learner), 'kind': 'quiz_reading',
+                     'passed': None} for ident, seconds, learner in (
+                         (1, 120, 1), (2, 90, 1), (3, 60, 2))]
+        current = self.current['project_current']([*readings, readings[0]], {})
+        self.assertEqual({row['id']: row['actual_seconds'] for row in current},
+                         {1: 120, 2: 90, 3: 60})
+        self.assertEqual(len(current), 3)
+
+    def test_unsubmitted_or_zero_reading_cannot_erase_quiz_hours(self):
+        for submitted_at in (None, '2026-11-02T12:00:00Z'):
+            with self.subTest(submitted_at=submitted_at):
+                rows = self.records([attempt(1, 300), {**attempt(2, 0), 'kind': 'quiz_reading',
+                                     'passed': None, 'submitted_at': submitted_at}])
+                self.assertEqual(self.reporting['metrics_from_records'](rows, {})['otjh']['actual'],
+                                 round(300 / 3600, 4))
+
+    def test_restored_video_allocation_preserves_attempts_and_counts_once(self):
+        saved = [{**attempt(ident, seconds), 'quiz_ref': None, 'kind': 'video',
+                  'component_ref': 'C1', 'component_type': 'video',
+                  'component_link_source': 'direct'} for ident, seconds in ((1, 600), (2, 0))]
+        saved[0].update(actual_seconds=600, actual_basis='staff:module-progress', accepted=True,
+                        reporting_month='2026-10')
+        rows = self.records(saved)
+        self.assertEqual([row['id'] for row in rows], [1, 2])
+        self.assertEqual([row['verified_seconds'] for row in rows], [600, 0])
+        self.assertEqual(self.reporting['metrics_from_records'](rows, {})['otjh']['actual'],
+                         round(600 / 3600, 4))
+        self.assertAlmostEqual(sum(row['actual_hours'] for row in
+                                   self.reporting['rows_for']({'id': 1}, rows)), 600 / 3600)
+
     def test_retry_order_uses_submission_instant_not_duration_or_declared_date(self):
         earlier = {**attempt(9, 1800), 'submitted_at': '2026-10-02T10:00:00+01:00'}
         later = {**attempt(10, 600), 'submitted_at': '2026-10-02T09:30:00Z',
@@ -102,14 +159,15 @@ class RetakeTimingTests(unittest.TestCase):
     def test_single_and_bulk_reads_agree_for_both_learner_types(self):
         owners = [{'id': 1, 'enrolment_id': 101, 'learner_type': 'commercial'},
                   {'id': 2, 'enrolment_id': 102, 'learner_type': 'apprenticeship'}]
-        records = {owner['id']: [attempt(1, 1800, learner=owner['id']), attempt(2, 600, learner=owner['id'])]
+        records = {owner['id']: [attempt(1, 1800, learner=owner['id']), attempt(2, 600, learner=owner['id']),
+                   {**attempt(3, 120, learner=owner['id']), 'kind': 'quiz_reading', 'passed': None}]
                    for owner in owners}
         self.current['query'] = Mock(return_value=[])
         bulk = self.current['current_records_bulk'](owners, records)
         for owner in owners:
             single = self.current['current_records'](owner, records[owner['id']])
             self.assertEqual(bulk[owner['enrolment_id']], single)
-            self.assertEqual([row['actual_seconds'] for row in single], [600])
+            self.assertEqual([row['actual_seconds'] for row in single], [600, 120])
 
     def test_retries_are_scoped_to_component_and_learner(self):
         records = [{**attempt(ident, seconds, learner=learner), 'quiz_ref': None,
