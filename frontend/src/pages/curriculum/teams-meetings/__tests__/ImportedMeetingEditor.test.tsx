@@ -51,6 +51,17 @@ function openWithSharedUpdate(disabled = false) {
 }
 
 describe('editing a verified imported meeting', () => {
+  it('counts selected attendees when the original calendar does not allow role edits', async () => {
+    vi.mocked(readImportedMeetingEditor).mockResolvedValue({ ...original(), rolesEditable: false });
+    open(); await edit();
+    expect(screen.getByLabelText('Attendees selected count')).toHaveTextContent('1 selected');
+    await userEvent.type(screen.getByRole('combobox', { name: 'Attendees' }), 'new@example.invalid{Enter}');
+    expect(screen.getByLabelText('Attendees selected count')).toHaveTextContent('2 selected');
+    await userEvent.click(screen.getByRole('button', { name: 'Remove old@example.invalid' }));
+    expect(screen.getByLabelText('Attendees selected count')).toHaveTextContent('1 selected');
+    expect(confirmImportedMeetingEdit).not.toHaveBeenCalled();
+  });
+
   it('uses the shared Update Teams button to read first and then review the edited original', async () => {
     openWithSharedUpdate();
     expect(screen.queryByRole('button', { name: 'Edit existing Teams meeting' })).not.toBeInTheDocument();
