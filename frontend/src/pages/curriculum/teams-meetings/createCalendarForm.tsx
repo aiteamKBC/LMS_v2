@@ -432,7 +432,7 @@ export function TeamsPeopleFields({ form, patch, prefilling, prefillNotice, onPr
         />
       </FormField>
       <FormField label="Attendees" hint="Presenters and co-organisers are invited automatically.">
-        <EntraPeopleInput label="Attendees" includeGuests
+        <EntraPeopleInput label="Attendees" includeGuests showCount
           value={form.attendees}
           onChange={value => patch({ attendees: value })}
         />
