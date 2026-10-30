@@ -2715,6 +2715,11 @@ export interface ModuleSaveConflict {
   remote?: unknown;
 }
 
+export class ModuleEditReservedError extends Error {
+  readonly fields: string[];
+  constructor(message: string, fields: string[]) { super(message); this.name = 'ModuleEditReservedError'; this.fields = fields; }
+}
+
 export class ModuleStructureConflictError extends Error {
   /** What the server holds now, so the workspace can show it or re-open it. */
   currentRevision: string;
@@ -2862,6 +2867,7 @@ export async function saveModuleStructure(
      * server finds deleted is a conflict, never a silent restore.
      */
     restoreIds?: string[];
+    collaboration?: { editorId: string; proofs: Record<string, string> };
   } = {},
 ) {
   const recalculated = recalculateModule(payload);
@@ -2888,7 +2894,7 @@ export async function saveModuleStructure(
       weeksNumber: recalculated.weekStructure.length || recalculated.weeks,
       ...(options.expectedRevision ? { expectedRevision: options.expectedRevision } : {}),
     };
-  const serialized = JSON.stringify(body);
+  const serialized = JSON.stringify({ ...body, ...(options.collaboration ? { collaboration: options.collaboration } : {}) });
   const sizeBytes = new Blob([serialized]).size;
   const componentCount = recalculated.weekStructure.reduce((total, week) => total + week.components.length, 0);
   // Refused here rather than sent: the server would only answer with an HTML
@@ -2909,6 +2915,11 @@ export async function saveModuleStructure(
       err.status === 413 || (err.status === 400 && sizeBytes > DJANGO_DEFAULT_UPLOAD_LIMIT_BYTES)
     )) {
       throw new ModuleStructureTooLargeError(sizeBytes, componentCount, false);
+    }
+    if (err instanceof ApiError && err.status === 409 && err.data?.code === 'module_edit_reserved') {
+      const fields = Array.isArray(err.data.blockedFields) ? err.data.blockedFields.flatMap(item =>
+        item && typeof item === 'object' && typeof item.key === 'string' ? [item.key] : []) : [];
+      throw new ModuleEditReservedError(String(err.data.error || 'Reserved fields remain in your draft.'), fields);
     }
     if (!(err instanceof ApiError) || err.status !== 409 || !err.data?.conflict) throw err;
     const server = err.data.module as ModuleCatalogueItem | undefined;

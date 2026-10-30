@@ -27078,6 +27078,7 @@ def curriculum_module_structure(request, module_catalogue_id):
         )
         if archived_error:
             return archived_error
+    from .module_collaboration import enabled as collaboration_enabled, check_structure_save, announce_saved
     # Optimistic concurrency. A caller that read the structure sends the
     # revision it read back as ``expectedRevision`` (or an ``If-Match`` header),
     # and this save is refused unless the stored material is still exactly that.
@@ -27127,8 +27128,9 @@ def curriculum_module_structure(request, module_catalogue_id):
         merge_summary = None
         item_merge = partial_save and isinstance(payload.get('structureBase'), dict)
         with transaction.atomic():
-            if expected_revision:
+            if expected_revision or collaboration_enabled(resolved_catalogue_id):
                 lock_module_structure_row(resolved_catalogue_id)
+            if expected_revision:
                 if partial_save:
                     # Read once, under the lock, for both the guard and the
                     # merge: the revision and the stored structure then
@@ -27217,12 +27219,20 @@ def curriculum_module_structure(request, module_catalogue_id):
                         currentRevision=module_structure_revision(resolved_catalogue_id),
                         module=stamp_revision_after_write(stored_structure, resolved_catalogue_id),
                     )
+                lease_error = check_structure_save(request, resolved_catalogue_id, stored_structure, full_payload, payload)
+                if lease_error is not None:
+                    return lease_error
                 result = save_module_authoring_structure(
                     resolved_catalogue_id, full_payload, write_changed_only=True,
                     light=source_rows is not None, stored_rows=source_rows,
                     stored_structure=stored_structure, build_result=False,
                 )
             else:
+                if collaboration_enabled(resolved_catalogue_id):
+                    stored_guard = get_authoring_structure_payload(resolved_catalogue_id) or {}
+                    lease_error = check_structure_save(request, resolved_catalogue_id, stored_guard, payload, payload)
+                    if lease_error is not None:
+                        return lease_error
                 result = save_module_authoring_structure(resolved_catalogue_id, payload)
             if module_catalogue_id.startswith('training-module-'):
                 link_training_row_to_catalogue(
@@ -27230,6 +27240,7 @@ def curriculum_module_structure(request, module_catalogue_id):
                     result.get('catalogueId') or resolved_catalogue_id,
                 )
             saved_catalogue_id = result.get('catalogueId') or resolved_catalogue_id
+            announce_saved(saved_catalogue_id)
     except ModuleAuthoringValidationError as exc:
         return json_error('Module authoring validation failed.', status=400, validationErrors=exc.errors)
     except Exception as exc:
@@ -32296,6 +32307,10 @@ def curriculum_module_component_detail(request, module_catalogue_id, component_i
         refused = refuse_stale_module_write(request, payload or {}, module_catalogue_id)
         if refused is not None:
             return refused
+        from .module_collaboration import check_removal
+        refused = check_removal(request, module_catalogue_id, 'component', component_id, payload or {})
+        if refused is not None:
+            return refused
         authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id = %s and component_id = %s', [module_catalogue_id, component_id], via_parent=component_id, deleted_by='component-delete')
         authoring_soft_delete(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s and id = %s', [module_catalogue_id, component_id], deleted_by='component-delete')
     invalidate_curriculum_cache()
@@ -32311,6 +32326,10 @@ def curriculum_module_week_detail(request, module_catalogue_id, week_id):
     payload = json_body(request) if request.body else {}
     with transaction.atomic():
         refused = refuse_stale_module_write(request, payload or {}, module_catalogue_id)
+        if refused is not None:
+            return refused
+        from .module_collaboration import check_removal
+        refused = check_removal(request, module_catalogue_id, 'week', week_id, payload or {})
         if refused is not None:
             return refused
         # Read under the lock: a component added to this week after the caller
@@ -32378,23 +32397,31 @@ def curriculum_module_detail(request, identifier):
     existing_authoring = authoring_module_exists(module_catalogue_id) if module_catalogue_id else None
     if existing_authoring:
         if request.method == 'DELETE':
-            # Opt-in per request, exactly as the programme, cohort and group
-            # deletes read it: a bare DELETE still archives.
-            if request_wants_permanent_delete(request):
-                return permanent_module_delete_response(existing_authoring)
-            # Never archive past a running Teams calendar, and never cancel it
-            # on the author's behalf: they cancel it, then archive.
-            blocked = module_teams_calendar_block_response(module_catalogue_id)
-            if blocked is not None:
-                return blocked
-            delete_module_authoring_structure(module_catalogue_id)
-            log_curriculum_decision(
-                'module.archive', outcome='soft_deleted', entity_id=module_catalogue_id,
-                parent_id=clean_str(existing_authoring.get('group_id')),
-            )
-            repair_curriculum_parent_links(clean_str(existing_authoring.get('programme_id')))
-            invalidate_curriculum_cache()
-            return JsonResponse({'deleted': True, 'deletedAuthoring': True, 'id': identifier})
+            from .module_collaboration import enabled as collaboration_enabled, check_removal
+            from contextlib import nullcontext
+            with transaction.atomic() if collaboration_enabled(module_catalogue_id) else nullcontext():
+                if collaboration_enabled(module_catalogue_id):
+                    lock_module_structure_row(module_catalogue_id)
+                    refused = check_removal(request, module_catalogue_id, 'module', module_catalogue_id, {})
+                    if refused is not None:
+                        return refused
+                # Opt-in per request, exactly as the programme, cohort and group
+                # deletes read it: a bare DELETE still archives.
+                if request_wants_permanent_delete(request):
+                    return permanent_module_delete_response(existing_authoring)
+                # Never archive past a running Teams calendar, and never cancel it
+                # on the author's behalf: they cancel it, then archive.
+                blocked = module_teams_calendar_block_response(module_catalogue_id)
+                if blocked is not None:
+                    return blocked
+                delete_module_authoring_structure(module_catalogue_id)
+                log_curriculum_decision(
+                    'module.archive', outcome='soft_deleted', entity_id=module_catalogue_id,
+                    parent_id=clean_str(existing_authoring.get('group_id')),
+                )
+                repair_curriculum_parent_links(clean_str(existing_authoring.get('programme_id')))
+                invalidate_curriculum_cache()
+                return JsonResponse({'deleted': True, 'deletedAuthoring': True, 'id': identifier})
         payload = json_body(request)
         if payload is None:
             return json_error('Invalid JSON body.')
@@ -32529,6 +32556,7 @@ def curriculum_module_detail(request, identifier):
         # moves the revision, so the save is refused rather than performed on a
         # structure it no longer matches.
         expected_revision = requested_expected_revision(request, payload)
+        from .module_collaboration import check_structure_save, announce_saved
         with transaction.atomic():
             if expected_revision or implicit_revision:
                 lock_module_structure_row(module_catalogue_id)
@@ -32541,6 +32569,9 @@ def curriculum_module_detail(request, identifier):
                             get_authoring_structure_payload(module_catalogue_id)
                         ),
                     )
+            lease_error = check_structure_save(request, module_catalogue_id, current, structure_payload, payload)
+            if lease_error is not None:
+                return lease_error
             if rename_only:
                 # Do not re-save weeks/components or reconcile their dates for
                 # a display-name edit. The canonical id and all links stand.
@@ -32562,6 +32593,7 @@ def curriculum_module_detail(request, identifier):
                 result['qualityChecklist'] = module_authoring_quality_check(result)[0]
             else:
                 result = save_module_authoring_structure(module_catalogue_id, structure_payload)
+            announce_saved(module_catalogue_id)
         # A tutor change made straight against one module has to mirror onto the
         # raise the assignment notification, exactly as the tree save and the
         # group-modules endpoint do. Without this the module row carried the new

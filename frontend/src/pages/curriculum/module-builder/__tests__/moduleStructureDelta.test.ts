@@ -4,6 +4,7 @@ import {
   moduleStructureDelta,
   recalculateModule,
   saveModuleStructure,
+  ModuleEditReservedError,
   type ModuleCatalogueItem,
 } from '../moduleAuthoringData';
 
@@ -109,5 +110,27 @@ describe('saveModuleStructure', () => {
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body).not.toHaveProperty('saveMode');
     expect(body.weekStructure).toHaveLength(2);
+  });
+
+  it('sends ownership as separate request metadata without changing authored values', async () => {
+    const base = storedModule(), current = clone(base);
+    current.weekStructure[0].components[0].title = 'Owner edit';
+    const fetchMock = stubFetch(current);
+    const collaboration = { editorId: 'synthetic-tab', proofs: { '["component","COMP-10","title"]': 'synthetic-nonce' } };
+    await saveModuleStructure('MOD-TEST', current, { base, expectedRevision: 'REV-1', collaboration });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.collaboration).toEqual(collaboration);
+    expect(body.structureDelta.components['COMP-10'].title).toBe('Owner edit');
+    expect(current).not.toHaveProperty('collaboration');
+  });
+
+  it('distinguishes a field reservation from a revision conflict so other edits can retry', async () => {
+    const key = '["component","COMP-10","title"]';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: 'module_edit_reserved', error: 'Synthetic colleague is editing this field.', blockedFields: [{ key }],
+    }), { status: 409, headers: { 'Content-Type': 'application/json' } })));
+    const refusal = saveModuleStructure('MOD-TEST', storedModule());
+    await expect(refusal).rejects.toBeInstanceOf(ModuleEditReservedError);
+    await expect(refusal).rejects.toMatchObject({ fields: [key] });
   });
 });

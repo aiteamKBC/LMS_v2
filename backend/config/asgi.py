@@ -22,11 +22,12 @@ from chat.routing import websocket_urlpatterns
 from coach_api.dashboard_snapshot_scheduler import CoachDashboardSnapshotASGI
 from curriculum_api.session_sync_runtime import SessionSyncASGI
 from learner_api.catchup_reminders import CatchupReminderASGI
+from curriculum_api.module_collaboration_consumer import ModuleCollaborationASGI
 
 
 application = ProtocolTypeRouter(
     {
         'http': CoachDashboardSnapshotASGI(CatchupReminderASGI(SessionSyncASGI(django_application))),
-        'websocket': AuthMiddlewareStack(URLRouter(websocket_urlpatterns)),
+        'websocket': ModuleCollaborationASGI(AuthMiddlewareStack(URLRouter(websocket_urlpatterns))),
     }
 )

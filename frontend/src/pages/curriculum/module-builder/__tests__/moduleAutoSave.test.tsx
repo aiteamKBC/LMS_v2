@@ -5,6 +5,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
 import { ModuleStructureConflictError } from '../moduleAuthoringData';
+import { fieldKey, projectAvailable } from '../collaborationProtocol';
+
+const collaborationTest = vi.hoisted(() => ({ enabled: false }));
+vi.mock('../useModuleCollaboration', async importOriginal => {
+  const original = await importOriginal<typeof import('../useModuleCollaboration')>();
+  return { useModuleCollaboration: (...args: Parameters<typeof original.useModuleCollaboration>) => {
+    const actual = original.useModuleCollaboration(...args);
+    return collaborationTest.enabled ? { ...actual, enabled: true, connected: true, members: [], leases: [],
+      claim: async () => true, holder: () => '', saved: async () => {}, cancel: () => {},
+      prepare: async (base: Parameters<typeof projectAvailable>[0], draft: Parameters<typeof projectAvailable>[1]) => {
+        const key = fieldKey('week', draft.weekStructure[0].id, 'title');
+        return { module: projectAvailable(base, draft, [key]), blocked: [key], collaboration: { editorId: 'synthetic', proofs: {} } };
+      },
+    } : actual;
+  } };
+});
 
 /**
  * The authoring workspace saves itself.
@@ -226,6 +242,7 @@ async function openWorkspaceSaving() {
 
 describe('Module Builder auto-save', { timeout: 25000 }, () => {
   beforeEach(() => {
+    collaborationTest.enabled = false;
     reload.mockClear();
     loadModuleStructure.mockClear();
     saveModuleStructure.mockClear();
@@ -237,6 +254,21 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
       revision += 1;
       return { ...module, structureRevision: `rev-${revision}` };
     });
+  });
+
+  it('saves an independent reorder while retaining a reserved title and unsaved navigation guard', async () => {
+    collaborationTest.enabled = true;
+    const title = await openWorkspace();
+    await userEvent.type(title, '!');
+    await userEvent.click(screen.getByRole('button', { name: 'Reorder components' }));
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1));
+    expect(saveCalls()[0][1].weekStructure[0].title).toBe('Week one');
+    expect(saveCalls()[0][1].weekStructure[0].components.map(c => c.id)).toEqual(['COMPONENT-2', 'COMPONENT-1']);
+    await waitFor(() => expect(title).toHaveValue('Week one!'));
+    expect(saveState()).toBe('Unsaved changes - press Save');
+    await userEvent.click(screen.getByRole('button', { name: 'Back to modules' }));
+    await waitFor(() => expect(swalFire).toHaveBeenCalled());
   });
 
   it('saves a week title without the Save button being pressed', async () => {

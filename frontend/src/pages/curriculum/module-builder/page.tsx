@@ -1,3 +1,8 @@
+import { EditScope, ModulePresence } from './CollaborativeField';
+import { CollaborationContext } from './collaborationContext';
+import { useModuleCollaboration } from './useModuleCollaboration';
+import { dirtyFields, projectAvailable } from './collaborationProtocol';
+import { ModuleEditReservedError } from './moduleAuthoringData';
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -711,6 +716,7 @@ export default function ModuleBuilder() {
    * every keystroke made while it was in the air -- the same out-of-order
    * overwrite the save path guards against, arriving by a different door.
    */
+  const collaboration = useModuleCollaboration(workingModule?.catalogueId || '', () => { void liveSyncRef.current('live'); });
   const workingModuleRef = useRef<ModuleCatalogueItem | null>(null);
   workingModuleRef.current = workingModule;
   /**
@@ -2313,6 +2319,7 @@ export default function ModuleBuilder() {
     // on after the `finally` has released the in-flight guard, because the
     // retry is a second save and the overlap guard would otherwise refuse it.
     let retryAfterMerge = '';
+    let retryAfterReservation = false;
     // What the server said both editors changed, kept for after the merge: the
     // browser's own merge normally finds the same things, and when it cannot
     // (a row deleted that this copy never knew of) these are what is asked.
@@ -2325,7 +2332,7 @@ export default function ModuleBuilder() {
     }
     // Someone else changed what this author changed, and they have not chosen
     // yet. Sending now would decide it for them.
-    if (moduleConflictsRef.current.length) {
+    if (moduleConflictsRef.current.length && !collaboration.enabled) {
       setActionMessage(MODULE_CONFLICT_CHOICE_NOTICE);
       return null;
     }
@@ -2343,7 +2350,7 @@ export default function ModuleBuilder() {
       ksbProfileSourceId: workingModuleScopeLock.ksbSourceId || liveModule.ksbProfileSourceId,
     } : liveModule;
     const validationIssues = validateModuleAuthoringStructure(scopedWorkingModule);
-    if (validationIssues.length) {
+    if (validationIssues.length && !collaboration.enabled) {
       setActionMessage(firstValidationMessage(validationIssues));
       return null;
     }
@@ -2366,12 +2373,49 @@ export default function ModuleBuilder() {
     setActionMessage(null);
     const normalisedModule = normaliseComponentTitles(scopedWorkingModule);
     const selectedKsbSourceId = cleanKsbSourceId(workingModuleScopeLock?.locked ? workingModuleScopeLock.ksbSourceId : normalisedModule.ksbProfileSourceId);
-    const moduleToSave = recalculateModule({
+    let moduleToSave = recalculateModule({
       ...normalisedModule,
       ksbProfileSourceId: selectedKsbSourceId && (workingModuleScopeLock?.locked || ksbSourceMatchesModule(selectedKsbSourceId, ksbSets, standards, normalisedModule, curriculumProgrammes))
         ? selectedKsbSourceId
         : '',
     });
+    const base = savedModuleSnapshotRef.current
+      ? JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem : null;
+    const draftBeforeSave = moduleToSave;
+    let ownership: { editorId: string; proofs: Record<string, string> } | undefined;
+    let pendingFields = false;
+    try {
+      if (collaboration.enabled) {
+        // A disagreement blocks that field, not independent work elsewhere.
+        moduleConflictsRef.current.forEach(conflict => { moduleToSave = applyTheirs(moduleToSave, conflict); });
+        if (!base) throw new Error('Read the saved module before saving collaboratively. Your draft is retained.');
+        const prepared = await collaboration.prepare(base, moduleToSave);
+        moduleToSave = prepared.module;
+        let validationDraft = scopedWorkingModule;
+        moduleConflictsRef.current.forEach(conflict => { validationDraft = applyTheirs(validationDraft, conflict); });
+        const availableIssues = validateModuleAuthoringStructure(projectAvailable(base, validationDraft, prepared.blocked));
+        if (availableIssues.length) {
+          setActionMessage(firstValidationMessage(availableIssues));
+          return null;
+        }
+        ownership = prepared.collaboration;
+        pendingFields = prepared.blocked.length > 0 || moduleConflictsRef.current.length > 0;
+        if (pendingFields) autoSaveArmedRef.current = false;
+        if (pendingFields && !dirtyFields(base, moduleToSave).length) {
+          setActionMessage('These fields are reserved or need your choice. Your draft is retained; other fields remain editable.');
+          return null;
+        }
+      }
+    } catch (error) {
+      setActionMessage(error instanceof Error ? error.message : 'Editing coordination is unavailable. Your draft is retained.');
+      return null;
+    } finally {
+      // Preparation may return before the content-save try/finally below.
+      savingRef.current = false;
+      setSaving(false);
+    }
+    savingRef.current = true;
+    setSaving(true);
     // Exactly what this request carries. Everything below compares against it
     // rather than against "is the module dirty", because those become different
     // questions the moment somebody types while the request is in the air.
@@ -2385,15 +2429,14 @@ export default function ModuleBuilder() {
     // payload -- the one thing a refusal must not do.
     autoSaveAttemptRef.current = sentSnapshot;
     try {
-      setWorkingModule(moduleToSave);
+      if (!pendingFields) setWorkingModule(moduleToSave);
       // The copy the server holds at that revision, so only what the reader
       // changed since is sent and written. Without one -- a module never saved
       // -- the whole structure goes, as it always did.
-      const base = savedModuleSnapshotRef.current
-        ? JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem
-        : null;
+
       const saved = await saveModuleStructure(moduleToSave.catalogueId, moduleToSave, {
         expectedRevision: serverRevisionRef.current,
+        collaboration: ownership,
         source,
         base,
         // Lets the server merge this save with one that landed first, item by
@@ -2428,23 +2471,31 @@ export default function ModuleBuilder() {
         // depends only on `current`, so a repeated call cannot leave the two
         // disagreeing.
         const unchangedSinceSent = moduleSnapshot(current) === sentSnapshot;
+        if (pendingFields) {
+          savedModuleSnapshotRef.current = moduleSnapshot(saved);
+          return mergeModuleStructures(moduleToSave, current, saved).module;
+        }
         savedModuleSnapshotRef.current = unchangedSinceSent ? moduleSnapshot(saved) : sentSnapshot;
         return unchangedSinceSent ? saved : current;
       });
+      await collaboration.saved(moduleToSave, workingModuleRef.current || draftBeforeSave);
       setStorageVersion(version => version + 1);
-      setActionMessage(null);
+      setActionMessage(pendingFields ? 'Available changes saved. Reserved fields and unresolved choices remain in your draft.' : null);
       setSaveFailure(null);
       // No dialog on a successful save. The footer already reads "All changes
       // saved" with a green Saved button, and a modal on every save is an
       // interruption in a screen people save constantly.
       reload();
-      return saved;
+      return pendingFields ? null : saved;
     } catch (err) {
       // Nothing is reset, reloaded or refetched here on purpose. Every refusal
       // leaves the weeks, components, OTJH and KSB mappings the reader has
       // authored exactly where they are -- `savedModuleSnapshotRef` is left
       // alone too, so the workspace still knows it has unsaved work.
-      if (err instanceof ModuleStructureConflictError) {
+      if (err instanceof ModuleEditReservedError && collaboration.enabled && err.fields.length && rebasesLeft > 0) {
+        collaboration.rejectFields(err.fields);
+        retryAfterReservation = true;
+      } else if (err instanceof ModuleStructureConflictError) {
         serverConflicts = err.conflicts.length ? conflictsFromServer(moduleToSave, err.conflicts) : [];
         // Somebody else's write got there first. Re-sending this payload as it
         // stands would replace every week and component with the pre-edit ones,
@@ -2502,12 +2553,13 @@ export default function ModuleBuilder() {
     // already returned. The merge installs the stored weeks alongside the
     // reader's and moves the workspace onto the revision that refused this
     // save, which is what makes the second attempt a legal one.
+    if (retryAfterReservation) return persistRef.current(source, rebasesLeft - 1);
     if (retryAfterMerge) {
       const merged = await mergeStoredRef.current(retryAfterMerge).catch(() => false);
       if (!moduleConflictsRef.current.length && serverConflicts.length) {
         setModuleConflicts(serverConflicts);
       }
-      if (moduleConflictsRef.current.length) {
+      if (moduleConflictsRef.current.length && !collaboration.enabled) {
         // A real disagreement: the merge has put their side next to this
         // author's, and nothing goes until the author chooses.
         autoSaveArmedRef.current = false;
@@ -2523,7 +2575,7 @@ export default function ModuleBuilder() {
       setActionMessage(MODULE_CONFLICT_UNREADABLE_NOTICE);
     }
     return null;
-  }, [curriculumProgrammes, ksbSets, reload, setModuleConflicts, standards, workingModule, workingModuleProgrammeArchived, workingModuleScopeLock]);
+  }, [collaboration, curriculumProgrammes, ksbSets, reload, setModuleConflicts, standards, workingModule, workingModuleProgrammeArchived, workingModuleScopeLock]);
   /**
    * `persistWorkingModule` and the live merge, readable from inside each other.
    *
@@ -2861,6 +2913,7 @@ export default function ModuleBuilder() {
   }, [clearWorkingModule, searchParams, workingModule]);
 
   const restoreSavedWorkingModule = useCallback(() => {
+    collaboration.cancel();
     if (!savedModuleSnapshotRef.current) return workingModule;
     try {
       const restored = recalculateModule(JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem);
@@ -2873,7 +2926,7 @@ export default function ModuleBuilder() {
     } catch {
       return workingModule;
     }
-  }, [workingModule]);
+  }, [collaboration, workingModule]);
 
   const applySelectionSafely = useCallback((nextSelection: Selection, moduleOverride?: ModuleCatalogueItem | null) => {
     const source = moduleOverride || workingModule;
@@ -3219,7 +3272,7 @@ export default function ModuleBuilder() {
   useModuleLiveSync({
     moduleId: workingModule ? moduleStructureIdentifier(workingModule) : '',
     groupId: workingModule?.groupId || '',
-    enabled: Boolean(workingModule) && !openingModule,
+    enabled: Boolean(workingModule) && !openingModule && !collaboration.connected,
     onChange: () => { void liveSyncRef.current('live'); },
   });
 
@@ -3426,6 +3479,8 @@ export default function ModuleBuilder() {
 
   if (workingModule) {
     return (
+      <CollaborationContext.Provider value={collaboration}>
+      <EditScope kind="module" id={workingModule.catalogueId}>
       <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Module Builder" pageSubtitle={`${workingModule.title} - authoring workspace`} userName="Rachel Myers" userRole="Curriculum Designer">
         <div className="min-h-[calc(100vh-96px)] bg-background-100 px-3 py-4 sm:px-5 lg:px-6">
           <div className="mx-auto flex w-full max-w-[1840px] flex-col gap-4">
@@ -3567,6 +3622,7 @@ export default function ModuleBuilder() {
               reader is looking at or typing into moves. */}
           <ModuleConflictPanel
             conflicts={moduleConflicts}
+            saveOtherFields={collaboration.enabled}
             onKeepMine={keepMineInConflict}
             onUseTheirs={takeTheirsInConflict}
           />
@@ -3649,6 +3705,7 @@ export default function ModuleBuilder() {
                       This is the component you opened from Audit Trail.
                     </div>
                   )}
+                  <EditScope kind="component" id={selectedComponent.id}>
                   <WeekComponentEditor
                     component={selectedComponent}
                     onChange={updates => updateWorkingModule(module => {
@@ -3702,8 +3759,10 @@ export default function ModuleBuilder() {
                     moduleId={workingModule.catalogueId || workingModule.id}
                     recordingLinks={recordingLinks}
                   />
+                  </EditScope>
                 </ModuleBuilderScrollArea>
               ) : selectedWeek ? (
+                <EditScope kind="week" id={selectedWeek.id}>
                 <ModuleWeekPanel
                   week={selectedWeek}
                   module={workingModule}
@@ -3717,6 +3776,7 @@ export default function ModuleBuilder() {
                   }}
                   onReuseComponents={() => setReusePickerWeekId(selectedWeek.id)}
                 />
+                </EditScope>
               ) : (
                 <EmptyEditor onAddWeek={() => {
                   const week = createEmptyWeek(workingModule.id, 1);
@@ -3726,6 +3786,8 @@ export default function ModuleBuilder() {
               )}
             </div>
 
+              <div className="min-w-0">
+              <ModulePresence collaboration={collaboration} />
               <ApprenticeshipSettings
                 module={workingModule}
                 week={selectedWeek}
@@ -3740,6 +3802,7 @@ export default function ModuleBuilder() {
               onUpdateKsbWeight={(target, mappingId, weight) => updateWorkingModule(module => updateKsbMappingWeight(module, target, mappingId, weight))}
               onUpdateKsbWeightClass={(target, mappingId, weightClass) => updateWorkingModule(module => updateKsbMappingWeightClass(module, target, mappingId, weightClass))}
             />
+              </div>
           </div>
           </fieldset>
           <WorkspaceActionFooter
@@ -3923,6 +3986,8 @@ export default function ModuleBuilder() {
           />
         )}
       </WorkspaceShell>
+      </EditScope>
+      </CollaborationContext.Provider>
     );
   }
 
@@ -5538,7 +5603,7 @@ function ModuleWeekPanel({ week, module, groupOptions, onChange, onOpenSessionKs
             <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700">{totalOtjh.toFixed(1)}h OTJH</span>
           </div>
           <div className="mt-1.5">
-            <TextInput label="Week title" value={week.title} onChange={value => onChange({ title: value })} />
+            <TextInput editField="title" label="Week title" value={week.title} onChange={value => onChange({ title: value })} />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
@@ -5724,8 +5789,8 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
 
       <div className="space-y-5 p-5">
         <EditorSection title="Identity" icon="ri-edit-line">
-          <TextInput label="Title" value={readableComponentTitle(component.title)} onChange={value => onChange({ title: value })} error={fieldError('title')} />
-          <TextArea label="Description" value={component.description} onChange={value => onChange({ description: value })} rows={4} />
+          <TextInput editField="title" label="Title" value={readableComponentTitle(component.title)} onChange={value => onChange({ title: value })} error={fieldError('title')} />
+          <TextArea editField="description" label="Description" value={component.description} onChange={value => onChange({ description: value })} rows={4} />
         </EditorSection>
 
         <EditorSection title="Component content" icon="ri-file-list-3-line">
@@ -5745,22 +5810,22 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
 
         <EditorSection title="Completion and reward" icon="ri-checkbox-circle-line">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <NumberInput label="Expected OTJH hours" value={component.expectedOtjh} min={0} step={0.25} onChange={value => onChange({ expectedOtjh: value })} error={fieldError('expectedOtjh')} />
-            <NumberInput label="Points" value={component.points} min={0} step={1} onChange={value => onChange({ points: value })} error={fieldError('points')} />
+            <NumberInput editField="expectedOtjh" label="Expected OTJH hours" value={component.expectedOtjh} min={0} step={0.25} onChange={value => onChange({ expectedOtjh: value })} error={fieldError('expectedOtjh')} />
+            <NumberInput editField="points" label="Points" value={component.points} min={0} step={1} onChange={value => onChange({ points: value })} error={fieldError('points')} />
           </div>
         </EditorSection>
 
         {showApprenticeshipSettings && (
           <EditorSection title="Apprenticeship settings" icon="ri-settings-3-line">
             <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-              <Checkbox label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-              <Checkbox label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+              <Checkbox editField="reflectionRequired" label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+              <Checkbox editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
             </div>
             <TextArea label="Completion rule" value={String(component.settings.completionRule ?? 'Mark complete')} onChange={value => onSettingChange('completionRule', value)} rows={2} />
             {/* Only asked for once reflection is required — there is nowhere for
                 the learner's answer to go while the toggle above is off. */}
             {component.reflectionRequired && (
-              <TextArea label="Reflection question" value={component.reflectionQuestion} onChange={value => onChange({ reflectionQuestion: value })} rows={3} error={fieldError('reflectionQuestion')} />
+              <TextArea editField="reflectionQuestion" label="Reflection question" value={component.reflectionQuestion} onChange={value => onChange({ reflectionQuestion: value })} rows={3} error={fieldError('reflectionQuestion')} />
             )}
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <SelectInput label="Status" value={String(component.settings.contentStatus ?? 'Draft')} options={CONTENT_STATUSES} onChange={value => onSettingChange('contentStatus', value)} error={fieldError('settings.contentStatus')} />
@@ -6190,7 +6255,7 @@ function TypeSpecificFields({
         {/* For a reflection component the question *is* its content, so this is
             the same first-class field the assurance section edits -- not a
             second copy of it in `settings`. */}
-        <TextArea label="Reflection question" value={component.reflectionQuestion} onChange={value => onChange({ reflectionQuestion: value })} rows={4} />
+        <TextArea editField="reflectionQuestion" label="Reflection question" value={component.reflectionQuestion} onChange={value => onChange({ reflectionQuestion: value })} rows={4} />
         <NumberInput label="Minimum word count" value={getNumber('minimumWordCount')} min={0} step={50} onChange={value => onSettingChange('minimumWordCount', value)} />
       </EditorBlock>
     );
@@ -6787,12 +6852,12 @@ function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, 
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
           <SettingsSection title="Basic details">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <TextInput label="Module title" value={module.title} onChange={value => onChange({ title: value })} />
-              <SelectInput label="Status" value={module.status} options={['draft', 'review', 'published']} onChange={value => onChange({ status: value })} />
+              <TextInput editField="title" label="Module title" value={module.title} onChange={value => onChange({ title: value })} />
+              <SelectInput editField="status" label="Status" value={module.status} options={['draft', 'review', 'published']} onChange={value => onChange({ status: value })} />
               <NumberInput label="Weeks" value={module.weeks} min={1} step={1} onChange={value => resizeWeeks(module, value, onChange)} />
-              <NumberInput label="Total OTJH hours" value={module.declaredTotalOtjh ?? module.totalOtjh} min={0} step={0.25} onChange={value => onChange({ declaredTotalOtjh: value })} />
+              <NumberInput editField="declaredTotalOtjh" label="Total OTJH hours" value={module.declaredTotalOtjh ?? module.totalOtjh} min={0} step={0.25} onChange={value => onChange({ declaredTotalOtjh: value })} />
             </div>
-            <TextArea label="Short description" value={module.description} onChange={value => onChange({ description: value })} rows={3} />
+            <TextArea editField="description" label="Short description" value={module.description} onChange={value => onChange({ description: value })} rows={3} />
           </SettingsSection>
 
           <SettingsSection title="KSBs targeted by this module">
@@ -6805,9 +6870,9 @@ function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, 
           </SettingsSection>
 
           <SettingsSection title="Compliance/context fields">
-            <TextArea label="Background" value={module.background} onChange={value => onChange({ background: value })} rows={3} />
-            <TextArea label="EPA Requirements Covered" value={module.epaRequirements.join('\n')} onChange={value => onChange({ epaRequirements: lines(value) })} rows={4} />
-            <TextArea label="Professional Qualification Outcomes" value={module.qualificationOutcomes.join('\n')} onChange={value => onChange({ qualificationOutcomes: lines(value) })} rows={4} />
+            <TextArea editField="background" label="Background" value={module.background} onChange={value => onChange({ background: value })} rows={3} />
+            <TextArea editField="epaRequirements" label="EPA Requirements Covered" value={module.epaRequirements.join('\n')} onChange={value => onChange({ epaRequirements: lines(value) })} rows={4} />
+            <TextArea editField="qualificationOutcomes" label="Professional Qualification Outcomes" value={module.qualificationOutcomes.join('\n')} onChange={value => onChange({ qualificationOutcomes: lines(value) })} rows={4} />
           </SettingsSection>
 
           <SettingsSection title="Completion criteria">
