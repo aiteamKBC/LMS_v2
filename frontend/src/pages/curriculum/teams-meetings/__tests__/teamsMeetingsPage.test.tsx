@@ -894,10 +894,15 @@ describe('Teams Meetings page', () => {
     const dialog = within(await screen.findByRole('dialog'));
     expect(await dialog.findByRole('alert')).toHaveTextContent('Original calendar requires connection.');
     expect(dialog.getByRole('region', { name: 'Invitations and meeting settings' })).toBeVisible();
-    for (const name of ['Update Teams calendar', 'Cancel series', 'Edit session dates', 'Save without notifying']) {
+    for (const name of ['Cancel series', 'Edit session dates', 'Save without notifying']) {
       expect(dialog.getByRole('button', { name })).toBeVisible();
       expect(dialog.getByRole('button', { name })).toBeDisabled();
     }
+    const update = dialog.getByRole('button', { name: 'Update Teams calendar' });
+    expect(update).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.click(update);
+    expect(dialog.getByRole('status', { name: 'Teams calendar action' })).toHaveFocus();
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
     expect(dialog.getByRole('button', { name: 'Connect Microsoft calendar' })).toBeEnabled();
     expect(dialog.queryByText('Series linked from Teams')).not.toBeInTheDocument();
     expect(dialog.queryByRole('region', { name: 'Edit original Teams meeting' })).not.toBeInTheDocument();
@@ -954,7 +959,7 @@ describe('Teams Meetings page', () => {
     expect(await dialog.findByRole('region', { name: 'Invitations and meeting settings' })).toBeVisible();
     await waitFor(() => expect(readImportedMeetingEditor).toHaveBeenCalledWith('LIVE-1', { standard: true }));
     expect(dialog.queryByRole('button', { name: 'Create' })).not.toBeInTheDocument();
-    expect(dialog.getByRole('button', { name: 'Update Teams calendar' })).toBeDisabled();
+    expect(dialog.getByRole('button', { name: 'Update Teams calendar' })).toHaveAttribute('aria-disabled', 'true');
     expect(syncTeamsCalendarState).not.toHaveBeenCalledWith('LIVE-1');
     expect(createTeamsMeeting).not.toHaveBeenCalled();
     expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
@@ -1121,7 +1126,11 @@ describe('Teams Meetings page', () => {
     await userEvent.click(dialog.getByRole('tab', { name: 'Module Teams calendar' }));
     expect(await dialog.findByRole('region', { name: 'Invitations and meeting settings' })).toBeVisible();
     expect(dialog.queryByRole('button', { name: 'Create' })).not.toBeInTheDocument();
-    expect(dialog.getByRole('button', { name: 'Update Teams calendar' })).toBeDisabled();
+    const update = dialog.getByRole('button', { name: 'Update Teams calendar' });
+    expect(update).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.click(update);
+    expect(dialog.getByRole('status', { name: 'Teams calendar action' })).toHaveFocus();
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
   });
 
   it('uses the Entra people picker for every meeting role', async () => {
