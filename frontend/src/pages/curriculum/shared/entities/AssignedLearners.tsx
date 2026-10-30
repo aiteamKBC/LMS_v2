@@ -6,16 +6,16 @@ import { Context, createCountStore, keyFor, type CountState } from './assignedLe
 
 export function LearnerDirectoryProvider({ children }: { children: ReactNode }) {
   const store = useMemo(createCountStore, []);
-  const [selection, setSelection] = useState<{ target: LearnerTarget; manage?: () => void } | null>(null);
+  const [selection, setSelection] = useState<{ target: LearnerTarget; manage?: () => void | Promise<unknown> } | null>(null);
   useEffect(() => () => store.dispose(), [store]);
-  const open = useCallback((target: LearnerTarget, manage?: () => void) => setSelection({ target, manage }), []);
+  const open = useCallback((target: LearnerTarget, manage?: () => void | Promise<unknown>) => setSelection({ target, manage }), []);
   const context = useMemo(() => ({ store, open }), [store, open]);
   return <Context.Provider value={context}>{children}{selection && <DirectoryDialog key={keyFor(selection.target)}
     target={selection.target} store={store} onClose={() => setSelection(null)} onManage={selection.manage} />}</Context.Provider>;
 }
 
 export function AssignedLearners({ target, initialCount, onManage, render }: {
-  target: LearnerTarget; initialCount?: number | null; onManage?: () => void;
+  target: LearnerTarget; initialCount?: number | null; onManage?: () => void | Promise<unknown>;
   render?: (count: string, open: (event?: { stopPropagation: () => void }) => void) => ReactNode;
 }) {
   const context = useContext(Context);
@@ -36,11 +36,12 @@ export function AssignedLearners({ target, initialCount, onManage, render }: {
 }
 
 function DirectoryDialog({ target, store, onClose, onManage }: {
-  target: LearnerTarget; store: ReturnType<typeof createCountStore>; onClose: () => void; onManage?: () => void;
+  target: LearnerTarget; store: ReturnType<typeof createCountStore>; onClose: () => void; onManage?: () => void | Promise<unknown>;
 }) {
   const [status, setStatus] = useState<'active' | 'all'>('active'), [search, setSearch] = useState(''), [page, setPage] = useState(1);
   const [result, setResult] = useState<LearnerDirectoryPage | null>(null), [error, setError] = useState('');
   const [loading, setLoading] = useState(true), [retry, setRetry] = useState(0);
+  const [managing, setManaging] = useState(false);
   const latest = useRef(0);
   useEffect(() => {
     const controller = new AbortController(), version = ++latest.current;
@@ -57,7 +58,11 @@ function DirectoryDialog({ target, store, onClose, onManage }: {
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [target, store, status, search, page, retry]);
   return <Modal title={`${target.name} — Assigned learners`} onClose={onClose} size="max-w-2xl" footer={onManage ?
-    <button type="button" onClick={() => { onClose(); onManage(); }} className="rounded-lg border border-primary-200 px-3 py-2 text-sm font-semibold text-primary-700">Assignments & progress</button> : undefined}>
+    <button type="button" disabled={managing} onClick={async () => {
+      setManaging(true);
+      try { await onManage(); onClose(); }
+      catch { setError('Could not open assignments. Please retry.'); setManaging(false); }
+    }} className="rounded-lg border border-primary-200 px-3 py-2 text-sm font-semibold text-primary-700 disabled:opacity-60">{managing ? 'Opening assignments...' : 'Assignments & progress'}</button> : undefined}>
     <div className="mb-4 flex flex-wrap items-center gap-2">
       <label className="flex-1 text-xs font-semibold">Search learners<input type="search" value={search} maxLength={100} onChange={event => { setSearch(event.target.value); setPage(1); }}
         className="mt-1 block w-full rounded-lg border border-background-200 px-3 py-2 text-sm" /></label>

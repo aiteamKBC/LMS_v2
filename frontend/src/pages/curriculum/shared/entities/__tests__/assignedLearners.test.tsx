@@ -58,3 +58,17 @@ it('cancels stale name searches and never replaces the latest results', async ()
   await act(async () => resolveOld({ ...page, learners: [{ ...page.learners[0], name: 'Stale result' }] }));
   expect(screen.queryByText('Stale result')).not.toBeInTheDocument();
 });
+
+it('keeps assignment loading visible and prevents repeated opens until the existing workflow is ready', async () => {
+  let finish!: () => void;
+  const manage = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+  render(<LearnerDirectoryProvider><AssignedLearners target={target} onManage={manage} /></LearnerDirectoryProvider>);
+  await userEvent.click(await screen.findByRole('button', { name: 'Module A: 2 active assigned learners' }));
+  await screen.findByText('Alice Example');
+  await userEvent.click(screen.getByRole('button', { name: 'Assignments & progress' }));
+  expect(screen.getByRole('button', { name: 'Opening assignments...' })).toBeDisabled();
+  expect(manage).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+  await act(async () => finish());
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+});

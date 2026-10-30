@@ -8439,7 +8439,7 @@ function ModuleCatalogueCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5 xl:justify-end">
-          <AssignedLearners target={{ scope: 'module', id: moduleLearnerIdentifier(module), name: module.title }} onManage={() => { void onLearners(); }} />
+          <AssignedLearners target={{ scope: 'module', id: moduleLearnerIdentifier(module), name: module.title }} onManage={onLearners} />
           {primaryDeliveryHref && (
             <Link
               to={primaryDeliveryHref}

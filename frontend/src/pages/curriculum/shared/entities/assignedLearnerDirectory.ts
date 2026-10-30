@@ -50,7 +50,7 @@ export function createCountStore() {
 
 interface DirectoryContext {
   store: ReturnType<typeof createCountStore>;
-  open: (target: LearnerTarget, manage?: () => void) => void;
+  open: (target: LearnerTarget, manage?: () => void | Promise<unknown>) => void;
 }
 export const Context = createContext<DirectoryContext | null>(null);
 export function useRefreshAssignedLearners() { return useContext(Context)?.store.refresh; }
