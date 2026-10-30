@@ -191,7 +191,15 @@ def submit_video_progress(request, component_id):
         "outsideWorkingHoursConfirmedAt": None,
         "declaredCompletedAt": declared_at.isoformat() if declared_at else None,
         "submissionValidationReason": validation_reason,
+        **{key: payload[key] for key in ('retakeTimeChoice', 'retakeTimeReason', 'retakePreviousSeconds') if key in payload},
     }
+
+    from .retake_timing import validate_activity_time
+    from .active_users import _progress_record_minutes
+    try:
+        validate_activity_time(record, history, seconds_for=lambda row: _progress_record_minutes(row) * 60)
+    except ValueError as exc:
+        return _error(str(exc), 400)
 
     if active is not None:
         activity = {
@@ -208,6 +216,8 @@ def submit_video_progress(request, component_id):
             save_progress_record(active, record, activity)
         except ComponentReferenceError as exc:
             return _error(str(exc), 400)
+        except ValueError as exc:
+            return _error(str(exc), 409)
         except IntegrityError as exc:
             if "learner_progress_tracking_session_uq" in str(exc):
                 return _error("This activity timing session has already been submitted.", 409)

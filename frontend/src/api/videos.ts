@@ -11,6 +11,9 @@ import { CompletionValidationError, type WorkingRuleReason } from '@/lib/complet
 const BASE = '/learner_api/videos';
 
 export interface VideoProgressSubmission {
+  retakeTimeChoice?: 'correct' | 'add' | 'retry';
+  retakeTimeReason?: string;
+  retakePreviousSeconds?: number;
   week?: string | null;
   module?: string | null;
   startedAt: string;
@@ -32,6 +35,8 @@ export interface VideoProgressSubmission {
 
 // Slim stored record (references the video by componentId; no name fields).
 export interface VideoProgressRecord {
+  retakeTimeChoice?: 'correct' | 'add' | 'retry';
+  countedSeconds?: number;
   kind: 'video';
   componentId: string;
   attempt: number;
