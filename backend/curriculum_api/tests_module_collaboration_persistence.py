@@ -13,6 +13,7 @@ from . import module_collaboration as service, views
 from .module_collaboration_state import CoordinationUnavailable, ReservationBusy, field_key
 from .module_collaboration_store import MemoryRoomStore
 from .tests import CurriculumTeamsRequestTestCase
+from .tests_partial_structure_save import delta_between
 
 
 @override_settings(CURRICULUM_COLLABORATION_ENABLED=True, CURRICULUM_COLLABORATION_MODULES=('MOD-COLLAB-SYNTHETIC',),
@@ -48,23 +49,27 @@ class ModuleCollaborationPersistenceTests(CurriculumTeamsRequestTestCase):
         self.assertEqual(200, response.status_code, response.content)
         return response.json()
 
-    def save(self, base, draft, metadata=None):
-        return self.client.patch(self.url, json.dumps({**draft, 'expectedRevision': base['structureRevision'],
+    def save(self, base, draft, metadata=None, *, partial=False):
+        body = draft
+        if partial:
+            body = {**{key: value for key, value in draft.items() if key not in ('weekStructure', 'weeks')},
+                'saveMode': 'partial', 'structureDelta': delta_between(base, draft)}
+        return self.client.patch(self.url, json.dumps({**body, 'expectedRevision': base['structureRevision'],
             **({'collaboration': metadata} if metadata is not None else {})}), content_type='application/json')
 
     def test_held_title_does_not_block_another_field_and_only_owner_can_save_title(self):
         base = self.read(); draft = copy.deepcopy(base)
         draft['weekStructure'][0]['components'][0]['expectedOtjh'] = 2
-        response = self.save(base, draft)
+        response = self.save(base, draft, partial=True)
         self.assertEqual(200, response.status_code, response.content)
         self.assertEqual('Original', self.read()['weekStructure'][0]['components'][0]['title'])
         base = self.read(); draft = copy.deepcopy(base)
         draft['weekStructure'][0]['components'][0]['title'] = 'Owner edit'
-        refused = self.save(base, draft)
+        refused = self.save(base, draft, partial=True)
         self.assertEqual(409, refused.status_code, refused.content)
         self.assertEqual('module_edit_reserved', refused.json()['code'])
         self.assertEqual(base['structureRevision'], self.read()['structureRevision'])
-        accepted = self.save(base, draft, dict(editorId=self.actor['editor'], proofs={self.key: self.proof}))
+        accepted = self.save(base, draft, dict(editorId=self.actor['editor'], proofs={self.key: self.proof}), partial=True)
         self.assertEqual(200, accepted.status_code, accepted.content)
         self.assertEqual('Owner edit', self.read()['weekStructure'][0]['components'][0]['title'])
 

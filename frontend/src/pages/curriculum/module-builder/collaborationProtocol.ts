@@ -55,6 +55,7 @@ function records(module: ModuleCatalogueItem, kind: string): RecordValue[] {
 }
 /** Exclude only unavailable fields from the request; never mutate the draft. */
 export function projectAvailable(base: ModuleCatalogueItem, draft: ModuleCatalogueItem, blocked: string[]): ModuleCatalogueItem {
+  if (!blocked.length) return draft;
   const result = structuredClone(draft);
   for (const key of blocked) {
     const [kind, id, path] = JSON.parse(key) as string[];

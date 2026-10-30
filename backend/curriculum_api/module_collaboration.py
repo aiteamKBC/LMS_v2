@@ -129,6 +129,8 @@ def check_structure_save(request, module_id, stored, candidate, payload, *, remo
         member = room['members'].get(editor)
         if member and member['account'] != str(account.pk):
             return JsonResponse({'error': 'This editor belongs to another session.'}, status=403)
+        if not room['leases'] and not proofs:
+            return None  # No reservations to check; avoid walking a large module.
         parents = {c['id']: w['id'] for w in stored.get('weekStructure') or [] for c in w.get('components') or []}
         changes = {field_key(removed[0], removed[1], '$delete')} if removed else changed_fields(stored, candidate)
         refused = blocked_fields(room, changes, editor, proofs, time.time(), parents=parents)
