@@ -68,7 +68,10 @@ def eligible(row):
 def require_managed_calendar(series):
     """Imported main meetings stay with their original Teams calendar owner."""
     from . import views as v
-    if v.module_has_external_teams_calendar(series.get('module_catalogue_id'), series):
+    from .teams_original_calendar import calendar_authorized, OriginalCalendarRequired
+    if series.get('meeting_type') == 'linked-external' and not calendar_authorized(series.get('id')):
+        raise OriginalCalendarRequired('Verify access to the original Teams calendar before changing it.')
+    if v.module_has_external_teams_calendar(series.get('module_catalogue_id'), series) and not calendar_authorized(series.get('id')):
         raise CalendarStateError(
             'This module uses an imported Teams meeting. Manage dates and cancellations in the original Teams calendar; '
             'the LMS will preserve its existing link.'
@@ -77,6 +80,7 @@ def require_managed_calendar(series):
 
 def action_preview(live_id, payload, actor):
     from . import views as v
+    from .teams_original_calendar import current_calendar
     from .teams_schedule_notice import schedule_snapshot
     series, rows, saved = load_calendar_state(live_id)
     require_managed_calendar(series)
@@ -125,7 +129,8 @@ def action_preview(live_id, payload, actor):
                 for event in result.get('exceptionOccurrences') or []:
                     captured[event['id']] = event
             return result
-        plan = cancellation_plan(series, rows, saved, capture)
+        original = current_calendar()
+        plan = cancellation_plan(series, rows, saved, capture, **({'original_prefix': original.original_prefix} if original else {}))
     if plan['seriesCancelled']:
         raise CalendarStateError('Microsoft has already cancelled this calendar. Sync calendar status first.')
     bindings = plan['snapshot']['occurrences']
@@ -250,7 +255,9 @@ def leftover_preview(live_id, payload, actor, series, rows, saved):
                 for event in result.get('exceptionOccurrences') or []:
                     captured[event['id']] = event
             return result
-        plan = cancellation_plan(series, rows, saved, capture)
+        from .teams_original_calendar import current_calendar
+        original = current_calendar()
+        plan = cancellation_plan(series, rows, saved, capture, **({'original_prefix': original.original_prefix} if original else {}))
     slot = next((item for item in plan.get('leftovers') or [] if item.get('eventId') == event_id), None)
     if not slot:
         raise CalendarStateError('That Teams slot is no longer listed as outside the module plan. Sync calendar status first.')
@@ -283,12 +290,20 @@ def graph_action(series, command, comment, notify_attendees=True):
     from coach_api.views import get_graph_settings, microsoft_graph_token
     try:
         settings = get_graph_settings()
-        token = microsoft_graph_token()
+        from .teams_original_calendar import current_calendar
+        original = current_calendar()
+        if original and original.read_only:
+            raise ActionNotSent('A status check cannot resend a calendar mutation.')
+        token = original.access['accessToken'] if original else microsoft_graph_token()
     except (RuntimeError, httpx.HTTPError) as exc:
         raise ActionNotSent('Microsoft sign-in could not be verified. No calendar change was sent.') from exc
     if settings['base_url'].rstrip('/') != 'https://graph.microsoft.com/v1.0':
         raise CalendarStateError('The Microsoft calendar endpoint is not supported.')
     path = f"users/{quote(series['organizer_email'], safe='')}/events/{quote(command['eventId'], safe='')}"
+    if original:
+        path = original.path(path)
+        if path is None:
+            raise CalendarStateError('The action does not belong to the verified original calendar.')
     with httpx.Client(base_url='https://graph.microsoft.com/v1.0/', follow_redirects=False,
                       headers={'Authorization': 'Bearer ' + token}, timeout=20) as client:
         try:
@@ -308,6 +323,15 @@ def graph_action(series, command, comment, notify_attendees=True):
         if (event.get('onlineMeeting') or {}).get('joinUrl', '') != command['joinUrl']:
             raise ActionNotSent('The meeting link changed after review.')
         if command['action'] == 'cancel':
+            if original and original.original_prefix.startswith('groups/'):
+                # Group calendar events use their documented organizer DELETE;
+                # there is one accepted mutation, followed by the same verification.
+                response = client.delete(path)
+                if response.status_code in (200, 202, 204):
+                    return True
+                if 400 <= response.status_code < 500 and response.status_code not in (408, 409):
+                    raise ActionNotSent('Microsoft rejected the group calendar cancellation. No cancellation was confirmed.')
+                return False
             return send_cancellation(client, path, comment, not_sent=ActionNotSent,
                                      occurrence=bool(command.get('rootId') and command['rootId'] != command['eventId']))
         response = client.patch(
@@ -573,6 +597,7 @@ def continue_action(live_id, operation_id, send=False):
 @require_role('admin', 'staff')
 @require_POST
 def calendar_action(request, live_session_id):
+    from .teams_original_calendar import OriginalCalendarRequired, original_calendar_request
     try:
         payload = json.loads(request.body)
         if not isinstance(payload, dict):
@@ -583,8 +608,11 @@ def calendar_action(request, live_session_id):
         elif payload.get('stage') == 'confirm':
             result = with_change_emails(live_session_id, with_change_notice(live_session_id, confirm_action(live_session_id, payload, actor)))
         elif payload.get('stage') == 'status':
-            _, _, saved = load_calendar_state(live_session_id)
+            series, _, saved = load_calendar_state(live_session_id)
             operation = saved.get('management') or {}
+            from .teams_original_calendar import calendar_authorized
+            if series.get('meeting_type') == 'linked-external' and operation.get('status') in ('processing', 'uncertain') and not calendar_authorized(live_session_id):
+                return original_calendar_request(calendar_action)(request, live_session_id)
             result = with_change_emails(live_session_id, with_change_notice(live_session_id, continue_action(live_session_id, operation.get('id'), send=False))) if operation else {'status': 'none', 'message': 'No calendar action is awaiting confirmation.'}
         else:
             raise ValueError('Choose review, confirm or status.')
@@ -593,6 +621,8 @@ def calendar_action(request, live_session_id):
         return JsonResponse({'error': 'This review has expired or changed. Open the review again.'}, status=400)
     except ValueError as exc:
         return JsonResponse({'error': str(exc)}, status=400)
+    except OriginalCalendarRequired:
+        return original_calendar_request(calendar_action)(request, live_session_id)
     except (LookupError, CalendarStateError) as exc:
         return JsonResponse({'error': str(exc)}, status=409)
     except (httpx.HTTPError, RuntimeError):

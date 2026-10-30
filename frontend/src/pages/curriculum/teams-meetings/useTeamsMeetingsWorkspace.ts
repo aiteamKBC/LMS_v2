@@ -26,6 +26,8 @@ import {
   type CurriculumModule,
   type CurriculumSession,
   type CurriculumTeamsMeetingSummary,
+  readImportedMeetingEditor,
+  type ImportedMeetingEditor,
 } from '@/lib/curriculumApi';
 import {
   ApiError,
@@ -758,6 +760,22 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     const sessions = sessionsForPlan || drop(selected.sessions);
     return { ...selected, sessions: namedSessions(sessions, components), plannedStarts: startsFor(sessions) };
   }, [additionalMeetings, liveComponents, plannedSessions, selected]);
+  const [originalRead, setOriginalRead] = useState<{ id: string; loading: boolean; data?: ImportedMeetingEditor; error?: string }>({ id: '', loading: false });
+  const [originalRevision, setOriginalRevision] = useState(0);
+  const reloadOriginalCalendar = () => {
+    setOriginalRead(value => ({ ...value, loading: true }));
+    setOriginalRevision(value => value + 1);
+  };
+  const refreshOriginalCalendar = () => {
+    if (!updateDrawer.dirty) { reloadOriginalCalendar(); return; }
+    void showCurriculumConfirm({ title: 'Reload the saved meeting?',
+      text: 'Refreshing reads the latest meeting and discards your unsaved invitation changes.',
+      icon: 'warning', confirmButtonText: 'Reload meeting',
+      onConfirm: () => { updateDrawer.openWith(emptyTeamsCalendarForm()); reloadOriginalCalendar(); } });
+  };
+  const updateExistingTeamsMeeting = (id: string, input: Parameters<typeof updateTeamsMeetingSchedule>[1], options?: Parameters<typeof updateTeamsMeetingSchedule>[2]) => updateTeamsMeetingSchedule(id, {
+    ...input, ...(originalRead.id === id && originalRead.data?.sourceToken ? { originalSourceToken: originalRead.data.sourceToken } : {}),
+  }, options);
   const selectedLiveId = useRef('');
   selectedLiveId.current = selected?.summary?.liveSessionId || '';
   const selectedLinkRead = selected ? linkReadStatus[normaliseKey(selected.catalogueId)] : undefined;
@@ -778,7 +796,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   const protectedCalendar = (row: MeetingRow) => externalCalendarFor(
     row.summary, additionalMeetings[normaliseKey(row.catalogueId)]?.all, detail?.series,
   );
-  const calendarWriteBlockReason = (row: MeetingRow) => protectedCalendar(row) ? EXTERNAL_CALENDAR_MESSAGE
+  const calendarWriteBlockReason = (row: MeetingRow) => protectedCalendar(row) && !protectedCalendar(row)?.originalSeriesId ? EXTERNAL_CALENDAR_MESSAGE
     : linkReadStatus[normaliseKey(row.catalogueId)] !== 'ready' || !calendarOwnershipKnown(row.summary, detail?.series)
       ? 'The saved meeting links and calendar ownership must be checked before changing this module calendar.' : '';
   // The cancellation-status endpoint requires an LMS-owned organiser event.
@@ -786,7 +804,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   // while an older status request is still in flight.
   const calendarSyncEligibility = useRef(new Map<string, { allowed: boolean; imported: boolean; moduleId: string }>());
   calendarSyncEligibility.current = new Map(rows.flatMap(row => row.summary ? [[row.summary.liveSessionId, {
-    allowed: !protectedCalendar(row) && calendarOwnershipKnown(row.summary, detail?.series),
+    allowed: calendarOwnershipKnown(row.summary, detail?.series) && (!protectedCalendar(row) || (originalRead.id === row.summary.liveSessionId && originalRead.data?.status === 'editable')),
     imported: Boolean(protectedCalendar(row)), moduleId: row.catalogueId,
   }] as const] : []));
 
@@ -1354,7 +1372,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       }
       const peopleOnly = Boolean(invitationsChanged
         && datesUnchanged && durationsUnchanged);
-      const result = await updateTeamsMeetingSchedule(summary.liveSessionId, {
+      const result = await updateExistingTeamsMeeting(summary.liveSessionId, {
         title: row.name,
         organizerEmail: summary.organizerEmail,
         eventId: summary.eventId,
@@ -1374,6 +1392,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       }, { onSubmitted: () => setUpdateProgress({ stage: 'calendar' }) });
       setUpdateProgress(previous => previous ? { ...previous, stage: 'emails' } : previous);
       if (update) settleInvitations(update.form);
+      if (originalRead.id === summary.liveSessionId) reloadOriginalCalendar();
       // Not awaited, the same as the create flow: the table refresh is a round
       // trip and the confirmation must not queue behind it. The rows stay on
       // screen while it runs, so the table catches up under the alert.
@@ -1621,7 +1640,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     settingsDrawer.setSaving(true);
     settingsDrawer.setError(null);
     try {
-      const result = await updateTeamsMeetingSchedule(summary.liveSessionId, {
+      const result = await updateExistingTeamsMeeting(summary.liveSessionId, {
         ...held,
         settingsOnly: true,
         recording: form.recording,
@@ -1632,6 +1651,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       }, { onSubmitted: () => setUpdateProgress({ stage: 'calendar' }) });
       setUpdateProgress(previous => previous ? { ...previous, stage: 'emails' } : previous);
       settingsDrawer.close();
+      if (originalRead.id === summary.liveSessionId) reloadOriginalCalendar();
       await loadTeamsState();
       if (summary.liveSessionId) await loadDetail(summary.liveSessionId);
       notifyChanged(row.catalogueId);
@@ -1678,10 +1698,11 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     }
     try {
       const inviting = invite && changes.addedPeople.length > 0;
-      const result = await updateTeamsMeetingSchedule(summary.liveSessionId, { ...held, ...changes.fields, ...(inviting ? {} : { invitationsOnly: true }) }, {
+      const result = await updateExistingTeamsMeeting(summary.liveSessionId, { ...held, ...changes.fields, ...(inviting ? {} : { invitationsOnly: true }) }, {
         onSubmitted: () => setUpdateProgress({ stage: 'calendar' }),
       });
       settleInvitations(update.form);
+      if (originalRead.id === summary.liveSessionId) reloadOriginalCalendar();
       await loadTeamsState();
       if (summary.liveSessionId) await loadDetail(summary.liveSessionId);
       notifyChanged(row.catalogueId);
@@ -2015,12 +2036,41 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   // saved calendar changes -- but never over edits not yet sent.
   const seededInvitationsRef = useRef('');
   const detailSeries = detail?.series;
+  const originalId = externalCalendar?.originalSeriesId || '';
+  const originalCalendar = originalId && originalRead.id === originalId ? originalRead : undefined;
+  const originalCalendarBlocked = Boolean(originalId && (!originalCalendar || originalCalendar.loading || originalCalendar.data?.status !== 'editable'));
+  useEffect(() => {
+    if (!originalId) return;
+    let active = true;
+    setOriginalRead({ id: originalId, loading: true });
+    void readImportedMeetingEditor(originalId, { standard: true }).then(data => {
+      if (!active || selectedLiveId.current !== originalId) return;
+      setOriginalRead({ id: originalId, loading: false, data });
+      if (data.status !== 'editable' || updateDrawer.dirty) return;
+      const roles = new Set([...(data.presenters || []), ...(data.coOrganizers || [])].map(value => value.toLowerCase()));
+      const form = { ...emptyTeamsCalendarForm(), organizerEmail: data.organizer || selected?.summary?.organizerEmail || '',
+        attendees: (data.attendees || []).filter(value => !roles.has(value.toLowerCase())).join('\n'),
+        presenters: (data.presenters || []).join('\n'), coOrganizers: (data.coOrganizers || []).join('\n'),
+        recording: data.options ? data.options.recordAutomatically ? data.options.allowTranscription ? 'record-transcribe' : 'record' : 'none' : invitationForm(selected!).recording,
+        lobbyBypass: data.options?.lobbyBypassSettings?.scope === 'organizationExcludingGuests' ? 'organization-excluding-guests' : data.options?.lobbyBypassSettings?.scope || invitationForm(selected!).lobbyBypass,
+        spokenLanguage: data.options?.meetingSpokenLanguageTag || invitationForm(selected!).spokenLanguage };
+      updateBaseline.current = form;
+      invitationsFor.current = originalId;
+      updateDrawer.openWith(form);
+    }).catch(error => {
+      if (active) setOriginalRead({ id: originalId, loading: false, error: error instanceof Error ? error.message : 'The original calendar could not be read. Retry.' });
+    });
+    return () => { active = false; };
+    // One read per original calendar/explicit refresh, never over typed edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [originalId, originalRevision]);
   useEffect(() => {
     const summary = selected?.summary;
     if (!selected || !summary) {
       seededInvitationsRef.current = '';
       return;
     }
+    if (originalId) return;
     const loaded = detailSeries?.id === summary.liveSessionId;
     const key = `${summary.liveSessionId}:${loaded}:${summary.updatedAt || ''}:${loaded ? JSON.stringify(detailSeries) : ''}`;
     if (seededInvitationsRef.current === key) return;
@@ -2030,7 +2080,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     // seedInvitations is re-created every render; the key is what keeps this
     // from running twice for the same calendar state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, detailSeries]);
+  }, [selected, detailSeries, originalId]);
 
   // True while the discard dialog is up. Escape reaches both this dialog and
   // SweetAlert's own handler in the same event, so without the flag dismissing
@@ -2136,6 +2186,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     comparison, comparing, comparisonError, compareAttendees, publishedInvitees,
     selectedScopeRows, chooseMeetingScope, refreshMeetingScopes,
     externalCalendar, calendarLinksLoading, calendarLinksError,
+    originalCalendar, originalCalendarBlocked, refreshOriginalCalendar,
     createCalendar, createRecovery, createProgress, updateProgress, requestCloseSelected, notifyChanged, blockedReason, drawerOpen,
   };
 }

@@ -4207,7 +4207,10 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         )
     if request.method != 'PATCH':
         return json_error('Method not allowed.', status=405)
-    if module_has_external_teams_calendar(clean_str(series_rows[0].get('module_catalogue_id')), series_rows[0]):
+    from .teams_original_calendar import calendar_authorized, original_calendar_request
+    if series_rows[0].get('meeting_type') == 'linked-external' and not calendar_authorized(live_session_id):
+        return original_calendar_request(curriculum_teams_meeting_schedule)(request, live_session_id)
+    if module_has_external_teams_calendar(clean_str(series_rows[0].get('module_catalogue_id')), series_rows[0]) and not calendar_authorized(live_session_id):
         return json_error(
             'This imported meeting is managed in its original Teams calendar. Update its dates and invitations '
             'there. Reattaching saved LMS data preserves the existing link but does not fetch new Teams dates.',
@@ -19224,6 +19227,13 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         live_rows = [row for row in components_by_week.get(week_id, []) if frontend_component_type(row.get('type')) == 'live-session']
         for live_index, row in enumerate(live_rows):
             existing_settings = component_builder_settings(row)
+            # Updating the main calendar does not adopt a different meeting
+            # explicitly selected for this component (for example a master class).
+            explicit_link = clean_str(existing_settings.get('liveSessionLinkOverride'))
+            if explicit_link and explicit_link != clean_str(series_row.get('join_url')):
+                session_index += 1
+                handled_component_ids.add(clean_str(row.get('id')))
+                continue
             # A live session delivered by its own additional meeting is not part
             # of this series. It is never sent to the module's calendar, so it
             # owns no occurrence here and must keep ITS meeting's link rather

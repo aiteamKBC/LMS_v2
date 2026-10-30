@@ -3810,8 +3810,10 @@ export interface ImportedMeetingEdits {
   sessions?: { sessionNumber: number; start: string; durationMinutes: number }[];
 }
 
-export function readImportedMeetingEditor(liveSessionId: string) {
-  return importedCalendarPost<ImportedMeetingEditor>(liveSessionId, 'edit-read', {});
+export async function readImportedMeetingEditor(liveSessionId: string, options?: { standard: boolean }) {
+  const result = await importedCalendarPost<ImportedMeetingEditor>(liveSessionId, 'edit-read', options?.standard ? { standard: true } : {});
+  if (options?.standard && result.status === 'editable') clearCurriculumGetCache();
+  return result;
 }
 
 export function previewImportedMeetingEdit(liveSessionId: string, sourceToken: string, changes: ImportedMeetingEdits, notify: boolean) {

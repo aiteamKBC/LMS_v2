@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 from django.http import JsonResponse
+from .teams_original_calendar import original_calendar_read
 from django.views.decorators.http import require_GET
 from login.permissions import require_role
 
@@ -226,6 +227,7 @@ def check_live_session(live_session_id):
     """Run the report for one saved series (module calendar or additional week meeting)."""
     from coach_api.views import get_graph_settings, microsoft_graph_request, microsoft_graph_token
     from . import views as v
+    from .teams_original_calendar import current_calendar
 
     rows = v.authoring_fetch_all(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])
     if not rows:
@@ -237,15 +239,22 @@ def check_live_session(live_session_id):
         token = microsoft_graph_token()
     except RuntimeError:
         token = ''
-    return permission_report(
+    original = current_calendar()
+    owner_id = v.teams_online_meeting_owner_id(organizer, join_url)
+    report = permission_report(
         series, graph_request=microsoft_graph_request, graph_settings=get_graph_settings(), token=token,
-        owner_id=v.teams_online_meeting_owner_id(organizer, join_url), organizer=organizer,
+        owner_id=owner_id, organizer=owner_id if original else organizer,
         online_meeting_id=v.clean_str(series.get('online_meeting_id')), join_url=join_url,
     )
+    if original:
+        report['organizer']['email'] = organizer
+        report['app']['permissionContext'] += ' + verified original calendar connection'
+    return report
 
 
 @require_role('admin', 'staff')
 @require_GET
+@original_calendar_read
 def teams_meeting_permission_check(request, live_session_id):
     """Staff-only, read-only Microsoft permission check for one meeting."""
     from coach_api.views import has_graph_credentials

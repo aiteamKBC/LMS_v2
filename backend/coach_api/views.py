@@ -1061,6 +1061,12 @@ def microsoft_graph_request(
     attendee on each write to a meeting, which turns a routine per-instance
     reconciliation into one message per instance per person.
     """
+    from curriculum_api.teams_original_calendar import current_calendar
+    original = current_calendar()
+    if original and original.path(path) is not None:
+        return original.request(method, path, payload=payload, headers=extra_headers)
+    if original:
+        original.check_application_request(method, path)
     started = perf_counter()
     settings = get_graph_settings()
     try:

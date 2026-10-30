@@ -141,8 +141,12 @@ class CalendarChecksTests(unittest.TestCase):
         package = types.ModuleType('curriculum_api')
         package.__path__ = [str(ROOT)]
         package.views = self.v
+        original = types.ModuleType('curriculum_api.teams_original_calendar')
+        original.calendar_authorized = lambda _id: False
+        original.original_calendar_request = lambda view: view
         self.modules = patch.dict(sys.modules, {'coach_api': types.ModuleType('coach_api'), 'coach_api.views': transport,
-                                                'curriculum_api': package, 'curriculum_api.views': self.v})
+                                                'curriculum_api': package, 'curriculum_api.views': self.v,
+                                                'curriculum_api.teams_original_calendar': original})
         self.modules.start()
         self.addCleanup(self.modules.stop)
         # The retry guard's ledger: in memory, so its claims can be read back.
@@ -723,14 +727,18 @@ class CalendarChecksTests(unittest.TestCase):
         self.options_ok = False
         self.assertEqual(self.create().status_code, 502)
         self.options_ok = True
+        metadata = {key: {field: copy.deepcopy(event.get(field)) for field in ('subject', 'hideAttendees', 'start', 'end', 'recurrence')}
+                    for key, event in self.events.items()}
         self.calls.clear()
         self.headers.clear()
         result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
         self.assertEqual(result.status_code, 200, result)
         self.assertFalse([call for call in self.calls if call[0] in ('POST', 'DELETE')])
         patches = [call[2] for call in self.calls if call[0] == 'PATCH']
-        self.assertEqual([sorted(patch) for patch in patches], [['attendees', 'hideAttendees', 'subject']])
-        self.assertEqual([item[2] for item in self.headers if item[0] == 'PATCH'], [None])
+        self.assertEqual([sorted(patch) for patch in patches], [['attendees']])
+        self.assertEqual([item[2] for item in self.headers if item[0] == 'PATCH'], [SILENT_INVITE])
+        self.assertEqual({key: {field: event.get(field) for field in ('subject', 'hideAttendees', 'start', 'end', 'recurrence')}
+                          for key, event in self.events.items()}, metadata)
         self.assertTrue(all(
             [item['emailAddress']['address'] for item in event['attendees']] == ['learner@example.invalid']
             for event in self.events.values()
@@ -812,9 +820,14 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertFalse([item for item in self.headers
                           if item[0] == 'PATCH' and 'attendees' in (item[3] or {}) and item[2] != SILENT_INVITE])
 
-    def test_date_update_always_announces_the_change(self):
-        """Existing-calendar updates always announce the new session dates."""
+    def test_unticked_date_update_preserves_the_silent_notification_choice(self):
+        """The explicit silent choice sends dates without announcement writes."""
         self.assertEqual(self.create().status_code, 201)
+        planned_before = {datetime.fromisoformat(item['startDateTimeUtc']) for item in self.payload['scheduledOccurrences']}
+        # A holiday slot still on the recurrence follows its clock change too;
+        # Update never cancels that slot merely because it is outside the plan.
+        held_outside_plan = {start + timedelta(hours=1) for start in
+                             ({checks.event_instant(item, 'start') for item in self.instances} - planned_before)}
         shifted = []
         for item in self.payload['scheduledOccurrences']:
             start = datetime.fromisoformat(item['startDateTimeUtc']) + timedelta(hours=1)
@@ -833,11 +846,12 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200, result)
         writes = [item for item in self.headers if item[0] in ('POST', 'PATCH', 'DELETE')]
         self.assertTrue(writes)
-        self.assertTrue([item for item in writes if item[2] is None])
+        self.assertTrue(all(item[2] == SILENT_INVITE for item in writes))
+        self.assertFalse(self.forwards)
         # The calendar really moved, and everyone invited is still invited.
         self.assertEqual(
             {checks.event_instant(item, 'start') for item in self.instances},
-            {datetime.fromisoformat(item['startDateTimeUtc']) for item in shifted},
+            {datetime.fromisoformat(item['startDateTimeUtc']) for item in shifted} | held_outside_plan,
         )
         self.assertTrue(all(
             [person['emailAddress']['address'] for person in event['attendees']] == ['learner@example.invalid']

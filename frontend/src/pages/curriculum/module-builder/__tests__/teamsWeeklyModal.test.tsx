@@ -194,9 +194,14 @@ it('refuses every write while the module has unsaved changes, and still lets it 
 it('reads the module back from the server after a write', async () => {
   const { onRestored } = open('MOD-1');
   const dialog = within(await screen.findByRole('dialog'));
+  await waitFor(() => expect(dialog.getByRole('button', { name: 'Remove learner@example.invalid' })).toBeInTheDocument());
+  const attendees = dialog.getByRole('combobox', { name: 'Attendees' });
+  fireEvent.change(attendees, { target: { value: 'new@example.invalid' } });
+  fireEvent.keyDown(attendees, { key: 'Enter' });
   const update = await dialog.findByRole('button', { name: 'Update Teams calendar' });
   await waitFor(() => expect(update).toBeEnabled());
   await userEvent.click(update);
+  await userEvent.click(await dialog.findByRole('button', { name: 'Confirm update' }));
   await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
   await waitFor(() => expect(onRestored).toHaveBeenCalledWith(freshModule));
   expect(loadModuleStructure).toHaveBeenCalledWith('MOD-1', { skipCache: true });
