@@ -61,6 +61,7 @@ vi.mock('@/pages/curriculum/shared/components/weekAuthoringLazy', () => ({
 vi.mock('../moduleAuthoringData', async importOriginal => ({
   ...(await importOriginal<typeof import('../moduleAuthoringData')>()),
   loadModuleStructure: (...args: unknown[]) => loadModuleStructure(...(args as [])),
+  loadModuleWeekSessionPlan: vi.fn(async () => null),
   createNewModule: (...args: unknown[]) => createNewModule(...(args as [])),
 }));
 
@@ -263,9 +264,10 @@ describe('Module Builder deep links', { timeout: 15000 }, () => {
     // and a wrong guess shows another module's weeks and OTJH under the name
     // the reader clicked -- so an unmatched id is reported, never substituted.
     await renderAt('?module=MOD-NOT-IN-CATALOGUE&moduleTitle=Data%20Foundations');
-    expect(await screen.findByText('Unable to find module "Data Foundations" (MOD-NOT-IN-CATALOGUE) in Module Builder.'))
+    expect(await screen.findByText(/Data Foundations could not be opened: its saved weeks and components could not be read/))
       .toBeInTheDocument();
-    expect(loadModuleStructure).not.toHaveBeenCalled();
+    expect(loadModuleStructure).toHaveBeenCalledWith('MOD-NOT-IN-CATALOGUE', { revalidate: true });
+    expect(loadModuleStructure).toHaveBeenCalledTimes(1);
     expect(createNewModule).not.toHaveBeenCalled();
   });
 
@@ -273,6 +275,13 @@ describe('Module Builder deep links', { timeout: 15000 }, () => {
     await renderAt('?moduleTitle=Data%20Foundations');
     expect(await screen.findByText('Unable to find module "Data Foundations" in Module Builder.')).toBeInTheDocument();
     expect(loadModuleStructure).not.toHaveBeenCalled();
+  });
+
+  it('does not treat a title that resembles a canonical id as an opening instruction', async () => {
+    await renderAt('?moduleTitle=MOD-20260818112738930447');
+    expect(await screen.findByText('Unable to find module "MOD-20260818112738930447" in Module Builder.')).toBeInTheDocument();
+    expect(loadModuleStructure).not.toHaveBeenCalled();
+    expect(createNewModule).not.toHaveBeenCalled();
   });
 
   it('reports an unknown ?moduleTitle= instead of creating a module for it', async () => {
