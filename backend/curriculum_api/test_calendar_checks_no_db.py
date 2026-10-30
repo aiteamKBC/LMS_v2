@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 from urllib import parse as urllib_parse
 from zoneinfo import ZoneInfo
+from coach_api.graph_transport import GraphRequestError
 
 ROOT = Path(__file__).parent
 spec = importlib.util.spec_from_file_location('calendar_checks', ROOT / 'teams_calendar_checks.py')
@@ -265,6 +266,22 @@ class CalendarChecksTests(unittest.TestCase):
 
     def create(self):
         return self.v.curriculum_teams_meeting(types.SimpleNamespace(method='POST'))
+
+    def test_unconfirmed_create_has_a_safe_message_and_does_not_claim_failure_is_final(self):
+        transport = sys.modules['coach_api.views']
+        transport.microsoft_graph_request = Mock(side_effect=GraphRequestError('Microsoft Graph POST events failed: HTTP 503',
+            status=503, retry_after=2, uncertain=True, request_id='SYNTHETIC-REQUEST'))
+        log = types.SimpleNamespace(EVENT_SAVE='calendar_event_save', record_graph_failure=Mock())
+        with patch.dict(sys.modules, {'curriculum_api.teams_graph_failure_log': log}):
+            response = self.create()
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response['code'], 'teams_calendar_create_uncertain')
+        self.assertTrue(response['verificationRequired'])
+        self.assertEqual((response['graphStatus'], response['retryAfterSeconds'], response['requestId']), (503, 2, 'SYNTHETIC-REQUEST'))
+        self.assertNotIn('detail', response)
+        self.assertEqual(self.series, [])
+        self.attach.assert_not_called()
+        log.record_graph_failure.assert_called_once()
 
     def test_verified_shared_calendar_attaches_before_response_without_browser_restore(self):
         result = self.create()

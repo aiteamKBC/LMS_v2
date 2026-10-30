@@ -1455,6 +1455,23 @@ describe('Teams Meetings page', () => {
     await waitFor(() => expect(createTeamsMeeting).toHaveBeenCalledTimes(2));
     expect(createTeamsMeeting).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ confirmUncertain: true }));
   });
+
+  it('shows a temporary Microsoft creation refusal without allowing an unverified second create', async () => {
+    const { ApiError } = await import('../../module-builder/moduleAuthoringData');
+    const message = 'Microsoft could not confirm the creation request. Check its status before creating again.';
+    createTeamsMeeting.mockRejectedValueOnce(new ApiError(502, message, undefined, {
+      code: 'teams_calendar_create_uncertain', error: message, graphStatus: 503, verificationRequired: true,
+    }));
+    await renderPage();
+    expect(await screen.findByText('Reporting Basics')).toBeInTheDocument();
+    await userEvent.click(within(rowFor('Reporting Basics')).getByRole('button', { name: 'Create Teams meetings calendar' }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+    expect(await within(dialog).findByText(message)).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'Create' })).toBeDisabled();
+    expect(createTeamsMeeting).toHaveBeenCalledTimes(1);
+    expect(finishTeamsCreation).not.toHaveBeenCalled();
+  });
   /**
    * The create form lives in the dialog itself, so the dialog's own X, backdrop
    * and Escape are the only ways out of it. Nothing has reached Teams until

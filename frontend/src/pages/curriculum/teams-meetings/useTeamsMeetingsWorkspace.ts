@@ -1950,7 +1950,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
           const savedLiveSessionId = err instanceof ApiError ? String(err.data?.liveSessionId || '') : '';
           if (code === 'teams_calendar_create_uncertain') {
             endCreateProgress();
-            setCreateRecovery({ phase: 'uncertain', message: UNCERTAIN_MESSAGE });
+            setCreateRecovery({ phase: 'uncertain', message: String(err instanceof ApiError && err.data?.error || UNCERTAIN_MESSAGE) });
             return;
           }
           // The create endpoint can answer 502 after the event and LMS row are
