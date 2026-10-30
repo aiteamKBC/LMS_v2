@@ -335,6 +335,39 @@ describe('ModuleFormDrawer', () => {
     deliveries: [{ moduleId: 'MOD-1', emailed: true, lastSent: { status: 'sent', at: '2026-10-01T09:30:00Z' } }],
   };
 
+  it('uploads the cover through Edit module without replacing content or creating a module', async () => {
+    const { onSaved } = renderDrawer({ module: assignedModule() });
+    await userEvent.upload(screen.getByLabelText('Upload image'), new File(['cover'], 'cover.png', { type: 'image/png' }));
+    const image = await screen.findByAltText('Data Foundations cover');
+    const cover = image.getAttribute('src');
+    expect(cover).toMatch(/^data:image\/png;base64,/);
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+    await waitFor(() => expect(updateCurriculumModuleMock).toHaveBeenCalledTimes(1));
+    const [id, payload] = updateCurriculumModuleMock.mock.calls[0];
+    expect(id).toBe('MOD-1');
+    expect(payload).toMatchObject({ coverImage: cover });
+    expect(payload).not.toHaveProperty('weekStructure');
+    expect(payload).not.toHaveProperty('teamsEventId');
+    expect(createGroupModuleMock).not.toHaveBeenCalled();
+    expect(createNewModuleMock).not.toHaveBeenCalled();
+    expect(sendTutorAssignmentEmailMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ catalogueId: 'MOD-1' })));
+  });
+
+  it('keeps the uploaded cover and drawer open when the module save fails', async () => {
+    updateCurriculumModuleMock.mockRejectedValueOnce(new Error('Could not save the module image.'));
+    const { onSaved, onClose } = renderDrawer({ module: assignedModule() });
+    await userEvent.upload(screen.getByLabelText('Upload image'), new File(['cover'], 'cover.png', { type: 'image/png' }));
+    const image = await screen.findByAltText('Data Foundations cover');
+    const cover = image.getAttribute('src');
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+    expect(await screen.findByText('Could not save the module image.')).toBeInTheDocument();
+    expect(screen.getByAltText('Data Foundations cover')).toHaveAttribute('src', cover);
+    expect(screen.getByRole('button', { name: 'Save module' })).toBeEnabled();
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it('renames the same module without submitting inherited delivery fields or emailing its tutor', async () => {
     renderDrawer({ module: assignedModule() });
     const name = screen.getByPlaceholderText('e.g. Data Modelling');

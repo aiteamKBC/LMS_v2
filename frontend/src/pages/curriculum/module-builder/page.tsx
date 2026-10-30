@@ -1928,7 +1928,7 @@ export default function ModuleBuilder() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const requestedModule = params.get('module') || params.get('moduleId') || params.get('catalogueId') || params.get('moduleTitle') || '';
+    const requestedModule = params.get('module') || params.get('moduleId') || params.get('catalogueId') || '';
     const requestedKey = requestedModule.trim();
     // Carried only so the not-found message can name the module the way the
     // reader saw it. It is NOT a lookup key: titles are not unique (the same
@@ -1936,7 +1936,7 @@ export default function ModuleBuilder() {
     // only ever guess, and a guess here opens a different module's weeks and
     // OTJH under the name the reader clicked.
     const requestedTitle = (params.get('moduleTitle') || '').trim();
-    const dedupeKey = requestedKey || requestedTitle;
+    const dedupeKey = requestedKey || (requestedTitle ? `title:${requestedTitle}` : '');
     if (!dedupeKey || workingModule || deepLinkedModuleRef.current === dedupeKey) return;
 
     // A canonical id names its module outright -- every link this workspace
@@ -3329,10 +3329,21 @@ export default function ModuleBuilder() {
     }
   }, [hasUnsavedWorkingModuleChanges, persistWorkingModule, restoreSavedWorkingModule, saving]);
 
+  const pendingSelectionRef = useRef<{ catalogueId: string; selection: Selection } | null>(null);
   const requestSelectionChange = useCallback((nextSelection: Selection) => {
     setFocusedComponentId('');
-    applySelectionSafely(nextSelection);
-  }, [applySelectionSafely]);
+    pendingSelectionRef.current = { catalogueId: workingModuleRef.current?.catalogueId || '', selection: nextSelection };
+    setSelection(nextSelection);
+  }, []);
+
+  useEffect(() => {
+    const pending = pendingSelectionRef.current;
+    if (!pending) return;
+    pendingSelectionRef.current = null;
+    // A rail can append and select a component in the same event. Validate
+    // after React commits both updates, against the module that owns the click.
+    if (pending.catalogueId === workingModule?.catalogueId) applySelectionSafely(pending.selection, workingModule);
+  }, [selection, workingModule, applySelectionSafely]);
 
   useEffect(() => {
     if (!focusedComponentId) return undefined;
@@ -4073,6 +4084,7 @@ export default function ModuleBuilder() {
               <SelectMenu
                 ariaLabel="Programme"
                 value={programmeFilter}
+                placeholder={programmeFilter === 'All' ? 'All programmes' : programmeFilter}
                 onChange={value => changeFilter(() => {
                   setProgrammeFilter(value);
                   setCohortFilter('');
