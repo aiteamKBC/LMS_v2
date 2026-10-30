@@ -1,3 +1,4 @@
+import { fetchAssignedLearners } from '@/api/assignedLearners';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -18,6 +19,11 @@ import { fetchCurriculumKsbSets, fetchCurriculumKsbSetSummaries, fetchCurriculum
  * standard yet can be parked on it; it is created the first time it is asked for
  * and reused after that — never one empty profile per programme.
  */
+
+vi.mock('@/api/assignedLearners', () => ({ fetchAssignedLearners: vi.fn(async () => ({ scope: 'programme', id: 'PROG-MAPPED', status: 'active', total: 2, filteredTotal: 2, page: 1, pageSize: 25, learners: [
+  { id: 'A', name: 'Active One', email: 'active-one@example.invalid', status: 'active' },
+  { id: 'B', name: 'Active Two', email: 'active-two@example.invalid', status: 'active' },
+] })) }));
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -137,6 +143,7 @@ function cardFor(name: string) {
 
 describe('Programmes page — a programme with no usable KSB source', { timeout: 15000 }, () => {
   beforeEach(() => {
+    vi.mocked(fetchAssignedLearners).mockClear();
     listedProgrammes = [withSource, withoutSource];
     ksbSets = [realProfile];
     createCurriculumProgramme.mockClear();
@@ -146,6 +153,19 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     vi.mocked(fetchCurriculumKsbSets).mockClear();
     vi.mocked(fetchCurriculumKsbSetSummaries).mockClear();
     vi.mocked(fetchCurriculumKsbSourceDefinitions).mockClear();
+  });
+
+  it('keeps the unfiltered programme total out of the active directory until it is explicitly opened', async () => {
+    listedProgrammes = [{ ...withSource, learners: 9 }];
+    await renderProgrammes();
+    const learners = await screen.findByTitle('View active assigned learners in Data Analyst');
+    expect(learners).toHaveTextContent('View');
+    expect(fetchAssignedLearners).not.toHaveBeenCalled();
+    await userEvent.click(learners);
+    await screen.findByText('Active One');
+    expect(learners).toHaveTextContent('2');
+    expect(fetchAssignedLearners).toHaveBeenCalledTimes(1);
+    expect(fetchAssignedLearners).toHaveBeenCalledWith(expect.objectContaining({ scope: 'programme', id: 'PROG-MAPPED' }), 'active', '', 1, expect.any(AbortSignal));
   });
 
   it('loads source summaries on mount and definitions only when that source is opened', async () => {
