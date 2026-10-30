@@ -151,6 +151,37 @@ describe('collaboration connection', () => {
     expect(sent.module.weekStructure[0].components[0].expectedOtjh).toBe(2);
     expect(result.current.connected).toBe(true);
   });
+  it('returns to versioned saving when the server explicitly disables collaboration', async () => {
+    const { result } = renderHook(() => useModuleCollaboration('M1', vi.fn())); await flush();
+    act(() => Socket.instances[0].receive({ type: 'state', ok: true, members: [], leases: [] }));
+    config.mockResolvedValueOnce({ enabled: false });
+    act(() => Socket.instances[0].close(4404)); await flush();
+    expect(config).toHaveBeenCalledTimes(2);
+    expect(result.current.enabled).toBe(false);
+    const base = baseModule(), draft = structuredClone(base);
+    draft.weekStructure[0].components[0].title = 'Retained after rollback';
+    expect((await result.current.prepare(base, draft)).module).toBe(draft);
+    expect(draft.weekStructure[0].components[0].title).toBe('Retained after rollback');
+  });
+  it.each(['unavailable', 'enabled'] as const)('retains the draft when disabled status is %s', async status => {
+    const { result } = renderHook(() => useModuleCollaboration('M1', vi.fn())); await flush();
+    act(() => Socket.instances[0].receive({ type: 'state', ok: true, members: [], leases: [] }));
+    if (status === 'unavailable') config.mockRejectedValueOnce(new Error('Status unavailable'));
+    else config.mockResolvedValueOnce({ enabled: true });
+    act(() => Socket.instances[0].close(4404)); await flush();
+    expect(config).toHaveBeenCalledTimes(2);
+    expect(result.current.enabled).toBe(true);
+    await expect(result.current.prepare(baseModule(), baseModule())).rejects.toThrow('draft is retained');
+  });
+  it('does not treat an authorization refusal as a disabled feature', async () => {
+    const { result } = renderHook(() => useModuleCollaboration('M1', vi.fn())); await flush();
+    act(() => Socket.instances[0].receive({ type: 'state', ok: true, members: [], leases: [] }));
+    config.mockResolvedValue({ enabled: false });
+    act(() => Socket.instances[0].close(4403)); await flush();
+    expect(config).toHaveBeenCalledTimes(1);
+    expect(result.current.enabled).toBe(true);
+    await expect(result.current.prepare(baseModule(), baseModule())).rejects.toThrow('draft is retained');
+  });
   it('releases many fields in bounded batches and retains a field edited again during release', async () => {
     const { result } = renderHook(() => useModuleCollaboration('M1', vi.fn())); await flush();
     const socket = Socket.instances[0]; act(() => socket.receive({ type: 'state', ok: true, members: [], leases: [] }));

@@ -141,7 +141,18 @@ export function useModuleCollaboration(moduleId: string, onSaved: () => void) {
         if (expiry) clearInterval(expiry);
         proofs.current.forEach((_, key) => lost.current.add(key)); proofs.current.clear(); failPending();
         setState(current => ({ ...current, connected: false, members: [], leases: [], message: retained }));
-        if (![4400, 4403, 4404].includes(event.code)) reconnect = setTimeout(() => connect(path, heartbeatSeconds), Math.min(30_000, 1000 * 2 ** retries++));
+        if (event.code === 4404) {
+          // A pilot can be disabled while this page is open. Resume ordinary
+          // versioned saving only after the authenticated endpoint confirms it.
+          void fetchCurriculumJson<{ enabled: boolean }>(`/curriculum/modules/${encodeURIComponent(moduleId)}/collaboration/`, { skipCache: true }).then(config => {
+            if (stopped || socket.current !== ws || config.enabled !== false) return;
+            lost.current.clear();
+            setState(initial);
+          }).catch(() => {
+            if (!stopped && socket.current === ws) setState(current => ({ ...current,
+              message: 'Live editing status could not be verified. Your draft is retained; reload to check again.' }));
+          });
+        } else if (![4400, 4403].includes(event.code)) reconnect = setTimeout(() => connect(path, heartbeatSeconds), Math.min(30_000, 1000 * 2 ** retries++));
       };
     }
     void fetchCurriculumJson<{ enabled: boolean; websocketPath?: string; heartbeatSeconds?: number }>(`/curriculum/modules/${encodeURIComponent(moduleId)}/collaboration/`, { skipCache: true }).then(config => {

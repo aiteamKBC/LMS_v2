@@ -7,13 +7,13 @@ import type { CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi'
 import { ModuleStructureConflictError } from '../moduleAuthoringData';
 import { fieldKey, projectAvailable } from '../collaborationProtocol';
 
-const collaborationTest = vi.hoisted(() => ({ enabled: false }));
+const collaborationTest = vi.hoisted(() => ({ enabled: false, claim: vi.fn(async () => true) }));
 vi.mock('../useModuleCollaboration', async importOriginal => {
   const original = await importOriginal<typeof import('../useModuleCollaboration')>();
   return { useModuleCollaboration: (...args: Parameters<typeof original.useModuleCollaboration>) => {
     const actual = original.useModuleCollaboration(...args);
     return collaborationTest.enabled ? { ...actual, enabled: true, connected: true, members: [], leases: [],
-      claim: async () => true, holder: () => '', saved: async () => {}, cancel: () => {},
+      claim: collaborationTest.claim, holder: () => '', saved: async () => {}, cancel: () => {},
       prepare: async (base: Parameters<typeof projectAvailable>[0], draft: Parameters<typeof projectAvailable>[1]) => {
         const key = fieldKey('week', draft.weekStructure[0].id, 'title');
         return { module: projectAvailable(base, draft, [key]), blocked: [key], collaboration: { editorId: 'synthetic', proofs: {} } };
@@ -200,9 +200,9 @@ function holdNextSave() {
   return { release };
 }
 
-async function openWorkspace() {
+async function openWorkspace(extraSearch = '') {
   loadModuleStructure.mockResolvedValue(storedStructure());
-  const search = '?module=MOD-AUTOSAVE-1';
+  const search = `?module=MOD-AUTOSAVE-1${extraSearch}`;
   window.history.replaceState({}, '', `/curriculum/module-builder${search}`);
   const { default: ModuleBuilder } = await import('../page');
   render(
@@ -243,6 +243,7 @@ async function openWorkspaceSaving() {
 describe('Module Builder auto-save', { timeout: 25000 }, () => {
   beforeEach(() => {
     collaborationTest.enabled = false;
+    collaborationTest.claim.mockClear();
     reload.mockClear();
     loadModuleStructure.mockClear();
     saveModuleStructure.mockClear();
@@ -254,6 +255,15 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
       revision += 1;
       return { ...module, structureRevision: `rev-${revision}` };
     });
+  });
+
+  it('opens module settings without requesting a reservation for the derived hours total', async () => {
+    collaborationTest.enabled = true;
+    await openWorkspace('&settings=1');
+    await userEvent.click(screen.getByLabelText('Total OTJH hours'));
+    expect(collaborationTest.claim).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByLabelText('Module title'));
+    expect(collaborationTest.claim).toHaveBeenCalledWith(fieldKey('module', 'MOD-AUTOSAVE-1', 'title'));
   });
 
   it('saves an independent reorder while retaining a reserved title and unsaved navigation guard', async () => {

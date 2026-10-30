@@ -6855,7 +6855,7 @@ function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, 
               <TextInput editField="title" label="Module title" value={module.title} onChange={value => onChange({ title: value })} />
               <SelectInput editField="status" label="Status" value={module.status} options={['draft', 'review', 'published']} onChange={value => onChange({ status: value })} />
               <NumberInput label="Weeks" value={module.weeks} min={1} step={1} onChange={value => resizeWeeks(module, value, onChange)} />
-              <NumberInput editField="declaredTotalOtjh" label="Total OTJH hours" value={module.declaredTotalOtjh ?? module.totalOtjh} min={0} step={0.25} onChange={value => onChange({ declaredTotalOtjh: value })} />
+              <NumberInput label="Total OTJH hours" value={module.declaredTotalOtjh ?? module.totalOtjh} min={0} step={0.25} onChange={value => onChange({ declaredTotalOtjh: value })} />
             </div>
             <TextArea editField="description" label="Short description" value={module.description} onChange={value => onChange({ description: value })} rows={3} />
           </SettingsSection>
