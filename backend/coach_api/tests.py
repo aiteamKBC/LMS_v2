@@ -2807,6 +2807,7 @@ Learner progress looks strong.
 
         with patch("coach_api.views.coach_meeting_artifact_record", return_value=record), \
              patch("coach_api.views.has_graph_credentials", return_value=True), \
+             patch("coach_api.review_attendance_links.saved_links", return_value=[]) as attendance_links, \
              patch("coach_api.views.coach_meeting_graph_target", return_value=("users/coach/onlineMeetings/meeting-1", None)), \
              patch("coach_api.views.fetch_coach_meeting_transcript_content", return_value={
                  "transcript_vtt": "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nHello learner.",
@@ -2834,6 +2835,7 @@ Learner progress looks strong.
         self.assertEqual(payload["attendance"]["expectedAbsentCount"], 1)
         self.assertEqual(payload["attendance"]["records"][0]["displayName"], "Learner")
         self.assertEqual(payload["attendance"]["records"][0]["totalAttendanceSeconds"], 1200)
+        attendance_links.assert_called_once_with(record)
         self.assertEqual(
             [(item["role"], item["email"]) for item in payload["attendance"]["expectedAttendees"]],
             [("coach", "coach@example.com"), ("learner", "learner@example.com")],
@@ -2861,6 +2863,7 @@ Learner progress looks strong.
 
         with patch("coach_api.views.coach_meeting_artifact_record", return_value=record), \
              patch("coach_api.views.stored_coach_meeting_snapshot", return_value=stored_snapshot) as stored, \
+             patch("coach_api.review_attendance_links.saved_links", return_value=[]) as attendance_links, \
              patch("coach_api.views.stored_coach_meeting_summary", return_value=None), \
              patch("coach_api.views.fetch_coach_meeting_graph_snapshot") as graph_fetch:
             response = unwrap(coach_timetable_event_artifacts)(request, record.event_key)
@@ -2869,6 +2872,8 @@ Learner progress looks strong.
         self.assertEqual(response.status_code, 200)
         self.assertEqual(payload["artifacts"][0]["id"], "recording-1")
         self.assertEqual(payload["storage"]["stored"], True)
+        self.assertEqual(payload["attendance"], stored_snapshot["attendance"])
+        attendance_links.assert_called_once_with(record)
         stored.assert_called_once_with(record)
         graph_fetch.assert_not_called()
 
