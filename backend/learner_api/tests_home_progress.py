@@ -189,6 +189,41 @@ class HomeProgressTests(SimpleTestCase):
             submissions=[{'activity_id': 'new', 'status': 'accepted', 'actual_time_hours': 3, 'imported': True}])
         self.assertEqual(result['otjh']['actual'], 3)
 
+    def test_submitted_includes_pending_extra_activities_separately_from_assignments(self):
+        submissions = [
+            {'activity_type': 'assignment', 'component_ref': 'new',
+             'status': 'submitted_for_tutor_review', 'actual_time_hours': 2},
+            {'activity_type': 'extra_activity', 'activity_id': 'extra:one',
+             'component_ref': 'new', 'status': 'submitted_for_tutor_review', 'actual_time_hours': 3},
+            {'activity_type': 'extra_activity', 'activity_id': 'extra:two',
+             'status': 'pending_review', 'actual_time_hours': '30:00'},
+            {'activity_type': 'quiz', 'component_ref': 'new',
+             'status': 'accepted', 'actual_time_hours': 9},
+        ]
+        result = self.summary(current=[native(type='assignment', expected_hours=5)], submissions=submissions)
+        self.assertEqual(result['otjh']['submitted'], 5.5)
+        self.assertEqual(result['otjh']['actual'], 0)
+        self.assertEqual(result['assignments']['completed'], 0)
+
+    def test_extra_activity_uses_latest_decision_and_excludes_imported_or_non_pending(self):
+        extra = {'activity_type': 'extra_activity', 'activity_id': 'extra:one',
+                 'status': 'submitted', 'actual_time_hours': 2}
+        for status in ('accepted', 'partial', 'draft', 'rejected', 'referred', 'resubmission_required'):
+            with self.subTest(status=status):
+                result = self.summary(submissions=[extra, {**extra, 'status': status}])
+                self.assertEqual(result['otjh']['submitted'], 0)
+        result = self.summary(submissions=[extra, {**extra, 'actual_time_hours': 3},
+            {**extra, 'activity_id': 'extra:imported', 'imported': True}])
+        self.assertEqual(result['otjh']['submitted'], 3)
+
+    def test_missing_pending_extra_activity_hours_are_unavailable_and_zero_is_valid(self):
+        extra = {'activity_type': 'extra_activity', 'activity_id': 'extra:one', 'status': 'submitted'}
+        for value in (None, '', 'NaN', '-1', 'invalid'):
+            with self.subTest(value=value):
+                result = self.summary(submissions=[{**extra, 'actual_time_hours': value}])
+                self.assertIsNone(result['otjh']['submitted'])
+        self.assertEqual(self.summary(submissions=[{**extra, 'actual_time_hours': 0}])['otjh']['submitted'], 0)
+
     def test_submissions_for_unassigned_components_cannot_inflate_totals(self):
         result = self.summary(current=[native(expected_hours=2)],
             submissions=[{'component_ref': 'another-learner', 'status': 'accepted', 'actual_time_hours': 99}])

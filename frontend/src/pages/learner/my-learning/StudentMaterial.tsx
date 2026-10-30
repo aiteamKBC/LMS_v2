@@ -11,8 +11,13 @@ import type { TimeTrackingSession } from '@/api/timeTracking';
 import { CompletionTimeDialog } from '@/components/feature/CompletionTimeDialog';
 import type { WorkingRuleReason } from '@/lib/completionValidation';
 import { useLegacyStudySession } from './useLegacyStudySession';
+import { ActivityElapsedTimer } from '../video-watch/ActivityElapsedTimer';
+import { ActivityTimeSpentInput } from '../video-watch/ActivityTimeSpentInput';
+import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
 
 const AttachmentPreview = lazy(() => import('../video-watch/page').then((module) => ({ default: module.InlineAttachmentPreview })));
+type StartedAttempt = { attempt_id: string; definition: Partial<SubjectMaterial>; timing: TimeTrackingSession };
+const pendingStarts = new Map<string, Promise<StartedAttempt>>();
 
 function studyClock(seconds: number) {
   const total = Math.floor(seconds);
@@ -115,10 +120,20 @@ export function Media({ value, kind, title, fileName, canEmbed = true, onEnded, 
     sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads allow-presentation" allow="autoplay; fullscreen; picture-in-picture" allowFullScreen />{original}</section>;
 }
 
-export function StudentMaterial({ kind, learnerId, groupId, activityId, completed = false, onProgress, readOnly = false, baseUrl, reviewQuiz = false, catalogueQuiz = false }: {
+type StudentMaterialProps = {
   kind: string; learnerId: string; groupId: number; activityId: number; completed?: boolean;
   onProgress?: (result: SubjectAttemptResult) => void; readOnly?: boolean; baseUrl?: string; reviewQuiz?: boolean; catalogueQuiz?: boolean;
-}) {
+};
+
+export function StudentMaterial(props: StudentMaterialProps) {
+  // Switching learner/placement must also close pending confirmation dialogs
+  // and invalidate async work belonging to the previous activity.
+  const identity = JSON.stringify([props.kind, props.learnerId, props.groupId, props.activityId,
+    props.baseUrl, !!props.catalogueQuiz, !!props.reviewQuiz, !!props.readOnly]);
+  return <StudentMaterialContent key={identity} {...props} />;
+}
+
+function StudentMaterialContent({ kind, learnerId, groupId, activityId, completed = false, onProgress, readOnly = false, baseUrl, reviewQuiz = false, catalogueQuiz = false }: StudentMaterialProps) {
   const [data, setData] = useState<SubjectMaterial | null>(null);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
@@ -126,6 +141,11 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
   const [correction, setCorrection] = useState<{ reason: WorkingRuleReason | ''; holidayName: string } | null>(null);
   const [result, setResult] = useState('');
   const [savedResult, setSavedResult] = useState<SubjectAttemptResult | null>(null);
+  const { confirmTime, timeConfirmation } = useManualTimeConfirmation();
+  const mounted = useRef(true);
+  const requestPending = useRef(false);
+  const autoStarted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const playingMedia = useRef(new Set<number>());
   const activityElement = useRef<HTMLDivElement>(null);
   const completionHintId = useId();
@@ -137,10 +157,11 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
   const currentIdentity = useRef(timerKey);
   currentIdentity.current = timerKey;
   const study = useLegacyStudySession(timerKey, !!data?.can_attempt && !!data?.available && !readOnly && !reviewQuiz
-    && !((catalogueQuiz || !data?.quiz) && (completed || data?.completed || savedResult?.completed)), busy || !!correction, activityElement);
+    && !((catalogueQuiz || !data?.quiz) && (completed || data?.completed || savedResult?.completed)), busy || !!correction || !!timeConfirmation, activityElement);
   const attemptId = study.draft?.attemptId || null;
   const answers = study.draft?.answers || {};
   const confirmed = study.draft?.confirmed || false;
+  const manualSeconds = study.draft?.manualSeconds ?? null;
   const { setAnswers, setConfirmed } = study;
   useEffect(() => {
     const controller = new AbortController();
@@ -160,44 +181,83 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
     void beginAttempt();
   };
   const beginAttempt = async (retakeTimeChoice?: RetakeTimeChoice) => {
-    if (readOnly || reviewQuiz || !data || busy || !data.can_attempt || !data.persistence_ready || !data.available || (data.quiz && !data.quiz.ready)) return;
+    if (readOnly || reviewQuiz || !data || busy || requestPending.current || attemptId || !data.can_attempt || !data.persistence_ready || !data.available || (data.quiz && !data.quiz.ready)) return;
+    requestPending.current = true;
     setBusy(true); setError(''); setResult('');
+    const startUrl = `${attempts}${quizQuery}`;
+    const pending = pendingStarts.get(startUrl) || post<StartedAttempt>(startUrl, { track_time: true,
+      ...(retakeTimeChoice ? { retakeTimeChoice } : {}) });
+    pendingStarts.set(startUrl, pending);
     try {
-      const response = await post<{ attempt_id: string; definition: Partial<SubjectMaterial>; timing: TimeTrackingSession }>(`${attempts}${quizQuery}`, { track_time: true,
-        ...(retakeTimeChoice ? { retakeTimeChoice } : {}) });
-      if (currentIdentity.current !== timerKey) return;
+      const response = await pending;
+      // Persist the owned draft even if navigation finished while starting.
       study.begin(response.attempt_id, response.timing);
+      if (!mounted.current || currentIdentity.current !== timerKey) return;
       setData({ ...data, ...response.definition });
-    } catch (failure) { if (currentIdentity.current === timerKey) setError(failure instanceof Error ? failure.message : 'Could not start the attempt.'); }
-    finally { if (currentIdentity.current === timerKey) setBusy(false); }
+    } catch (failure) { if (mounted.current && currentIdentity.current === timerKey) setError(failure instanceof Error ? failure.message : 'Could not start the attempt.'); }
+    finally {
+      if (pendingStarts.get(startUrl) === pending) pendingStarts.delete(startUrl);
+      requestPending.current = false;
+      if (mounted.current && currentIdentity.current === timerKey) setBusy(false);
+    }
   };
+  const beginRef = useRef(beginAttempt);
+  beginRef.current = beginAttempt;
+  useEffect(() => {
+    // Only the first attempt starts on opening. Results and retakes remain an
+    // explicit choice; a failed request offers retry instead of a POST loop.
+    if (autoStarted.current || attemptId || readOnly || reviewQuiz || completed || savedResult || !data
+      || data.completed || data.history.length || data.historical.attempt_number
+      || !data.can_attempt || !data.persistence_ready || !data.available || (data.quiz && !data.quiz.ready)) return;
+    const startVisible = () => {
+      if (autoStarted.current || document.visibilityState !== 'visible') return;
+      for (let node = activityElement.current; node; node = node.parentElement as HTMLDivElement | null) {
+        const style = getComputedStyle(node);
+        if (node.hidden || style.display === 'none' || style.visibility === 'hidden') return;
+      }
+      autoStarted.current = true;
+      observer.disconnect();
+      void beginRef.current();
+    };
+    const observer = new MutationObserver(startVisible);
+    for (let node: HTMLElement | null = activityElement.current; node; node = node.parentElement) {
+      observer.observe(node, { attributes: true, attributeFilter: ['hidden', 'style', 'class'] });
+    }
+    document.addEventListener('visibilitychange', startVisible);
+    startVisible();
+    return () => { observer.disconnect(); document.removeEventListener('visibilitychange', startVisible); };
+  }, [data, attemptId, completed, readOnly, reviewQuiz, savedResult]);
   const submit = async (declaredCompletedAt?: string) => {
-    if (readOnly || reviewQuiz || !data || busy || !data.can_attempt || !data.persistence_ready || !data.available) return;
+    if (readOnly || reviewQuiz || !data || busy || requestPending.current || !data.can_attempt || !data.persistence_ready || !data.available) return;
+    requestPending.current = true;
     setBusy(true); setError('');
     try {
-      if (!attemptId || !study.draft) throw new Error('Start the activity before submitting.');
+      if (!attemptId || !study.draft) throw new Error('Activity timing is not ready. Please retry.');
+      if (manualSeconds != null && !declaredCompletedAt && !(await confirmTime(manualSeconds))) return;
+      if (!mounted.current) return;
       const saved = await post<SubjectAttemptResult>(`${attempts}${attemptId}/${quizQuery}`, { answers, reading_confirmed: data.quiz ? confirmed : true,
-        trackingToken: study.draft.timing.trackingToken, timeTakenSeconds: Math.floor(study.draft.elapsedSeconds),
+        trackingToken: study.draft.timing.trackingToken, timeTakenSeconds: Math.floor(manualSeconds ?? study.draft.elapsedSeconds),
+        ...(manualSeconds != null ? { timeEntrySource: 'input' } : {}),
         ...(declaredCompletedAt ? { declaredCompletedAt } : {}) });
-      if (currentIdentity.current !== timerKey) return;
+      if (!mounted.current || currentIdentity.current !== timerKey) return;
       setResult(saved.score_percent == null ? 'Activity completed.' : `Attempt saved: ${Number(saved.score_percent).toFixed(0)}% · ${saved.passed ? 'Passed' : 'Not passed'}. Your highest score is kept.`);
       setSavedResult(saved);
       study.clear(); setCorrection(null);
       onProgress?.(saved);
       try {
         const latest = await subjectRequest<SubjectMaterial>(materialUrl);
-        if (currentIdentity.current === timerKey) setData(latest);
+        if (mounted.current && currentIdentity.current === timerKey) setData(latest);
       } catch {
         setError('Your attempt was saved, but its history could not be refreshed.');
       }
     } catch (failure) {
-      if (currentIdentity.current !== timerKey) return;
+      if (!mounted.current || currentIdentity.current !== timerKey) return;
       if (failure && typeof failure === 'object' && 'validation' in failure && failure.validation) {
         setCorrection(failure.validation as { reason: WorkingRuleReason | ''; holidayName: string });
       }
       setError(failure instanceof Error ? failure.message : 'Could not save your attempt.');
     }
-    finally { if (currentIdentity.current === timerKey) setBusy(false); }
+    finally { requestPending.current = false; if (mounted.current && currentIdentity.current === timerKey) setBusy(false); }
   };
   if (!data && error) return <div role="alert" className="rounded-xl border border-red-200 p-4">{error} <button onClick={() => setRetry((v) => v + 1)} className="font-semibold underline">Try again</button></div>;
   if (!data) return <p role="status" className="p-5">Loading activity…</p>;
@@ -205,7 +265,7 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
   const displayedAnswers = attemptId ? answers : previousSelections(data);
   const reviewing = !attemptId && (data.history.length > 0 || data.historical.answers.length > 0);
   const isComplete = completed || data.completed || savedResult?.completed || data.history.some((attempt) => attempt.completed);
-  const reviewOnly = readOnly || reviewQuiz || (catalogueQuiz && isComplete);
+  const reviewOnly = readOnly || reviewQuiz || ((catalogueQuiz || !quiz) && isComplete);
   const answered = quiz?.questions.every((question) => (answers[question.id]?.length || 0) > 0) ?? true;
   const needsConfirmation = !!quiz && data.has_reading;
   const blockedReason = !data.persistence_ready
@@ -215,31 +275,11 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
       : quiz && !quiz.ready ? quiz.message : '';
   const actionsDisabled = busy || !data.can_attempt || !!blockedReason;
   const completionHint = blockedReason || (data.can_attempt
-    ? quiz ? 'Complete the quiz and submit your answers. Passing records this activity as complete.' : isComplete ? 'This activity is complete and included in your progress.' : 'Select Start activity before studying. When finished, select Submit & complete to save your study time and completion.'
+    ? quiz ? 'Complete the quiz and submit your answers. Passing records this activity as complete.' : isComplete ? 'This activity is complete and included in your progress.' : 'When finished, select Finish to save your study time and completion.'
     : '');
+  const hasPreviousAttempt = !!(isComplete || data.history.length || data.historical.attempt_number || savedResult);
   const actionClass = 'shrink-0 rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50';
   return <div ref={activityElement} className="space-y-6 rounded-2xl border border-foreground-200 bg-white p-4 sm:p-6">
-    <section aria-label="Activity completion" className="sticky top-3 z-10 space-y-3 rounded-xl border border-primary-100 bg-white p-4 shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div><h4 className="text-sm font-bold text-foreground-900">Activity progress</h4>
-          <p aria-live="polite" className={`mt-1 text-sm font-semibold ${isComplete ? 'text-emerald-700' : 'text-foreground-500'}`}>{isComplete ? 'Complete' : 'Not complete'}</p>
-        </div>
-        {!reviewOnly && (quiz || !isComplete) && (!attemptId ? <button type="button" onClick={start} disabled={actionsDisabled} aria-describedby={completionHint ? completionHintId : undefined} className={actionClass}>{busy ? 'Starting…' : quiz ? isComplete || data.history.length || data.historical.attempt_number ? 'Try quiz again' : 'Start quiz' : 'Start activity'}</button>
-          : <button type="button" onClick={() => void submit()} disabled={actionsDisabled || !answered || (needsConfirmation && !confirmed)} aria-describedby={completionHint ? completionHintId : undefined} className={actionClass}>{busy ? 'Saving…' : quiz ? 'Submit answers' : 'Submit & complete'}</button>
-        )}
-      </div>
-      {!reviewOnly && (!isComplete || !!attemptId) && <div className="flex flex-wrap items-center gap-3 rounded-lg bg-primary-50 p-3 text-sm">
-        <span>Study time <strong className="ml-2 font-mono tabular-nums" aria-label="Study time">{studyClock(study.draft?.elapsedSeconds || 0)}</strong></span>
-        {attemptId && <button type="button" className="rounded-lg border border-primary-300 px-3 py-1 font-semibold" onClick={() => study.setPaused(!study.paused)}>{study.paused ? 'Resume timer' : 'Pause timer'}</button>}
-        <span className="text-xs text-foreground-600">{!attemptId ? 'Start before studying to record your time.' : study.paused ? 'Timer paused.' : study.draft?.timing.countingMode === 'active_playback' ? 'Time counts during audible playback while this page is visible.' : 'Time counts while this page is visible.'}</span>
-      </div>}
-      {study.storageError && <p role="alert" className="text-sm text-amber-800">{study.storageError}</p>}
-      {savedResult?.study_time && <p className="text-sm text-emerald-700">Study time saved: {Math.floor(savedResult.study_time.verifiedSeconds / 60)}m {savedResult.study_time.verifiedSeconds % 60}s</p>}
-      {!reviewOnly && completionHint && <p id={completionHintId} className={`text-sm ${blockedReason ? 'text-amber-800' : 'text-foreground-500'}`}>{completionHint}</p>}
-      {needsConfirmation && !!attemptId && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={actionsDisabled} onChange={(event) => setConfirmed(event.target.checked)} className="mt-1 accent-primary-600" />I have completed the reading material.</label>}
-      {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
-      {result && <p role="status" className={`rounded-xl p-3 text-sm font-semibold ${savedResult?.completed ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{result}</p>}
-    </section>
     {!data.available && <p>No material is available for this activity yet.</p>}
     {data.media.map((item, index) => <Media key={`${index}:${item.url}`} value={item.url} kind={item.kind} title={item.title} fileName={item.file_name} canEmbed={item.can_embed} onPlayingChange={playing => {
       if (playing) playingMedia.current.add(index); else playingMedia.current.delete(index);
@@ -260,6 +300,33 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
         </label>)}
       </fieldset>)}
     </section>}
+    <section aria-label="Activity completion" className="space-y-4 rounded-xl border border-primary-100 bg-white p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p aria-live="polite" className={`text-sm font-semibold ${isComplete ? 'text-emerald-700' : 'text-foreground-500'}`}>{isComplete ? 'Complete' : 'Not complete'}</p>
+        {!reviewOnly && !attemptId && hasPreviousAttempt && (quiz || !isComplete) && <button type="button" onClick={start} disabled={actionsDisabled} className={actionClass}>{busy ? 'Preparing activity…' : quiz ? 'Try quiz again' : 'Record another attempt'}</button>}
+      </div>
+      {!reviewOnly && (!isComplete || !!attemptId) && <div className="flex flex-wrap items-end justify-end gap-3">
+        <ActivityElapsedTimer time={studyClock(study.draft?.elapsedSeconds || 0)} />
+        <fieldset disabled={!attemptId || actionsDisabled} className="min-w-0 max-w-full">
+          <legend className="sr-only">Activity time</legend>
+          <ActivityTimeSpentInput initialSeconds={manualSeconds} onChange={study.setManualSeconds} />
+        </fieldset>
+        {!attemptId && error && !hasPreviousAttempt
+          ? <button type="button" onClick={() => void beginAttempt()} disabled={actionsDisabled} className={actionClass}>Retry activity</button>
+          : <button type="button" onClick={() => void submit()} disabled={!attemptId || actionsDisabled || !answered || (needsConfirmation && !confirmed)} aria-describedby={completionHint ? completionHintId : undefined} className={actionClass}>{busy ? attemptId ? 'Saving…' : 'Preparing activity…' : quiz ? 'Submit answers' : 'Finish'}</button>}
+      </div>}
+      {!reviewOnly && !!attemptId && <div className="flex flex-wrap items-center gap-3 text-xs text-foreground-600">
+        <button type="button" disabled={actionsDisabled} className="rounded-lg border border-primary-300 px-3 py-1 font-semibold" onClick={() => study.setPaused(!study.paused)}>{study.paused ? 'Resume timer' : 'Pause timer'}</button>
+        <span>{study.paused ? 'Timer paused.' : study.draft?.timing.countingMode === 'active_playback' ? 'Time counts during audible playback while this page is visible.' : 'Time counts while this page is visible.'}</span>
+        <span>{manualSeconds == null ? 'Only enter a time if you need to correct it.' : 'Your manual time will be saved. Clear both fields to use the timer.'}</span>
+      </div>}
+      {study.storageError && <p role="alert" className="text-sm text-amber-800">{study.storageError}</p>}
+      {savedResult?.study_time && <p className="text-sm text-emerald-700">Study time saved: {studyClock(savedResult.study_time.selectedSeconds ?? savedResult.study_time.verifiedSeconds)}</p>}
+      {!readOnly && !reviewQuiz && completionHint && <p id={completionHintId} className={`text-sm ${blockedReason ? 'text-amber-800' : 'text-foreground-500'}`}>{completionHint}</p>}
+      {!reviewOnly && needsConfirmation && !!attemptId && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={actionsDisabled} onChange={(event) => setConfirmed(event.target.checked)} className="mt-1 accent-primary-600" />I have completed the reading material.</label>}
+      {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+      {result && <p role="status" className={`rounded-xl p-3 text-sm font-semibold ${savedResult?.completed ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{result}</p>}
+    </section>
     {reviewQuiz && data.historical.attempt_number == null && data.historical.score == null && !data.historical.answers.length && <p className="text-sm text-foreground-500">No saved attempt is available for this quiz.</p>}
     {(data.historical.answers.length > 0 || data.historical.score != null || data.history.length > 0) && <section className="space-y-3 border-t pt-4" aria-label="Attempt history">
       <h4 className="font-bold">Your attempt history</h4>
@@ -268,9 +335,10 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
         <div className="mt-3 space-y-4">{data.historical.answers.map((answer, index) => <div key={`${answer.question_id}:${index}`}><Html value={answer.question_body || `Question ${index + 1}`} /><p className="mt-1 text-sm text-foreground-600">Your answer: {Array.isArray(answer.learner_answer) ? answer.learner_answer.map(String).join(', ') : String(answer.learner_answer ?? 'Not recorded')}</p></div>)}</div>
       </details>}
       {data.history.map((attempt) => <details key={attempt.id} className="rounded-xl border p-3"><summary className="cursor-pointer text-sm">{new Date(attempt.submitted_at).toLocaleString('en-GB')} · {attempt.score_percent == null ? 'Activity completed' : `${Number(attempt.score_percent).toFixed(0)}% · ${attempt.passed ? 'Passed' : 'Not passed'}`}</summary>
-        <div className="mt-3 space-y-3">{attempt.study_time && <p className="text-sm">Measured study time: {Math.floor(attempt.study_time.verifiedSeconds / 60)}m {attempt.study_time.verifiedSeconds % 60}s</p>}{attempt.answer_review?.map((answer, index) => <div key={index}><Html value={answer.question} /><p className="text-sm">Your answer: {answer.selected.join(', ')} · {answer.correct ? 'Correct' : 'Incorrect'}</p></div>)}</div>
+        <div className="mt-3 space-y-3">{attempt.study_time && <p className="text-sm">{attempt.study_time.timeEntrySource === 'input' ? 'Manual study time' : 'Measured study time'}: {studyClock(attempt.study_time.selectedSeconds ?? attempt.study_time.verifiedSeconds)}</p>}{attempt.answer_review?.map((answer, index) => <div key={index}><Html value={answer.question} /><p className="text-sm">Your answer: {answer.selected.join(', ')} · {answer.correct ? 'Correct' : 'Incorrect'}</p></div>)}</div>
       </details>)}
     </section>}
+    {timeConfirmation}
     {retakeTimeOpen && <RetakeTimeDialog onClose={() => setRetakeTimeOpen(false)} onChoose={selection => {
       setRetakeTimeOpen(false); void beginAttempt(selection);
     }} />}

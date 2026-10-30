@@ -37,6 +37,34 @@ def fake_connections():
 
 
 class MyLearningAggregateTests(SimpleTestCase):
+    def test_owned_course_reference_checks_identity_and_returns_only_display_fields(self):
+        snapshot = {'version': 1, 'basis': 'old_lms:course_progress', 'learner_id': 7,
+                    'enrolment_id': 11, 'source_learner_id': '22', 'source_course_ref': '50',
+                    'percent': 92, 'captured_at': '2026-10-30T12:00:00+00:00'}
+        course = {'id': 3, 'source_course_ref': '50', 'source_course_title': 'Old', 'source_learner_id': '22',
+                  'legacy_course_progress': snapshot}
+        with patch.object(canonical, 'query', side_effect=lambda *_: [deepcopy(course)]):
+            result = canonical.owned_source_courses({'id': 7, 'enrolment_id': 11})[0]
+            foreign = canonical.owned_source_courses({'id': 8, 'enrolment_id': 12})[0]
+        self.assertEqual(result['legacyProgressReference'], {'percent': 92, 'capturedAt': snapshot['captured_at']})
+        self.assertNotIn('legacyProgressReference', foreign)
+        self.assertNotIn('source_learner_id', result)
+        self.assertNotIn('legacy_course_progress', result)
+
+    def test_historical_reference_never_changes_activity_totals_hours_or_transfer_credit(self):
+        course = {'id': 3, 'source_course_ref': '50', 'source_course_title': 'Old'}
+        definitions = [{'source_course_ref': '50', 'source_activity_id': f'material:{ident}',
+                        'source_activity_title': f'Activity {ident}', 'source_course_title': 'Old'} for ident in (1, 2)]
+        content = native([component()])
+        before, summary = self.cards(content, [course], definitions, {('50', 'material:1')}, hours={'50': 2})
+        reference = {'percent': 100, 'capturedAt': '2026-10-30T12:00:00+00:00'}
+        after, new_summary = self.cards(content, [{**course, 'legacyProgressReference': reference}],
+            definitions, {('50', 'material:1')}, hours={'50': 2})
+        self.assertEqual(new_summary, summary)
+        old = next(card for card in after if card['source'] == 'legacy')
+        self.assertEqual(old.pop('legacyProgressReference'), reference)
+        self.assertEqual(after, before)
+
     def test_undated_execution_month_matches_detail_and_next_activity_preview(self):
         from .course_catalogue_display import catalogue_display_context, display_schedule
         course = {'id': 3, 'source_course_ref': '50', 'source_course_title': 'Old'}
@@ -264,6 +292,9 @@ class MyLearningModuleTests(SimpleTestCase):
         context=list(deepcopy(self.context))
         context[4]=[{'id':3,'source_course_ref':'50','source_course_title':'Old','curriculum_module_ref':'M1'},
                     {'id':4,'source_course_ref':'60','source_course_title':'Other'}]
+        reference = {'percent': 92, 'capturedAt': '2026-10-30T12:00:00+00:00'}
+        context[4][0]['legacyProgressReference'] = reference
+        context[4][1]['legacyProgressReference'] = {**reference, 'percent': 97}
         activity={'subjects':[{'id':50,'name':'Old'}], 'activities':[], 'progress_basis':'catalogue_activities'}
         with ExitStack() as stack:
             stack.enter_context(patch.object(learning,'load_context',return_value=tuple(context)))
@@ -283,6 +314,7 @@ class MyLearningModuleTests(SimpleTestCase):
         self.assertEqual(result['detail']['components'],[])
         self.assertNotIn('Other',json.dumps(result))
         self.assertEqual(result['metadata']['current_subjects'],[])
+        self.assertEqual(result['metadata']['legacy_progress_references'], {'legacy:50': reference})
 
     def test_invalid_module_fails_before_any_content_reader(self):
         from . import weekly_learning

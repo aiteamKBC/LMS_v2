@@ -43,7 +43,7 @@ export function ProgressCard({ data, loading, error, refresh, dashboardHref, lin
         <strong>OTJ Progress</strong>
         <dl className={styles.hourLegend}>
           <div><dt><i className={styles.actualDot}/>Completed (Actual)</dt><dd>{figure(hours(otjh?.actual))}</dd></div>
-          <div><dt title="Assignment hours awaiting tutor review"><i className={styles.submittedDot}/>Submitted</dt><dd>{figure(hours(otjh?.submitted))}</dd></div>
+          <div><dt title="Assignment and extra activity hours awaiting tutor review"><i className={styles.submittedDot}/>Submitted</dt><dd>{figure(hours(otjh?.submitted))}</dd></div>
           <div><dt>Total Planned</dt><dd>{figure(hours(otjh?.planned))}</dd></div>
         </dl>
       </div>

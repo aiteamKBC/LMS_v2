@@ -1,14 +1,14 @@
 import type { LearnerDetail } from '@/api/learnerDetail';
-import type { StudentActivityItem, StudentActivityResponse } from '@/api/studentActivity';
+import type { LegacyProgressReference, StudentActivityItem, StudentActivityResponse } from '@/api/studentActivity';
 import { completedComponentIds, isComponentComplete, quizAttemptsFor, type JourneyComponent } from '@/utils/learnerJourney';
 
 export type Schedule = Pick<StudentActivityItem, 'date' | 'month' | 'week_start' | 'week_end' | 'date_needs_review' | 'date_source'> & { due_timing?: string };
 export type SubjectEntry = { id: string; title: string; category: string; completed: boolean; position: number; schedule: Schedule; week?: string; legacy?: StudentActivityItem; native?: JourneyComponent; bestScorePercent?: number | null };
 export type SubjectCardSummary = { activityCount: number; completedActivityCount: number; progress: number; status: 'Completed' | 'In progress' | 'Upcoming'; nextTitle?: string | null; finalTestPassed: boolean };
-export type Subject = { card?: SubjectCardSummary; id: string; title: string; source: 'legacy' | 'current'; moduleId?: string | null; activities: SubjectEntry[]; recordedHistory?: boolean; catalogueProgress?: boolean; catalogueCount?: number; acceptedHours?: number; previousLearningFor?: string; importedCourseRef?: string; replacementCourseRef?: string; archivedActivities?: SubjectEntry[]; aggregateProgress?: number; transferredProgress?: number; transferPending?: boolean; demoProgress?: boolean };
+export type Subject = { card?: SubjectCardSummary; id: string; title: string; source: 'legacy' | 'current'; moduleId?: string | null; activities: SubjectEntry[]; recordedHistory?: boolean; catalogueProgress?: boolean; catalogueCount?: number; acceptedHours?: number; previousLearningFor?: string; importedCourseRef?: string; replacementCourseRef?: string; archivedActivities?: SubjectEntry[]; aggregateProgress?: number; transferredProgress?: number; transferPending?: boolean; demoProgress?: boolean; legacyProgressReference?: LegacyProgressReference };
 type BuilderSubject = { id: string; title: string };
 type ActivitySource = { module_id: string; group_id: number; activity_id: number };
-export type CoverMetadata = { covers: Record<string, string>; activity_dates?: Record<string, Schedule>; current_subjects?: BuilderSubject[]; builder_subjects?: Record<string, BuilderSubject>; activity_sources?: Record<string, ActivitySource>; previous_learning_groups?: Record<string, string>; imported_courses?: Record<string, string>; replacement_courses?: Record<string, string>; approved_transfers?: Record<string, string>; imported_continuations?: Record<string, { courseRef: string; afterDate: string; componentIds: string[] }>; module_credits?: Record<string, { progress: number; actualHours: number; transferredProgress?: number; transferPending?: boolean; demoProgress?: boolean }> };
+export type CoverMetadata = { covers: Record<string, string>; legacy_progress_references?: Record<string, LegacyProgressReference>; activity_dates?: Record<string, Schedule>; current_subjects?: BuilderSubject[]; builder_subjects?: Record<string, BuilderSubject>; activity_sources?: Record<string, ActivitySource>; previous_learning_groups?: Record<string, string>; imported_courses?: Record<string, string>; replacement_courses?: Record<string, string>; approved_transfers?: Record<string, string>; imported_continuations?: Record<string, { courseRef: string; afterDate: string; componentIds: string[] }>; module_credits?: Record<string, { progress: number; actualHours: number; transferredProgress?: number; transferPending?: boolean; demoProgress?: boolean }> };
 export type UnifiedLearningSummary = {
   subjects: Subject[];
   subjectCount: number;
@@ -135,6 +135,8 @@ export function subjectsFrom(data: LearningSummaryActivity | null, real: Learnin
     }
   }
   return [...subjects.values()].map((subject) => ({ ...subject,
+    legacyProgressReference: metadata?.legacy_progress_references?.[subject.id]
+      ?? data?.subjects?.find(previous => `legacy:${previous.id}` === subject.id)?.legacyProgressReference,
     ...(metadata?.module_credits?.[subject.id] ? {
       aggregateProgress: metadata.module_credits[subject.id].progress,
       transferredProgress: metadata.module_credits[subject.id].transferredProgress,

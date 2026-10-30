@@ -28,6 +28,7 @@ describe('home progress card', () => {
     show();
     expect(screen.getByRole('progressbar', { name: 'OTJ progress' })).toHaveAttribute('aria-valuenow', '2.74');
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuetext', 'Completed (Actual): 13.5 h; Submitted: 8.25 h; Total Planned: 492.59 h');
+    expect(screen.getByTitle('Assignment and extra activity hours awaiting tutor review')).toHaveTextContent('Submitted');
     expect(screen.getByText('2 Jan 2026 – 13 Sept 2026')).toBeVisible();
     expect(screen.getByRole('link', { name: /21 of 150 Activities completed/ })).toHaveAttribute('href', '/learner/my-learning');
     expect(screen.getByRole('link', { name: /3 of 12 Assignments completed/ })).toHaveAttribute('href', '/learner/monthly-submission');

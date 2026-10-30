@@ -76,12 +76,20 @@ def completion_time(definition, payload, *, kind, learner_id, group_id, activity
     if started_at is None or timezone.is_naive(started_at):
         raise TrackingSessionError('The activity timing session has an invalid start time.')
     claimed = _normalise_claimed_seconds(payload.get('timeTakenSeconds'))
+    time_source = payload.get('timeEntrySource', 'timer')
+    if time_source not in ('timer', 'input'):
+        raise TrackingSessionError('Invalid time entry source.')
     budget = max(0, int((submitted_at - started_at).total_seconds()))
     tracking = {'sessionId': claims['sessionId'], 'startedAt': started_at,
         'claimedSeconds': claimed, 'verifiedSeconds': min(claimed, budget),
         'serverSessionSeconds': budget, 'countingMode': claims['countingMode'],
         'source': f"signed_attempt_capped_{claims['countingMode']}",
         'calculation': 'min(client_active_seconds, signed_server_session_seconds)'}
+    # Preserve signed-session evidence separately from the learner's explicit
+    # manual duration, matching native activity completion. Old timer payloads
+    # and historical snapshots retain their capped-duration contract.
+    if time_source == 'input':
+        tracking.update(timeEntrySource='input', selectedSeconds=claimed)
     # Legacy placements have no native component/cohort identity. Use the same
     # working-time rule and correction flow as other unplaced learning.
     declared, reason = resolve_completion_instants(payload, submitted_at)
@@ -91,10 +99,14 @@ def completion_time(definition, payload, *, kind, learner_id, group_id, activity
 
 
 def measured_seconds(value):
-    """Only the new server-verified evidence may award local attempt hours."""
+    """Use a saved manual selection or verified timer, never untimed history."""
     if not isinstance(value, dict) or value.get('version') != 1:
         return None
     seconds = value.get('verifiedSeconds')
     if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds < 0:
         return None
+    if value.get('timeEntrySource') == 'input':
+        seconds = value.get('selectedSeconds')
+        if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds < 0:
+            return None
     return seconds

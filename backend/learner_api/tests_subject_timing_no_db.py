@@ -40,6 +40,38 @@ class LegacyTimingTests(unittest.TestCase):
             self.assertEqual(result['submittedAt'], (START + timedelta(seconds=60)).isoformat())
             json.dumps(result)
 
+    def test_manual_selection_preserves_signed_evidence_for_materials_and_quizzes(self):
+        for kind in ('commercial', 'apprenticeship'):
+            for quiz in (None, {'id': 'q'}):
+                with self.subTest(kind=kind, quiz=quiz):
+                    attempt, definition = self.session(kind, quiz=quiz)
+                    payload = {'trackingToken': definition['studyTimingSession']['trackingToken'],
+                               'timeTakenSeconds': 1800, 'timeEntrySource': 'input'}
+                    with patch('learner_api.subject_timing.timezone.now', return_value=START + timedelta(seconds=60)):
+                        result = subject_timing.completion_time(definition, payload, kind=kind,
+                            learner_id=9, group_id=50, activity_id=60, attempt_id=attempt)
+                    self.assertEqual(result['verifiedSeconds'], 60)
+                    self.assertEqual(result['selectedSeconds'], 1800)
+                    self.assertEqual(result['timeEntrySource'], 'input')
+                    self.assertEqual(subject_timing.measured_seconds(result), 1800)
+                    self.assertEqual(result['submittedAt'], (START + timedelta(seconds=60)).isoformat())
+
+    def test_manual_time_still_requires_the_owned_token_and_valid_duration(self):
+        attempt, definition = self.session()
+        original = {'trackingToken': definition['studyTimingSession']['trackingToken'],
+                    'timeTakenSeconds': 1800, 'timeEntrySource': 'input'}
+        for changes in ({'trackingToken': 'forged'}, {'timeTakenSeconds': -1},
+                        {'timeTakenSeconds': 'NaN'}, {'timeTakenSeconds': 'Infinity'},
+                        {'timeEntrySource': 'unknown'}):
+            with self.subTest(changes=changes), self.assertRaises(TrackingSessionError):
+                subject_timing.completion_time(definition, {**original, **changes}, kind='commercial',
+                    learner_id=9, group_id=50, activity_id=60, attempt_id=attempt)
+
+    def test_invalid_saved_manual_time_cannot_award_hours(self):
+        for seconds in (None, -1, True, '1800'):
+            self.assertIsNone(subject_timing.measured_seconds({'version': 1,
+                'verifiedSeconds': 60, 'timeEntrySource': 'input', 'selectedSeconds': seconds}))
+
     def test_token_is_bound_to_learner_course_activity_type_and_attempt(self):
         attempt, definition = self.session()
         for override in ({'learner_id': 10}, {'group_id': 51}, {'activity_id': 61},
@@ -147,6 +179,40 @@ class TimedAttemptStoreTests(unittest.TestCase):
 
 
 class LegacyHoursProjectionTests(unittest.TestCase):
+    def test_manual_duration_matches_dashboard_and_monthly_hours_without_counting_failed_retries(self):
+        timing = {'version': 1, 'verifiedSeconds': 60, 'selectedSeconds': 1800,
+                  'timeEntrySource': 'input', 'submittedAt': START.isoformat()}
+        attempt = {'group_id': 50, 'activity_id': 60, 'catalogue_kind': 'quiz',
+                   'submitted_at': START, 'completed': True, 'timed_attempts': [
+                       {'id': 'saved', 'completed': True, 'timing': timing},
+                       {'id': 'failed', 'completed': False, 'timing': {**timing, 'selectedSeconds': 7200}}]}
+        merge = adapter()['merge_attempts']
+        projected = merge([], [attempt])
+        self.assertEqual(sum(row.get('actual_seconds') or 0 for row in projected), 1800)
+        timed = next(row for row in projected if row.get('actual_seconds') == 1800)
+        self.assertEqual(timed['actual_basis'], 'legacy_activity_manual_time')
+        self.assertEqual(merge(projected, [attempt]), projected)
+        from . import canonical_learning as canonical
+        records = canonical.progress_records_with_completion([], projected)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]['actual_seconds'], 1800)
+        item = {'id': 123, 'title': 'Synthetic quiz', 'category': 'Quiz'}
+        owner = {'id': 1, 'enrolment_id': 9, 'aptem_id': 11}
+        with patch.object(canonical, 'query', return_value=[{'definition': {}, 'answers': {}}]) as query:
+            preview = canonical.content(item, owner, records[0])
+        self.assertIn('Manual study time: 30m 0s', preview['parts'][0]['html'])
+        self.assertEqual(query.call_args.args[1], ['saved', 9, 11])
+        from . import monthly_log_sources as sources
+        rows = [{'id': saved['id'], 'group_id': 50, 'activity_id': 60, 'submitted_at': START,
+                 'completed': saved['completed'], 'score_percent': 100 if saved['completed'] else 0,
+                 'passed': saved['completed'], 'group_name': 'Synthetic course',
+                 'definition': {'catalogue_kind': 'quiz', 'studyTime': saved['timing']}}
+                for saved in attempt['timed_attempts']]
+        with patch.object(sources, 'query', side_effect=[[{'table_name': 'exists'}], rows]):
+            monthly = sources._attempts({'id': 9, 'aptem_id': 11})
+        self.assertEqual(sum(row['actual_hours'] for row in monthly), 0.5)
+        self.assertFalse(monthly[-1]['accepted'])
+
     def test_monthly_attempts_do_not_award_failed_or_repeated_hours(self):
         from . import monthly_log_sources as sources
         rows = [{'id': str(index), 'group_id': 50, 'activity_id': 60, 'submitted_at': START,

@@ -311,6 +311,11 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             subject['previousLearningFor'] = group
         if metadata['imported_courses'].get(subject['id']):
             subject['importedCourseRef'] = metadata['imported_courses'][subject['id']]
+        historical_ref = (approved.get(subject['id']) or {}).get('courseRef') or links.get(subject['id']) or subject['id']
+        historical = next((course.get('legacyProgressReference') for course in courses
+                           if f"legacy:{course['source_course_ref']}" == historical_ref), None)
+        if historical is not None:
+            subject['legacyProgressReference'] = historical
         subject.update(activityCount=count, completedActivityCount=complete, progress=percent(complete, count),
             status='Completed' if count and complete == count else 'In progress' if any(i['completed'] or i.get('started') for i in items) else 'Upcoming',
             nextTitle=next_title(items, today),
@@ -703,6 +708,10 @@ def read_module(source, kind, owner, subject_id):
     clean_metadata={k:{ref:value for ref,value in metadata[k].items() if ref in visible_refs}
         for k in ('covers','builder_subjects','imported_courses','replacement_courses','previous_learning_groups')}
     clean_metadata['current_subjects']=[m for m in metadata['current_subjects'] if m['id'] in native_scope_ids]
+    historical_ref = (approved.get(subject_id) or {}).get('courseRef') or links.get(subject_id) or subject_id
+    historical = owned.get(historical_ref, {}).get('legacyProgressReference')
+    if historical is not None:
+        clean_metadata['legacy_progress_references'] = {subject_id: historical}
     if continuation_weeks:
         clean_metadata['imported_continuations'] = continuation_components(metadata,
             {subject_id:activity.get('activities', [])},detail['components'],continuation_dates)
