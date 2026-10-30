@@ -1385,7 +1385,7 @@ def otjh_summary_bulk(learner_ids):
     retake_profiles = {int(item['learner_id']) for item in query('''
         SELECT DISTINCT learner_id FROM "Learner".learner_progress_entries
         WHERE learner_id=ANY(%s) AND deleted_at IS NULL
-          AND source_payload->>'retakeTimeChoice' IN ('keep','new')''', [profile_ids])}
+          AND source_payload->>'retakeTimeChoice' IN ('keep','new','correct','add','retry')''', [profile_ids])}
     relation = query('SELECT to_regclass(%s) AS name', ['"Learner".subject_activity_attempts'])
     if relation and relation[0].get('name'):
         selected_enrolments = {int(item['enrolment_id']) for item in query('''

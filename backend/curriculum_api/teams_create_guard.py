@@ -211,7 +211,8 @@ def teams_meeting_collection(request):
         from .teams_create_drafts import clear_draft
         clear_draft(key)
     try:
-        claims.finish(key, token, 'done', response.status_code, code, live_session_id)
+        state = 'uncertain' if code == 'teams_calendar_create_uncertain' else 'done'
+        claims.finish(key, token, state, response.status_code, code, live_session_id)
     except Exception:
         # The response still goes back. Left 'creating', the claim reads as
         # uncertain once its lease ends, which errs towards asking a person.

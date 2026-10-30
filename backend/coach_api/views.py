@@ -1061,6 +1061,13 @@ def microsoft_graph_request(
     attendee on each write to a meeting, which turns a routine per-instance
     reconciliation into one message per instance per person.
     """
+    from .graph_transport import GraphRequestError, html_error_details, read_graph_response, retry_after_seconds
+    from curriculum_api.teams_original_calendar import current_calendar
+    original = current_calendar()
+    if original and original.path(path) is not None:
+        return original.request(method, path, payload=payload, headers=extra_headers)
+    if original:
+        original.check_application_request(method, path)
     started = perf_counter()
     settings = get_graph_settings()
     try:
@@ -1090,8 +1097,7 @@ def microsoft_graph_request(
 
     request = urllib_request.Request(url, data=body, headers=headers, method=method.upper())
     try:
-        with urllib_request.urlopen(request, timeout=25) as response:
-            raw = response.read().decode("utf-8")
+        raw = read_graph_response(request, opener=urllib_request.urlopen).decode("utf-8")
     except urllib_error.HTTPError as exc:
         metric_event(
             "graph_call",
@@ -1121,7 +1127,7 @@ def microsoft_graph_request(
                         or ""
                     ).strip()
         except (TypeError, ValueError, json.JSONDecodeError):
-            graph_message = detail[:1500].strip()
+            graph_code, graph_message = html_error_details(detail, exc.code)
         if not request_id and exc.headers:
             request_id = str(
                 exc.headers.get("request-id")
@@ -1135,17 +1141,20 @@ def microsoft_graph_request(
             diagnostics.append(f"message={graph_message}")
         if request_id:
             diagnostics.append(f"request-id={request_id}")
-        raise RuntimeError(
-            f"Microsoft Graph {method.upper()} {path} failed: {'; '.join(diagnostics)}"
+        raise GraphRequestError(
+            f"Microsoft Graph {method.upper()} {path} failed: {'; '.join(diagnostics)}",
+            status=exc.code, retry_after=retry_after_seconds(exc.headers), request_id=request_id,
+            uncertain=getattr(exc, 'graph_write_uncertain', method.upper() not in ('GET', 'HEAD') and exc.code >= 500),
         ) from exc
-    except urllib_error.URLError as exc:
+    except (urllib_error.URLError, TimeoutError) as exc:
         metric_event(
             "graph_call",
             method=method.upper(),
             graph_status="network_error",
             latency_ms=round((perf_counter() - started) * 1000, 1),
         )
-        raise RuntimeError(f"Microsoft Graph {method.upper()} {path} failed: {exc}") from exc
+        raise GraphRequestError(f"Microsoft Graph {method.upper()} {path} failed: Microsoft could not be reached.",
+                                uncertain=method.upper() not in ('GET', 'HEAD')) from exc
 
     metric_event(
         "graph_call",

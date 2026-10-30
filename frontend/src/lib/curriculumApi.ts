@@ -2399,12 +2399,9 @@ export interface FreeProgrammeComponent {
   settings?: Record<string, unknown>;
 }
 
-export type CurriculumCourseType = 'free' | 'apprentices';
-
 export interface FreeProgrammeModule {
   id: string;
   courseId?: string;
-  courseType?: CurriculumCourseType;
   weekId?: string;
   weekNumber?: number;
   weekTitle?: string;
@@ -3512,11 +3509,7 @@ export function fetchCurriculumScopeLearnerRoster(
 export function fetchCurriculumScopeLearnerKsbImpact(
   scope: CurriculumLearnerScope,
   identifier: string,
-  params: {
-    sourceType?: string; sourceId?: string; learnerStatus?: string; moduleProgress?: boolean;
-    /** Narrow the read to one learner by profile id (never an enrolment id). */
-    learnerId?: string;
-  } = {},
+  params: { sourceType?: string; sourceId?: string; learnerStatus?: string; moduleProgress?: boolean } = {},
   signal?: AbortSignal,
 ): Promise<CurriculumScopeLearnerKsbImpactResponse> {
   const query = new URLSearchParams();
@@ -3524,7 +3517,6 @@ export function fetchCurriculumScopeLearnerKsbImpact(
   if (params.sourceId) query.set('source_id', params.sourceId);
   if (params.learnerStatus) query.set('learnerStatus', params.learnerStatus);
   if (params.moduleProgress) query.set('moduleProgress', '1');
-  if (params.learnerId) query.set('learnerId', params.learnerId);
   return fetchJson<CurriculumScopeLearnerKsbImpactResponse>(
     scopePath(SCOPE_IMPACT_PATHS, '/curriculum/learner-ksb-impact/', scope, identifier, query),
     { signal },
@@ -3818,8 +3810,10 @@ export interface ImportedMeetingEdits {
   sessions?: { sessionNumber: number; start: string; durationMinutes: number }[];
 }
 
-export function readImportedMeetingEditor(liveSessionId: string) {
-  return importedCalendarPost<ImportedMeetingEditor>(liveSessionId, 'edit-read', {});
+export async function readImportedMeetingEditor(liveSessionId: string, options?: { standard: boolean }) {
+  const result = await importedCalendarPost<ImportedMeetingEditor>(liveSessionId, 'edit-read', options?.standard ? { standard: true } : {});
+  if (options?.standard && result.status === 'editable') clearCurriculumGetCache();
+  return result;
 }
 
 export function previewImportedMeetingEdit(liveSessionId: string, sourceToken: string, changes: ImportedMeetingEdits, notify: boolean) {
@@ -4290,7 +4284,6 @@ export type FreeProgrammeComponentInput = Partial<FreeProgrammeComponent> & {
 export type FreeProgrammeModuleInput = {
   id?: string;
   courseId?: string;
-  courseType?: CurriculumCourseType;
   weekId?: string;
   weekNumber?: number;
   weekTitle?: string;

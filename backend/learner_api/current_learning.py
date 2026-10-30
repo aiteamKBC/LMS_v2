@@ -105,18 +105,13 @@ def project_current(records, markings):
                  reporting_month=at.strftime('%Y-%m'), reporting_started_at=at,
                  reporting_ended_at=at, activity_status='Completed' if accepted else 'Submitted')
         candidates.append(p)
-        # Count the latest eligible attempt, even when its duration decreases.
-        # Failed retries cannot displace an accepted completion.
-        if p.get('quiz_ref') and p.get('kind') == 'quiz_reading':
-            # Each reading is completed on its own existing progress row.
-            # Use that identity even in compact reads without attempt numbers.
-            key = ('quiz-reading', p['id'])
-        else:
-            key = ('quiz', p['quiz_ref']) if p.get('quiz_ref') else ('component', component) if component else ('entry', p['id'])
+        # Ordinary retries count the larger duration. Explicit corrections and
+        # additions are applied below without rewriting saved attempt evidence.
+        key = ('quiz', p['quiz_ref']) if p.get('quiz_ref') else ('component', component) if component else ('entry', p['id'])
         key = (p.get('learner_id'), *key)
         previous = native.get(key)
-        if previous is None or (accepted, attempt_order(p['submitted_at'], p['id'])) > (
-                previous['accepted'], attempt_order(previous['submitted_at'], previous['id'])):
+        if previous is None or (accepted, seconds, attempt_order(p['submitted_at'], p['id'])) > (
+                previous['accepted'], previous['actual_seconds'], attempt_order(previous['submitted_at'], previous['id'])):
             native[key] = p
     return native_choices(result + list(native.values()), candidates)
 
@@ -213,15 +208,15 @@ def measured_attempt_record(attempt, route, *, has_accepted_history=False):
     Untimed historical attempts contribute no hours. Keep this row separate
     from audited source time, and give retries/re-reads a stable identity.
     """
-    from learner_api.subject_timing import measured_seconds
     candidates = []
     saved_attempts = attempt.get('timed_attempts') or []
     if isinstance(saved_attempts, str):
         saved_attempts = json.loads(saved_attempts)
     for saved in saved_attempts:
         timing = saved.get('timing') or {}
-        seconds = measured_seconds(timing)
-        if saved.get('completed') is True and seconds is not None:
+        seconds = timing.get('verifiedSeconds')
+        if (saved.get('completed') is True and timing.get('version') == 1
+                and isinstance(seconds, int) and not isinstance(seconds, bool) and seconds >= 0):
             candidates.append(saved)
     if not candidates:
         return None
@@ -235,9 +230,8 @@ def measured_attempt_record(attempt, route, *, has_accepted_history=False):
     ident = f"subject:timing:{attempt['group_id']}:{attempt.get('catalogue_kind', 'material')}:{attempt['activity_id']}"
     return {'id': ident, 'component_title': attempt.get('title'),
         'kind': 'quiz' if attempt.get('catalogue_kind') == 'quiz' else 'component',
-        'accepted': True, 'completed': True, 'actual_seconds': measured_seconds(timing),
-        'actual_basis': 'legacy_activity_manual_time' if timing.get('timeEntrySource') == 'input' else 'legacy_activity_verified_timer',
-        'ksbs': [], 'sources': [route], 'segments': [],
+        'accepted': True, 'completed': True, 'actual_seconds': timing['verifiedSeconds'],
+        'actual_basis': 'legacy_activity_verified_timer', 'ksbs': [], 'sources': [route], 'segments': [],
         'retake_replace_existing': replace_history,
         'reporting_month': at.strftime('%Y-%m'), 'reporting_started_at': at, 'reporting_ended_at': at,
         'source_payload': {'original_source_ref': ident, 'subject_attempt_id': str(saved['id']), 'studyTime': timing}}

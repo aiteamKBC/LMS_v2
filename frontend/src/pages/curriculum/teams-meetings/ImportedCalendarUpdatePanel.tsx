@@ -22,12 +22,13 @@ function sessionTime(value: string, timeZone?: string) {
   }
 }
 
-export function ImportedCalendarUpdatePanel({ liveSessionId, disabled, onUpdated, editorConnectionKind, onEditorConnected }: {
+export function ImportedCalendarUpdatePanel({ liveSessionId, disabled, onUpdated, editorConnectionKind, onEditorConnected, connectionOnly = false }: {
   liveSessionId: string;
   disabled: boolean;
   onUpdated: () => Promise<void>;
   editorConnectionKind?: 'user' | 'group' | null;
   onEditorConnected?: () => void;
+  connectionOnly?: boolean;
 }) {
   const [preview, setPreview] = useState<ImportedCalendarPreview | null>(null);
   const [result, setResult] = useState<ImportedCalendarUpdateResult | null>(null);
@@ -180,6 +181,13 @@ export function ImportedCalendarUpdatePanel({ liveSessionId, disabled, onUpdated
 
   const ready = preview?.status === 'ready' && Boolean(preview.previewToken) && !uncertain;
   const importingOnly = preview?.calendarChangeRequired === false;
+  if (connectionOnly) return <section aria-label="Microsoft calendar connection" className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs">
+    <p>Connect a Microsoft account allowed to manage this original calendar. Connecting sends no invitations and keeps the existing meeting link.</p>
+    {failure && <p role="alert">{failure}</p>}
+    <button type="button" onClick={() => void connect()} disabled={disabled || Boolean(busy)} className="rounded-lg border border-primary-200 bg-white px-3 py-2 font-bold text-primary-700 disabled:opacity-50">
+      {busy === 'connect' ? 'Complete Microsoft sign-in…' : 'Connect Microsoft calendar'}
+    </button>
+  </section>;
   return (
     <section aria-label="Update the original Teams calendar" className="space-y-3 rounded-xl border border-primary-200 bg-primary-50/30 p-4">
       <h3 className="text-sm font-bold text-foreground-800">Update the original Teams calendar</h3>

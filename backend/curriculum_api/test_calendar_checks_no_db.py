@@ -15,6 +15,8 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 from urllib import parse as urllib_parse
 from zoneinfo import ZoneInfo
+from config.time_zones import calendar_zone, local_clock_to_utc
+from coach_api.graph_transport import GraphRequestError
 
 ROOT = Path(__file__).parent
 spec = importlib.util.spec_from_file_location('calendar_checks', ROOT / 'teams_calendar_checks.py')
@@ -71,7 +73,7 @@ class CalendarChecksTests(unittest.TestCase):
         self.corrupt = ''
         self.payload = self.make_payload()
         self.v = types.ModuleType('curriculum_api.views')
-        self.v.__dict__.update(datetime=datetime, timedelta=timedelta, timezone=timezone, ZoneInfo=ZoneInfo, hashlib=hashlib,
+        self.v.__dict__.update(calendar_zone=calendar_zone, local_clock_to_utc=local_clock_to_utc, datetime=datetime, timedelta=timedelta, timezone=timezone, ZoneInfo=ZoneInfo, hashlib=hashlib,
                               escape=escape, re=re, urllib_parse=urllib_parse, logger=logging.getLogger('calendar-test'),
                               TEAMS_REPEAT_VALUES={'none', 'weekly', 'daily', 'weekdays'},
                               TEAMS_LOBBY_VALUES={'invited', 'organizer', 'everyone'}, DEFAULT_TEAMS_LOBBY_BYPASS='everyone', LIVE_SESSIONS_TABLE='series', LIVE_SESSION_OCCURRENCES_TABLE='occurrences',
@@ -141,8 +143,12 @@ class CalendarChecksTests(unittest.TestCase):
         package = types.ModuleType('curriculum_api')
         package.__path__ = [str(ROOT)]
         package.views = self.v
+        original = types.ModuleType('curriculum_api.teams_original_calendar')
+        original.calendar_authorized = lambda _id: False
+        original.original_calendar_request = lambda view: view
         self.modules = patch.dict(sys.modules, {'coach_api': types.ModuleType('coach_api'), 'coach_api.views': transport,
-                                                'curriculum_api': package, 'curriculum_api.views': self.v})
+                                                'curriculum_api': package, 'curriculum_api.views': self.v,
+                                                'curriculum_api.teams_original_calendar': original})
         self.modules.start()
         self.addCleanup(self.modules.stop)
         # The retry guard's ledger: in memory, so its claims can be read back.
@@ -262,6 +268,22 @@ class CalendarChecksTests(unittest.TestCase):
     def create(self):
         return self.v.curriculum_teams_meeting(types.SimpleNamespace(method='POST'))
 
+    def test_unconfirmed_create_has_a_safe_message_and_does_not_claim_failure_is_final(self):
+        transport = sys.modules['coach_api.views']
+        transport.microsoft_graph_request = Mock(side_effect=GraphRequestError('Microsoft Graph POST events failed: HTTP 503',
+            status=503, retry_after=2, uncertain=True, request_id='SYNTHETIC-REQUEST'))
+        log = types.SimpleNamespace(EVENT_SAVE='calendar_event_save', record_graph_failure=Mock())
+        with patch.dict(sys.modules, {'curriculum_api.teams_graph_failure_log': log}):
+            response = self.create()
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response['code'], 'teams_calendar_create_uncertain')
+        self.assertTrue(response['verificationRequired'])
+        self.assertEqual((response['graphStatus'], response['retryAfterSeconds'], response['requestId']), (503, 2, 'SYNTHETIC-REQUEST'))
+        self.assertNotIn('detail', response)
+        self.assertEqual(self.series, [])
+        self.attach.assert_not_called()
+        log.record_graph_failure.assert_called_once()
+
     def test_verified_shared_calendar_attaches_before_response_without_browser_restore(self):
         result = self.create()
         self.assertEqual(result.status_code, 201, result)
@@ -297,6 +319,20 @@ class CalendarChecksTests(unittest.TestCase):
 
     def test_invalid_schedule_zone_is_refused_before_graph(self):
         self.payload['scheduleTimeZone'] = 'Invalid/Zone'
+        self.assertEqual(self.create().status_code, 400)
+        self.assertEqual(self.calls, [])
+
+    def test_saved_iana_calendar_zone_is_preserved_when_default_or_selection_differs(self):
+        for stored in ('Africa/Cairo', 'Egypt Standard Time'):
+            settings = self.v.teams_schedule_settings({'timezone': 'GMT Standard Time'},
+                {'scheduleTimeZone': 'Europe/London'}, {'timezone': stored})
+            self.assertEqual(settings['_schedule_timezone_iana'], 'Africa/Cairo')
+            self.assertEqual(settings['timezone'], 'Egypt Standard Time')
+
+    def test_mismatched_local_and_utc_clock_is_refused_before_graph(self):
+        self.payload['scheduleTimeZone'] = 'Europe/London'
+        self.payload['localStartDateTime'] = '2026-10-23T09:00:00'
+        self.payload['startDateTimeUtc'] = '2026-10-23T09:00:00Z'
         self.assertEqual(self.create().status_code, 400)
         self.assertEqual(self.calls, [])
 
@@ -723,14 +759,18 @@ class CalendarChecksTests(unittest.TestCase):
         self.options_ok = False
         self.assertEqual(self.create().status_code, 502)
         self.options_ok = True
+        metadata = {key: {field: copy.deepcopy(event.get(field)) for field in ('subject', 'hideAttendees', 'start', 'end', 'recurrence')}
+                    for key, event in self.events.items()}
         self.calls.clear()
         self.headers.clear()
         result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
         self.assertEqual(result.status_code, 200, result)
         self.assertFalse([call for call in self.calls if call[0] in ('POST', 'DELETE')])
         patches = [call[2] for call in self.calls if call[0] == 'PATCH']
-        self.assertEqual([sorted(patch) for patch in patches], [['attendees', 'hideAttendees', 'subject']])
-        self.assertEqual([item[2] for item in self.headers if item[0] == 'PATCH'], [None])
+        self.assertEqual([sorted(patch) for patch in patches], [['attendees']])
+        self.assertEqual([item[2] for item in self.headers if item[0] == 'PATCH'], [SILENT_INVITE])
+        self.assertEqual({key: {field: event.get(field) for field in ('subject', 'hideAttendees', 'start', 'end', 'recurrence')}
+                          for key, event in self.events.items()}, metadata)
         self.assertTrue(all(
             [item['emailAddress']['address'] for item in event['attendees']] == ['learner@example.invalid']
             for event in self.events.values()
@@ -812,9 +852,14 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertFalse([item for item in self.headers
                           if item[0] == 'PATCH' and 'attendees' in (item[3] or {}) and item[2] != SILENT_INVITE])
 
-    def test_date_update_always_announces_the_change(self):
-        """Existing-calendar updates always announce the new session dates."""
+    def test_unticked_date_update_preserves_the_silent_notification_choice(self):
+        """The explicit silent choice sends dates without announcement writes."""
         self.assertEqual(self.create().status_code, 201)
+        planned_before = {datetime.fromisoformat(item['startDateTimeUtc']) for item in self.payload['scheduledOccurrences']}
+        # A holiday slot still on the recurrence follows its clock change too;
+        # Update never cancels that slot merely because it is outside the plan.
+        held_outside_plan = {start + timedelta(hours=1) for start in
+                             ({checks.event_instant(item, 'start') for item in self.instances} - planned_before)}
         shifted = []
         for item in self.payload['scheduledOccurrences']:
             start = datetime.fromisoformat(item['startDateTimeUtc']) + timedelta(hours=1)
@@ -833,11 +878,12 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200, result)
         writes = [item for item in self.headers if item[0] in ('POST', 'PATCH', 'DELETE')]
         self.assertTrue(writes)
-        self.assertTrue([item for item in writes if item[2] is None])
+        self.assertTrue(all(item[2] == SILENT_INVITE for item in writes))
+        self.assertFalse(self.forwards)
         # The calendar really moved, and everyone invited is still invited.
         self.assertEqual(
             {checks.event_instant(item, 'start') for item in self.instances},
-            {datetime.fromisoformat(item['startDateTimeUtc']) for item in shifted},
+            {datetime.fromisoformat(item['startDateTimeUtc']) for item in shifted} | held_outside_plan,
         )
         self.assertTrue(all(
             [person['emailAddress']['address'] for person in event['attendees']] == ['learner@example.invalid']

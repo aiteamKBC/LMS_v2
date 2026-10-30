@@ -1,4 +1,4 @@
-import { DEFAULT_START_TIME, DEFAULT_DURATION_MINUTES, minuteKey, sessionNaiveLocal, minutesBetween, naiveLocalFromUtc, calendarLabel, teamsGapNote, overrideDurationMinutes, emptyTeamsCalendarForm, teamsCalendarOccurrences, buildTeamsCalendarInput, teamsUpdateChanges, TEAMS_LOBBY_OPTIONS, TEAMS_RECORDING_OPTIONS, TEAMS_LANGUAGE_OPTIONS, type TeamsPlannedSession, type TeamsSchedulePreviewRow, type GroupDeliveryPattern, type TeamsCalendarForm, type TeamsCalendarTarget, type TeamsUpdateFields } from './createCalendarForm.helpers';
+import { DEFAULT_START_TIME, DEFAULT_DURATION_MINUTES, minuteKey, sessionNaiveLocal, minutesBetween, naiveLocalFromUtc, calendarLabel, teamsGapNote, overrideDurationMinutes, emptyTeamsCalendarForm, buildTeamsCalendarInput, teamsUpdateChanges, TEAMS_LOBBY_OPTIONS, TEAMS_RECORDING_OPTIONS, TEAMS_LANGUAGE_OPTIONS, type TeamsPlannedSession, type TeamsSchedulePreviewRow, type GroupDeliveryPattern, type TeamsCalendarForm, type TeamsCalendarTarget, type TeamsUpdateFields } from './createCalendarForm.helpers';
 export type { TeamsPlannedSession, TeamsSchedulePreviewRow, GroupDeliveryPattern, TeamsCalendarForm, TeamsCalendarTarget } from './createCalendarForm.helpers';
 import type { ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -7,7 +7,7 @@ import {
   getCalendarTimeZone,
   parseUtcInstant,
   utcIsoToCalendarParts,
-  zonedNaiveToUtcIso,
+  previewZonedNaiveToUtcIso,
   type TeamsMeetingInput,
 } from '../module-builder/moduleAuthoringData';
 import { emailList } from "../module-builder/EmailChipsInput.helpers";
@@ -155,7 +155,7 @@ export function ModuleSessionSchedulePreview({
     : row.teamsStarts.map(() => undefined);
   const held = calendarDates?.length ? calendarDates : row.teamsStarts;
   const plannedStarts = sessionRows.map((session, index) => (session
-    ? row.plannedStarts[index] || zonedNaiveToUtcIso(sessionNaiveLocal(session), session.timeZone || row.timeZone)
+    ? row.plannedStarts[index] || previewZonedNaiveToUtcIso(sessionNaiveLocal(session), session.timeZone || row.timeZone)
     : ''));
   // Paired by date, so one session missing from Teams reads as that one
   // session, not as every later row "still held" a week out. Rows that are the
@@ -474,7 +474,7 @@ export function TeamsCalendarFormBody({
   showAlternateTimeZones?: boolean;
 }) {
   const previewRow = { ...row, timeZone: form.scheduleTimeZone || row.timeZone,
-    plannedStarts: teamsCalendarOccurrences(row, form.scheduleTimeZone).map(item => item.startDateTimeUtc) };
+    plannedStarts: row.sessions.map(session => session.startDateTimeUtc || previewZonedNaiveToUtcIso(sessionNaiveLocal(session), form.scheduleTimeZone || session.timeZone || row.timeZone)) };
   const firstPlanned = previewRow.plannedStarts[0] || '';
   const override = overrideDurationMinutes(form, row);
   return (
@@ -521,7 +521,7 @@ export function TeamsCalendarFormBody({
             <SelectControl disabled={existingCalendar} value={form.seriesMode || 'auto'} onChange={value => patch({ seriesMode: value as TeamsCalendarForm['seriesMode'] })} options={[
               { value: 'auto', label: 'Automatic: share a link when times match' },
               { value: 'per_day', label: 'Separate series and link for each day' },
-              ...(existingCalendar || new Set(teamsCalendarOccurrences(row).map(item => `${naiveLocalFromUtc(item.startDateTimeUtc).slice(11)}:${form.durationMinutes || item.durationMinutes}`)).size <= 1 ? [{ value: 'shared', label: 'One series and link for all days' }] : []),
+              ...(existingCalendar || new Set(previewRow.plannedStarts.map((start, index) => `${naiveLocalFromUtc(start).slice(11)}:${form.durationMinutes || row.sessions[index]?.durationMinutes || row.durationMinutes}`)).size <= 1 ? [{ value: 'shared', label: 'One series and link for all days' }] : []),
             ]} />
           </FormField>
           <div className="grid gap-4 sm:grid-cols-2">

@@ -1,6 +1,5 @@
 import { LearnerPreview } from '../module-builder/LearnerPreview';
 import { ModuleSessions } from './ModuleSessions';
-import { programmeColor } from '../shared/programmeColors';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -26,7 +25,7 @@ import {
   teamsMeetingArtifactPreviewUrl,
   weekHeadingTitle,
   weekPlacementLabel,
-  zonedNaiveToUtcIso,
+  previewZonedNaiveToUtcIso,
   type KsbMapping,
   type ModuleCatalogueItem,
   type ModuleWeekSessionPlan,
@@ -477,7 +476,7 @@ export default function ModuleWorkspacePage() {
   const plannedOccurrences = useMemo(
     () => (plan?.sessions || []).map((session, index) => ({
       sessionNumber: session.sessionNumber || index + 1,
-      startDateTimeUtc: zonedNaiveToUtcIso(`${session.date}T${session.startTime || sessionStartTime}`),
+      startDateTimeUtc: previewZonedNaiveToUtcIso(`${session.date}T${session.startTime || sessionStartTime}`),
       durationMinutes: session.durationMinutes || sessionDurationMinutes,
     })),
     [plan, sessionDurationMinutes, sessionStartTime],
@@ -717,7 +716,7 @@ export default function ModuleWorkspacePage() {
               />
             </span>
           ) : ''}
-          accentColor={programmeColor(context?.programme || (context?.programmeId ? { id: context.programmeId } : null))}
+          accentColor={module?.color}
           dense
           stats={[
             { icon: 'ri-presentation-line', label: 'Tutor', value: cleanText(module?.tutor, 'Unassigned') },

@@ -13,7 +13,7 @@ from datetime import datetime, date, time, timezone as utc_timezone
 from html import escape
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from zoneinfo import ZoneInfo
 
 
@@ -103,8 +103,14 @@ class ReminderTests(unittest.TestCase):
             timezone=SimpleNamespace(get_default_timezone=lambda: ZoneInfo('Europe/London'),
                 make_aware=lambda value, zone: value.replace(tzinfo=zone),
                 now=lambda: datetime(2026, 9, 18, 12, tzinfo=utc_timezone.utc)))
+        # Run the real auth invalidation hook, with only cache/background work mocked.
+        self.ns['__package__'] = 'coach_api'
+        self.enterContext(patch.dict('sys.modules', {
+            'coach_api.dashboard_cache': SimpleNamespace(invalidate_coach_dashboard_cache=Mock()),
+            'coach_api.dashboard_refresh': SimpleNamespace(schedule_coach_dashboard_refresh=Mock()),
+        }))
         root = Path(__file__).parent
-        load_functions(root / 'auth.py', self.ns, {'_forbidden', '_json_payload', '_request_values', '_legacy_owner_mismatch', '_legacy_owner_values',
+        load_functions(root / 'auth.py', self.ns, {'_invalidate_dashboard_after_mutation', '_forbidden', '_json_payload', '_request_values', '_legacy_owner_mismatch', '_legacy_owner_values',
             '_requested_view_as_email', 'coach_access_required', 'authenticated_coach_email'})
         load_functions(root / 'meeting_reminders.py', self.ns)
         self.request = SimpleNamespace(method='POST', login_account=SimpleNamespace(subject_type='staff', subject_id=1),

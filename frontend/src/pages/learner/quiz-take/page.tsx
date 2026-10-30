@@ -37,7 +37,8 @@ import { startTimeTracking, checkpointTimeTracking, type TimeTrackingSession } f
 import { ComponentAccessNotice } from '@/components/feature/ComponentAccessNotice';
 import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
 import { CompletionTimeDialog } from '@/components/feature/CompletionTimeDialog';
-import { RetakeTimeDialog, type RetakeTimeChoice } from '@/components/feature/RetakeTimeDialog';
+import { ActivityRetakeTimeDialog, ActivityTimeLimitNotice } from '@/components/feature/ActivityRetakeTimeDialog';
+import { countedActivityTime, activityTimeIssue, type ActivityTimeChoice } from '@/lib/activityTimeDecision';
 import { CompletionValidationError, type WorkingRuleReason } from '@/lib/completionValidation';
 
 const learnerNav = roleNavMap.learner;
@@ -323,10 +324,14 @@ export default function QuizTakePage() {
   const showSidebar = Boolean(placement) && (phase === 'intro' || phase === 'results');
 
   const [retakeTimeOpen, setRetakeTimeOpen] = useState(false);
-  const retakeTimeChoice = useRef<RetakeTimeChoice | undefined>(undefined);
+  const retakeTimeChoice = useRef<ActivityTimeChoice | undefined>(undefined);
+  const retakeReason = useRef(''), retakePrevious = useRef(0);
+  const [timeLimitIssue, setTimeLimitIssue] = useState('');
+  const previousQuizSeconds = result?.attempt?.countedSeconds ?? countedActivityTime((detail?.quizAttempts || []).filter(row => String(row.quizId) === String(quizId)));
   const startQuiz = () => {
     if (latestAttempt || result) { setRetakeTimeOpen(true); return; }
     retakeTimeChoice.current = undefined;
+    retakePrevious.current = 0; retakeReason.current = '';
     beginQuiz();
   };
   const beginQuiz = () => {
@@ -402,6 +407,8 @@ export default function QuizTakePage() {
     options: { skipReflection?: boolean; declaredCompletedAt?: string } = {},
   ) => {
     if (!quiz || !kind || !id || completionInFlightRef.current || !canUseComponent) return;
+    const timeIssue = activityTimeIssue(retakePrevious.current, reflection.timeTakenSeconds ?? elapsedSeconds, retakeTimeChoice.current);
+    if (timeIssue) { setTimeLimitIssue(timeIssue); return; }
     completionInFlightRef.current = true;
     setSubmitting(true);
     setSubmitError(null);
@@ -432,6 +439,8 @@ export default function QuizTakePage() {
         skipReflection: options.skipReflection === true,
         declaredCompletedAt: options.declaredCompletedAt,
         retakeTimeChoice: retakeTimeChoice.current,
+        ...(retakeTimeChoice.current ? { retakeTimeReason: retakeReason.current, retakePreviousSeconds: retakePrevious.current } : {}),
+        timeEntrySource: reflection.timeTakenSeconds != null ? 'input' : 'timer',
       });
       setReflectionChoiceOpen(false);
       setResult(res);
@@ -575,8 +584,9 @@ export default function QuizTakePage() {
             accessOpen={componentAccess.open}
           />
         )}
-        {retakeTimeOpen && <RetakeTimeDialog onClose={() => setRetakeTimeOpen(false)} onChoose={selection => {
-          retakeTimeChoice.current = selection; setRetakeTimeOpen(false); beginQuiz();
+        {timeLimitIssue && <ActivityTimeLimitNotice message={timeLimitIssue} onEdit={() => setTimeLimitIssue('')} />}
+        {retakeTimeOpen && <ActivityRetakeTimeDialog previousSeconds={previousQuizSeconds} onClose={() => setRetakeTimeOpen(false)} onChoose={(selection, reason) => {
+          retakeTimeChoice.current = selection; retakeReason.current = reason; retakePrevious.current = previousQuizSeconds; setRetakeTimeOpen(false); beginQuiz();
         }} />}
         {correction && (
           <CompletionTimeDialog

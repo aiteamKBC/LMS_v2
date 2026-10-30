@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, FileDown, Plus, Save, Trash2, Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { qualityContext, qualityReview, qualityPdf, qualityImageUrl, uploadQualityImage, uploadQualityEvidence, saveQualityReview, invalidateQualityReviews,
@@ -11,11 +11,12 @@ import { blankQualityForm, qualityCompletionIssue } from './qualityFormModel';
 import QualityFormCards from './QualityFormCards';
 import QualityEvidenceFiles from './QualityEvidenceFiles';
 import { suggestQualityType } from './qualityReviewType';
+import { createQualityMeetingReference } from './qualityMeetingReference';
 
 const input = 'w-full min-w-0 rounded-lg border border-background-200 bg-white px-3 py-2 text-sm text-foreground-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500';
 const button = 'inline-flex items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-white px-3 py-2 text-xs font-semibold text-primary-700 disabled:opacity-50';
-export default function QualityReviewDialog({ eventKey = '', reference, initialLearnerId = '', initialReviewType, reviewId, timeZone = 'Europe/London', onClose, onSaved, onDirtyChange, onBusyChange }: {
-  eventKey?: string; reference?: string; initialLearnerId?: string; initialReviewType?: QualityReviewType | ''; reviewId?: string; timeZone?: string; onClose: () => void; onSaved?: (review: QualityReview) => void; onDirtyChange?: (dirty: boolean) => void; onBusyChange?: (busy: boolean) => void;
+export default function QualityReviewDialog({ eventKey = '', reference, meetingId, meetingStartsAt, meetingEndsAt, initialLearnerId = '', initialReviewType, reviewId, timeZone = 'Europe/London', onClose, onSaved, onDirtyChange, onBusyChange }: {
+  eventKey?: string; reference?: string; meetingId?: string; meetingStartsAt?: string; meetingEndsAt?: string; initialLearnerId?: string; initialReviewType?: QualityReviewType | ''; reviewId?: string; timeZone?: string; onClose: () => void; onSaved?: (review: QualityReview) => void; onDirtyChange?: (dirty: boolean) => void; onBusyChange?: (busy: boolean) => void;
 }) {
   const [context, setContext] = useState<QualityContext | null>(null), [template, setTemplate] = useState<QualityTemplate | null>(null);
   const [review, setReview] = useState<QualityReview | null>(null), [form, setForm] = useState<QualityForm | null>(null);
@@ -28,6 +29,8 @@ export default function QualityReviewDialog({ eventKey = '', reference, initialL
   const currentReview = useRef(review); currentReview.current = review;
   const pdfObject = useRef(''), requestKey = useRef({ body: '', id: '' });
   const alive = useRef(true);
+  const withReference = useMemo(() => createQualityMeetingReference(reference, meetingId && meetingStartsAt && meetingEndsAt
+    ? { id: meetingId, startsAt: meetingStartsAt, endsAt: meetingEndsAt, timeZone } : undefined), [reference, meetingId, meetingStartsAt, meetingEndsAt, timeZone]);
   const dirty = Boolean(form && (JSON.stringify(form) !== baseline || (review && formType !== (review.reviewType || suggestQualityType(review.meeting.title)))));
   useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
@@ -45,11 +48,11 @@ export default function QualityReviewDialog({ eventKey = '', reference, initialL
       if (data) setContext(data);
     };
     void (reviewId ? qualityReview(reviewId, controller.signal, requestedType).then(value => accept(value.review, value.template, undefined, value.reviewType))
-      : qualityContext(eventKey, reference, learner, controller.signal, requestedType).then(value => accept(requestedType ? value.review : null, value.template, value)))
+      : withReference(token => qualityContext(eventKey, token, learner, controller.signal, requestedType), controller.signal).then(value => accept(requestedType ? value.review : null, value.template, value)))
       .catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : 'The form could not be loaded.'); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [eventKey, reference, learner, reviewId, reload, timeZone, requestedType, initialReviewType]);
+  }, [eventKey, withReference, learner, reviewId, reload, timeZone, requestedType, initialReviewType]);
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => { if (dirty) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
@@ -66,7 +69,8 @@ export default function QualityReviewDialog({ eventKey = '', reference, initialL
     if (requestKey.current.body !== body) requestKey.current = { body, id: crypto.randomUUID() };
     setBusy(true); setError(''); setConflict(false);
     try {
-      const saved = await saveQualityReview({ ...payload, requestId: requestKey.current.id }, review?.id, eventKey, reference);
+      const savePayload = { ...payload, requestId: requestKey.current.id };
+      const saved = await withReference(token => saveQualityReview(savePayload, review?.id, eventKey, token));
       setReview(saved); setFormType(saved.reviewType || formType); setForm(saved.form); setBaseline(JSON.stringify(saved.form)); onSaved?.(saved);
       currentReview.current = saved;
       setEvidenceFiles(saved.evidenceFiles ?? []);

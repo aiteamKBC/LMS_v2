@@ -1,3 +1,5 @@
+import { BUSINESS_TIME_ZONE, localClockToUtcIso } from '@/lib/timeZones';
+
 /** Normalize stored clocks without losing AM/PM from older session records. */
 export function normalizedClock(value: unknown): string {
   const match = String(value ?? '').trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$/i);
@@ -26,13 +28,17 @@ export function durationLabel(minutes: number): string {
   return `${hours} hour${hours === 1 ? '' : 's'}`;
 }
 
-export function calendarInputError(row: { sessions: { startTime: unknown; endTime: unknown; startDateTimeUtc?: string; durationMinutes?: number }[] }): string {
+export function calendarInputError(row: { timeZone?: string; sessions: { date?: string; timeZone?: string; startTime: unknown; endTime: unknown; startDateTimeUtc?: string; durationMinutes?: number }[] }): string {
   for (const session of row.sessions) {
     if (session.startDateTimeUtc && Number.isFinite(Date.parse(session.startDateTimeUtc)) && Number.isFinite(session.durationMinutes) && Number(session.durationMinutes) > 0) continue;
     try {
       const start = normalizedClock(session.startTime);
       const end = normalizedClock(session.endTime);
       if (end <= start) return 'Each session must end after it starts. Check its AM/PM values.';
+      if (session.date) {
+        try { localClockToUtcIso(`${session.date}T${start}`, session.timeZone || row.timeZone || BUSINESS_TIME_ZONE); }
+        catch (error) { return error instanceof Error ? error.message : 'Check the session time zone.'; }
+      }
     } catch { return 'A session has a missing or invalid time. Correct its schedule before sending invitations.'; }
   }
   return '';

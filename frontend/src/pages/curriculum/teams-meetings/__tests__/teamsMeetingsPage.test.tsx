@@ -290,7 +290,8 @@ function rowFor(name: string) {
 
 describe('Teams Meetings page', () => {
   beforeEach(() => {
-    vi.mocked(readImportedMeetingEditor).mockClear();
+    vi.mocked(readImportedMeetingEditor).mockReset();
+    vi.mocked(readImportedMeetingEditor).mockResolvedValue({ status: 'blocked', message: 'Original calendar requires connection.', connectionRequired: true, connectionKind: 'group' });
     vi.mocked(loadModuleStructure).mockReset();
     vi.mocked(loadModuleStructure).mockImplementation(async catalogueId => savedModule(catalogueId));
     vi.mocked(syncTeamsCalendarState).mockReset();
@@ -884,31 +885,57 @@ describe('Teams Meetings page', () => {
     expect(row.getByRole('button', { name: 'Create Teams meetings calendar' })).toBeInTheDocument();
   });
 
-  it('uses Update Teams calendar for an imported original without creating or replacing a meeting', async () => {
+  it('uses the original standard form and actions for a linked calendar, with visible access failure', async () => {
     fetchCurriculumTeamsMeetingSummaries.mockResolvedValue(summaries.map(summary => summary.moduleCatalogueId === 'MOD-1'
       ? { ...summary, meetingType: 'linked-external', calendarManagement: 'external' as const } : summary));
     await renderPage();
     await screen.findByText('Data Foundations');
     await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
     const dialog = within(await screen.findByRole('dialog'));
-    expect(await dialog.findByText('Series linked from Teams')).toBeVisible();
-    expect(dialog.getByRole('link', { name: 'Open existing meeting' })).toHaveAttribute('href', summaries[0].joinUrl);
-    expect(dialog.getByText(/Creating a new module meeting is blocked/)).toBeVisible();
-    expect(dialog.getByText('When a week is inserted')).toBeVisible();
-    expect(dialog.getByRole('button', { name: 'Reattach saved Teams data' })).toBeVisible();
-    expect(dialog.queryByRole('button', { name: 'Edit existing Teams meeting' })).not.toBeInTheDocument();
-    const update = dialog.getByRole('button', { name: 'Update Teams calendar' });
-    expect(update).toBeEnabled();
-    expect(dialog.getByRole('button', { name: 'Review Teams calendar update' })).toBeVisible();
-    for (const name of ['Create', 'Cancel series', 'Edit session dates', 'Save without notifying']) {
-      expect(dialog.queryByRole('button', { name })).not.toBeInTheDocument();
+    expect(await dialog.findByRole('alert')).toHaveTextContent('Original calendar requires connection.');
+    expect(dialog.getByRole('region', { name: 'Invitations and meeting settings' })).toBeVisible();
+    for (const name of ['Update Teams calendar', 'Cancel series', 'Edit session dates', 'Save without notifying']) {
+      expect(dialog.getByRole('button', { name })).toBeVisible();
+      expect(dialog.getByRole('button', { name })).toBeDisabled();
     }
+    expect(dialog.getByRole('button', { name: 'Connect Microsoft calendar' })).toBeEnabled();
+    expect(dialog.queryByText('Series linked from Teams')).not.toBeInTheDocument();
+    expect(dialog.queryByRole('region', { name: 'Edit original Teams meeting' })).not.toBeInTheDocument();
+    expect(dialog.queryByRole('button', { name: 'Review Teams calendar update' })).not.toBeInTheDocument();
+    expect(readImportedMeetingEditor).toHaveBeenCalledExactlyOnceWith('LIVE-1', { standard: true });
     expect(createTeamsMeeting).not.toHaveBeenCalled();
     expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
-    await userEvent.click(update);
-    await waitFor(() => expect(readImportedMeetingEditor).toHaveBeenCalledExactlyOnceWith('LIVE-1'));
+  });
+
+  it.each([false, true])('saves verified linked calendar participants through the standard API (invite added: %s)', async invite => {
+    window.localStorage.setItem('curriculumTeamsAutoSync', 'off');
+    fetchCurriculumTeamsMeetingSummaries.mockResolvedValue(summaries.map(summary => summary.moduleCatalogueId === 'MOD-1'
+      ? { ...summary, meetingType: 'linked-external', calendarManagement: 'external' as const } : summary));
+    vi.mocked(readImportedMeetingEditor).mockResolvedValue({ status: 'editable', message: 'Verified', sourceToken: 'SOURCE-1',
+      organizer: 'tutor@example.com', attendees: ['learner@example.com', 'existing.presenter@example.com'],
+      presenters: ['existing.presenter@example.com'], coOrganizers: [], rolesEditable: true,
+      options: { recordAutomatically: true, allowTranscription: true, lobbyBypassSettings: { scope: 'everyone' }, meetingSpokenLanguageTag: 'en-GB' } });
+    await renderPage();
+    await screen.findByText('Data Foundations');
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    await waitFor(() => expect(dialog.getByRole('combobox', { name: 'Attendees' })).toBeEnabled());
+    expect(dialog.getByRole('button', { name: 'Remove existing.presenter@example.com' })).toBeVisible();
+    const attendees = dialog.getByRole('combobox', { name: 'Attendees' });
+    fireEvent.change(attendees, { target: { value: 'new.learner@example.com' } });
+    fireEvent.keyDown(attendees, { key: 'Enter' });
+    await userEvent.click(dialog.getByRole('button', { name: invite ? 'Save and invite added people' : 'Save without notifying' }));
+    await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
+    expect(updateTeamsMeetingSchedule).toHaveBeenCalledWith('LIVE-1', expect.objectContaining({ peopleOnly: true,
+      originalSourceToken: 'SOURCE-1', attendees: ['learner@example.com', 'new.learner@example.com'], ...(invite ? {} : { invitationsOnly: true }),
+      eventId: summaries[0].eventId, startDateTimeUtc: new Date(summaries[0].occurrenceDates![0]).toISOString(),
+    }), expect.anything());
+    const input = (updateTeamsMeetingSchedule.mock.calls[0] as unknown as [string, { scheduledOccurrences?: { startDateTimeUtc: string }[] }])[1];
+    expect(input).not.toHaveProperty('presenters');
+    expect(input).not.toHaveProperty('recording');
+    expect(input.scheduledOccurrences?.map(item => item.startDateTimeUtc)).toEqual(summaries[0].occurrenceDates?.map(value => new Date(value).toISOString()));
     expect(createTeamsMeeting).not.toHaveBeenCalled();
-    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+    if (!invite) expect(finishTeamsUpdate).not.toHaveBeenCalled();
   });
 
   it('uses raw imported series metadata from an older server before offering calendar edits', async () => {
@@ -924,9 +951,10 @@ describe('Teams Meetings page', () => {
     expect(dialog.queryByRole('button', { name: 'Update Teams calendar' })).not.toBeInTheDocument();
     expect(dialog.queryByText('Series linked from Teams')).not.toBeInTheDocument();
     await act(async () => { release({ ...artifacts, series: { ...artifacts.series, meeting_type: 'linked-external' } } as never); });
-    expect(await dialog.findByText('Series linked from Teams')).toBeVisible();
+    expect(await dialog.findByRole('region', { name: 'Invitations and meeting settings' })).toBeVisible();
+    await waitFor(() => expect(readImportedMeetingEditor).toHaveBeenCalledWith('LIVE-1', { standard: true }));
     expect(dialog.queryByRole('button', { name: 'Create' })).not.toBeInTheDocument();
-    expect(dialog.getByRole('button', { name: 'Update Teams calendar' })).toBeEnabled();
+    expect(dialog.getByRole('button', { name: 'Update Teams calendar' })).toBeDisabled();
     expect(syncTeamsCalendarState).not.toHaveBeenCalledWith('LIVE-1');
     expect(createTeamsMeeting).not.toHaveBeenCalled();
     expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
@@ -1084,16 +1112,16 @@ describe('Teams Meetings page', () => {
     }
     render(<MemoryRouter><DialogWithAdditionalTab /></MemoryRouter>);
     const dialog = within(await screen.findByRole('dialog'));
-    expect(await dialog.findByText('Series linked from Teams')).toBeVisible();
+    expect(await dialog.findByRole('region', { name: 'Invitations and meeting settings' })).toBeVisible();
     await userEvent.click(dialog.getByRole('tab', { name: 'Additional week meeting' }));
     await userEvent.click(dialog.getByRole('button', { name: 'Create additional meeting' }));
     expect(createAdditional).toHaveBeenCalledTimes(1);
     expect(createTeamsMeeting).not.toHaveBeenCalled();
     expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
     await userEvent.click(dialog.getByRole('tab', { name: 'Module Teams calendar' }));
-    expect(await dialog.findByText('Series linked from Teams')).toBeVisible();
+    expect(await dialog.findByRole('region', { name: 'Invitations and meeting settings' })).toBeVisible();
     expect(dialog.queryByRole('button', { name: 'Create' })).not.toBeInTheDocument();
-    expect(dialog.getByRole('button', { name: 'Update Teams calendar' })).toBeEnabled();
+    expect(dialog.getByRole('button', { name: 'Update Teams calendar' })).toBeDisabled();
   });
 
   it('uses the Entra people picker for every meeting role', async () => {
@@ -1426,6 +1454,23 @@ describe('Teams Meetings page', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: /I checked Outlook/ }));
     await waitFor(() => expect(createTeamsMeeting).toHaveBeenCalledTimes(2));
     expect(createTeamsMeeting).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ confirmUncertain: true }));
+  });
+
+  it('shows a temporary Microsoft creation refusal without allowing an unverified second create', async () => {
+    const { ApiError } = await import('../../module-builder/moduleAuthoringData');
+    const message = 'Microsoft could not confirm the creation request. Check its status before creating again.';
+    createTeamsMeeting.mockRejectedValueOnce(new ApiError(502, message, undefined, {
+      code: 'teams_calendar_create_uncertain', error: message, graphStatus: 503, verificationRequired: true,
+    }));
+    await renderPage();
+    expect(await screen.findByText('Reporting Basics')).toBeInTheDocument();
+    await userEvent.click(within(rowFor('Reporting Basics')).getByRole('button', { name: 'Create Teams meetings calendar' }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+    expect(await within(dialog).findByText(message)).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'Create' })).toBeDisabled();
+    expect(createTeamsMeeting).toHaveBeenCalledTimes(1);
+    expect(finishTeamsCreation).not.toHaveBeenCalled();
   });
   /**
    * The create form lives in the dialog itself, so the dialog's own X, backdrop

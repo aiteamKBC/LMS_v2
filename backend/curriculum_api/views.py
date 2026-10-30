@@ -1,3 +1,4 @@
+from config.time_zones import calendar_zone, local_clock_to_utc
 import base64
 import contextlib
 import functools
@@ -39,7 +40,6 @@ from django.views.decorators.gzip import gzip_page
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from login.permissions import require_role
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
-from .course_types import CourseTypeError, course_types_for_modules
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
 from .teams_options_retry import microsoft_update_summary
 from .session_overrides import apply_session_overrides, override_clock, session_overrides
@@ -2304,6 +2304,15 @@ def teams_event_payload(payload, graph_settings):
     # Convert each instant in the business zone. A fixed UTC offset changes
     # midnight Thursday into two different weekdays across the autumn clock change.
     zone_name = graph_timezone_iana(graph_settings)
+    if utc_start.tzinfo is None:
+        raise ValueError('The meeting UTC start must include an offset.')
+    expected_local = utc_start.astimezone(calendar_zone(zone_name))
+    # Older clients used localStartDateTime for the browser's clock. Only the
+    # explicit scheduleTimeZone contract names the calendar's civil clock.
+    if payload.get('scheduleTimeZone') and (
+            local_start.replace(tzinfo=None) != expected_local.replace(tzinfo=None)
+            or (local_start.tzinfo is not None and local_start.astimezone(timezone.utc) != utc_start)):
+        raise ValueError('The meeting local time and UTC time do not match the selected calendar time zone. Review the session time.')
     graph_zone = graph_settings.get('timezone') or 'GMT Standard Time'
     targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, zone_name)
     event = {
@@ -2458,7 +2467,7 @@ def graph_timezone_iana(graph_settings):
     override = clean_str(os.environ.get('MICROSOFT_GRAPH_TIMEZONE_IANA'))
     if override:
         return override
-    return GRAPH_WINDOWS_TO_IANA.get(clean_str(graph_settings.get('timezone')), 'Europe/London')
+    return calendar_zone(clean_str(graph_settings.get('timezone')) or 'Europe/London').key
 
 
 def teams_schedule_settings(graph_settings, payload=None, series=None):
@@ -2467,10 +2476,10 @@ def teams_schedule_settings(graph_settings, payload=None, series=None):
     if selected and selected not in ('Africa/Cairo', 'Europe/London'):
         raise ValueError('Choose Egypt or England as the schedule time zone.')
     stored = clean_str((series or {}).get('timezone'))
-    zone = GRAPH_WINDOWS_TO_IANA.get(stored) if stored else selected
+    zone = calendar_zone(stored).key if stored else selected
     if not zone:
         return graph_settings
-    windows = next((key for key, value in GRAPH_WINDOWS_TO_IANA.items() if value == zone), stored)
+    windows = next((key for key, value in GRAPH_WINDOWS_TO_IANA.items() if value == zone), zone)
     return {**graph_settings, 'timezone': windows, '_schedule_timezone_iana': zone}
 
 
@@ -3662,6 +3671,15 @@ def curriculum_teams_meeting(request):
         event = microsoft_graph_request('POST', f'users/{owner_key}/events', payload={**event_payload, 'attendees': []})
     except RuntimeError as exc:
         logger.warning('Unable to create Module Builder Teams event: %s', exc)
+        from .teams_graph_failure_log import EVENT_SAVE, record_graph_failure
+        record_graph_failure(EVENT_SAVE, str(exc), organizer=organizer)
+        if getattr(exc, 'uncertain', False):
+            return json_error(
+                'Microsoft could not confirm the creation request. Check its status and the organizer calendar before creating again.',
+                status=502, code='teams_calendar_create_uncertain', verificationRequired=True,
+                graphStatus=getattr(exc, 'status_code', None), retryAfterSeconds=getattr(exc, 'retry_after', None),
+                requestId=getattr(exc, 'request_id', ''),
+            )
         return json_error('Microsoft Teams could not create the meeting.', status=502, detail=str(exc))
 
     event_id = clean_str(event.get('id'))
@@ -4208,7 +4226,10 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         )
     if request.method != 'PATCH':
         return json_error('Method not allowed.', status=405)
-    if module_has_external_teams_calendar(clean_str(series_rows[0].get('module_catalogue_id')), series_rows[0]):
+    from .teams_original_calendar import calendar_authorized, original_calendar_request
+    if series_rows[0].get('meeting_type') == 'linked-external' and not calendar_authorized(live_session_id):
+        return original_calendar_request(curriculum_teams_meeting_schedule)(request, live_session_id)
+    if module_has_external_teams_calendar(clean_str(series_rows[0].get('module_catalogue_id')), series_rows[0]) and not calendar_authorized(live_session_id):
         return json_error(
             'This imported meeting is managed in its original Teams calendar. Update its dates and invitations '
             'there. Reattaching saved LMS data preserves the existing link but does not fetch new Teams dates.',
@@ -12090,11 +12111,10 @@ def calendar_clock_to_utc_iso(date_value, time_value, time_zone=None):
         return ''
     naive = datetime(day.year, day.month, day.day) + timedelta(minutes=minutes)
     try:
-        zone = ZoneInfo(time_zone or graph_timezone_iana({}))
-    except Exception:
-        logger.debug('Unknown calendar timezone; falling back to UTC.', exc_info=True)
-        zone = timezone.utc
-    return naive.replace(tzinfo=zone).astimezone(timezone.utc).isoformat()
+        return local_clock_to_utc(naive, time_zone or graph_timezone_iana({})).isoformat()
+    except ValueError:
+        logger.warning('Calendar clock cannot name a unique instant in its saved time zone.')
+        return ''
 
 
 def module_schedule_view(module, tutor_name=None):
@@ -15563,7 +15583,6 @@ def provision_free_programme_tables():
             create table if not exists {authoring_table_name(FREE_COURSES_TABLE)} (
                 id varchar(128) primary key,
                 course_name text not null default '',
-                course_type varchar(16) not null default 'free' check (course_type in ('free', 'apprentices')),
                 description text,
                 cover_image_url text,
                 week_builder_week_ids {json_type} not null default '[]',
@@ -15616,11 +15635,6 @@ def provision_free_programme_tables():
             cursor.execute(f'''
                 alter table {authoring_table_name(FREE_COURSES_TABLE)}
                 add column if not exists course_name text not null default ''
-            ''')
-            cursor.execute(f'''
-                alter table {authoring_table_name(FREE_COURSES_TABLE)}
-                add column if not exists course_type varchar(16) not null default 'free'
-                check (course_type in ('free', 'apprentices'))
             ''')
             cursor.execute(f'''
                 alter table {authoring_table_name(FREE_COURSES_TABLE)}
@@ -15711,8 +15725,6 @@ def provision_free_programme_tables():
             module_columns = {row[1] for row in cursor.fetchall()}
             cursor.execute(f'pragma table_info({quote_ident(FREE_COURSES_TABLE)})')
             course_columns = {row[1] for row in cursor.fetchall()}
-            if 'course_type' not in course_columns:
-                cursor.execute(f"alter table {authoring_table_name(FREE_COURSES_TABLE)} add column course_type varchar(16) not null default 'free' check (course_type in ('free', 'apprentices'))")
             if 'course_name' not in course_columns:
                 cursor.execute(f'alter table {authoring_table_name(FREE_COURSES_TABLE)} add column course_name text not null default ""')
             if 'description' not in course_columns:
@@ -18799,7 +18811,7 @@ def live_session_row_to_component_settings(row):
         'teamsDurationMinutes': parse_int(row.get('duration_minutes'), 60),
         'durationMinutes': parse_int(row.get('duration_minutes'), 60),
         'teamsProvider': clean_str(row.get('provider')) or 'Microsoft Teams',
-        'sessionTimeZone': GRAPH_WINDOWS_TO_IANA.get(clean_str(row.get('timezone')), graph_timezone_iana({})),
+        'sessionTimeZone': graph_timezone_iana(teams_schedule_settings({}, series=row)),
         'teamsRepeat': clean_str(row.get('repeat_pattern')) or 'none',
         'teamsRepeatOccurrences': parse_int(row.get('repeat_occurrences'), 1),
         'teamsLobbyBypass': clean_str(row.get('lobby_bypass')) or 'invited',
@@ -19233,6 +19245,13 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         live_rows = [row for row in components_by_week.get(week_id, []) if frontend_component_type(row.get('type')) == 'live-session']
         for live_index, row in enumerate(live_rows):
             existing_settings = component_builder_settings(row)
+            # Updating the main calendar does not adopt a different meeting
+            # explicitly selected for this component (for example a master class).
+            explicit_link = clean_str(existing_settings.get('liveSessionLinkOverride'))
+            if explicit_link and explicit_link != clean_str(series_row.get('join_url')):
+                session_index += 1
+                handled_component_ids.add(clean_str(row.get('id')))
+                continue
             # A live session delivered by its own additional meeting is not part
             # of this series. It is never sent to the module's calendar, so it
             # owns no occurrence here and must keep ITS meeting's link rather
@@ -20133,7 +20152,7 @@ def curriculum_teams_meeting_summary(request):
             'eventId': clean_str(row.get('graph_event_id')),
             'onlineMeetingId': clean_str(row.get('online_meeting_id')),
             'organizerEmail': clean_str(row.get('organizer_email')),
-            'timeZone': GRAPH_WINDOWS_TO_IANA.get(clean_str(row.get('timezone')), graph_timezone_iana({})),
+            'timeZone': graph_timezone_iana(teams_schedule_settings({}, series=row)),
             'presenters': teams_series_email_list(row.get('presenters')),
             'coOrganizers': teams_series_email_list(row.get('co_organizers')),
             'attendees': teams_series_email_list(row.get('attendees')),
@@ -23947,7 +23966,6 @@ def free_programme_module_response(row, components, course=None):
     return {
         'id': module_id,
         'courseId': row.get('course_id') or course.get('id') or module_id,
-        'courseType': course.get('course_type') or 'free',
         'weekId': row.get('week_id') or '',
         'weekNumber': parse_int(row.get('week_number'), 1),
         'weekTitle': row.get('week_title') or '',
@@ -24065,11 +24083,6 @@ def save_free_programme_modules(programme_id, payload):
         modules = []
 
     with transaction.atomic():
-        existing_types = {
-            clean_str(course.get('id')): course.get('course_type') or 'free'
-            for course in free_programme_fetch_all(FREE_COURSES_TABLE, columns=['id', 'course_type'])
-        }
-        course_types = course_types_for_modules(modules, existing_types)
         # Scope the rewrite to this programme's own free courses/weeks. This
         # used to delete every row in both tables, destroying other
         # programmes' free-course data on every save.
@@ -24094,13 +24107,11 @@ def save_free_programme_modules(programme_id, payload):
         for module_index, module in enumerate(modules):
             if not isinstance(module, dict):
                 continue
-            course_type = course_types[module_index]
             course_key = (
                 clean_str(module.get('courseId') or module.get('course_id')),
                 clean_str(module.get('courseName') or module.get('course_name') or module.get('title') or module.get('name')),
                 clean_str(module.get('description') or ''),
                 clean_str(module.get('coverImageUrl') or module.get('cover_image_url') or ''),
-                course_type,
             )
             course_id = course_key[0]
             if not course_id:
@@ -24156,7 +24167,6 @@ def save_free_programme_modules(programme_id, payload):
                 'total_otjh': total_otjh,
             })
             group = course_groups.setdefault(course_id, {
-                'course_type': course_type,
                 'course_name': module.get('courseName') or module.get('course_name') or module.get('title') or module.get('name') or f'Free course {len(course_groups) + 1}',
                 'description': module.get('description') or '',
                 'cover_image_url': cover_image_url,
@@ -27317,8 +27327,6 @@ def curriculum_free_programme_modules(request, programme_id):
         return json_error('Invalid JSON body.')
     try:
         modules = save_free_programme_modules(programme_id, payload)
-    except CourseTypeError as exc:
-        return json_error(str(exc), status=400)
     except Exception as exc:
         logger.exception('Unable to save free programme modules for %s.', programme_id)
         return json_error('Unable to save free programme modules.', status=500, detail=str(exc))
@@ -27589,7 +27597,6 @@ def _free_module_response_to_input(module):
     return {
         'id': module.get('id'),
         'courseId': module.get('courseId'),
-        'courseType': module.get('courseType') or 'free',
         'weekId': module.get('weekId'),
         'weekNumber': module.get('weekNumber'),
         'weekTitle': module.get('weekTitle'),
@@ -31231,18 +31238,6 @@ def scope_ksb_achievement(coverage_items, learner_consumption, learners, plan, l
     }
 
 
-def learners_matching_profile(learners, learner_id):
-    """Narrow a scope roster to one learner by profile id; no id keeps them all.
-
-    Profile ids and enrolment ids are separate sequences that can collide, so
-    only the profile ``id`` is matched, never ``enrolmentId``.
-    """
-    learner_id = clean_str(learner_id)
-    if not learner_id:
-        return learners
-    return [row for row in learners if clean_str(row.get('id')) == learner_id]
-
-
 def scope_learner_ksb_impact_payload(request, scope, identifier):
     """The one read behind every scope's achievement view.
 
@@ -31289,10 +31284,6 @@ def _scope_learner_ksb_impact_payload(request, scope, identifier):
         '' if learner_status.lower() in {'', 'all'} else learner_status,
         lineage=lineage,
     )
-    # The module learners dialog reads one learner's programme-wide progress.
-    # Narrowing before any progress read keeps every learner-shaped read below
-    # to that learner instead of the programme's whole roster.
-    learners = learners_matching_profile(learners, request.GET.get('learnerId'))
     learner_ids = [
         int(row.get('sourceId') if row.get('sourceKind') == 'learner' else row.get('id'))
         for row in learners

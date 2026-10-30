@@ -103,7 +103,7 @@ def verified_context(series, rows, client):
     return path, master, events, last
 
 
-def read_edit(live_id, actor, access):
+def read_edit(live_id, actor, access, *, standard=False):
     series, rows, snapshot, module, version = load_edit(live_id)
     if pending(snapshot):
         operation = snapshot.get(calendar.KEY) or {}
@@ -119,14 +119,23 @@ def read_edit(live_id, actor, access):
                 meeting = read_online(client, series, meeting_path)
             except calendar.GraphRefusal:
                 meeting_path = None
+        if standard and meeting is None:
+            from .teams_original_calendar import read_original_online
+            meeting_path, meeting = read_original_online(series, access, client)
     roles = (meeting or {}).get('participants', {}).get('attendees')
     roles_editable = isinstance(roles, list) and all(text(item.get('upn')) and item.get('role') in
                           {'attendee', 'presenter', 'coorganizer'} for item in roles)
+    if standard:
+        from .teams_original_calendar import bind_calendar
+        bind_calendar(series, rows, master, events, meeting, original_path=path)
+        series, rows, snapshot, module, version = load_edit(live_id)
     source = {'kind': KIND, 'liveId': live_id, 'actor': actor, 'version': version,
               'accessMode': access['mode'], 'accessActor': text(access.get('actorId')),
               'calendarKind': access['calendarKind'], 'tenantId': access['tenantId'],
               'path': path, 'master': master, 'events': events, 'through': through.isoformat(),
               'onlinePath': meeting_path, 'online': meeting, 'joinUrl': series['join_url']}
+    if standard:
+        source['standard'] = True
     zone_name = calendar.ZONES.get(text(series.get('timezone')), text(series.get('timezone')) or 'Europe/London')
     by_slot = {}
     for event in events:
@@ -237,6 +246,8 @@ def move_commands(source, edits, rows, module, zone_name):
 
 def review_edit(live_id, payload, actor, access):
     source = signing.loads(payload.get('sourceToken') or '', salt=SALT, max_age=600)
+    if source.get('standard'):
+        raise calendar.Blocked('standard_calendar_editor', 'Save this read through the standard Update Teams calendar form.')
     if source.get('liveId') != live_id or source.get('actor') != actor or source.get('kind') != KIND:
         raise calendar.Blocked('wrong_review_owner', 'This meeting edit belongs to another account or series.')
     calendar.same_access(source, access)

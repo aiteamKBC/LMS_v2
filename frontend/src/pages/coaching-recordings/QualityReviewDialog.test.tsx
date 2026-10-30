@@ -1,10 +1,12 @@
 import { act, fireEvent, render as renderUi, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import QualityReviewDialog from './QualityReviewDialog';
-import { qualityContext, qualityForms, qualityReview, saveQualityReview, uploadQualityImage, QualityReviewError, type QualityContext, type QualityReview } from '@/api/coachingQualityReviews';
-vi.mock('@/api/coachingQualityReviews', async () => ({ ...await vi.importActual<typeof import('@/api/coachingQualityReviews')>('@/api/coachingQualityReviews'), qualityContext: vi.fn(), qualityForms: vi.fn(), qualityReview: vi.fn(), saveQualityReview: vi.fn(), uploadQualityImage: vi.fn() }));
+import { qualityContext, qualityForms, qualityReview, qualityPdf, saveQualityReview, uploadQualityImage, QualityReviewError, type QualityContext, type QualityReview } from '@/api/coachingQualityReviews';
+import { loadLinkedCoachingMeeting, type LinkedCoachingMeeting } from '@/api/coachingRecordings';
+vi.mock('@/api/coachingQualityReviews', async () => ({ ...await vi.importActual<typeof import('@/api/coachingQualityReviews')>('@/api/coachingQualityReviews'), qualityContext: vi.fn(), qualityForms: vi.fn(), qualityReview: vi.fn(), qualityPdf: vi.fn(), saveQualityReview: vi.fn(), uploadQualityImage: vi.fn() }));
+vi.mock('@/api/coachingRecordings', () => ({ loadLinkedCoachingMeeting: vi.fn() }));
 vi.mock('@/pages/learner/monthly-submission/AssignmentPdfPreview', () => ({ AssignmentPdfPreview: () => <div>PDF preview</div> }));
 const render = (element: ReactNode) => renderUi(<MemoryRouter>{element}</MemoryRouter>);
 const context = (): QualityContext => ({ template: { id: 'portfolio-sampling-v1', title: 'Portfolio Sampling Feedback Form', ratings: { gold: 'High quality', green: 'Effective', amber: 'Weak', red: 'Absent', na: 'Not applicable' },
@@ -13,14 +15,76 @@ const context = (): QualityContext => ({ template: { id: 'portfolio-sampling-v1'
   observer: { id: 'staff:1', name: 'Reviewer', email: 'reviewer@example.invalid' }, snapshot: { coach: { email: 'coach@example.invalid', name: 'Coach One' },
     learner: { id: '1', name: 'Learner One' }, meeting: { eventId: 'event', title: 'Synthetic MCM meeting', startsAt: '2026-10-20T10:00:00Z', endsAt: '2026-10-20T11:00:00Z' } } });
 const choose = async (kind = 'MCM') => { fireEvent.click(await screen.findByRole('radio', { name: kind })); await screen.findByRole('radio', { name: 'Green' }); };
+const occurrence = { meetingId: 'a'.repeat(32), meetingStartsAt: context().snapshot.meeting.startsAt, meetingEndsAt: context().snapshot.meeting.endsAt };
+const expiredReference = () => new QualityReviewError('Refresh the calendar to renew this meeting reference.', 400, 'invalid_calendar_reference');
 describe('Quality review form', () => {
   beforeEach(() => {
     vi.mocked(qualityForms).mockReset().mockResolvedValue({ forms: ['MCM','PR'].map(reviewType => ({ reviewType, title: reviewType, group: 'Forms', published: true, revision: 0, legacy: false })) });
     vi.mocked(qualityContext).mockReset().mockResolvedValue(context());
     vi.mocked(qualityReview).mockReset();
+    vi.mocked(qualityPdf).mockReset().mockResolvedValue(new Blob(['%PDF-synthetic'], { type: 'application/pdf' }));
+    vi.mocked(loadLinkedCoachingMeeting).mockReset().mockResolvedValue({ meeting: { meetingId: occurrence.meetingId,
+      startsAt: occurrence.meetingStartsAt, endsAt: occurrence.meetingEndsAt, recordingsReference: 'renewed-reference' } } as LinkedCoachingMeeting);
     vi.mocked(uploadQualityImage).mockReset().mockResolvedValue({ id: 'saved-image' });
     vi.mocked(saveQualityReview).mockReset().mockImplementation(async payload => ({ ...context().snapshot, id: 'review-one', version: 1, templateId: 'portfolio-sampling-v1', identity: 'saved',
       learner: { id: '1', name: 'Learner One' }, reviewType: payload.reviewType, status: payload.status, form: payload.form, reviewer: context().observer, updatedAt: '2026-10-20T12:00:00Z', updatedBy: 'staff:1' }) as QualityReview);
+  });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+  it('renews a stale reference on opening and keeps using it when choosing a form', async () => {
+    vi.mocked(qualityContext).mockRejectedValueOnce(expiredReference());
+    render(<QualityReviewDialog {...occurrence} initialLearnerId="1" reference="old-reference" onClose={vi.fn()} />);
+    await choose();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(loadLinkedCoachingMeeting).toHaveBeenCalledWith(occurrence.meetingId, '2026-10-20', 'Europe/London', expect.any(AbortSignal), true);
+    expect(vi.mocked(qualityContext).mock.calls.map(call => call[1])).toEqual(['old-reference', 'renewed-reference', 'renewed-reference']);
+    expect(saveQualityReview).not.toHaveBeenCalled();
+  });
+  it.each(['Save draft', 'Complete review'])('renews an expired reference during %s, preserves answers and enables the saved PDF', async action => {
+    const createUrl = vi.fn().mockReturnValue('blob:quality-review');
+    vi.stubGlobal('URL', class extends URL { static createObjectURL = createUrl; static revokeObjectURL = vi.fn(); });
+    const download = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    vi.mocked(saveQualityReview).mockRejectedValueOnce(expiredReference());
+    const onSaved = vi.fn();
+    render(<QualityReviewDialog {...occurrence} initialLearnerId="1" reference="old-reference" onClose={vi.fn()} onSaved={onSaved} />);
+    await choose();
+    fireEvent.click(screen.getByRole('radio', { name: 'Green' }));
+    const evidence = screen.getByRole('textbox', { name: 'Evidence observed and impact on the learner' });
+    fireEvent.change(evidence, { target: { value: 'Keep the full observation after reference expiry.' } });
+    fireEvent.click(screen.getByRole('button', { name: action }));
+    await screen.findByText(`${action === 'Save draft' ? 'Draft' : 'Completed'} · Version 1 saved`);
+    expect(evidence).toHaveValue('Keep the full observation after reference expiry.');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(qualityContext).toHaveBeenCalledTimes(2);
+    expect(loadLinkedCoachingMeeting).toHaveBeenCalledOnce();
+    expect(onSaved).toHaveBeenCalledOnce();
+    const [first, retry] = vi.mocked(saveQualityReview).mock.calls;
+    expect(first[0]).toEqual(retry[0]);
+    expect(first[0]).toMatchObject({ learnerId: '1', reviewType: 'MCM', expectedVersion: 0,
+      form: { criteria: { 'progress-1': { rating: 'green', evidence: 'Keep the full observation after reference expiry.' } } } });
+    expect(first[3]).toBe('old-reference'); expect(retry[3]).toBe('renewed-reference');
+    if (action === 'Save draft') {
+      fireEvent.click(screen.getByRole('button', { name: 'Complete review' }));
+      await screen.findByText('Completed · Version 1 saved');
+      const update = vi.mocked(saveQualityReview).mock.calls[2];
+      expect(update[1]).toBe('review-one'); expect(update[0].expectedVersion).toBe(1);
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Download PDF' }));
+    await waitFor(() => expect(download).toHaveBeenCalledOnce());
+    expect(qualityPdf).toHaveBeenCalledWith(expect.objectContaining({ id: 'review-one', status: 'completed' }));
+    expect(qualityContext).toHaveBeenCalledTimes(2);
+  });
+  it('keeps the selected form and unsaved answers when reference renewal is denied', async () => {
+    vi.mocked(saveQualityReview).mockRejectedValueOnce(expiredReference());
+    vi.mocked(loadLinkedCoachingMeeting).mockRejectedValue(new Error('This meeting is no longer accessible.'));
+    render(<QualityReviewDialog {...occurrence} initialLearnerId="1" reference="old-reference" onClose={vi.fn()} />);
+    await choose();
+    const evidence = screen.getByRole('textbox', { name: 'Evidence observed and impact on the learner' });
+    fireEvent.change(evidence, { target: { value: 'Do not discard this draft.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('no longer accessible');
+    expect(evidence).toHaveValue('Do not discard this draft.');
+    expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled();
+    expect(saveQualityReview).toHaveBeenCalledOnce(); expect(qualityContext).toHaveBeenCalledTimes(2);
   });
   it('opens one scoped read, starts with blank ratings and saves only on an explicit action', async () => {
     render(<QualityReviewDialog initialLearnerId="1" eventKey="event" reference="signed" onClose={vi.fn()} />);
