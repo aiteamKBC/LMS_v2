@@ -21,7 +21,7 @@ class CanonicalHoursTests(SimpleTestCase):
         self.db.create_function('GREATEST', 2, max)
         self.db.execute('''CREATE TABLE Learner.learner_progress_entries(
             id,learner_id,kind,component_ref,component_type,quiz_ref,passed,reported_time,
-            submitted_at,time_tracking_source,claimed_seconds,verified_seconds,
+            submitted_at,declared_completed_at,started_at,time_tracking_source,claimed_seconds,verified_seconds,
             component_link_source,source_system,actual_seconds,accepted,reporting_month,
             actual_basis,source_payload,deleted_at)''')
         self.db.execute('CREATE TABLE Learner.learner_activity_reporting_segments(progress_id,learner_id)')
@@ -75,6 +75,34 @@ class CanonicalHoursTests(SimpleTestCase):
         self.assertEqual(months[0]['submitted'], 0)
         self.assertEqual(self.db.total_changes, before)
         self.assertIsNone(self.db.execute('SELECT actual_seconds FROM Learner.learner_progress_entries WHERE id=2').fetchone()[0])
+
+    def test_saved_activity_decisions_match_learner_and_coach_totals_after_reopening(self):
+        for mode, expected in (('correct', 1200), ('add', 4800), ('retry', 3600)):
+            with self.subTest(mode=mode):
+                self.db.execute('DELETE FROM Learner.learner_progress_entries')
+                records = [self.entry(1, component_ref='same', claimed_seconds=3600, time_tracking_source='signed:input'),
+                           self.entry(2, component_ref='same', claimed_seconds=1200, time_tracking_source='signed:input',
+                                      source_payload={'retakeTimeChoice': mode})]
+                before = self.db.total_changes
+                with patch.object(canonical, 'query', side_effect=self.read):
+                    months = read_hour_totals(self.owner)
+                self.assertAlmostEqual(sum(row['completed'] for row in months), expected / 3600)
+                learner = canonical.progress_records_with_completion(records, project_current(records, {}))
+                self.assertEqual(learner[0]['actual_seconds'], expected)
+                self.assertEqual(self.db.total_changes, before)
+
+    def test_activity_decisions_preserve_the_declared_completion_month_on_coach_reads(self):
+        for mode, expected in (('correct', 1200), ('add', 4800)):
+            with self.subTest(mode=mode):
+                self.db.execute('DELETE FROM Learner.learner_progress_entries')
+                self.entry(1, component_ref='same', claimed_seconds=3600, time_tracking_source='signed:input')
+                self.entry(2, component_ref='same', claimed_seconds=1200, time_tracking_source='signed:input',
+                    submitted_at='2026-11-01T10:00:00Z', declared_completed_at='2026-10-31T13:00:00Z',
+                    started_at='2026-10-31T12:00:00Z', source_payload={'retakeTimeChoice': mode})
+                with patch.object(canonical, 'query', side_effect=self.read):
+                    months = read_hour_totals(self.owner)
+                self.assertEqual([row['month'] for row in months], ['2026-10'])
+                self.assertAlmostEqual(months[0]['completed'], expected / 3600)
 
     def test_shared_projection_preserves_retries_failures_staff_corrections_and_retained_imports(self):
         records = [

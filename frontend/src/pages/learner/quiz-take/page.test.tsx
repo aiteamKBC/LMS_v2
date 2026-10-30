@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import QuizTakePage from './page';
@@ -287,6 +287,32 @@ describe('quiz requirements loading', () => {
     expect(mocks.submit).toHaveBeenCalledWith(1, 'commercial', '501', expect.objectContaining({ timeTakenSeconds: 120 }));
   });
 
+  it('keeps quiz answers and reflection while reducing an addition from nine hours to eight', async () => {
+    mocks.detail.mockResolvedValue({ ...detail, components: [{ quizMeta: { quizId: 1 }, reflectionRequired: true }],
+      quizAttempts: [{ kind: 'quiz', quizId: 1, passed: true, grade: 1, questions: [], attempt: 1,
+        claimedSeconds: 21600, verifiedSeconds: 10, timeTrackingSource: 'signed:input',
+        submittedAt: '2026-10-01T10:00:00Z', timeTaken: '360:00' }] });
+    mocks.reflectionTimeSeconds = 10800;
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: /Retake Quiz/ }));
+    fireEvent.click(screen.getByRole('radio', { name: /^Add more learning time/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Yes, add reflection' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit reflection' }));
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('make 9 hours');
+    expect(mocks.submit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit time and try again' }));
+    expect(screen.getByText('My Learning Evidence and Reflection')).toBeVisible();
+    mocks.reflectionTimeSeconds = 7200;
+    fireEvent.click(screen.getByRole('button', { name: 'Submit reflection' }));
+    await waitFor(() => expect(mocks.submit).toHaveBeenCalledWith(1, 'commercial', '501', expect.objectContaining({
+      retakeTimeChoice: 'add', retakePreviousSeconds: 21600, timeTakenSeconds: 7200, timeEntrySource: 'input', feedback: 'Reflection',
+      answers: { '1': 1 },
+    })));
+  });
+
   it('keeps reflection optional for tutor-validated quizzes', async () => {
     mocks.detail.mockResolvedValue({
       ...detail,
@@ -343,7 +369,8 @@ describe('quiz requirements loading', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Retake Quiz/ }));
     expect(mocks.start).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Keep current date and duration' }));
+    fireEvent.click(screen.getByRole('radio', { name: /^Record another attempt/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(mocks.start).toHaveBeenCalledOnce();
     expect(await screen.findByRole('button', { name: 'Finish Quiz' })).toBeVisible();
     mocks.submit.mockResolvedValue({ passed: true, achievedScore: 1, totalScore: 1,
@@ -351,7 +378,7 @@ describe('quiz requirements loading', () => {
     fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
     await act(async () => {});
-    expect(mocks.submit).toHaveBeenCalledWith(1, 'commercial', '501', expect.objectContaining({ retakeTimeChoice: 'keep' }));
+    expect(mocks.submit).toHaveBeenCalledWith(1, 'commercial', '501', expect.objectContaining({ retakeTimeChoice: 'retry', retakePreviousSeconds: 0 }));
   });
 
   it('starts signed timing when the AI reading opens and records it once on finish', async () => {

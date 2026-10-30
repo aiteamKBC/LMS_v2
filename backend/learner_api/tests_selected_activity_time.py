@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 from django.test import RequestFactory, SimpleTestCase
 
-from . import components, videos
+from . import components, videos, quizzes
 from .active_users import completed_hours_value_from_progress
 from .current_learning import project_current
 from .time_tracking import issue_tracking_session
@@ -17,7 +17,7 @@ from .time_tracking import issue_tracking_session
 class SelectedActivityTimeTests(SimpleTestCase):
     def submit(self, *, media="component", kind="apprenticeship", selected=2400,
                source="input", session_seconds=300, reported="14 hours",
-               component_type="reading", used=False, token_owner="19", planned=None):
+               component_type="reading", used=False, token_owner="19", planned=None, history=None, decision=None, previous=None):
         endpoint = videos if media == "video" else components
         now = datetime(2026, 1, 15, 12, tzinfo=timezone.utc)
         session = issue_tracking_session(
@@ -29,7 +29,9 @@ class SelectedActivityTimeTests(SimpleTestCase):
             f"/learner_api/{media}/COMP-TIME/complete/?kind={kind}&learnerId=19",
             data=json.dumps({"trackingToken": session["trackingToken"], "timeTakenSeconds": selected,
                 "timeEntrySource": source, "reportedTime": reported, "videoTitle": "Synthetic video",
-                **({"plannedOtjh": planned} if planned is not None else {})}),
+                **({"plannedOtjh": planned} if planned is not None else {}),
+                **({'retakeTimeChoice': decision, 'retakeTimeReason': 'Correcting a mistaken time.'} if decision else {}),
+                **({'retakePreviousSeconds': previous} if previous is not None else {})}),
             content_type="application/json",
         )
         view = endpoint.submit_video_progress if media == "video" else endpoint.submit_component_progress
@@ -37,7 +39,7 @@ class SelectedActivityTimeTests(SimpleTestCase):
             view = view.__wrapped__
         model = Mock()
         model.objects.get.return_value = SimpleNamespace(id=19)
-        profile = SimpleNamespace(training_plan_progress=[])
+        profile = SimpleNamespace(training_plan_progress=history or [])
         with ExitStack() as stack:
             def mock(name, **kwargs):
                 return stack.enter_context(patch.object(endpoint, name, **kwargs))
@@ -206,3 +208,115 @@ class SelectedActivityTimeTests(SimpleTestCase):
         self.assert_selected_duration(response, save, 2400, 300)
         self.assertEqual(queue.call_args.kwargs["context"]["plannedOtjh"], "14h")
         self.assertEqual(queue.call_args.kwargs["context"]["actualTimeHours"], 2400 / 3600)
+
+    def test_three_explicit_decisions_keep_evidence_and_server_owned_totals(self):
+        for media in ('video', 'component'):
+            for kind in ('commercial', 'apprenticeship'):
+                for mode, expected in (('correct', 1200), ('add', 4800), ('retry', 3600)):
+                    with self.subTest(media=media, kind=kind, mode=mode):
+                        history = [{'kind': media, 'componentId': 'COMP-TIME', 'claimedSeconds': 3600,
+                                    'verifiedSeconds': 10, 'timeTrackingSource': 'signed:input', 'submittedAt': '2026-01-14T12:00:00Z'}]
+                        response, save, _ = self.submit(media=media, kind=kind, selected=1200, decision=mode, previous=3600, history=history)
+                        self.assertEqual(response.status_code, 200, response.content)
+                        record = json.loads(response.content)['record']
+                        self.assertEqual(record['countedSeconds'], expected)
+                        self.assertEqual(record['claimedSeconds'], 1200)
+                        self.assertEqual(record['verifiedSeconds'], 300)
+                        self.assertEqual(history[0]['claimedSeconds'], 3600)
+                        save.assert_called_once()
+
+    def test_addition_above_eight_hours_cannot_save_and_a_smaller_retry_can(self):
+        for media in ('video', 'component'):
+            history = [{'kind': media, 'componentId': 'COMP-TIME', 'claimedSeconds': 21600,
+                        'timeTrackingSource': 'signed:input', 'submittedAt': '2026-01-14T12:00:00Z'}]
+            response, save, _ = self.submit(media=media, selected=10800, decision='add', previous=21600, history=history)
+            self.assertEqual(response.status_code, 400)
+            self.assertIn('9 hours', json.loads(response.content)['error'])
+            self.assertIn('try again', json.loads(response.content)['error'])
+            save.assert_not_called()
+            response, save, _ = self.submit(media=media, selected=7200, decision='add', previous=21600, history=history)
+            self.assertEqual(json.loads(response.content)['record']['countedSeconds'], 28800)
+            save.assert_called_once()
+
+    def test_hard_limit_and_stale_previous_time_cannot_write(self):
+        response, save, _ = self.submit(selected=28801)
+        self.assertEqual(response.status_code, 400); save.assert_not_called()
+        history = [{'kind': 'component', 'componentId': 'COMP-TIME', 'claimedSeconds': 3600, 'timeTrackingSource': 'signed:input'}]
+        response, save, _ = self.submit(decision='add', previous=1200, history=history)
+        self.assertEqual(response.status_code, 400); save.assert_not_called()
+
+    def test_failed_explicit_quiz_retry_cannot_replace_successful_raw_hours(self):
+        old = {'kind': 'quiz', 'quizId': '77', 'passed': True, 'claimedSeconds': 3600,
+               'timeTrackingSource': 'signed:input', 'submittedAt': '2026-01-14T12:00:00Z'}
+        for mode in ('correct', 'add', 'retry'):
+            failed = {**old, 'claimedSeconds': 7200, 'passed': False, 'retakeTimeChoice': mode,
+                      'submittedAt': '2026-01-15T12:00:00Z'}
+            self.assertEqual(completed_hours_value_from_progress([old, failed]), 1)
+
+
+class QuizActivityTimeTests(SimpleTestCase):
+    QUIZ_ID = 77
+
+    def submit(self, *, kind='commercial', current=1200, previous=3600, mode='add', source='input', answers=None):
+        from .tests import QuizSubmitWorkingRulesTests
+        now = datetime(2026, 1, 15, 12, tzinfo=timezone.utc)
+        token = issue_tracking_session(activity_kind='quiz', activity_id=77, learner_kind=kind,
+            learner_id='19', counting_mode='active_quiz', issued_at=now - timedelta(seconds=20))
+        payload = {'trackingToken': token['trackingToken'], 'timeTakenSeconds': current,
+            'timeEntrySource': source, 'answers': answers or {'1': 10}, 'retakeTimeChoice': mode,
+            'retakeTimeReason': 'Correcting a synthetic entry.', 'retakePreviousSeconds': previous}
+        request = RequestFactory().post(f'/learner_api/quizzes/77/submit/?kind={kind}&learnerId=19',
+            data=json.dumps(payload), content_type='application/json')
+        model = Mock(); model.objects.get.return_value = SimpleNamespace(id=19)
+        history = [{'kind': 'quiz', 'quizId': '77', 'passed': True, 'claimedSeconds': previous,
+            'timeTrackingSource': 'signed:input', 'submittedAt': '2026-01-14T12:00:00Z'}]
+        view = quizzes.submit_quiz_attempt
+        while hasattr(view, '__wrapped__'): view = view.__wrapped__
+        with ExitStack() as stack:
+            stack.enter_context(patch('socket.socket', side_effect=AssertionError('Network forbidden')))
+            for name, value in {'SOURCE_MODELS': {kind: model}, '_fetch_quiz': QuizSubmitWorkingRulesTests._quiz(self),
+                    'learner_profile_for_source': SimpleNamespace(training_plan_progress=history),
+                    'tracking_session_already_used': False}.items():
+                stack.enter_context(patch.object(quizzes, name, new=value) if name == 'SOURCE_MODELS'
+                                    else patch.object(quizzes, name, return_value=value))
+            save = stack.enter_context(patch.object(quizzes, 'save_progress_record'))
+            audit = stack.enter_context(patch.object(quizzes, 'record_quiz_attempt'))
+            stack.enter_context(patch.object(quizzes.timezone, 'now', return_value=now))
+            stack.enter_context(patch('learner_api.working_rules.learner_holiday_details', return_value={}))
+            response = view(request, 77)
+        return response, save, audit
+
+    def test_decisions_use_selected_time_and_preserve_scores_and_verified_time(self):
+        for kind in ('commercial', 'apprenticeship'):
+            for source in ('input', 'timer'):
+                for mode, expected in (('correct', 1200), ('add', 4800), ('retry', 3600)):
+                    with self.subTest(kind=kind, source=source, mode=mode):
+                        response, save, audit = self.submit(kind=kind, mode=mode, source=source)
+                        self.assertEqual(response.status_code, 200, response.content)
+                        data = json.loads(response.content)
+                        self.assertTrue(data['passed']); self.assertEqual(data['achievedScore'], 1)
+                        self.assertEqual(data['attempt']['countedSeconds'], expected)
+                        self.assertEqual(data['attempt']['claimedSeconds'], 1200)
+                        self.assertEqual(data['attempt']['verifiedSeconds'], 20)
+                        save.assert_called_once(); audit.assert_called_once()
+
+    def test_over_limit_attempt_writes_nothing_and_smaller_addition_can_save(self):
+        for current, expected_status in ((10800, 400), (7200, 200)):
+            response, save, audit = self.submit(previous=21600, current=current)
+            self.assertEqual(response.status_code, expected_status, response.content)
+            if current == 10800:
+                self.assertIn('9 hours', json.loads(response.content)['error'])
+                save.assert_not_called(); audit.assert_not_called()
+            else:
+                self.assertEqual(json.loads(response.content)['attempt']['countedSeconds'], 28800)
+                save.assert_called_once(); audit.assert_called_once()
+
+    def test_failed_attempt_response_keeps_the_successful_total_for_the_next_retry(self):
+        for mode in ('correct', 'add', 'retry'):
+            response, save, audit = self.submit(mode=mode, current=7200, answers={'1': 11})
+            self.assertEqual(response.status_code, 200, response.content)
+            data = json.loads(response.content)
+            self.assertFalse(data['passed'])
+            self.assertEqual(data['attempt']['countedSeconds'], 3600)
+            self.assertEqual(data['attempt']['claimedSeconds'], 7200)
+            save.assert_called_once(); audit.assert_called_once()

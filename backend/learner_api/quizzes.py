@@ -460,7 +460,7 @@ def submit_quiz_attempt(request, quiz_id):
     # never costs them a retake and grades to exactly the same score.
     from .retake_timing import choice
     try:
-        retake_choice = choice(payload.get('retakeTimeChoice'))
+        retake_choice = choice(payload.get('retakeTimeChoice'), activity=True)
     except ValueError as exc:
         return _error(str(exc), 400)
     submitted_at_dt = timezone.now()
@@ -586,7 +586,9 @@ def submit_quiz_attempt(request, quiz_id):
         return _error("This activity timing session has already been submitted.", 409)
     started_at = tracking["startedAt"].isoformat()
     submitted_at = submitted_at_dt.isoformat()
-    time_taken = _format_clock(tracking["verifiedSeconds"])
+    selected_source = payload.get('timeEntrySource')
+    selected_seconds = tracking['claimedSeconds'] if selected_source in ('input', 'timer') else tracking['verifiedSeconds']
+    time_taken = _format_clock(selected_seconds)
 
     # Slim, id-referenced record actually stored in Training_plan_progress.
     # Names (quizName/week/module) are dropped — the plan tree resolves them from
@@ -601,13 +603,13 @@ def submit_quiz_attempt(request, quiz_id):
         "totalScore": question_count,          # questions total
         "ksbs": ksbs,                          # KSB codes the learner selected
         "feedback": feedback,
-        "reportedTime": reported_time,
+        "reportedTime": f'{selected_seconds / 60} minutes' if selected_source in ('input', 'timer') else reported_time,
         "reflectionSkipped": reflection_skipped,
         "questions": stored_questions,         # id-referenced (see above)
         "startedAt": started_at,
         "submittedAt": submitted_at,
         "timeTaken": time_taken,
-        "timeTrackingSource": tracking["source"],
+        "timeTrackingSource": f'{tracking["source"]}:{selected_source}' if selected_source in ('input', 'timer') else tracking["source"],
         "timeTrackingCalculation": tracking["calculation"],
         "timeTrackingSessionId": tracking["sessionId"],
         "claimedSeconds": tracking["claimedSeconds"],
@@ -619,7 +621,15 @@ def submit_quiz_attempt(request, quiz_id):
         "declaredCompletedAt": declared_at.isoformat() if declared_at else None,
         "submissionValidationReason": validation_reason,
         "retakeTimeChoice": retake_choice,
+        **{key: payload[key] for key in ('retakeTimeReason', 'retakePreviousSeconds') if key in payload},
     }
+
+    from .retake_timing import validate_activity_time
+    from .active_users import _progress_record_minutes
+    try:
+        validate_activity_time(attempt, history, seconds_for=lambda row: _progress_record_minutes(row) * 60)
+    except ValueError as exc:
+        return _error(str(exc), 400)
 
     if active is not None:
         activity = {
@@ -637,6 +647,8 @@ def submit_quiz_attempt(request, quiz_id):
             save_progress_record(active, attempt, activity)
         except ComponentReferenceError as exc:
             return _error(str(exc), 400)
+        except ValueError as exc:
+            return _error(str(exc), 409)
         except IntegrityError as exc:
             if "learner_progress_tracking_session_uq" in str(exc):
                 return _error("This activity timing session has already been submitted.", 409)
