@@ -29173,11 +29173,14 @@ def programme_identity_candidates(programme_id):
     return [value for value in unique(candidates) if value]
 
 
-def assigned_learners_for_programme(programme_id, lifecycle_status=''):
+@scoped_curriculum_read
+def assigned_learners_for_programme(programme_id, lifecycle_status='', *, strict=False):
     # Read once: both the placement query and the name filter below need the
     # same candidates, and resolving them reads the programme's module rows.
     candidates = programme_identity_candidates(programme_id)
     if connection.vendor != 'postgresql' or not learner_schema_table_exists('learners'):
+        if strict:
+            raise DatabaseError('The learner directory is unavailable.')
         canonical_rows = []
     else:
         canonical_rows = []
@@ -29254,6 +29257,8 @@ def assigned_learners_for_programme(programme_id, lifecycle_status=''):
                 )
                 canonical_rows = rows_as_dicts(cursor)
         except Exception as exc:
+            if strict:
+                raise
             logger.warning('Could not load assigned learners for programme %s: %s', programme_id, exc)
             canonical_rows = []
     if not candidates:
@@ -29463,7 +29468,7 @@ def narrow_learners_to_placement(learners, id_key, scope_id, name_key, scope_nam
     return kept
 
 
-def assigned_learners_for_scope(scope, identifier, lifecycle_status='', lineage=None):
+def assigned_learners_for_scope(scope, identifier, lifecycle_status='', lineage=None, *, strict=False):
     """The learners enrolment placed inside a curriculum scope.
 
     One read of the programme roster, then narrowed to the cohort/group the
@@ -29478,6 +29483,7 @@ def assigned_learners_for_scope(scope, identifier, lifecycle_status='', lineage=
     wrong group's list rather than no list at all.
     """
     lineage = lineage or scope_placement_lineage(scope, identifier)
+    read_options = {'strict': True} if strict else {}
     programme_ident = scope_programme_identifier(lineage)
     module_id = clean_str(lineage.get('moduleCatalogueId')) if scope in {'module', 'week', 'component'} else ''
     if not programme_ident and not module_id:
@@ -29490,7 +29496,7 @@ def assigned_learners_for_scope(scope, identifier, lifecycle_status='', lineage=
             # plan entries only; never seed the group placement learners.
             learners = module_assignment_roster(module_id, [], lifecycle_status)
         else:
-            learners = assigned_learners_for_programme(programme_ident, lifecycle_status) if programme_ident else []
+            learners = assigned_learners_for_programme(programme_ident, lifecycle_status, **read_options) if programme_ident else []
             learners = narrow_learners_to_placement(
                 learners, 'cohortId', lineage.get('cohortId'), 'cohort', lineage.get('cohortName'),
             )
@@ -29499,7 +29505,7 @@ def assigned_learners_for_scope(scope, identifier, lifecycle_status='', lineage=
             )
             learners = module_assignment_roster(module_id, learners, lifecycle_status)
     else:
-        learners = assigned_learners_for_programme(programme_ident, lifecycle_status) if programme_ident else []
+        learners = assigned_learners_for_programme(programme_ident, lifecycle_status, **read_options) if programme_ident else []
         learners = narrow_learners_to_placement(
             learners, 'cohortId', lineage.get('cohortId'), 'cohort', lineage.get('cohortName'),
         )

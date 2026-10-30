@@ -12,6 +12,11 @@ import { fetchCurriculumDeliveryScope } from '@/lib/curriculumApi';
  * cohort, group and tutor filters, the search text and the open learner list.
  */
 
+vi.mock('@/api/assignedLearners', () => ({
+  fetchAssignedLearners: vi.fn(async () => ({ scope: 'module', id: 'MOD-1', status: 'active', total: 1, filteredTotal: 1, page: 1, pageSize: 25,
+    learners: [{ id: 'learner-1', name: 'A Learner', email: 'learner@example.com', status: 'active' }] })),
+}));
+
 const fetchLearnerAssignments = vi.fn();
 const fetchCurriculumScopeLearnerKsbImpact = vi.fn();
 const reloadModules = vi.fn(async () => null);
@@ -217,7 +222,10 @@ describe('Module Builder keeps the reader\'s place in its address', { timeout: 1
     await waitFor(() => expect(address().get('q')).toBe('Foundations'));
 
     const card = screen.getByText('Data Foundations').closest('article')!;
-    await user.click(within(card).getByRole('button', { name: /^(Assign learners|Learners)/ }));
+    await user.click(within(card).getByRole('button', { name: /Data Foundations: view assigned learners/ }));
+    await screen.findByRole('dialog', { name: /Data Foundations.*Assigned learners/ });
+    expect(fetchCurriculumScopeLearnerKsbImpact).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Assignments & progress' }));
     await screen.findByRole('dialog', { name: 'Data Foundations learner progress' });
     await waitFor(() => expect(address().get('learners')).toBe('MOD-1'));
     // Each change replaces the current entry: Back still leaves in one step.

@@ -11,9 +11,9 @@ const people = [
   { id: '1', name: 'Alex Example', email: 'alex@example.invalid' },
   { id: '2', name: 'Jamie Example', email: 'jamie@example.invalid' },
 ];
-function Picker({ single = false, initial = '', includeGuests = false }) {
+function Picker({ single = false, initial = '', includeGuests = false, showCount = false }) {
   const [value, setValue] = useState(initial);
-  return <><EntraPeopleInput label="Presenter" value={value} onChange={setValue} single={single} includeGuests={includeGuests} /><output data-testid="value">{value}</output><button type="button">Outside</button></>;
+  return <><EntraPeopleInput label="Presenter" value={value} onChange={setValue} single={single} includeGuests={includeGuests} showCount={showCount} /><output data-testid="value">{value}</output><button type="button">Outside</button></>;
 }
 beforeEach(() => {
   vi.clearAllMocks();
@@ -21,6 +21,38 @@ beforeEach(() => {
   vi.mocked(searchEntraPeople).mockResolvedValue({ people, hasMore: false });
 });
 afterEach(() => vi.unstubAllGlobals());
+
+it('counts unique committed emails after manual entry, paste, removal and undo', async () => {
+  const user = userEvent.setup();
+  render(<Picker showCount initial={'alex@example.invalid\nALEX@example.invalid\ninvalid'} />);
+  const count = screen.getByLabelText('Presenter selected count');
+  expect(count).toHaveTextContent('1 selected');
+  await user.type(screen.getByRole('combobox'), 'jamie@example.invalid{Enter}');
+  expect(count).toHaveTextContent('2 selected');
+  await user.click(screen.getByRole('button', { name: 'Remove jamie@example.invalid' }));
+  expect(count).toHaveTextContent('1 selected');
+  await user.keyboard('{Control>}z{/Control}');
+  expect(count).toHaveTextContent('2 selected');
+  await user.click(screen.getByRole('combobox'));
+  await user.paste('guest@example.invalid; jamie@example.invalid');
+  expect(count).toHaveTextContent('3 selected');
+  await user.type(screen.getByRole('combobox'), 'Uncommitted name');
+  expect(count).toHaveTextContent('3 selected');
+});
+
+it('shows the attendee count when the shared create/edit fields are prefilled', async () => {
+  function MeetingFields() {
+    const [form, setForm] = useState({ attendees: '', presenters: '', coOrganizers: '', recording: 'record', lobbyBypass: 'everyone', spokenLanguage: 'en-GB' });
+    return <TeamsPeopleFields form={form} patch={change => setForm(previous => ({ ...previous, ...change }))}
+      onPrefill={() => setForm(previous => ({ ...previous, attendees: 'one@example.invalid\nONE@example.invalid\ntwo@example.invalid' }))} />;
+  }
+  render(<MeetingFields />);
+  expect(screen.getByLabelText('Attendees selected count')).toHaveTextContent('0 selected');
+  await userEvent.click(screen.getByRole('button', { name: /Prefill from/ }));
+  expect(screen.getByLabelText('Attendees selected count')).toHaveTextContent('2 selected');
+  await userEvent.click(screen.getByRole('button', { name: 'Remove two@example.invalid' }));
+  expect(screen.getByLabelText('Attendees selected count')).toHaveTextContent('1 selected');
+});
 
 it('selects a named Entra result while preserving the email payload', async () => {
   const user = userEvent.setup();
