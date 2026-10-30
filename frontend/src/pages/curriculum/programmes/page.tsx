@@ -1398,7 +1398,7 @@ function CurriculumProgrammesContent() {
                   <Metric label="Groups" value={String(prog.groups || 0)} onOpen={openTab('delivery')} hint={`Open the groups of ${prog.name}`} />
                   <Metric label="Modules" value={String(prog.modules)} onOpen={openTab('design')} hint={`Open the ${prog.modules} modules of ${prog.name}`} />
                   <Metric label="Weeks" value={`${prog.weeks}`} onOpen={openTab('design')} hint={`Open the module plan of ${prog.name}`} />
-                  <AssignedLearners target={{ scope: 'programme', id: prog.sourceId || prog.id, name: prog.name }} initialCount={prog.learners} render={(count, open) => <Metric label="Learners" value={count} onOpen={open} hint={`View active assigned learners in ${prog.name}`} />} />
+                  <AssignedLearners target={{ scope: 'programme', id: prog.sourceId || prog.id, name: prog.name }} render={(count, open) => <Metric label="Learners" value={count} onOpen={open} hint={`View active assigned learners in ${prog.name}`} />} />
                   <button
                     type="button"
                     onClick={openTab('coverage', 'mapping')}
