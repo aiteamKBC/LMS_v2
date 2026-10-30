@@ -1038,6 +1038,7 @@ interface RailNodeProps {
   selected: boolean;
   focused?: boolean;
   issues: number;
+  nested?: boolean;
   weekSessionDate?: string;
   /**
    * The delivery days of this week a ticked holiday falls on, as `YYYY-MM-DD`.
@@ -1089,7 +1090,7 @@ function SortableRailNode(props: RailNodeProps) {
   );
 }
 
-function RailNodeCard({ component, index, selected, focused = false, issues, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, otherWeeks, onCopyToWeek, onMoveToWeek, linkLabel = '', moveNote = '', handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
+function RailNodeCard({ component, index, selected, focused = false, issues, nested = false, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, otherWeeks, onCopyToWeek, onMoveToWeek, linkLabel = '', moveNote = '', handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
   const isLiveSession = component.type === 'live-session';
@@ -1139,21 +1140,28 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
         </SpineGutter>
         <div
           onClick={onSelect}
-          className={`min-w-0 flex-1 my-1 flex flex-wrap items-center gap-2 rounded-xl border px-2.5 py-2.5 transition-all cursor-pointer ${dragging ? 'border-primary-300 bg-background-50 shadow-xl ring-2 ring-primary-200' : focused ? 'border-primary-400 bg-primary-50 shadow-md ring-4 ring-primary-200/70' : selected ? `${tone.border} ${tone.soft} shadow-sm` : 'border-background-200 bg-background-50 hover:border-background-300 hover:shadow-sm'}`}
+          className={`min-w-0 flex-1 my-1 ${nested ? 'grid grid-cols-[20px_32px_minmax(0,1fr)] items-start gap-x-2 gap-y-1.5' : 'flex flex-wrap items-center gap-2'} rounded-xl border px-2.5 py-2.5 transition-all cursor-pointer ${dragging ? 'border-primary-300 bg-background-50 shadow-xl ring-2 ring-primary-200' : focused ? 'border-primary-400 bg-primary-50 shadow-md ring-4 ring-primary-200/70' : selected ? `${tone.border} ${tone.soft} shadow-sm` : 'border-background-200 bg-background-50 hover:border-background-300 hover:shadow-sm'}`}
         >
           <button type="button" {...(handleProps || {})} onClick={e => e.stopPropagation()} aria-label="Drag to reorder" className="grid place-items-center w-5 h-8 -ml-0.5 shrink-0 text-foreground-300 hover:text-foreground-600 cursor-grab active:cursor-grabbing touch-none rounded"><AppIcon className="ri-draggable"></AppIcon></button>
           <span className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip}`}><AppIcon className={`${definition.icon} text-base`}></AppIcon></span>
           <span className="flex-1 min-w-0">
-          <span className="flex min-w-0 items-center gap-2">
-            <span onMouseEnter={showFullTextWhenTruncated} className={`min-w-0 flex-1 text-[13px] font-bold truncate ${unedited ? 'text-foreground-500' : 'text-foreground-900'}`}>{component.title || weekTypeLabel(component.type)}</span>
+          <span className={`flex min-w-0 gap-2 ${nested ? 'items-start' : 'items-center'}`}>
+            <span onMouseEnter={showFullTextWhenTruncated} className={`min-w-0 flex-1 text-[13px] font-bold ${nested ? 'break-words [overflow-wrap:anywhere]' : 'truncate'} ${unedited ? 'text-foreground-500' : 'text-foreground-900'}`}>{component.title || weekTypeLabel(component.type)}</span>
             {issues > 0 && <span className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-600"><AppIcon className="ri-error-warning-fill"></AppIcon>{issues}</span>}
           </span>
+          {nested && scheduledDate && (
+            <span className="mt-1 flex flex-wrap items-center gap-x-1 text-[10px] text-foreground-400">
+              <AppIcon className="ri-calendar-line shrink-0" />
+              Session:
+              <time dateTime={scheduledDate} className="whitespace-nowrap tabular-nums">{formatDateLabel(scheduledDate)}</time>
+            </span>
+          )}
           <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-foreground-400">
             <span className={`font-semibold ${tone.text}`}>{weekTypeLabel(component.type)}</span>
             <span className="tabular-nums">{formatHoursMinutes(component.expectedOtjh)}</span>
             <span className="tabular-nums">{component.points}pts</span>
             {component.ksbMappings.length > 0 && <span className="tabular-nums">{component.ksbMappings.length} KSB</span>}
-            {scheduledDate && <span className="tabular-nums">{formatDateLabel(scheduledDate)}</span>}
+            {!nested && scheduledDate && <span className="tabular-nums">{formatDateLabel(scheduledDate)}</span>}
             {isLiveSession && ['missing', 'ambiguous'].includes(String(component.settings?.teamsCalendarBinding || '')) && (
               <span
                 title={externalTeamsCalendar
@@ -1207,7 +1215,7 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
           </span>
         </span>
         {(onDuplicate || onDelete) && (
-          <span className="flex shrink-0 items-center gap-0.5">
+          <span className={`flex shrink-0 items-center gap-0.5 ${nested ? 'col-span-3 justify-end border-t border-background-200 pt-1' : ''}`}>
             {onDuplicate && (
               <CloneComponentButton
                 label={component.title || weekTypeLabel(component.type)}
@@ -1237,7 +1245,7 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
             title={`${liveSessionDriftCause(dateDrift)?.sentence ? `${liveSessionDriftCause(dateDrift)?.sentence} ` : ''}Teams calendar currently has this meeting on ${formatDateLabel(dateDrift.storedDate)}. This week is now planned for ${dateDrift.weekDates.map(formatDateLabel).join(' and ')}. ${externalTeamsCalendar
               ? 'This is an imported Teams series. Open Update Teams meeting to review and re-match its saved dates. If the planned date is missing, the organizer must update the original series in Teams before its dates can be imported. The LMS keeps the existing link and does not reschedule this series.'
               : 'This session keeps its confirmed date because attendees were invited to it. Open the Teams Meetings page and run Update to move the Microsoft meeting to the planned date and notify attendees.'}`}
-            className="basis-full rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[10px] leading-snug text-amber-900"
+            className={`${nested ? 'col-span-3' : 'basis-full'} rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[10px] leading-snug text-amber-900`}
           >
             <p className="flex items-center gap-1 font-bold">
               <AppIcon className="ri-calendar-schedule-line text-[11px] text-amber-600"></AppIcon>
@@ -1711,6 +1719,7 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
                 <Fragment key={component.id}>
                   <SortableRailNode
                     component={component}
+                    nested={nested}
                     index={index}
                     selected={component.id === selectedId}
                     focused={component.id === focusedId}
@@ -1734,7 +1743,7 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
             </div>
           </SortableContext>
           <DragOverlay>
-            {activeComponent ? <RailNodeCard component={activeComponent} index={components.findIndex(c => c.id === activeComponent.id)} selected dragging issues={0} weekSessionDate={weekSessionDate} holidayDates={holidayDates} dateDrift={dateDriftByComponentId?.get(activeComponent.id)} /> : null}
+            {activeComponent ? <RailNodeCard component={activeComponent} index={components.findIndex(c => c.id === activeComponent.id)} selected dragging issues={0} nested={nested} weekSessionDate={weekSessionDate} holidayDates={holidayDates} dateDrift={dateDriftByComponentId?.get(activeComponent.id)} /> : null}
           </DragOverlay>
         </DndContext>
       )}
