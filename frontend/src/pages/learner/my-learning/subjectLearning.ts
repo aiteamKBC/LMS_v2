@@ -109,11 +109,11 @@ function authoredWeekRanges(activities: SubjectEntry[]) {
   for (const [key, rows] of entries) {
     const declared = rows.map(row => row.schedule.delivery_week).find(week => week
       && `week:${week.module_id}:${week.id}` === key);
-    const live = rows.filter(row => (row.native?.type || row.category).replace(/-/g, '_') === 'live_session')
+    const live = rows.filter(row => (row.native?.type || row.category).trim().toLowerCase().replace(/[\s-]+/g, '_') === 'live_session' && !row.native?.additionalMeeting)
       .sort((a, b) => a.position - b.position)[0];
     const start = (declared ? deliveryDateKey(declared.start) : '')
       || (live && (sessionDeliveryDate(live.native || {}) || deliveryDate(live)))
-      || rows.map(deliveryDate).find(Boolean) || null;
+      || rows.filter(row => !row.native?.additionalMeeting).map(deliveryDate).find(Boolean) || null;
     const months = [...new Set(rows.map(row => row.schedule.month).filter(Boolean))];
     const lastDay = start ? deliveryWeekEnd(start) : null;
     const declaredEnd = deliveryDateKey(declared?.end);
