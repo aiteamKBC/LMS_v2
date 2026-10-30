@@ -81,6 +81,7 @@ export default function MeetingDetailsDrawer({ meeting, reference, timeZone, now
     </aside>
     {qualityOpen && <Suspense fallback={<div role="status" className="fixed inset-0 z-[90] flex items-center justify-center bg-white/95 text-sm">Loading the quality form…</div>}>
       <QualityReviewDialog eventKey={reference ? '' : meeting.eventKey ?? ''} reference={reference} initialLearnerId={meeting.learnerIds.length === 1 ? meeting.learnerIds[0] : ''}
+        meetingId={meeting.meetingId} meetingStartsAt={meeting.startsAt} meetingEndsAt={meeting.endsAt}
         reviewId={reviewId} timeZone={timeZone} onClose={() => setQualityOpen(false)} onSaved={() => { invalidateQualityReviews(); setQualityRefresh(value => value + 1); }} />
     </Suspense>}
   </div>, document.body);
