@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 from urllib import parse as urllib_parse
 from zoneinfo import ZoneInfo
+from config.time_zones import calendar_zone, local_clock_to_utc
 from coach_api.graph_transport import GraphRequestError
 
 ROOT = Path(__file__).parent
@@ -72,7 +73,7 @@ class CalendarChecksTests(unittest.TestCase):
         self.corrupt = ''
         self.payload = self.make_payload()
         self.v = types.ModuleType('curriculum_api.views')
-        self.v.__dict__.update(datetime=datetime, timedelta=timedelta, timezone=timezone, ZoneInfo=ZoneInfo, hashlib=hashlib,
+        self.v.__dict__.update(calendar_zone=calendar_zone, local_clock_to_utc=local_clock_to_utc, datetime=datetime, timedelta=timedelta, timezone=timezone, ZoneInfo=ZoneInfo, hashlib=hashlib,
                               escape=escape, re=re, urllib_parse=urllib_parse, logger=logging.getLogger('calendar-test'),
                               TEAMS_REPEAT_VALUES={'none', 'weekly', 'daily', 'weekdays'},
                               TEAMS_LOBBY_VALUES={'invited', 'organizer', 'everyone'}, DEFAULT_TEAMS_LOBBY_BYPASS='everyone', LIVE_SESSIONS_TABLE='series', LIVE_SESSION_OCCURRENCES_TABLE='occurrences',
@@ -318,6 +319,20 @@ class CalendarChecksTests(unittest.TestCase):
 
     def test_invalid_schedule_zone_is_refused_before_graph(self):
         self.payload['scheduleTimeZone'] = 'Invalid/Zone'
+        self.assertEqual(self.create().status_code, 400)
+        self.assertEqual(self.calls, [])
+
+    def test_saved_iana_calendar_zone_is_preserved_when_default_or_selection_differs(self):
+        for stored in ('Africa/Cairo', 'Egypt Standard Time'):
+            settings = self.v.teams_schedule_settings({'timezone': 'GMT Standard Time'},
+                {'scheduleTimeZone': 'Europe/London'}, {'timezone': stored})
+            self.assertEqual(settings['_schedule_timezone_iana'], 'Africa/Cairo')
+            self.assertEqual(settings['timezone'], 'Egypt Standard Time')
+
+    def test_mismatched_local_and_utc_clock_is_refused_before_graph(self):
+        self.payload['scheduleTimeZone'] = 'Europe/London'
+        self.payload['localStartDateTime'] = '2026-10-23T09:00:00'
+        self.payload['startDateTimeUtc'] = '2026-10-23T09:00:00Z'
         self.assertEqual(self.create().status_code, 400)
         self.assertEqual(self.calls, [])
 

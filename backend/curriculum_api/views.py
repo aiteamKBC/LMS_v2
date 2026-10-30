@@ -1,3 +1,4 @@
+from config.time_zones import calendar_zone, local_clock_to_utc
 import base64
 import contextlib
 import functools
@@ -2303,6 +2304,15 @@ def teams_event_payload(payload, graph_settings):
     # Convert each instant in the business zone. A fixed UTC offset changes
     # midnight Thursday into two different weekdays across the autumn clock change.
     zone_name = graph_timezone_iana(graph_settings)
+    if utc_start.tzinfo is None:
+        raise ValueError('The meeting UTC start must include an offset.')
+    expected_local = utc_start.astimezone(calendar_zone(zone_name))
+    # Older clients used localStartDateTime for the browser's clock. Only the
+    # explicit scheduleTimeZone contract names the calendar's civil clock.
+    if payload.get('scheduleTimeZone') and (
+            local_start.replace(tzinfo=None) != expected_local.replace(tzinfo=None)
+            or (local_start.tzinfo is not None and local_start.astimezone(timezone.utc) != utc_start)):
+        raise ValueError('The meeting local time and UTC time do not match the selected calendar time zone. Review the session time.')
     graph_zone = graph_settings.get('timezone') or 'GMT Standard Time'
     targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, zone_name)
     event = {
@@ -2457,7 +2467,7 @@ def graph_timezone_iana(graph_settings):
     override = clean_str(os.environ.get('MICROSOFT_GRAPH_TIMEZONE_IANA'))
     if override:
         return override
-    return GRAPH_WINDOWS_TO_IANA.get(clean_str(graph_settings.get('timezone')), 'Europe/London')
+    return calendar_zone(clean_str(graph_settings.get('timezone')) or 'Europe/London').key
 
 
 def teams_schedule_settings(graph_settings, payload=None, series=None):
@@ -2466,10 +2476,10 @@ def teams_schedule_settings(graph_settings, payload=None, series=None):
     if selected and selected not in ('Africa/Cairo', 'Europe/London'):
         raise ValueError('Choose Egypt or England as the schedule time zone.')
     stored = clean_str((series or {}).get('timezone'))
-    zone = GRAPH_WINDOWS_TO_IANA.get(stored) if stored else selected
+    zone = calendar_zone(stored).key if stored else selected
     if not zone:
         return graph_settings
-    windows = next((key for key, value in GRAPH_WINDOWS_TO_IANA.items() if value == zone), stored)
+    windows = next((key for key, value in GRAPH_WINDOWS_TO_IANA.items() if value == zone), zone)
     return {**graph_settings, 'timezone': windows, '_schedule_timezone_iana': zone}
 
 
@@ -12101,11 +12111,10 @@ def calendar_clock_to_utc_iso(date_value, time_value, time_zone=None):
         return ''
     naive = datetime(day.year, day.month, day.day) + timedelta(minutes=minutes)
     try:
-        zone = ZoneInfo(time_zone or graph_timezone_iana({}))
-    except Exception:
-        logger.debug('Unknown calendar timezone; falling back to UTC.', exc_info=True)
-        zone = timezone.utc
-    return naive.replace(tzinfo=zone).astimezone(timezone.utc).isoformat()
+        return local_clock_to_utc(naive, time_zone or graph_timezone_iana({})).isoformat()
+    except ValueError:
+        logger.warning('Calendar clock cannot name a unique instant in its saved time zone.')
+        return ''
 
 
 def module_schedule_view(module, tutor_name=None):
@@ -18802,7 +18811,7 @@ def live_session_row_to_component_settings(row):
         'teamsDurationMinutes': parse_int(row.get('duration_minutes'), 60),
         'durationMinutes': parse_int(row.get('duration_minutes'), 60),
         'teamsProvider': clean_str(row.get('provider')) or 'Microsoft Teams',
-        'sessionTimeZone': GRAPH_WINDOWS_TO_IANA.get(clean_str(row.get('timezone')), graph_timezone_iana({})),
+        'sessionTimeZone': graph_timezone_iana(teams_schedule_settings({}, series=row)),
         'teamsRepeat': clean_str(row.get('repeat_pattern')) or 'none',
         'teamsRepeatOccurrences': parse_int(row.get('repeat_occurrences'), 1),
         'teamsLobbyBypass': clean_str(row.get('lobby_bypass')) or 'invited',
@@ -20143,7 +20152,7 @@ def curriculum_teams_meeting_summary(request):
             'eventId': clean_str(row.get('graph_event_id')),
             'onlineMeetingId': clean_str(row.get('online_meeting_id')),
             'organizerEmail': clean_str(row.get('organizer_email')),
-            'timeZone': GRAPH_WINDOWS_TO_IANA.get(clean_str(row.get('timezone')), graph_timezone_iana({})),
+            'timeZone': graph_timezone_iana(teams_schedule_settings({}, series=row)),
             'presenters': teams_series_email_list(row.get('presenters')),
             'coOrganizers': teams_series_email_list(row.get('co_organizers')),
             'attendees': teams_series_email_list(row.get('attendees')),

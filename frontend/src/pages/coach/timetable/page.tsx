@@ -1,3 +1,4 @@
+import { ukOffsetForDate } from '@/lib/timeZones';
 import { canRescheduleReconciledReview, isImportedPersonalSupportPlan } from '../shared/resolvedReviewRows';
 import ImportedReviewBookingDialog from '../shared/ImportedReviewBookingDialog';
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
@@ -1709,7 +1710,7 @@ export default function CoachTimetablePage() {
         scheduledDate: createSessionDate,
         scheduledTime: createSessionTime,
         durationMinutes: createSessionDuration,
-        timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+        timezoneOffsetMinutes: ukOffsetForDate(createSessionDate),
         notes: createSessionNotes,
       });
 
@@ -1834,7 +1835,7 @@ export default function CoachTimetablePage() {
           scheduledDate: scheduleModalDate,
           scheduledTime: scheduleModalTime,
           durationMinutes: scheduleModalDuration,
-          timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+          timezoneOffsetMinutes: ukOffsetForDate(scheduleModalDate),
         }),
       });
       const data = await readApiJson<{ event: TimetableEvent; warning?: string }>(response);

@@ -49,6 +49,7 @@ import {
   syncTeamsMeetingArtifacts,
   updateTeamsMeetingSchedule,
   zonedNaiveToUtcIso,
+  previewZonedNaiveToUtcIso,
   type TeamsMeetingArtifact,
   type TeamsMeetingArtifactsResult,
   type TeamsMeetingInput,
@@ -662,7 +663,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       const context = resolveModuleContext(module, groups, cohorts, programmes);
       const summary = summaryByModule.get(key);
       const moduleSessions = sessionsByModule.get(key) || [];
-      const plannedStarts = moduleSessions.map(session => zonedNaiveToUtcIso(sessionNaiveLocal(session), session.timeZone || summary?.timeZone));
+      const plannedStarts = moduleSessions.map(session => previewZonedNaiveToUtcIso(sessionNaiveLocal(session), session.timeZone || summary?.timeZone));
       const teamsStarts = summary?.occurrenceDates || [];
       const firstSession = moduleSessions[0];
       const groupPattern = groupDeliveryPattern(context.group, context.groupName);
@@ -754,7 +755,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     // listed it on the review page.
     const drop = (list: CurriculumSession[]) => withoutAdditionalMeetings(list, extra?.all || [], excluded);
     const startsFor = (list: CurriculumSession[]) => list.map(
-      session => zonedNaiveToUtcIso(sessionNaiveLocal(session), session.timeZone || selected.summary?.timeZone),
+      session => previewZonedNaiveToUtcIso(sessionNaiveLocal(session), session.timeZone || selected.summary?.timeZone),
     );
     const sessionsForPlan = plannedSessions[key];
     const sessions = sessionsForPlan || drop(selected.sessions);
