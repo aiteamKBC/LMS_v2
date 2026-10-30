@@ -23,6 +23,7 @@ const hours = fieldKey('component', 'C1', 'expectedOtjh');
 class Socket {
   static OPEN = 1;
   static instances: Socket[] = [];
+  static busy = new Set<string>();
   readyState = 1;
   onmessage?: (event: { data: string }) => void;
   onclose?: (event: { code: number }) => void;
@@ -32,6 +33,10 @@ class Socket {
   receive(data: object) { this.onmessage?.({ data: JSON.stringify(data) }); }
   send(text: string) {
     const frame = JSON.parse(text); this.frames.push(frame);
+    if (frame.type === 'claim' && Socket.busy.has(frame.key)) {
+      this.receive({ type: 'error', requestId: frame.requestId, code: 'field_retry', error: 'A save is in progress; draft retained.' });
+      return;
+    }
     if (frame.type === 'claim') this.receive({ type: 'state', requestId: frame.requestId, ok: true, key: frame.key,
       token: 'private-token', serverTime: Date.now() / 1000, members: [], leases: [{ key: frame.key, editorId: this.url.searchParams.get('editor'), name: 'Me', expiresAt: Date.now() / 1000 + 60 }] });
     if (frame.type === 'release') this.receive({ type: 'state', requestId: frame.requestId, ok: true, leases: [] });
@@ -40,7 +45,7 @@ class Socket {
 }
 const flush = async () => { await act(async () => { await Promise.resolve(); }); };
 beforeEach(() => {
-  vi.useFakeTimers(); Socket.instances = [];
+  vi.useFakeTimers(); Socket.instances = []; Socket.busy.clear();
   vi.stubGlobal('WebSocket', Socket);
   config.mockResolvedValue({ enabled: true, websocketPath: '/ws/curriculum/module-collaboration/M1/', heartbeatSeconds: 20 });
   Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
@@ -118,6 +123,21 @@ describe('collaboration connection', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(1000); }); expect(Socket.instances).toHaveLength(2);
     act(() => Socket.instances[1].receive({ type: 'state', ok: true, members: [], leases: [] }));
     expect(onSaved).toHaveBeenCalledTimes(2);
+  });
+  it('keeps the page connected and saves other fields during brief grant contention', async () => {
+    const { result } = renderHook(() => useModuleCollaboration('M1', vi.fn())); await flush();
+    act(() => Socket.instances[0].receive({ type: 'state', ok: true, members: [], leases: [] }));
+    Socket.busy.add(title);
+    const base = baseModule(), draft = structuredClone(base);
+    draft.weekStructure[0].components[0].title = 'Retained'; draft.weekStructure[0].components[0].expectedOtjh = 2;
+    const attempt = result.current.claim(title);
+    const save = result.current.prepare(base, draft);
+    await expect(attempt).rejects.toThrow('save is in progress');
+    const sent = await save;
+    expect(sent.blocked).toContain(title);
+    expect(sent.module.weekStructure[0].components[0].title).toBe('Original');
+    expect(sent.module.weekStructure[0].components[0].expectedOtjh).toBe(2);
+    expect(result.current.connected).toBe(true);
   });
 });
 

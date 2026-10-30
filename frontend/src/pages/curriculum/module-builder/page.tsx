@@ -3786,7 +3786,7 @@ export default function ModuleBuilder() {
               )}
             </div>
 
-              <div className="min-w-0">
+              <div className={collaboration.enabled ? 'min-w-0 self-start xl:sticky xl:top-4' : 'contents'}>
               <ModulePresence collaboration={collaboration} />
               <ApprenticeshipSettings
                 module={workingModule}

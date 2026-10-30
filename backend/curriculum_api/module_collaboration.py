@@ -15,7 +15,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 
 from .module_collaboration_state import (
-    CoordinationUnavailable, HEARTBEAT_SECONDS, blocked_fields, changed_fields,
+    CoordinationUnavailable, ReservationBusy, HEARTBEAT_SECONDS, blocked_fields, changed_fields,
     field_key, parse_field_key, transition,
 )
 from .module_collaboration_store import RedisRoomStore
@@ -77,6 +77,9 @@ def claim(module_id, actor, key):
     try:
         return _claim(module_id, actor, key)
     except DatabaseError as exc:
+        cause = exc.__cause__
+        if getattr(cause, 'sqlstate', None) == '55P03' or getattr(cause, 'pgcode', None) == '55P03':
+            raise ReservationBusy('A module save is in progress. Your draft is retained; retry this field shortly.') from exc
         raise CoordinationUnavailable('A module save is in progress. Your draft is retained; try again shortly.') from exc
 
 

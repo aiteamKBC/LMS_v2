@@ -19,7 +19,7 @@ from channels.sessions import CookieMiddleware
 from django.urls import path
 
 from . import module_collaboration as service
-from .module_collaboration_state import CoordinationUnavailable
+from .module_collaboration_state import CoordinationUnavailable, ReservationBusy
 
 
 def authenticate(cookies, module_id, *, check_module=False):
@@ -130,6 +130,8 @@ class ModuleCollaborationConsumer(AsyncJsonWebsocketConsumer):
             await self.publish(result, claimed=content.get('key') if action == 'claim' and result.get('ok') else '')
         except ValueError as exc:
             await self.send_json({'type': 'error', 'requestId': request_id, 'error': str(exc)})
+        except ReservationBusy as exc:
+            await self.send_json({'type': 'error', 'requestId': request_id, 'code': 'field_retry', 'error': str(exc)})
         except CoordinationUnavailable:
             await self.send_json({'type': 'error', 'requestId': request_id,
                 'error': 'Live editing coordination is unavailable. Your draft is retained.'})

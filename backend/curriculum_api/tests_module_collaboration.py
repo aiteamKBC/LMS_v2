@@ -13,7 +13,7 @@ from django.test import SimpleTestCase, override_settings
 
 from . import module_collaboration as service
 from .module_collaboration_state import (
-    CoordinationUnavailable, blocked_fields, changed_fields, field_key, parse_field_key, transition,
+    CoordinationUnavailable, ReservationBusy, blocked_fields, changed_fields, field_key, parse_field_key, transition,
 )
 from .module_collaboration_store import MemoryRoomStore, RedisRoomStore
 
@@ -202,6 +202,20 @@ class SocketIdentityTests(SimpleTestCase):
 @override_settings(CURRICULUM_COLLABORATION_ENABLED=True, CURRICULUM_COLLABORATION_MODULES=('M1',),
     ALLOWED_HOSTS=['testserver'], CHANNEL_LAYERS={'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}})
 class CollaborationSocketTests(SimpleTestCase):
+    async def test_content_save_lock_contention_keeps_presence_and_socket_alive(self):
+        from channels.testing import WebsocketCommunicator
+        from .module_collaboration_consumer import ModuleCollaborationASGI
+        store = MemoryRoomStore()
+        with patch.object(service, 'get_store', return_value=store), patch('curriculum_api.module_collaboration_consumer.authenticate', return_value={'account': '1', 'name': 'Synthetic staff'}), patch.object(service, 'claim', side_effect=ReservationBusy('Save in progress; draft retained.')):
+            socket = WebsocketCommunicator(ModuleCollaborationASGI(None), '/ws/curriculum/module-collaboration/M1/?editor=' + ALICE['editor'], headers=[(b'origin', b'http://testserver')])
+            self.assertTrue((await socket.connect())[0]); await socket.receive_json_from(); await socket.receive_json_from()
+            await socket.send_json_to({'type': 'claim', 'key': TITLE, 'requestId': 'busy'})
+            response = await socket.receive_json_from()
+            self.assertEqual('field_retry', response['code'])
+            await socket.send_json_to({'type': 'heartbeat'})
+            self.assertTrue((await socket.receive_json_from())['ok'])
+            await socket.disconnect()
+
     async def test_two_editors_see_names_and_one_owner_then_disconnect_releases(self):
         from channels.testing import WebsocketCommunicator
         from .module_collaboration_consumer import ModuleCollaborationASGI

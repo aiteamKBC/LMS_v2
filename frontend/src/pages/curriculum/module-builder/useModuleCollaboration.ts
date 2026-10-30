@@ -165,7 +165,10 @@ export function useModuleCollaboration(moduleId: string, onSaved: () => void) {
     // need no round trip per field: the HTTP save checks them atomically under
     // the module-row lock, using its existing revision/three-way merge.
     for (const key of keys) {
-      if (claiming.current.has(key)) await claiming.current.get(key);
+      if (claiming.current.has(key)) {
+        try { await claiming.current.get(key); }
+        catch { blocked.push(key); continue; }
+      }
       const proof = proofs.current.get(key);
       if (proof && proof.expires <= now()) { proofs.current.delete(key); lost.current.add(key); }
       const [kind, id, field] = JSON.parse(key) as string[];

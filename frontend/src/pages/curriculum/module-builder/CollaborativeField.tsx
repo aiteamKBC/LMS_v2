@@ -16,7 +16,7 @@ export function CollaborativeField({ field, children }: { field?: string; childr
   const acquire = () => {
     if (holder) return;
     void collaboration.claim(key).then(ok => setError(ok ? '' : 'A colleague reserved this field. Your draft stays here.'))
-      .catch(() => setError('Editing coordination is reconnecting. Your draft stays here.'));
+      .catch(error => setError(error instanceof Error ? error.message : 'Editing coordination is reconnecting. Your draft stays here.'));
   };
   return <div onFocusCapture={acquire} onInputCapture={acquire}>
     <fieldset disabled={Boolean(holder) || !collaboration.connected} inert={Boolean(holder) || !collaboration.connected || undefined} className="min-w-0">

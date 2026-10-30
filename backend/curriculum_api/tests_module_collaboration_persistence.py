@@ -3,12 +3,14 @@ import copy
 import json
 import time
 from types import SimpleNamespace
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 from django.test import Client, override_settings
+from django.db import connections, transaction
 
 from . import module_collaboration as service, views
-from .module_collaboration_state import CoordinationUnavailable, field_key
+from .module_collaboration_state import CoordinationUnavailable, ReservationBusy, field_key
 from .module_collaboration_store import MemoryRoomStore
 from .tests import CurriculumTeamsRequestTestCase
 
@@ -77,3 +79,17 @@ class ModuleCollaborationPersistenceTests(CurriculumTeamsRequestTestCase):
         response = self.save(base, draft)
         self.assertEqual(409, response.status_code, response.content)
         self.assertEqual(1, len(self.read()['weekStructure']))
+
+    def test_claim_wait_is_bounded_and_does_not_turn_another_save_into_socket_outage(self):
+        self.assertEqual('postgresql', connections['default'].vendor)
+        def acquire():
+            try:
+                return service.claim(self.module_id, self.actor, self.key)
+            finally:
+                connections['default'].close()
+        with ThreadPoolExecutor(1) as workers:
+            with transaction.atomic():
+                views.lock_module_structure_row(self.module_id)
+                attempt = workers.submit(acquire)
+                with self.assertRaises(ReservationBusy): attempt.result(timeout=15)
+        self.assertEqual('Original', self.read()['weekStructure'][0]['components'][0]['title'])

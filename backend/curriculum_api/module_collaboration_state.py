@@ -23,6 +23,10 @@ class CoordinationUnavailable(RuntimeError):
     pass
 
 
+class ReservationBusy(RuntimeError):
+    """A content save is using the brief row lock; keep the socket available."""
+
+
 def same_token(expected, supplied):
     return isinstance(supplied, str) and supplied.isascii() and secrets.compare_digest(expected, supplied)
 
