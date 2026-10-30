@@ -1,17 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { CSS } from '@dnd-kit/utilities';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { LayoutGrid, Table2 } from 'lucide-react';
-import { courseCardKey, filterCourses, groupCourses, type CourseCard as SavedFreeCourseCard } from '../courses/model';
-import CoursesTable from '../courses/CoursesTable';
-import type { CurriculumCourseType } from '@/lib/curriculumApi';
-import styles from '../courses/CoursesPage.module.css';
+import { Link, useNavigate } from 'react-router-dom';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { formatHoursMinutes } from '@/lib/format';
@@ -42,7 +36,6 @@ interface FreeCourseComponent {
 
 interface FreeCourse {
   id: string;
-  courseType: CurriculumCourseType;
   title: string;
   subtitle: string;
   coverImageUrl: string;
@@ -51,6 +44,17 @@ interface FreeCourse {
   color: string;
   accent: string;
   components: FreeCourseComponent[];
+}
+
+interface SavedFreeCourseCard {
+  key: string;
+  courseId: string;
+  title: string;
+  description: string;
+  coverImageUrl: string;
+  weeks: FreeProgrammeModule[];
+  componentCount: number;
+  totalOtjh: number;
 }
 
 const COMPONENT_META: Record<ComponentKind, { label: string; icon: string; color: string }> = {
@@ -161,16 +165,8 @@ function freeModuleComponentToCourseComponent(component: FreeProgrammeModule['co
 }
 
 export default function FreeCoursesPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const typeParam = searchParams.get('type');
-  const courseFilter = typeParam === 'free' || typeParam === 'apprentices' ? typeParam : 'all';
-  const courseView = searchParams.get('view') === 'table' ? 'table' : 'cards';
-  const [courseSearch, setCourseSearch] = useState('');
-  const [savedCoursesError, setSavedCoursesError] = useState<string | null>(null);
-  const [reloadCourses, setReloadCourses] = useState(0);
   const [course, setCourse] = useState<FreeCourse>({
     id: '',
-    courseType: 'free',
     title: '',
     subtitle: '',
     coverImageUrl: '',
@@ -193,8 +189,6 @@ export default function FreeCoursesPage() {
   const [savedModules, setSavedModules] = useState<FreeProgrammeModule[]>([]);
   const [savedCoursesLoading, setSavedCoursesLoading] = useState(true);
   const [wizardOpen, setWizardOpen] = useState(false);
-  const [weekSearch, setWeekSearch] = useState('');
-  const wizardRef = useRef<HTMLDivElement>(null);
   const [editingCourseKey, setEditingCourseKey] = useState<string | null>(null);
   const navigate = useNavigate();
   const [convertCard, setConvertCard] = useState<SavedFreeCourseCard | null>(null);
@@ -274,26 +268,10 @@ export default function FreeCoursesPage() {
   const firstLockedIndex = course.components.findIndex(component => component.kind === 'quiz');
   const learnerCompletedCount = course.components.filter(component => completedPreviewIds.has(component.id)).length;
   const selectedWeekIds = useMemo(() => new Set(course.components.map(component => component.sourceWeekId).filter(Boolean)), [course.components]);
-  const visibleWeekTemplates = useMemo(() => {
-    const query = weekSearch.trim().toLocaleLowerCase();
-    return weekTemplates.filter(template => !query || `${template.title || ''} ${template.summary || ''}`.toLocaleLowerCase().includes(query));
-  }, [weekTemplates, weekSearch]);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
-
-  useEffect(() => {
-    if (!wizardOpen) return;
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    wizardRef.current?.querySelector<HTMLInputElement>('input')?.focus();
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      previousFocus?.focus();
-    };
-  }, [wizardOpen]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -317,17 +295,16 @@ export default function FreeCoursesPage() {
   useEffect(() => {
     const controller = new AbortController();
     setSavedCoursesLoading(true);
-    setSavedCoursesError(null);
     fetchFreeProgrammeModules('FREE-COURSES', controller.signal)
       .then(modules => setSavedModules(modules))
-      .catch(err => {
-        if (!controller.signal.aborted) setSavedCoursesError(err instanceof Error ? err.message : 'Unable to load courses.');
+      .catch(() => {
+        if (!controller.signal.aborted) setSavedModules([]);
       })
       .finally(() => {
         if (!controller.signal.aborted) setSavedCoursesLoading(false);
       });
     return () => controller.abort();
-  }, [reloadCourses]);
+  }, []);
 
   // Load the programme list the first time the convert or import dialog opens.
   // The re-entry guard is the loaded result only (never the loading flag): under
@@ -389,13 +366,7 @@ export default function FreeCoursesPage() {
     quizzes: course.components.filter(item => item.kind === 'quiz').length,
   }), [course.components, selectedWeekIds.size]);
 
-  const savedCourseCards = useMemo(() => groupCourses(savedModules), [savedModules]);
-  const visibleCourses = useMemo(() => filterCourses(savedCourseCards, courseFilter, courseSearch), [savedCourseCards, courseFilter, courseSearch]);
-  const catalogueTotals = useMemo(() => ({
-    weeks: visibleCourses.reduce((sum, card) => sum + card.weeks.length, 0),
-    components: visibleCourses.reduce((sum, card) => sum + card.componentCount, 0),
-    quizzes: visibleCourses.reduce((sum, card) => sum + card.weeks.reduce((total, week) => total + (week.components || []).filter(part => part.type === 'quiz').length, 0), 0),
-  }), [visibleCourses]);
+  const savedCourseCards = useMemo(() => groupSavedFreeCourses(savedModules), [savedModules]);
 
   const handleCoverImageUpload = async (file?: File) => {
     if (!file) return;
@@ -433,8 +404,7 @@ export default function FreeCoursesPage() {
   };
 
   const resetDraftCourse = () => {
-    setWeekSearch('');
-    setCourse(previous => ({ ...previous, id: '', courseType: courseFilter === 'apprentices' ? 'apprentices' : 'free', title: '', subtitle: '', coverImageUrl: '', components: [] }));
+    setCourse(previous => ({ ...previous, id: '', title: '', subtitle: '', coverImageUrl: '', components: [] }));
     setSelectedComponentId('');
     setCompletedPreviewIds(new Set());
     setEditingCourseKey(null);
@@ -446,14 +416,12 @@ export default function FreeCoursesPage() {
   };
 
   const openEditWizard = (card: SavedFreeCourseCard) => {
-    setWeekSearch('');
     const components = card.weeks.flatMap((week, weekIndex) =>
       (week.components || []).map((component, componentIndex) => freeModuleComponentToCourseComponent(component, week, weekIndex + componentIndex, weekTemplates)),
     );
     setCourse(previous => ({
       ...previous,
       id: card.courseId,
-      courseType: card.courseType,
       title: card.title,
       subtitle: card.description,
       coverImageUrl: card.coverImageUrl,
@@ -463,12 +431,6 @@ export default function FreeCoursesPage() {
     setCompletedPreviewIds(new Set());
     setEditingCourseKey(card.key);
     setWizardOpen(true);
-  };
-
-  const closeCourseWizard = () => {
-    if (savingCourse) return;
-    setWizardOpen(false);
-    resetDraftCourse();
   };
 
   const removeComponent = (componentId: string) => {
@@ -483,7 +445,7 @@ export default function FreeCoursesPage() {
   const confirmRemoveComponent = async (component: FreeCourseComponent) => {
     await showCurriculumConfirm({
       title: 'Remove component?',
-      text: `"${component.title || 'This component'}" will be removed from this course.`,
+      text: `"${component.title || 'This component'}" will be removed from this free course.`,
       confirmButtonText: 'Remove',
       cancelButtonText: 'Keep it',
       onConfirm: async () => {
@@ -521,7 +483,7 @@ export default function FreeCoursesPage() {
     const componentCount = course.components.filter(component => component.sourceWeekId === template.id).length;
     await showCurriculumConfirm({
       title: 'Remove week?',
-      text: `"${template.title || 'This week'}" and ${componentCount || 'its'} component${componentCount === 1 ? '' : 's'} will be removed from this course.`,
+      text: `"${template.title || 'This week'}" and ${componentCount || 'its'} component${componentCount === 1 ? '' : 's'} will be removed from this free course.`,
       confirmButtonText: 'Remove week',
       cancelButtonText: 'Keep it',
       onConfirm: async () => {
@@ -596,7 +558,6 @@ export default function FreeCoursesPage() {
   const savedModuleInput = (module: FreeProgrammeModule): FreeProgrammeModuleInput => ({
     id: module.id,
     courseId: module.courseId,
-    courseType: module.courseType || 'free',
     weekId: module.weekId,
     weekNumber: module.weekNumber,
     weekTitle: module.weekTitle,
@@ -634,7 +595,6 @@ export default function FreeCoursesPage() {
     });
     return orderedWeeks.map((week, weekIndex): FreeProgrammeModuleInput => ({
       courseId,
-      courseType: course.courseType,
       courseName,
       title: courseName,
       description: course.subtitle,
@@ -666,12 +626,12 @@ export default function FreeCoursesPage() {
 
   const createFreeCourse = async () => {
     const courseName = course.title.trim();
-    if (!courseName || !course.components.length || savingCourse || savedCoursesLoading || savedCoursesError) return;
+    if (!courseName || !course.components.length || savingCourse || savedCoursesLoading) return;
     setSavingCourse(true);
     try {
       const newModules = draftWeekInputs(courseName);
       const retainedModules = editingCourseKey
-        ? savedModules.filter(module => courseCardKey(module) !== editingCourseKey)
+        ? savedModules.filter(module => (module.courseId || `${module.courseName || module.title || 'Untitled free course'}::${module.description || ''}`) !== editingCourseKey)
         : savedModules;
       const response = await saveFreeProgrammeModules('FREE-COURSES', {
         programmeName: 'Free Courses',
@@ -681,14 +641,14 @@ export default function FreeCoursesPage() {
       resetDraftCourse();
       setWizardOpen(false);
       await showCurriculumAlert({
-        title: editingCourseKey ? 'Course updated' : 'Course created',
+        title: editingCourseKey ? 'Free course updated' : 'Free course created',
         text: `${courseName} was saved with ${newModules.length} week${newModules.length === 1 ? '' : 's'}.`,
         icon: 'success',
         timer: 1800,
       });
     } catch (err) {
       await showCurriculumAlert({
-        title: 'Could not save course',
+        title: 'Could not create free course',
         text: err instanceof Error ? err.message : 'Please try again.',
         icon: 'error',
       });
@@ -699,7 +659,7 @@ export default function FreeCoursesPage() {
 
   const deleteFreeCourse = async (card: SavedFreeCourseCard) => {
     await showCurriculumConfirm({
-      title: 'Delete course?',
+      title: 'Delete free course?',
       text: `"${card.title}" and its ${card.weeks.length} week${card.weeks.length === 1 ? '' : 's'} will be removed.`,
       confirmButtonText: 'Delete',
       cancelButtonText: 'Keep it',
@@ -713,7 +673,7 @@ export default function FreeCoursesPage() {
         setSavedModules(response.modules || []);
         if (editingCourseKey === card.key) resetDraftCourse();
       },
-      successTitle: 'Course deleted',
+      successTitle: 'Free course deleted',
       successText: `"${card.title}" was removed.`,
     });
   };
@@ -754,8 +714,8 @@ export default function FreeCoursesPage() {
       await showCurriculumConfirm({
         title: isMove ? 'Move into this group?' : 'Add to this group?',
         text: isMove
-          ? `"${card.title}" will be added to "${groupLabel}" in ${programmeLabel}, then DELETED from Courses — and removed from any learner currently assigned it.`
-          : `"${card.title}" will be added as a module to "${groupLabel}" in ${programmeLabel}. The course stays exactly as it is.`,
+          ? `"${card.title}" will be added to "${groupLabel}" in ${programmeLabel}, then DELETED as a free course — and removed from any learner currently assigned it.`
+          : `"${card.title}" will be added as a module to "${groupLabel}" in ${programmeLabel}. The free course stays exactly as it is.`,
         icon: isMove ? 'warning' : 'question',
         confirmButtonText: isMove ? 'Move it' : 'Add module',
         cancelButtonText: 'Cancel',
@@ -772,7 +732,7 @@ export default function FreeCoursesPage() {
             if (editingCourseKey === card.key) resetDraftCourse();
           }
         },
-        successTitle: isMove ? 'Course moved' : 'Module added',
+        successTitle: isMove ? 'Free course moved' : 'Module added',
         successText: 'Opening the Module Builder to add KSBs and hours.',
       });
     } finally {
@@ -857,31 +817,30 @@ export default function FreeCoursesPage() {
       roleLabel="Curriculum Designer"
       navItems={curriculumNavItems}
       workspaceLabel="Curriculum Studio"
-      pageTitle="Courses"
-      pageSubtitle={`${savedCourseCards.length} courses · Free and Apprentices`}
+      pageTitle="Free Courses"
+      pageSubtitle={`${totals.weeks} selected weeks - ${totals.components} components - ${totals.quizzes} quizzes`}
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <main className={styles.page}>
+      <main className="curriculum-library-page min-h-[calc(100vh-150px)] space-y-4 bg-background-50 px-4 py-4 md:px-6">
         <WorkspaceHeroBanner
-          className={styles.hero}
+          className="curriculum-library-hero"
           decorative
           eyebrow="Learning resources"
-          title="Courses"
-          description="Create and manage Free and Apprentices courses from reusable weeks, learning materials and assessments."
+          title="Free Courses"
+          description="Build short open-access courses from customised video, reading, PowerPoint, audio and quiz components."
           icon="ri-graduation-cap-line"
           statIconPosition="leading"
           stats={[
-            { label: 'Weeks', value: String(catalogueTotals.weeks), icon: 'ri-calendar-line' },
-            { label: 'Components', value: String(catalogueTotals.components), icon: 'ri-layout-4-line' },
-            { label: 'Quizzes', value: String(catalogueTotals.quizzes), icon: 'ri-questionnaire-line' },
+            { label: 'Weeks', value: String(totals.weeks), icon: 'ri-calendar-line' },
+            { label: 'Components', value: String(totals.components), icon: 'ri-layout-4-line' },
+            { label: 'Quizzes', value: String(totals.quizzes), icon: 'ri-questionnaire-line' },
           ]}
           actions={(
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={openImportPicker}
-                disabled={savedCoursesLoading || Boolean(savedCoursesError)}
                 className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-primary-300 bg-white/70 px-4 text-sm font-bold text-primary-800 transition hover:bg-white"
               >
                 <AppIcon name="ri-download-2-line" size={16} />
@@ -890,53 +849,27 @@ export default function FreeCoursesPage() {
               <button
                 type="button"
                 onClick={openAddWizard}
-                disabled={savedCoursesLoading || Boolean(savedCoursesError)}
                 className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-bold text-primary-900 transition hover:bg-primary-50"
               >
                 <AppIcon name="ri-add-line" size={16} />
-                Add course
+                Add free course
               </button>
             </div>
           )}
         />
 
-        <div className={styles.filters}>
-          <div role="group" aria-label="Course type filter" className={styles.typeFilters}>
-            {(['all', 'free', 'apprentices'] as const).map(type => <button key={type} type="button" aria-pressed={courseFilter === type} onClick={() => setSearchParams(previous => { const next = new URLSearchParams(previous); if (type === 'all') next.delete('type'); else next.set('type', type); return next; })}>
-              {type === 'all' ? 'All courses' : type === 'free' ? 'Free' : 'Apprentices'}
-              {' '}<span>{savedCourseCards.filter(card => type === 'all' || card.courseType === type).length}</span>
-            </button>)}
-          </div>
-          <div className={styles.viewTools}>
-            <label className={styles.search}><AppIcon name="ri-search-line" /><input type="search" aria-label="Search courses" placeholder="Search courses or weeks..." value={courseSearch} onChange={event => setCourseSearch(event.target.value)} /></label>
-            <div role="group" aria-label="Course view" className={styles.viewToggle}>
-              {(['cards', 'table'] as const).map(view => (
-                <button key={view} type="button" aria-pressed={courseView === view} onClick={() => setSearchParams(previous => {
-                  const next = new URLSearchParams(previous);
-                  if (view === 'cards') next.delete('view'); else next.set('view', view);
-                  return next;
-                })}>
-                  {view === 'cards' ? <LayoutGrid size={14} aria-hidden="true" /> : <Table2 size={14} aria-hidden="true" />}
-                  {view === 'cards' ? 'Cards' : 'Table'}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-        <section className={styles.catalogue} aria-label="Course catalogue">
-          <div>
+        <section className="overflow-hidden rounded-lg border border-background-200 bg-white shadow-sm">
+          <div className="border-b border-background-200 bg-background-50 px-5 py-5 md:px-7">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-sm font-bold uppercase tracking-wide text-foreground-700">{courseFilter === 'all' ? 'All courses' : courseFilter === 'free' ? 'Free courses' : 'Apprentices courses'}</h2>
+                <h2 className="text-sm font-bold uppercase tracking-wide text-foreground-700">Created free courses</h2>
                 <p className="mt-1 text-xs text-foreground-400">Courses saved for the curriculum team.</p>
               </div>
               {savedCoursesLoading && <AppIcon name="ri-loader-4-line" className="animate-spin text-foreground-400" size={16} />}
             </div>
-            {savedCoursesError ? <div role="alert" className={styles.error}>{savedCoursesError}<button type="button" onClick={() => setReloadCourses(value => value + 1)}>Retry</button></div> : visibleCourses.length > 0 ? courseView === 'table' ? (
-              <CoursesTable courses={visibleCourses} onEdit={openEditWizard} onConvert={openConvertWizard} onDelete={card => { void deleteFreeCourse(card); }} />
-            ) : (
-              <div className={styles.grid}>
-                {visibleCourses.map(card => (
+            {savedCourseCards.length > 0 ? (
+  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {savedCourseCards.map(card => (
                   <SavedFreeCourseCardView
                     key={card.key}
                     card={card}
@@ -950,79 +883,72 @@ export default function FreeCoursesPage() {
               !savedCoursesLoading && (
                 <div className="rounded-lg border border-dashed border-background-300 bg-white px-4 py-8 text-center">
                   <AppIcon name="ri-graduation-cap-line" className="mx-auto text-3xl text-foreground-300" />
-                  <p className="mt-2 text-sm font-bold text-foreground-700">{savedCourseCards.length ? 'No courses match your filters' : 'No courses created yet'}</p>
-                  <p className="mt-1 text-xs text-foreground-400">{savedCourseCards.length ? 'Try another type or search term.' : 'Use Add course to build the first one.'}</p>
+                  <p className="mt-2 text-sm font-bold text-foreground-700">No free courses created yet</p>
+                  <p className="mt-1 text-xs text-foreground-400">Use Add free course to build the first one.</p>
                 </div>
               )
             )}
           </div>
 
           {wizardOpen && (
-            <div className={styles.wizardOverlay}>
-              <div ref={wizardRef} role="dialog" aria-modal="true" aria-label={editingCourseKey ? 'Edit course' : 'Add course'} aria-describedby="course-wizard-help" className={styles.wizardDialog} onKeyDown={event => {
-                if (event.key === 'Escape') { event.stopPropagation(); closeCourseWizard(); }
-                if (event.key !== 'Tab') return;
-                const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]'))
-                  .filter(control => control.getClientRects().length > 0);
-                const first = controls[0], last = controls[controls.length - 1];
-                if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-                else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-              }}>
-                <div className={styles.wizardHeader}>
+            <div className="fixed inset-0 z-50 overflow-y-auto bg-foreground-950/55 px-4 py-6 backdrop-blur-sm">
+              <div className="mx-auto max-w-[1500px] overflow-hidden rounded-xl bg-white shadow-2xl">
+                <div className="flex items-center justify-between gap-3 border-b border-background-200 px-5 py-4">
                   <div>
-                    <h2>{editingCourseKey ? 'Edit course' : 'Add course'}</h2>
-                    <p id="course-wizard-help">Name your course, add weeks, then save.</p>
+                    <h2 className="font-heading text-xl font-bold text-foreground-950">{editingCourseKey ? 'Edit free course' : 'Add free course'}</h2>
+                    <p className="mt-1 text-sm text-foreground-500">Name the course, choose weeks, then save it for the curriculum catalogue.</p>
                   </div>
                   <button
                     type="button"
-                    onClick={closeCourseWizard}
-                    disabled={savingCourse}
-                    className={styles.wizardClose}
+                    onClick={() => {
+                      setWizardOpen(false);
+                      resetDraftCourse();
+                    }}
+                    className="flex h-9 w-9 items-center justify-center rounded-lg text-foreground-500 transition hover:bg-background-100 hover:text-foreground-900"
                     aria-label="Close wizard"
                   >
                     <AppIcon name="ri-close-line" size={18} />
                   </button>
                 </div>
 
-                <div className={styles.wizardBody}>
-          <div className={styles.wizardBasics}>
+          <div className="border-b border-background-200 bg-white px-5 py-4 md:px-7">
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_220px] lg:items-end">
               <label>
                 <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-foreground-500">Course name</span>
                 <input
                   value={course.title}
                   onChange={event => setCourse(previous => ({ ...previous, title: event.target.value }))}
-                  placeholder="Name this course"
+                  placeholder="Name this free course"
                   className="h-11 w-full rounded-lg border border-background-200 bg-background-50 px-3 text-sm font-semibold outline-none transition focus:border-primary-300 focus:bg-white"
                 />
               </label>
-              <label>
-                <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-foreground-500">Course type</span>
-                <select aria-label="Course type" value={course.courseType} onChange={event => setCourse(previous => ({ ...previous, courseType: event.target.value as CurriculumCourseType }))} className="h-10 rounded-lg border border-background-200 bg-background-50 px-3 text-sm">
-                  <option value="free">Free</option><option value="apprentices">Apprentices</option>
-                </select>
-              </label>
-          </div>
-          <details className={styles.wizardDetails}>
-            <summary>Description &amp; cover image <span>Optional</span></summary>
-            <div className={styles.wizardOptionalFields}>
-              <label>
+              <button
+                type="button"
+                disabled={!course.title.trim() || totals.weeks === 0 || savingCourse || savedCoursesLoading}
+                onClick={() => { void createFreeCourse(); }}
+                className="primary-action inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-primary-700 px-4 text-sm font-semibold text-white transition hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {savingCourse ? <AppIcon name="ri-loader-4-line" className="animate-spin" size={16} /> : <AppIcon name="ri-check-line" size={16} />}
+                {savingCourse ? 'Saving...' : editingCourseKey ? 'Save changes' : 'Create free course'}
+              </button>
+              <label className="lg:col-span-2">
                 <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-foreground-500">Description</span>
                 <textarea
                   value={course.subtitle}
                   onChange={event => setCourse(previous => ({ ...previous, subtitle: event.target.value }))}
-                  placeholder="Describe what learners will get from this course"
-                  rows={2}
+                  placeholder="Describe what learners will get from this free course"
+                  rows={3}
                   className="w-full resize-none rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-sm font-semibold outline-none transition focus:border-primary-300 focus:bg-white"
                 />
               </label>
-              <div>
+              <div className="lg:col-span-2">
                 <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-foreground-500">Cover image</span>
-                <div className={styles.wizardCover}>
-                  <div className={styles.wizardCoverPreview}>
+                <div className="grid gap-3 rounded-lg border border-background-200 bg-background-50 p-3 md:grid-cols-[220px_minmax(0,1fr)]">
+                  <div className="overflow-hidden rounded-lg border border-background-200 bg-white">
                     {course.coverImageUrl ? (
-                      <img src={course.coverImageUrl} alt="Course cover preview" />
+                      <img src={course.coverImageUrl} alt="" className="h-28 w-full object-cover" />
                     ) : (
-                      <div>
+                      <div className="flex h-28 items-center justify-center bg-[linear-gradient(135deg,#f7f4ff_0%,#ffffff_48%,#ecfdf5_100%)] text-primary-700">
                         <AppIcon name="ri-image-add-line" size={24} />
                       </div>
                     )}
@@ -1052,7 +978,6 @@ export default function FreeCoursesPage() {
                     </div>
                     <input
                       value={course.coverImageUrl.startsWith('data:') ? '' : course.coverImageUrl}
-                      aria-label="Cover image URL"
                       onChange={event => setCourse(previous => ({ ...previous, coverImageUrl: event.target.value }))}
                       placeholder="Or paste an image URL"
                       className="h-10 w-full rounded-lg border border-background-200 bg-white px-3 text-sm font-semibold outline-none transition focus:border-primary-300"
@@ -1061,23 +986,36 @@ export default function FreeCoursesPage() {
                 </div>
               </div>
             </div>
-          </details>
+          </div>
 
-          <div className={styles.wizardColumns}>
+          <div className="grid grid-cols-1 gap-4 p-5 xl:grid-cols-[minmax(0,1fr)_540px] md:p-6">
             <div className="min-w-0">
-              <section className={styles.wizardSelected} aria-label="Selected course content">
-                  <div className={styles.wizardSectionHeading}>
-                    <h3>Selected content</h3>
+              <section className="rounded-lg border border-background-200 bg-white shadow-sm">
+                <div className="border-b border-background-200 px-4 py-4">
+                  <div className="flex items-start gap-3">
+                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-white" style={{ backgroundColor: course.color }}>
+                      <AppIcon name="ri-book-open-line" size={22} />
+                    </span>
+                    <div className="min-w-0">
+                      <h2 className="truncate font-heading text-lg font-bold text-foreground-950">{course.title.trim() || 'Untitled free course'}</h2>
+                      <p className="text-sm text-foreground-500">Final learner course built from the weeks you choose.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="px-4 py-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <h3 className="text-xs font-bold uppercase tracking-wide text-foreground-500">Course builder</h3>
                     <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold uppercase text-amber-700">
                       Sequential unlock
                     </span>
                   </div>
-                  <div className={styles.wizardComponentList}>
+                  <div className="overflow-hidden rounded-lg border border-background-200">
                     {course.components.length === 0 && (
                       <div className="px-4 py-10 text-center">
                         <AppIcon name="ri-calendar-line" className="mx-auto text-3xl text-foreground-300" />
                         <p className="mt-3 text-sm font-bold text-foreground-700">No weeks selected yet</p>
-                        <p className="mt-1 text-xs text-foreground-400">Find a week in the library and choose Add week.</p>
+                        <p className="mt-1 text-xs text-foreground-400">Choose one or more free week templates from the panel on the right.</p>
                       </div>
                     )}
                     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleComponentDragEnd} modifiers={[restrictToVerticalAxis, restrictToParentElement]}>
@@ -1096,15 +1034,16 @@ export default function FreeCoursesPage() {
                       </SortableContext>
                     </DndContext>
                   </div>
+                </div>
               </section>
             </div>
 
-            <aside className="min-w-0 space-y-3">
-              <section className={styles.wizardTemplates} aria-label="Week template library">
-                <div className={styles.wizardSectionHeading}>
+            <aside className="min-w-0 space-y-4">
+              <section className="rounded-lg border border-background-200 bg-white p-4 shadow-sm">
+                <div className="mb-4 flex items-start justify-between gap-3">
                   <div>
-                    <h3>Week library</h3>
-                    <p>Find and add saved Week Builder templates.</p>
+                    <h3 className="text-xs font-bold uppercase tracking-wide text-foreground-500">Week Builder templates</h3>
+                    <p className="mt-1 text-xs text-foreground-400">Choose free-course weeks built in Week Builder.</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
                     {!weekLoading && (
@@ -1115,26 +1054,24 @@ export default function FreeCoursesPage() {
                     {weekLoading && <AppIcon name="ri-loader-4-line" className="animate-spin text-foreground-400" size={16} />}
                   </div>
                 </div>
-                <label className={styles.wizardWeekSearch}><AppIcon name="ri-search-line" size={14} /><input type="search" aria-label="Search week templates" placeholder="Search weeks..." value={weekSearch} onChange={event => setWeekSearch(event.target.value)} /></label>
                 {weekError && (
                   <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-800">
                     {weekError}
                   </div>
                 )}
-                <div className={styles.wizardTemplateList}>
-                  {!weekLoading && weekTemplates.length > 0 && !visibleWeekTemplates.length && <p className={styles.wizardNoMatches}>No weeks match your search.</p>}
-                  {visibleWeekTemplates.map(template => {
+                <div className="grid grid-cols-1 gap-3">
+                  {weekTemplates.map(template => {
                     const selected = selectedWeekIds.has(template.id);
                     const componentCount = template.componentCount || template.components.length;
                     return (
                       <div
                         key={template.id}
-                        className={styles.wizardTemplateCard}
-                        data-selected={selected || undefined}
-                        role="group" aria-label={template.title || 'Untitled week'}
+                        className={`rounded-lg border p-3 transition ${
+                          selected ? 'border-primary-300 bg-primary-50 shadow-sm ring-1 ring-primary-100' : 'border-background-200 bg-background-50 hover:border-primary-100 hover:bg-white'
+                        }`}
                       >
                         <div className="flex items-start gap-3">
-                          <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1 ${
+                          <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ring-1 ${
                             selected ? 'bg-primary-700 text-white ring-primary-700' : 'bg-white text-primary-700 ring-background-200'
                           }`}>
                             <AppIcon name={selected ? 'ri-checkbox-circle-line' : 'ri-calendar-line'} size={18} />
@@ -1144,8 +1081,7 @@ export default function FreeCoursesPage() {
                               <button
                                 type="button"
                                 onClick={() => { void toggleWeekDetails(template); }}
-                                className={styles.wizardTemplateTitle}
-                                title={template.title}
+                                className="min-w-0 overflow-x-auto whitespace-nowrap pr-2 text-left text-sm font-bold leading-5 text-foreground-950 transition hover:text-primary-700"
                                 aria-expanded={expandedWeekIds.has(template.id)}
                               >
                                 {template.title || 'Untitled week'}
@@ -1156,17 +1092,17 @@ export default function FreeCoursesPage() {
                                 {selected ? 'Added to course' : 'Available'}
                               </span>
                             </div>
-                            <div className={styles.wizardTemplateMeta}>
-                              <span>
+                            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-semibold text-foreground-500">
+                              <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 ring-1 ring-background-200">
                                 <AppIcon name="ri-stack-line" size={13} />
                                 {componentCount} components
                               </span>
-                              <span>
+                              <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 ring-1 ring-background-200">
                                 <AppIcon name="ri-award-line" size={13} />
                                 {template.points || 0} points
                               </span>
                             </div>
-                            {template.summary && <p className={styles.wizardTemplateSummary} title={template.summary}>{template.summary}</p>}
+                            {template.summary && <p className="mt-2 line-clamp-2 text-[11px] leading-5 text-foreground-500">{template.summary}</p>}
                           </div>
                         </div>
                         {expandedWeekIds.has(template.id) && (
@@ -1204,7 +1140,7 @@ export default function FreeCoursesPage() {
                             )}
                           </div>
                         )}
-                        <div className={styles.wizardTemplateActions}>
+                        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_150px]">
                           <button
                             type="button"
                             onClick={() => { void toggleWeekDetails(template); }}
@@ -1220,6 +1156,8 @@ export default function FreeCoursesPage() {
                             <AppIcon name="ri-external-link-line" size={14} />
                             Week Builder
                           </Link>
+                        </div>
+                        <div className="mt-2">
                           <button
                             type="button"
                             disabled={addingWeekId === template.id}
@@ -1241,9 +1179,7 @@ export default function FreeCoursesPage() {
                 </div>
               </section>
 
-              <details className={styles.wizardPreview}>
-                <summary>Learner preview <span>{learnerCompletedCount}/{course.components.length} complete</span></summary>
-                <div className={styles.wizardPreviewBody}>
+              <section className="rounded-lg border border-background-200 bg-white p-4 shadow-sm">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
                     <h3 className="text-xs font-bold uppercase tracking-wide text-foreground-500">Learner preview</h3>
@@ -1290,21 +1226,9 @@ export default function FreeCoursesPage() {
                     The first quiz appears at item {firstLockedIndex + 1}; learners must complete every component above it before it opens.
                   </p>
                 )}
-                </div>
-              </details>
+              </section>
             </aside>
           </div>
-                </div>
-                <footer className={styles.wizardFooter}>
-                  <p aria-live="polite"><strong>{totals.weeks} {totals.weeks === 1 ? 'week' : 'weeks'}</strong> · {totals.components} components{!course.title.trim() ? ' · Enter a course name' : totals.weeks === 0 ? ' · Add at least one week' : ''}</p>
-                  <div>
-                    <button type="button" onClick={closeCourseWizard} disabled={savingCourse} className={styles.wizardCancel}>Cancel</button>
-                    <button type="button" disabled={!course.title.trim() || totals.weeks === 0 || savingCourse || Boolean(addingWeekId) || savedCoursesLoading || Boolean(savedCoursesError)} onClick={() => { void createFreeCourse(); }} className={styles.wizardSave}>
-                      <AppIcon name={savingCourse ? 'ri-loader-4-line' : 'ri-check-line'} className={savingCourse ? 'animate-spin' : ''} size={15} />
-                      {savingCourse ? 'Saving...' : editingCourseKey ? 'Save changes' : 'Create course'}
-                    </button>
-                  </div>
-                </footer>
               </div>
             </div>
           )}
@@ -1333,8 +1257,8 @@ export default function FreeCoursesPage() {
                     <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-foreground-500">Mode</span>
                     <div className="grid grid-cols-2 gap-2">
                       {([
-                        { value: 'clone', title: 'Clone', hint: 'Keep the course as-is' },
-                        { value: 'move', title: 'Move', hint: 'Delete the course after' },
+                        { value: 'clone', title: 'Clone', hint: 'Keep the free course as-is' },
+                        { value: 'move', title: 'Move', hint: 'Delete the free course after' },
                       ] as const).map(option => (
                         <button
                           key={option.value}
@@ -1359,7 +1283,7 @@ export default function FreeCoursesPage() {
                     {convertMode === 'move' && (
                       <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-5 text-red-700">
                         <AppIcon name="ri-alert-line" size={14} className="mt-0.5 shrink-0" />
-                        The course will be deleted and removed from any learner currently assigned it.
+                        The free course will be deleted and removed from any learner currently assigned it.
                       </p>
                     )}
                   </div>
@@ -1672,6 +1596,38 @@ export default function FreeCoursesPage() {
   );
 }
 
+function groupSavedFreeCourses(modules: FreeProgrammeModule[]): SavedFreeCourseCard[] {
+  const groups = new Map<string, SavedFreeCourseCard>();
+  modules.forEach(module => {
+    const title = module.courseName || module.title || 'Untitled free course';
+    const description = module.description || '';
+    const coverImageUrl = module.coverImageUrl || '';
+    const key = module.courseId || `${title}::${description}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.weeks.push(module);
+      existing.componentCount += module.componentCount || module.components?.length || 0;
+      existing.totalOtjh += Number(module.totalOtjh || 0);
+      return;
+    }
+    groups.set(key, {
+      key,
+      courseId: module.courseId || module.id,
+      title,
+      description,
+      coverImageUrl,
+      weeks: [module],
+      componentCount: module.componentCount || module.components?.length || 0,
+      totalOtjh: Number(module.totalOtjh || 0),
+    });
+  });
+  return Array.from(groups.values()).map(card => ({
+    ...card,
+    weeks: [...card.weeks].sort((left, right) => Number(left.weekNumber || 0) - Number(right.weekNumber || 0)),
+    totalOtjh: Math.round(card.totalOtjh * 100) / 100,
+  }));
+}
+
 function SavedFreeCourseCardView({ card, onEdit, onDelete, onConvert }: { card: SavedFreeCourseCard; onEdit: () => void; onDelete: () => void; onConvert: () => void }) {
   const shownWeeks = card.weeks.slice(0, 3);
   const hiddenWeekCount = Math.max(0, card.weeks.length - shownWeeks.length);
@@ -1684,13 +1640,13 @@ function SavedFreeCourseCardView({ card, onEdit, onDelete, onConvert }: { card: 
   }, [card.coverImageUrl]);
 
   return (
-    <article aria-label={card.title} data-course-type={card.courseType} className={`${styles.card} group flex min-h-[620px] w-full flex-col overflow-hidden rounded-lg border border-background-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-md`}>
+    <article className="group flex min-h-[620px] w-full flex-col overflow-hidden rounded-lg border border-background-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-md">
       <div className="relative h-60 overflow-hidden bg-background-100">
         {showCoverImage ? (
           <img
             src={card.coverImageUrl}
             alt=""
-            className={styles.coverImage}
+            className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
             onError={() => setCoverBroken(true)}
           />
         ) : (
@@ -1700,9 +1656,9 @@ function SavedFreeCourseCardView({ card, onEdit, onDelete, onConvert }: { card: 
             </div>
           </div>
         )}
-        <div className={`${styles.badge} absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-white/95 px-2.5 py-1 text-[10px] font-bold uppercase text-primary-800 shadow-sm ring-1 ring-white/60`}>
+        <div className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-white/95 px-2.5 py-1 text-[10px] font-bold uppercase text-primary-800 shadow-sm ring-1 ring-white/60">
           <AppIcon name="ri-book-open-line" size={12} />
-          {card.courseType === 'apprentices' ? 'Apprentices' : 'Free course'}
+          Free course
         </div>
       </div>
 

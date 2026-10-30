@@ -5,7 +5,6 @@ import { describe, expect, it } from 'vitest';
 // production build; it only surfaces as a blank screen when a user navigates there.
 // These tests actually execute the dynamic imports.
 const CURRICULUM_ROUTE_IMPORTS: Record<string, () => Promise<unknown>> = {
-  '/curriculum/courses': () => import('@/pages/curriculum/courses/page'),
   '/curriculum/programmes': () => import('@/pages/curriculum/programmes/page'),
   '/curriculum/programmes/:id': () => import('@/pages/curriculum/programme-detail/page'),
   '/curriculum/cohorts': () => import('@/pages/curriculum/cohorts/page'),
@@ -47,7 +46,7 @@ describe('curriculum route lazy imports', { timeout: 15000 }, () => {
   it('lazily-loaded curriculum hubs resolve', async () => {
     const hubs = await import('@/pages/curriculum/hubs/page');
     expect(hubs.CurriculumLibraryHub).toBeTypeOf('function');
-    expect(hubs).not.toHaveProperty('CurriculumDeliveryHub');
+    expect(hubs.CurriculumDeliveryHub).toBeTypeOf('function');
     expect(hubs.CurriculumQualityHub).toBeTypeOf('function');
   });
 });

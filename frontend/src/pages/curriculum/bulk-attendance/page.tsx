@@ -1,9 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from 'react-router-dom';
-import { AppIcon } from '@/components/feature/AppIcon';
-import SessionPicker from './components/SessionPicker';
-import RegisterSummary from './components/RegisterSummary';
-import styles from './bulkAttendance.module.css';
 import { WorkspaceShell } from "@/components/feature/WorkspaceShell";
 import { curriculumNavItems } from "@/mocks/navigation";
 import type { AttendanceStatus, Learner, Lecture } from "@/types/bulkAttendance";
@@ -44,7 +39,6 @@ import {
   formatDateLabel,
   formatShortDate,
   getWeekDays,
-  todayIso,
 } from "@/utils/bulkAttendance";
 import { downloadCsv, slugify } from "@/utils/bulkCsv";
 import { downloadAttendanceSummaryPdf } from "./attendancePdf";
@@ -59,7 +53,6 @@ import AttendanceTable, {
   type EditableRecord,
   type LectureInfo,
 } from "./components/AttendanceTable";
-import WeeklyGrid from "./components/WeeklyGrid";
 import MonthlyGrid from "./components/MonthlyGrid";
 import SummaryReport from "./components/SummaryReport";
 import LearnerHistoryModal, {
@@ -134,8 +127,6 @@ export default function AttendancePage() {
   const [detailHistoryVersion, setDetailHistoryVersion] = useState(0);
   const [detailSaving, setDetailSaving] = useState(false);
   const [detailSaveError, setDetailSaveError] = useState<string | null>(null);
-  const [registerSaving, setRegisterSaving] = useState(false);
-  const [registerSaveError, setRegisterSaveError] = useState<string | null>(null);
   const [pendingEdits, setPendingEdits] = useState<Record<string, BulkAttendanceChange>>({});
   const [kbcRecentVersion, setKbcRecentVersion] = useState(0);
   const [dayMembership, setDayMembership] = useState<{ date: string; ids: Set<string> } | null>(null);
@@ -150,8 +141,6 @@ export default function AttendancePage() {
   const [addAttendanceError, setAddAttendanceError] = useState<string | null>(null);
   const [liveDayError, setLiveDayError] = useState<string | null>(null);
   const [savingLiveLearnerIds, setSavingLiveLearnerIds] = useState<string[]>([]);
-  const liveSaveLock = useRef(false);
-  const [liveDayRead, setLiveDayRead] = useState({ key: '', loading: false, success: false });
 
   const selectedLecture = useMemo(
     () => lectures.find((lecture) => lecture.id === lectureId) ?? null,
@@ -380,13 +369,6 @@ export default function AttendancePage() {
   // can be viewed and corrected without requiring another lecture click.
   const attendanceTargetLecture = selectedLecture
     ?? (dateLectures.length === 1 ? dateLectures[0] : null);
-  const attendanceTargetKey = attendanceTargetLecture
-    ? `${attendanceTargetLecture.id}:${attendanceTargetLecture.moduleCatalogueId}:${attendanceTargetLecture.sessionDate}` : '';
-  const currentAttendanceTarget = useRef(attendanceTargetKey);
-  currentAttendanceTarget.current = attendanceTargetKey;
-  const ambiguousTarget = Boolean(attendanceTargetLecture && lectures.filter(lecture =>
-    lecture.moduleCatalogueId === attendanceTargetLecture.moduleCatalogueId && lecture.sessionDate === attendanceTargetLecture.sessionDate,
-  ).length > 1);
 
   const addAttendanceLectures = useMemo(
     () => lectures
@@ -400,12 +382,6 @@ export default function AttendancePage() {
       })),
     [lectures, scopedModules],
   );
-
-  const pickerLectures = useMemo(() => {
-    if (!moduleId) return addAttendanceLectures;
-    const moduleLectureIds = new Set(lectures.filter(lecture => lecture.moduleId === moduleId).map(lecture => lecture.id));
-    return addAttendanceLectures.filter(lecture => moduleLectureIds.has(lecture.id));
-  }, [addAttendanceLectures, lectures, moduleId]);
 
   const handleDateChange = useCallback((nextDate: string, nextLectureId = "") => {
     setDate(nextDate);
@@ -479,7 +455,6 @@ export default function AttendancePage() {
     sourceError: attendanceSourceError,
     statuses,
     getStatus,
-    setStatusForDate, dirty, pendingCount, pendingStatuses, save, undo,
     applySavedStatuses,
     replaceSavedStatusesForDate,
   } = useAttendance({
@@ -491,13 +466,6 @@ export default function AttendancePage() {
   // selection is rendered immediately while only its learner results load.
   const pageLoading = dataLoading || attendanceLoading || dayLoading;
   const registerLoading = pageLoading || scopeRosterLoading;
-  const liveDayReadKey = `${attendanceTargetKey}:${activeLearners.map(learner => learner.id).join('|')}`;
-
-  const handleGridToggle = (learnerId: string, day: string) => {
-    setRegisterSaveError(null);
-    const current = getStatus(learnerId, day);
-    setStatusForDate(learnerId, day, current === "present" ? "absent" : "present");
-  };
 
   const handleToggleSelect = (learnerId: string) => {
     setSelectedIds((prev) =>
@@ -507,25 +475,23 @@ export default function AttendancePage() {
     );
   };
 
-  const handleMarkSelected = async (status: Extract<AttendanceStatus, "present" | "absent">, targetIds = selectedIds) => {
-    if (targetIds.length === 0 || liveSaveLock.current) return;
+  const handleMarkSelected = async (status: Extract<AttendanceStatus, "present" | "absent">) => {
+    if (selectedIds.length === 0) return;
     const target = attendanceTargetLecture;
     if (!target?.moduleCatalogueId) {
       setAddAttendanceError("Choose one live session, or a module with one live session on this date, before changing attendance.");
       setShowAddAttendanceDay(true);
       return;
     }
-    liveSaveLock.current = true;
-    const targetKey = attendanceTargetKey;
-    setSavingLiveLearnerIds((current) => Array.from(new Set([...current, ...targetIds])));
+    setSavingLiveLearnerIds((current) => Array.from(new Set([...current, ...selectedIds])));
     setLiveDayError(null);
     try {
       const sessionLearners = await learnersAssignedToLiveLecture(target);
       const targets = sessionLearners.filter(
-        (learner) => targetIds.includes(learner.id) && Boolean(learner.kbcId),
+        (learner) => selectedIds.includes(learner.id) && Boolean(learner.kbcId),
       );
       if (!targets.length) {
-        if (currentAttendanceTarget.current === targetKey) setLiveDayError("None of the selected learners is assigned to this live session.");
+        setLiveDayError("None of the selected learners is assigned to this live session.");
         return;
       }
       await createBulkAttendanceLiveDay({
@@ -534,16 +500,15 @@ export default function AttendancePage() {
         date: target.sessionDate,
         attendance: status,
       });
-      if (currentAttendanceTarget.current === targetKey) applySavedStatuses(targets.map((learner) => learner.id), target.sessionDate, status);
+      applySavedStatuses(targets.map((learner) => learner.id), target.sessionDate, status);
       setKbcRecentVersion((version) => version + 1);
       setDetailHistoryVersion((version) => version + 1);
     } catch (reason) {
-      if (currentAttendanceTarget.current === targetKey) setLiveDayError(
+      setLiveDayError(
         reason instanceof Error ? reason.message : "Attendance could not be saved. Please try again.",
       );
     } finally {
-      liveSaveLock.current = false;
-      setSavingLiveLearnerIds((current) => current.filter((id) => !targetIds.includes(id)));
+      setSavingLiveLearnerIds((current) => current.filter((id) => !selectedIds.includes(id)));
     }
   };
 
@@ -556,15 +521,12 @@ export default function AttendancePage() {
     const sessionDate = attendanceTargetLecture?.sessionDate || date;
     const moduleCatalogueId = attendanceTargetLecture?.moduleCatalogueId;
     if (!moduleCatalogueId) {
-      setLiveDayRead({ key: '', loading: false, success: false });
       replaceSavedStatusesForDate(sessionDate, {});
       setLiveDayError(null);
       return undefined;
     }
 
     const controller = new AbortController();
-    const readKey = `${attendanceTargetLecture?.id}:${moduleCatalogueId}:${sessionDate}:${activeLearners.map(learner => learner.id).join('|')}`;
-    setLiveDayRead({ key: readKey, loading: true, success: false });
     setLiveDayError(null);
     replaceSavedStatusesForDate(sessionDate, {});
     void fetchBulkAttendanceLiveDayRecords(sessionDate, moduleCatalogueId, controller.signal)
@@ -581,7 +543,6 @@ export default function AttendancePage() {
           if (learnerId) nextStatuses[learnerId] = record.attendance;
         });
         replaceSavedStatusesForDate(sessionDate, nextStatuses);
-        setLiveDayRead({ key: readKey, loading: false, success: true });
       })
       .catch((reason: unknown) => {
         if (controller.signal.aborted) return;
@@ -590,8 +551,6 @@ export default function AttendancePage() {
             ? reason.message
             : "Unable to load live-session attendance for this date.",
         );
-      }).finally(() => {
-        if (!controller.signal.aborted) setLiveDayRead(current => ({ ...current, loading: false }));
       });
     return () => controller.abort();
   }, [
@@ -711,69 +670,6 @@ export default function AttendancePage() {
     );
   }, [learners, isArchived]);
 
-  const saveRegisterChanges = async () => {
-    const entries = Object.entries(pendingStatuses)
-      .filter(([, status]) => status === "present" || status === "absent");
-    if (entries.length === 0) {
-      save();
-      return;
-    }
-
-    setRegisterSaving(true);
-    setRegisterSaveError(null);
-    try {
-      const byDay = new Map<string, Array<[string, Extract<AttendanceStatus, "present" | "absent">]>>();
-      entries.forEach(([key, status]) => {
-        const separator = key.lastIndexOf(":");
-        const learnerId = separator >= 0 ? key.slice(0, separator) : key;
-        const day = separator >= 0 ? key.slice(separator + 1) : date;
-        const list = byDay.get(day) ?? [];
-        list.push([learnerId, status as Extract<AttendanceStatus, "present" | "absent">]);
-        byDay.set(day, list);
-      });
-
-      for (const [day, changes] of byDay) {
-        const dayLectures = lectures.filter((lecture) => lecture.sessionDate === day);
-        const lecture = selectedLecture?.sessionDate === day
-          ? selectedLecture
-          : dayLectures.length === 1 ? dayLectures[0] : null;
-        if (!lecture?.moduleCatalogueId) {
-          throw new Error(
-            dayLectures.length > 1
-              ? `Choose one lecture for ${formatShortDate(day)} before saving attendance.`
-              : "Choose a live session before saving attendance.",
-          );
-        }
-
-        const assigned = await learnersAssignedToLiveLecture(lecture);
-        const assignedById = new Map(assigned.map((learner) => [learner.id, learner]));
-        for (const status of ["present", "absent"] as const) {
-          const targets = changes
-            .filter(([, nextStatus]) => nextStatus === status)
-            .map(([learnerId]) => assignedById.get(learnerId))
-            .filter((learner): learner is Learner => Boolean(learner?.kbcId));
-          if (targets.length === 0) continue;
-          await createBulkAttendanceLiveDay({
-            learnerIds: targets.map((learner) => learner.kbcId!),
-            moduleCatalogueId: lecture.moduleCatalogueId,
-            date: day,
-            attendance: status,
-          });
-        }
-      }
-
-      save();
-      setKbcRecentVersion((version) => version + 1);
-      setDetailHistoryVersion((version) => version + 1);
-    } catch (reason) {
-      setRegisterSaveError(
-        reason instanceof Error ? reason.message : "Attendance could not be saved. Please try again.",
-      );
-    } finally {
-      setRegisterSaving(false);
-    }
-  };
-
   const addAttendanceDay = async ({
     date: attendanceDate,
     lectureId: targetLectureId,
@@ -881,14 +777,6 @@ export default function AttendancePage() {
   }, [activeLearners, selectedLecture, kbcRecent, pendingEdits]);
 
   const weekDays = useMemo(() => getWeekDays(date), [date]);
-
-  const weekLabel = useMemo(() => {
-    const fmt = (value: Date) =>
-      value.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-    const start = new Date(`${weekDays[0].iso}T00:00:00`);
-    const end = new Date(`${weekDays[6].iso}T00:00:00`);
-    return `${fmt(start)} – ${fmt(end)}`;
-  }, [weekDays]);
 
   const handleExport = () => {
     const header = [
@@ -1078,24 +966,39 @@ export default function AttendancePage() {
   };
 
   const isArchiveView = view === "archive";
-  const currentRegisterReady = Boolean(selectedLecture && attendanceTargetLecture?.moduleCatalogueId)
-    && !ambiguousTarget && !registerLoading && !dataError && !scopeRosterError && !dirty
-    && liveDayRead.key === liveDayReadKey && !liveDayRead.loading && liveDayRead.success;
-  const currentCounts = visibleRows.reduce((counts, row) => {
-    counts[getStatus(row.learner.id, date)] += 1;
-    return counts;
-  }, { present: 0, absent: 0, unmarked: 0 });
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Bulk Attendance" pageSubtitle="Record attendance across learners, cohorts and modules" userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className={styles.page}>
-      <main id="curriculum-bulk-attendance">
-        <section className={styles.intro}>
-          <nav className={styles.breadcrumb} aria-label="Breadcrumb"><Link to="/workspace/curriculum">Curriculum</Link><AppIcon className="ri-arrow-right-s-line" /><span>Bulk Attendance</span></nav>
-          <div className={styles.introLine}><div>
-            <h1>{isArchiveView ? 'Learner archive' : 'Bulk attendance'}</h1>
-            <p>Choose a live session, review its learners and record attendance. Saved history remains available in learner details.</p>
-            <div className={styles.introTotals}><span className={styles.scopeBadge}>{dataLoading ? 'Loading learners...' : dataError ? 'Learner count unavailable' : `${activeLearners.length} learners in scope`}</span><span>Delivered-register total unavailable</span><span>Attendance-mark total unavailable</span><span>Sync time unavailable</span></div>
+      <div className="min-h-screen bg-background-100">
+      <main className="mx-auto w-full max-w-[1400px] px-4 py-6 md:px-8 md:py-8">
+        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold text-foreground-950 md:text-2xl">
+              {isArchiveView ? "Learner archive" : "Attendance register"}
+            </h2>
+            <p className="mt-1 text-sm text-foreground-500">
+              {isArchiveView ? (
+                <>
+                  {archivedTotal}{" "}
+                  {archivedTotal === 1 ? "learner" : "learners"}
+                  <span className="mx-2 text-foreground-300">•</span>
+                  Completed, EnteredEpa and Withdrawn
+                </>
+              ) : (
+                <>
+                  {date ? formatDateLabel(date) : "All dates"}
+                  <span className="mx-2 text-foreground-300">•</span>
+                  {activeModuleLabel}
+                  {selectedLecture && (
+                    <>
+                      <span className="mx-2 text-foreground-300">•</span>
+                      {selectedLecture.name} —{" "}
+                      {formatShortDate(selectedLecture.sessionDate)}
+                    </>
+                  )}
+                </>
+              )}
+            </p>
             {dataLoading && (
               <p className="mt-2 text-xs text-foreground-500">Loading current curriculum data…</p>
             )}
@@ -1162,35 +1065,40 @@ export default function AttendancePage() {
                 </button>
               </div>
             )}
+          </div>
 
-          </div><div className={styles.introActions}>
-            {(isArchiveView || tab !== 'daily') && <label className={styles.dateJump}><AppIcon className="ri-calendar-line" /><span>Jump to date</span><input type="date" aria-label="Jump to date" value={date} onChange={event => handleDateChange(event.target.value)} /></label>}
-            <button type="button" disabled={dataLoading} onClick={() => { retryData(); setKbcRecentVersion(version => version + 1); }}><AppIcon className="ri-refresh-line" />Refresh</button>
-            <button type="button" className={styles.archiveAction} onClick={() => setView(isArchiveView ? 'register' : 'archive')}><AppIcon className={isArchiveView ? 'ri-arrow-left-line' : 'ri-archive-line'} />{isArchiveView ? 'Back to register' : `Archived (${archivedTotal})`}</button>
-          </div></div>
-        </section>
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            <label className="flex h-11 items-center gap-2 rounded-md border border-background-300 bg-background-50 px-3">
+              <i className="ri-calendar-line text-base text-foreground-500" />
+              <span className="font-label text-xs uppercase tracking-wide text-foreground-500">
+                Date
+              </span>
+              <input
+                type="date"
+                value={date}
+                onChange={(event) => handleDateChange(event.target.value)}
+                className="cursor-pointer bg-transparent text-sm text-foreground-950 outline-none"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => setView(isArchiveView ? "register" : "archive")}
+              className="flex h-11 cursor-pointer items-center gap-2 whitespace-nowrap rounded-md bg-primary-500 px-3 text-sm font-medium text-background-50 transition-colors hover:bg-primary-600"
+            >
+              <i
+                className={
+                  isArchiveView
+                    ? "ri-arrow-left-line text-base"
+                    : "ri-archive-2-line text-base"
+                }
+              />
+              {isArchiveView ? "Back to register" : `Archived (${archivedTotal})`}
+            </button>
+          </div>
+        </div>
 
-        {!isArchiveView && (
-            <div className={styles.toolbar}>
-              <RegisterTabs active={tab} onChange={setTab} />
-              <span className={styles.scopeCount}>{registerLoading ? 'Loading learners…' : dataError || scopeRosterError ? 'Learner scope unavailable' : `${visibleRows.length} learners in scope`}</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setAddAttendanceError(null);
-                  setShowAddAttendanceDay(true);
-                }}
-                disabled={dataLoading || scopeRosterLoading || !scopedLearners.some((learner) => !isArchived(learner))}
-                className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-primary-200 bg-background-50 px-4 py-2.5 text-sm font-semibold text-primary-700 shadow-sm transition-colors hover:border-primary-300 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
-              >
-                <i className="ri-calendar-event-line text-base" />
-                Add attendance day
-              </button>
-            </div>
-        )}
         {/* Compact filter toolbar — shared by the register and the archive. */}
-        <details className={styles.filters} open>
-          <summary>Filters</summary>
+        <section className="mt-5">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <FilterCard
               variant="compact"
@@ -1282,7 +1190,7 @@ export default function AttendancePage() {
               }}
             />
           </div>
-        </details>
+        </section>
 
         {isArchiveView ? (
           <section className="mt-5">
@@ -1290,22 +1198,55 @@ export default function AttendancePage() {
           </section>
         ) : (
           <>
+            <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <RegisterTabs active={tab} onChange={setTab} />
+              <button
+                type="button"
+                onClick={() => {
+                  setAddAttendanceError(null);
+                  setShowAddAttendanceDay(true);
+                }}
+                disabled={dataLoading || scopeRosterLoading || !scopedLearners.some((learner) => !isArchived(learner))}
+                className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-primary-200 bg-background-50 px-4 py-2.5 text-sm font-semibold text-primary-700 shadow-sm transition-colors hover:border-primary-300 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+              >
+                <i className="ri-calendar-event-line text-base" />
+                Add attendance day
+              </button>
+            </div>
 
             {tab === "daily" && (
               <section className="mt-4 space-y-3">
-                <SessionPicker sessions={pickerLectures} selectedId={selectedLecture?.id} date={date} loading={dataLoading} eligibleCount={currentRegisterReady ? visibleRows.length : null} markedCount={currentRegisterReady ? currentCounts.present + currentCounts.absent : null} onChange={handleDateChange} />
-                <section className={styles.register}>
-                <RegisterSummary title={`${date ? formatDateLabel(date) : 'All dates'}${selectedLecture ? ` - ${selectedLecture.name}` : ''}`} ready={currentRegisterReady} {...currentCounts} />
-                {!currentRegisterReady && <p className={styles.registerNotice}>{ambiguousTarget ? 'More than one session shares this module and date. The current save workflow cannot distinguish them; use an existing saved history record for corrections.' : dirty ? 'Save or undo existing register changes before using the current-session controls.' : selectedLecture ? 'Waiting for a complete session roster and saved register. Resolve any loading errors before marking.' : 'Choose a session above to view and mark its register. Recent history can still be reviewed below.'}</p>}
+                <button
+                  type="button"
+                  onClick={() => setShowLearnerDirectory(true)}
+                  disabled={pageLoading || activeLearners.length === 0}
+                  aria-label={`View all ${activeLearners.length} learners`}
+                  className="group grid w-full cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 rounded-xl border border-background-300 bg-background-50 p-4 text-left shadow-sm transition-all hover:border-primary-300 hover:bg-primary-50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 disabled:cursor-not-allowed disabled:opacity-60 sm:p-5"
+                >
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-secondary-100 text-secondary-900">
+                    <i className="ri-group-line text-2xl" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block font-label text-xs uppercase tracking-wide text-foreground-500">
+                      Learners
+                    </span>
+                    <span className="mt-0.5 block text-2xl font-semibold leading-none text-foreground-950">
+                      {pageLoading || scopeRosterLoading ? "—" : activeLearners.length}
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-2 text-sm font-medium text-primary-700">
+                    <span className="hidden sm:inline">View directory</span>
+                    <i className="ri-arrow-right-line text-lg transition-transform group-hover:translate-x-0.5" />
+                  </span>
+                </button>
 
-                <div className={styles.registerToolbar}>
+                <div className="flex flex-col gap-3 rounded-xl border border-background-300 bg-background-50 p-3 shadow-sm xl:flex-row xl:items-center xl:justify-between">
                   <SearchBar
                     value={query}
                     resultCount={visibleRows.length}
                     onChange={setQuery}
                   />
                   <div className="flex flex-wrap items-center gap-2">
-                    <button type="button" className={styles.directoryButton} onClick={() => setShowLearnerDirectory(true)} disabled={pageLoading || activeLearners.length === 0} aria-label={`View all ${activeLearners.length} learners`}><AppIcon className="ri-user-line" />Directory</button>
                     {selectedIds.length > 0 && (
                       <span className="mr-1 text-sm text-foreground-500">
                         {selectedIds.length} selected
@@ -1314,7 +1255,7 @@ export default function AttendancePage() {
                     <button
                       type="button"
                       onClick={() => void handleMarkSelected("present")}
-                      disabled={registerLoading || savingLiveLearnerIds.length > 0 || selectedIds.length === 0}
+                      disabled={registerLoading || selectedIds.length === 0}
                       className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border border-green-300 bg-green-100 px-3 py-2 text-sm font-medium text-green-800 transition-colors hover:bg-green-200 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <i className="ri-check-double-line" />
@@ -1323,7 +1264,7 @@ export default function AttendancePage() {
                     <button
                       type="button"
                       onClick={() => void handleMarkSelected("absent")}
-                      disabled={registerLoading || savingLiveLearnerIds.length > 0 || selectedIds.length === 0}
+                      disabled={registerLoading || selectedIds.length === 0}
                       className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border border-red-300 bg-red-100 px-3 py-2 text-sm font-medium text-red-800 transition-colors hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <i className="ri-close-line" />
@@ -1419,44 +1360,6 @@ export default function AttendancePage() {
                   onToggleRecord={toggleRecord}
                   highlights={highlights}
                   onHighlightChange={setHighlight}
-                  currentRegister={{ ready: currentRegisterReady, statuses, savingIds: savingLiveLearnerIds, onMark: (learnerId, status) => { void handleMarkSelected(status, [learnerId]); } }}
-                />
-                <p className={styles.registerNotice}>Bulk actions save selected learners assigned to the chosen session. Selection can include learners hidden by search. Individual buttons save immediately; recent-history corrections use the existing Save action.</p>
-                </section>
-              </section>
-            )}
-
-            {tab === "weekly" && (
-              <section className="mt-5">
-                <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-                  <div>
-                    <h3 className="text-sm font-semibold text-foreground-950">
-                      Weekly overview
-                    </h3>
-                    <p className="mt-0.5 text-xs text-foreground-500">
-                      {weekLabel}
-                      <span className="mx-2 text-foreground-300">•</span>
-                      Tap any day to update it
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-4 text-xs text-foreground-500">
-                    <span className="flex items-center gap-1.5">
-                      <span className="h-3 w-3 rounded-sm bg-green-100 ring-1 ring-green-200" />
-                      Present
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                      <span className="h-3 w-3 rounded-sm bg-red-100 ring-1 ring-red-200" />
-                      Absent
-                    </span>
-                  </div>
-                </div>
-                <WeeklyGrid
-                  rows={rows}
-                  days={weekDays}
-                  today={todayIso()}
-                  loading={registerLoading}
-                  getStatus={getStatus}
-                  onToggle={handleGridToggle}
                 />
               </section>
             )}
@@ -1532,47 +1435,6 @@ export default function AttendancePage() {
                 </div>
               </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {dirty && (
-        <div className="fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-5">
-          <div className="flex w-full max-w-md flex-col items-center gap-3 rounded-lg border border-background-300 bg-background-50 p-3 sm:flex-row sm:justify-between">
-            {registerSaveError && <p className="w-full text-sm text-red-700" role="alert">{registerSaveError}</p>}
-            <div className="flex items-center gap-2.5">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-100 text-accent-700">
-                <i className="ri-edit-2-line" />
-              </span>
-              <div className="leading-tight">
-                <p className="text-sm font-medium text-foreground-950">
-                  Unsaved changes
-                </p>
-                <p className="text-xs text-foreground-500">
-                  {pendingCount} change{pendingCount === 1 ? "" : "s"} not saved
-                  yet
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={undo}
-                className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border border-background-300 bg-background-50 px-3 py-2 text-sm font-medium text-foreground-800 transition-colors hover:bg-background-200"
-              >
-                <i className="ri-arrow-go-back-line" />
-                Undo
-              </button>
-              <button
-                type="button"
-                onClick={() => void saveRegisterChanges()}
-                disabled={registerSaving}
-                className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md bg-primary-500 px-3 py-2 text-sm font-medium text-background-50 transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <i className="ri-save-3-line" />
-                {registerSaving ? "Saving…" : "Save changes"}
-              </button>
-            </div>
           </div>
         </div>
       )}
