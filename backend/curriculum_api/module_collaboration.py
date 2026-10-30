@@ -115,8 +115,13 @@ def check_structure_save(request, module_id, stored, candidate, payload, *, remo
         return None
     from login.sessions import authenticate_request
     account = authenticate_request(request)
-    if not account or account.role not in ('admin', 'staff'):
+    # Preserve the HTTP API gate's existing Django-operator identity as well
+    # as LMS staff. It cannot impersonate a socket editor or bypass a lease.
+    django_user = getattr(request, 'user', None) if account is None else None
+    django_operator = bool(django_user is not None and getattr(django_user, 'is_authenticated', False))
+    if (account is not None and account.role not in ('admin', 'staff')) or (account is None and not django_operator):
         return JsonResponse({'error': 'Staff access is required.'}, status=403)
+    principal = str(account.pk) if account is not None else 'django:' + str(django_user.pk)
     metadata = payload.get('collaboration') or {}
     if not isinstance(metadata, dict):
         return JsonResponse({'error': 'Invalid editing identity.'}, status=400)
@@ -127,7 +132,7 @@ def check_structure_save(request, module_id, stored, candidate, payload, *, remo
     try:
         room = get_store().read(module_id)
         member = room['members'].get(editor)
-        if member and member['account'] != str(account.pk):
+        if member and member['account'] != principal:
             return JsonResponse({'error': 'This editor belongs to another session.'}, status=403)
         if not room['leases'] and not proofs:
             return None  # No reservations to check; avoid walking a large module.

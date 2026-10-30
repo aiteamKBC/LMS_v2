@@ -28,6 +28,9 @@ class Socket {
   onmessage?: (event: { data: string }) => void;
   onclose?: (event: { code: number }) => void;
   frames: Record<string, unknown>[] = [];
+  leases = new Map<string, { key: string; editorId: string | null; name: string; expiresAt: number }>();
+  heldRelease: (() => void) | null = null;
+  holdNextRelease = false;
   url: URL;
   constructor(url: URL) { this.url = url; Socket.instances.push(this); }
   receive(data: object) { this.onmessage?.({ data: JSON.stringify(data) }); }
@@ -37,9 +40,18 @@ class Socket {
       this.receive({ type: 'error', requestId: frame.requestId, code: 'field_retry', error: 'A save is in progress; draft retained.' });
       return;
     }
-    if (frame.type === 'claim') this.receive({ type: 'state', requestId: frame.requestId, ok: true, key: frame.key,
-      token: 'private-token', serverTime: Date.now() / 1000, members: [], leases: [{ key: frame.key, editorId: this.url.searchParams.get('editor'), name: 'Me', expiresAt: Date.now() / 1000 + 60 }] });
-    if (frame.type === 'release') this.receive({ type: 'state', requestId: frame.requestId, ok: true, leases: [] });
+    if (frame.type === 'claim') {
+      this.leases.set(frame.key, { key: frame.key, editorId: this.url.searchParams.get('editor'), name: 'Me', expiresAt: Date.now() / 1000 + 60 });
+      this.receive({ type: 'state', requestId: frame.requestId, ok: true, key: frame.key,
+        token: 'private-token', serverTime: Date.now() / 1000, members: [], leases: [...this.leases.values()] });
+    }
+    if (frame.type === 'release') {
+      const respond = () => {
+        for (const item of frame.release || [{ key: frame.key }]) this.leases.delete(item.key);
+        this.receive({ type: 'state', requestId: frame.requestId, ok: true, leases: [...this.leases.values()] });
+      };
+      if (this.holdNextRelease) { this.holdNextRelease = false; this.heldRelease = respond; } else respond();
+    }
   }
   close(code = 1000) { this.readyState = 3; this.onclose?.({ code }); }
 }
@@ -138,6 +150,20 @@ describe('collaboration connection', () => {
     expect(sent.module.weekStructure[0].components[0].title).toBe('Original');
     expect(sent.module.weekStructure[0].components[0].expectedOtjh).toBe(2);
     expect(result.current.connected).toBe(true);
+  });
+  it('releases many fields in bounded batches and retains a field edited again during release', async () => {
+    const { result } = renderHook(() => useModuleCollaboration('M1', vi.fn())); await flush();
+    const socket = Socket.instances[0]; act(() => socket.receive({ type: 'state', ok: true, members: [], leases: [] }));
+    const keys = Array.from({ length: 40 }, (_, index) => fieldKey('component', 'C1', `settings.note${index}`));
+    await act(async () => { for (const key of keys) await result.current.claim(key); });
+    socket.holdNextRelease = true;
+    const saving = result.current.saved(baseModule(), baseModule());
+    await act(async () => { await result.current.claim(keys[39]); socket.heldRelease?.(); await saving; });
+    const releases = socket.frames.filter(frame => frame.type === 'release');
+    expect(releases).toHaveLength(2);
+    expect(releases.every(frame => (frame.release as unknown[]).length <= 32)).toBe(true);
+    expect(releases.flatMap(frame => frame.release as { key: string }[])).toHaveLength(39);
+    expect(socket.leases.has(keys[39])).toBe(true);
   });
 });
 

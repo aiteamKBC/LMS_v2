@@ -122,8 +122,11 @@ class ModuleCollaborationConsumer(AsyncJsonWebsocketConsumer):
                     raise ValueError('Invalid reservation renewal.')
                 result = await database_sync_to_async(service.apply_event)(self.module_id, action, self.actor, renew=renew)
             elif action == 'release':
+                release = content.get('release') or []
+                if not isinstance(release, list) or len(release) > 64 or any(not isinstance(item, dict) for item in release):
+                    raise ValueError('Invalid reservation release.')
                 result = await database_sync_to_async(service.apply_event)(self.module_id, action, self.actor,
-                    key=str(content.get('key') or ''), token=str(content.get('token') or ''))
+                    key=str(content.get('key') or ''), token=str(content.get('token') or ''), release=release)
             else:
                 raise ValueError('Unsupported editing event.')
             await self.send_json({'type': 'state', 'requestId': request_id, **result})

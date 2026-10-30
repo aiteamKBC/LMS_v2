@@ -16,7 +16,7 @@ export function useModuleCollaboration(moduleId: string, onSaved: () => void) {
   const editorId = useRef(crypto.randomUUID());
   const socket = useRef<WebSocket | null>(null);
   const pending = useRef(new Map<string, Pending>());
-  const proofs = useRef(new Map<string, { token: string; expires: number; touched: number }>());
+  const proofs = useRef(new Map<string, { token: string; expires: number; touched: number; version: number }>());
   const claiming = useRef(new Map<string, Promise<boolean>>());
   const lost = useRef(new Set<string>());
   const offset = useRef(0);
@@ -32,21 +32,33 @@ export function useModuleCollaboration(moduleId: string, onSaved: () => void) {
       ws.send(JSON.stringify({ type, requestId, ...data }));
     });
   };
-  const release = async (key: string) => {
-    const proof = proofs.current.get(key);
-    proofs.current.delete(key); lost.current.delete(key);
-    if (proof && socket.current?.readyState === WebSocket.OPEN) await request('release', { key, token: proof.token });
+  const release = async (keys: string[]) => {
+    const captured = keys.flatMap(key => {
+      const proof = proofs.current.get(key);
+      return proof ? [{ key, token: proof.token, version: proof.version }] : [];
+    });
+    // One bounded frame per batch, not a burst that can hit the socket limit.
+    for (let index = 0; index < captured.length; index += 32) {
+      const batch = captured.slice(index, index + 32).filter(item => {
+        const current = proofs.current.get(item.key);
+        return current?.token === item.token && current.version === item.version;
+      }).map(({ key, token }) => {
+        proofs.current.delete(key); lost.current.delete(key);
+        return { key, token };
+      });
+      if (batch.length) await request('release', { release: batch });
+    }
   };
   const claim = (key: string): Promise<boolean> => {
     if (!stateRef.current.enabled) return Promise.resolve(true);
     const existing = proofs.current.get(key);
-    if (existing && existing.expires > now()) { existing.touched = Date.now(); return Promise.resolve(true); }
+    if (existing && existing.expires > now()) { existing.touched = Date.now(); existing.version += 1; return Promise.resolve(true); }
     const inFlight = claiming.current.get(key);
     if (inFlight) return inFlight;
     const job = request('claim', { key }).then(reply => {
       if (reply.ok && reply.token) {
         const lease = reply.leases?.find(item => item.key === key);
-        proofs.current.set(key, { token: reply.token, expires: lease?.expiresAt ?? now(), touched: Date.now() });
+        proofs.current.set(key, { token: reply.token, expires: lease?.expiresAt ?? now(), touched: Date.now(), version: 0 });
         lost.current.delete(key);
         return true;
       }
@@ -184,12 +196,12 @@ export function useModuleCollaboration(moduleId: string, onSaved: () => void) {
   };
   const saved = async (sent: ModuleCatalogueItem, latest: ModuleCatalogueItem) => {
     const a = editValues(sent), b = editValues(latest);
-    await Promise.all([...proofs.current.keys()].filter(key => JSON.stringify(a.get(key)) === JSON.stringify(b.get(key)))
-      .map(key => releaseRef.current(key).catch(() => {
+    await releaseRef.current([...proofs.current.keys()].filter(key => JSON.stringify(a.get(key)) === JSON.stringify(b.get(key))))
+      .catch(() => {
         setState(current => ({ ...current, message: 'Content saved. The field reservation will release automatically when the connection recovers or its short expiry ends.' }));
-      })));
+      });
   };
-  const cancel = () => { void Promise.all([...proofs.current.keys()].map(key => releaseRef.current(key))).catch(() => setState(current => ({ ...current, message: retained }))); };
+  const cancel = () => { void releaseRef.current([...proofs.current.keys()]).catch(() => setState(current => ({ ...current, message: retained }))); };
   const resume = () => { callback.current(); lost.current.clear(); setState(current => ({ ...current, message: '' })); };
   const rejectFields = (keys: string[]) => { keys.forEach(key => lost.current.add(key)); };
   const holder = (key: string) => state.leases.find(lease => lease.editorId !== editorId.current && lease.expiresAt > now() && overlaps(key, lease.key))?.name || '';

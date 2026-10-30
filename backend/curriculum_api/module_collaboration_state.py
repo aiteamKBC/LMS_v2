@@ -88,7 +88,7 @@ def member_matches(room, editor, connection):
     return (room['members'].get(editor) or {}).get('connection') == connection
 
 
-def transition(room, action, actor, now, *, key='', token='', renew=()):
+def transition(room, action, actor, now, *, key='', token='', renew=(), release=()):
     """Return new state and response. A stale connection can never remove a new one."""
     room = clean_room(room, now)
     editor, connection = actor['editor'], actor['connection']
@@ -129,9 +129,13 @@ def transition(room, action, actor, now, *, key='', token='', renew=()):
         room['leases'][key] = lease
         return room, {'ok': True, 'key': key, 'token': lease['token'], **public_room(room, now)}
     elif action == 'release':
-        lease = room['leases'].get(key)
-        if lease and lease['editor'] == editor and lease['connection'] == connection and same_token(lease['token'], token):
-            del room['leases'][key]
+        for proof in list(release or [{'key': key, 'token': token}])[:64]:
+            if not isinstance(proof, dict) or not isinstance(proof.get('key'), str):
+                raise ValueError('Invalid reservation release.')
+            held_key = proof['key']
+            lease = room['leases'].get(held_key)
+            if lease and lease['editor'] == editor and lease['connection'] == connection and same_token(lease['token'], proof.get('token', '')):
+                del room['leases'][held_key]
     elif action != 'snapshot':
         raise ValueError('Unsupported collaboration event.')
     return room, {'ok': True, **public_room(room, now)}

@@ -116,6 +116,13 @@ class FieldReservationTests(SimpleTestCase):
         self.event('claim', ALICE, key=TITLE); self.event('leave', ALICE)
         self.assertTrue(self.event('claim', BOB, key=TITLE)['ok'])
 
+    def test_batch_release_only_releases_matching_ownership(self):
+        keys = [field_key('component', 'C1', f'settings.note{index}') for index in range(40)]
+        proofs = [{'key': key, 'token': self.event('claim', ALICE, key=key)['token']} for key in keys]
+        self.event('claim', BOB, key=TITLE)
+        self.event('release', ALICE, release=proofs + [{'key': TITLE, 'token': 'wrong'}])
+        self.assertEqual([TITLE], list(self.store.read('M1')['leases']))
+
     def test_nested_content_type_change_and_deletion_respect_field_owner(self):
         self.event('claim', ALICE, key=field_key('component', 'C1', 'settings.readingContent'))
         for field in ['settings', 'type', '$delete']:
@@ -182,6 +189,16 @@ class SaveReservationGuardTests(SimpleTestCase):
     def test_other_modules_keep_existing_behavior(self):
         self.assertFalse(service.enabled('M2'))
 
+    def test_existing_django_operator_http_identity_still_respects_reservations(self):
+        request = SimpleNamespace(user=SimpleNamespace(is_authenticated=True, pk=7))
+        with patch('login.sessions.authenticate_request', return_value=None):
+            draft = module(); draft['weekStructure'][0]['components'][0]['expectedOtjh'] = 2
+            self.assertIsNone(service.check_structure_save(request, 'M1', module(), draft, {}))
+            draft['weekStructure'][0]['components'][0]['title'] = 'Cannot overwrite'
+            self.assertEqual(409, service.check_structure_save(request, 'M1', module(), draft, {}).status_code)
+            self.assertEqual(403, service.check_structure_save(request, 'M1', module(), draft,
+                {'collaboration': {'editorId': ALICE['editor']}}).status_code)
+
 
 class SocketIdentityTests(SimpleTestCase):
     def test_socket_uses_the_same_restricted_staff_gate_as_http(self):
@@ -234,6 +251,11 @@ class CollaborationSocketTests(SimpleTestCase):
             await a.receive_json_from(); await b.receive_json_from()
             await b.send_json_to({'type': 'claim', 'key': TITLE, 'requestId': 'deny'})
             self.assertFalse((await b.receive_json_from())['ok'])
+            await a.send_json_to({'type': 'release', 'release': [{'key': TITLE, 'token': grant['token']}]})
+            self.assertEqual([], (await a.receive_json_from())['leases'])
+            await a.receive_json_from(); await b.receive_json_from()
+            await a.send_json_to({'type': 'claim', 'key': TITLE})
+            self.assertTrue((await a.receive_json_from())['ok']); await a.receive_json_from(); await b.receive_json_from()
             await a.disconnect()
             # Leave publishes the roster then removed leases.
             self.assertEqual('presence', (await b.receive_json_from())['type'])
