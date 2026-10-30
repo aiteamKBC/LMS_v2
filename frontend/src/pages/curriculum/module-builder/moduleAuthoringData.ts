@@ -1,5 +1,6 @@
 import { requestSessionSync } from '@/api/sessionResults';
 import { localClockToUtcIso, zoneOffsetMs } from '@/lib/timeZones';
+import { sessionDeliveryDate } from '@/lib/deliveryWeek';
 import type { CurriculumKsbEntry, CurriculumModule, LibraryComponent } from '@/lib/curriculumApi';
 import {
   CurriculumApiError,
@@ -191,11 +192,16 @@ export interface ModuleMonthGroup {
  * Returns [] when no week has a date: there is no month to name, and a single
  * "Unscheduled" heading over the whole list tells a reader nothing.
  */
+export function moduleWeekDeliveryDate(week: ModuleWeek): string {
+  const primary = week.components.find(component => component.type === 'live-session' && !component.settings?.extraTeamsMeetingUrl);
+  return (primary && sessionDeliveryDate(primary.settings || {})) || sessionDeliveryDate({ sessionDate: week.sessionDate });
+}
+
 export function groupWeeksByMonth(weeks: ModuleWeek[]): ModuleMonthGroup[] {
-  if (!weeks.some(week => monthKeyOf(week.sessionDate))) return [];
+  if (!weeks.some(week => monthKeyOf(moduleWeekDeliveryDate(week)))) return [];
   const groups: ModuleMonthGroup[] = [];
   weeks.forEach(week => {
-    const key = monthKeyOf(week.sessionDate);
+    const key = monthKeyOf(moduleWeekDeliveryDate(week));
     const current = groups[groups.length - 1];
     // Only ever extends the run in progress, so the weeks stay in module order:
     // a heading is a stretch of the timetable, not a bucket to file weeks into.

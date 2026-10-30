@@ -37,6 +37,16 @@ def fake_connections():
 
 
 class MyLearningAggregateTests(SimpleTestCase):
+    def test_next_title_uses_the_whole_delivery_week_not_an_individual_material_date(self):
+        def item(title, when, placement, completed=False):
+            return {'title': title, 'completed': completed, 'position': 1,
+                    'schedule': {'date': when, 'month': when[:7], 'delivery_week': placement}}
+        previous = {'module_id': 'M1', 'id': 'W4', 'start': '2026-10-23', 'end': '2026-10-29', 'month': '2026-10'}
+        current = {'module_id': 'M1', 'id': 'W5', 'start': '2026-10-30', 'end': '2026-11-05', 'month': '2026-10'}
+        items = [item('Previous unfinished reading', '2026-10-23', previous),
+                 item('Current live', '2026-10-30', current, True),
+                 item('Current reading', '2026-11-02', current)]
+        self.assertEqual(learning.next_title(items, '2026-10-30'), 'Current reading')
     def test_undated_execution_month_matches_detail_and_next_activity_preview(self):
         from .course_catalogue_display import catalogue_display_context, display_schedule
         course = {'id': 3, 'source_course_ref': '50', 'source_course_title': 'Old'}

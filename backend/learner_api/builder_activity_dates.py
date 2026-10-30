@@ -1,7 +1,7 @@
 """Read-only delivery dates for every component in assigned Builder modules."""
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from .subject_dates import activity_schedule, as_date
@@ -41,9 +41,25 @@ COMPONENT_SCHEDULE_SETTINGS = '''jsonb_build_object(
             'teamsStartDateTimeUtc',c.settings_json->>'teamsStartDateTimeUtc',
             'teamsLiveSessionId',c.settings_json->>'teamsLiveSessionId',
             'teamsSessionNumber',c.settings_json->>'teamsSessionNumber',
+            'extraTeamsMeetingUrl',c.settings_json->>'extraTeamsMeetingUrl',
             'dueTiming',c.settings_json->>'dueTiming')'''
 # Module Builder's component order.
 COMPONENT_ORDER = 'c.module_catalogue_id,c.display_order,c.id'
+
+
+def delivery_week(module_id, week):
+    """Readonly display placement; never replace activity/meeting/report dates."""
+    primary = next((component for component in week['components']
+                    if component['type'] == 'live-session'
+                    and not component['settings'].get('extraTeamsMeetingUrl')), None)
+    # Ignore title/upload dates here: the linked occurrence (or the existing
+    # delivery plan when no occurrence is dated) owns the authored week.
+    session = _component_schedule({**primary, 'title': ''}, '') if primary else {}
+    start = as_date(session.get('date')) or as_date(week.get('sessionDate'))
+    return {'id': week['id'], 'module_id': module_id,
+            'start': start.isoformat() if start else None,
+            'end': (start + timedelta(days=6)).isoformat() if start else None,
+            'month': start.strftime('%Y-%m') if start else None}
 
 
 def read_builder_activity_dates(cursor, module_ids, components=None, *, resolved_metadata=None):
@@ -124,18 +140,26 @@ def read_builder_activity_dates(cursor, module_ids, components=None, *, resolved
         module_weeks = [week for (parent_id, _), week in weeks.items() if parent_id == module_id]
         apply_module_session_plan_to_weeks(module, {}, module_weeks,
                                           holidays=holidays.get(str(module['cohort_id']), []))
-        for week in module_weeks:
+        placements = [delivery_week(module_id, week) for week in module_weeks]
+        starts = sorted({placement['start'] for week, placement in zip(module_weeks, placements)
+                         if placement['start'] and (not week['components'] or any(
+                             dates[component['id']]['date_source'] not in ('introduction', 'extra_activity')
+                             for component in week['components']))})
+        for placement in placements:
+            following = next((start for start in starts if placement['start'] and start > placement['start']), None)
+            if following and placement['end'] and following <= placement['end']:
+                placement['end'] = (as_date(following) - timedelta(days=1)).isoformat()
+        for week, placement in zip(module_weeks, placements):
             for component in week['components']:
                 if component['type'] == 'live-session' and component['settings'].get('sessionRescheduled'):
                     dates[component['id']] = _component_schedule(component, week['title'])
-                    continue
                 # Explicit dates, Introduction and ambiguous authored dates keep
                 # their placement. Only genuinely undated content inherits a slot.
-                if dates[component['id']]['date_source'] != 'undated':
-                    continue
-                day = as_date(component['settings'].get('sessionDate')) or as_date(week.get('sessionDate'))
-                if day:
-                    dates[component['id']] = _with_due_timing(
-                        _dated_schedule(day, 'builder_week'), component['settings'],
-                    )
+                elif dates[component['id']]['date_source'] == 'undated':
+                    day = as_date(component['settings'].get('sessionDate')) or as_date(week.get('sessionDate'))
+                    if day:
+                        dates[component['id']] = _with_due_timing(
+                            _dated_schedule(day, 'builder_week'), component['settings'],
+                        )
+                dates[component['id']] = {**dates[component['id']], 'delivery_week': placement}
     return dates
