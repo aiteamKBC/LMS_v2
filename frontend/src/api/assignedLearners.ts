@@ -1,4 +1,4 @@
-import { fetchCurriculumJson } from '@/lib/curriculumApi';
+import { coachFetch } from '@/lib/coachFetch';
 
 export type LearnerScope = 'programme' | 'cohort' | 'group' | 'module';
 export interface LearnerTarget { scope: LearnerScope; id: string; name: string }
@@ -8,14 +8,19 @@ export interface LearnerDirectoryPage {
   total: number; filteredTotal: number; page: number; pageSize: number; learners: AssignedLearner[];
 }
 
-export function fetchAssignedCounts(scope: LearnerScope, ids: string[], signal: AbortSignal, refresh = false) {
-  const query = new URLSearchParams({ scope, ids: ids.join(',') });
-  if (refresh) query.set('refresh', '1');
-  return fetchCurriculumJson<{ counts: Record<string, number | null> }>(`/curriculum/learner-directory/counts/?${query}`, { signal, revalidate: true });
-}
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/curriculum_api';
 
-export function fetchAssignedLearners(target: LearnerTarget, status: 'active' | 'all', q: string, page: number, signal: AbortSignal) {
+export async function fetchAssignedLearners(target: LearnerTarget, status: 'active' | 'all', q: string, page: number, signal: AbortSignal) {
   const query = new URLSearchParams({ scope: target.scope, id: target.id, status, q, page: String(page) });
-  if (!q && page === 1) query.set('refresh', '1');
-  return fetchCurriculumJson<LearnerDirectoryPage>(`/curriculum/learner-directory/learners/?${query}`, { signal, revalidate: true });
+  // One user-opened dialog owns this request. Keep its real abort signal and
+  // bypass the shared curriculum cache, prefetch queue and automatic retries.
+  const response = await coachFetch(`${API_BASE_URL}/curriculum/learner-directory/learners/?${query}`, { signal, cache: 'no-store' });
+  if (!response.ok) {
+    const fallback = 'Could not load assigned learners. Please retry.';
+    let data: { error?: unknown };
+    try { data = await response.json() as { error?: unknown }; }
+    catch { throw new Error(fallback); }
+    throw new Error(typeof data.error === 'string' ? data.error : fallback);
+  }
+  return response.json() as Promise<LearnerDirectoryPage>;
 }

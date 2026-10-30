@@ -45,7 +45,6 @@ from .home_summary import curriculum_home_summary
 
 
 urlpatterns = [
-    path('curriculum/learner-directory/counts/', learner_directory.counts),
     path('curriculum/learner-directory/learners/', learner_directory.learners),
     path('curriculum/modules/<str:module_id>/collaboration/', collaboration_configuration, name='module-collaboration'),
     path('curriculum/bulk-attendance/learners/', bulk_attendance_learners, name='curriculum-bulk-attendance-learners'),

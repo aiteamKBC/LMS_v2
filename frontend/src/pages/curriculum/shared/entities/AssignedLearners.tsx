@@ -8,10 +8,11 @@ export function LearnerDirectoryProvider({ children }: { children: ReactNode }) 
   const store = useMemo(createCountStore, []);
   const [selection, setSelection] = useState<{ target: LearnerTarget; manage?: () => void | Promise<unknown> } | null>(null);
   useEffect(() => () => store.dispose(), [store]);
-  const open = useCallback((target: LearnerTarget, manage?: () => void | Promise<unknown>) => setSelection({ target, manage }), []);
+  const open = useCallback((target: LearnerTarget, manage?: () => void | Promise<unknown>) => setSelection(current =>
+    current && keyFor(current.target) === keyFor(target) ? current : { target, manage }), []);
   const context = useMemo(() => ({ store, open }), [store, open]);
   return <Context.Provider value={context}>{children}{selection && <DirectoryDialog key={keyFor(selection.target)}
-    target={selection.target} store={store} onClose={() => setSelection(null)} onManage={selection.manage} />}</Context.Provider>;
+    target={selection.target} store={store} onClose={() => setSelection(current => current === selection ? null : current)} onManage={selection.manage} />}</Context.Provider>;
 }
 
 export function AssignedLearners({ target, initialCount, onManage, render }: {
@@ -26,10 +27,10 @@ export function AssignedLearners({ target, initialCount, onManage, render }: {
     return context?.store.subscribe({ scope, id, name }, setState);
   }, [context?.store, scope, id, name, initialCount]);
   const open = (event?: { stopPropagation: () => void }) => { event?.stopPropagation(); context?.open(target, onManage); };
-  const count = state.count === null ? '—' : String(state.count);
+  const count = state.count === null ? 'View' : String(state.count);
   if (render) return render(count, open);
-  return <button type="button" onClick={open} title={state.failed ? 'Count unavailable. Open the learner list to retry.' : `View active assigned learners in ${name}`}
-    aria-label={`${name}: ${count} active assigned learners`}
+  return <button type="button" onClick={open} title={`View active assigned learners in ${name}`}
+    aria-label={state.count === null ? `${name}: view assigned learners` : `${name}: ${count} active assigned learners`}
     className="inline-flex min-h-7 shrink-0 items-center gap-1 rounded-lg border border-primary-100 bg-primary-50 px-2 py-1 text-[11px] font-semibold text-primary-700 hover:bg-primary-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300">
     <AppIcon className="ri-group-line" aria-hidden="true" />{count} learners
   </button>;

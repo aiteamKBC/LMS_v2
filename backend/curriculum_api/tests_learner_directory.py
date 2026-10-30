@@ -24,15 +24,15 @@ class AssignedLearnerDirectoryTests(SimpleTestCase):
             ] if not status or row['lifecycleStatus'] == status
         ]
 
-    def test_default_count_and_list_use_same_active_membership_and_identifier(self):
-        request = self.factory.get('/', {'scope': 'module', 'ids': 'MOD-A,MOD-A'})
-        result = json.loads(directory.counts(request).content)
-        self.assertEqual(result, {'counts': {'MOD-A': 1}})
-        self.members.assert_called_once_with('module', 'MOD-A', 'active', lineage={'found': True}, strict=True)
+    def test_requested_list_reports_the_active_total_and_keeps_the_roster_out_of_shared_cache(self):
         result = json.loads(directory.learners(self.factory.get('/', {'scope': 'module', 'id': 'MOD-A'})).content)
+        self.members.assert_called_once_with('module', 'MOD-A', 'active', lineage={'found': True}, strict=True)
         self.assertEqual((result['total'], result['learners'][0]['id']), (1, '1'))
         self.assertNotIn('learningPlan', result['learners'][0])
-        self.assertEqual(self.cache.call_args.kwargs['ttl'], 30)
+        self.cache.assert_not_called()
+        response = directory.learners(self.factory.get('/', {'scope': 'module', 'id': 'MOD-A'}))
+        self.assertEqual(self.members.call_count, 2)
+        self.assertIn('no-store', response['Cache-Control'])
 
     def test_other_statuses_are_opt_in(self):
         result = json.loads(directory.learners(self.factory.get('/', {'scope': 'cohort', 'id': 'C-A', 'status': 'all'})).content)
@@ -50,23 +50,19 @@ class AssignedLearnerDirectoryTests(SimpleTestCase):
     def test_missing_record_is_distinct_from_empty_roster(self):
         self.lineage.return_value = {'found': False}
         self.assertEqual(directory.learners(self.factory.get('/', {'scope': 'group', 'id': 'G-A'})).status_code, 404)
-        self.assertEqual(json.loads(directory.counts(self.factory.get('/', {'scope': 'group', 'ids': 'G-A'})).content)['counts']['G-A'], None)
         self.members.assert_not_called()
 
     def test_invalid_and_unbounded_requests_do_not_query_membership(self):
-        for query in [{'scope': 'bad', 'ids': 'X'}, {'scope': 'module', 'ids': ','.join(map(str, range(31)))}]:
-            self.assertEqual(directory.counts(self.factory.get('/', query)).status_code, 400)
-        for params in [{'page': 'oops'}, {'status': 'unknown'}, {'page': '0'}]:
+        for params in [{'scope': 'bad'}, {'id': ''}, {'id': 'x' * 201}, {'q': 'x' * 101}, {'page': 'oops'}, {'status': 'unknown'}, {'page': '0'}]:
             self.assertEqual(directory.learners(self.factory.get('/', {'scope': 'module', 'id': 'M', **params})).status_code, 400)
         self.members.assert_not_called()
 
     def test_only_staff_can_read_and_no_write_method_is_accepted(self):
         for account, expected in [(None, 401), (SimpleNamespace(role='learner'), 403), (SimpleNamespace(role='employer'), 403)]:
             with patch('login.permissions.authenticate_request', return_value=account):
-                request = self.factory.get('/', {'scope': 'module', 'ids': 'M'})
-                self.assertEqual(directory.counts(request).status_code, expected)
+                request = self.factory.get('/', {'scope': 'module', 'id': 'M'})
                 self.assertEqual(directory.learners(request).status_code, expected)
-        self.assertEqual(directory.counts(self.factory.post('/')).status_code, 405)
+        self.assertEqual(directory.learners(self.factory.post('/')).status_code, 405)
         self.members.assert_not_called()
 
     def test_one_programme_roster_read_is_shared_across_a_batch_but_not_requests(self):
@@ -83,7 +79,6 @@ class AssignedLearnerDirectoryTests(SimpleTestCase):
 
     def test_database_failure_is_not_reported_as_zero_or_an_empty_list(self):
         self.members.side_effect = DatabaseError('Private database detail')
-        for view, query in [(directory.counts, {'scope': 'module', 'ids': 'M'}), (directory.learners, {'scope': 'module', 'id': 'M'})]:
-            response = view(self.factory.get('/', query))
-            self.assertEqual(response.status_code, 503)
-            self.assertNotIn('Private database detail', response.content.decode())
+        response = directory.learners(self.factory.get('/', {'scope': 'module', 'id': 'M'}))
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn('Private database detail', response.content.decode())

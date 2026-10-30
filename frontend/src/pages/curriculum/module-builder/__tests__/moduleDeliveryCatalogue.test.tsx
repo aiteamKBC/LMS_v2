@@ -7,7 +7,6 @@ import type { CurriculumCohort, CurriculumGroup, CurriculumModule, CurriculumPro
 import { fetchCurriculumDeliveryScope, fetchCurriculumOverview } from '@/lib/curriculumApi';
 import { fetchAssignedLearners } from '@/api/assignedLearners';
 vi.mock('@/api/assignedLearners', () => ({
-  fetchAssignedCounts: vi.fn(async (_scope: string, ids: string[]) => ({ counts: Object.fromEntries(ids.map(id => [id, 0])) })),
   fetchAssignedLearners: vi.fn(async () => ({ scope: 'module', id: 'MOD-1', status: 'active', total: 0, filteredTotal: 0, page: 1, pageSize: 25, learners: [] })),
 }));
 
@@ -290,7 +289,7 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
 
   it('opens the assignment drawer when the module has no assigned learners', async () => {
     await renderCatalogue();
-    await userEvent.click(cardFor('Data Foundations').getByRole('button', { name: /active assigned learners$/ }));
+    await userEvent.click(cardFor('Data Foundations').getByRole('button', { name: /view assigned learners$/ }));
     expect(await screen.findByText('No assigned learners in this view.')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Assignments & progress' }));
 
@@ -309,7 +308,7 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
       totals: { learnerCount: 1, assignedCount: 1 },
     });
     await renderCatalogue();
-    await userEvent.click(cardFor('Data Foundations').getByRole('button', { name: /active assigned learners$/ }));
+    await userEvent.click(cardFor('Data Foundations').getByRole('button', { name: /view assigned learners$/ }));
     await screen.findByText('1 assigned learners');
     await userEvent.click(screen.getByRole('button', { name: 'Assignments & progress' }));
 
