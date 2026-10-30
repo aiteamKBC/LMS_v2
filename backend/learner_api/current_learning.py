@@ -105,13 +105,13 @@ def project_current(records, markings):
                  reporting_month=at.strftime('%Y-%m'), reporting_started_at=at,
                  reporting_ended_at=at, activity_status='Completed' if accepted else 'Submitted')
         candidates.append(p)
-        # Count the latest eligible attempt, even when its duration decreases.
-        # Failed retries cannot displace an accepted completion.
+        # Ordinary retries count the larger duration. Explicit corrections and
+        # additions are applied below without rewriting saved attempt evidence.
         key = ('quiz', p['quiz_ref']) if p.get('quiz_ref') else ('component', component) if component else ('entry', p['id'])
         key = (p.get('learner_id'), *key)
         previous = native.get(key)
-        if previous is None or (accepted, attempt_order(p['submitted_at'], p['id'])) > (
-                previous['accepted'], attempt_order(previous['submitted_at'], previous['id'])):
+        if previous is None or (accepted, seconds, attempt_order(p['submitted_at'], p['id'])) > (
+                previous['accepted'], previous['actual_seconds'], attempt_order(previous['submitted_at'], previous['id'])):
             native[key] = p
     return native_choices(result + list(native.values()), candidates)
 

@@ -52,10 +52,10 @@ def pending_hour_records(owners):
     if not owners:
         return result
     pending = canonical.query('''SELECT p.id,p.learner_id,p.kind,p.component_ref,
-        p.component_type,p.quiz_ref,p.passed,p.reported_time,p.submitted_at,
+        p.component_type,p.quiz_ref,p.passed,p.reported_time,p.submitted_at,p.declared_completed_at,p.started_at,
         p.time_tracking_source,p.claimed_seconds,p.verified_seconds,
         p.component_link_source,p.source_system,p.actual_seconds,p.accepted,
-        p.reporting_month
+        p.reporting_month,jsonb_build_object('retakeTimeChoice',p.source_payload->>'retakeTimeChoice') AS source_payload
         FROM "Learner".learner_progress_entries p
         WHERE p.learner_id=ANY(%s) AND p.deleted_at IS NULL
           AND p.actual_seconds IS NULL AND coalesce(p.source_system,'')=''

@@ -21,6 +21,7 @@ from django.utils.dateparse import parse_datetime
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 from .identity import learner_profile_for_source
+from .retake_timing import attempt_order, selected_attempt
 from .mappers import get_training_plan, training_plan_field
 from .models import (
     EnrolmentUser,
@@ -221,6 +222,22 @@ def dedupe_otjh_progress_records(progress):
             candidate_minutes == current_minutes and candidate_is_newer
         ):
             unique[position] = record
+    # New explicit decisions are projected without overwriting timer evidence.
+    # Unlabelled history retains the original best-attempt calculation here.
+    groups = {}
+    for index, row in enumerate(progress):
+        if isinstance(row, dict):
+            groups.setdefault(otjh_progress_dedupe_key(row, index), []).append(row)
+    for key, rows in groups.items():
+        if not any(row.get('retakeTimeChoice') in ('correct', 'add', 'retry') for row in rows):
+            continue
+        ordered = sorted(((index, row) for index, row in enumerate(rows) if row.get('passed') is not False),
+                         key=lambda item: attempt_order(item[1].get('submittedAt'), item[0]))
+        selected, seconds = selected_attempt([{**row, 'seconds': _progress_record_minutes(row) * 60,
+            'mode': row.get('retakeTimeChoice')} for _, row in ordered], default='retry')
+        if selected:
+            unique[positions[key]] = {**selected, 'claimedSeconds': seconds,
+                'reportedTime': f'{seconds / 60:g} minutes', 'timeTrackingSource': 'activity-time-decision:input'}
     return unique
 
 
@@ -1094,7 +1111,7 @@ def _create_progress_entry(**fields):
     return LearnerProgressEntry.objects.create(**fields)
 
 
-def save_progress_record(learner, record, activity=None):
+def save_progress_record(learner, record, activity=None, *, monthly_assignment=False):
     """Store progress, quiz detail, KSB links, and feed presentation atomically."""
     if learner is None:
         return None
@@ -1136,7 +1153,40 @@ def save_progress_record(learner, record, activity=None):
     with transaction.atomic(using="enrolment"):
         # Serialize writes per learner so two simultaneous submissions cannot
         # claim the same entry/event order.
+        if record.get('retakeTimeChoice') in ('correct', 'add', 'retry'):
+            with connections['enrolment'].cursor() as cursor:
+                lock = ' FOR UPDATE' if connections['enrolment'].vendor == 'postgresql' else ''
+                cursor.execute('SELECT id FROM enrolment."Created_users" WHERE id=%s' + lock, [learner.enrolment_id])
         learner = LearnerProfile.objects.select_for_update().get(pk=learner.pk)
+        from .retake_timing import validate_activity_time
+        authoritative_record = {**record, 'componentType': component_context.get('componentType') or record.get('componentType')}
+        validate_activity_time(authoritative_record, learner.training_plan_progress,
+                               seconds_for=lambda row: _progress_record_minutes(row) * 60, monthly_assignment=monthly_assignment)
+        if 'countedSeconds' in authoritative_record:
+            record['countedSeconds'] = authoritative_record['countedSeconds']
+        if record.get('retakeTimeChoice') in ('correct', 'add', 'retry'):
+            # A new learner decision cannot rewrite signed or staff-reviewed time.
+            from .manual_time_corrections import require_open_month
+            from old_otjh.repository import query
+            from old_otjh.service import ServiceError
+            reference = ('quiz_ref', str(record['quizId'])) if record.get('quizId') else ('component_ref', component_id)
+            previous = query(f'''SELECT source_system,actual_basis,reporting_month,declared_completed_at,submitted_at
+                FROM "Learner".learner_progress_entries WHERE learner_id=%s AND {reference[0]}=%s AND deleted_at IS NULL''',
+                [learner.pk, reference[1]])
+            from .retake_timing import stamp
+            months = {stamp(record.get('declaredCompletedAt') or record.get('submittedAt')).strftime('%Y-%m')}
+            for entry in previous:
+                if entry.get('source_system') or entry.get('actual_basis') == 'staff:module-progress':
+                    raise ValueError('This activity has historical or staff-reviewed hours. Ask your coach to review its time.')
+                at = entry.get('declared_completed_at') or entry.get('submitted_at')
+                if at:
+                    months.add(entry.get('reporting_month') or stamp(at).strftime('%Y-%m'))
+            for month in months:
+                try:
+                    require_open_month({'id': learner.pk, 'enrolment_id': learner.enrolment_id,
+                                        'aptem_id': learner.aptem_id}, month)
+                except ServiceError as error:
+                    raise ValueError(str(error)) from error
         next_order = (
             LearnerProgressEntry.objects.filter(learner=learner)
             .aggregate(value=Max("entry_order"))["value"]
@@ -1204,11 +1254,12 @@ def save_progress_record(learner, record, activity=None):
         )
         if record.get('retakeTimeChoice') is not None:
             from .retake_timing import choice
-            selected = choice(record['retakeTimeChoice'])
+            selected = choice(record['retakeTimeChoice'], activity=True)
             with connections['enrolment'].cursor() as cursor:
                 cursor.execute('''UPDATE "Learner".learner_progress_entries
-                    SET source_payload=coalesce(source_payload,'{}'::jsonb) || jsonb_build_object('retakeTimeChoice',%s::text)
-                    WHERE id=%s AND learner_id=%s''', [selected, progress.pk, learner.pk])
+                    SET source_payload=coalesce(source_payload,'{}'::jsonb) || %s::jsonb
+                    WHERE id=%s AND learner_id=%s''', [json.dumps({'retakeTimeChoice': selected,
+                        **({'retakeTimeReason': record['retakeTimeReason'].strip()} if record.get('retakeTimeReason') else {})}), progress.pk, learner.pk])
         LearnerProgressKsb.objects.bulk_create(
             [
                 LearnerProgressKsb(

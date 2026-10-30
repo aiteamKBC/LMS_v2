@@ -62,7 +62,10 @@ export interface Quiz {
 export type QuizAnswerValue = number | number[] | string | string[] | Record<string, string>;
 
 export interface QuizSubmission {
-  retakeTimeChoice?: 'keep' | 'new';
+  retakeTimeChoice?: 'keep' | 'new' | 'correct' | 'add' | 'retry';
+  retakeTimeReason?: string;
+  retakePreviousSeconds?: number;
+  timeEntrySource?: 'timer' | 'input';
   answers: Record<string, QuizAnswerValue>;
   timeTakenSeconds: number;
   startedAt: string;
@@ -94,6 +97,7 @@ export interface QuizQuestionResult {
 
 // The slim stored attempt (also echoed in the submit response's `attempt`).
 export interface QuizAttempt {
+  countedSeconds?: number;
   kind: 'quiz';
   attempt: number;            // 1-based attempt number for this quiz
   grade: number;              // 0-1 decimal, e.g. 0.9
