@@ -1,0 +1,21 @@
+:global(#curriculum-programmes) .facts { display: grid; gap: 12px; padding-top: 14px; margin-top: 14px; border-top: 1px solid #ffffff2b; color: #f4edf9; }
+:global(#curriculum-programmes) .source { display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 12px; border: 1px solid #ffffff40; border-radius: 8px; background: #ffffff12; color: #fff !important; text-align: left; }
+.source > span { flex: 1; min-width: 0; display: grid; gap: 4px; }
+:global(#curriculum-programmes) .source :is(span, strong, small) { color: inherit !important; overflow-wrap: anywhere; }
+.source small { font-size: 10px; opacity: .8; }
+.source strong { font-size: 13px; font-weight: 600; }
+.source span > span { font-size: 11px; opacity: .85; line-height: 1.6; }
+.source:hover { background: #ffffff20; }
+.metadata { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0; }
+.metadata dt { color: #d2bfdf; font-size: 10px; }
+:global(#curriculum-programmes) .metadata dd { margin: 4px 0 0; color: #fff !important; font-size: 12px; overflow-wrap: anywhere; }
+:global(#curriculum-programmes) .progress { display: grid; gap: 6px; width: 100%; text-align: left; color: #f3eaf9 !important; background: transparent; padding: 5px 0; }
+.progress > span { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11px; }
+:global(#curriculum-programmes) .progress :is(span, strong) { color: inherit !important; }
+.progress strong { font-weight: 500; }
+.progressLine .track { display: block; flex: 1; height: 5px; overflow: hidden; background: #ffffff25; border-radius: 8px; }
+.track > span { display: block; height: 100%; background: #d1bae8; border-radius: inherit; }
+:global(#curriculum-programmes) .description { margin: 0; font-size: 12px; line-height: 1.6; color: #e7d9f2 !important; overflow-wrap: anywhere; }
+.facts :is(button):focus-visible { outline: 2px solid #efdcff; outline-offset: 3px; }
+@media (max-width: 900px) { .metadata { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 540px) { .progress > span { flex-wrap: wrap; } .progressLine .track { min-width: 100px; } }

@@ -79,6 +79,65 @@ describe('Session recordings calendar', () => {
     vi.mocked(resolveRecordingUrl).mockReset().mockResolvedValue('https://storage.invalid/inline-video');
   });
 
+  it('separates complete library totals, ready files and selected-day lecture counts', async () => {
+    const delivery = library.deliveries[0], week = delivery.weeks[0];
+    vi.mocked(loadRecordingsLibrary).mockResolvedValue({ ...library,
+      sessions: [...library.sessions!, { ...library.sessions![0], occurrenceId: 'EARLIER', startsAt: `${addDays(date,-2)}T09:00:00Z`, endsAt: `${addDays(date,-2)}T10:00:00Z` }],
+      deliveries: [{ ...delivery, weeks: [{ ...week, recordings: [...week.recordings, { ...week.recordings[0], id: 'SECOND-FILE' }] }, delivery.weeks[1]] }],
+    });
+    await renderPage(false);
+    const totals = await screen.findByLabelText('Recording library totals');
+    await waitFor(() => expect(within(totals).getByText('Lectures across all dates').nextElementSibling).toHaveTextContent('3'));
+    expect(within(totals).getByText('Ready to download').nextElementSibling).toHaveTextContent('2');
+    expect(screen.getByRole('button', { name: 'Ready to download (1)' })).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Daily lecture agenda' })).getAllByRole('button', { name: 'Download' })).toHaveLength(2);
+    expect(vi.mocked(resolveRecordingUrl)).not.toHaveBeenCalled();
+  });
+
+  it('preserves occurrence identity for lectures with duplicate titles', async () => {
+    vi.mocked(loadRecordingsLibrary).mockResolvedValue({ ...library, sessions: library.sessions!.map(session => ({ ...session, title: 'Same lecture title' })) });
+    await renderPage();
+    const rows = within(screen.getByRole('region', { name: 'Daily lecture agenda' }));
+    expect(rows.getByRole('article', { name: 'Same lecture title - M1:O1' })).toBeInTheDocument();
+    expect(rows.getByRole('article', { name: 'Same lecture title - M1:O2' })).toBeInTheDocument();
+    expect(within(rows.getByRole('article', { name: 'Same lecture title - M1:O1' })).getByRole('button', { name: 'Download' })).toBeInTheDocument();
+    expect(within(rows.getByRole('article', { name: 'Same lecture title - M1:O2' })).queryByRole('button', { name: 'Download' })).not.toBeInTheDocument();
+  });
+
+  it('keeps processing filters and lecture-title search compatible with the module view', async () => {
+    const user = userEvent.setup(); await renderPage();
+    await user.click(screen.getByRole('button', { name: 'Processing (1)' }));
+    expect(screen.getByRole('combobox', { name: 'Filter by recording status' })).toHaveValue('pending');
+    expect(screen.queryByRole('button', { name: 'Intro to analysis' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'By module (2)' }));
+    await user.type(screen.getByRole('textbox', { name: 'Search lectures by title' }), 'Cleaning');
+    expect(within(screen.getByRole('region', { name: 'All LMS modules' })).getByText('Data Analysis')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'All LMS modules' })).queryByText('Leadership')).not.toBeInTheDocument();
+  });
+
+  it('locates the latest saved lecture day without hardcoding the date or changing the recording filter', async () => {
+    const user = userEvent.setup(); const earlier = addDays(date,-3);
+    const shift = (value: string | null) => value ? `${earlier}${value.slice(10)}` : null;
+    vi.mocked(loadRecordingsLibrary).mockResolvedValue({ ...library,
+      sessions: library.sessions!.map(session => ({ ...session, startsAt: shift(session.startsAt), endsAt: shift(session.endsAt) })),
+      deliveries: library.deliveries.map(delivery => ({ ...delivery, weeks: delivery.weeks.map(week => ({ ...week, recordings: week.recordings.map(file => ({ ...file, startsAt: shift(file.startsAt), recordedAt: shift(file.recordedAt), endsAt: shift(file.endsAt) })) })) })),
+    });
+    await renderPage(false);
+    await user.click(await screen.findByRole('button', { name: 'Latest recorded day' }));
+    expect(screen.getByRole('button', { name: `Select ${earlier}` })).toHaveAttribute('aria-current','date');
+    expect(screen.getByRole('button', { name: 'Ready to download (1)' })).toHaveAttribute('aria-pressed','true');
+    expect(screen.getByRole('button', { name: 'Intro to analysis' })).toBeInTheDocument();
+  });
+
+  it('never turns missing status checks into verified zero totals', async () => {
+    vi.mocked(loadRecordingsLibrary).mockResolvedValue({ ...library, attentionChecked: false, calendarAvailable: false });
+    await renderPage(false);
+    const totals = await screen.findByLabelText('Recording library totals');
+    await waitFor(() => expect(within(totals).getByText('Ready to download').nextElementSibling).toHaveTextContent('1'));
+    expect(within(totals).getByText('Lectures across all dates').nextElementSibling).toHaveTextContent('Unavailable');
+    expect(within(totals).getByText('Need attention').nextElementSibling).toHaveTextContent('Unavailable');
+  });
+
   it('converts the same UTC lecture across Cairo and London including the date boundary and daylight saving', () => {
     const sample = { ...library, deliveries: [], sessions: [{ ...(library.sessions ?? [])[0],
       startsAt: '2026-07-01T23:30:00Z', endsAt: '2026-07-02T00:30:00Z' }] };
@@ -199,7 +258,7 @@ describe('Session recordings calendar', () => {
   it('keeps modules without booked lectures in the LMS directory', async () => {
     const user = userEvent.setup();
     await renderPage();
-    await user.click(await screen.findByRole('button', { name: 'All LMS modules (2)' }));
+    await user.click(await screen.findByRole('button', { name: 'By module (2)' }));
     expect(screen.getByRole('region', { name: 'All LMS modules' })).toHaveTextContent('2 of 2 modules');
     await user.click(screen.getByText('Leadership'));
     expect(screen.getByText(/No dated lecture is saved for this module/)).toBeInTheDocument();
@@ -440,7 +499,7 @@ describe('Session recordings calendar', () => {
     expect(screen.getByRole('combobox', { name: 'Calendar view' })).toHaveValue('day');
     expect(screen.getByRole('button', { name: 'All lectures (2)' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.queryByRole('button', { name: /Earlier day/ })).not.toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Hourly lecture calendar' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Daily lecture agenda' })).toBeInTheDocument();
     await user.selectOptions(screen.getByRole('combobox', { name: 'Calendar view' }), 'week');
     await user.click(screen.getByRole('button', { name: 'Today' }));
     expect(screen.getByRole('combobox', { name: 'Calendar view' })).toHaveValue('day');

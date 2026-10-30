@@ -1,0 +1,52 @@
+/* Applied only to Curriculum navigation below the existing branding. Nav IDs give these
+   overrides precedence over the shared learner theme, including dark mode. */
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation)) {
+  padding: 12px 8px 20px !important;
+  background: #4f2d7f !important;
+  color: #d6bde9;
+  scrollbar-color: #9365ad #4f2d7f;
+}
+
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation)) > * + * { margin-top: 4px !important; }
+.workspaceCard { display: flex; align-items: center; gap: 12px; min-height: 56px; margin-bottom: 7px; border: 1px solid #75488d; border-radius: 7px; padding: 9px 12px; color: #f4ca54; background: #60367a; }
+.workspaceCard > span { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.workspaceCard > svg { flex-shrink: 0; }
+.workspaceEyebrow { color: #c2a2d4; font-size: 10px; font-weight: 600; letter-spacing: 1px; line-height: 1.3; text-transform: uppercase; }
+.workspaceName { color: #fff; font-size: 13px; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
+
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation)) :is(a, button) {
+  position: relative;
+  min-height: 40px !important;
+  border: 0 !important;
+  border-radius: 6px !important;
+  padding: 9px 10px !important;
+  color: #d6bde9 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-size: 13px !important;
+  font-weight: 500;
+  line-height: 1.4;
+  gap: 10px !important;
+}
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation)) :is(a, button):hover { color: #fff !important; background: #5b3277 !important; }
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation)) :is(a, button):focus-visible { outline: 2px solid #f4ca54; outline-offset: -2px; }
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation)) :is(a[aria-current="page"], button[aria-current="true"]) { color: #fff !important; background: #6a4382 !important; }
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation)) a[aria-current="page"]::before { content: ''; position: absolute; top: 10px; bottom: 10px; left: -5px; width: 3px; border-radius: 2px; background: #f4ca54; }
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation)) :is(a, button) svg { width: 16px !important; height: 16px !important; color: inherit !important; }
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation)) button > span:last-child > svg { width: 14px !important; height: 14px !important; border: 1px solid #75488d; border-radius: 6px; box-sizing: content-box; padding: 6px; }
+
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation)) :global(.kbc-learner-submenu) { margin: 3px 0 8px 20px !important; padding-left: 10px !important; }
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation)) :global(.kbc-learner-submenu[data-open="true"]) { padding-top: 0 !important; padding-bottom: 0 !important; }
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation)) :global(.kbc-learner-submenu-track) { left: 0 !important; top: 0 !important; bottom: 0 !important; width: 1px !important; background: #75488d !important; }
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation)) :global(.kbc-learner-submenu-track-fill) { display: none; }
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation)) :global(.kbc-learner-submenu-item)::before { display: none; }
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation)) :global(.kbc-learner-submenu-item) > a { min-height: 34px !important; margin: 0 !important; padding: 7px 8px !important; border-radius: 5px !important; font-size: 12px !important; }
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation)) :global(.kbc-learner-submenu-item) > a svg { width: 13px !important; height: 13px !important; }
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation)) :global([data-sidebar-group="curriculum-home-additional-tools"]) { margin-top: 22px !important; border-top: 1px solid #75488d; padding-top: 14px; }
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation)) :global([data-sidebar-group="curriculum-home-additional-tools"]) > button { color: #c2a2d4 !important; font-size: 11px !important; }
+
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation))[data-navigation-collapsed="true"] { padding-inline: 6px !important; }
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation))[data-navigation-collapsed="true"] :is(a, button) { width: 100%; min-height: 44px !important; justify-content: center; padding: 8px !important; }
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation))[data-navigation-collapsed="true"] :global([data-sidebar-group="curriculum-home-additional-tools"]) { margin-top: 12px !important; padding-top: 10px; }
+
+.navigation:is(:global(#curriculum-desktop-primary-navigation), :global(#curriculum-mobile-primary-navigation)) :is(a[aria-current="page"], button[aria-current="true"]) :is(svg, span) { color: inherit !important; }

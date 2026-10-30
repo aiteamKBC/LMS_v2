@@ -448,7 +448,9 @@ it('uses the learner-style collapsible navigation for Curriculum and keeps Quali
   expect(qualityLink.querySelector('.bg-amber-400')).toBeNull();
   expect(qualityLink).toHaveAttribute('href', '/curriculum/quality');
 
-  fireEvent.click(within(sidebar).getByRole('button', { name: 'Collapse Curriculum Designer navigation' }));
+  // Curriculum exposes the requested footer control instead of a logo-area toggle.
+  expect(within(sidebar).queryByRole('button', { name: 'Collapse Curriculum Designer navigation' })).toBeNull();
+  fireEvent.click(within(sidebar).getByRole('button', { name: 'Collapse sidebar' }));
   expect(sidebar.style.width).toBe('64px');
   expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('64px');
   expect(localStorage.getItem('kbc_curriculum_sidebar_collapsed')).toBe('true');

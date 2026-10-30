@@ -1,6 +1,7 @@
 import type { RecordingsDelivery, RecordingsModule } from '@/api/sessionResults';
 import type { Lecture, RecordingFilter } from '../types';
 import { formatFullDate, lectureNeedsAttention, lectureReadyCount } from '../utils';
+import { agendaMatches, matchesLectureQuery } from '../filters';
 
 interface Props {
   modules: RecordingsModule[];
@@ -29,7 +30,8 @@ export default function ModuleDirectory({ modules, deliveries, lectures, query, 
     const sessions = byModule.get(module.moduleId) ?? [];
     if (statusFilter === 'ready' && !sessions.some(item => lectureReadyCount(item) > 0)) return false;
     if (statusFilter === 'attention' && !sessions.some(lectureNeedsAttention)) return false;
-    return !needle || `${module.title} ${module.programme} ${module.cohort} ${module.group}`.toLocaleLowerCase().includes(needle);
+    if (!['all', 'ready', 'attention'].includes(statusFilter) && !sessions.some(lecture => agendaMatches(lecture, statusFilter, Date.now()))) return false;
+    return !needle || `${module.title} ${module.programme} ${module.cohort} ${module.group}`.toLocaleLowerCase().includes(needle) || sessions.some(lecture => matchesLectureQuery(lecture, query));
   });
 
   return <section aria-label="All LMS modules" className="mt-4 rounded-xl border border-background-200 bg-background-50 p-4 sm:p-5">
