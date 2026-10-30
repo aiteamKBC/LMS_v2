@@ -1,3 +1,4 @@
+import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -100,6 +101,10 @@ function staffProfileName(profile: CurriculumStaffProfile) {
 }
 
 export default function CurriculumGroupsPage() {
+  return <LearnerDirectoryProvider><CurriculumGroupsPageContent /></LearnerDirectoryProvider>;
+}
+
+function CurriculumGroupsPageContent() {
   const [searchParams, setSearchParams] = useSearchParams();
   const {
     programmes, cohorts, groups, modules, coaches, loading, loaded, refreshing, error, reload, applyLocal,
@@ -496,7 +501,7 @@ export default function CurriculumGroupsPage() {
               const context = resolveGroupContext(group, cohorts, programmes);
               return (
                 <>
-                  <StackedCell
+                  <div className="min-w-0 self-center space-y-1"><StackedCell
                     href={namedCurriculumWorkspacePath('groups', group.id, group.name)}
                     primary={(
                       <span className="flex items-center gap-2">
@@ -506,6 +511,8 @@ export default function CurriculumGroupsPage() {
                     )}
                     secondary={group.id}
                   />
+                  <AssignedLearners target={{ scope: 'group', id: group.id, name: group.name }} initialCount={group.learners} />
+                </div>
                   <StackedCell
                     href={context.cohortId ? `/curriculum/cohorts/${encodeURIComponent(context.cohortId)}` : undefined}
                     primary={context.cohortName}

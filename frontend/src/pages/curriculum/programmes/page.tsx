@@ -1,3 +1,4 @@
+import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
 import { type CSSProperties, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -335,6 +336,10 @@ function programmeIsArchived(programme: CurriculumProgramme) {
 }
 
 export default function CurriculumProgrammes() {
+  return <LearnerDirectoryProvider><CurriculumProgrammesContent /></LearnerDirectoryProvider>;
+}
+
+function CurriculumProgrammesContent() {
   const navigate = useNavigate();
   // What the grid is showing lives in the URL, the same way the Cohorts and
   // Groups pages carry their scope. Opening a programme and coming back is now
@@ -1393,7 +1398,7 @@ export default function CurriculumProgrammes() {
                   <Metric label="Groups" value={String(prog.groups || 0)} onOpen={openTab('delivery')} hint={`Open the groups of ${prog.name}`} />
                   <Metric label="Modules" value={String(prog.modules)} onOpen={openTab('design')} hint={`Open the ${prog.modules} modules of ${prog.name}`} />
                   <Metric label="Weeks" value={`${prog.weeks}`} onOpen={openTab('design')} hint={`Open the module plan of ${prog.name}`} />
-                  <Metric label="Learners" value={String(prog.learners)} onOpen={openTab('coverage', 'achievement')} hint={`Open learner achievement for ${prog.name}`} />
+                  <AssignedLearners target={{ scope: 'programme', id: prog.sourceId || prog.id, name: prog.name }} initialCount={prog.learners} render={(count, open) => <Metric label="Learners" value={count} onOpen={open} hint={`View active assigned learners in ${prog.name}`} />} />
                   <button
                     type="button"
                     onClick={openTab('coverage', 'mapping')}

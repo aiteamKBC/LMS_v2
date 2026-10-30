@@ -1,3 +1,5 @@
+import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
+import { useRefreshAssignedLearners } from '../shared/entities/assignedLearnerDirectory';
 import { sessionDeliveryDate } from '@/lib/deliveryWeek';
 import { EditScope, ModulePresence } from './CollaborativeField';
 import { CollaborationContext } from './collaborationContext';
@@ -683,6 +685,11 @@ async function showDuplicateModuleSwal(
 }
 
 export default function ModuleBuilder() {
+  return <LearnerDirectoryProvider><ModuleBuilderContent /></LearnerDirectoryProvider>;
+}
+
+function ModuleBuilderContent() {
+  const refreshAssignedLearners = useRefreshAssignedLearners();
   const { auth } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedCreateScopeRef = useRef({
@@ -3528,6 +3535,7 @@ export default function ModuleBuilder() {
           <div className="flex flex-wrap justify-end gap-2 py-3">
             <button type="button" onClick={() => setPreviewOpen(true)} className="rounded-lg border border-primary-200 bg-white px-4 py-2 text-sm font-semibold text-primary-700">Preview as learner</button>
             <button type="button" onClick={() => setAiMaterialOpen(true)} className="rounded-lg border border-primary-200 bg-white px-4 py-2 text-sm font-semibold text-primary-700">AI Material</button>
+            <AssignedLearners target={{ scope: 'module', id: workingModule.catalogueId, name: workingModule.title }} />
             <button type="button" onClick={() => setSessionResultsOpen(true)} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white">Sessions & Recordings</button>
           </div>
           {sessionResultsOpen && <SessionResultsDialog moduleId={workingModule.catalogueId || workingModule.id} onClose={() => setSessionResultsOpen(false)} />}
@@ -4285,6 +4293,7 @@ export default function ModuleBuilder() {
             const catalogueId = learnerAssignmentModuleIdRef.current;
             setLearnerAssignmentTarget(null);
             if (catalogueId) setLearnerCountOverrides(previous => ({ ...previous, [catalogueId]: result.learnerCount }));
+            if (catalogueId) refreshAssignedLearners?.({ scope: 'module', id: catalogueId, name: '' });
             void reload({ silent: true });
           }}
         />
@@ -4315,6 +4324,7 @@ export default function ModuleBuilder() {
                 : current);
               const catalogueId = learnerAssignmentModuleIdRef.current;
               if (catalogueId) {
+                refreshAssignedLearners?.({ scope: 'module', id: catalogueId, name: '' });
                 setLearnerCountOverrides(previous => ({
                   ...previous,
                   [catalogueId]: Math.max(0, (previous[catalogueId] ?? learnerProgress.assignedLearners.length) - 1),
@@ -8393,11 +8403,8 @@ function ModuleCatalogueCard({
   const primaryDeliveryHref = primaryDelivery ? `/curriculum/modules/${encodeURIComponent(primaryDelivery.deliveryModuleId)}` : '';
   // Seeded from the bulk overview count so the badge shows without a click;
   // a click still refreshes it with the freshest number as the dialog opens.
-  const [assignedLearnerCount, setAssignedLearnerCount] = useState<number | null>(module.assignedLearnerCount ?? null);
-  const [learnersLoading, setLearnersLoading] = useState(false);
   // The card instance survives a list reload (same key), so a fresh overview
   // count has to be pushed in rather than only read once at mount.
-  useEffect(() => { setAssignedLearnerCount(module.assignedLearnerCount ?? null); }, [module.assignedLearnerCount]);
   // Legacy fallbacks retained by the merge were:
   // weekCount = module.weekStructure.length || module.weeks || 0
 
@@ -8438,26 +8445,7 @@ function ModuleCatalogueCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5 xl:justify-end">
-          <button
-            type="button"
-            onClick={async () => {
-              if (learnersLoading) return;
-              setLearnersLoading(true);
-              try {
-                const count = await onLearners();
-                if (count !== null) setAssignedLearnerCount(count);
-              } finally {
-                setLearnersLoading(false);
-              }
-            }}
-            disabled={learnersLoading}
-            aria-busy={learnersLoading}
-            title={assignedLearnerCount === 0 ? 'Assign learners to this module' : assignedLearnerCount === null ? 'Assign learners or view learner progress' : 'View assigned learners and their progress'}
-            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:border-primary-300 hover:bg-primary-100 disabled:cursor-wait disabled:opacity-60"
-          >
-            <AppIcon name={learnersLoading ? 'ri-loader-4-line' : assignedLearnerCount ? 'ri-group-line' : 'ri-user-add-line'} className={learnersLoading ? 'animate-spin' : ''} size={15}></AppIcon>
-            {learnersLoading ? 'Loading learners...' : assignedLearnerCount === 0 ? 'Assign learners' : assignedLearnerCount === null ? 'Learners' : `Learners (${assignedLearnerCount})`}
-          </button>
+          <AssignedLearners target={{ scope: 'module', id: moduleLearnerIdentifier(module), name: module.title }} onManage={onLearners} />
           {primaryDeliveryHref && (
             <Link
               to={primaryDeliveryHref}
