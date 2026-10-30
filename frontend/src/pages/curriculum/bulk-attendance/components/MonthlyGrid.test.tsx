@@ -39,6 +39,53 @@ beforeEach(() => {
   mocks.kbcSave.mockResolvedValue([]);
 });
 
+it("shows the original lecture as attended after a parallel-group make-up without a second day", async () => {
+  mocks.read.mockResolvedValue({
+    occurrences: [
+      { id: "six", date: "2026-10-06", sessionNumber: 1, moduleCatalogueId: "MC1", moduleTitle: "Module A" },
+    ],
+    records: [
+      { recordKey: "live:1", learnerId: "301", occurrenceId: "six", moduleCatalogueId: "MC1",
+        attendance: "absent", effectiveAttendance: "present" },
+    ],
+  });
+  mocks.kbcRead.mockResolvedValue([
+    { recordKey: "live:1", learnerId: "301", occurrenceId: "six", sessionDate: "2026-10-06",
+      moduleName: "Module A", lectureName: "Session 1", sessionNumber: 1, attendance: "absent",
+      effectiveAttendance: "present", source: "live" },
+    { recordKey: "live:2", learnerId: "301", occurrenceId: "nine", sessionDate: "2026-10-09",
+      moduleName: "Module A", lectureName: "Session 1", sessionNumber: 1, attendance: "present",
+      countsAsSession: false, source: "live" },
+  ]);
+  render(<MonthlyGrid rows={[row]} lectures={[]} moduleCatalogueId="MC1" date="2026-10-17"
+    active loading={false} onSaved={vi.fn()} />);
+
+  expect(await screen.findByRole("img", { name: /Alex Example 2026-10-06 .* present through make-up attendance/ })).toBeVisible();
+  expect(screen.queryByRole("columnheader", { name: /Fri 9/ })).not.toBeInTheDocument();
+  expect(screen.getByText("100%")).toBeVisible();
+});
+
+it("shows a scheduled guest lecture as linked evidence without counting it again", async () => {
+  mocks.read.mockResolvedValue({
+    occurrences: [
+      { id: "six", date: "2026-10-06", sessionNumber: 1, moduleCatalogueId: "MC1", moduleTitle: "Module A" },
+      { id: "nine", date: "2026-10-09", sessionNumber: 1, moduleCatalogueId: "MC1", moduleTitle: "Module A" },
+    ],
+    records: [
+      { recordKey: "live:1", learnerId: "301", occurrenceId: "six", moduleCatalogueId: "MC1",
+        attendance: "absent", effectiveAttendance: "present" },
+      { recordKey: "live:2", learnerId: "301", occurrenceId: "nine", moduleCatalogueId: "MC1",
+        attendance: "present", countsAsSession: false },
+    ],
+  });
+  render(<MonthlyGrid rows={[row]} lectures={[]} moduleCatalogueId="MC1" date="2026-10-17"
+    active loading={false} onSaved={vi.fn()} />);
+
+  expect(await screen.findByRole("img", { name: /Alex Example 2026-10-06 .* present through make-up attendance/ })).toBeVisible();
+  expect(screen.getByRole("img", { name: "Alex Example 2026-10-09 parallel-group attendance linked to the original lecture" })).toBeVisible();
+  expect(screen.getByText("100%")).toBeVisible();
+});
+
 it("keeps only unsaved lectures pending after a partial monthly save", async () => {
   mocks.save.mockResolvedValueOnce({ created: 1, updated: 0 })
     .mockRejectedValueOnce(new Error("Second lecture was not saved"))

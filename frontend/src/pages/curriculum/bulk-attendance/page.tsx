@@ -540,7 +540,7 @@ export default function AttendancePage() {
         const nextStatuses: Record<string, AttendanceStatus> = {};
         records.forEach((record) => {
           const learnerId = learnerIdByKbcId.get(record.learnerId);
-          if (learnerId) nextStatuses[learnerId] = record.attendance;
+          if (learnerId) nextStatuses[learnerId] = record.effectiveAttendance ?? record.attendance;
         });
         replaceSavedStatusesForDate(sessionDate, nextStatuses);
       })
@@ -747,7 +747,8 @@ export default function AttendancePage() {
     activeLearners.forEach((learner) => {
       // Preserve the server's chronological order, including its tie-break
       // for multiple saved records on the same date.
-      const databaseRecords = learner.kbcId ? kbcRecent[learner.kbcId] ?? [] : [];
+      const databaseRecords = (learner.kbcId ? kbcRecent[learner.kbcId] ?? [] : [])
+        .filter((record) => record.countsAsSession !== false);
       // Do not use curriculum lecture dates as placeholders here. A missing
       // attendance row is not a lecture record, so it must not appear as one
       // of the learner's last four database sessions.
@@ -757,8 +758,8 @@ export default function AttendancePage() {
           id: `${record.source}:${record.recordKey}`,
           name: `${record.lectureName || record.moduleName || "Lecture title not recorded"} (${record.source === "live" ? "Live register" : "KBC"})`,
           sessionDate: record.sessionDate,
-          status: pendingEdits[`${record.source}:${record.recordKey}`]?.attendance ?? saved,
-          editable: {
+          status: pendingEdits[`${record.source}:${record.recordKey}`]?.attendance ?? record.effectiveAttendance ?? saved,
+          editable: record.effectiveAttendance ? undefined : {
             source: record.source,
             recordKey: record.recordKey,
             attendance: record.attendance ?? ("unmarked" as AttendanceStatus),
@@ -918,6 +919,12 @@ export default function AttendancePage() {
       lectureName: record.lectureName || record.moduleName || "Lecture title not recorded",
       attendance: record.attendance ?? ("unmarked" as AttendanceStatus),
       source: record.source,
+      occurrenceId: record.occurrenceId,
+      effectiveAttendance: record.effectiveAttendance,
+      recoveryOccurrenceId: record.recoveryOccurrenceId,
+      makeupForOccurrenceId: record.makeupForOccurrenceId,
+      makeupForDate: record.makeupForDate,
+      countsAsSession: record.countsAsSession,
   })), [detailKbcHistory]);
   // One set of unsaved present/absent corrections, shared by View details and
   // the Last 4 badges. Each change is saved to its own source (KBC or live register).

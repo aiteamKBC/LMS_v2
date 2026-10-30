@@ -171,13 +171,13 @@ export default function MonthlyGrid({
       setResult({ scope, payload });
       const loadedStatuses = {
         ...Object.fromEntries(liveResult.value.records.map((record) => [
-          markKey("live:" + record.occurrenceId, record.learnerId), record.attendance,
+          markKey("live:" + record.occurrenceId, record.learnerId), record.effectiveAttendance ?? record.attendance,
         ])),
         ...Object.fromEntries(kbcRecords
           .filter((record) => record.attendance !== null)
           .map((record) => [
             markKey(record.source === "live" ? record.recordKey : "kbc:" + record.recordKey, record.learnerId),
-            record.attendance as AttendanceStatus,
+            (record.effectiveAttendance ?? record.attendance) as AttendanceStatus,
           ])),
       };
       // Keep a locally confirmed status visible if a parent refresh races the
@@ -225,10 +225,10 @@ export default function MonthlyGrid({
       .filter(Boolean));
     const kbcByKey = new Map<string, MonthlySession>();
     (currentResult?.kbcRecords ?? [])
-      .filter((record) => !selectedLecture || (
+      .filter((record) => record.countsAsSession !== false && (!selectedLecture || (
         record.sessionDate === selectedLecture.sessionDate
         && (record.sessionNumber === null || record.sessionNumber === selectedLecture.sessionNumber)
-      ))
+      )))
       .forEach((record) => {
       if (record.source === "live") {
         // A live record already represented by the scheduled occurrence is
@@ -287,10 +287,22 @@ export default function MonthlyGrid({
   const getSavedRecord = (session: MonthlySession, learnerId: string) =>
     session.kbcRecordByLearner[learnerId];
 
+  const liveRecordByOccurrence = useMemo(() => new Map(
+    (currentResult?.records ?? []).map((record) => [record.occurrenceId + ":" + record.learnerId, record]),
+  ), [currentResult]);
+
+  const liveRecordFor = (session: MonthlySession, learnerId: string) =>
+    session.occurrence && liveRecordByOccurrence.get(session.occurrence.id + ":" + learnerId);
+
+  const isRecovered = (session: MonthlySession, learnerId: string) =>
+    Boolean(liveRecordFor(session, learnerId)?.effectiveAttendance
+      || getSavedRecord(session, learnerId)?.effectiveAttendance);
+
   const liveDatesByLearner = useMemo(() => {
     const occurrenceDates = new Map(occurrences.map((occurrence) => [occurrence.id, occurrence.date]));
     const dates = new Map<string, Set<string>>();
     (currentResult?.records ?? []).forEach((record) => {
+      if (record.countsAsSession === false) return;
       const sessionDate = occurrenceDates.get(record.occurrenceId);
       if (!sessionDate) return;
       const learnerDates = dates.get(record.learnerId) ?? new Set<string>();
@@ -298,7 +310,7 @@ export default function MonthlyGrid({
       dates.set(record.learnerId, learnerDates);
     });
     (currentResult?.kbcRecords ?? [])
-      .filter((record) => record.source === "live")
+      .filter((record) => record.source === "live" && record.countsAsSession !== false)
       .forEach((record) => {
         const learnerDates = dates.get(record.learnerId) ?? new Set<string>();
         learnerDates.add(record.sessionDate);
@@ -326,8 +338,10 @@ export default function MonthlyGrid({
   // lecture only for the learner it belongs to.
   const appliesTo = useCallback((session: MonthlySession, learnerId: string) =>
     !isCoveredByLive(session, learnerId)
+      && liveRecordByOccurrence.get((session.occurrence?.id ?? "") + ":" + learnerId)?.countsAsSession !== false
+      && getSavedRecord(session, learnerId)?.countsAsSession !== false
       && (Boolean(session.occurrence) || Boolean(getSavedRecord(session, learnerId))),
-  [isCoveredByLive]);
+  [isCoveredByLive, liveRecordByOccurrence]);
 
   const rates = useMemo(() => Object.fromEntries(rows.map(({ learner }) => {
     const learnerId = learner.kbcId || "";
@@ -337,13 +351,17 @@ export default function MonthlyGrid({
     let present = 0;
     days.forEach(([, daySessions]) => {
       const learnerSessions = daySessions.filter((session) => appliesTo(session, learnerId));
+      if (!learnerSessions.length && daySessions.every((session) =>
+        liveRecordByOccurrence.get((session.occurrence?.id ?? "") + ":" + learnerId)?.countsAsSession === false
+        || getSavedRecord(session, learnerId)?.countsAsSession === false)) return;
       total += Math.max(1, learnerSessions.length);
       present += learnerSessions.filter((session) => getStatus(session, learnerId) === "present").length;
     });
     return [learner.id, total ? Math.round(present / total * 100) : 0];
-  })), [appliesTo, days, getStatus, rows]);
+  })), [appliesTo, days, getStatus, liveRecordByOccurrence, rows]);
 
   const toggle = (session: MonthlySession, learnerId: string) => {
+    if (isRecovered(session, learnerId)) return;
     const savedRecord = getSavedRecord(session, learnerId);
     if (!learnerId || (session.source === "kbc" && !savedRecord)
       || (session.source === "live" && !session.occurrence && !savedRecord)) return;
@@ -490,9 +508,21 @@ export default function MonthlyGrid({
                     </div></td>
                     {days.map(([day, daySessions]) => {
                       const learnerSessions = daySessions.filter((session) => appliesTo(session, learnerId));
+                      const guestSession = daySessions.find((session) =>
+                        liveRecordFor(session, learnerId)?.countsAsSession === false
+                        || getSavedRecord(session, learnerId)?.countsAsSession === false);
+                      const guestPresent = guestSession && (
+                        liveRecordFor(guestSession, learnerId)?.attendance === "present"
+                        || getSavedRecord(guestSession, learnerId)?.attendance === "present");
                       return <td key={day} className="px-2 py-3 text-center align-middle">
                         {learnerSessions.length === 0 ? (
-                          <span
+                          guestSession ? <span role="img"
+                            aria-label={learner.name + " " + day + " parallel-group " + (guestPresent ? "attendance" : "record") + " linked to the original lecture"}
+                            title={guestPresent ? "Parallel-group attendance is counted on the original lecture date" : "Parallel-group absence does not cover the original lecture"}
+                            className={"mx-auto flex h-8 w-8 items-center justify-center rounded-md border text-sm " +
+                              (guestPresent ? "border-green-200 bg-green-50 text-green-700" : "border-background-300 bg-background-100 text-foreground-500")}>
+                            <i className="ri-links-line" aria-hidden="true" />
+                          </span> : <span
                             role="img"
                             aria-label={learner.name + " " + day + " no saved attendance unmarked"}
                             title="No attendance saved for this learner on this lecture day"
@@ -505,7 +535,12 @@ export default function MonthlyGrid({
                           const status = getStatus(session, learnerId);
                           const isPresent = status === "present";
                           const isAbsent = status === "absent";
-                          return <button key={session.key} type="button" disabled={saving} onClick={() => toggle(session, learnerId)}
+                          return isRecovered(session, learnerId) ? <span key={session.key}
+                            role="img" aria-label={learner.name + " " + day + " " + session.title + " present through make-up attendance"}
+                            title="Attended through a parallel group session. Edit the original register record in View details."
+                            className="flex h-8 w-8 items-center justify-center rounded-md border border-green-200 bg-green-100 text-green-700">
+                            <i className="ri-check-line" aria-hidden="true" />
+                          </span> : <button key={session.key} type="button" disabled={saving} onClick={() => toggle(session, learnerId)}
                             aria-label={learner.name + " " + day + " " + session.title + " " + status}
                             title={session.title}
                             className={"flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border text-sm transition-colors disabled:cursor-not-allowed " +

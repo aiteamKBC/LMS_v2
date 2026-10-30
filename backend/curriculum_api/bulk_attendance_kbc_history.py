@@ -432,7 +432,9 @@ def bulk_attendance_kbc_recent(request):
             return JsonResponse({'error': 'Unable to load recent KBC attendance. Please try again.'}, status=503)
 
     recent = {
-        learner_id: merge_live_over_kbc(kbc.get(learner_id, []), live.get(learner_id, []))[-RECENT_LECTURE_LIMIT:]
+        learner_id: [record for record in merge_live_over_kbc(
+            kbc.get(learner_id, []), live.get(learner_id, []))
+            if record.get('countsAsSession') is not False][-RECENT_LECTURE_LIMIT:]
         for learner_id in set(kbc) | set(live)
     }
     return _with_warnings({'recent': recent}, warning)

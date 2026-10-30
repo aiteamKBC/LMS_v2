@@ -98,6 +98,13 @@ def read_live_register_records(kbc_id=None):
     aptem_by_profile, _conflicts = resolve_effective_aptem_ids(profiles)
     kbc_id_by_profile = {profile_id: str(aptem_id) for profile_id, aptem_id in aptem_by_profile.items()}
 
+    from .bulk_attendance_live_recovery import parallel_recovery_links
+    covered, guests = parallel_recovery_links(
+        [row for row in rows if row['learner_profile_id'] in kbc_id_by_profile
+         and (kbc_id is None or kbc_id_by_profile[row['learner_profile_id']] == kbc_id)],
+        complete=True,
+    )
+
     lecture_titles = {}
     if kbc_id is not None:
         # One learner's details: worth matching each lecture to its curriculum title.
@@ -107,10 +114,18 @@ def read_live_register_records(kbc_id=None):
         except DatabaseError as exc:
             logger.warning('Could not read live lecture titles for bulk attendance: %s', exc)
 
-    return build_live_records(
+    records = build_live_records(
         rows, occurrences, titles, kbc_id_by_profile,
         _local_date, timezone.localdate(), kbc_id, lecture_titles,
     )
+    by_key = {f"live:{row['id']}": row for row in rows}
+    for learner_records in records.values():
+        for record in learner_records:
+            row = by_key[record['recordKey']]
+            key = (row['learner_profile_id'], str(row['occurrence_id']))
+            record.update(covered.get(key, {}))
+            record.update(guests.get(key, {}))
+    return records
 
 
 def read_live_register_or_warning(kbc_id=None):

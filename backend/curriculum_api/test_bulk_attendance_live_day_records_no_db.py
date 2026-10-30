@@ -107,8 +107,8 @@ class LiveAttendanceDayRecordsTests(unittest.TestCase):
             {"id": "next-month", "live_session_id": "series-1", "scheduled_start": datetime(2026, 11, 1, tzinfo=timezone.utc), "session_number": 4, "status": "scheduled"},
         ]))
         register = SimpleNamespace(objects=Query([
-            {"id": 1, "occurrence_id": "occ-1", "learner_profile_id": 11, "attendance_status": "present"},
-            {"id": 2, "occurrence_id": "occ-2", "learner_profile_id": 11, "attendance_status": "absent"},
+            {"id": 1, "occurrence_id": "occ-1", "module_catalogue_id": "module-1", "learner_profile_id": 11, "attendance_status": "present"},
+            {"id": 2, "occurrence_id": "occ-2", "module_catalogue_id": "module-1", "learner_profile_id": 11, "attendance_status": "absent"},
         ]))
 
         class Response:
@@ -137,6 +137,7 @@ class LiveAttendanceDayRecordsTests(unittest.TestCase):
             "DatabaseError": RuntimeError,
             "_local_date": lambda value: value.date(),
             "_aptem_ids_by_profile": lambda _ids: {11: "301"},
+            "parallel_recovery_links": lambda _rows, **_kwargs: ({}, {}),
         }
         load_members({"bulk_attendance_live_month_records"}, scope)
         result = scope["bulk_attendance_live_month_records"](
@@ -148,6 +149,17 @@ class LiveAttendanceDayRecordsTests(unittest.TestCase):
             [(row["occurrenceId"], row["attendance"]) for row in result.payload["records"]],
             [("occ-1", "present"), ("occ-2", "absent")],
         )
+
+        scope["parallel_recovery_links"] = lambda _rows, **_kwargs: (
+            {(11, "occ-2"): {"effectiveAttendance": "present", "recoveryOccurrenceId": "occ-1"}},
+            {(11, "occ-1"): {"countsAsSession": False, "makeupForDate": "2026-10-17"}},
+        )
+        projected = scope["bulk_attendance_live_month_records"](
+            SimpleNamespace(GET={"month": "2026-10", "module_catalogue_id": "module-1"})
+        )
+        self.assertEqual(projected.payload["records"][0]["countsAsSession"], False)
+        self.assertEqual(projected.payload["records"][1]["effectiveAttendance"], "present")
+        scope["parallel_recovery_links"] = lambda _rows, **_kwargs: ({}, {})
 
         group_result = scope["bulk_attendance_live_month_records"](
             SimpleNamespace(GET={"month": "2026-10", "group_id": "group-1"})

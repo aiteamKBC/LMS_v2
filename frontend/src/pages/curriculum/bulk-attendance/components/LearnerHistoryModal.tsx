@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AttendanceStatus, Learner } from "@/types/bulkAttendance";
 import {
   avatarClass,
@@ -18,6 +18,12 @@ export interface LearnerHistoryRecord {
   lectureName: string;
   attendance: AttendanceStatus;
   source?: "kbc" | "live";
+  occurrenceId?: string;
+  effectiveAttendance?: "present";
+  recoveryOccurrenceId?: string;
+  makeupForOccurrenceId?: string;
+  makeupForDate?: string;
+  countsAsSession?: boolean;
 }
 
 interface LearnerHistoryModalProps {
@@ -84,22 +90,30 @@ export default function LearnerHistoryModal({
     return () => window.removeEventListener("keydown", handleKey);
   }, [onClose]);
 
-  const statusOf = (entry: LearnerHistoryRecord): AttendanceStatus =>
-    (entry.source && entry.recordKey && pendingStatus?.(entry.source, entry.recordKey)) || entry.attendance;
+  const statusOf = useCallback((entry: LearnerHistoryRecord): AttendanceStatus => {
+    const pending = entry.source && entry.recordKey && pendingStatus?.(entry.source, entry.recordKey);
+    if (pending) return pending;
+    if (entry.effectiveAttendance && entry.recoveryOccurrenceId) {
+      const target = history.find((item) => item.occurrenceId === entry.recoveryOccurrenceId);
+      if (target?.source && target.recordKey && pendingStatus?.(target.source, target.recordKey) === "absent") {
+        return entry.attendance;
+      }
+    }
+    return entry.effectiveAttendance ?? entry.attendance;
+  }, [history, pendingStatus]);
 
   const { present, absent, unmarked, rate } = useMemo(() => {
-    const statuses = history.map((entry) =>
-      (entry.source && entry.recordKey && pendingStatus?.(entry.source, entry.recordKey)) || entry.attendance);
+    const statuses = history.filter((entry) => entry.countsAsSession !== false).map(statusOf);
     const presentCount = statuses.filter((status) => status === "present").length;
     const absentCount = statuses.filter((status) => status === "absent").length;
     const markedCount = presentCount + absentCount;
     return {
       present: presentCount,
       absent: absentCount,
-      unmarked: history.length - markedCount,
+      unmarked: statuses.length - markedCount,
       rate: markedCount ? Math.round((presentCount / markedCount) * 100) : 0,
     };
-  }, [history, pendingStatus]);
+  }, [history, statusOf]);
 
   const rateClass = rate >= 80 ? "text-green-700" : rate >= 50 ? "text-warning-700" : "text-red-700";
 
@@ -181,7 +195,7 @@ export default function LearnerHistoryModal({
             <p className="mt-1 text-xs text-foreground-500">KBC history and the live session register. On a date both cover, the live register is shown. Click a status to change it, then Save.</p>
           </div>
           <span className="shrink-0 rounded-full bg-background-200 px-2.5 py-1 font-label text-xs text-foreground-700">
-            {history.length} {history.length === 1 ? "session" : "sessions"}
+            {history.filter((entry) => entry.countsAsSession !== false).length} {history.filter((entry) => entry.countsAsSession !== false).length === 1 ? "session" : "sessions"}
           </span>
         </div>
 
@@ -200,7 +214,10 @@ export default function LearnerHistoryModal({
                 const current = statusOf(entry);
                 const status = statusStyle(current);
                 const record = editableRecord(entry);
-                const changed = current !== entry.attendance;
+                const pending = entry.source && entry.recordKey && pendingStatus?.(entry.source, entry.recordKey);
+                const changed = Boolean(pending && pending !== entry.attendance);
+                const recovered = entry.effectiveAttendance === "present" && current === "present"
+                  && entry.attendance === "absent" && !pending;
                 return (
                   <li key={entry.id} className={`flex items-center justify-between gap-3 rounded-md border px-3.5 py-2.5 ${changed ? "border-primary-300 bg-primary-50" : "border-background-200 bg-background-100"}`}>
                     <span className="min-w-0">
@@ -212,8 +229,19 @@ export default function LearnerHistoryModal({
                           Source: {entry.source === "live" ? "Live register" : "KBC"}
                         </span>
                       )}
+                      {entry.makeupForDate && <span className={"mt-0.5 block text-xs " + (current === "present" ? "text-green-700" : "text-foreground-500")}>
+                        {current === "present" ? "Make-up evidence" : "Parallel-group record"} for {formatDateLabel(entry.makeupForDate)}
+                      </span>}
+                      {recovered && <span className="mt-0.5 block text-xs text-green-700">Attended through a parallel group session</span>}
                     </span>
-                    {record && onToggleRecord ? (
+                    {recovered ? (
+                      <span className="flex shrink-0 flex-col items-end gap-1">
+                        <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${status.className}`} title="Original absence covered by a parallel group session">
+                          <i className={status.icon} />{status.label}
+                        </span>
+                        {record && onToggleRecord && <button type="button" disabled={saving} onClick={() => onToggleRecord(record)} className="text-xs text-foreground-500 underline disabled:opacity-60">Mark original present</button>}
+                      </span>
+                    ) : record && onToggleRecord ? (
                       <button
                         type="button"
                         onClick={() => onToggleRecord(record)}

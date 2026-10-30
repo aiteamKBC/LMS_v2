@@ -14,6 +14,7 @@ from django.views.decorators.http import require_GET
 from learner_api.models import LearnerProfile
 
 from .models import LiveSession, LiveSessionLearnerAttendance, LiveSessionOccurrence, ModuleAuthoringModule
+from .bulk_attendance_live_recovery import parallel_recovery_links
 from .session_results_policy import instant
 
 
@@ -118,6 +119,7 @@ def bulk_attendance_live_day_records(request):
             )
         )
         aptem_by_profile = _aptem_ids_by_profile({row["learner_profile_id"] for row in register_rows})
+        covered, guests = parallel_recovery_links(register_rows, database=database)
         records = [
             {
                 "recordKey": f"live:{row['id']}",
@@ -125,6 +127,8 @@ def bulk_attendance_live_day_records(request):
                 "moduleCatalogueId": row["module_catalogue_id"],
                 "occurrenceId": row["occurrence_id"],
                 "attendance": row["attendance_status"],
+                **covered.get((row["learner_profile_id"], str(row["occurrence_id"])), {}),
+                **guests.get((row["learner_profile_id"], str(row["occurrence_id"])), {}),
             }
             for row in register_rows
             if row["learner_profile_id"] in aptem_by_profile
@@ -189,10 +193,11 @@ def bulk_attendance_live_month_records(request):
         register_rows = list(
             LiveSessionLearnerAttendance.objects.using(database)
             .filter(occurrence_id__in=occurrence_ids)
-            .values("id", "occurrence_id", "learner_profile_id", "attendance_status")
+            .values("id", "occurrence_id", "module_catalogue_id", "learner_profile_id", "attendance_status")
         ) if occurrence_ids else []
         occurrence_by_id = {row["id"]: row for row in occurrences}
         aptem_by_profile = _aptem_ids_by_profile({row["learner_profile_id"] for row in register_rows})
+        covered, guests = parallel_recovery_links(register_rows, database=database)
         return JsonResponse({
             "occurrences": [
                 {
@@ -211,6 +216,8 @@ def bulk_attendance_live_month_records(request):
                     "moduleCatalogueId": session_by_id[occurrence_by_id[row["occurrence_id"]]["live_session_id"]]["module_catalogue_id"],
                     "learnerId": aptem_by_profile[row["learner_profile_id"]],
                     "attendance": row["attendance_status"],
+                    **covered.get((row["learner_profile_id"], str(row["occurrence_id"])), {}),
+                    **guests.get((row["learner_profile_id"], str(row["occurrence_id"])), {}),
                 }
                 for row in register_rows
                 if row["learner_profile_id"] in aptem_by_profile

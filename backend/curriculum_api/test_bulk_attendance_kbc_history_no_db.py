@@ -301,6 +301,19 @@ class KbcHistoryTests(unittest.TestCase):
         self.assertEqual([r['recordKey'] for r in recent], ['k1', 'k2', 'k3', 'live:9'])
         self.assertEqual(recent[-1]['attendance'], 'absent')
 
+    def test_guest_makeup_keeps_same_day_kbc_lecture_and_is_not_a_recent_session(self):
+        guest = {**self._record('live:guest', '2026-10-09', 'present', 'live'),
+                 'countsAsSession': False, 'makeupForDate': '2026-10-06'}
+        self.live.return_value = ({'301': [guest]}, None)
+        kbc = {'301': [self._record('k1', '2026-10-09', 'present')]}
+        with patch.object(history, 'learner_directory_dsn', return_value='synthetic'), \
+             patch.object(history, 'read_kbc_recent_attendance', return_value=kbc):
+            response = history.bulk_attendance_kbc_recent(SimpleNamespace(method='GET', GET={}))
+        recent = json.loads(response.content)['recent']['301']
+        self.assertEqual([record['recordKey'] for record in recent], ['k1'])
+        self.assertEqual([record['recordKey'] for record in history.merge_live_over_kbc(kbc['301'], [guest])],
+                         ['k1', 'live:guest'])
+
     def test_recent_matches_full_history_when_one_live_day_replaces_many_kbc_rows(self):
         # Execute the reader's actual window query against an isolated in-memory
         # fixture. Only PostgreSQL cast/parameter syntax is adapted for SQLite.
@@ -378,7 +391,7 @@ class KbcHistoryTests(unittest.TestCase):
         )
         self.assertEqual(list(records), ['301'])
         self.assertEqual(records['301'], [{
-            'recordKey': 'live:1', 'learnerId': '301', 'sessionDate': '2026-10-08',
+            'recordKey': 'live:1', 'occurrenceId': 'o1', 'learnerId': '301', 'sessionDate': '2026-10-08',
             'moduleName': 'Commercial Intelligence', 'lectureName': 'Commercial Intelligence — Session 3',
             'sessionNumber': 3, 'attendance': 'present', 'source': 'live',
         }])
