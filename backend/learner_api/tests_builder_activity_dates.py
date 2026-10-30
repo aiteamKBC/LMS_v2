@@ -154,3 +154,72 @@ class BuilderActivityDatesTests(SimpleTestCase):
         cursor = MagicMock()
         self.assertEqual(read_builder_activity_dates(cursor, []), {})
         cursor.execute.assert_not_called()
+
+    def test_delivery_week_keeps_materials_with_the_confirmed_live_session_without_changing_due_dates(self):
+        dates = self.read([('W5', 'Week 5')], [
+            ('LIVE', 'W5', 'Live', 'live_session', {'sessionDate': '2026-10-30',
+             'teamsLiveSessionId': 'SYNTHETIC-SERIES', 'teamsSessionNumber': 5}),
+            ('DUE', 'W5', 'Assignment', 'assignment', {'sessionDate': '2026-11-02', 'dueTiming': 'end of week'}),
+            ('RECORDING', 'W5', 'Recording', 'recording_placeholder', {}),
+        ], start='2026-11-02')
+        placement = {'id': 'W5', 'module_id': 'MOD-1', 'start': '2026-10-30',
+                     'end': '2026-11-05', 'month': '2026-10'}
+        self.assertTrue(all(schedule['delivery_week'] == placement for schedule in dates.values()))
+        self.assertEqual(dates['DUE']['date'], '2026-11-02')
+        self.assertEqual(dates['DUE']['month'], '2026-11')
+        self.assertEqual(dates['DUE']['week_end'], '2026-11-08')
+        self.assertEqual(dates['DUE']['due_timing'], 'end of week')
+        self.assertEqual(dates['LIVE']['date'], '2026-10-30')
+
+    def test_delivery_month_contains_five_fridays(self):
+        weeks = [(f'W{i}', f'Week {i}') for i in range(1, 7)]
+        dates = self.read(weeks, [
+            (f'C{i}', week_id, 'Reading', 'reading', {}) for i, (week_id, _) in enumerate(weeks, 1)
+        ], start='2026-10-02', days='Friday')
+        self.assertEqual([value['delivery_week']['start'] for value in dates.values()],
+                         ['2026-10-02', '2026-10-09', '2026-10-16', '2026-10-23', '2026-10-30', '2026-11-06'])
+        self.assertEqual([value['delivery_week']['month'] for value in dates.values()],
+                         ['2026-10'] * 5 + ['2026-11'])
+
+    def test_additional_meeting_does_not_replace_the_primary_delivery_anchor(self):
+        dates = self.read([('W1', 'Week 1')], [
+            ('EXTRA', 'W1', 'Additional meeting', 'live_session', {'sessionDate': '2026-09-30',
+             'extraTeamsMeetingUrl': 'https://example.invalid/extra'}),
+            ('PRIMARY', 'W1', 'Primary live', 'live_session', {'sessionDate': '2026-10-30',
+             'teamsLiveSessionId': 'SYNTHETIC-SERIES', 'teamsSessionNumber': 1}),
+            ('READ', 'W1', 'Reading', 'reading', {}),
+        ], start='2026-10-30', days='Friday')
+        self.assertTrue(all(value['delivery_week']['start'] == '2026-10-30' for value in dates.values()))
+        self.assertEqual(dates['EXTRA']['date'], '2026-09-30')
+
+    def test_delivery_anchor_uses_uk_day_and_unscheduled_weeks_stay_undated(self):
+        dates = self.read([('W1', 'Week 1')], [
+            ('LIVE', 'W1', 'Live', 'live_session', {'sessionDateTimeUtc': '2026-09-30T23:30:00Z'}),
+            ('READ', 'W1', 'Reading', 'reading', {}),
+        ], start=None)
+        self.assertEqual(dates['READ']['delivery_week']['start'], '2026-10-01')
+        self.assertEqual(dates['READ']['delivery_week']['month'], '2026-10')
+        undated = self.read([('W1', 'Week 1')], [('READ', 'W1', 'Reading', 'reading', {})], start=None)
+        self.assertEqual(undated['READ']['delivery_week'],
+                         {'id': 'W1', 'module_id': 'MOD-1', 'start': None, 'end': None, 'month': None})
+
+    def test_delivery_week_stops_before_an_earlier_rescheduled_next_week(self):
+        dates = self.read([('W1', 'Week 1'), ('W2', 'Week 2')], [
+            ('FIRST', 'W1', 'First live', 'live_session', {'sessionDate': '2026-10-30',
+             'teamsLiveSessionId': 'SYNTHETIC-SERIES', 'teamsSessionNumber': 1}),
+            ('NEXT', 'W2', 'Next live', 'live_session', {'sessionDate': '2026-11-02',
+             'teamsLiveSessionId': 'SYNTHETIC-SERIES', 'teamsSessionNumber': 2}),
+        ], start='2026-10-30', days='Friday')
+        self.assertEqual(dates['FIRST']['delivery_week']['end'], '2026-11-01')
+        self.assertEqual(dates['NEXT']['delivery_week']['start'], '2026-11-02')
+        self.assertEqual(dates['FIRST']['week_end'], '2026-11-01')
+
+    def test_introduction_does_not_shorten_a_teaching_week(self):
+        dates = self.read([('W1', 'Week 1'), ('INTRO', 'Introduction')], [
+            ('LIVE', 'W1', 'Live', 'live_session', {'sessionDate': '2026-10-23',
+             'teamsLiveSessionId': 'SYNTHETIC-SERIES', 'teamsSessionNumber': 1}),
+            ('WELCOME', 'INTRO', 'Welcome', 'reading', {}),
+        ], start='2026-10-23', days='Monday,Friday')
+        self.assertEqual(dates['LIVE']['delivery_week']['end'], '2026-10-29')
+        self.assertEqual(dates['WELCOME']['date_source'], 'introduction')
+        self.assertIsNone(dates['WELCOME']['date'])

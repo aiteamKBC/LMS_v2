@@ -245,6 +245,7 @@ class LiveAssignedModuleTests(SimpleTestCase):
 
         live = result[2][0]
         self.assertEqual((live['teamsLiveSessionId'], live['teamsSessionNumber']), ('LIVE-EXTRA', 1))
+        self.assertIs(live['additionalMeeting'], True)
         self.assertFalse(any('curriculum.live_session_occurrences' in call.args[0] for call in cursor.execute.call_args_list))
 
     def test_unbooked_additional_id_does_not_replace_the_main_meeting(self):
@@ -260,6 +261,7 @@ class LiveAssignedModuleTests(SimpleTestCase):
 
         live = result[2][0]
         self.assertEqual((live['teamsLiveSessionId'], live['teamsSessionNumber']), ('LIVE-MAIN', 7))
+        self.assertNotIn('additionalMeeting', live)
 
     def test_ambiguous_live_session_date_is_not_attached_to_either_occurrence(self):
         rows = [

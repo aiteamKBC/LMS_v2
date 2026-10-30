@@ -1853,7 +1853,9 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                                                'sessionDateTimeUtc': _s(settings.get('sessionDateTimeUtc')) or None,
                                                'teamsLiveSessionId': (_s(settings.get('extraTeamsLiveSessionId'))
                                                    if _s(settings.get('extraTeamsMeetingUrl')) else '')
-                                                   or _s(settings.get('teamsLiveSessionId')) or None} if catalogue_facts else {})})
+                                                   or _s(settings.get('teamsLiveSessionId')) or None,
+                                               **({'additionalMeeting': True} if _s(ctype).strip().lower().replace('-', '_') == 'live_session'
+                                                  and _s(settings.get('extraTeamsMeetingUrl')) else {})} if catalogue_facts else {})})
                 titles = list(dict.fromkeys(_s(value) for value in master_module_title.values()))
                 if catalogue_facts:
                     # Preserve the same id-less rows as the full reader in a
@@ -2116,6 +2118,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             "resourceUrl": resource_url,
             "liveSessionUrl": live_session_url,
             "teamsLiveSessionId": teams_live_session_id,
+            "additionalMeeting": normalised_type == "live_session" and bool(_s(settings.get("extraTeamsMeetingUrl"))),
             "teamsSessionNumber": teams_session_number,
             "recordingSeriesId": recording_series_id or None,
             "recordingSessionNumber": recording_session_number if has_recording_source else None,
@@ -2207,6 +2210,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "resourceUrl": comp["resourceUrl"],
                     "liveSessionUrl": comp["liveSessionUrl"],
                     "teamsLiveSessionId": comp["teamsLiveSessionId"],
+                    **({"additionalMeeting": True} if comp.get("additionalMeeting") else {}),
                     "teamsSessionNumber": comp["teamsSessionNumber"],
                     "recordingSeriesId": comp["recordingSeriesId"],
                     "recordingSessionNumber": comp["recordingSessionNumber"],

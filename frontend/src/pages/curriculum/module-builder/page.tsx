@@ -1,5 +1,6 @@
 import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
 import { useRefreshAssignedLearners } from '../shared/entities/assignedLearnerDirectory';
+import { sessionDeliveryDate } from '@/lib/deliveryWeek';
 import { EditScope, ModulePresence } from './CollaborativeField';
 import { CollaborationContext } from './collaborationContext';
 import { useModuleCollaboration } from './useModuleCollaboration';
@@ -90,6 +91,7 @@ import {
   createEmptyWeek,
   createNewModule,
   groupWeeksByMonth,
+  moduleWeekDeliveryDate,
   deleteModuleStructure,
   curriculumModuleToCatalogue,
   duplicateModuleStructure,
@@ -4702,8 +4704,12 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   // plan has not loaded yet reads exactly as it did before rather than blank.
   const sessionDatesOf = (week: ModuleWeek): string[] => {
     const run = sessionDatesByWeekId.get(week.id);
+    const mainSessions = week.components.filter(component => component.type === 'live-session' && !component.settings?.extraTeamsMeetingUrl);
+    const delivered = mainSessions.map((component, index) => sessionDeliveryDate(component.settings || {}) || run?.[index] || '').filter(Boolean);
+    if (delivered.length) return delivered;
     if (run?.length) return run;
-    return week.sessionDate ? [cleanText(week.sessionDate).slice(0, 10)] : [];
+    const date = moduleWeekDeliveryDate(week);
+    return date ? [date] : [];
   };
   const deliveryDays = Array.from(new Set([
     ...(module.weeklySchedule || []).map(slot => cleanText(slot.day)),
@@ -5094,10 +5100,10 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                     <span>{activeTypeFilter ? `${shownComponents.length} ${activeTypeLabel} of ${week.components.length}` : `${week.components.length} components`}</span>
                     <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
                     <span>{totalOtjh.toFixed(1)}h</span>
-                    {week.sessionDate && (
+                    {moduleWeekDeliveryDate(week) && (
                       <>
                         <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
-                        <span className="truncate">{formatDateLabel(week.sessionDate)}</span>
+                        <span className="truncate">{formatDateLabel(moduleWeekDeliveryDate(week))}</span>
                       </>
                     )}
                     {!hasDeliveryDate && (

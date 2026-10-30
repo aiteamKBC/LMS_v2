@@ -1,8 +1,9 @@
 import type { LearnerDetail } from '@/api/learnerDetail';
 import type { StudentActivityItem, StudentActivityResponse } from '@/api/studentActivity';
 import { completedComponentIds, isComponentComplete, quizAttemptsFor, type JourneyComponent } from '@/utils/learnerJourney';
+import type { DeliveryWeek } from '@/lib/deliveryWeek';
 
-export type Schedule = Pick<StudentActivityItem, 'date' | 'month' | 'week_start' | 'week_end' | 'date_needs_review' | 'date_source'> & { due_timing?: string };
+export type Schedule = Pick<StudentActivityItem, 'date' | 'month' | 'week_start' | 'week_end' | 'date_needs_review' | 'date_source'> & { due_timing?: string; delivery_week?: DeliveryWeek };
 export type SubjectEntry = { id: string; title: string; category: string; completed: boolean; position: number; schedule: Schedule; week?: string; legacy?: StudentActivityItem; native?: JourneyComponent; bestScorePercent?: number | null };
 export type SubjectCardSummary = { activityCount: number; completedActivityCount: number; progress: number; status: 'Completed' | 'In progress' | 'Upcoming'; nextTitle?: string | null; finalTestPassed: boolean };
 export type Subject = { card?: SubjectCardSummary; id: string; title: string; source: 'legacy' | 'current'; moduleId?: string | null; activities: SubjectEntry[]; recordedHistory?: boolean; catalogueProgress?: boolean; catalogueCount?: number; acceptedHours?: number; previousLearningFor?: string; importedCourseRef?: string; replacementCourseRef?: string; archivedActivities?: SubjectEntry[]; aggregateProgress?: number; transferredProgress?: number; transferPending?: boolean; demoProgress?: boolean };
@@ -47,7 +48,7 @@ function nativeActivitySchedule(schedule: Schedule | undefined, sessionDate?: st
   // Older metadata used the upload date. It cannot override a session date or
   // move a whole future programme into the month its components were created.
   if (!schedule || ['original_created_at', 'source_date', 'undated'].includes(schedule.date_source || '')) {
-    return scheduleForDate(sessionDate);
+    return { ...scheduleForDate(sessionDate), ...(schedule?.delivery_week ? { delivery_week: schedule.delivery_week } : {}) };
   }
   return schedule;
 }

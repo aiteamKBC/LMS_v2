@@ -38,6 +38,14 @@ def component(**changes):
 
 
 class WeeklyComponentProjectionTests(SimpleTestCase):
+    def test_additional_meeting_marker_survives_without_replacing_session_identity_or_dates(self):
+        row = weekly_learning._weekly_component(component(type='live_session', componentId='EXTRA',
+            additionalMeeting=True, sessionDate='2026-10-30', sessionDateTimeUtc='2026-10-30T10:00:00Z'))
+        self.assertIs(row['additionalMeeting'], True)
+        self.assertEqual((row['componentId'], row['sessionDate'], row['sessionDateTimeUtc']),
+                         ('EXTRA', '2026-10-30', '2026-10-30T10:00:00Z'))
+        self.assertNotIn('additionalMeeting', weekly_learning._weekly_component(component(type='live_session')))
+
     def test_keeps_identity_timing_codes_and_replaces_content_with_its_verdict(self):
         row = weekly_learning._weekly_component(component())
         self.assertEqual(row, {

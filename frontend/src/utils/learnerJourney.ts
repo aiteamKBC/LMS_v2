@@ -45,6 +45,7 @@ export interface JourneyComponent {
   liveSessionUrl?: string | null;
   teamsLiveSessionId?: string | null;
   teamsSessionNumber?: number | null;
+  additionalMeeting?: boolean;
   recordingSeriesId?: string | null;
   recordingSessionNumber?: number | null;
   recordingDate?: string | null;
@@ -451,6 +452,7 @@ export function isOpenableComponent(c: JourneyComponent): boolean {
   return hasComponentContent(c);
 }
 export interface JourneyWeek {
+  weekId?: string;
   week: string;
   otjh: number;
   components: JourneyComponent[];
@@ -709,6 +711,7 @@ export function buildLearnerJourney(real: LearnerJourneySource | null): JourneyM
             liveSessionUrl: c.liveSessionUrl, sessionDate: c.sessionDate, sessionTime: c.sessionTime,
             teamsLiveSessionId: c.teamsLiveSessionId,
             teamsSessionNumber: c.teamsSessionNumber,
+            additionalMeeting: c.additionalMeeting,
             recordingSeriesId: c.recordingSeriesId,
             recordingSessionNumber: c.recordingSessionNumber,
             recordingDate: c.recordingDate,
@@ -723,6 +726,7 @@ export function buildLearnerJourney(real: LearnerJourneySource | null): JourneyM
           }));
         return {
           week: w.week,
+          ...(w.weekId ? { weekId: w.weekId } : {}),
           // Quiz duration remains available to the quiz runner and is credited
           // as actual learner time after submission. It is not planned OTJH.
           otjh: components.reduce(
