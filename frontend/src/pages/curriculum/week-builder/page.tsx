@@ -3590,25 +3590,15 @@ function formatFileSize(size: number) {
 function AssignedGroupsSection({ component, onChange, groupOptions, programmeId, groupName }: Pick<ComponentBodyProps, 'component' | 'onChange' | 'groupOptions'> & { programmeId: string; groupName?: string }) {
   const rawSelectedKeys = component.settings.selectedGroupKeys as string[] | undefined;
   const norm = (value?: string) => String(value ?? '').trim().toLowerCase();
-  // The module was built for this group, so it's never really optional — shown
-  // It starts selected, but remains editable and can be cleared by the tutor.
+  // Legacy components inherit the module's group for display. Opening their
+  // editor must not write that default and mark the module as edited. An
+  // explicit empty selection stays empty; only an assignment action persists it.
   const moduleGroupOption = groupName ? groupOptions.find(option => norm(option.name) === norm(groupName)) : undefined;
-  const storedKeys = rawSelectedKeys ?? [];
-  const selectedKeys = storedKeys;
-  const hasStoredSelection = Array.isArray(component.settings.selectedGroupKeys);
+  const selectedKeys = Array.isArray(rawSelectedKeys) ? rawSelectedKeys : moduleGroupOption ? [moduleGroupOption.key] : [];
   const [browsingKey, setBrowsingKey] = useState<string | null>(null);
   const setGroups = (keys: string[]) => onChange({
     settings: { ...component.settings, selectedGroupKeys: keys, selectedGroupNames: groupOptions.filter(option => keys.includes(option.key)).map(option => option.name) },
   });
-
-  // Self-heals a never-touched (or pre-existing) component so the locked group
-  // is actually persisted as assigned, not just shown that way — otherwise a
-  // week saved without ever touching this list would still store it as
-  // unassigned underneath.
-  useEffect(() => {
-    if (moduleGroupOption && !hasStoredSelection) setGroups([moduleGroupOption.key]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [moduleGroupOption?.key, hasStoredSelection]);
 
   // Placed copies this component has produced elsewhere, one entry per copy
   // (parallel arrays — ComponentSettingValue has no object type). A single
