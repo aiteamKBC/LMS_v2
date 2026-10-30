@@ -33,8 +33,7 @@
 // ============================================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import styles from './ArchivePage.module.css';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
 import {
@@ -71,11 +70,13 @@ import {
   EntityDrawer,
   EntityEmptyState,
   EntityFilterBar,
+  EntityHero,
   EntityPagination,
   EntityTable,
   InlineError,
   NamedActions,
   ParentBadge,
+  PlainCell,
   WorkspaceTabs,
 } from '../shared/entities/ui';
 
@@ -136,9 +137,6 @@ interface ArchiveRow {
   deleteBlockedBy: string;
   /** Records this one's own archive took down with it, shown under it. */
   childRows: ArchiveRow[];
-  /** Display only: named counts from the archive payload, never an invented generic total. */
-  items: string;
-  linkedRecords: string;
 }
 
 const KIND_LABEL: Record<ArchiveKind, string> = {
@@ -349,7 +347,7 @@ function howArchived(item: ArchiveItem): { how: string; viaParent: boolean } {
   const withParent = archivedWithLabel(item);
   if (withParent) return { how: withParent, viaParent: true };
   const stamp = cleanText(item.record.archivedBy);
-  if (VIA_PARENT_LABEL[stamp] && stamp !== `${item.kind}-delete`) return { how: VIA_PARENT_LABEL[stamp], viaParent: true };
+  if (VIA_PARENT_LABEL[stamp]) return { how: VIA_PARENT_LABEL[stamp], viaParent: true };
   return { how: 'Archived on its own', viaParent: false };
 }
 
@@ -365,7 +363,7 @@ function archiveRow(item: ArchiveItem, children: ArchiveItem[] = []): ArchiveRow
     }
   })();
   const { how, viaParent } = howArchived(item);
-  const row: ArchiveRow = { ...base, ...archiveFacts(item), key: item.key || base.key, how, viaParent, childRows };
+  const row: ArchiveRow = { ...base, key: item.key || base.key, how, viaParent, childRows };
   // A cohort that left with its programme cannot come back without it: every
   // cohort list is scoped by programme, and the restore endpoint refuses one
   // whose programme is still archived. Said here rather than after the click.
@@ -377,34 +375,7 @@ function archiveRow(item: ArchiveItem, children: ArchiveItem[] = []): ArchiveRow
   return row;
 }
 
-type BaseRow = Omit<ArchiveRow, 'how' | 'viaParent' | 'childRows' | 'items' | 'linkedRecords'>;
-
-function recordedCount(value: unknown, label: string): string {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0
-    ? plural(value, label) : `${label[0].toUpperCase()}${label.slice(1)} count unavailable`;
-}
-
-/** Keep different entity counts named, including the archive's historical ownership. */
-function archiveFacts(item: ArchiveItem): Pick<ArchiveRow, 'items' | 'linkedRecords'> {
-  switch (item.kind) {
-    case 'programme': return {
-      items: recordedCount(item.record.modules, 'module'),
-      linkedRecords: `${recordedCount(item.record.cohorts, 'cohort')} · ${recordedCount(item.record.groups, 'group')}`,
-    };
-    case 'cohort': return {
-      items: recordedCount(item.record.groups, 'archived group'),
-      linkedRecords: `${recordedCount(item.record.learners, 'learner')} still placed here`,
-    };
-    case 'group': return {
-      items: 'Not available',
-      linkedRecords: `${recordedCount(item.record.learners, 'learner')} still placed here`,
-    };
-    case 'module': return {
-      items: recordedCount(item.record.components, 'component'),
-      linkedRecords: `${recordedCount(item.record.weeks, 'week')} · ${recordedCount(item.record.sessions, 'session')}`,
-    };
-  }
-}
+type BaseRow = Omit<ArchiveRow, 'how' | 'viaParent' | 'childRows'>;
 
 function programmeRow(programme: CurriculumArchivedProgramme, childRows: ArchiveRow[]): BaseRow {
   const id = programme.sourceId || programme.id;
@@ -730,17 +701,14 @@ function ArchivedWeek({ week, open, onToggle, focusComponentId = '' }: {
 
 // ------------------------------------------------------------------- the page
 
-const GRID = styles.grid;
+const GRID = 'grid grid-cols-[minmax(220px,1.5fr)_100px_minmax(150px,1fr)_minmax(220px,1.4fr)_140px_290px]';
 
 const COLUMNS = [
   { label: 'Record' },
   { label: 'Type' },
-  { label: 'Programme' },
+  { label: 'Where it sat' },
+  { label: 'Restore / Delete would' },
   { label: 'Archived' },
-  { label: 'Items' },
-  { label: 'Linked records' },
-  { label: 'Restorable' },
-  { label: 'Archived by' },
   { label: 'Actions', align: 'right' as const },
 ];
 
@@ -826,7 +794,6 @@ export default function CurriculumArchivePage() {
   // The row an action is running against, so its button shows the spinner rather
   // than the whole table going quiet while a restore is in flight.
   const [busyKey, setBusyKey] = useState<string | null>(null);
-  const actionLock = useRef(false);
   const [actionError, setActionError] = useState<string | null>(null);
   // Entries whose "archived with it" list is open.
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
@@ -973,8 +940,7 @@ export default function CurriculumArchivePage() {
    * that carried it has closed by the time the reader looks for it.
    */
   const runAction = async (row: ArchiveRow, action: () => Promise<boolean>) => {
-    if (actionLock.current) return;
-    actionLock.current = true;
+    if (busyKey) return;
     setBusyKey(row.key);
     setActionError(null);
     let done = false;
@@ -982,16 +948,13 @@ export default function CurriculumArchivePage() {
       done = await action();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : `Unable to update ${row.name}.`);
+    } finally {
+      setBusyKey(null);
     }
     // A linked record read on its own is not refreshed by the page read; once
     // it has been acted on it is gone, so the panel closes with it.
     if (done && linkedRow?.key === row.key) setLinkedRow(null);
-    try {
-      await archive.reload();
-    } finally {
-      actionLock.current = false;
-      setBusyKey(null);
-    }
+    await archive.reload();
   };
 
   const restore = (row: ArchiveRow) => {
@@ -1090,42 +1053,13 @@ export default function CurriculumArchivePage() {
     previous.includes(key) ? previous.filter(item => item !== key) : [...previous, key]
   ));
 
-  const renderCells = (row: ArchiveRow) => (
-    <>
-      <div className={styles.cell}>
-        <p className={styles.recordName} title={row.name}>{row.name}</p>
-        <p className={styles.reference}>{row.reference}</p>
-        <HowBadge row={row} />
-        {row.childRows.length > 0 && <button type="button" className={styles.expand} onClick={() => toggleExpanded(row.key)} aria-expanded={expandedKeys.includes(row.key)}>
-          <AppIcon name={expandedKeys.includes(row.key) ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
-          {`+ ${childSummary(row.childRows)} archived with it`}
-        </button>}
-      </div>
-      <span className={styles.cell}>{KIND_LABEL[row.kind]}</span>
-      <span className={styles.cell}>{row.programme || 'No programme recorded'}
-        {row.parents.length > 1 && <small>{row.parents.slice(1).join(' › ')}</small>}
-        {row.kind === 'programme' && <small>Top of the curriculum</small>}
-      </span>
-      <span className={styles.cell}>{archivedLabel(row)}</span>
-      <span className={styles.cell}>{row.items}</span>
-      <span className={styles.cell}>{row.linkedRecords}</span>
-      <div className={styles.cell}>
-        <span className={row.restoreBlockedBy ? styles.blocked : styles.eligible}>{row.restoreBlockedBy ? 'Blocked' : 'Restore available'}</span>
-        {row.restoreBlockedBy && <p className={styles.reason}>{row.restoreBlockedBy}</p>}
-        <details className={styles.effects}><summary>Restore / Delete effects</summary><EffectCell row={row} /></details>
-      </div>
-      <span className={styles.cell} title="The archive source stores the archive cause, not a person">Not recorded</span>
-      <div className={styles.rowActions}>{rowActions(row)}</div>
-    </>
-  );
-
   const totals = archive.totals;
   const archiveTotal = KIND_ORDER.reduce((sum, kind) => sum + totals[kind], 0);
   const matchingTotal = KIND_ORDER.reduce((sum, kind) => sum + archive.counts[kind], 0);
   // A first read that failed has counted nothing: zeros and "Nothing in the
   // archive" would say the opposite of "we could not check".
   const unread = !archive.loaded && !archive.loading;
-  const countOf = (value: number) => (!archive.loaded ? '—' : value);
+  const countOf = (value: number) => (unread ? '—' : value);
   const filtered = Boolean(debouncedSearch.trim() || programmeFilter);
 
   const tabs = [
@@ -1154,32 +1088,35 @@ export default function CurriculumArchivePage() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <div className={styles.page} id="curriculum-archive-page">
-        <section className={styles.intro} aria-label="Archive overview">
-          <nav className={styles.breadcrumb} aria-label="Breadcrumb"><Link to="/workspace/curriculum">Curriculum</Link><AppIcon name="ri-arrow-right-s-line" /><span>Archive</span></nav>
-          <h1>Archive</h1>
-          <p>Archived programmes, cohorts, groups and modules. Review original ownership and restoration effects before restoring a record.</p>
-          <div className={styles.totals} aria-live="polite">
-            <span className={styles.totalBadge}>{!archive.loaded && archive.loading ? 'Loading archived records…' : archive.loaded ? plural(archiveTotal, 'archived record') : 'Archived count unavailable'}</span>
-            <span>Non-restorable total unavailable</span>
-            <span>Across the archive: {KIND_ORDER.map(kind => `${countOf(totals[kind])} ${KIND_LABEL[kind].toLowerCase()}s`).join(' · ')}</span>
-          </div>
-        </section>
+      <div className="min-h-full space-y-4 bg-background-50 p-4 sm:p-5 lg:p-6">
+        <EntityHero
+          eyebrow="Curriculum Studio"
+          title="Archive"
+          description="Programmes, cohorts, groups and modules that have been archived anywhere in the curriculum. Restore one to put it back where it was, or delete it for good from here."
+          loading={archive.loading && !archive.loaded}
+          stats={[
+            { icon: 'ri-archive-line', label: 'Archived', value: countOf(archiveTotal) },
+            { icon: KIND_ICON.programme, label: 'Programmes', value: countOf(totals.programme) },
+            { icon: KIND_ICON.cohort, label: 'Cohorts', value: countOf(totals.cohort) },
+            { icon: KIND_ICON.group, label: 'Groups', value: countOf(totals.group) },
+            { icon: KIND_ICON.module, label: 'Modules', value: countOf(totals.module) },
+          ]}
+        />
 
-        <div className={styles.messages}>
         {archive.error && <InlineError message={archive.error} onRetry={() => void archive.reload()} />}
         {actionError && <InlineError message={actionError} />}
         {deepLinkMissing && (
           <InlineError message="The record this link points to is no longer in the archive. It may have been restored, or deleted permanently." />
         )}
 
-        </div>
-        <section className={styles.notice} aria-label="Restoration consequences">
-          <AppIcon name="ri-information-line" />
-          <div><strong>Restoration has consequences</strong><p>Restore brings back the record and the records archived with it. Modules detached when a cohort or group was archived must be attached again. Module quizzes stay in the Quiz Archive. Review the record’s effects and existing confirmation before continuing.</p></div>
-        </section>
+        <ArchiveNotice>
+          Archived records are hidden from planning but still in the database. Each row says how it got here — on its
+          own, or along with a programme or cohort — and what Restore and Delete would do to it. Restoring a record
+          brings back what its archive took down with it, listed under it; modules are detached when a cohort or group
+          is archived, so they have to be attached again. Deleting from here is permanent and cannot be undone; learner
+          accounts and learner progress are never touched either way.
+        </ArchiveNotice>
 
-        <section className={styles.filters} aria-label="Archive filters">
         <WorkspaceTabs tabs={tabs} active={kindFilter} onChange={setKindFilter} />
 
         <EntityFilterBar
@@ -1201,24 +1138,38 @@ export default function CurriculumArchivePage() {
           loading={archive.loading && archive.loaded}
         />
 
-        </section>
-
-        <section className={styles.table} aria-label="Archived records">
-          <header className={styles.tableHeading}><h2>Archived records</h2><span>{archive.loaded ? `${archive.total} ${archive.total === 1 ? 'entry' : 'entries'}` : archive.loading ? 'Loading…' : 'Count unavailable'}</span></header>
-          <EntityTable
-            columns={COLUMNS}
-            gridClass={GRID}
-            rows={archive.rows}
-            rowKey={row => row.key}
-            loading={archive.loading && !archive.loaded}
-            refreshing={archive.loading && archive.loaded}
-            isRowExpanded={row => row.childRows.length > 0 && expandedKeys.includes(row.key)}
-            renderRowDetail={row => (
-              <div className={styles.children}>
-                <p>Archived with {row.name} — restoring it brings these back</p>
-                {row.childRows.map(child => <div key={child.key} className={GRID}>{renderCells(child)}</div>)}
+        <EntityTable
+          columns={COLUMNS}
+          gridClass={GRID}
+          rows={archive.rows}
+          rowKey={row => row.key}
+          loading={archive.loading && !archive.loaded}
+          refreshing={archive.loading && archive.loaded}
+          isRowExpanded={row => row.childRows.length > 0 && expandedKeys.includes(row.key)}
+          renderRowDetail={row => (
+            <div className="space-y-2">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-foreground-400">
+                Archived with {row.name} — restoring it brings these back
+              </p>
+              <div className="divide-y divide-background-200/70 overflow-hidden rounded-xl border border-background-200 bg-background-50">
+                {row.childRows.map(child => (
+                  <div key={child.key} className={`${GRID} items-center gap-3 px-3 py-2`}>
+                    <div className="min-w-0">
+                      <p className="truncate text-[12.5px] font-semibold text-foreground-900">{child.name}</p>
+                      <p className="truncate text-[11px] text-foreground-400">{child.reference}</p>
+                    </div>
+                    <PlainCell>
+                      <ParentBadge label={KIND_LABEL[child.kind]} tone={child.kind} />
+                    </PlainCell>
+                    <PlainCell>{child.parents.join(' › ') || '—'}</PlainCell>
+                    <EffectCell row={child} />
+                    <PlainCell>{archivedLabel(child)}</PlainCell>
+                    {rowActions(child)}
+                  </div>
+                ))}
               </div>
-            )}
+            </div>
+          )}
           empty={unread ? (
             <EntityEmptyState
               icon="ri-error-warning-line"
@@ -1234,9 +1185,40 @@ export default function CurriculumArchivePage() {
                 : 'Anything you archive — a programme, cohort, group or module — is kept here until you restore it or delete it for good.'}
             />
           )}
-            renderRow={renderCells}
-          />
-        </section>
+          renderRow={row => (
+            <>
+              <div className="min-w-0">
+                <p className="truncate text-[13px] font-semibold text-foreground-900" title={row.name}>{row.name}</p>
+                <p className="truncate text-[11px] text-foreground-400">{row.reference}</p>
+                <HowBadge row={row} />
+                {row.childRows.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={event => { event.stopPropagation(); toggleExpanded(row.key); }}
+                    aria-expanded={expandedKeys.includes(row.key)}
+                    className="mt-1 flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:text-primary-800"
+                  >
+                    <AppIcon className={`${expandedKeys.includes(row.key) ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-sm`}></AppIcon>
+                    {`+ ${childSummary(row.childRows)} archived with it`}
+                  </button>
+                )}
+              </div>
+              <PlainCell>
+                <ParentBadge label={KIND_LABEL[row.kind]} tone={row.kind} />
+              </PlainCell>
+              <PlainCell>
+                {row.parents.length
+                  ? row.parents.join(' › ')
+                  // Not "—": a programme sits at the top of the chain on
+                  // purpose, and an orphan says something different.
+                  : (row.kind === 'programme' ? 'Top of the curriculum' : 'No parent recorded')}
+              </PlainCell>
+              <EffectCell row={row} />
+              <PlainCell>{archivedLabel(row)}</PlainCell>
+              {rowActions(row)}
+            </>
+          )}
+        />
 
         <EntityPagination
           page={archive.page}
@@ -1246,17 +1228,6 @@ export default function CurriculumArchivePage() {
           noun={kindFilter ? `archived ${KIND_LABEL[kind(kindFilter)].toLowerCase()}s` : 'entries'}
           onPage={next => { setPage(next); setExpandedKeys([]); }}
         />
-
-        <section className={styles.requirements} aria-label="Restoration requirements">
-          <h2>Restoration requirements</h2>
-          <ul>
-            <li><AppIcon name="ri-checkbox-circle-line" />Restore an archived programme before a dependent cohort or module; restore an archived cohort before its groups.</li>
-            <li><AppIcon name="ri-checkbox-circle-line" />A parent restore brings back records archived with that parent. Records archived independently stay archived.</li>
-            <li><AppIcon name="ri-checkbox-circle-line" />Reattach modules after restoring a cohort or group. Restore module quizzes separately from the Quiz Workspace.</li>
-            <li><AppIcon name="ri-checkbox-circle-line" />The current workflow offers the existing Restore action, without a draft or copy mode. Final eligibility is checked when the server processes the restore.</li>
-            <li><AppIcon name="ri-checkbox-circle-line" />Archive dates may be missing, and the source does not record the person who archived a record. Permanent deletion cannot be undone.</li>
-          </ul>
-        </section>
 
         {/*
           The archived record, read-only.

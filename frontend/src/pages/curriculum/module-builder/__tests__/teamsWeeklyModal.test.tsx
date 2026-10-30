@@ -192,26 +192,14 @@ it('refuses every write while the module has unsaved changes, and still lets it 
 });
 
 it('reads the module back from the server after a write', async () => {
-  // Teams still holds an old second date, so the update has something to write;
-  // a calendar that already matches the plan is answered with "No changes to save".
-  fetchCurriculumTeamsMeetingSummaries.mockImplementation(async () => [{
-    ...summaries[0], occurrenceDates: ['2026-09-02T08:30:00Z', '2026-09-16T08:30:00Z'],
-  }]);
-  try {
-    const { onRestored } = open('MOD-1');
-    const dialog = within(await screen.findByRole('dialog'));
-    const update = await dialog.findByRole('button', { name: 'Update Teams calendar' });
-    await waitFor(() => expect(update).toBeEnabled());
-    await userEvent.click(update);
-    // The first press only opens the confirmation; nothing is sent until it is confirmed.
-    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
-    await userEvent.click(dialog.getByRole('button', { name: 'Confirm update' }));
-    await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(onRestored).toHaveBeenCalledWith(freshModule));
-    expect(loadModuleStructure).toHaveBeenCalledWith('MOD-1', { skipCache: true });
-  } finally {
-    fetchCurriculumTeamsMeetingSummaries.mockImplementation(async () => summaries);
-  }
+  const { onRestored } = open('MOD-1');
+  const dialog = within(await screen.findByRole('dialog'));
+  const update = await dialog.findByRole('button', { name: 'Update Teams calendar' });
+  await waitFor(() => expect(update).toBeEnabled());
+  await userEvent.click(update);
+  await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(onRestored).toHaveBeenCalledWith(freshModule));
+  expect(loadModuleStructure).toHaveBeenCalledWith('MOD-1', { skipCache: true });
 });
 
 // A date the reader cannot name is a date they cannot check. "Session 1" is the

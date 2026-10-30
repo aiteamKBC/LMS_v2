@@ -3,7 +3,6 @@
 // Extracted out of the Module Builder so other authoring surfaces (e.g. the
 // Week Builder) can render the exact same editor.
 import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type ReactNode } from 'react';
-import { AppIcon } from '@/components/feature/AppIcon';
 import { sanitizeCurriculumHtml } from '@/lib/curriculumHtml';
 
 type RichTextMode = 'design' | 'html';

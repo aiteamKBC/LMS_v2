@@ -13,11 +13,9 @@ import { useLearnerNavGate } from '@/hooks/useLearnerNavGate';
 import { getRememberedLearner } from '@/hooks/useMyLearner';
 import { ArrowLeft } from 'lucide-react';
 import design from './WorkspaceDesign.module.css';
-import './CurriculumControls.module.css';
 import './CoachResponsive.css';
 import { activePersonalLearning } from '@/lib/personalLearning';
 import { PersonalLearningBanner } from './PersonalLearningBanner';
-import { CurriculumBackToTop } from './CurriculumBackToTop';
 import { bareLearnerPath, learnerHref, learnerIdentityFromPath, type LearnerRoutePage } from '@/lib/learnerRoutes';
 
 interface WorkspaceShellProps {
@@ -274,7 +272,7 @@ export function WorkspaceShell({
     : navItems;
   // A builder preview leaves only by returning to the builder kept under it.
   const previewing = personal?.mode === 'preview' || personal?.mode === 'all';
-  const workspaceNavItems = auth.account?.role === 'admin' && role !== 'curriculum' && !previewing && !navItems.some(item => item.id === 'personal-courses')
+  const workspaceNavItems = auth.account?.role === 'admin' && !previewing && !navItems.some(item => item.id === 'personal-courses')
     ? [...stableNavItems, { id: 'personal-courses', label: 'My Courses', icon: 'ri-graduation-cap-line', href: '/my-courses' }]
     : stableNavItems;
   const navigate = useNavigate();
@@ -290,7 +288,6 @@ export function WorkspaceShell({
   const mobileBodyOverflowRef = useRef<string | null>(null);
   const mobileFocusTimerRef = useRef<number | null>(null);
   const accountButtonRef = useRef<HTMLButtonElement>(null);
-  const mainScrollRef = useRef<HTMLElement>(null);
   const [sidebarPinned, setSidebarPinned] = useState(readPinnedPreference);
   const [coachSidebarCollapsed, setCoachSidebarCollapsed] = useState(readCoachSidebarCollapsed);
   const [learnerSidebarCollapsed, setLearnerSidebarCollapsed] = useState(readLearnerSidebarCollapsed);
@@ -598,14 +595,13 @@ export function WorkspaceShell({
             change (router/index.ts keys the boundary by pathname), so a
             transition owned by this component could never run. It used to hold
             an opacity-0 state behind a 120ms timer that nothing ever set. */}
-        <main ref={mainScrollRef} tabIndex={role === 'curriculum' ? -1 : undefined} className="workspace-main min-h-0 flex-1 overflow-y-auto !bg-none">
+        <main className="workspace-main min-h-0 flex-1 overflow-y-auto !bg-none">
           {/* An administrator reading a coach's workspace: shown on every coach
               page, since the sidebar reaches most of them without passing the
               dashboard that chose the coach. */}
           {role === 'coach' && <CoachViewAsBar />}
           {children}
         </main>
-        {role === 'curriculum' && <CurriculumBackToTop scrollRef={mainScrollRef} />}
       </div>
 
       {/* Global Search Modal */}

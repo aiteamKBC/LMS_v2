@@ -17,8 +17,6 @@ vi.mock('./useCurriculumHome', () => ({
   }),
 }));
 
-vi.mock('./LiveTotalsSection', () => ({ LiveTotalsSection: () => <div data-testid="live-totals" /> }));
-
 import CurriculumStudio from './page';
 
 describe('Curriculum Home guide', () => {

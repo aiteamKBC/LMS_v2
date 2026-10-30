@@ -1,6 +1,6 @@
-import { type CSSProperties, type FormEvent, type ReactNode, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { CardGridSkeleton } from '@/components/feature/Skeletons';
@@ -8,7 +8,7 @@ import { ProgrammeFormDrawer } from '@/pages/curriculum/shared/entities/forms';
 import { WEEKEND_HINT } from '@/pages/curriculum/shared/entities/ui';
 import { WEEKEND_DAYS } from "@/pages/curriculum/shared/entities/ui.helpers";
 import { CurriculumStructureWizard, type StructureWizardCreated, type StructureWizardRecordStep } from '@/pages/curriculum/shared/entities/structureWizard';
-import { sortEntities, visibleNotes, PROGRAMME_SORT_OPTIONS } from '@/pages/curriculum/shared/entities/model';
+import { formatProgrammeLevel, sortEntities, visibleNotes, PROGRAMME_SORT_OPTIONS } from '@/pages/curriculum/shared/entities/model';
 import { SelectMenu } from '@/components/feature/SelectField';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
@@ -57,12 +57,6 @@ import {
   type CurriculumStaffProfile,
   type CurriculumStandard,
 } from '@/lib/curriculumApi';
-
-import styles from './programmes.module.css';
-import { ProgrammeSummaryFacts } from './ProgrammeSummaryFacts';
-import { programmeColor } from '../shared/programmeColors';
-
-const ProgrammeDetailPage = lazy(() => import('../programme-detail/page'));
 
 type ProgrammeFormState = Required<Pick<CurriculumProgrammeInput, 'name' | 'standard' | 'level' | 'color' | 'description'>>;
 type ProgrammeAppliedKsbSource = {
@@ -123,6 +117,7 @@ const WEEKDAY_OPTIONS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
 /** How many "set it now" shortcuts the notice offers before it stops listing. */
 const MISSING_KSB_SOURCE_SHORTCUTS = 3;
 
+const PROGRAMMES_PER_PAGE = 6;
 
 type SelectOption = { value: string; label: string; meta?: string; color?: string; aliases?: string[] };
 type StructureWizardStep = 'programme' | 'cohort' | 'group' | 'modules' | 'weeks' | 'review';
@@ -341,12 +336,14 @@ function programmeIsArchived(programme: CurriculumProgramme) {
 
 export default function CurriculumProgrammes() {
   const navigate = useNavigate();
-  // Keep the search in the URL so it survives opening a programme and returning.
+  // What the grid is showing lives in the URL, the same way the Cohorts and
+  // Groups pages carry their scope. Opening a programme and coming back is now
+  // the ordinary loop rather than a dead end, and local state made that loop
+  // lossy: the reader returned to page 1 of an unfiltered active list every
+  // time, having to retype the search and re-find the row they had just left.
+  // It also makes a filtered view something that can be linked to.
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState(() => searchParams.get('q') || '');
-  const [statusFilter, setStatusFilter] = useState('active');
-  const [selectedProgrammeId, setSelectedProgrammeId] = useState('');
-  const [detailRefreshVersion, setDetailRefreshVersion] = useState(0);
   // Which order the grid is in. Empty is the order the endpoint returned, which
   // is what the page has always shown.
   const [sort, setSort] = useState('');
@@ -360,6 +357,7 @@ export default function CurriculumProgrammes() {
   const [orderOverride, setOrderOverride] = useState<string[] | null>(null);
   const [savingOrder, setSavingOrder] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
+  const [programmePage, setProgrammePage] = useState(() => Math.max(1, Math.floor(Number(searchParams.get('page'))) || 1));
   const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false);
   const [programmeDrawerTarget, setProgrammeDrawerTarget] = useState<CurriculumProgramme | null>(null);
   // A just-created programme goes to Delivery as soon as its required KSB
@@ -470,39 +468,27 @@ export default function CurriculumProgrammes() {
       (a, b) => (rank.get(programmeKey(a)) ?? Number.MAX_SAFE_INTEGER) - (rank.get(programmeKey(b)) ?? Number.MAX_SAFE_INTEGER),
     );
   }, [visibleProgrammes, orderOverride]);
-  const programmeKsbSources = useMemo(() => {
-    const lookup = new Map<string, ProgrammeAppliedKsbSource>();
-    visibleProgrammes.forEach(programme => {
-      const key = programme.sourceId || programme.id;
-      const override = programmeSourceOverrides.get(key);
-      const effectiveProgramme = override === undefined ? programme : { ...programme, ksbProfileSourceId: override };
-      lookup.set(key, resolveProgrammeAppliedKsbSource(effectiveProgramme, ksbSets, standards));
-    });
-    return lookup;
-  }, [ksbSets, programmeSourceOverrides, standards, visibleProgrammes]);
   const filtered = sortEntities(
     orderedProgrammes.filter(p => {
       const needle = search.toLowerCase();
       if (needle && !p.name.toLowerCase().includes(needle)) return false;
-      if (statusFilter === 'needs-source') {
-        const source = programmeKsbSources.get(programmeKey(p));
-        return !source?.value || source.ksbCount < 1;
-      }
-      return statusFilter === 'all' || programmeStatus(p) === statusFilter;
+      return true;
     }),
     PROGRAMME_SORT_OPTIONS,
     sort,
   );
-  const selectedProgramme = filtered.find(programme => programmeKey(programme) === selectedProgrammeId) || filtered[0];
-  const ksbStatsReady = visibleProgrammes.every(programme => Number.isFinite(programmeKsbStats[programmeKey(programme)]?.ksbMapped));
-  const learnerStatsReady = visibleProgrammes.every(programme => {
-    const stats = programmeKsbStats[programmeKey(programme)];
-    return Number.isFinite(stats?.learnerKsbConsumedWeight) && Number.isFinite(stats?.learnerKsbExpectedWeight);
-  });
+  const totalProgrammePages = Math.max(1, Math.ceil(filtered.length / PROGRAMMES_PER_PAGE));
+  const paginatedProgrammes = filtered.slice(
+    (programmePage - 1) * PROGRAMMES_PER_PAGE,
+    programmePage * PROGRAMMES_PER_PAGE,
+  );
+  // Arranging happens on the whole list at once. A page of six cannot be dragged
+  // past its own edge, so paging is lifted for as long as the mode is on.
+  const displayedProgrammes = reordering ? filtered : paginatedProgrammes;
   // A search or a chosen sort is showing a subset, or an order this page did not
   // pick. Saving from either would renumber programmes the reader cannot see, so
   // the mode is only offered on the full list in its saved order.
-  const canReorder = !search.trim() && !sort && statusFilter === 'all';
+  const canReorder = !search.trim() && !sort;
   const gridColumns = useProgrammeGridColumns();
   // The arrow that was just pressed, so focus can follow the card it moved.
   const arrangeFocus = useRef<string | null>(null);
@@ -547,8 +533,30 @@ export default function CurriculumProgrammes() {
     if (!canReorder) setReordering(false);
   }, [canReorder]);
 
-  // Preserve search and unrelated query parameters; old page links now open
-  // the complete scrollable list instead of hiding records behind a page.
+  // Changing what is listed sends the reader back to the first page - but only
+  // when they change it. On the first render these are the values restored from
+  // the URL, and resetting there would throw away the page that was just
+  // restored alongside them.
+  const gridFiltersMounted = useRef(false);
+  useEffect(() => {
+    if (!gridFiltersMounted.current) {
+      gridFiltersMounted.current = true;
+      return;
+    }
+    setProgrammePage(1);
+  }, [search, sort]);
+
+  useEffect(() => {
+    // Not while the programmes are still in flight: `filtered` is empty until
+    // they land, so totalProgrammePages is 1 and a restored ?page= would be
+    // clamped away before the rows it points at exist.
+    if (loading) return;
+    setProgrammePage(currentPage => Math.min(currentPage, totalProgrammePages));
+  }, [loading, totalProgrammePages]);
+
+  // One writer for the whole grid state, so the three values cannot fight over
+  // the query string. Defaults are omitted rather than spelled out, leaving a
+  // clean /curriculum/programmes for the unfiltered first page.
   useEffect(() => {
     const next = new URLSearchParams(searchParams);
     const carry = (key: string, value: string) => {
@@ -556,16 +564,26 @@ export default function CurriculumProgrammes() {
       else next.delete(key);
     };
     carry('q', search.trim());
-    next.delete('page');
+    carry('page', programmePage > 1 ? String(programmePage) : '');
     if (next.toString() === searchParams.toString()) return;
     setSearchParams(next, { replace: true });
-  }, [search, searchParams, setSearchParams]);
+  }, [search, programmePage, searchParams, setSearchParams]);
 
   const totalProgrammes = visibleProgrammes.length;
   const totalLearners = visibleProgrammes.reduce((a, b) => a + (b.learners || 0), 0);
   const totalCohorts = visibleProgrammes.reduce((a, b) => a + (b.cohorts || 0), 0);
   const totalModules = visibleProgrammes.reduce((a, b) => a + (b.modules || 0), 0);
   const totalWeeks = visibleProgrammes.reduce((a, b) => a + (b.weeks || 0), 0);
+  const programmeKsbSources = useMemo(() => {
+    const lookup = new Map<string, ProgrammeAppliedKsbSource>();
+    visibleProgrammes.forEach(programme => {
+      const key = programme.sourceId || programme.id;
+      const override = programmeSourceOverrides.get(key);
+      const effectiveProgramme = override === undefined ? programme : { ...programme, ksbProfileSourceId: override };
+      lookup.set(key, resolveProgrammeAppliedKsbSource(effectiveProgramme, ksbSets, standards));
+    });
+    return lookup;
+  }, [ksbSets, programmeSourceOverrides, standards, visibleProgrammes]);
   const programmesWithKsb = visibleProgrammes.filter(programme => (
     Boolean(programmeKsbSources.get(programme.sourceId || programme.id)?.value) && programme.ksbTotal > 0
   ));
@@ -585,8 +603,8 @@ export default function CurriculumProgrammes() {
   const averageLearnerKsbProgress = learnerKsbTotals.expected > 0
     ? Math.min(100, Math.round((learnerKsbTotals.consumed / learnerKsbTotals.expected) * 100))
     : 0;
-  const summaryUnavailable = Boolean(error) && visibleProgrammes.length === 0;
-  const pageSubtitle = loading ? 'Loading programmes...' : summaryUnavailable ? 'Programmes unavailable' : `${totalProgrammes} programmes - ${totalCohorts} cohorts - ${totalModules} modules - ${totalLearners} learners`;
+  const pageSubtitle = `${totalProgrammes} programmes - ${totalCohorts} cohorts - ${totalModules} modules - ${totalLearners} learners`;
+  const heroSummary = <><strong>{totalProgrammes} programmes</strong> - {totalCohorts} cohorts - {totalModules} modules</>;
 
   // Programmes nothing can be mapped against yet. A KSB source is not decoration
   // on a programme: its modules map to that source's codes, its coverage is
@@ -628,8 +646,7 @@ export default function CurriculumProgrammes() {
 
   // The programme's own home: /curriculum/programmes/:id, where its cohorts,
   // groups, modules, sessions, KSB coverage and learner achievement are each
-  // owned by a tab. The browser embeds that same workspace; explicit record
-  // shortcuts still open its canonical route and retain their existing handlers.
+  // owned by a tab. This page never re-draws those views; it links into them.
   //
   // `tab` deep-links straight to the one the reader asked for, so the figures on
   // the card are the navigation - a Cohorts count opens Delivery, a Modules
@@ -642,6 +659,15 @@ export default function CurriculumProgrammes() {
     if (view) params.set('view', view);
     const query = params.toString();
     navigate(`/curriculum/programmes/${encodeURIComponent(programmeId)}${query ? `?${query}` : ''}`);
+  };
+
+  // Editing programme-level details is a focused form. Structure edits live on
+  // the Cohorts / Groups / Module Builder pages and in the programme workspace,
+  // each through the one form that record type has.
+  const openEdit = (programme: CurriculumProgramme) => {
+    setActionError(null);
+    setProgrammeDrawerTarget(programme);
+    setProgrammeDrawerOpen(true);
   };
 
   // Archiving is as far as this page goes. It is reversible and removes nothing,
@@ -957,36 +983,76 @@ export default function CurriculumProgrammes() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Programmes" pageSubtitle={pageSubtitle} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div id="curriculum-programmes" className={styles.page}>
-        <header className={styles.pageHeading}>
-          <div>
-            <h1>Programmes</h1>
-            <div className={styles.summary}>
-              <span><strong>{loading ? '...' : summaryUnavailable ? 'Unavailable' : totalProgrammes}</strong> programmes</span>
-              <span><strong>{loading ? '...' : summaryUnavailable ? 'Unavailable' : totalCohorts}</strong> cohorts</span>
-              <span><strong>{loading ? '...' : summaryUnavailable ? 'Unavailable' : totalModules}</strong> modules</span>
-              <span><strong>{loading ? '...' : summaryUnavailable ? 'Unavailable' : totalLearners}</strong> learners</span>
-              <span><strong>{loading ? '...' : summaryUnavailable ? 'Unavailable' : totalWeeks}</strong> planned weeks</span>
-              <span><strong>{summaryUnavailable ? 'Unavailable' : loading || ksbSourcesLoading ? '...' : ksbSourcesError ? 'Unavailable' : !programmesWithKsb.length ? 'No KSB source' : !ksbStatsReady ? 'Not loaded' : `${averageKsbCoverage}%`}</strong> KSB mapping coverage</span>
-              <span><strong>{summaryUnavailable ? 'Unavailable' : loading ? '...' : !learnerStatsReady ? 'Not loaded' : learnerKsbTotals.expected > 0 ? `${averageLearnerKsbProgress}%` : 'No denominator'}</strong> learner KSB progress</span>
+      <div className="programmes-page min-h-full bg-background-50 p-4 sm:p-5 lg:p-6 space-y-4">
+        <section className="curriculum-department-hero overflow-hidden rounded-2xl border border-white/10 bg-primary-950 text-white shadow-xl">
+          <div className="curriculum-programme-hero-body relative p-5 sm:p-7">
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(255,255,255,0.18),transparent_34%),linear-gradient(135deg,rgba(109,40,217,0.35),rgba(15,23,42,0))]" />
+            <div className="curriculum-programme-hero-content relative z-10 flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+              <span className="curriculum-programme-hero-icon flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/20 ring-1 ring-white/30 backdrop-blur-sm">
+                <AppIcon className="ri-stack-line text-2xl text-white" />
+              </span>
+              <div className="curriculum-programme-hero-copy max-w-3xl">
+                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-white/60">Curriculum Studio</p>
+                <h2 className="mt-2 text-2xl font-heading font-bold text-white sm:text-3xl">Programme planning workspace</h2>
+                <p className="mt-2 max-w-2xl text-[13px] leading-6 text-white/75">
+                  Build programme structures, manage cohorts and groups, and keep module delivery plans connected to live LMS records.
+                </p>
+                <p className="mt-2 text-[12px] font-semibold text-white/70">{loading ? 'Loading live LMS programmes...' : heroSummary}</p>
+              </div>
+              <div className="curriculum-programme-hero-actions flex flex-col gap-2 sm:flex-row sm:items-center">
+                {/* A programme is independently saveable: this creates one from
+                    programme-level details alone. Its cohorts, groups and modules
+                    are then added from their own pages, each through the one form
+                    that record type has. */}
+                <button
+                  type="button"
+                  onClick={() => { setProgrammeDrawerTarget(null); setProgrammeDrawerOpen(true); }}
+                  className="primary-action inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl bg-white px-4 text-[12px] font-bold text-primary-900 shadow-lg shadow-black/10 transition-smooth hover:bg-primary-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2"
+                >
+                  <AppIcon className="ri-add-line text-base"></AppIcon>
+                  Add Programme
+                </button>
+                {/* The other way in: the same four forms, chained, so a new
+                    programme's first cohort, group and module can be set up
+                    without closing this drawer and picking the parent again on
+                    three more pages. */}
+                <button
+                  type="button"
+                  onClick={() => setWizardRun({ from: 'programme' })}
+                  className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl border border-white bg-white px-4 text-[12px] font-bold text-foreground-950 shadow-lg shadow-black/10 transition-smooth hover:bg-primary-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2"
+                >
+                  <AppIcon className="ri-route-line text-base"></AppIcon>
+                  Guided setup
+                </button>
+                <button
+                  type="button"
+                  onClick={() => reload()}
+                  className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl border border-white bg-white px-4 text-[12px] font-bold text-foreground-950 shadow-lg shadow-black/10 transition-smooth hover:bg-primary-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2"
+                >
+                  <AppIcon className="ri-refresh-line text-base"></AppIcon>
+                  Refresh
+                </button>
+              </div>
+            </div>
+            <div className="curriculum-programme-hero-stats relative mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <DashboardStat icon="ri-layout-masonry-line" label="Actual programmes" value={String(totalProgrammes)} detail={`${totalModules} modules connected`} />
+              <DashboardStat icon="ri-calendar-event-line" label="Cohorts" value={String(totalCohorts)} detail={`${totalLearners} learners allocated`} />
+              <DashboardStat icon="ri-stack-line" label="Modules" value={String(totalModules)} detail={`${totalWeeks} planned weeks`} />
+              <DashboardStat
+                icon="ri-node-tree"
+                label="KSB progress"
+                value={`${averageLearnerKsbProgress}%`}
+                detail={learnerKsbTotals.expected > 0
+                  ? `Learner-evidenced · ${averageKsbCoverage}% mapped`
+                  : programmesWithKsb.length ? `${averageKsbCoverage}% mapped, no learner progress yet` : 'No mapped KSBs yet'}
+              />
             </div>
           </div>
-          <div className={styles.headingActions}>
-            <span className={styles.attentionBadge}>{summaryUnavailable ? 'Programme checks unavailable' : loading || ksbSourcesLoading ? 'Checking KSB sources...' : ksbSourcesError ? 'KSB source checks unavailable' : `${programmesMissingKsbSource.length} matching programmes need KSB codes`}</span>
-            <details className={styles.addMenu}>
-              <summary>+ Add new</summary>
-              <div>
-                <button type="button" onClick={() => { setProgrammeDrawerTarget(null); setProgrammeDrawerOpen(true); }}>Add Programme</button>
-                <button type="button" onClick={() => setWizardRun({ from: 'programme' })}>Guided setup</button>
-              </div>
-            </details>
-            <button type="button" aria-label="Refresh programmes" title="Refresh programmes" onClick={() => { void reload(); setDetailRefreshVersion(version => version + 1); }}><AppIcon className="ri-refresh-line" /></button>
-          </div>
-        </header>
+        </section>
 
         {error && (
-          <div role="alert" className="rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
-            Programmes could not be refreshed: {error}. Use Refresh to try again.
+          <div className="rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
+            Curriculum API error: {error}. Start the Django backend on port 8000 and refresh.
           </div>
         )}
 
@@ -996,59 +1062,7 @@ export default function CurriculumProgrammes() {
           </div>
         )}
 
-        {(ksbSourcesLoading || ksbSourcesError || programmesMissingKsbSource.length > 0) && <details className={styles.pageNotice}><summary>KSB source checks and shortcuts</summary>
-        {ksbSourcesError && <p role="alert">KSB source checks are unavailable: {ksbSourcesError} <button type="button" onClick={() => void loadKsbSources()}>Retry KSB source checks</button></p>}
-        {/* Said once for the page, because it is a state to clear rather than a
-            fact about one card: a programme with no KSB source is unfinished,
-            and the button that finishes it is right here. */}
-        {!loading && !ksbSourcesLoading && !ksbSourcesError && programmesMissingKsbSource.length > 0 && (
-          <div className="flex flex-col gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex items-start gap-2.5">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-200 text-amber-700 shadow-sm shadow-amber-900/10">
-                <AppIcon className="ri-error-warning-fill text-lg"></AppIcon>
-              </span>
-              <div className="min-w-0">
-                <p className="text-[13px] font-bold text-amber-900">
-                  {programmesMissingKsbSource.length === 1
-                    ? `${programmesMissingKsbSource[0].programme.name} has no KSB codes yet`
-                    : `${programmesMissingKsbSource.length} programmes have no KSB codes yet`}
-                </p>
-                <p className="mt-0.5 text-[12px] leading-5 text-amber-800">
-                  {programmesWithEmptyKsbSource.length === programmesMissingKsbSource.length
-                    ? 'Their applied source holds no KSB codes. Apply each programme’s GOV.UK standard — until then there is nothing for their modules to map to and coverage stays at 0%.'
-                    : 'Until a KSB source is applied and filled in there are no codes for their modules to map to, coverage stays at 0% and learner KSB progress cannot be measured.'}
-                </p>
-              </div>
-            </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-              {programmesMissingKsbSource
-                .filter(entry => !entry.source?.value)
-                .slice(0, MISSING_KSB_SOURCE_SHORTCUTS)
-                .map(({ programme }) => (
-                  <button
-                    key={programme.id}
-                    type="button"
-                    title={`Apply the GOV.UK standard for ${programme.name}.`}
-                    onClick={() => setApplyProgramme(programme)}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-400 bg-white px-2.5 text-[11px] font-bold text-amber-900 transition-smooth hover:bg-amber-100"
-                  >
-                    <AppIcon className="ri-node-tree text-sm"></AppIcon>
-                    Choose a source
-                  </button>
-                ))}
-              {programmesMissingKsbSource.length > MISSING_KSB_SOURCE_SHORTCUTS && (
-                <span className="text-[11px] font-bold text-amber-800">
-                  +{programmesMissingKsbSource.length - MISSING_KSB_SOURCE_SHORTCUTS} more below
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-
-        </details>}
-        <div className={styles.layout}>
-          <aside className={`${styles.browser} ${reordering ? styles.arranging : ''}`} aria-label="Programme browser">
-        <section className={styles.searchPanel}>
+        <section className="programmes-search-panel rounded-2xl border border-primary-100/70 bg-background-50 p-3 shadow-sm">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="relative flex-1">
               <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
@@ -1109,24 +1123,88 @@ export default function CurriculumProgrammes() {
           )}
         </section>
 
-          <div className={styles.filters} role="group" aria-label="Filter programmes by status">
-            {[
-              { value: 'all', label: 'All', count: visibleProgrammes.length },
-              { value: 'needs-source', label: 'Needs KSB codes', count: visibleProgrammes.filter(programme => { const source = programmeKsbSources.get(programmeKey(programme)); return !source?.value || source.ksbCount < 1; }).length },
-              { value: 'active', label: 'Active', count: visibleProgrammes.filter(programme => programmeStatus(programme) === 'active').length },
-              { value: 'draft', label: 'Draft', count: visibleProgrammes.filter(programmeIsDraft).length },
-            ].map(filter => <button key={filter.value} type="button" aria-pressed={statusFilter === filter.value} disabled={filter.value === 'needs-source' && (ksbSourcesLoading || Boolean(ksbSourcesError))} onClick={() => setStatusFilter(filter.value)}>{filter.label} {loading || filter.value === 'needs-source' && ksbSourcesLoading ? '...' : filter.count}</button>)}
+        {/* Said once for the page, because it is a state to clear rather than a
+            fact about one card: a programme with no KSB source is unfinished,
+            and the button that finishes it is right here. */}
+        {!loading && programmesMissingKsbSource.length > 0 && (
+          <div className="flex flex-col gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex items-start gap-2.5">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-200 text-amber-700 shadow-sm shadow-amber-900/10">
+                <AppIcon className="ri-error-warning-fill text-lg"></AppIcon>
+              </span>
+              <div className="min-w-0">
+                <p className="text-[13px] font-bold text-amber-900">
+                  {programmesMissingKsbSource.length === 1
+                    ? `${programmesMissingKsbSource[0].programme.name} has no KSB codes yet`
+                    : `${programmesMissingKsbSource.length} programmes have no KSB codes yet`}
+                </p>
+                <p className="mt-0.5 text-[12px] leading-5 text-amber-800">
+                  {programmesWithEmptyKsbSource.length === programmesMissingKsbSource.length
+                    ? 'Their applied source holds no KSB codes. Apply each programme’s GOV.UK standard — until then there is nothing for their modules to map to and coverage stays at 0%.'
+                    : 'Until a KSB source is applied and filled in there are no codes for their modules to map to, coverage stays at 0% and learner KSB progress cannot be measured.'}
+                </p>
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+              {programmesMissingKsbSource
+                .filter(entry => !entry.source?.value)
+                .slice(0, MISSING_KSB_SOURCE_SHORTCUTS)
+                .map(({ programme }) => (
+                  <button
+                    key={programme.id}
+                    type="button"
+                    title={`Apply the GOV.UK standard for ${programme.name}.`}
+                    onClick={() => setApplyProgramme(programme)}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-400 bg-white px-2.5 text-[11px] font-bold text-amber-900 transition-smooth hover:bg-amber-100"
+                  >
+                    <AppIcon className="ri-node-tree text-sm"></AppIcon>
+                    Choose a source
+                  </button>
+                ))}
+              {programmesMissingKsbSource.length > MISSING_KSB_SOURCE_SHORTCUTS && (
+                <span className="text-[11px] font-bold text-amber-800">
+                  +{programmesMissingKsbSource.length - MISSING_KSB_SOURCE_SHORTCUTS} more below
+                </span>
+              )}
+            </div>
           </div>
-          <p className={styles.resultCount}>{loading ? 'Loading programmes...' : `${filtered.length} of ${totalProgrammes} programmes`}</p>
+        )}
+
         {loading ? (
           <CardGridSkeleton count={6} />
         ) : filtered.length ? (
           <>
-          <div className={`${styles.cards} grid grid-cols-1 items-stretch gap-5 md:grid-cols-2 xl:grid-cols-3`} role="region" aria-label="Programme list" tabIndex={0}>
-            {filtered.map((prog, cardIndex) => {
-              const cardColor = programmeColor(prog);
+          <div className="grid grid-cols-1 items-stretch gap-5 md:grid-cols-2 xl:grid-cols-3">
+            {displayedProgrammes.map((prog, cardIndex) => {
+              const appliedSource = programmeKsbSources.get(prog.sourceId || prog.id) || resolveProgrammeAppliedKsbSource(prog, ksbSets, standards);
+              const hasAppliedKsbSource = Boolean(appliedSource.value);
+              // Applied but empty is its own state: the source is chosen, so the
+              // work left is authoring its codes, not picking a different one.
+              const ksbSourceIsEmpty = hasAppliedKsbSource && appliedSource.ksbCount < 1;
+              const mappingCoverage = hasAppliedKsbSource && prog.ksbTotal > 0 ? Math.round((prog.ksbMapped / prog.ksbTotal) * 100) : 0;
+              // Learner-consumed KSB progress. Read straight off the programme
+              // payload, so unlike the design-mapping figure above it does not
+              // wait on ksbSets/standards and cannot flicker to 0 mid-load.
+              const learnerKsbProgress = Math.max(0, Math.min(100, Math.round(prog.learnerKsbProgressPercentage || 0)));
+              const learnerKsbLearnerCount = prog.learnerKsbLearnerCount || 0;
+              const hasLearnerKsbDenominator = (prog.learnerKsbExpectedWeight || 0) > 0 && learnerKsbLearnerCount > 0;
+              const cardColor = normaliseHex(prog.color || '#6941c6');
+              const isDraftProgramme = programmeIsDraft(prog);
+              // Clicking the card opens the programme it names. It used to start
+              // the guided setup instead, which is a different promise: the card
+              // shows what the programme already has, so the click that follows
+              // from reading it is "show me this", not "add more to this". The
+              // guided run keeps its own button in the row below.
+              const openCard = () => openProgramme(prog);
+              const openWizardForCard = () => setWizardRun({ from: 'cohort', programmeId: prog.sourceId || prog.id });
+              // Deep links from the figures on the card into the tab that owns
+              // each one. Stops the card click from also firing behind them.
+              const openTab = (tab: ProgrammeDetailTab, view?: ProgrammeDetailView) => (event: { stopPropagation: () => void }) => {
+                event.stopPropagation();
+                openProgramme(prog, tab, view);
+              };
               return (
-              <div key={programmeKey(prog)} className={`${styles.browserCard} relative h-full`} style={{ '--programme-color': cardColor } as CSSProperties} data-selected={programmeKey(prog) === (selectedProgramme && programmeKey(selectedProgramme))}>
+              <div key={prog.id} className="relative h-full">
               {/* While the grid is being arranged the card is a thing to move,
                   not a thing to open, so the arrows sit over it and its own
                   buttons are taken out of the way behind them. */}
@@ -1135,73 +1213,285 @@ export default function CurriculumProgrammes() {
                   id={programmeKey(prog)}
                   name={prog.name}
                   position={cardIndex}
-                  total={filtered.length}
+                  total={displayedProgrammes.length}
                   columns={gridColumns}
                   onMove={moveProgramme}
                 />
               )}
-              <button type="button" className={styles.browserSelect} inert={reordering || undefined} disabled={reordering} aria-pressed={programmeKey(prog) === (selectedProgramme && programmeKey(selectedProgramme))} onClick={() => setSelectedProgrammeId(programmeKey(prog))}>
-                <span className={styles.programmeIcon}><AppIcon className="ri-stack-line" aria-hidden="true" /></span>
-                <span><small>{programmeStatus(prog)}</small><strong>{prog.name}</strong><small>{prog.learners} learners &middot; {prog.modules} modules</small></span>
-                <span aria-hidden="true">&rsaquo;</span>
-              </button>
+              <article
+                // inert, not aria-hidden: the card keeps buttons of its own, and
+                // they have to leave the tab order with it rather than stay
+                // reachable inside a subtree screen readers are told to skip.
+                inert={reordering}
+                className="programmes-card programme-color-card group relative flex h-full cursor-pointer flex-col overflow-hidden rounded-2xl border border-primary-100/70 bg-background-50 p-4 text-white shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-300/80 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                style={{ '--programme-card-color': cardColor } as CSSProperties}
+                onClick={reordering ? undefined : openCard}
+                onKeyDown={event => {
+                  if (reordering) return;
+                  if (event.target !== event.currentTarget) return;
+                  if (event.key !== 'Enter' && event.key !== ' ') return;
+                  event.preventDefault();
+                  openCard();
+                }}
+                tabIndex={reordering ? -1 : 0}
+                aria-label={`Open ${prog.name}`}
+                title={`Open ${prog.name} — its cohorts, groups, modules, sessions and KSB coverage`}
+              >
+                <div className="programme-card-accent absolute inset-x-0 top-0 h-1" />
+                <div className="mb-2.5 flex items-start justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span className="programme-card-icon flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white shadow-sm" style={{ backgroundColor: cardColor }}>
+                      <AppIcon className="ri-book-2-line text-base"></AppIcon>
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-[15px] font-heading font-bold text-foreground-950">{prog.name}</p>
+                      <p className="text-[11px] text-foreground-400">{formatProgrammeLevel(prog.level)}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        <span className="programme-type-badge inline-flex items-center gap-1 rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-primary-700 ring-1 ring-primary-100">
+                          <AppIcon className="ri-calendar-event-line text-[10px]"></AppIcon>
+                          Programme
+                        </span>
+                        {isDraftProgramme && (
+                          <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-700 ring-1 ring-amber-200">
+                            Draft
+                          </span>
+                        )}
+                        {/* Up beside the name, because a grid of cards is read
+                            by its headings: the panel below says the same thing
+                            in full, but only once the eye has stopped here. */}
+                        {(!hasAppliedKsbSource || ksbSourceIsEmpty) && (
+                          <span className="programme-warning-badge inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-800 ring-1 ring-amber-300">
+                            <AppIcon className="ri-error-warning-line text-[10px]"></AppIcon>
+                            {ksbSourceIsEmpty ? 'Needs KSB codes' : 'Needs KSB source'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  {/* The card is clickable; say so rather than leaving it to be
+                      discovered. Dimmed at rest so a grid of six is not six
+                      arrows competing with the programme names. */}
+                  <span
+                    aria-hidden="true"
+                    className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-foreground-300 opacity-0 transition-smooth group-hover:bg-primary-50 group-hover:text-primary-600 group-hover:opacity-100 group-focus-within:opacity-100"
+                  >
+                    <AppIcon className="ri-arrow-right-line text-sm"></AppIcon>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={e => {
+                    e.stopPropagation();
+                    // An empty source has no KSBs to review. It is a placeholder
+                    // to move off rather than a profile to fill in, so the panel
+                    // offers the choice of a real source instead.
+                    if (ksbSourceIsEmpty) setApplyProgramme(prog);
+                    else openAppliedKsbSourceReview(prog, appliedSource);
+                  }}
+                  className={`programme-source-button mb-2.5 w-full rounded-xl border px-2 py-1.5 text-left transition-smooth focus:outline-none focus:ring-2 focus:ring-primary-200 ${hasAppliedKsbSource && !ksbSourceIsEmpty ? 'programme-source-applied' : 'programme-source-missing'}`}
+                  aria-label={!hasAppliedKsbSource
+                    ? `Set the KSB source for ${prog.name}`
+                    : ksbSourceIsEmpty
+                      ? `Choose a real KSB source for ${prog.name}`
+                      : `View KSBs for ${appliedSource.title}`}
+                >
+                  <div className="flex items-start gap-2">
+                    <span className={`programme-source-icon mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${hasAppliedKsbSource && !ksbSourceIsEmpty ? 'programme-source-applied' : 'programme-source-missing'}`}>
+                      <AppIcon className={hasAppliedKsbSource && !ksbSourceIsEmpty ? 'ri-checkbox-circle-line' : 'ri-error-warning-fill'}></AppIcon>
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className={`programme-source-label text-[9px] font-black uppercase tracking-wide ${hasAppliedKsbSource && !ksbSourceIsEmpty ? 'text-primary-700' : 'text-amber-800'}`}>
+                        {!hasAppliedKsbSource ? 'KSB Source required' : ksbSourceIsEmpty ? 'Applied KSB Source · empty' : 'Applied KSB Source'}
+                      </p>
+                      <p className="mt-0.5 truncate text-[12px] font-heading font-bold text-foreground-950">{appliedSource.title}</p>
+                      {/* Reported by what it costs, not by the word "none":
+                          "not applied" and "0 K / 0 S / 0 B" both read as a
+                          value left at its default rather than as work to do. */}
+                      <p className={`mt-0.5 text-[10px] font-semibold ${hasAppliedKsbSource && !ksbSourceIsEmpty ? 'truncate text-foreground-500' : 'text-amber-800'}`}>
+                        {!hasAppliedKsbSource
+                          ? 'Modules cannot map KSBs and coverage cannot be measured until one is applied.'
+                          : ksbSourceIsEmpty
+                            ? 'A placeholder with no KSB codes in it. Apply the programme’s real profile or standard to make it mappable.'
+                            : appliedSource.detail || appliedSource.subtitle}
+                      </p>
+                    </div>
+                    <span className={`programme-source-cta mt-1 flex h-6 shrink-0 items-center justify-center rounded-lg ${hasAppliedKsbSource && !ksbSourceIsEmpty ? 'w-6 text-primary-600' : 'gap-1 bg-amber-500 px-2 text-[10px] font-bold text-white'}`}>
+                      {hasAppliedKsbSource && !ksbSourceIsEmpty ? (
+                        <AppIcon className="ri-arrow-right-s-line"></AppIcon>
+                      ) : (
+                        <>
+                          <AppIcon className="ri-add-line text-[12px]"></AppIcon>
+                          {ksbSourceIsEmpty ? 'Replace' : 'Set'}
+                        </>
+                      )}
+                    </span>
+                  </div>
+                </button>
+                {appliedSource.standard && (
+                  <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
+                    {appliedSource.standard.minimumHours && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[10px] font-bold text-cyan-800" title="Minimum hours for funding compliance">
+                        <AppIcon className="ri-time-line text-[11px]"></AppIcon>
+                        {appliedSource.standard.minimumHours} hrs min
+                      </span>
+                    )}
+                    {appliedSource.standard.maxFunding && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800" title="Maximum government funding">
+                        <AppIcon className="ri-price-tag-3-line text-[11px]"></AppIcon>
+                        {appliedSource.standard.maxFunding} max funding
+                      </span>
+                    )}
+                    {appliedSource.standard.duration && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-background-200 bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-600" title="Typical duration">
+                        <AppIcon className="ri-hourglass-line text-[11px]"></AppIcon>
+                        {appliedSource.standard.duration}
+                      </span>
+                    )}
+                    {appliedSource.standard.route && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-background-200 bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-600" title="Route">
+                        <AppIcon className="ri-route-line text-[11px]"></AppIcon>
+                        {appliedSource.standard.route}
+                      </span>
+                    )}
+                    {appliedSource.standard.degree && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-background-200 bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-600" title="Qualification type">
+                        <AppIcon className="ri-graduation-cap-line text-[11px]"></AppIcon>
+                        {appliedSource.standard.degree}
+                      </span>
+                    )}
+                    {appliedSource.standard.larsCode && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-background-200 bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-600" title="LARS code">
+                        <AppIcon className="ri-barcode-line text-[11px]"></AppIcon>
+                        LARS {appliedSource.standard.larsCode}
+                      </span>
+                    )}
+                    {appliedSource.standard.eqaProvider && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-background-200 bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-600" title="External quality assurance provider">
+                        <AppIcon className="ri-shield-check-line text-[11px]"></AppIcon>
+                        {appliedSource.standard.eqaProvider}
+                      </span>
+                    )}
+                    {appliedSource.standard.approvedForDelivery && (
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${
+                          /approved/i.test(appliedSource.standard.approvedForDelivery)
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                            : 'border-amber-200 bg-amber-50 text-amber-800'
+                        }`}
+                        title="Approved for delivery"
+                      >
+                        <AppIcon className="ri-checkbox-circle-line text-[11px]"></AppIcon>
+                        {appliedSource.standard.approvedForDelivery}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {/* Every figure here is a way in, not a read-out: each opens the
+                    tab of the programme workspace that owns it. */}
+                <div className="programmes-metrics mb-3 grid grid-cols-2 gap-2.5 rounded-xl border border-primary-100/70 bg-primary-50/65 p-2.5 sm:grid-cols-5">
+                  <Metric label="Cohorts" value={String(prog.cohorts)} onOpen={openTab('delivery')} hint={`Open the ${prog.cohorts} cohorts of ${prog.name}`} />
+                  <Metric label="Groups" value={String(prog.groups || 0)} onOpen={openTab('delivery')} hint={`Open the groups of ${prog.name}`} />
+                  <Metric label="Modules" value={String(prog.modules)} onOpen={openTab('design')} hint={`Open the ${prog.modules} modules of ${prog.name}`} />
+                  <Metric label="Weeks" value={`${prog.weeks}`} onOpen={openTab('design')} hint={`Open the module plan of ${prog.name}`} />
+                  <Metric label="Learners" value={String(prog.learners)} onOpen={openTab('coverage', 'achievement')} hint={`Open learner achievement for ${prog.name}`} />
+                  <button
+                    type="button"
+                    onClick={openTab('coverage', 'mapping')}
+                    title={`Open KSB coverage for ${prog.name}`}
+                    className="col-span-2 rounded-lg px-1 py-0.5 text-left transition-smooth hover:bg-primary-100/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 sm:col-span-5"
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="text-[9px] text-foreground-400 uppercase">KSB Progress</p>
+                      <p className="text-[9px] font-semibold text-foreground-400">
+                        {hasLearnerKsbDenominator
+                          ? `${prog.learnerKsbCodesStarted || 0}/${prog.learnerKsbCodesTotal || 0} KSBs · ${learnerKsbLearnerCount} learner${learnerKsbLearnerCount === 1 ? '' : 's'}`
+                          : `Mapping ${hasAppliedKsbSource ? `${mappingCoverage}%` : 'not applied'}`}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <div className="flex-1 h-1.5 bg-background-200 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${!hasLearnerKsbDenominator ? 'bg-background-300' : learnerKsbProgress >= 100 ? 'bg-emerald-500' : learnerKsbProgress >= 70 ? 'bg-primary-500' : learnerKsbProgress > 0 ? 'bg-amber-500' : 'bg-background-300'}`}
+                          style={{ width: `${hasLearnerKsbDenominator ? learnerKsbProgress : 0}%` }}
+                        ></div>
+                      </div>
+                      <span className="text-[10px] font-semibold">
+                        {hasLearnerKsbDenominator
+                          ? `${learnerKsbProgress}%`
+                          : learnerKsbLearnerCount === 0 ? 'No learners' : 'Needs mapping'}
+                      </span>
+                    </div>
+                  </button>
+                </div>
+                {prog.description && <p className="mb-2.5 line-clamp-2 text-[12px] leading-5 text-foreground-500">{prog.description}</p>}
+                {/* Two tiers, because six equal chips gave the reader nothing to
+                    aim at. The top row is what a curriculum designer came to the
+                    card to do - open the programme, or build the next piece of
+                    it. The bottom row is upkeep on the record itself. */}
+                <div className="mt-auto space-y-1.5 border-t border-primary-100/70 pt-2.5">
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); openCard(); }}
+                      title={`Open ${prog.name} — cohorts, groups, modules, sessions, KSB coverage and achievement`}
+                      className="programme-action-button programme-action-open primary-action inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-2 py-1.5 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                    >
+                      <AppIcon className="ri-folder-open-line text-sm"></AppIcon>
+                      Open programme
+                    </button>
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); openWizardForCard(); }}
+                      title={`Guided setup for ${prog.name} — its next cohort, group and module in one run`}
+                      className="programme-action-button programme-action-structure inline-flex items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2 py-1.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                    >
+                      <AppIcon className="ri-route-line text-sm"></AppIcon>
+                      Add structure
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1">
+                    <button className="programme-action-button programme-action-source inline-flex items-center justify-center gap-1 rounded-lg border border-primary-200 bg-primary-50 px-1.5 py-1 text-[10px] font-bold text-primary-700 transition-smooth hover:bg-primary-100" onClick={e => { e.stopPropagation(); setApplyProgramme(prog); }}>
+                      <AppIcon className="ri-node-tree text-sm"></AppIcon>KSB Source
+                    </button>
+                    <button className="programme-action-button programme-action-learners inline-flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-1.5 py-1 text-[10px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100" onClick={e => { e.stopPropagation(); void openProgrammeLearnerImpact(prog); }}>
+                      <AppIcon className="ri-user-follow-line text-sm"></AppIcon>Learners
+                    </button>
+                    <button className="programme-action-button programme-action-edit inline-flex items-center justify-center gap-1 rounded-lg border border-background-200 bg-background-50 px-1.5 py-1 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-100" onClick={e => { e.stopPropagation(); openEdit(prog); }}>
+                      <AppIcon className="ri-pencil-line text-sm"></AppIcon>Edit
+                    </button>
+                    <button
+                      className="programme-action-button programme-action-delete inline-flex items-center justify-center gap-1 rounded-lg border border-red-200 bg-red-50 px-1.5 py-1 text-[10px] font-bold text-red-600 transition-smooth hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={deletingProgrammeId === (prog.sourceId || prog.id)}
+                      onClick={e => { e.stopPropagation(); void archiveProgramme(prog); }}
+                      title="Archive this programme; it can be restored or deleted permanently from Curriculum > Archive"
+                    >
+                      <AppIcon className={deletingProgrammeId === (prog.sourceId || prog.id)
+                        ? 'ri-loader-4-line animate-spin text-sm'
+                        : 'ri-archive-line text-sm'}></AppIcon>
+                      Archive
+                    </button>
+                  </div>
+                </div>
+              </article>
               </div>
             );
             })}
           </div>
+          {!reordering && totalProgrammePages > 1 && (
+            <ProgrammePagination
+              currentPage={programmePage}
+              totalPages={totalProgrammePages}
+              onPageChange={setProgrammePage}
+            />
+          )}
           </>
         ) : (
           <ProgrammesEmptyState
             hasSearch={Boolean(search.trim())}
-            hasFilters={visibleProgrammes.length > 0 && statusFilter !== 'all'}
-            onClear={() => { setSearch(''); setStatusFilter('all'); }}
+            onClear={() => setSearch('')}
             onCreate={() => { setProgrammeDrawerTarget(null); setProgrammeDrawerOpen(true); }}
           />
         )}
-
-          </aside>
-          {!reordering && selectedProgramme && <section className={styles.selected} aria-label="Selected programme workspace">
-            <Suspense fallback={<p role="status">Loading programme workspace...</p>}>
-              <ProgrammeDetailPage
-                key={programmeKey(selectedProgramme)}
-                programmeId={programmeKey(selectedProgramme)}
-                programmeSnapshot={{ ...selectedProgramme, ksbProfileSourceId: programmeSourceOverrides.get(programmeKey(selectedProgramme)) ?? selectedProgramme.ksbProfileSourceId }}
-                refreshVersion={detailRefreshVersion}
-                onReloaded={() => reload({ silent: true, revalidate: true })}
-                summaryActions={<>
-                  <button type="button" onClick={() => setWizardRun({ from: 'cohort', programmeId: selectedProgramme.sourceId || selectedProgramme.id })}>
-                    <AppIcon className="ri-route-line" aria-hidden="true" />Add structure
-                  </button>
-                  <button type="button" onClick={() => setApplyProgramme(selectedProgramme)} title="Change the KSB source for this programme">
-                    <AppIcon className="ri-node-tree" aria-hidden="true" />KSB Source
-                  </button>
-                  <button type="button" onClick={() => void openProgrammeLearnerImpact(selectedProgramme)}>
-                    <AppIcon className="ri-user-follow-line" aria-hidden="true" />Learners
-                  </button>
-                  <button type="button" disabled={deletingProgrammeId === (selectedProgramme.sourceId || selectedProgramme.id)}
-                    onClick={() => void archiveProgramme(selectedProgramme)} title="Archive this programme; it can be restored from Curriculum > Archive">
-                    <AppIcon className={deletingProgrammeId === (selectedProgramme.sourceId || selectedProgramme.id) ? 'ri-loader-4-line animate-spin' : 'ri-archive-line'} aria-hidden="true" />Archive
-                  </button>
-                </>}
-                summaryContent={<ProgrammeSummaryFacts
-                  programme={selectedProgramme}
-                  source={programmeKsbSources.get(programmeKey(selectedProgramme)) || resolveProgrammeAppliedKsbSource(selectedProgramme, ksbSets, standards)}
-                  loading={ksbSourcesLoading}
-                  error={ksbSourcesError}
-                  onRetry={() => void loadKsbSources()}
-                  onOpenSource={() => {
-                    const source = programmeKsbSources.get(programmeKey(selectedProgramme)) || resolveProgrammeAppliedKsbSource(selectedProgramme, ksbSets, standards);
-                    if (source.value && source.ksbCount < 1) setApplyProgramme(selectedProgramme);
-                    else openAppliedKsbSourceReview(selectedProgramme, source);
-                  }}
-                  onOpen={(tab, view) => openProgramme(selectedProgramme, tab, view)}
-                />}
-                embedded
-              />
-            </Suspense>
-          </section>}
-          {!reordering && !selectedProgramme && <section className={styles.selected} aria-label="Selected programme workspace"><p role="status">{loading ? 'Loading programme workspace...' : error ? 'A programme cannot be selected until the programme list is available.' : 'Select a programme from the browser to view its records.'}</p></section>}
-        </div>
 
         <ProgrammeFormDrawer
           open={programmeDrawerOpen}
@@ -2084,19 +2374,79 @@ function ProgrammeKsbEmptyState({ icon, title, message }: { icon: string; title:
   );
 }
 
+function DashboardStat({ icon, label, value, detail }: { icon: string; label: string; value: string; detail: string }) {
+  return (
+    <div className="coach-metric-card">
+      <div className="flex items-center gap-2 text-primary-900/70">
+        <AppIcon className={`${icon} text-sm`}></AppIcon>
+        <span className="truncate text-[10px] font-bold uppercase tracking-wide">{label}</span>
+      </div>
+      <p className="mt-2 text-2xl font-heading font-bold text-foreground-950">{value}</p>
+      <p className="mt-0.5 truncate text-[11px] font-semibold text-foreground-600">{detail}</p>
+    </div>
+  );
+}
+
+function ProgrammePagination({ currentPage, totalPages, onPageChange }: {
+  currentPage: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+}) {
+  return (
+    <nav aria-label="Programme pages" className="flex flex-col gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+      <span className="text-xs font-semibold text-foreground-500">
+        Page {currentPage} of {totalPages}
+      </span>
+      <div className="flex items-center justify-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => onPageChange(currentPage - 1)}
+          disabled={currentPage === 1}
+          aria-label="Previous page"
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-xs font-bold text-foreground-700 transition-smooth hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <AppIcon className="ri-arrow-left-s-line" />
+          Previous
+        </button>
+        {Array.from({ length: totalPages }, (_, index) => index + 1).map(page => (
+          <button
+            key={page}
+            type="button"
+            onClick={() => onPageChange(page)}
+            aria-current={page === currentPage ? 'page' : undefined}
+            className={page === currentPage
+              ? 'inline-flex h-9 min-w-9 items-center justify-center rounded-lg bg-primary-600 px-2.5 text-xs font-bold text-white shadow-sm transition-smooth focus:outline-none focus:ring-2 focus:ring-primary-300'
+              : 'inline-flex h-9 min-w-9 items-center justify-center rounded-lg border border-foreground-200 bg-background-50 px-2.5 text-xs font-bold text-foreground-700 transition-smooth hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300'}
+          >
+            {page}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => onPageChange(currentPage + 1)}
+          disabled={currentPage === totalPages}
+          aria-label="Next page"
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-xs font-bold text-foreground-700 transition-smooth hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Next
+          <AppIcon className="ri-arrow-right-s-line" />
+        </button>
+      </div>
+    </nav>
+  );
+}
+
 function ProgrammesEmptyState({
   hasSearch,
-  hasFilters = false,
   onClear,
   onCreate,
 }: {
   hasSearch: boolean;
-  hasFilters?: boolean;
   onClear: () => void;
   onCreate: () => void;
 }) {
-  const title = hasFilters ? 'No programmes match your filters' : hasSearch ? 'No programmes match your search' : 'No programmes created yet';
-  const message = hasSearch || hasFilters
+  const title = hasSearch ? 'No programmes match your search' : 'No programmes created yet';
+  const message = hasSearch
     ? 'Try a different programme name or standard.'
     : 'Create the first programme structure to add cohorts, groups, modules and weekly components.';
 
@@ -2108,7 +2458,7 @@ function ProgrammesEmptyState({
       <h3 className="mt-4 text-base font-heading font-bold text-foreground-950">{title}</h3>
       <p className="mx-auto mt-2 max-w-md text-[13px] leading-6 text-foreground-500">{message}</p>
       <div className="mt-5 flex flex-col items-center justify-center gap-2 sm:flex-row">
-        {(hasSearch || hasFilters) && (
+        {hasSearch && (
           <button type="button" onClick={onClear} className="inline-flex h-10 items-center gap-2 rounded-lg border border-background-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100">
             <AppIcon className="ri-filter-off-line"></AppIcon>
             Clear search
@@ -3371,4 +3721,30 @@ function ArchiveConfirmDialog({
   }, [open]);
 
   return null;
+}
+
+/**
+ * A count on a programme card. With `onOpen` it becomes the link to the tab that
+ * owns the records it counts, so the number and the way to reach them are the
+ * same target rather than two.
+ */
+function Metric({ label, value, onOpen, hint }: { label: string; value: string; onOpen?: (event: { stopPropagation: () => void }) => void; hint?: string }) {
+  const body = (
+    <>
+      <p className="truncate text-[9px] font-bold uppercase tracking-wide text-foreground-400">{label}</p>
+      <p className="mt-0.5 truncate text-sm font-bold text-foreground-950">{value}</p>
+    </>
+  );
+  const shell = 'programmes-metric min-w-0 rounded-lg bg-background-50 px-2.5 py-2 ring-1 ring-primary-100/80';
+  if (!onOpen) return <div className={shell}>{body}</div>;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title={hint}
+      className={`${shell} programmes-metric-link block w-full text-left transition-smooth hover:bg-primary-50 hover:ring-primary-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400`}
+    >
+      {body}
+    </button>
+  );
 }
