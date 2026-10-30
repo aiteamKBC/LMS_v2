@@ -20,7 +20,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { coachSessionKey, readCoachSessionCache, writeCoachSessionCache } from '@/features/coach/shared/coachSessionCache';
 import ProgressReviewCompletionModal from '@/pages/coach/shared/ProgressReviewCompletionModal';
 import { reviewInstancePath, reviewInstanceRouteState } from '@/pages/coach/shared/reviewInstanceNavigation';
-import { createLearnerReviewAddition, fetchLearnerAdditionReviewTemplates, markReviewInstanceInProgressManually, openReviewInstanceForEvent } from '@/api/reviewInstances';
+import { createLearnerReviewAddition, fetchCoachReviewSlots, fetchLearnerAdditionReviewTemplates, markReviewInstanceInProgressManually, openReviewInstanceForEvent } from '@/api/reviewInstances';
 import type { LearnerAdditionReviewTemplate, LearnerAdditionReasonCode } from '@/api/reviewInstances';
 import {
   buildCoachSourceOptions,
@@ -875,6 +875,10 @@ export default function CoachTimetablePage() {
   const [createSessionLearnerPickerOpen, setCreateSessionLearnerPickerOpen] = useState(false);
   const [createSessionDate, setCreateSessionDate] = useState('');
   const [createSessionTime, setCreateSessionTime] = useState('09:00');
+  const [createReviewTimes, setCreateReviewTimes] = useState<string[]>([]);
+  const [createReviewAvailabilityLoading, setCreateReviewAvailabilityLoading] = useState(false);
+  const [createReviewAvailabilityError, setCreateReviewAvailabilityError] = useState('');
+  const [createReviewAvailabilityRevision, setCreateReviewAvailabilityRevision] = useState(0);
   const [createSessionDuration, setCreateSessionDuration] = useState(60);
   const [createSessionNotes, setCreateSessionNotes] = useState('');
   const [createSessionBusy, setCreateSessionBusy] = useState(false);
@@ -905,6 +909,10 @@ export default function CoachTimetablePage() {
   const [scheduleModalEventKey, setScheduleModalEventKey] = useState('');
   const [scheduleModalDate, setScheduleModalDate] = useState('');
   const [scheduleModalTime, setScheduleModalTime] = useState('09:00');
+  const [scheduleReviewTimes, setScheduleReviewTimes] = useState<string[]>([]);
+  const [scheduleReviewAvailabilityLoading, setScheduleReviewAvailabilityLoading] = useState(false);
+  const [scheduleReviewAvailabilityError, setScheduleReviewAvailabilityError] = useState('');
+  const [scheduleReviewAvailabilityRevision, setScheduleReviewAvailabilityRevision] = useState(0);
   const [scheduleModalDuration, setScheduleModalDuration] = useState(60);
   const [scheduleModalBusy, setScheduleModalBusy] = useState(false);
   const [scheduleModalError, setScheduleModalError] = useState<string | null>(null);
@@ -1204,6 +1212,54 @@ export default function CoachTimetablePage() {
   const selectedScheduleEvent = useMemo(() => {
     return scheduleEventOptions.find(event => eventIdentity(event) === scheduleModalEventKey) || scheduleEventOptions[0] || null;
   }, [scheduleEventOptions, scheduleModalEventKey]);
+  const isReviewSchedule = ['mcr', 'progress-review', 'review'].includes(scheduleModalType);
+
+  useEffect(() => {
+    setCreateReviewTimes([]);
+    setCreateReviewAvailabilityError('');
+    setCreateSessionTime('');
+    if (!createSessionOpen || createSessionType !== 'review' || !createSessionLearnerId || !createSessionDate) {
+      setCreateReviewAvailabilityLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    let active = true;
+    setCreateReviewAvailabilityLoading(true);
+    void fetchCoachReviewSlots(createSessionLearnerId, createSessionDate, createSessionDuration, { signal: controller.signal })
+      .then(times => {
+        if (!active) return;
+        setCreateReviewTimes(times);
+        setCreateSessionTime(current => current && times.includes(current) ? current : '');
+      })
+      .catch(error => {
+        if (active) setCreateReviewAvailabilityError(error instanceof Error ? error.message : 'Could not check coach availability. Retry before booking.');
+      })
+      .finally(() => { if (active) setCreateReviewAvailabilityLoading(false); });
+    return () => { active = false; controller.abort(); };
+  }, [createSessionOpen, createSessionType, createSessionLearnerId, createSessionDate, createSessionDuration, createReviewAvailabilityRevision]);
+
+  useEffect(() => {
+    setScheduleReviewTimes([]);
+    setScheduleReviewAvailabilityError('');
+    if (!scheduleModalOpen || !isReviewSchedule || !selectedScheduleEvent?.learnerId || !scheduleModalDate) {
+      setScheduleReviewAvailabilityLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    let active = true;
+    setScheduleReviewAvailabilityLoading(true);
+    void fetchCoachReviewSlots(selectedScheduleEvent.learnerId, scheduleModalDate, scheduleModalDuration, {
+      excludeEventKey: selectedScheduleEvent.calendarEventKey || selectedScheduleEvent.eventKey,
+      signal: controller.signal,
+    }).then(times => {
+      if (!active) return;
+      setScheduleReviewTimes(times);
+      setScheduleModalTime(current => current && times.includes(current) ? current : '');
+    }).catch(error => {
+      if (active) setScheduleReviewAvailabilityError(error instanceof Error ? error.message : 'Could not check coach availability. Retry before booking.');
+    }).finally(() => { if (active) setScheduleReviewAvailabilityLoading(false); });
+    return () => { active = false; controller.abort(); };
+  }, [scheduleModalOpen, isReviewSchedule, selectedScheduleEvent?.learnerId, selectedScheduleEvent?.eventKey, selectedScheduleEvent?.calendarEventKey, scheduleModalDate, scheduleModalDuration, scheduleReviewAvailabilityRevision]);
 
   useEffect(() => {
     if (!scheduleModalOpen) return;
@@ -1616,7 +1672,7 @@ export default function CoachTimetablePage() {
     }
 
     setPendingScheduleIntent(null);
-  }, [focusEventOnCalendar, loading, pendingScheduleIntent, schedulableEvents, setCalendarDate]);
+  }, [focusEventOnCalendar, loading, pendingScheduleIntent, schedulableEvents, setCalendarDate, calendarEvents]);
 
   useEffect(() => {
     if (!pendingFocusIntent || loading) return;
@@ -1702,7 +1758,8 @@ export default function CoachTimetablePage() {
   // Review occurrence is booked through -- no duplicated Graph logic here.
   const handleAddLearnerReview = useCallback(async (alsoSchedule: boolean) => {
     if (!canAddLearnerReview || !createSessionLearnerId || !createSessionReviewTemplateId || !createSessionReviewTargetDate) return;
-    if (alsoSchedule && (!createSessionDate || !createSessionTime)) return;
+    if (alsoSchedule && (!createSessionDate || !createSessionTime || createReviewAvailabilityLoading
+      || createReviewAvailabilityError || !createReviewTimes.includes(createSessionTime))) return;
 
     setCreateSessionBusy(true);
     setCreateSessionError(null);
@@ -1752,6 +1809,9 @@ export default function CoachTimetablePage() {
     createSessionReviewTargetDate,
     createSessionReviewTemplateId,
     createSessionTime,
+    createReviewAvailabilityError,
+    createReviewAvailabilityLoading,
+    createReviewTimes,
     focusEventOnCalendar,
     loadTimetable,
     updateSingleEvent,
@@ -1759,6 +1819,8 @@ export default function CoachTimetablePage() {
 
   const handleModalScheduleSave = useCallback(async () => {
     if (!selectedScheduleEvent?.eventKey) return;
+    if (isReviewSchedule && (scheduleReviewAvailabilityLoading || scheduleReviewAvailabilityError
+      || !scheduleReviewTimes.includes(scheduleModalTime))) return;
 
     setScheduleModalBusy(true);
     setScheduleModalError(null);
@@ -1798,6 +1860,10 @@ export default function CoachTimetablePage() {
     scheduleModalDate,
     scheduleModalDuration,
     scheduleModalTime,
+    isReviewSchedule,
+    scheduleReviewAvailabilityError,
+    scheduleReviewAvailabilityLoading,
+    scheduleReviewTimes,
     selectedScheduleEvent,
     updateSingleEvent,
   ]);
@@ -3276,12 +3342,30 @@ export default function CoachTimetablePage() {
                   <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">
                     {createSessionType === 'review' ? 'Meeting time (for Add & Schedule)' : 'Time'}
                   </span>
-                  <input
-                    type="time"
-                    value={createSessionTime}
-                    onChange={event => setCreateSessionTime(event.target.value)}
-                    className="w-full rounded-lg border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
-                  />
+                  {createSessionType === 'review' ? (
+                    <>
+                      <select
+                        aria-label="Meeting time (UK time, Europe/London)"
+                        value={createSessionTime}
+                        disabled={createReviewAvailabilityLoading || Boolean(createReviewAvailabilityError) || !createReviewTimes.length}
+                        onChange={event => setCreateSessionTime(event.target.value)}
+                        className="w-full rounded-lg border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                      >
+                        <option value="">{createReviewAvailabilityLoading ? 'Checking coach availability…' : 'Select an available UK time'}</option>
+                        {createReviewTimes.map(time => <option key={time} value={time}>{time}</option>)}
+                      </select>
+                      <span className="mt-1 block text-xs text-foreground-500">UK time (Europe/London)</span>
+                      {createReviewAvailabilityError && <span role="alert" className="mt-1 block text-xs text-red-700">{createReviewAvailabilityError} <button type="button" className="font-semibold underline" onClick={() => setCreateReviewAvailabilityRevision(value => value + 1)}>Retry</button></span>}
+                      {!createReviewAvailabilityLoading && !createReviewAvailabilityError && createSessionDate && !createReviewTimes.length && <span role="status" className="mt-1 block text-xs text-foreground-500">No available Review times for this date and duration.</span>}
+                    </>
+                  ) : (
+                    <input
+                      type="time"
+                      value={createSessionTime}
+                      onChange={event => setCreateSessionTime(event.target.value)}
+                      className="w-full rounded-lg border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                    />
+                  )}
                 </label>
               </section>
 
@@ -3351,6 +3435,7 @@ export default function CoachTimetablePage() {
                       disabled={
                         !canAddLearnerReview || createSessionBusy || !createSessionLearnerId || !createSessionReviewTemplateId
                         || !createSessionReviewTargetDate || !createSessionDate || !createSessionTime
+                        || createReviewAvailabilityLoading || Boolean(createReviewAvailabilityError) || !createReviewTimes.includes(createSessionTime)
                       }
                       className="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
                     >
@@ -3567,11 +3652,25 @@ export default function CoachTimetablePage() {
                     </label>
 
                     <label className="block">
-                      <ScheduleFieldLabel>Time</ScheduleFieldLabel>
-                      <ScheduleTimeInput
-                        value={scheduleModalTime}
-                        onChange={setScheduleModalTime}
-                      />
+                      <ScheduleFieldLabel>{isReviewSchedule ? 'Time (UK time · Europe/London)' : 'Time'}</ScheduleFieldLabel>
+                      {isReviewSchedule ? (
+                        <>
+                          <select
+                            aria-label="Schedule time (UK time, Europe/London)"
+                            value={scheduleModalTime}
+                            disabled={scheduleReviewAvailabilityLoading || Boolean(scheduleReviewAvailabilityError) || !scheduleReviewTimes.length}
+                            onChange={event => setScheduleModalTime(event.target.value)}
+                            className="w-full rounded-lg border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                          >
+                            <option value="">{scheduleReviewAvailabilityLoading ? 'Checking coach availability…' : 'Select an available UK time'}</option>
+                            {scheduleReviewTimes.map(time => <option key={time} value={time}>{time}</option>)}
+                          </select>
+                          {scheduleReviewAvailabilityError && <p role="alert" className="mt-1 text-xs text-red-700">{scheduleReviewAvailabilityError} <button type="button" className="font-semibold underline" onClick={() => setScheduleReviewAvailabilityRevision(value => value + 1)}>Retry</button></p>}
+                          {!scheduleReviewAvailabilityLoading && !scheduleReviewAvailabilityError && scheduleModalDate && !scheduleReviewTimes.length && <p role="status" className="mt-1 text-xs text-foreground-500">No available Review times for this date and duration.</p>}
+                        </>
+                      ) : (
+                        <ScheduleTimeInput value={scheduleModalTime} onChange={setScheduleModalTime} />
+                      )}
                     </label>
 
                     <label className="block">
@@ -3631,7 +3730,8 @@ export default function CoachTimetablePage() {
                   <button
                     type="button"
                     onClick={handleModalScheduleSave}
-                    disabled={scheduleModalBusy || !selectedScheduleEvent || !scheduleModalDate || !scheduleModalTime}
+                    disabled={scheduleModalBusy || !selectedScheduleEvent || !scheduleModalDate || !scheduleModalTime
+                      || (isReviewSchedule && (scheduleReviewAvailabilityLoading || Boolean(scheduleReviewAvailabilityError) || !scheduleReviewTimes.includes(scheduleModalTime)))}
                     className="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <AppIcon className={`${scheduleModalBusy ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'} text-base`}></AppIcon>

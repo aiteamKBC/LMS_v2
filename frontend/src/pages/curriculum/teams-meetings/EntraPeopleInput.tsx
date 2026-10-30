@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { emailList } from '../module-builder/EmailChipsInput';
+import { emailList } from "../module-builder/EmailChipsInput.helpers";
 import { searchEntraPeople, type EntraPerson } from './entraDirectory';
 
 const isEmail = (value: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value);
@@ -13,6 +13,9 @@ export function EntraPeopleInput({ value, onChange, label, single = false, inclu
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // Kept apart from `error` so the next search clears a failed one without
+  // also clearing a message about the typed text.
+  const [searchError, setSearchError] = useState('');
   const [hasMore, setHasMore] = useState(false);
   const [active, setActive] = useState(-1);
   const [undoStack, setUndoStack] = useState<RemovedEmail[]>([]);
@@ -24,6 +27,7 @@ export function EntraPeopleInput({ value, onChange, label, single = false, inclu
     setPeople([]);
     setActive(-1);
     setHasMore(false);
+    setSearchError('');
     if (!open || draft.trim().length < 2 || draft.trim().length > 80) { setLoading(false); return; }
     const controller = new AbortController();
     setLoading(true);
@@ -34,7 +38,7 @@ export function EntraPeopleInput({ value, onChange, label, single = false, inclu
         setPeople(result.people);
         setHasMore(result.hasMore);
       } catch (failure) {
-        if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'Entra search is unavailable.');
+        if (!controller.signal.aborted) setSearchError(failure instanceof Error ? failure.message : 'Entra search is unavailable.');
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
@@ -108,7 +112,8 @@ export function EntraPeopleInput({ value, onChange, label, single = false, inclu
           aria-activedescendant={active >= 0 && people[active] ? `${listId}-${active}` : undefined}
           placeholder={single && emails.length ? 'Search to replace...' : 'Search Entra by name or email...'}
           className="min-w-[160px] flex-1 bg-transparent p-1 text-[13px] text-foreground-900 outline-none placeholder:text-foreground-400"
-          onChange={event => { setDraft(event.target.value); setError(''); setOpen(true); }} onFocus={() => setOpen(true)}
+          onChange={event => { setDraft(event.target.value); setError(''); setOpen(true); }}
+          onFocus={() => { setError(''); setOpen(true); }}
           onKeyDown={event => {
             if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
               event.preventDefault(); setOpen(true);
@@ -138,6 +143,7 @@ export function EntraPeopleInput({ value, onChange, label, single = false, inclu
       )}
       <div aria-live="polite" className="mt-1 text-[11px]">
         {error ? <span className="text-red-700">{error}</span> : loading ? <span>Searching Entra...</span>
+          : searchError ? <span className="text-red-700">{searchError}</span>
           : open && draft.trim().length >= 2 && !people.length ? <span>No matching account. You can enter a full email address.</span> : null}
       </div>
     </div>

@@ -39,11 +39,14 @@ from . import module_progress, extra_activities, absence_reports, apprenticeship
 from .my_learning import my_learning
 from . import progress_transfer
 from . import support_tickets
+from . import reading_ocr
 
 from curriculum_api import session_results
 from .session_recovery import link_catchup
 
 urlpatterns = [
+    path('reading/ocr/csrf/', reading_ocr.reading_ocr_csrf),
+    path('reading/ocr/', reading_ocr.reading_ocr),
     path('support/tickets/', support_tickets.learner_tickets),
     path('support/tickets/<uuid:ticket_id>/', support_tickets.learner_ticket),
     path('support/tickets/<uuid:ticket_id>/attachments/<uuid:attachment_id>/', support_tickets.learner_attachment),
@@ -79,6 +82,7 @@ urlpatterns = [
     path('monthly-logs/<int:learner_id>/documents/<uuid:file_id>/', monthly_logs.document, name='monthly-log-document'),
     path('monthly-logs/<int:learner_id>/canonical-documents/<int:file_id>/', monthly_logs.canonical_document, name='monthly-log-canonical-document'),
     path('monthly-logs/<int:learner_id>/<str:month>/', monthly_logs.detail, name='monthly-log-detail'),
+    path('monthly-logs/<int:learner_id>/<str:month>/manual-time/<int:progress_id>/', monthly_logs.correct_manual_time, name='monthly-log-manual-time'),
     path('monthly-logs/<int:learner_id>/<str:month>/sign/', monthly_logs.sign, name='monthly-log-sign'),
     path('monthly-logs/<int:learner_id>/<str:month>/complete/', monthly_logs.complete, name='monthly-log-complete'),
     path('monthly-logs/<int:learner_id>/<str:month>/unlock/', monthly_logs.unlock, name='monthly-log-unlock'),

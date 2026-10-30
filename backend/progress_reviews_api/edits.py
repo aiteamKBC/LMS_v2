@@ -125,6 +125,8 @@ def editable_view(pack: dict, *, review_kind: str) -> dict:
     if review_kind != "mcm":
         view["epa"] = {"current_readiness": _percent_shown((pack.get("epa") or {}).get("current_readiness"))}
         view["manager_questions"] = list(pack.get("manager_questions") or [])[:MAX_MANAGER_QUESTIONS]
+    elif (pack.get('review') or {}).get('presentation_format') == 'kbc-mcm-v2':
+        view['manual_slides'] = copy.deepcopy(pack.get('manual_slides') or [])
     return view
 
 
@@ -290,6 +292,24 @@ def apply_edits(pack: dict, edits: dict, *, review_kind: str, learner_id) -> dic
     if not isinstance(edits, dict):
         raise EditError("The edit must be a JSON object.")
     pack = copy.deepcopy(pack)
+
+    if 'manual_slides' in edits:
+        if review_kind != 'mcm' or (pack.get('review') or {}).get('presentation_format') != 'kbc-mcm-v2':
+            raise EditError('Manual slides are available on the approved MCM template only.')
+        manual = _list(edits['manual_slides'], 'Manual slides', 188)
+        output = []
+        for index, item in enumerate(manual, 1):
+            if not isinstance(item, dict):
+                raise EditError(f'Manual slide {index} must contain a title and content.')
+            title = _text(item.get('title'), f'Manual slide {index} title', 100)
+            body = _text(item.get('body'), f'Manual slide {index} content', 600)
+            if title == NOT_AVAILABLE or body == NOT_AVAILABLE:
+                raise EditError(f'Manual slide {index} needs a title and content.')
+            notes = item.get('notes') or ''
+            if not isinstance(notes, str) or len(notes) > 100000:
+                raise EditError(f'Manual slide {index} notes must be text of no more than 100,000 characters.')
+            output.append({'title': title, 'body': body, 'notes': notes})
+        pack['manual_slides'] = output
 
     learner = pack.setdefault("learner", {})
     for key, label in (

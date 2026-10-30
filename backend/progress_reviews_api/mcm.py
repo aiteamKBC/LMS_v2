@@ -129,6 +129,9 @@ def _relabel(slides, pack) -> None:
 def generate_mcm_pptx(pack: dict, *, fetch_image: ImageFetcher = default_image_fetcher) -> bytes:
     """Render the full Progress Review deck from an MCM-labelled pack, relabel
     it, then drop the review-only slides."""
+    from .standard_mcm import FORMAT, generate
+    if (pack.get('review') or {}).get('presentation_format') == FORMAT:
+        return generate(pack, fetch_image=fetch_image)
     prs = gen.render_progress_review(label_pack(pack), fetch_image=fetch_image)
     _relabel(list(prs.slides), pack)
     gen._remove_source_employer_logos(prs)

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { formatClock, parseClockSeconds, formatRecordedClock } from './ReflectionWindow.helpers';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { ComponentKsbMapping, LearnerKind, LearnerKsbItem } from '@/api/learnerDetail';
 import { uploadEvidence } from '@/api/evidence';
 import { proofreadLearningReflection, transcribeVoiceReflection } from '@/api/reflectionVoice';
@@ -10,30 +11,9 @@ import {
 import { useReflectionAutosave } from './useReflectionAutosave';
 import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
 
-export function formatClock(totalSeconds: number): string {
-  const safeSeconds = Number.isFinite(totalSeconds)
-    ? Math.max(0, Math.floor(totalSeconds))
-    : 0;
-  const hours = Math.floor(safeSeconds / 3600);
-  const minutes = Math.floor((safeSeconds % 3600) / 60);
-  const seconds = safeSeconds % 60;
-  return [hours, minutes, seconds]
-    .map((value) => String(value).padStart(2, '0'))
-    .join(':');
-}
 
 /** Normalise stored completion clocks. Older records use MM:SS (and may have
  * more than 59 minutes); newer UI always displays HH:MM:SS. */
-export function parseClockSeconds(value: string | null | undefined): number | null {
-  const parts = String(value || '').trim().split(':');
-  if (parts.length !== 2 && parts.length !== 3) return null;
-  const units = parts.map(Number);
-  if (units.some((part) => !Number.isFinite(part) || part < 0)) return null;
-  if (units.at(-1)! >= 60 || (parts.length === 3 && units[1] >= 60)) return null;
-  return parts.length === 3
-    ? units[0] * 3600 + units[1] * 60 + units[2]
-    : units[0] * 60 + units[1];
-}
 
 /** The saved reflection always stores hours; show it in the field's unit. */
 function savedActualTime(hours: string, inMinutes: boolean): string {
@@ -42,10 +22,6 @@ function savedActualTime(hours: string, inMinutes: boolean): string {
   return Number.isFinite(value) && value >= 0 ? String(Number((value * 60).toFixed(2))) : '';
 }
 
-export function formatRecordedClock(value: string | null | undefined): string | null {
-  const totalSeconds = parseClockSeconds(value);
-  return totalSeconds == null ? null : formatClock(totalSeconds);
-}
 
 function formatKsbWeight(weight: number): string {
   const rounded = Math.round((Number(weight) || 0) * 10) / 10;
@@ -241,6 +217,7 @@ function ReflectionWindowForm({
   const submissionInFlightRef = useRef(false);
   const { confirmTime, timeConfirmation } = useManualTimeConfirmation();
   const timeInputRef = useRef<HTMLInputElement>(null);
+  const timeHelpId = useId();
 
   const draftKey = learnerKind && learnerId && evidenceSectionRef
     ? `reflection-draft:${learnerKind}:${learnerId}:${noun}:${evidenceSectionRef}` : null;
@@ -717,7 +694,7 @@ function ReflectionWindowForm({
     }
   };
 
-  const timeInput = () => (
+  const timeInput = (location: string) => (
     <div>
       <Field label={usesClock ? 'Selected activity time' : `Actual time spent (${inMinutes ? 'minutes' : 'hours'})`}>
         <input
@@ -732,10 +709,16 @@ function ReflectionWindowForm({
             else setActualTime(event.target.value);
           }}
           aria-invalid={!validTime}
+          aria-describedby={`${timeHelpId}-${location}`}
           placeholder={usesClock ? 'HH:MM:SS' : inMinutes ? 'e.g. 30' : 'e.g. 2'}
           className="h-11 w-full rounded-xl border border-foreground-200 bg-white px-3 font-mono text-sm focus:border-primary-400 focus:outline-none"
         />
       </Field>
+      <p id={`${timeHelpId}-${location}`} className="mt-2 text-sm text-foreground-700">
+        {usesClock ? 'Format: hours : minutes : seconds. For 30 minutes, enter 00:30:00.'
+          : inMinutes ? 'Enter minutes. For 30 minutes, enter 30.'
+          : 'Enter hours. For 30 minutes, enter 0.5; for 1 hour 30 minutes, enter 1.5.'}
+      </p>
       {!submissionLocked && <p className="mt-1 text-xs text-foreground-500">
         {usesClock && !validTime ? 'Enter hours, minutes and seconds, for example 00:30:00.'
           : 'You can increase or reduce this time. Your final value will be saved.'}
@@ -842,7 +825,7 @@ function ReflectionWindowForm({
       >
         {tab === 'learning' && (
           <section>
-            <div className="mb-5 max-w-sm">{timeInput()}</div>
+            <div className="mb-5 max-w-sm">{timeInput('learning')}</div>
             <h2 className="text-base font-semibold text-[#142033]">What have you learnt from this activity?</h2>
             <p className="mt-1 text-sm text-[#607086]">
               Explain the key ideas, methods, models, tools, concepts or techniques you have understood. Aim for at least 100 words.
@@ -1208,7 +1191,7 @@ function ReflectionWindowForm({
                   {plannedTimeLabel || 'Not set'}
                 </div>
               </Field>
-              {timeInput()}
+              {timeInput('otjh')}
               <Field label="Date completed">
                 <input
                   type="date"
@@ -1241,7 +1224,7 @@ function ReflectionWindowForm({
 
         {tab === 'review' && (
           <section className="space-y-4">
-            <div className="max-w-sm">{timeInput()}</div>
+            <div className="max-w-sm">{timeInput('review')}</div>
             <div className="rounded-xl border border-foreground-200 bg-white p-3">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-sm font-medium text-foreground-800">AI quality check</span>

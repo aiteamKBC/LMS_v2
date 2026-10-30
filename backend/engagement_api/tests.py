@@ -29,36 +29,6 @@ class FeedbackValidationTests(SimpleTestCase):
         self.patch_module_sync.start()
         self.addCleanup(self.patch_module_sync.stop)
 
-    def test_review_feedback_sync_uses_publish_time_as_the_no_backfill_boundary(self):
-        published_at = datetime(2026, 10, 18, 12, tzinfo=timezone.utc)
-        form = feedback.FeedbackForm(id=71, form_type='post_mcm_review', published_at=published_at)
-        forms_query = mock.MagicMock()
-        forms_query.order_by.return_value = [form]
-        cursor = mock.MagicMock()
-        cursor.__enter__.return_value = cursor
-        cursor.fetchall.return_value = [(
-            9001, 'APTEM-9001', 61, 'Synthetic Learner', 'Monthly Coaching Meeting',
-            'October coaching', datetime(2026, 10, 19, 9, tzinfo=timezone.utc),
-        )]
-        fake_connection = SimpleNamespace(cursor=mock.Mock(return_value=cursor))
-
-        with (
-            mock.patch.object(feedback.FeedbackForm.objects, 'filter', return_value=forms_query),
-            mock.patch.object(feedback.FeedbackReviewDelivery.objects, 'bulk_create') as bulk_create,
-            mock.patch.object(feedback, 'connection', fake_connection),
-        ):
-            feedback._sync_review_feedback_deliveries('61')
-
-        sql, params = cursor.execute.call_args.args
-        self.assertIn("status = 'Completed'", sql)
-        self.assertIn('completed_date >= %s', sql)
-        self.assertEqual(params, ['61', 'Monthly Coaching Meeting', published_at])
-        created = bulk_create.call_args.args[0]
-        self.assertEqual(len(created), 1)
-        self.assertEqual(created[0].source_review_id, 9001)
-        self.assertEqual(created[0].form, form)
-        self.assertTrue(bulk_create.call_args.kwargs['ignore_conflicts'])
-
     def test_explicitly_disabled_release_hides_feedback_but_staff_preview_remains_available(self):
         with self.settings(DEBUG=False, LEARNER_FEEDBACK_ENABLED=False, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=False):
             recipients = mock.MagicMock()

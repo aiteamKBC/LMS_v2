@@ -4,7 +4,6 @@ import { learnerKey, londonToday, progressReviews, type DashboardAttendance, typ
 
 export function useEmployerDashboard(employerId: string, learners: EmployerLearnerCard[] | undefined, refresh: number, includeProgramme = true) {
   const [metrics, setMetrics] = useState<Loadable<EmployerDashboardMetrics>>({ status: 'loading' });
-  const [homeProgressMetrics, setHomeProgressMetrics] = useState<Loadable<EmployerDashboardMetrics>>({ status: 'loading' });
   const [programmeMetrics, setProgrammeMetrics] = useState<Loadable<EmployerDashboardMetrics>>({ status: 'loading' });
   const [attendance, setAttendance] = useState<DashboardAttendance>({});
   const [reviews, setReviews] = useState<DashboardReviews>({});
@@ -13,7 +12,6 @@ export function useEmployerDashboard(employerId: string, learners: EmployerLearn
     const controller = new AbortController();
     const { signal } = controller;
     setMetrics({ status: 'loading' });
-    setHomeProgressMetrics({ status: 'loading' });
     setAttendance({});
     setReviews({});
     setReviewSummaries({});
@@ -22,13 +20,11 @@ export function useEmployerDashboard(employerId: string, learners: EmployerLearn
       const empty = { learners: {}, asOf: '' };
       setMetrics({ status: 'ready', data: empty });
       if (includeProgramme) {
-        setHomeProgressMetrics({ status: 'ready', data: empty });
         setProgrammeMetrics({ status: 'ready', data: empty });
       }
       return () => controller.abort();
     }
     if (includeProgramme) {
-      setHomeProgressMetrics({ status: 'loading' });
       setProgrammeMetrics({ status: 'loading' });
     }
     if (includeProgramme) {
@@ -37,18 +33,13 @@ export function useEmployerDashboard(employerId: string, learners: EmployerLearn
       void fetchEmployerDashboardMetrics(employerId, signal, 'status')
         .then(data => { if (!signal.aborted) setMetrics({ status: 'ready', data }); })
         .catch(() => { if (!signal.aborted) setMetrics({ status: 'error', error: 'Learner status could not be loaded.' }); });
-      // Student Home's compact summary supplies the table's OTJ ratio. Keep it
-      // independent from catalogue/module completion, which the chart uses.
-      void fetchEmployerDashboardMetrics(employerId, signal, 'summary')
-        .then(data => { if (!signal.aborted) setHomeProgressMetrics({ status: 'ready', data }); })
-        .catch(() => { if (!signal.aborted) setHomeProgressMetrics({ status: 'error' }); });
       void fetchEmployerDashboardMetrics(employerId, signal, 'programme')
         .then(data => { if (!signal.aborted) setProgrammeMetrics({ status: 'ready', data }); })
         .catch(() => { if (!signal.aborted) setProgrammeMetrics({ status: 'error' }); });
     } else {
-      void fetchEmployerDashboardMetrics(employerId, signal, 'summary')
+      void fetchEmployerDashboardMetrics(employerId, signal, 'status')
         .then(data => { if (!signal.aborted) setMetrics({ status: 'ready', data }); })
-        .catch(() => { if (!signal.aborted) setMetrics({ status: 'error', error: 'Learner progress could not be loaded.' }); });
+        .catch(() => { if (!signal.aborted) setMetrics({ status: 'error', error: 'Learner status could not be loaded.' }); });
     }
     setReviews(Object.fromEntries(learners.map(learner => [learnerKey(learner), { status: 'loading' }])));
     if (includeProgramme) setReviewSummaries(Object.fromEntries(learners.map(learner => [learnerKey(learner), { status: 'loading' }])));
@@ -106,5 +97,5 @@ export function useEmployerDashboard(employerId: string, learners: EmployerLearn
     }
     return () => controller.abort();
   }, [employerId, learners, refresh, includeProgramme]);
-  return { metrics, homeProgressMetrics, programmeMetrics, attendance, reviews, reviewSummaries };
+  return { metrics, programmeMetrics, attendance, reviews, reviewSummaries };
 }

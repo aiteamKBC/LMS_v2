@@ -63,5 +63,6 @@ def list_extra_activities(request):
                        'answer': data.get('assignmentAnswer', ''), 'reflection': data.get('whatYouLearned', ''),
                        'ksbs': data.get('ksbCodes', []), 'hours': data.get('actualTimeHours', ''),
                        'coachFeedback': feedback, 'reviewedBy': reviewer,
+                       'addedBy': mapping(data.get('coachCreation')).get('name') if data.get('submissionOrigin') == 'coach' else None,
                        'reviewedAt': reviewed.isoformat() if reviewed else None})
     return JsonResponse({'activities': result})

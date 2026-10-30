@@ -24,7 +24,8 @@ import type { MeetingAttendance } from '@/api/meetingAttendance';
 import AbsenceReportDialog from '../attendance/components/AbsenceReportDialog';
 import AbsenceReportForm from '../attendance/components/AbsenceReportForm';
 import { useMeetingBooking } from '../reviews/useMeetingBooking';
-import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
+import { LearnerReviewInstanceForm } from '../reviews/LearnerReviewInstanceForm';
+import { useLearnerReviewInstance } from "../reviews/LearnerReviewInstanceForm.helpers";
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 
 import CoachingHome from './CoachingHome';

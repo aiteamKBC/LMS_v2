@@ -57,6 +57,7 @@ it('asks quizzes for minutes and presets the planned minutes', async () => {
   openOtjh();
   const field = await screen.findByLabelText('Actual time spent (minutes)');
   expect(field).toHaveValue(60);
+  expect(field).toHaveAccessibleDescription('Enter minutes. For 30 minutes, enter 30.');
   expect(screen.queryByLabelText('Actual time spent (hours)')).toBeNull();
 });
 
@@ -71,7 +72,9 @@ it('keeps hours for other reflections', async () => {
   mocks.load.mockResolvedValue(null);
   view({ noun: 'video' });
   openOtjh();
-  expect(await screen.findByLabelText('Actual time spent (hours)')).toHaveValue(1);
+  const field = await screen.findByLabelText('Actual time spent (hours)');
+  expect(field).toHaveValue(1);
+  expect(field).toHaveAccessibleDescription('Enter hours. For 30 minutes, enter 0.5; for 1 hour 30 minutes, enter 1.5.');
 });
 
 
@@ -93,6 +96,7 @@ it.each([
   view({ noun: 'reading', plannedHours: 14, plannedTimeLabel: '14h', selectedTimeSeconds: seconds, onSubmit });
   openOtjh();
   expect(await screen.findByLabelText('Selected activity time')).toHaveValue(clock);
+  expect(screen.getByLabelText('Selected activity time')).toHaveAccessibleDescription('Format: hours : minutes : seconds. For 30 minutes, enter 00:30:00.');
   expect(screen.getByLabelText('Selected activity time')).not.toHaveAttribute('readonly');
   expect(screen.queryByLabelText('Actual time spent (hours)')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));

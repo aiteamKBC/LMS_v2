@@ -1,3 +1,4 @@
+import { WEEKEND_DAYS } from './ui.helpers';
 // ============================================================================
 // Shared chrome for the entity-based Curriculum pages.
 //
@@ -1153,9 +1154,6 @@ export function CoverImageControl({ value, onChange, onError, alt = '' }: {
 }
 
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-
-/** Saturday and Sunday are the weekend in England, so delivering on them is the exception. */
-export const WEEKEND_DAYS = ['Saturday', 'Sunday'];
 export const WEEKEND_HINT = 'Saturday and Sunday are weekend holidays in England — delivery on these days is unusual.';
 
 /** Delivery days as a comma-separated string, which is how the API stores them. */

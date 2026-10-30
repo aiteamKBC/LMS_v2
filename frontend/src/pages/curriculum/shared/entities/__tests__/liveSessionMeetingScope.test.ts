@@ -105,4 +105,16 @@ describe('liveSessionPlan', () => {
     expect(selected.map(item => item.weekNumber)).toEqual([1, 3]);
     expect(selected.map(item => item.sessionNumber)).toEqual([1, 3]);
   });
+
+  it('sends each date once when the module starts after its opening week s delivery day', () => {
+    // Starts on a Sunday, delivers Wednesdays: the plan's dates sit in calendar
+    // weeks 2-6, so week 1 has none of its own and falls back to the first date.
+    // Week 2 matching that same date by calendar week sent two sessions on one
+    // day and dropped the last.
+    const booked = (n: number) => live({ teamsOccurrenceId: `OCC-${n}`, teamsSessionNumber: n });
+    const module = { weekStructure: [1, 2, 3, 4, 5].map(n => ({ weekNumber: n, components: [booked(n)] })) };
+    const selected = liveSessionPlan(module as never, plan([2, 3, 4, 5, 6]));
+    expect(selected.map(item => item.date)).toEqual(['2026-12-02', '2026-12-03', '2026-12-04', '2026-12-05', '2026-12-06']);
+    expect(selected.map(item => item.sessionNumber)).toEqual([1, 2, 3, 4, 5]);
+  });
 });

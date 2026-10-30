@@ -112,7 +112,8 @@ def bulk_attendance_live_day_records(request):
 
         register_rows = list(
             LiveSessionLearnerAttendance.objects.using(database)
-            .filter(occurrence_id__in=occurrence_ids)
+            .filter(occurrence_id__in=occurrence_ids,
+                    module_catalogue_id__in=set(module_by_live_session.values()))
             .values(
                 "id", "occurrence_id", "module_catalogue_id",
                 "learner_profile_id", "attendance_status",
@@ -192,10 +193,10 @@ def bulk_attendance_live_month_records(request):
         occurrence_ids = [row["id"] for row in occurrences]
         register_rows = list(
             LiveSessionLearnerAttendance.objects.using(database)
-            .filter(occurrence_id__in=occurrence_ids)
+            .filter(occurrence_id__in=occurrence_ids,
+                    module_catalogue_id__in={session['module_catalogue_id'] for session in sessions})
             .values("id", "occurrence_id", "module_catalogue_id", "learner_profile_id", "attendance_status")
         ) if occurrence_ids else []
-        occurrence_by_id = {row["id"]: row for row in occurrences}
         aptem_by_profile = _aptem_ids_by_profile({row["learner_profile_id"] for row in register_rows})
         covered, guests = parallel_recovery_links(register_rows, database=database)
         return JsonResponse({
@@ -213,7 +214,7 @@ def bulk_attendance_live_month_records(request):
                 {
                     "recordKey": f"live:{row['id']}",
                     "occurrenceId": row["occurrence_id"],
-                    "moduleCatalogueId": session_by_id[occurrence_by_id[row["occurrence_id"]]["live_session_id"]]["module_catalogue_id"],
+                    "moduleCatalogueId": row["module_catalogue_id"],
                     "learnerId": aptem_by_profile[row["learner_profile_id"]],
                     "attendance": row["attendance_status"],
                     **covered.get((row["learner_profile_id"], str(row["occurrence_id"])), {}),

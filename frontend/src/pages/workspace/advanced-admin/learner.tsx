@@ -7,7 +7,7 @@ import type { LearnerDetail } from '@/api/learnerDetail';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { roleNavMap } from '@/mocks/navigation';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import ReadOnlyLearning from './ReadOnlyLearning';
 import LearnerModuleProgress from './LearnerModuleProgress';
 import InclusionDashboard from './InclusionDashboard';

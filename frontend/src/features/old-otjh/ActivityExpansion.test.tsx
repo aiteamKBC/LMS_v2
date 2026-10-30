@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { ActivityExpansion } from './ActivityExpansion';
 import type { Activity } from './api';
 
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { id: 1 } } }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: { id: 1 } } }) }));
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 it('keeps an opened material without polling or focus-triggered timeouts', async () => {

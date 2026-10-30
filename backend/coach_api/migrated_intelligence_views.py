@@ -166,6 +166,8 @@ def _response(overlay, record, snapshot=None, *, errors=None, status=200):
                                  'code': 'ACTUAL_SESSION_CLAIM_CONFLICT'}, status=409)
         legacy_session = legacy.context if legacy else None
     snapshot = scope_snapshot(record, saved, session=legacy_session, meeting_scoped=meeting_scoped)
+    from .review_attendance_links import attendance_for_display
+    snapshot = {**snapshot, 'attendance': attendance_for_display(record, snapshot['attendance'])}
     state = overlay.meeting_intelligence or {}
     binding = summary_binding_response(overlay)
     latest_status = generation_status(state)

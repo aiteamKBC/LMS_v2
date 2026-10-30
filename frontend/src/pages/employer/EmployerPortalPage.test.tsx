@@ -1,4 +1,4 @@
-﻿import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
@@ -19,7 +19,7 @@ vi.mock('@/api/employerPortal', () => ({
   fetchEmployerProgressReviewSummary: (...args: unknown[]) => api.reviewSummary(...args),
   fetchEmployerLearnerAttendance: (...args: unknown[]) => api.attendance(...args),
 }));
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ auth: { account: { role: session.role, displayName: 'Test Employer' } } }),
 }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({
@@ -49,12 +49,15 @@ const table = () => within(screen.getByRole('region', { name: 'Employer learners
 beforeEach(() => {
   vi.clearAllMocks();
   session.role = 'employer';
+  // jsdom has no native dialog; the summary-card dialog needs these two.
+  Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value: function (this: HTMLDialogElement) { this.open = true; } });
+  Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value: function (this: HTMLDialogElement) { this.open = false; } });
   portal = {
     employer: { id: '8', name: 'Test employer', email: 'employer@example.test', employerGroupNames: ['Test org'] },
     outstandingTotal: 2,
     learners: [
-      { id: '11', kind: 'apprenticeship', name: 'Alex Learner', email: 'alex@example.test', programme: 'Data Analysis', cohort: 'Cohort A', programmeStatus: 'Active', onboardingStatus: '', isActive: true, outstandingCount: 0, documentsTotal: 2 },
-      { id: '12', kind: 'commercial', name: 'Morgan Learner', email: 'morgan@example.test', programme: 'Marketing', cohort: 'Cohort B', programmeStatus: 'Onboarding', onboardingStatus: 'Onboarding', isActive: false, outstandingCount: 2, documentsTotal: 2 },
+      { id: '11', kind: 'apprenticeship', name: 'Alex Learner', email: 'alex@example.test', programme: 'Data Analysis', cohort: 'Cohort A', programmeStatus: 'Active', onboardingStatus: '', isActive: true, outstandingCount: 0, documentsTotal: 2, otjhProgress: { actual: 90, planned: 200, percent: 45 } },
+      { id: '12', kind: 'commercial', name: 'Morgan Learner', email: 'morgan@example.test', programme: 'Marketing', cohort: 'Cohort B', programmeStatus: 'Onboarding', onboardingStatus: 'Onboarding', isActive: false, outstandingCount: 2, documentsTotal: 2, otjhProgress: { actual: 70, planned: 400, percent: 17.5 } },
     ],
   };
   metrics = { asOf: londonToday(), learners: {
@@ -169,7 +172,7 @@ describe('employer home dashboard', () => {
     const progress = await screen.findByRole('progressbar', { name: 'Alex Learner OTJ progress' });
     expect(progress).toHaveAttribute('aria-valuenow', '45');
     expect(screen.getByRole('progressbar', { name: 'Morgan Learner OTJ progress' })).toHaveAttribute('aria-valuenow', '17.5');
-    expect(table().getByRole('columnheader', { name: 'Progress' })).toBeVisible();
+    expect(table().getByRole('columnheader', { name: 'OTJ Progress' })).toBeVisible();
     expect(table().getByRole('columnheader', { name: 'Attendance' })).toBeVisible();
     expect(table().queryByRole('columnheader', { name: 'Engagement' })).not.toBeInTheDocument();
     expect(table().getByText('90 / 200 OTJ hours')).toBeVisible();
@@ -181,9 +184,23 @@ describe('employer home dashboard', () => {
     expect(table().getByText('2 / 3 sessions')).toBeVisible();
     expect(table().getByRole('link', { name: 'View Alex Learner' })).toHaveAttribute('href', '/employers/8/learner/apprenticeship/11');
     expect(table().getByRole('link', { name: 'View Morgan Learner' })).toHaveAttribute('href', '/employers/8/learner/commercial/12');
-    expect(api.metrics).toHaveBeenCalledWith('8', expect.any(AbortSignal), 'summary');
+    expect(api.metrics.mock.calls.some(call => call[2] === 'summary')).toBe(false);
     expect(api.metrics).toHaveBeenCalledWith('8', expect.any(AbortSignal), 'programme');
     expect(api.reviews).toHaveBeenCalledWith('8', 'commercial', '12', expect.any(AbortSignal));
+  });
+
+  it('renders the Learner OTJ percentage from the initial list response without a summary request', async () => {
+    portal.learners[0].otjhProgress = { actual: 5, planned: 568.73, percent: 0.88 };
+    api.metrics.mockImplementation(() => new Promise(() => undefined));
+
+    showPage('/employers/8/learners');
+
+    expect(await screen.findByRole('progressbar', { name: 'Alex Learner OTJ progress' }))
+      .toHaveAttribute('aria-valuenow', '0.88');
+    expect(table().getByText('0.88%')).toBeVisible();
+    expect(table().getByText('5 / 568.73 OTJ hours')).toBeVisible();
+    expect(api.portal).toHaveBeenCalledTimes(1);
+    expect(api.metrics.mock.calls.some(call => call[2] === 'summary')).toBe(false);
   });
 
   it('combines search, programme, cohort and status filters and clears them', async () => {
@@ -203,14 +220,14 @@ describe('employer home dashboard', () => {
 
   it('shows precise OTJ hours in the table and preserves the separate programme activity chart', async () => {
     metrics.learners['11'].programme = { completed: 1, total: 900, percent: 0.11, status: 'ready' };
-    metrics.learners['11'].otjh = { actual: 0.55, planned: 500, percent: 0.11 };
+    portal.learners[0].otjhProgress = { actual: 0.55, planned: 500, percent: 0.11 };
     showPage();
     const progress = await screen.findByRole('progressbar', { name: 'Alex Learner OTJ progress' });
     expect(progress).toHaveAttribute('aria-valuenow', '0.11');
     expect(table().getByText('0.11%')).toBeVisible();
     expect(table().getByText('0.55 / 500 OTJ hours')).toBeVisible();
     const programmes = within(screen.getByRole('region', { name: 'Progress by programme' }));
-    expect(programmes.getByText('0.11%')).toBeVisible();
+    await waitFor(() => expect(programmes.getByText('0.11%')).toBeVisible());
     expect(programmes.getByRole('progressbar', { name: 'Data Analysis average progress' })).toHaveAttribute('aria-valuenow', '0.11');
     expect(table().getByText('17.5%')).toBeVisible();
   });
@@ -222,7 +239,7 @@ describe('employer home dashboard', () => {
     { actual: 12.5, planned: null, percent: null, text: 'Not available', bar: null },
     { actual: 0, planned: 0, percent: null, text: 'Not available', bar: null },
   ])('matches learner My Progress display for OTJ ($actual / $planned)', async ({ actual, planned, percent, text, bar }) => {
-    metrics.learners['11'].otjh = { actual, planned, percent };
+    portal.learners[0].otjhProgress = { actual, planned, percent };
     showPage('/employers/8/learners');
     await screen.findByRole('progressbar', { name: 'Alex Learner attendance' });
     const row = within(table().getByRole('link', { name: 'View Alex Learner' }).closest('tr')!);
@@ -237,31 +254,30 @@ describe('employer home dashboard', () => {
     metrics.learners['12'].attendance = { present: 0, sessions: 3, absent: 3, late: 0, attendanceRate: 0 };
     showPage();
     await screen.findByRole('progressbar', { name: 'Alex Learner OTJ progress' });
-    expect(table().getByText('No attendance records yet')).toBeVisible();
+    await waitFor(() => expect(table().getByText('No attendance records yet')).toBeVisible());
     expect(table().queryByRole('progressbar', { name: 'Alex Learner attendance' })).not.toBeInTheDocument();
     expect(table().getByRole('progressbar', { name: 'Morgan Learner attendance' })).toHaveAttribute('aria-valuenow', '0');
     expect(table().getByText('0 / 3 sessions')).toBeVisible();
   });
 
-  it('shows loading for both table metrics while the request is pending', async () => {
-    api.metrics.mockReturnValueOnce(new Promise(() => undefined));
+  it('shows OTJ progress from the initial learner-list response while attendance loads', async () => {
     api.attendance.mockImplementation(() => new Promise(() => undefined));
     showPage('/employers/8/learners');
     await screen.findByRole('heading', { name: 'Your learners (2)' });
     const cells = within(table().getByRole('link', { name: 'View Alex Learner' }).closest('tr')!).getAllByRole('cell');
-    expect(cells[3]).toHaveTextContent('Loading…');
+    expect(cells[3]).toHaveTextContent('45%');
     expect(cells[4]).toHaveTextContent('Loading…');
-    expect(table().queryByRole('progressbar')).not.toBeInTheDocument();
+    expect(table().getByRole('progressbar', { name: 'Alex Learner OTJ progress' })).toHaveAttribute('aria-valuenow', '45');
+    expect(api.metrics.mock.calls.some(call => call[2] === 'summary')).toBe(false);
   });
 
   it('loads risk status separately from OTJ/programme while attendance loads independently', async () => {
     showPage();
     expect(await screen.findByRole('progressbar', { name: 'Alex Learner OTJ progress' })).toHaveAttribute('aria-valuenow', '45');
-    expect(screen.getByRole('progressbar', { name: 'Morgan Learner attendance' })).toHaveAttribute('aria-valuenow', '67');
+    await waitFor(() => expect(screen.getByRole('progressbar', { name: 'Morgan Learner attendance' })).toHaveAttribute('aria-valuenow', '67'));
     expect(within(screen.getByRole('region', { name: 'Progress by programme' })).getByText('Data Analysis')).toBeVisible();
-    expect(api.metrics).toHaveBeenCalledTimes(3);
+    expect(api.metrics).toHaveBeenCalledTimes(2);
     expect(api.metrics).toHaveBeenCalledWith('8', expect.any(AbortSignal), 'status');
-    expect(api.metrics).toHaveBeenCalledWith('8', expect.any(AbortSignal), 'summary');
     expect(api.metrics).toHaveBeenCalledWith('8', expect.any(AbortSignal), 'programme');
     expect(api.attendance).toHaveBeenCalledTimes(2);
   });
@@ -292,7 +308,7 @@ describe('employer home dashboard', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Some attendance records could not be loaded.');
     expect(screen.getByRole('progressbar', { name: 'Alex Learner OTJ progress' })).toBeVisible();
     expect(screen.getByRole('progressbar', { name: 'Morgan Learner attendance' })).toBeVisible();
-    expect(api.metrics.mock.calls.every(call => call[2] === 'summary')).toBe(true);
+    expect(api.metrics.mock.calls.some(call => call[2] === 'summary')).toBe(false);
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(await screen.findByRole('progressbar', { name: 'Alex Learner attendance' })).toBeVisible();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -350,11 +366,17 @@ describe('employer home dashboard', () => {
     expect(screen.queryByText('Gateway Review')).not.toBeInTheDocument();
     expect(screen.queryByText('Personal Support Plan')).not.toBeInTheDocument();
     await userEvent.click(due);
-    expect(screen.getByRole('combobox', { name: 'Upcoming review' })).toHaveValue('month');
-    expect(screen.getByTestId('path')).toHaveTextContent('/employers/8/reviews?upcoming=month');
-    const journey = screen.getByRole('region', { name: 'Progress review journey' });
-    expect(within(journey).getByRole('link', { name: 'Alex Learner' })).toBeVisible();
-    expect(within(journey).queryByRole('link', { name: 'Morgan Learner' })).not.toBeInTheDocument();
+    const panel = within(await screen.findByRole('dialog', { name: 'Reviews due this month' }));
+    const listed = panel.getAllByRole('listitem');
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toHaveTextContent('Alex Learner');
+    expect(panel.queryByText('Morgan Learner')).not.toBeInTheDocument();
+    expect(panel.getByRole('link', { name: 'View review' }))
+      .toHaveAttribute('href', '/employers/8/learner/apprenticeship/11?tab=reviews&reviewId=pr-11');
+    expect(panel.queryByRole('link', { name: /^Join / })).not.toBeInTheDocument();
+    expect(panel.getByText('Meeting link not available yet.')).toBeVisible();
+    // The card reads in place now; it must not leave the overview.
+    expect(screen.getByTestId('path')).toHaveTextContent(/^\/employers\/8$/);
   });
 
   it('gives My learners and Progress reviews their own content instead of repeating home', async () => {
@@ -497,6 +519,64 @@ describe('employer home dashboard', () => {
     expect(within(actions).getByRole('link', { name: 'View all' })).toHaveAttribute('href', '/employers/8/documents');
   });
 
+  // The join link follows the meetings panel's rule: the employer is only sent
+  // to a meeting Microsoft has confirmed. A local booking is not that proof.
+  it('offers the review join link only once the invitation is confirmed', async () => {
+    api.reviews.mockImplementation(async (_employer: unknown, _kind: unknown, id: unknown) => ({
+      events: [makeReview(`pr-${id}`, { meetingLink: 'https://teams.example.test/meet/1', invited: true, syncState: 'synced' })],
+      definitions: {},
+    }));
+    showPage();
+    await userEvent.click(await screen.findByRole('button', { name: /^Reviews due this month: 2\./ }));
+    const join = within(await screen.findByRole('dialog', { name: 'Reviews due this month' }))
+      .getAllByRole('link', { name: /^Join / });
+    expect(join).toHaveLength(2);
+    expect(join[0]).toHaveAttribute('href', 'https://teams.example.test/meet/1');
+    expect(join[0]).toHaveAttribute('target', '_blank');
+    expect(join[0]).toHaveAttribute('rel', expect.stringContaining('noopener'));
+  });
+
+  it('withholds the join link while the Teams invitation is unconfirmed', async () => {
+    api.reviews.mockImplementation(async (_employer: unknown, _kind: unknown, id: unknown) => ({
+      events: [makeReview(`pr-${id}`, { meetingLink: 'https://teams.example.test/meet/1', invited: false })],
+      definitions: {},
+    }));
+    showPage();
+    await userEvent.click(await screen.findByRole('button', { name: /^Reviews due this month: 2\./ }));
+    const panel = within(await screen.findByRole('dialog', { name: 'Reviews due this month' }));
+    expect(panel.queryByRole('link', { name: /^Join / })).not.toBeInTheDocument();
+    expect(panel.getAllByText('Invitation not confirmed. Contact your coach.')).toHaveLength(2);
+    expect(panel.getAllByRole('link', { name: 'View review' })).toHaveLength(2);
+  });
+
+  // Every summary card opens its own records in place. Read-only: no links out,
+  // and the overview stays put instead of navigating to a filtered section.
+  it('opens the records behind each summary card in a dialog', async () => {
+    portal.learners[1].isActive = true;
+    metrics.learners['11'].risk = 'need-attention';
+    metrics.learners['12'].risk = 'at-risk';
+    const cards: [RegExp, string, string[]][] = [
+      [/^Total learners: 2\./, 'Total learners', ['Alex Learner', 'Morgan Learner']],
+      [/^Active on programme: 2\./, 'Active on programme', ['Alex Learner', 'Morgan Learner']],
+      [/^Reviews due this month: 1\./, 'Reviews due this month', ['Alex Learner']],
+      [/^Needs attention: 2\./, 'Needs attention', ['Alex Learner', 'Morgan Learner']],
+    ];
+    showPage();
+    for (const [name, title, expected] of cards) {
+      await userEvent.click(await screen.findByRole('button', { name }));
+      const panel = within(await screen.findByRole('dialog', { name: title }));
+      const listed = panel.getAllByRole('listitem');
+      expect(listed).toHaveLength(expected.length);
+      expected.forEach((learner, index) => expect(listed[index]).toHaveTextContent(learner));
+      // Only a review row has actions of its own; the learner lists stay read-only.
+      if (title === 'Reviews due this month') expect(panel.getAllByRole('link', { name: 'View review' })).toHaveLength(1);
+      else expect(panel.queryByRole('link')).not.toBeInTheDocument();
+      await userEvent.click(panel.getByRole('button', { name: 'Close' }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    }
+    expect(screen.getByTestId('path')).toHaveTextContent(/^\/employers\/8$/);
+  });
+
   it('uses the same OTJ statuses for the overview, table, filters and Needs attention', async () => {
     portal.learners[1].isActive = true;
     metrics.learners['11'].risk = 'need-attention';
@@ -516,17 +596,23 @@ describe('employer home dashboard', () => {
     expect(table().getByRole('link', { name: 'View Alex Learner' })).toBeVisible();
     expect(table().queryByRole('link', { name: 'View Morgan Learner' })).not.toBeInTheDocument();
     await userEvent.click(attention);
-    expect(screen.getByRole('heading', { name: 'Your learners (2)' })).toBeVisible();
-    expect(screen.getByRole('combobox', { name: 'Status' })).toHaveValue('attention');
+    const flagged = within(await screen.findByRole('dialog', { name: 'Needs attention' })).getAllByRole('listitem');
+    expect(flagged).toHaveLength(2);
+    expect(flagged[0]).toHaveTextContent('Alex Learner');
+    expect(flagged[0]).toHaveTextContent('Needs attention');
+    expect(flagged[1]).toHaveTextContent('Morgan Learner');
+    expect(flagged[1]).toHaveTextContent('At risk');
   });
 
   it('shows missing metrics as unavailable instead of zero or healthy progress', async () => {
     metrics.learners = {};
+    portal.learners.forEach(learner => { learner.otjhProgress = null; });
     showPage();
     await waitFor(() => expect(screen.getByRole('region', { name: 'Learner summary' })).toHaveTextContent('Needs attentionUnavailable'));
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
     expect(screen.queryByText('0%')).not.toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Engagement this month' })).toHaveTextContent('Not available');
+    // The engagement panel was removed from the dashboard; it recorded nothing.
+    expect(screen.queryByRole('region', { name: 'Engagement this month' })).not.toBeInTheDocument();
   });
 
   it('keeps the learner table and successful review reads when another source fails, with retry', async () => {
@@ -535,6 +621,7 @@ describe('employer home dashboard', () => {
     showPage();
     expect(await screen.findByRole('alert')).toHaveTextContent('could not be loaded');
     expect(table().getByRole('link', { name: 'View Alex Learner' })).toBeVisible();
+    expect(table().getByText('45%')).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
     await screen.findByRole('progressbar', { name: 'Alex Learner OTJ progress' });
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());

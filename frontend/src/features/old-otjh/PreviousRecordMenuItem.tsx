@@ -1,6 +1,6 @@
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { getWorkspaceRecordLink } from './api';

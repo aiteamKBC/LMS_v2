@@ -9,8 +9,13 @@ import { submitVideoProgress, type VideoProgressResponse } from '@/api/videos';
 import { fetchEvidence } from '@/api/evidence';
 import { loadLearningReflectionSubmission, saveLearningReflectionSubmission, type StoredLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import ComponentViewPage, { ComponentBody } from './page';
+import { LearnerProgrammeGate } from '@/components/feature/LearnerProgrammeGate';
 import { downloadReadingPdf } from './readingDownloads';
 const readingPdf = vi.hoisted(() => ({ getPage: vi.fn(), cleanup: vi.fn() }));
+const programmeRead = vi.hoisted(() => ({
+  real: {}, loading: false, loadError: '', refresh: vi.fn(),
+}));
+vi.mock('@/hooks/useLearnerSummaryParam', () => ({ useLearnerSummaryParam: () => programmeRead }));
 vi.mock('pdfjs-dist', () => ({
   GlobalWorkerOptions: {},
   getDocument: () => ({ promise: Promise.resolve({ numPages: 1, ...readingPdf }) }),
@@ -40,7 +45,7 @@ vi.mock('@/api/evidence', () => ({
   fetchEvidence: vi.fn(), uploadEvidence: vi.fn(), getEvidenceDownloadUrl: vi.fn(), deleteEvidence: vi.fn(),
 }));
 vi.mock('@/hooks/useMyLearner', () => ({ rememberLearner: vi.fn() }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: session.account }, isInitialized: session.isInitialized }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: session.account }, isInitialized: session.isInitialized }) }));
 vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true, outsideWorkingHours: session.outsideWorkingHours, holidays: session.holidays, holidayCalendarReady: session.holidayCalendarReady, currentTimeLabel: 'Sunday, 14:02 BST' }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children, pageSubtitle }: { children: ReactNode; pageSubtitle: string }) => <main><p>{pageSubtitle}</p>{children}</main> }));
 vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: ({ questionFiles, onSubmitProgress }: {
@@ -77,7 +82,7 @@ const detail = (done = false) => ({
 function Location() { return <span data-testid="location">{useLocation().pathname}</span>; }
 function mount(id = 'C1', kind = 'apprenticeship') {
   return render(<MemoryRouter initialEntries={[`/learner/component/${kind}/1/${id}`]}>
-    <Location /><Routes><Route path="/learner/component/:kind/:id/:componentId" element={<ComponentViewPage />} /></Routes>
+    <Location /><Routes><Route path="/learner/component/:kind/:id/:componentId" element={<LearnerProgrammeGate><ComponentViewPage /></LearnerProgrammeGate>} /></Routes>
   </MemoryRouter>);
 }
 
@@ -90,6 +95,8 @@ async function finish() {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  programmeRead.loading = false;
+  programmeRead.loadError = '';
   Object.assign(session.account, { role: 'learner', subjectType: 'learner', subjectId: 1, learnerRecordId: null });
   session.isInitialized = true;
   session.outsideWorkingHours = true;
@@ -105,6 +112,32 @@ beforeEach(() => {
   vi.mocked(loadLearningReflectionSubmission).mockResolvedValue(null);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+it.each(['commercial', 'apprenticeship'])('opens the %s assignment when an ancillary summary request times out', async kind => {
+  programmeRead.loadError = 'Loading is taking longer than expected. Please try again.';
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [
+    { ...first, type: 'assignment', component: 'Assignment instructions', assignmentBrief: 'Prepare your assignment.' },
+  ] } as LearnerDetail);
+  mount('C1', kind);
+  expect(await screen.findByRole('button', { name: 'Submit synthetic assignment' })).toBeEnabled();
+  expect(fetchLearnerDetail).toHaveBeenCalledWith(kind, '1', { componentId: 'C1' });
+  expect(screen.queryByText(programmeRead.loadError)).toBeNull();
+});
+
+it.each(['commercial', 'apprenticeship'])('retries a failed %s activity read without reloading the browser', async kind => {
+  const assignment = { ...detail(), components: [
+    { ...first, type: 'assignment', component: 'Assignment instructions', assignmentBrief: 'Prepare your assignment.' },
+  ] } as LearnerDetail;
+  vi.mocked(fetchLearnerDetail)
+    .mockRejectedValueOnce(new Error('Loading is taking longer than expected. Please try again.'))
+    .mockResolvedValueOnce(assignment);
+  mount('C1', kind);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Loading is taking longer than expected.');
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(await screen.findByRole('button', { name: 'Submit synthetic assignment' })).toBeEnabled();
+  expect(fetchLearnerDetail).toHaveBeenCalledTimes(2);
+  expect(fetchLearnerDetail).toHaveBeenLastCalledWith(kind, '1', { componentId: 'C1' });
+});
 
 it.each(['commercial', 'apprenticeship'])('counts reading time only after the PDF page renders for %s learners', async kind => {
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
@@ -243,8 +276,9 @@ it('lays out recording watch time, evidence, manual input, and Finish in one liv
   expect(screen.getByRole('timer')).toHaveAccessibleName('Time on this activity: 00 hours, 00 minutes, 37 seconds');
 });
 
-it('opens a dated recorded event without a placeholder video URL', async () => {
-  const event = { ...empty, componentId: 'EVENT', component: 'Recorded Event',
+it.each(['video', 'live_session'])('opens a dated recorded %s event without a placeholder video URL', async type => {
+  const event = { ...empty, type, componentId: 'EVENT', component: 'Recorded Event',
+    ...(type === 'live_session' ? { sessionDate: '2026-10-02' } : {}),
     recordingSeriesId: 'LIVE-1', recordingSessionNumber: 3, recordingDate: '2026-10-02' };
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [event] } as LearnerDetail);
   mount('EVENT');
@@ -252,6 +286,13 @@ it('opens a dated recorded event without a placeholder video URL', async () => {
   expect(recording).toHaveAttribute('data-recording-date', '2026-10-02');
   expect(recording).toHaveAttribute('data-recordings-only', 'true');
   expect(screen.queryByText('This video has no playable URL yet.')).not.toBeInTheDocument();
+});
+
+it('limits live-session recordings to the component date when no separate recording date is set', async () => {
+  const live = { ...first, sessionDate: '2026-10-28', teamsLiveSessionId: 'SERIES', teamsSessionNumber: 1 };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [live] } as LearnerDetail);
+  mount('C1');
+  expect(await screen.findByRole('button', { name: 'Simulate recording watch' })).toHaveAttribute('data-recording-date', '2026-10-28');
 });
 
 it.each(['commercial', 'apprenticeship'])('opens live session Finish before entering time for %s learners', async kind => {
@@ -532,8 +573,11 @@ async function openReadingConfirmation(kind = 'apprenticeship') {
 
 it.each(['commercial', 'apprenticeship'])('lets a %s learner correct 30 hours to 30 minutes before saving', async kind => {
   await openReadingConfirmation(kind);
-  fireEvent.click(screen.getByRole('button', { name: /Input/ }));
+  fireEvent.click(screen.getByRole('button', { name: /Input \(hours \/ minutes\)/ }));
+  expect(within(screen.getByRole('dialog')).getByLabelText('Hours spent')).toHaveAccessibleDescription('For 30 minutes: enter 0 in Hours and 30 in Minutes.');
+  expect(within(screen.getByRole('dialog')).getByLabelText('Minutes spent')).toHaveAccessibleDescription('For 30 minutes: enter 0 in Hours and 30 in Minutes.');
   fireEvent.change(within(screen.getByRole('dialog')).getByLabelText('Hours spent'), { target: { value: '30' } });
+  expect(within(screen.getByRole('dialog')).getByText('Selected time: 30 hours and 0 minutes.')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
 
   const review = screen.getByRole('alertdialog', { name: 'Check your time entry' });
@@ -548,6 +592,7 @@ it.each(['commercial', 'apprenticeship'])('lets a %s learner correct 30 hours to
   expect(within(dialog).getByLabelText('Hours spent')).toHaveFocus();
   fireEvent.change(within(dialog).getByLabelText('Hours spent'), { target: { value: '0' } });
   fireEvent.change(within(dialog).getByLabelText('Minutes spent'), { target: { value: '30' } });
+  expect(within(dialog).getByText('Selected time: 0 hours and 30 minutes.')).toBeVisible();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
 
   expect(screen.getByRole('alertdialog')).toHaveAccessibleDescription(/You entered 0 hours and 30 minutes/);

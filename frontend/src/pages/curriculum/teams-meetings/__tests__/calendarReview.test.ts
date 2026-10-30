@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Swal, { type SweetAlertOptions } from 'sweetalert2';
 import { calendarReviewHtml, TeamsReviewCancelled } from '../calendarReview';
 import { clockLabel, normalizedClock } from '../calendarTime';
-import { buildTeamsCalendarInput, emptyTeamsCalendarForm } from '../createCalendarForm';
+import { buildTeamsCalendarInput, emptyTeamsCalendarForm } from "../createCalendarForm.helpers";
 import { createTeamsMeeting, updateTeamsMeetingSchedule, type TeamsMeetingInput } from '../../module-builder/moduleAuthoringData';
 
 vi.mock('sweetalert2', () => ({ default: { fire: vi.fn() } }));

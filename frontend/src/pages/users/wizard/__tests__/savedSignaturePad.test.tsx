@@ -12,7 +12,7 @@ vi.mock('@/api/savedSignature', () => api);
 const auth = vi.hoisted(() => ({
   value: { user: { fullName: 'Sam Staff' }, account: { role: 'staff', subjectType: 'staff', subjectId: 7 } } as Record<string, unknown>,
 }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: auth.value }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: auth.value }) }));
 
 import { SignaturePad } from '../steps/SignaturePad';
 

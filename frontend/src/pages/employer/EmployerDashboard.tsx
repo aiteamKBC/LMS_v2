@@ -1,11 +1,13 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowRight, BarChart3, BriefcaseBusiness, CalendarDays, ChartNoAxesCombined, Check, ChevronLeft, ChevronRight, CircleAlert, ClipboardPenLine, Eye, GraduationCap, PlayCircle, RotateCcw, Search, Users, Workflow } from 'lucide-react';
+import { ArrowRight, BarChart3, BriefcaseBusiness, CalendarDays, Check, Video, ChevronLeft, ChevronRight, CircleAlert, ClipboardPenLine, Eye, GraduationCap, PlayCircle, RotateCcw, Search, Users, Workflow } from 'lucide-react';
 import type { EmployerDashboardMetrics, EmployerLearnerCard, EmployerPortal } from '@/api/employerPortal';
 import { formatReviewDate, greeting, isOpenReview, learnerHref, learnerReviewHref, learnerKey, londonToday, nextReview, orderReviewJourney, programmeAverages, relativeReviewDate, reviewDate, reviewLabels, reviewMatches, reviewState, riskLabels, riskOf, type DashboardAttendance, type DashboardReviews, type DashboardReviewSummaries, type Loadable } from './employerDashboardData';
 import styles from './EmployerPortalPage.module.css';
 import { EmployerReviewJourneys } from './EmployerReviewJourneys';
 import { EmployerMeetings } from './EmployerMeetings';
+import { EmployerStatDialog, type StatDialogRow } from './EmployerStatDialog';
+import { presentReview } from '@/pages/learner/progress-reviews/reviewPresentation';
 import { isAptemReview } from '@/pages/learner/progress-reviews/reviewPresentation';
 import selection from '@/pages/learner/reviews/reviewMarkerSelection.module.css';
 
@@ -14,11 +16,12 @@ import selection from '@/pages/learner/reviews/reviewMarkerSelection.module.css'
  * which used to be query strings that only scrolled this same page.
  */
 export type EmployerPortalView = 'home' | 'learners' | 'reviews';
+/** The summary card whose records are open in the overview's dialog. */
+type StatKey = 'learners' | 'active' | 'reviews' | 'attention';
 
 type Props = {
   data: EmployerPortal;
   metrics: Loadable<EmployerDashboardMetrics>;
-  homeProgressMetrics: Loadable<EmployerDashboardMetrics>;
   programmeMetrics: Loadable<EmployerDashboardMetrics>;
   attendance: DashboardAttendance;
   reviews: DashboardReviews;
@@ -49,7 +52,7 @@ function PanelHeader({ icon, title, action }: { icon: ReactNode; title: string; 
   return <header className={styles.panelHeader}><h2>{icon}{title}</h2>{action}</header>;
 }
 
-export function EmployerDashboard({ data, metrics, homeProgressMetrics, programmeMetrics, attendance: attendanceByLearner, reviews, reviewSummaries, onRetry, view = 'home', today = londonToday(), backAction }: Props) {
+export function EmployerDashboard({ data, metrics, programmeMetrics, attendance: attendanceByLearner, reviews, reviewSummaries, onRetry, view = 'home', today = londonToday(), backAction }: Props) {
   const employerId = data.employer.id;
   const learners = data.learners;
   const location = useLocation();
@@ -119,7 +122,6 @@ export function EmployerDashboard({ data, metrics, homeProgressMetrics, programm
   const reviewsFailed = learners.some(learner => reviews[learnerKey(learner)]?.status === 'error');
   const attendanceFailed = learners.some(learner => attendanceByLearner[learnerKey(learner)]?.status === 'error');
   const programmeFailed = view === 'home' && programmeMetrics.status === 'error';
-  const homeProgressFailed = view === 'home' && homeProgressMetrics.status === 'error';
   const due = learners.reduce((total, learner) => total + (reviewSummaries[learnerKey(learner)]?.data || []).filter(event => isOpenReview(event) && reviewDate(event)?.slice(0, 7) === today.slice(0, 7)).length, 0);
   const knownRisks = learners.filter(learner => learner.isActive && riskOf(metrics.data, learner) !== 'unavailable');
   const attention = knownRisks.filter(learner => ['need-attention', 'at-risk'].includes(riskOf(metrics.data, learner))).length;
@@ -144,6 +146,69 @@ export function EmployerDashboard({ data, metrics, homeProgressMetrics, programm
   const journeyLearners = view === 'reviews' ? journeyMatches : journeyMatches.slice(0, 2);
   const signatures = filtered.reduce((total, learner) => total + (reviews[learnerKey(learner)]?.data || []).filter(event => reviewState(event) === 'signature').length, 0);
   const organisation = data.employer.name || 'your organisation';
+  // Each summary card opens its own records here instead of navigating away.
+  const [openStat, setOpenStat] = useState<StatKey | null>(null);
+  const learnerRow = (learner: EmployerLearnerCard, meta: string): StatDialogRow => ({
+    id: learnerKey(learner),
+    primary: learner.name,
+    secondary: [learner.programme, learner.cohort].filter(Boolean).join(' · '),
+    meta,
+  });
+  // The summary read behind the card carries dates and status only, so the
+  // join link comes from the full review this dashboard already loads for the
+  // meetings panel. Same rule as there: Microsoft has to have confirmed the
+  // invitation before a join link is offered.
+  const reviewRowActions = (learner: EmployerLearnerCard, eventKey: string) => {
+    const full = (reviews[learnerKey(learner)]?.data || []).find(event => event.eventKey === eventKey);
+    const presentation = full && presentReview(full, undefined, today, undefined, 'employer');
+    const syncPending = Boolean(full && (full.invited === false || (full.syncState && full.syncState !== 'synced')));
+    const joinUrl = presentation && !syncPending ? presentation.joinUrl : null;
+    return <>
+      {joinUrl
+        ? <a className={styles.viewButton} href={joinUrl} target="_blank" rel="noopener noreferrer"
+          aria-label={`Join ${learner.name}: ${full?.title || 'progress review'}`}><Video size={15} />Join meeting</a>
+        : <span className={styles.unavailable}>{syncPending ? 'Invitation not confirmed. Contact your coach.'
+          : !full ? 'Meeting details still loading.' : 'Meeting link not available yet.'}</span>}
+      <Link className={`${styles.textButton} ${styles.reviewActionLink}`} to={learnerReviewHref(employerId, learner, eventKey)}
+        state={location.state} onClick={() => setOpenStat(null)}>View review</Link>
+    </>;
+  };
+  const statDialogs: Record<StatKey, { title: string; caption: string; emptyMessage: string; rows: StatDialogRow[] }> = {
+    learners: {
+      title: 'Total learners',
+      caption: `Every learner linked to ${organisation}`,
+      emptyMessage: 'No learners are linked to your organisation yet.',
+      rows: learners.map(learner => learnerRow(learner, learner.programmeStatus || 'No status recorded')),
+    },
+    active: {
+      title: 'Active on programme',
+      caption: 'Learners currently active on their programme',
+      emptyMessage: 'None of your learners are active on programme right now.',
+      rows: learners.filter(learner => learner.isActive)
+        .map(learner => learnerRow(learner, learner.programmeStatus || 'Active')),
+    },
+    reviews: {
+      title: 'Reviews due this month',
+      caption: 'Open progress reviews dated this month',
+      emptyMessage: 'No progress reviews are due this month.',
+      rows: learners.flatMap(learner => (reviewSummaries[learnerKey(learner)]?.data || [])
+        .filter(event => isOpenReview(event) && reviewDate(event)?.slice(0, 7) === today.slice(0, 7))
+        .map(event => ({
+          id: `${learnerKey(learner)}-${event.eventKey || event.id}`,
+          primary: learner.name,
+          secondary: event.title,
+          meta: formatReviewDate(reviewDate(event)),
+          action: reviewRowActions(learner, event.eventKey),
+        }))),
+    },
+    attention: {
+      title: 'Needs attention',
+      caption: 'Learners whose saved OTJ status needs attention or is at risk',
+      emptyMessage: 'No learner needs attention on their saved OTJ status.',
+      rows: knownRisks.filter(learner => ['need-attention', 'at-risk'].includes(riskOf(metrics.data, learner)))
+        .map(learner => learnerRow(learner, riskLabels[riskOf(metrics.data, learner) as keyof typeof riskLabels])),
+    },
+  };
 
   const learnersPanel = <section className={styles.panel} aria-labelledby="employer-learners">
     <header className={styles.panelHeader}>
@@ -154,14 +219,11 @@ export function EmployerDashboard({ data, metrics, homeProgressMetrics, programm
       </div>
     </header>
     {!tableFiltered.length ? <div className={styles.emptyState}><Users size={30} /><h3>{tableNameFilter && filtered.length ? 'No learners match that name' : learners.length ? 'No matching learners' : 'No learners linked yet'}</h3><p>{tableNameFilter && filtered.length ? 'Try another name or clear this filter.' : learners.length ? 'Try another search or clear your filters.' : 'Linked learners and their progress will appear here.'}</p>{tableNameFilter && filtered.length ? <button type="button" className={styles.textButton} onClick={() => setTableNameFilter('')}>Clear name filter</button> : learners.length > 0 && <button type="button" className={styles.textButton} onClick={clearFilters}>Clear filters</button>}</div>
-      : <><div className={styles.tableScroll} role="region" aria-label="Employer learners" tabIndex={0}><table className={styles.learnerTable}><thead><tr>{['Learner', 'Programme', 'Cohort', 'Progress', 'Attendance', 'Next review', 'Status', 'Actions'].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead><tbody>{rows.map(learner => {
+      : <><div className={styles.tableScroll} role="region" aria-label="Employer learners" tabIndex={0}><table className={styles.learnerTable}><thead><tr>{['Learner', 'Programme', 'Cohort', 'OTJ Progress', 'Attendance', 'Next review', 'Status', 'Actions'].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead><tbody>{rows.map(learner => {
         const resource = reviews[learnerKey(learner)];
         const event = nextReview(resource?.data);
         const date = event ? reviewDate(event) : null;
-        const progressSource = view === 'home' ? homeProgressMetrics.data : metrics.data;
-        const progressStatus = view === 'home' ? homeProgressMetrics.status : metrics.status;
-        const learnerMetrics = progressSource?.learners[learner.id];
-        const otjh = learnerMetrics?.otjh;
+        const otjh = learner.otjhProgress;
         const percent = otjh?.percent != null && Number.isFinite(otjh.percent) ? otjh.percent : null;
         const attendanceResource = attendanceByLearner[learnerKey(learner)];
         const attendance = attendanceResource?.data;
@@ -173,7 +235,7 @@ export function EmployerDashboard({ data, metrics, homeProgressMetrics, programm
           <td>{learner.programme || 'Not assigned'}</td><td>{learner.cohort || 'Not assigned'}</td>
           <td><div className={styles.progressCell}>
             {percent != null ? <><strong>{percentLabel(percent)}</strong><ProgressBar value={Math.max(0, Math.min(100, percent))} label={`${learner.name} OTJ progress`} /></>
-              : <span className={styles.unavailable}>{progressStatus === 'loading' ? 'Loading…' : 'Not available'}</span>}
+              : <span className={styles.unavailable}>Not available</span>}
             {otjh && <small title="Completed OTJ hours / total planned hours">{otjh.actual == null ? '—' : progressNumber.format(otjh.actual)} / {otjh.planned == null ? '—' : progressNumber.format(otjh.planned)} OTJ hours</small>}
           </div></td>
           <td>{attendancePercent != null ? <div className={styles.progressCell} title="Includes late attendance and completed catch-up">
@@ -217,14 +279,15 @@ export function EmployerDashboard({ data, metrics, homeProgressMetrics, programm
         <Link className={styles.sectionBack} to={`/employers/${employerId}`} state={location.state}><ArrowRight size={14} />Back to overview</Link>{backAction}
       </section>}
 
+    {openStat && <EmployerStatDialog {...statDialogs[openStat]} onClose={() => setOpenStat(null)} />}
     {isHome && <section className={styles.statsGrid} aria-label="Learner summary">
-      <Stat icon={<Users />} label="Total learners" value={learners.length} help="Linked to your organisation" tone="purple" onClick={() => openSection('learners')} />
-      <Stat icon={<PlayCircle />} label="Active on programme" value={active} help={learners.length ? `${Math.round(active / learners.length * 100)}% of all your learners` : 'No learners linked yet'} tone="green" onClick={() => openSection('learners', { status: 'active' })} />
-      <Stat icon={<ClipboardPenLine />} label="Reviews due this month" value={reviewSummaryReady ? due : reviewSummaryFailed ? 'Unavailable' : '…'} help={reviewSummaryReady ? 'Open progress reviews' : reviewSummaryFailed ? 'Review data could not be loaded' : 'Loading review dates'} tone="amber" onClick={() => openSection('reviews', { upcoming: 'month' })} />
-      <Stat icon={<CircleAlert />} label="Needs attention" value={attentionAvailable ? attention : metrics.status === 'loading' ? '…' : 'Unavailable'} help={attentionAvailable ? 'Saved learner OTJ status' : metrics.status === 'loading' ? 'Loading learner OTJ status' : 'OTJ status not available for all learners'} tone="rose" onClick={attentionAvailable && attention > 0 ? () => openSection('learners', { status: 'attention' }) : undefined} />
+      <Stat icon={<Users />} label="Total learners" value={learners.length} help="Linked to your organisation" tone="purple" onClick={() => setOpenStat('learners')} />
+      <Stat icon={<PlayCircle />} label="Active on programme" value={active} help={learners.length ? `${Math.round(active / learners.length * 100)}% of all your learners` : 'No learners linked yet'} tone="green" onClick={() => setOpenStat('active')} />
+      <Stat icon={<ClipboardPenLine />} label="Reviews due this month" value={reviewSummaryReady ? due : reviewSummaryFailed ? 'Unavailable' : '…'} help={reviewSummaryReady ? 'Open progress reviews' : reviewSummaryFailed ? 'Review data could not be loaded' : 'Loading review dates'} tone="amber" onClick={reviewSummaryReady ? () => setOpenStat('reviews') : undefined} />
+      <Stat icon={<CircleAlert />} label="Needs attention" value={attentionAvailable ? attention : metrics.status === 'loading' ? '…' : 'Unavailable'} help={attentionAvailable ? 'Saved learner OTJ status' : metrics.status === 'loading' ? 'Loading learner OTJ status' : 'OTJ status not available for all learners'} tone="rose" onClick={attentionAvailable ? () => setOpenStat('attention') : undefined} />
     </section>}
 
-    {(metrics.status === 'error' || reviewsFailed || attendanceFailed || programmeFailed || homeProgressFailed) && <div className={styles.dataNotice} role="alert"><CircleAlert size={18} /><p>{metrics.status === 'error' && 'Learner status could not be loaded. '}{homeProgressFailed && 'Learner OTJ progress could not be loaded. '}{attendanceFailed && 'Some attendance records could not be loaded. '}{programmeFailed && 'Programme progress could not be loaded. '}{reviewsFailed && 'Some progress reviews could not be loaded. '}Available records are still shown.</p><button type="button" onClick={onRetry}>Try again</button></div>}
+    {(metrics.status === 'error' || reviewsFailed || attendanceFailed || programmeFailed) && <div className={styles.dataNotice} role="alert"><CircleAlert size={18} /><p>{metrics.status === 'error' && 'Learner status could not be loaded. '}{attendanceFailed && 'Some attendance records could not be loaded. '}{programmeFailed && 'Programme progress could not be loaded. '}{reviewsFailed && 'Some progress reviews could not be loaded. '}Available records are still shown.</p><button type="button" onClick={onRetry}>Try again</button></div>}
     {(isHome || view === 'reviews') && <EmployerMeetings employerId={employerId} learners={learners} reviews={reviews} today={today} returnState={location.state} />}
     <form className={styles.filters} aria-label="Filter learners" onSubmit={event => event.preventDefault()}>
       <label className={styles.searchBox}><Search size={22} /><span className="sr-only">Search learners</span><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search learners by name or email..." /></label>
@@ -242,7 +305,6 @@ export function EmployerDashboard({ data, metrics, homeProgressMetrics, programm
         <div className={styles.chartsGrid}>
           <section className={styles.panel} aria-label="Learner progress overview"><PanelHeader icon={<BarChart3 size={21} />} title="Learner progress overview" /><p className={styles.chartCaption}>OTJ hours against the current target</p><div className={styles.donutContent}><div className={styles.donut} style={{ '--donut-gradient': filtered.length ? `conic-gradient(${gradient})` : '#e8e7f0' } as CSSProperties} role="img" aria-label={buckets.map(bucket => `${bucket.label}: ${bucket.count}`).join(', ')}><div><strong>{filtered.length}</strong><span>learners</span></div></div><ul className={styles.legend}>{buckets.map(bucket => <li key={bucket.key}><span className={styles.legendDot} style={{ backgroundColor: bucket.color }} /><span>{bucket.label}</span><strong>{bucket.count} <span>({filtered.length ? Math.round(bucket.count / filtered.length * 100) : 0}%)</span></strong></li>)}</ul></div></section>
           <section className={styles.panel} aria-label="Progress by programme"><PanelHeader icon={<GraduationCap size={22} />} title="Progress by programme" /><p className={styles.chartCaption}>Average programme completion</p><div className={styles.programmes}>{programmes.length ? programmes.map(group => <div key={group.name}><div className={styles.programmeHeading}><button type="button" onClick={() => openSection('learners', group.name === 'Not assigned' ? {} : { programme: group.name })}>{group.name}</button><strong>{group.percent != null ? percentLabel(group.percent) : '—'}</strong></div>{group.percent != null ? <ProgressBar value={group.percent} label={`${group.name} average progress`} /> : <p className={styles.unavailable}>{programmeMetrics.status === 'loading' ? 'Loading…' : 'Progress not available'}</p>}{group.available < group.total && <small className={styles.caption}>{group.available} of {group.total} learners have progress data</small>}</div>) : <p className={styles.unavailable}>No learners to show</p>}</div></section>
-          <section className={styles.panel} aria-label="Engagement this month"><PanelHeader icon={<ChartNoAxesCombined size={21} />} title="Engagement this month" /><div className={styles.engagementEmpty}><ChartNoAxesCombined size={44} strokeWidth={1.2} /><strong>Not available</strong><p>Engagement ratings are not currently recorded for this view.</p></div></section>
         </div>
       </div>
 

@@ -16,16 +16,19 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { workspacesFor } from '@/lib/portalWorkspaces';
+import type { AccessWorkspace } from '@/api/auth';
 
 const authValue = vi.fn();
 const switchRole = vi.fn();
 
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => authValue() }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => authValue() }));
 
 const { WorkspaceSwitcher } = await import('../WorkspaceSwitcher');
 
-function signedIn({ isAdmin = true, isAuthenticated = true } = {}) {
-  authValue.mockReturnValue({ auth: { isAuthenticated }, isAdmin, switchRole });
+function signedIn({ isAdmin = true, isAuthenticated = true, access = 'coach', accessWorkspaces = undefined }:
+  { isAdmin?: boolean; isAuthenticated?: boolean; access?: string; accessWorkspaces?: AccessWorkspace[] } = {}) {
+  authValue.mockReturnValue({ auth: { isAuthenticated,
+    account: { role: isAdmin ? 'admin' : 'staff', access, accessWorkspaces } }, isAdmin, switchRole });
 }
 
 /** Reports the current URL, so a navigation is observable. */
@@ -56,10 +59,91 @@ describe('WorkspaceSwitcher', () => {
     expect(trigger()).toHaveClass('kbc-workspace-switcher-button', 'font-bold', 'shadow-sm');
   });
 
-  it('is hidden from a non-admin', () => {
+  it('is hidden from a non-admin with no workspaces', () => {
     signedIn({ isAdmin: false });
     renderAt('/workspace/coach');
     expect(screen.queryByTitle('Switch workspace')).toBeNull();
+  });
+
+  it('is hidden when only one workspace is granted', () => {
+    signedIn({ isAdmin: false, accessWorkspaces: [{ access: 'coach', home: '/workspace/coach' }] });
+    renderAt('/workspace/coach');
+    expect(screen.queryByTitle('Switch workspace')).toBeNull();
+  });
+
+  it('offers only the granted workspaces and switches both ways without changing identity', async () => {
+    signedIn({ isAdmin: false, accessWorkspaces: [
+      { access: 'coach', home: '/workspace/coach' }, { access: 'tutor', home: '/workspace/tutor' },
+    ] });
+    const user = userEvent.setup();
+    renderAt('/workspace/coach');
+    await user.click(trigger());
+    expect(screen.getAllByRole('menuitem')).toHaveLength(2);
+    expect(screen.queryByRole('menuitem', { name: /Super Admin|Curriculum|Learner|Enrolment/ })).toBeNull();
+    await user.click(screen.getByRole('menuitem', { name: /Tutor/ }));
+    expect(path()).toBe('/workspace/tutor');
+    expect(screen.queryByRole('menu')).toBeNull();
+    await user.click(trigger());
+    expect(screen.getByRole('menuitem', { name: /Tutor/ })).toHaveAttribute('aria-current', 'true');
+    await user.keyboard('{ArrowUp}{Enter}');
+    expect(path()).toBe('/workspace/coach');
+    expect(switchRole).not.toHaveBeenCalled();
+  });
+
+  it.each(['commercial', 'apprenticeship'])('uses the server destination for the staff member’s own %s record', async kind => {
+    const home = `/workspace/learner/${kind}/512`;
+    signedIn({ isAdmin: false, accessWorkspaces: [
+      { access: 'coach', home: '/workspace/coach' }, { access: 'learner', home },
+    ] });
+    renderAt('/workspace/coach');
+    await userEvent.click(trigger());
+    await userEvent.click(screen.getByRole('menuitem', { name: /Learner/ }));
+    expect(path()).toBe(home);
+    await userEvent.click(trigger());
+    expect(screen.getByRole('menuitem', { name: /Learner/ })).toHaveAttribute('aria-current', 'true');
+  });
+
+  it.each(['coach', 'record-monitor'])('includes monitoring when the primary grant is %s', async access => {
+    signedIn({ isAdmin: false, access, accessWorkspaces: [
+      { access: 'coach', home: '/workspace/coach' }, { access: 'record-monitor', home: '/old-otjh/monitor' },
+    ] });
+    renderAt('/workspace/coach');
+    await userEvent.click(trigger());
+    await userEvent.click(screen.getByRole('menuitem', { name: /Learning record monitoring/ }));
+    expect(path()).toBe('/old-otjh/monitor');
+    await userEvent.click(trigger());
+    expect(screen.getByRole('menuitem', { name: /Learning record monitoring/ })).toHaveAttribute('aria-current', 'true');
+  });
+
+  it('offers enrolment and support without adding unrelated admin workspaces', async () => {
+    signedIn({ isAdmin: false, access: 'enrolment', accessWorkspaces: [
+      { access: 'enrolment', home: '/users' }, { access: 'support', home: '/support/ticket-queue' },
+    ] });
+    renderAt('/users');
+    await userEvent.click(trigger());
+    expect(screen.getAllByRole('menuitem')).toHaveLength(2);
+    expect(screen.getByRole('menuitem', { name: /Enrolment/ })).toHaveAttribute('aria-current', 'true');
+    await userEvent.click(screen.getByRole('menuitem', { name: /Support/ }));
+    expect(path()).toBe('/support/ticket-queue');
+  });
+
+  it('excludes Advanced Admin accounts even if extra workspaces are present', () => {
+    signedIn({ isAdmin: false, access: 'advanced-admin', accessWorkspaces: [
+      { access: 'advanced-admin', home: '/workspace/advanced-admin' }, { access: 'coach', home: '/workspace/coach' },
+    ] });
+    renderAt('/workspace/advanced-admin');
+    expect(screen.queryByTitle('Switch workspace')).toBeNull();
+  });
+
+  it('removes the switcher when a refreshed account loses its second grant', async () => {
+    const coach = { access: 'coach', home: '/workspace/coach' };
+    signedIn({ isAdmin: false, accessWorkspaces: [coach, { access: 'tutor', home: '/workspace/tutor' }] });
+    const view = renderAt('/workspace/coach');
+    await userEvent.click(trigger());
+    signedIn({ isAdmin: false, accessWorkspaces: [coach] });
+    view.rerender(<MemoryRouter><WorkspaceSwitcher /><CurrentPath /></MemoryRouter>);
+    expect(screen.queryByTitle('Switch workspace')).toBeNull();
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 
   it('is hidden when nobody is signed in', () => {

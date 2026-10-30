@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { inputClass } from '@/pages/users/components/ui';
 import { getActivityContent, type Activity, type ActivityContent } from './api';
 import { ProtectedFilePreview, QuizPreview, SourcePreview } from './ContentPreview';

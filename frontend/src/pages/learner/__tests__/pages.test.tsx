@@ -17,7 +17,7 @@ import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { invalidateLearnerReads } from '@/api/learnerRead';
 
 const viewer = vi.hoisted(() => ({ kind: 'commercial', role: 'learner' }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({
   isInitialized: true, isAdmin: false, hasPermission: () => true, canSeeNavItem: () => true,
   auth: { isAuthenticated: true, account: { id: 1, role: viewer.role, subjectType: 'learner', subjectId: 125, learnerType: viewer.kind },
     user: { id: '125', fullName: 'Test learner', email: 'learner@example.test' }, roles: [] },

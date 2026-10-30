@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast";
 import { fetchPointsGrants, fetchRecognitions, fetchVoucherClaims, type EngagementPointsGrant } from '@/api/engagement';
 import type { Recognition, VoucherClaim } from '@/mocks/engagement-data';
 import { EmptyState } from '@/components/feature/EmptyState';

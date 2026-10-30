@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { buildTeamsCalendarInput, emptyTeamsCalendarForm, ModuleSessionSchedulePreview, teamsCalendarOccurrences } from '../createCalendarForm';
+import { ModuleSessionSchedulePreview } from '../createCalendarForm';
+import { buildTeamsCalendarInput, emptyTeamsCalendarForm, teamsCalendarOccurrences } from "../createCalendarForm.helpers";
 import { calendarReviewHtml } from '../calendarReview';
 
 const row = {

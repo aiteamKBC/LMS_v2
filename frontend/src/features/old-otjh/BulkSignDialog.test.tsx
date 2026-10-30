@@ -6,7 +6,7 @@ import { BulkSignDialog } from './BulkSignDialog';
 import { getSigningReview, saveMonthSignatures, type Summary, type MonthState } from './api';
 
 const identity = { role: 'learner', access: 'learner', displayName: 'Test signer' };
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: identity } }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: identity } }) }));
 vi.mock('./api', async original => ({ ...await original<typeof import('./api')>(), getSigningReview: vi.fn(), saveMonthSignatures: vi.fn() }));
 vi.mock('./SignatureCapture', () => ({ SignatureCapture: ({ onSave, confirmationText, busy }: { onSave: (blob: Blob, method: string) => void; confirmationText: string; busy: boolean }) =>
   <div><p>{confirmationText}</p><button disabled={busy} onClick={() => onSave(new Blob(['signature'], { type: 'image/png' }), 'upload')}>Confirm test signature</button></div> }));

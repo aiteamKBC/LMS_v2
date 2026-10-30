@@ -48,16 +48,17 @@ function TransferDialog({ kind, learnerId, onRequested, onClose }: { kind: Learn
     <div className="space-y-4 p-5 text-sm text-foreground-700" aria-busy={loading || saving}>
       <p>Transfer your progress from all eligible old LMS modules to their matching modules in the new LMS.</p>
       <ul className="list-disc space-y-2 pl-5">
-        <li>Your progress percentage and recorded hours are saved when you confirm.</li>
+        <li>Your old progress percentage and recorded hours are saved as a historical record when you confirm.</li>
         <li>From that moment, additional progress on these old LMS modules will no longer count.</li>
         <li>An administrator must approve your request before the new modules appear.</li>
-        <li>After approval, matching activities already completed in the old LMS stay completed. They are included in your transferred percentage and are not counted twice. New progress is added up to 100%.</li>
+        <li>After approval, matching activities already completed in the old LMS stay completed. Your existing completions in the new LMS are kept, and each component counts once.</li>
+        <li>Your new percentage is completed components ÷ total components in the new module. It may differ from your old percentage because the module contents can differ. Recorded hours are preserved.</li>
         <li>Your previous learning records and evidence are retained.</li>
       </ul>
       {loading && <p role="status">Loading eligible modules…</p>}
       {error && <div role="alert"><p>{error}</p>{!preview && <button type="button" className="mt-2 underline" onClick={() => setRetry(value => value+1)}>Try again</button>}</div>}
       {pending && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3">Request submitted. Awaiting administrator approval. Progress on the included old LMS modules is now frozen.</p>}
-      {!loading && preview && !pending && !preview.eligible.length && <p role="status">{preview.requests.length ? 'Your eligible modules have already been transferred.' : 'No old modules currently have a verified new LMS module to transfer to.'}</p>}
+      {!loading && preview && !pending && !preview.eligible.length && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">{preview.requests.some(item => item.status === 'approved') ? 'Progress merged. Completed matches from the old LMS and existing completions in the new LMS count together, once per component. You can continue in your new modules.' : 'No old modules currently have a verified new LMS module to transfer to.'}</p>}
       {!!preview?.eligible.length && !pending && <section aria-label="Modules to transfer"><h3 className="mb-2 font-semibold">All {preview.eligible.length} eligible modules</h3><ul className="space-y-2">{preview.eligible.map(item => <li key={item.courseRef} className="rounded-lg bg-background-100 p-3"><strong>{item.oldTitle}</strong>{item.demoProgress && <p className="text-xs text-amber-700">Demo progress: transfer rehearsal only.</p>}<p className="mt-1 text-xs">New LMS: {item.newTitle}</p></li>)}</ul></section>}
     </div>
   </Modal>;

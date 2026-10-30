@@ -322,9 +322,10 @@ export default function MessagesPage() {
   const audioChunksRef = useRef<Blob[]>([]);
 
   const activeThreadData = activeThread ? THREADS.find(t => t.id === activeThread) : null;
-  const baseMessages = activeThread ? (SAMPLE_MESSAGES[activeThread] || []) : [];
-  const appendedMessages = activeThread ? (conversationMessages[activeThread] || []) : [];
-  const messages = [...baseMessages, ...appendedMessages];
+  const messages = useMemo(() => [
+    ...(activeThread ? SAMPLE_MESSAGES[activeThread] || [] : []),
+    ...(activeThread ? conversationMessages[activeThread] || [] : []),
+  ], [activeThread, conversationMessages]);
   const filteredThreads = searchQuery
     ? THREADS.filter(t =>
         t.contact.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -427,7 +428,7 @@ export default function MessagesPage() {
       }
     });
     return () => timers.forEach(clearTimeout);
-  }, [conversationMessages, activeThread, activeThreadData?.contact?.online]);
+  }, [conversationMessages, activeThread, activeThreadData?.contact]);
 
   const handleSend = () => {
     if ((!newMessage.trim() && attachedFiles.length === 0) || !activeThread) return;

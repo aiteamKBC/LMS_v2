@@ -1,0 +1,6 @@
+.info { margin: 8px 0; font-size: .875rem; color: #526175; }
+.info summary { cursor: pointer; width: fit-content; padding: 4px 8px; border-radius: 8px; }
+.info summary:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.info p { max-width: 42rem; margin-top: 8px; border: 1px solid #bfd5fd; border-radius: 12px; background: #eff6ff; color: #173a70; padding: 12px; }
+:global([data-theme="dark"]) .info { color: #c6d1e1; }
+:global([data-theme="dark"]) .info p { background: #172942; color: #dceaff; border-color: #4f709a; }

@@ -11,7 +11,8 @@ import { findByIdentifierThenName, findModule, formatProgrammeLevel, namedCurric
 // opens the same drawer that record's own page opens. One form per record type in
 // the whole studio, so nothing behaves differently depending on the door taken.
 import { CohortFormDrawer, GroupFormDrawer, ProgrammeFormDrawer } from '@/pages/curriculum/shared/entities/forms';
-import { ModuleFormDrawer, moduleFormTarget, type ModuleFormTarget } from '@/pages/curriculum/shared/entities/moduleForm';
+import { ModuleFormDrawer, type ModuleFormTarget } from '@/pages/curriculum/shared/entities/moduleForm';
+import { moduleFormTarget } from "@/pages/curriculum/shared/entities/moduleForm.helpers";
 import {
   ScopeAchievementPanel,
   ScopeLearnerAchievementDetail,
@@ -3033,7 +3034,7 @@ export default function ProgrammeDetailPage() {
         || (groupCoachFilter === 'assigned' ? hasCoach : !hasCoach);
       return matchesQuery && matchesCoach;
     });
-  }, [activeCohort, archivedGroupIds, groupCoachFilter, groupSearch, groupStatusFilter]);
+  }, [activeCohort, groupCoachFilter, groupSearch, groupStatusFilter]);
 
   // ----------------------------------------------------------------- modules
 
@@ -3058,7 +3059,7 @@ export default function ProgrammeDetailPage() {
       if (archivedModuleIds.has(mod.id)) return false;
       return matchesQuery && matchesCohort && matchesGroup;
     });
-  }, [PROGRAMME.modules, moduleSearch, moduleCohortFilter, moduleGroupFilter, moduleStatusFilter]);
+  }, [PROGRAMME.modules, moduleSearch, moduleCohortFilter, moduleGroupFilter, moduleStatusFilter, archivedModuleIds]);
 
   // ---------------------------------------------------------------- sessions
 
@@ -3225,7 +3226,7 @@ export default function ProgrammeDetailPage() {
       if (!mod) return '';
       return moduleBuilderUrl(mod, PROGRAMME, session.weekId ? { weekId: session.weekId } : undefined);
     };
-  }, [PROGRAMME.modules, PROGRAMME]);
+  }, [PROGRAMME]);
 
   // --------------------------------------------------------------------- KSB
 

@@ -15,7 +15,7 @@ const assignments: EmployerAssignment[] = [
 
 const fileUrl = vi.fn((..._args: unknown[]) => Promise.resolve('https://sas.example/file'));
 const assignmentApi = vi.hoisted(() => ({ fetchAssignments: vi.fn() }));
-vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
+vi.mock("@/hooks/useToast", () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
 vi.mock('@/api/employerPortal', () => ({
   fetchEmployerLearnerAssignments: (...args: unknown[]) => assignmentApi.fetchAssignments(...args),
   fetchEmployerAssignmentFileUrl: (...args: unknown[]) => fileUrl(...args),

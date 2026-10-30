@@ -50,11 +50,16 @@ export function firstAvailableBookingDate(candidate?: string | null, rules?: Boo
   const today = bookingToday();
   const valid = parseBookingDay(candidate) ? candidate! : '';
   const selected = new Date(`${valid && valid >= today ? valid : today}T12:00:00`);
-  while (selected.getDay() === 0 || selected.getDay() === 6 || rules?.bankHolidays?.some(day => day.date === isoDate(selected))
-    || (monthly && mcmBookingDateRestrictionMessage(isoDate(selected)))) {
+  // Search only the published calendar horizon. Without rules the caller is
+  // still loading them; a bounded provisional search must not loop forever.
+  const lastYear = rules ? Math.max(0, ...rules.coveredYears) : selected.getFullYear();
+  for (let searched = 0; searched < 3660 && selected.getFullYear() <= lastYear; searched++) {
+    const day = isoDate(selected);
+    if (!bookingDateRestrictionMessage(day, rules || null)
+      && !(monthly && mcmBookingDateRestrictionMessage(day))) return day;
     selected.setDate(selected.getDate() + 1);
   }
-  return isoDate(selected);
+  return '';
 }
 
 export function bookingDateRestrictionMessage(value: string, rules: BookingCalendarRules | null): string {

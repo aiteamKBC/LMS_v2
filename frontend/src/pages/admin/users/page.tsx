@@ -16,7 +16,7 @@ import { AdminPage, DataPanel, Pager, SourceNote, StatusBadge } from '../_shared
 import { useAdminData } from '../_shared/useAdminData';
 import { accountAction, addLearnerRecord, deleteStaffAccount, fetchAccounts, type AccountStatus, type PlatformAccount } from '@/api/platformAdmin';
 import { accessLabel, accessShortLabel, fetchStaffUser, type StaffUserRow } from '@/api/staffUsers';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { EditStaffModal } from '@/pages/users/components/EditStaffModal';
 import { AccessPanel } from './AccessPanel';
 import { fetchCohorts, fetchGroups, fetchProgrammes } from '@/api/curriculum';

@@ -21,7 +21,8 @@ import { useMeetingBooking } from '../reviews/useMeetingBooking';
 import ReviewsHome from './ReviewsHome';
 import { reviewOverview, reviewsListHref } from './reviewPresentation';
 import { useCoachingReviewDefinitions } from '../monthly-coaching/useCoachingReviewDefinitions';
-import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
+import { LearnerReviewInstanceForm } from '../reviews/LearnerReviewInstanceForm';
+import { useLearnerReviewInstance } from "../reviews/LearnerReviewInstanceForm.helpers";
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 
 const learnerNav = roleNavMap.learner;

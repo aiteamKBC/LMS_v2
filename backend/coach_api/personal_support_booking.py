@@ -40,7 +40,9 @@ def booking_state(owner, learner, review, overlay=None, *, preview_only=False, l
     status = (overlay.status if overlay else review.get("status")) or "not-scheduled"
     if verified and active:
         status = record.status
+    from .booking_reservations import review_occupies_slot
     return record, {
+        "reserved": bool(valid and review_occupies_slot(record)),
         "formRequired": False,
         "status": status,
         "booked": bool(verified and record.status in {"scheduled", "in-progress"}),
@@ -115,12 +117,17 @@ def book(request, instance_id, definition):
         validator = v.ObjectValidator(payload)
         scheduled_date = validator.iso_date("scheduledDate", required=True)
         scheduled_time = validator.clock_time("scheduledTime", required=True)
-        duration = validator.integer("durationMinutes", default=60, minimum=15, maximum=480)
+        duration = validator.integer("durationMinutes", required=True, minimum=15, maximum=480)
         offset = validator.integer("timezoneOffsetMinutes", default=0, minimum=-840, maximum=840)
         if scheduled_date and scheduled_date < v.date.today():
             validator.error("scheduledDate", "Choose today or a future date.")
         if rescheduling and not isinstance(payload.get("expectedBooking"), dict):
             validator.error("expectedBooking", "Reload the existing booking before rescheduling.")
+        from .booking_hours import validate_review_time_precision
+        try:
+            validate_review_time_precision(payload.get("scheduledTime"))
+        except ValueError as exc:
+            validator.error("scheduledTime", str(exc))
         validator.check()
         previous = None
         if rescheduling:
@@ -136,11 +143,22 @@ def book(request, instance_id, definition):
     review = definition["historicalReview"]
     try:
         record = booking_for_imported_review(learner, review)
-        if v.coach_learner_personal_calendar_conflicts(
+        same_persisted_slot = bool(record and record.status == CoachCalendarEvent.STATUS_SCHEDULED
+                                   and (record.scheduled_date, record.scheduled_time, record.duration_minutes) == desired)
+        if not same_persisted_slot:
+            from .booking_hours import validate_review_interval
+            try:
+                validate_review_interval(scheduled_date, scheduled_time, duration)
+            except ValueError as exc:
+                return fail(str(exc), code="INVALID_REVIEW_TIME", status=400)
+        if not same_persisted_slot and v.coach_learner_personal_calendar_conflicts(
             learner, scheduled_date, scheduled_time, duration, offset,
             exclude_record=record, business_time_zone="Europe/London",
         ):
             return fail("This learner is busy at that time.")
+        if not same_persisted_slot:
+            from .booking_availability import ensure_coach_review_slot_available
+            ensure_coach_review_slot_available(owner, scheduled_date, scheduled_time, duration, record=record)
         with transaction.atomic():
             v.lock_learner_calendar(learner_id)
             # Calendar then overlay: the same lock order as other Review writers.
@@ -187,10 +205,15 @@ def book(request, instance_id, definition):
                 )
             record.scheduled_date, record.scheduled_time, record.duration_minutes = desired
             record = v.persist_calendar_sync_reservation(record, review_event=base_event)
-    except (v.LearnerCalendarConflict, ReviewIdentityConflict, v.CalendarSyncInProgress) as exc:
-        return fail(str(exc))
     except IntegrityError:
         return fail("A concurrent booking won. Reload this review.")
+    except (v.LearnerCalendarConflict, ReviewIdentityConflict, v.CalendarSyncInProgress) as exc:
+        return fail(str(exc))
+    except Exception as exc:
+        from .booking_availability import CoachAvailabilityUnavailable
+        if isinstance(exc, CoachAvailabilityUnavailable):
+            return fail(str(exc), code="AVAILABILITY_UNAVAILABLE", status=503)
+        raise
 
     try:
         record, warning, _attempted = v.synchronize_reserved_calendar_event(record.pk, base_event)

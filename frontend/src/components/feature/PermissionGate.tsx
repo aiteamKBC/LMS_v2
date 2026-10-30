@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import type { PermissionLevel, AccessScope } from '@/mocks/rbac';
 
 // ============================================================

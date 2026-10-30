@@ -93,6 +93,7 @@ function conflict(record: unknown, currentRevision: string, kind = 'cohort') {
 }
 
 function renderCohortDrawer(cohort = storedCohort()) {
+  const onSaved = vi.fn(async (_result?: { cohort: CurriculumCohort }) => undefined);
   render(
     <CohortFormDrawer
       open
@@ -100,9 +101,10 @@ function renderCohortDrawer(cohort = storedCohort()) {
       programmes={programmes}
       holidays={[]}
       onClose={vi.fn()}
-      onSaved={vi.fn(async () => undefined)}
+      onSaved={onSaved}
     />,
   );
+  return { onSaved };
 }
 
 const nameField = () => screen.getByPlaceholderText('e.g. September 2026') as HTMLInputElement;
@@ -137,7 +139,7 @@ describe('cohort drawer under a stale save', () => {
       // save carries the duration it read, which is what used to undo it.
       .mockRejectedValueOnce(conflict(storedCohort({ durationMonths: 18 }), 'rev-11'))
       .mockResolvedValueOnce({ updated: true, id: 'COHORT-1', revision: 'rev-12' });
-    renderCohortDrawer();
+    const { onSaved } = renderCohortDrawer();
     await waitFor(() => expect(fetchCurriculumRecordSnapshot).toHaveBeenCalled());
 
     await userEvent.clear(nameField());
@@ -146,9 +148,11 @@ describe('cohort drawer under a stale save', () => {
 
     await waitFor(() => expect(updateCurriculumCohort).toHaveBeenCalledTimes(2));
     const retry = sentBodies()[1];
-    // Their duration and this reader's name, in one save, against the version
-    // the refusal named.
-    expect(retry).toMatchObject({ name: 'B renamed it', durationMonths: 18, expectedRevision: 'rev-11' });
+    // Their duration stays stored; the retry only authors this reader's name.
+    expect(retry).toEqual({ name: 'B renamed it', expectedRevision: 'rev-11' });
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith({ cohort: expect.objectContaining({
+      name: 'B renamed it', durationMonths: 18,
+    }) }));
     // And no notice: nobody disagreed about anything.
     expect(screen.queryByTestId('co-edit-notice')).not.toBeInTheDocument();
   });
@@ -260,14 +264,17 @@ describe('cohort drawer opened from a stale list', () => {
   });
 
   it("keeps the colleague's fields beside this reader's own change", async () => {
-    renderCohortDrawer(storedCohort());
+    const { onSaved } = renderCohortDrawer(storedCohort());
     await waitFor(() => expect(nameField()).toHaveValue('A renamed it'));
     await userEvent.clear(nameField());
     await userEvent.type(nameField(), 'B renamed it');
     await userEvent.click(saveButton());
 
     await waitFor(() => expect(updateCurriculumCohort).toHaveBeenCalled());
-    expect(sentBodies()[0]).toMatchObject({ name: 'B renamed it', durationMonths: 18, expectedRevision: 'rev-11' });
+    expect(sentBodies()[0]).toEqual({ name: 'B renamed it', expectedRevision: 'rev-11' });
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith({ cohort: expect.objectContaining({
+      name: 'B renamed it', durationMonths: 18,
+    }) }));
   });
 });
 

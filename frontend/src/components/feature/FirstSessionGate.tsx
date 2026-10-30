@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import {
   bookLearnerCalendarSession,
   fetchFirstSessionSlots,
@@ -10,7 +10,8 @@ import {
   type SessionSlot,
 } from '@/api/learnerCalendar';
 import type { LearnerKind } from '@/api/learnerDetail';
-import { SessionSlotPicker, slotLabel } from './SessionSlotPicker';
+import { SessionSlotPicker } from './SessionSlotPicker';
+import { slotLabel } from "./SessionSlotPicker.helpers";
 import { RouteLoadingSkeleton } from './RouteLoadingSkeleton';
 
 // ============================================================================

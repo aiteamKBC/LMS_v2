@@ -95,6 +95,8 @@ class CheckSessionResourceTests(SimpleTestCase):
 
     def call(self, *, generate=True):
         with ExitStack() as stack:
+            # Correction storage is a separate read-only dependency of the response.
+            stack.enter_context(patch('coach_api.review_attendance_links.saved_links', return_value=[]))
             def p(name,**kwargs): return stack.enter_context(patch(name,**kwargs))
             p('coach_api.migrated_intelligence_views.timezone.now',return_value=NOW)
             p('coach_api.migrated_intelligence_views._association',return_value=(self.overlay,self.record,self.definition))

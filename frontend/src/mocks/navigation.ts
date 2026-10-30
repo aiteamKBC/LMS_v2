@@ -37,6 +37,7 @@ export const learnerNavItems: SidebarNavItem[] = [
     href: '',
     children: [
       { id: 'learner-monthly-submission', label: 'Monthly Submission', icon: 'ri-file-upload-line', href: '/learner/monthly-submission' },
+      { id: 'learner-extra-activities', label: 'Extra activities', icon: 'ri-add-circle-line', href: '/learner/extra-activities' },
       { id: 'learner-monthly-logs', label: 'Monthly Logs', icon: 'ri-file-list-3-line', href: '/learner/monthly-logs', matchPaths: ['/learner/monthly-cycle'] },
       { id: 'learner-monthly-coaching', label: 'Monthly Coaching Meeting', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
       { id: 'learner-progress-reviews', label: 'Progress Review', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
@@ -114,6 +115,7 @@ export const coachNavItems: SidebarNavItem[] = [
     icon: 'ri-edit-line',
     href: '/coach/marking-queue',
   },
+  { id: 'coach-extra-activities', label: 'Extra activities', icon: 'ri-add-circle-line', href: '/coach/extra-activities' },
   {
     id: 'coach-monthly-logs',
     label: 'Monthly Logs',

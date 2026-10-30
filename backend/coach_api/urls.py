@@ -10,9 +10,12 @@ from .quality_form_api import quality_form, quality_forms
 from .recordings_link_api import coaching_linked_meeting
 from .completion_api import completion_notifications
 from .bulk_attendance import coach_bulk_attendance
+from .review_attendance_links import review_attendance_links
 from .attendance_loading import coach_attendance_options, coach_attendance_group, coach_attendance_session, coach_attendance_sessions, coach_attendance_context
 from . import personal_learning
 from . import monthly_logs
+from . import extra_activities
+from . import presentations
 from . import lms_support_tickets
 from .monthly_reports import coach_monthly_report_detail, coach_monthly_reports
 from .support_tickets import (
@@ -55,6 +58,7 @@ from .views import (
     coach_marking_queue,
     coach_imported_review_history,
     coach_monthly_activity,
+    coach_review_availability,
     coach_review_instance_answers,
     coach_review_instance_complete,
     coach_review_instance_progress,
@@ -83,6 +87,8 @@ from .views import (
 
 
 urlpatterns = [
+    path('coach/extra-activities', extra_activities.activities, name='coach-extra-activities'),
+    path('coach/extra-activities/learners', extra_activities.learners, name='coach-extra-activities-learners'),
     path('coach/completion-notifications', completion_notifications, name='coach-completion-notifications'),
     path('coaching-recordings/meetings/<str:identity>', coaching_linked_meeting, name='coaching-linked-meeting'),
     path('coaching-recordings/quality/context', review_context, name='coaching-quality-context'),
@@ -123,6 +129,7 @@ urlpatterns = [
     path('migrated-reviews/<str:review_id>/generate-pdf', migrated_review_generate_pdf, name='migrated-review-generate-pdf'),
     path('coach/personal-marking', personal_learning.marking),
     path('coach/personal-marking/<uuid:submission_id>', personal_learning.marking),
+    path('coach/personal-marking/<uuid:submission_id>/presentation', presentations.download, {'personal': True}, name='coach-personal-presentation'),
     path('coach/personal-marking/<uuid:submission_id>/evidence', personal_learning.evidence),
     path('coach/personal-marking/<uuid:submission_id>/evidence/<uuid:file_id>', personal_learning.evidence),
     path('csrf', coach_csrf_token, name='coach-csrf'),
@@ -170,6 +177,7 @@ urlpatterns = [
     path('coach/support-tickets/<int:ticket_id>/wellbeing-report', coach_support_ticket_wellbeing_report, name='coach-support-ticket-wellbeing-report'),
     path('coach/marking-queue', coach_marking_queue, name='coach-marking-queue'),
     path('coach/marking-queue/<uuid:submission_id>', coach_marking_queue, name='coach-marking-submission'),
+    path('coach/marking-queue/<uuid:submission_id>/presentation', presentations.download, name='coach-submission-presentation'),
     path('coach/marking-queue/<uuid:submission_id>/ai-feedback', coach_marking_ai_feedback, name='coach-marking-ai-feedback'),
     path('coach/marking-queue/<uuid:submission_id>/ai-prompt', coach_marking_ai_prompt, name='coach-marking-ai-prompt'),
     path('coach/monthly-activity', coach_monthly_activity, name='coach-monthly-activity'),
@@ -179,12 +187,14 @@ urlpatterns = [
     path('coach/timetable/events/action', coach_timetable_event_action, name='coach-timetable-event-action'),
     path('coach/timetable/events/<str:event_key>/reminder', coach_meeting_reminder, name='coach-meeting-reminder'),
     path('coach/timetable/events/<str:event_key>/artifacts', coach_timetable_event_artifacts, name='coach-timetable-event-artifacts'),
+    path('coach/review-attendance/<str:event_key>/links', review_attendance_links, name='coach-review-attendance-links'),
     path('coach/timetable/events/<str:event_key>/artifacts/<str:artifact_type>/<str:artifact_id>/content', coach_timetable_event_artifact_content, name='coach-timetable-event-artifact-content'),
     path('coach/timetable/events/<str:event_key>/summary', coach_timetable_event_summary, name='coach-timetable-event-summary'),
     # Curriculum-driven Review instances: opening a scheduled MCM/Progress
     # Review, saving its answers, signing and completing it -- the question
     # set/signature rules were resolved by Curriculum, not hard-coded here.
     path('coach/reviews/open', coach_review_instance_for_event, name='coach-review-instance-open'),
+    path('coach/reviews/availability', coach_review_availability, name='coach-review-availability'),
     path('coach/reviews/learners/<int:learner_id>/aptem-reconciliation-preview',
          coach_aptem_review_reconciliation_preview, name='coach-aptem-review-reconciliation-preview'),
     # Learner-specific additional Reviews (coach "Create session" -> Review):

@@ -25,8 +25,8 @@ const documents: EmployerDocuments = {
 
 const documentsApi = vi.hoisted(() => ({ fetchDocuments: vi.fn(), fetchReview: vi.fn() }));
 
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { role: 'employer', subjectId: 9, displayName: 'Test Employer' } } }) }));
-vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: { role: 'employer', subjectId: 9, displayName: 'Test Employer' } } }) }));
+vi.mock("@/hooks/useToast", () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
 vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({ SignaturePad: () => <div>Signature pad</div> }));
 vi.mock('@/pages/learner/reviews/LearnerReviewInstanceForm', () => ({ LearnerReviewInstanceForm: () => null }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({

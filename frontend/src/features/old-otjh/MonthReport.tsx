@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { Panel } from '@/components/ui/Panel';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { MonthReportSkeleton } from './RecordSkeletons';
@@ -19,7 +19,7 @@ import design from './design.module.css';
 import journal from './journal.module.css';
 import { RecordBadge } from './RecordDesign';
 import { JournalDownloads } from './JournalDownloads';
-import { useRecordHref } from './recordNavigation';
+import { useRecordHref, useRecordMonitoring } from './recordNavigation';
 
 const btnPrimary = journal.primaryButton;
 const btnSecondary = journal.secondaryButton;
@@ -31,13 +31,14 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
   const location = useLocation();
   const client = useQueryClient();
   const student = auth.account?.role === 'learner';
-  const readOnly = auth.account?.access === 'record-monitor';
+  const monitoring = useRecordMonitoring();
   const [bulkOpen, setBulkOpen] = useState(false);
   const summary = useRecordSummary(aptemId, true);
-  const key = ['old-otjh', auth.account?.id, 'month', aptemId ?? 'me', month];
+  const readOnly = monitoring || Boolean(summary.data?.read_only);
+  const key = ['old-otjh', auth.account?.id, 'month', aptemId ?? 'me', month, monitoring];
   const query = useQuery({ queryKey: key, queryFn: () => getMonth(month, aptemId), refetchInterval: 7000,
     enabled: Boolean(summary.data?.is_legacy && (!summary.data.needs_start || readOnly)) });
-  const live = useQuery({ queryKey: ['old-otjh', auth.account?.id, 'signoffs', aptemId ?? 'me', month],
+  const live = useQuery({ queryKey: ['old-otjh', auth.account?.id, 'signoffs', aptemId ?? 'me', month, monitoring],
     queryFn: () => getSignoffs(summary.data!.learner!.aptem_id, month),
     enabled: Boolean(query.data && summary.data?.learner), refetchInterval: 3000, staleTime: 0 });
   const lastLiveUpdate = useRef(0);
@@ -67,7 +68,7 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
     setConfirming(false); setMessage('This month has been reviewed, signed and completed.'); client.setQueryData(key, data); refresh();
     try {
       const fresh = await getSummary();
-      client.setQueryData(['old-otjh', auth.account?.id, 'summary', 'me'], fresh);
+      client.setQueryData(['old-otjh', auth.account?.id, 'summary', 'me', monitoring], fresh);
       const next = nextOutstanding(fresh, month);
       if (next) navigate(`/old-otjh/months/${next}`, { state: { completedMonth: month } });
     } catch { setMessage('This month is complete. Refresh the month list to check your remaining reviews.'); }
@@ -115,7 +116,7 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
       </div>
     </nav>
     {bulkOpen && <BulkSignDialog summary={summary.data} aptemId={aptemId} onClose={() => setBulkOpen(false)} onSaved={result => {
-      client.setQueryData(['old-otjh', auth.account?.id, 'summary', aptemId ?? 'me'], result.summary);
+      client.setQueryData(['old-otjh', auth.account?.id, 'summary', aptemId ?? 'me', monitoring], result.summary);
       setBulkOpen(false); draftDigest.current = null; setCaptureVersion(value => value + 1);
       setMessage(result.summary.can_access_lms ? 'All months are complete. Your signature is saved and LMS access is open.' : 'Your signature is saved on all months. The learner can now complete their record.');
       refresh();

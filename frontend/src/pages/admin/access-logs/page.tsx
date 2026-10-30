@@ -13,7 +13,8 @@ import { useSearchParams } from 'react-router-dom';
 import { AdminPage, DataPanel, Pager, SourceNote } from '../_shared/AdminPage';
 import { useAdminData } from '../_shared/useAdminData';
 import { fetchAuditLog, type AuditEntry } from '@/api/platformAdmin';
-import { ResendInvitationButton, canResendInvitation } from '../_shared/ResendInvitation';
+import { ResendInvitationButton } from '../_shared/ResendInvitation';
+import { canResendInvitation } from "../_shared/ResendInvitation.helpers";
 
 const PAGE_SIZE = 50;
 

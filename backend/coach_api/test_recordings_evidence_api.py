@@ -206,3 +206,10 @@ class EvidenceApiTests(SimpleTestCase):
         self.assertEqual(api.coaching_saved_evidence_pdf(self.request()).status_code, 503)
         self.assertEqual(api.coaching_saved_evidence_pdf(self.request(kind='attendance')).status_code, 400)
         self.assertEqual(api.coaching_saved_evidence_pdf(self.factory.post('/pdf')).status_code, 405)
+
+    def test_provider_failure_does_not_block_verified_saved_transcript_or_report_pdf(self):
+        self.evidence['transcriptCheck'] = {'state': 'unavailable', 'code': 'microsoft_access_denied'}
+        for params in ({}, {'kind': 'analysis', 'analysisId': 'analysis-1'}):
+            response = api.coaching_saved_evidence_pdf(self.request(**params))
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.content.startswith(b'%PDF-'))

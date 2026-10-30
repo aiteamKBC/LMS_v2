@@ -1,5 +1,6 @@
 import type { WeekTemplate } from '../week-builder/weekTemplateData';
 import { copyComponentToWeek, createEmptyWeek, makeAuthoringId, type ModuleCatalogueItem } from './moduleAuthoringData';
+import { relinkCopiedComponents } from '../shared/entities/liveSessionRecordingLink';
 
 /** Append independent weeks; the normal module save persists the whole batch. */
 export function appendWeekTemplateCopies(module: ModuleCatalogueItem, template: WeekTemplate, count: number): ModuleCatalogueItem {
@@ -14,7 +15,7 @@ export function appendWeekTemplateCopies(module: ModuleCatalogueItem, template: 
       summary: source.summary || '',
       learningOutcomes: source.learningOutcomes || [],
       ksbMappings: (source.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
-      components: (source.components || []).map(component => copyComponentToWeek(component, shell.id, module.id)),
+      components: relinkCopiedComponents(source.components || [], (source.components || []).map(component => copyComponentToWeek(component, shell.id, module.id))),
     };
   });
   return { ...module, weekStructure: [...module.weekStructure, ...weeks] };

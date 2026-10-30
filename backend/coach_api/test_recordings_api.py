@@ -322,7 +322,8 @@ class CoachingRecordingsApiTests(SimpleTestCase):
         response, data = self.get(directoryOnly='1')
         self.assertEqual(response.status_code, 200)
         self.assertEqual([row['email'] for row in data['coaches']], [OWNER])
-        self.assertEqual([row['id'] for row in data['learners']], ['1'])
+        self.assertEqual(data['learners'], [])
+        self.learners.assert_not_called()
         self.assertEqual(data['meetings'], [])
         self.assertEqual(data['coverage'], {'checkedCoachEmails': [], 'totalCoaches': 1, 'nextOffset': 0})
         self.graph.assert_not_called(); self.bookings.assert_not_called(); self.sources.assert_not_called()
@@ -571,6 +572,23 @@ class CoachingRecordingsApiTests(SimpleTestCase):
         self.assertEqual(detail['attendance'], attendance)
         self.assertIsNone(saved.call_args.args[0].learner_id)
         self.graph.assert_not_called()
+
+    def test_published_recording_is_ready_before_scheduled_end_without_changing_calendar_phase(self):
+        self.graph.return_value = [meeting()]
+        self.sources.side_effect = lambda contexts: {api.calendar_key(ctx): source_job(ctx) for ctx in contexts}
+        with patch.object(api, 'datetime', wraps=datetime) as clock:
+            clock.now.return_value = datetime(2026,10,20,9,30,tzinfo=timezone.utc)
+            response, data = self.get()
+        self.assertEqual(response.status_code,200)
+        row = data['meetings'][0]
+        self.assertEqual(row['phase'],'in-progress')
+        self.assertTrue(row['readyToAction'])
+        self.assertEqual(row['media']['readyCount'],1)
+        attendance = {'state':'available','reportCount':1,'rows':[]}
+        with patch.object(api, 'saved_calendar_attendance', return_value=attendance):
+            response=api.coaching_recording_session(self.factory.get('/session',{'reference':row['recordingsReference'],'part':'attendance'}))
+        self.assertEqual(response.status_code,200)
+        self.assertTrue(self.source_details.call_args.kwargs['discover'])
 
     def test_every_category_with_verified_recording_opens_attendance_in_ready_without_booking_or_ai_dependency(self):
         self.graph.return_value = [{**meeting(), 'subject': 'Synthetic calendar appointment', 'attendees': []}]

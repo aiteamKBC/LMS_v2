@@ -58,7 +58,7 @@ import {
   type ModuleCatalogueItem,
   type ModuleComponent,
 } from '../module-builder/moduleAuthoringData';
-import { emailList } from '../module-builder/EmailChipsInput';
+import { emailList } from '../module-builder/EmailChipsInput.helpers';
 import {
   liveSessionMeetingScope,
   liveSessionPlan,
@@ -72,19 +72,8 @@ import {
   normaliseKey,
   resolveModuleContext,
 } from '../shared/entities/model';
-import {
-  buildTeamsCalendarInput,
-  DEFAULT_DURATION_MINUTES,
-  emptyTeamsCalendarForm,
-  minuteKey,
-  minutesBetween,
-  naiveLocalFromUtc,
-  sessionNaiveLocal,
-  teamsCalendarOccurrences,
-  teamsUpdateChanges,
-  type GroupDeliveryPattern,
-  type TeamsCalendarForm,
-} from './createCalendarForm';
+import { type GroupDeliveryPattern, type TeamsCalendarForm } from './createCalendarForm';
+import { buildTeamsCalendarInput, DEFAULT_DURATION_MINUTES, emptyTeamsCalendarForm, minuteKey, minutesBetween, naiveLocalFromUtc, sessionNaiveLocal, teamsCalendarOccurrences, teamsUpdateChanges } from './createCalendarForm.helpers';
 import { useDrawerState } from '../shared/entities/useDrawerState';
 
 
@@ -1917,7 +1906,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       createDrawer.setError('Enter the Microsoft 365 organizer email.');
       return;
     }
-    if (!row.sessions.length) { createDrawer.setError('This module has no stored session dates yet.'); return; }
+    if (!row.sessions.length) { createDrawer.setError('This module has no live-session components yet. Add a Live session to the weeks that should meet.'); return; }
     createDrawer.setSaving(true);
     createDrawer.setError(null);
     try {

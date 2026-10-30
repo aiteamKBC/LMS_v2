@@ -8,7 +8,7 @@ export type SubjectCardSummary = { activityCount: number; completedActivityCount
 export type Subject = { card?: SubjectCardSummary; id: string; title: string; source: 'legacy' | 'current'; moduleId?: string | null; activities: SubjectEntry[]; recordedHistory?: boolean; catalogueProgress?: boolean; catalogueCount?: number; acceptedHours?: number; previousLearningFor?: string; importedCourseRef?: string; replacementCourseRef?: string; archivedActivities?: SubjectEntry[]; aggregateProgress?: number; transferredProgress?: number; transferPending?: boolean; demoProgress?: boolean };
 type BuilderSubject = { id: string; title: string };
 type ActivitySource = { module_id: string; group_id: number; activity_id: number };
-export type CoverMetadata = { covers: Record<string, string>; activity_dates?: Record<string, Schedule>; current_subjects?: BuilderSubject[]; builder_subjects?: Record<string, BuilderSubject>; activity_sources?: Record<string, ActivitySource>; previous_learning_groups?: Record<string, string>; imported_courses?: Record<string, string>; replacement_courses?: Record<string, string>; approved_transfers?: Record<string, string>; module_credits?: Record<string, { progress: number; actualHours: number; transferredProgress?: number; transferPending?: boolean; demoProgress?: boolean }> };
+export type CoverMetadata = { covers: Record<string, string>; activity_dates?: Record<string, Schedule>; current_subjects?: BuilderSubject[]; builder_subjects?: Record<string, BuilderSubject>; activity_sources?: Record<string, ActivitySource>; previous_learning_groups?: Record<string, string>; imported_courses?: Record<string, string>; replacement_courses?: Record<string, string>; approved_transfers?: Record<string, string>; imported_continuations?: Record<string, { courseRef: string; afterDate: string; componentIds: string[] }>; module_credits?: Record<string, { progress: number; actualHours: number; transferredProgress?: number; transferPending?: boolean; demoProgress?: boolean }> };
 export type UnifiedLearningSummary = {
   subjects: Subject[];
   subjectCount: number;
@@ -95,10 +95,13 @@ export function subjectsFrom(data: LearningSummaryActivity | null, real: Learnin
   // module and count as completed work there.
   const planEntries = [...(real?.components || []), ...(real?.retiredQuizComponents || [])];
   for (const [index, item] of planEntries.entries()) {
-    const key = item.moduleId ? `current:${item.moduleId}` : `unlinked:${item.module}`;
+    let key = item.moduleId ? `current:${item.moduleId}` : `unlinked:${item.module}`;
     if (replaced.has(key)) {
       replacedTitles.add((item.module || '').trim().toLowerCase());
-      continue;
+      const extension = metadata?.imported_continuations?.[key];
+      if (!extension || importedCourses[key] !== extension.courseRef || !item.componentId
+        || !extension.componentIds.includes(item.componentId)) continue;
+      key = extension.courseRef;
     }
     const subject = subjects.get(key) || { id: key, title: item.module || 'Unnamed subject', source: 'current' as const, activities: [],
       ...(importedCourses[key] ? { importedCourseRef: importedCourses[key] } : {}) };

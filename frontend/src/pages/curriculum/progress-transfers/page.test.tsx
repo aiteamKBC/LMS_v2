@@ -5,7 +5,7 @@ import * as api from '@/api/progressTransfer';
 import ProgressTransfersPage, { TransferRequests } from './page';
 
 const auth = vi.hoisted(() => ({ role: 'admin' }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: auth } }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: auth } }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
 vi.mock('@/api/progressTransfer', () => ({ getTransferRequests: vi.fn(), getTransferReview: vi.fn(), approveTransferRequest: vi.fn() }));
 const request: api.AdminTransfer = { requestId: 'R1', learnerId: '7', learnerKind: 'commercial', learnerName: 'Synthetic learner', programme: 'Programme',
@@ -20,6 +20,70 @@ function openChoices(choices: ReturnType<typeof within>) {
 }
 
 describe('admin progress transfers', () => {
+  it('shows different-type recommendations without selecting or counting them until the admin chooses', async () => {
+    vi.mocked(api.getTransferRequests).mockResolvedValue({ requests: [request], nextOffset: null, csrfToken: 'csrf' });
+    vi.mocked(api.getTransferReview).mockResolvedValue({ reviewToken: 'review', csrfToken: 'csrf', modules: [{
+      moduleId: 'M1', courseRef: 'legacy:50', title: 'New module', completedTargetIds: ['NATIVE'],
+      sources: [{ sourceActivityRef: 'material:7', title: 'Narrated walkthrough', type: 'video', week: 'Week 1', automaticTargetId: null, recommendedTargetId: 'REC' }],
+      targets: [
+        { componentId: 'REC', title: 'W00 - Narrated walkthrough', type: 'reading', week: 'Week 2', plannedHours: 1 },
+        { componentId: 'NATIVE', title: 'Existing reading', type: 'reading', week: 'Week 2', plannedHours: 1 },
+      ],
+    }] });
+    render(<MemoryRouter><TransferRequests /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Review transfer' }));
+    const choices = within(await screen.findByRole('group', { name: 'Match Narrated walkthrough (material:7) in New module' }));
+    expect(screen.getByText('Recommended: W00 - Narrated walkthrough')).toBeVisible();
+    expect(screen.getByText(/Old LMS: video; new LMS: reading/)).toBeVisible();
+    const counts = within(screen.getByRole('region', { name: 'Component counts for New module' }));
+    expect(counts.getByText('Matched from old LMS').parentElement).toHaveTextContent('0');
+    expect(counts.getByText('Completed components').parentElement).toHaveTextContent('1');
+    const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm' });
+    expect(confirm).toBeDisabled();
+    openChoices(choices);
+    fireEvent.click(choices.getByRole('button', { name: /^Week 2/ }));
+    expect(choices.getByText('Recommended')).toBeVisible();
+    const option = choices.getByRole('radio', { name: /W00 - Narrated walkthrough/ });
+    expect(option).not.toBeChecked();
+    expect(choices.queryByRole('radio', { name: /Existing reading/ })).not.toBeInTheDocument();
+    fireEvent.click(option);
+    expect(confirm).toBeEnabled();
+    expect(counts.getByText('Matched from old LMS').parentElement).toHaveTextContent('1');
+    expect(screen.getByText('Manual selection')).toBeInTheDocument();
+    expect(api.approveTransferRequest).not.toHaveBeenCalled();
+    fireEvent.click(choices.getByRole('button', { name: 'Clear match' }));
+    expect(confirm).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Reload component matches' }));
+    await waitFor(() => expect(api.getTransferReview).toHaveBeenCalledTimes(2));
+    expect(confirm).toBeDisabled();
+    expect(counts.getByText('Matched from old LMS').parentElement).toHaveTextContent('0');
+  });
+  it('restores request-local matches as editable selections without approving or awarding progress', async () => {
+    vi.mocked(api.getTransferRequests).mockResolvedValue({ requests: [request], nextOffset: null, csrfToken: 'csrf' });
+    vi.mocked(api.getTransferReview).mockResolvedValue({ reviewToken: 'review', csrfToken: 'csrf', modules: [{
+      moduleId: 'M1', courseRef: 'legacy:50', title: 'New module', completedTargetIds: ['NATIVE'],
+      sources: [{ sourceActivityRef: 'material:7', title: 'Old video title', type: 'video', week: 'Week 1', automaticTargetId: null, savedTargetId: 'SAVED' }],
+      targets: [
+        { componentId: 'SAVED', title: 'P1-VID', type: 'video', week: 'Week 2', plannedHours: 1 },
+        { componentId: 'NATIVE', title: 'Already completed video', type: 'video', week: 'Week 2', plannedHours: 1 },
+      ],
+    }] });
+    render(<MemoryRouter><TransferRequests /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Review transfer' }));
+    const choices = within(await screen.findByRole('group', { name: 'Match Old video title (material:7) in New module' }));
+    expect(choices.getByRole('button', { name: 'Choose component' })).toHaveTextContent('P1-VID');
+    expect(screen.getByText('Saved match — review', { selector: 'span' })).toBeVisible();
+    const counts = within(screen.getByRole('region', { name: 'Component counts for New module' }));
+    expect(counts.getByText('Completed components').parentElement).toHaveTextContent('2');
+    const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm' });
+    expect(confirm).toBeEnabled();
+    fireEvent.click(choices.getByRole('button', { name: 'Clear match' }));
+    expect(confirm).toBeDisabled();
+    expect(counts.getByText('Completed components').parentElement).toHaveTextContent('1');
+    fireEvent.click(screen.getByRole('button', { name: 'Reload component matches' }));
+    await waitFor(() => expect(confirm).toBeEnabled());
+    expect(api.approveTransferRequest).not.toHaveBeenCalled();
+  });
   it('shows one old week at a time, supports keyboard and mobile selection, and keeps modules independent', async () => {
     vi.mocked(api.getTransferRequests).mockResolvedValue({ requests: [request], nextOffset: null, csrfToken: 'csrf' });
     vi.mocked(api.getTransferReview).mockResolvedValue({ reviewToken: 'review', csrfToken: 'csrf', modules: [{
@@ -156,11 +220,13 @@ describe('admin progress transfers', () => {
     expect(matched.getByText(title)).toBeVisible();
     expect(matched.getByText('Project fundamentals & value delivery')).toBeVisible();
     expect(matched.getByText('Matched by name — review')).toBeVisible();
-    expect(screen.getByText(/Name matches are already selected for transfer/)).toBeVisible();
+    expect(screen.getByText(/Saved matches and name matches are already selected for transfer/)).toBeVisible();
     const counts = within(screen.getByRole('region', { name: 'Component counts for New module' }));
     expect(counts.getByText('Total components').parentElement).toHaveTextContent('4');
     expect(counts.getByText('Completed components').parentElement).toHaveTextContent('2');
     expect(counts.getByText('Remaining components').parentElement).toHaveTextContent('2');
+    expect(counts.getByText('Progress after merge (preview): 50%')).toBeVisible();
+    expect(screen.getByRole('columnheader', { name: 'Old LMS progress' })).toBeVisible();
     expect(screen.getByText(/their group membership does not change/)).toBeVisible();
     expect(screen.getByText('Old LMS course: 50')).toBeVisible();
     expect(screen.getByText('New LMS module: M1')).toBeVisible();
@@ -202,13 +268,13 @@ describe('admin progress transfers', () => {
     await waitFor(() => expect(api.approveTransferRequest).toHaveBeenCalledExactlyOnceWith('R1', 'csrf', {
       reviewToken: 'review', mappings: [{ moduleId: 'M1', sourceActivityRef: 'material:7', targetComponentId: 'MATCH' }],
     }));
-    expect(await screen.findByText(/Transfer approved. The learner/)).toBeVisible();
+    expect(await screen.findByText(/Progress merged successfully/)).toBeVisible();
     await waitFor(() => expect(api.getTransferRequests).toHaveBeenCalledTimes(2));
   });
 
   it('shows saved counts for approved transfers and leaves older unknown counts explicit', async () => {
     const approved: api.AdminTransfer = { ...request, status: 'approved', approvedAt: '2026-10-27T10:00:00Z', modules: [
-      { ...request.modules[0], componentCounts: { total: 12, matched: 3, completed: 5, remaining: 7 } },
+      { ...request.modules[0], mergedPercent: 41.67, componentCounts: { total: 12, matched: 3, completed: 5, remaining: 7 } },
       { ...request.modules[0], moduleId: 'M2', courseRef: 'legacy:51', newTitle: 'Earlier module' },
     ] };
     vi.mocked(api.getTransferRequests).mockResolvedValue({ requests: [approved], nextOffset: null, csrfToken: 'csrf' });
@@ -219,6 +285,7 @@ describe('admin progress transfers', () => {
     expect(counts.getByText('Matched from old LMS').parentElement).toHaveTextContent('3');
     expect(counts.getByText('Completed components').parentElement).toHaveTextContent('5');
     expect(counts.getByText('Remaining components').parentElement).toHaveTextContent('7');
+    expect(counts.getByText('Progress at merge: 41.67%')).toBeVisible();
     expect(counts.getByText(/Recorded when this transfer was approved/)).toBeVisible();
     expect(screen.getByText('Component counts were not recorded for this earlier transfer.')).toBeVisible();
     expect(api.getTransferReview).not.toHaveBeenCalled();
@@ -301,11 +368,26 @@ describe('admin progress transfers', () => {
     expect(dialog.getByText('40%')).toBeVisible();
     await waitFor(() => expect(dialog.getByRole('button', { name: 'Confirm' })).toBeEnabled());
     fireEvent.click(dialog.getByRole('button', { name: 'Confirm' }));
-    expect(await screen.findByText(/Transfer approved. The learner/)).toBeVisible();
+    expect(await screen.findByText(/Progress merged successfully/)).toBeVisible();
     await waitFor(() => expect(within(screen.getByRole('table', { name: 'Approved requests' })).getByText('Synthetic learner')).toBeVisible());
     expect(pending.queryByText('Synthetic learner')).not.toBeInTheDocument();
     expect(screen.getByText('No pending requests')).toBeVisible();
     expect(api.approveTransferRequest).toHaveBeenCalledExactlyOnceWith('R1', 'csrf', { reviewToken: 'review', mappings: [] });
+  });
+
+  it('does not announce a merge while approval is pending or returns an unapproved request', async () => {
+    vi.mocked(api.getTransferRequests).mockResolvedValue({ requests: [request], nextOffset: null, csrfToken: 'csrf' });
+    let finish!: (value: api.ProgressTransferRequest) => void;
+    vi.mocked(api.approveTransferRequest).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    render(<MemoryRouter><TransferRequests /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Review transfer' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(screen.queryByText(/Progress merged successfully/)).not.toBeInTheDocument();
+    finish(request);
+    expect(await screen.findByRole('alert')).toHaveTextContent('The merge was not confirmed');
+    expect(screen.queryByText(/Progress merged successfully/)).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeVisible();
   });
 
   it('keeps the request pending on approval failure', async () => {
@@ -317,7 +399,7 @@ describe('admin progress transfers', () => {
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Mapping changed.');
     expect(screen.getByText('Pending approval')).toBeVisible();
-    expect(screen.queryByText(/Transfer approved/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Progress merged successfully/)).not.toBeInTheDocument();
   });
 
   it('separates pending and approved requests and opens approved details without a Confirm action', async () => {
@@ -340,7 +422,7 @@ describe('admin progress transfers', () => {
     const dialog = within(screen.getByRole('dialog'));
     expect(dialog.getByText('Second original')).toBeVisible();
     expect(within(dialog.getByRole('table', { name: 'Module transfer details' })).getByText('Second current')).toBeVisible();
-    expect(dialog.getByText(/percentages and hours saved at the time of transfer/)).toBeVisible();
+    expect(dialog.getByText(/old LMS percentage and hours saved before the merge/)).toBeVisible();
     expect(dialog.queryByRole('button', { name: 'Confirm' })).not.toBeInTheDocument();
     fireEvent.click(dialog.getByText('Close', { selector: 'button' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();

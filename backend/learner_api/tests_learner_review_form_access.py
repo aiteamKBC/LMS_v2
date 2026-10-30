@@ -47,6 +47,8 @@ LEARNER_MIRROR_ID = 248
 class LearnerReviewFormAccessTestCase(LearnerReviewPageTestCase):
     """Shared fixtures for both learner Review pages. No tests of its own."""
 
+    databases = {'default', 'enrolment'}
+
     def _authored_template(self, *, name, review_type_id, interval=4, unit='weeks'):
         """A Review the way Curriculum authors one: named, classified, and
         carrying real sections and fields."""
@@ -133,6 +135,12 @@ class LearnerReviewSigningTests(LearnerReviewFormAccessTestCase):
         )
         record = self._schedule(self._occurrence('mcr'), template)
         instance = review_instances.get_review_instance(record.review_instance_id)
+        # These cases exercise signing an already held meeting. Attendance
+        # transitions are covered separately by the lifecycle state-machine suite.
+        review_instances.force_review_instance_status_for_tests(
+            instance['id'], review_instances.STATUS_IN_PROGRESS, actor='test-fixture',
+        )
+        instance = review_instances.get_review_instance(instance['id'])
         definition = review_instances.review_instance_form_definition(instance)
         fields = definition['sections'][0]['fields']
         review_instances.save_review_instance_answers(instance, {

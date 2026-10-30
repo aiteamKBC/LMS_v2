@@ -65,7 +65,8 @@ export interface HistoricalAssignmentContent {
 export interface StoredLearningReflectionSubmission extends LearningReflectionSubmissionInput {
   submissionAttempts?: SubmissionAttempt[];
   /** Server-owned provenance; learners cannot request the import exemption. */
-  submissionOrigin?: 'learner' | 'imported_legacy' | 'classified_legacy';
+  submissionOrigin?: 'learner' | 'imported_legacy' | 'classified_legacy' | 'coach';
+  coachCreation?: { name: string; addedAt: string; approvedAt: string; role: string };
   legacyAssignment?: {
     content?: HistoricalAssignmentContent;
     aptemLearnerId: number;
@@ -117,11 +118,11 @@ export async function loadLearningReflectionSubmission(input: {
   activityId: string;
   attempt?: string;
   assignmentTopicId?: string;
-}): Promise<StoredLearningReflectionSubmission | null> {
+}, options?: { revalidate?: boolean }): Promise<StoredLearningReflectionSubmission | null> {
   const params = new URLSearchParams(input);
   const data = await readLearnerJson<{ submission?: StoredLearningReflectionSubmission | null }>(
     `/learner_api/reflection/submissions/?${params.toString()}`,
-    input.attempt === undefined ? undefined : { revalidate: true },
+    input.attempt === undefined ? options : { ...options, revalidate: true },
   );
   return data.submission || null;
 }

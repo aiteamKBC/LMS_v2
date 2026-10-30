@@ -7,7 +7,7 @@ import { CoachSidebar } from './CoachSidebar';
 import { Header } from './Header';
 import { AppIcon } from './AppIcon';
 import { GlobalSearch } from './GlobalSearch';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { isOwnLearnerRecord } from '@/api/auth';
 import { useLearnerNavGate } from '@/hooks/useLearnerNavGate';
 import { getRememberedLearner } from '@/hooks/useMyLearner';

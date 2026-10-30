@@ -1,3 +1,4 @@
+import { fileProbe } from './page.helpers';
 import { archiveTimingDraft, timingSessionExpired } from '@/lib/timingRecovery';
 import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
 import { ManualTimeSummary } from '@/components/feature/ManualTimeConfirmation';
@@ -30,7 +31,8 @@ import {
   type JourneyComponent,
 } from '@/utils/learnerJourney';
 import { fetchEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
-import { ReflectionWindow, formatClock, formatRecordedClock } from '@/components/feature/ReflectionWindow';
+import { ReflectionWindow } from '@/components/feature/ReflectionWindow';
+import { formatClock, formatRecordedClock } from '@/components/feature/ReflectionWindow.helpers';
 import { ReflectionChoicePopup } from '@/components/feature/ReflectionChoicePopup';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
@@ -156,6 +158,8 @@ function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange:
     { key: 'hours', label: 'Hours', ariaLabel: 'Hours spent' },
     { key: 'minutes', label: 'Minutes', ariaLabel: 'Minutes spent' },
   ];
+  const helpId = useId();
+  const [selectedHours, selectedMinutes, selectedRemainder] = formatClock(initialSeconds ?? 0).split(':').map(Number);
 
   return (
     <div
@@ -173,6 +177,7 @@ function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange:
       <div className={manualTimeStyles.fields}>
         {fields.map((field) => (
           <label key={field.key} className={manualTimeStyles.field}>
+            <span className={manualTimeStyles.label}>{field.label}</span>
             <input
               type="text"
               inputMode="numeric"
@@ -187,14 +192,18 @@ function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange:
                   onChange(null);
                 }
               }}
-              placeholder="00"
+              placeholder={field.key === 'hours' ? '0' : '30'}
               aria-label={field.ariaLabel}
+              aria-describedby={helpId}
               className={manualTimeStyles.input}
             />
-            <span className={manualTimeStyles.label}>{field.label}</span>
           </label>
         ))}
       </div>
+      <p id={helpId} className={manualTimeStyles.hint}>For 30 minutes: enter 0 in Hours and 30 in Minutes.</p>
+      <p className={manualTimeStyles.summary} aria-live="polite" aria-atomic="true">
+        {initialSeconds !== null && `Selected time: ${selectedHours} ${selectedHours === 1 ? 'hour' : 'hours'} and ${selectedMinutes} ${selectedMinutes === 1 ? 'minute' : 'minutes'}${selectedRemainder > 0 ? ` and ${selectedRemainder} ${selectedRemainder === 1 ? 'second' : 'seconds'}` : ''}.`}
+      </p>
     </div>
   );
 }
@@ -230,7 +239,7 @@ function nextActivityRoute(detail: LearnerDetail | null, currentComponentId: str
 export default function ComponentViewPage() {
   const { kind, id, componentId } = useParams<{ kind: string; id: string; componentId: string }>();
   const timerStorageKey = activityTimerStorageKey(kind, id, componentId);
-  const [readyContent, setReadyContent] = useState<string | null>(null);
+  const [readyContent, setReadyContent] = useState<{ key: string } | null>(null);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   useEffect(() => { rememberLearner(kind, id); }, [kind, id]);
@@ -245,6 +254,7 @@ export default function ComponentViewPage() {
   const [detail, setDetail] = useState<LearnerDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadRevision, setLoadRevision] = useState(0);
 
   const [phase, setPhase] = useState<Phase>('consume');
   // Real playback state (video only), driven by the player.
@@ -338,7 +348,7 @@ export default function ComponentViewPage() {
       .catch((e) => { if (!cancelled) setLoadError(e instanceof Error ? e.message : 'Could not load component'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [kind, id, componentId]);
+  }, [kind, id, componentId, loadRevision]);
 
   // Keep completion state derived from the same progress records used by the
   // learner journey. This is also needed by the sidebar's done counts.
@@ -355,8 +365,14 @@ export default function ComponentViewPage() {
   const component = ctx?.component ?? null;
   const recordedEvent = Boolean(component?.recordingSeriesId && component.recordingSessionNumber && component.recordingDate);
   const contentReadyKey = `${timerStorageKey}:${component?.resourceUrl || ''}`;
-  const onContentReady = useCallback(() => setReadyContent(contentReadyKey), [contentReadyKey]);
-  useEffect(() => () => setReadyContent(null), [contentReadyKey]);
+  // A cached preview can load before passive cleanup runs. Give each visit a
+  // fresh identity instead of clearing an already received readiness event.
+  const previewInstance = useMemo(() => ({ key: contentReadyKey }), [contentReadyKey]);
+  const currentPreview = useRef(previewInstance);
+  currentPreview.current = previewInstance;
+  const onContentReady = useCallback(() => {
+    if (currentPreview.current === previewInstance) setReadyContent(previewInstance);
+  }, [previewInstance]);
   // Where this activity stands with the coach. Only meaningful for an activity
   // the author sent for validation: everything else is finished when the
   // learner completes it. Without this the page said "Ready to complete" on
@@ -668,7 +684,7 @@ export default function ComponentViewPage() {
     const activeMedia = isVideo || isAudio;
     if (phase !== 'consume' || !recordingAttempt || !canUseComponent || expiredTiming) return;
     // Downloading/parsing a document is not study time; wait for its first page.
-    if (waitsForPreview && (loading || loadError || !openable || readyContent !== contentReadyKey)) return;
+    if (waitsForPreview && (loading || loadError || !openable || readyContent !== previewInstance)) return;
     if (activeMedia ? !playerPlaying : (!unsupported && !playerPlaying)) return;
     const clock = startActivityClock({
       onInterval: (start,end) => {
@@ -688,7 +704,7 @@ export default function ComponentViewPage() {
     });
     timerRef.current = clock;
     return () => clock.stop();
-  }, [phase, recordingAttempt, canUseComponent, unsupported, playerPlaying, isVideo, isAudio, timerStorageKey, contentKind, loading, loadError, openable, waitsForPreview, readyContent, contentReadyKey, expiredTiming]);
+  }, [phase, recordingAttempt, canUseComponent, unsupported, playerPlaying, isVideo, isAudio, timerStorageKey, contentKind, loading, loadError, openable, waitsForPreview, readyContent, previewInstance, expiredTiming]);
 
   const finishConsuming = () => {
     if (!recordingAttempt) return;
@@ -889,7 +905,13 @@ export default function ComponentViewPage() {
         {loading ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} avatar={false} /></div>
         ) : loadError ? (
-          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text={loadError} /></div>
+          <div role="alert" className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6">
+            <EmptyState text={loadError} />
+            <button type="button" onClick={() => setLoadRevision(value => value + 1)}
+              className="mt-4 rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white">
+              Try again
+            </button>
+          </div>
         ) : !component ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Component not found in this learner's plan." /></div>
         ) : !canProgress ? (
@@ -967,7 +989,7 @@ export default function ComponentViewPage() {
                 component.teamsSessionNumber ? <SessionResults
                   seriesId={component.teamsLiveSessionId}
                   sessionNumber={component.teamsSessionNumber}
-                  recordingDate={component.recordingDate}
+                  recordingDate={component.recordingDate || component.sessionDate}
                   learner={{ kind: kind as LearnerKind, id: id || '' }}
                   attendanceType={detail?.attendanceType}
                   onRecordingWatchTimeChange={setRecordingWatchSeconds}
@@ -1486,7 +1508,7 @@ function CompletionConfirmPopup({
           >
             <span className="inline-flex items-center gap-2 text-sm font-semibold">
               <AppIcon className="ri-edit-2-line" />
-              Input
+              Input (hours / minutes)
             </span>
             <span className="font-mono text-sm font-bold tabular-nums">{inputLabel || '--:--:--'}</span>
           </button>
@@ -1575,12 +1597,7 @@ function directAudioSource(url: string, fileName?: string | null): string | null
   return null;
 }
 
-export function fileProbe(url: string, fileName?: string | null): string {
-  const named = fileName?.trim().split(/[?#]/)[0];
-  // Protected file endpoints have no extension in their path. Use the known
-  // filename instead of appending the URL and hiding its extension.
-  return named && /\.[a-z0-9]{1,8}$/i.test(named) ? named : url.split(/[?#]/)[0];
-}
+
 
 function fileLabelFrom(url: string, fileName?: string | null): string {
   if (fileName) return decodeInlineText(fileName);
@@ -2247,6 +2264,8 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
   const onAnnotationsDirty = readingTools?.onDirty;
   const pdfReaderId = useId();
   const [textView, setTextView] = useState(false);
+  const ocrDocument = useMemo(() => ({ pdf, pages: new Map<number, string>() }), [pdf]);
+  const ocrText = ocrDocument.pages;
   const preferences = readingPreferences || DEFAULT_READING_PREFERENCES;
 
   const persistHighlights = useCallback(() => {
@@ -2275,11 +2294,14 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
     const blocks = narrationFromPdf(content.items);
+    if (!blocks.length && ocrText.has(pageNumber)) {
+      return [{ text: ocrText.get(pageNumber)!, pauseMs: 650 }];
+    }
     if (!blocks.length) {
-      throw new ReadingNarrationError('No readable text was found on the open PDF page. Scanned pages need a text version to be read aloud.');
+      throw new ReadingNarrationError('No readable text was found on the open PDF page. Open Text reading view and choose Extract page text, then try Read aloud again.');
     }
     return blocks;
-  }, [pageNumber, pdf, status]);
+  }, [pageNumber, pdf, status, ocrText]);
 
   useEffect(() => {
     registerPdfReader?.(pdfReaderId, currentPageNarration);
@@ -2554,7 +2576,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
       {textView && <p className="border-b border-background-200 bg-white px-4 py-2 text-xs text-foreground-600">Use the reading tools above to adjust and highlight this page. Save changes keeps text highlights on this device. Original PDF preserves the page layout, images and marker annotations.</p>}
       {exportError && <p role="alert" className="p-3 text-sm text-red-700">{exportError}</p>}
       {narration.speechError && <p role="alert" className="p-3 text-sm text-red-700">{narration.speechError}</p>}
-      {readingPreferences && pdf && <PdfReadingText pdf={pdf} pageNumber={pageNumber} active={textView}
+      {readingPreferences && pdf && <PdfReadingText pdf={pdf} pageNumber={pageNumber} active={textView} ocrText={ocrText}
         storageKey={readingStorageKey(`${annotationKey || url}:${url}`, 'pdf-text-highlights')} preferences={preferences} />}
       <div hidden={textView}>
       <ReadingSurface

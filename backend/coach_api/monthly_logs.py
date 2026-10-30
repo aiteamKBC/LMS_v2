@@ -6,7 +6,7 @@ from django.middleware.csrf import get_token
 from django.utils import timezone
 
 from learner_api import canonical_learning as canonical
-from learner_api.canonical_hours import extra_activity_hour_records
+from learner_api.canonical_hours import pending_hour_records
 from learner_api import monthly_logs as logs
 from old_otjh.repository import query
 from old_otjh.service import ServiceError, coach_actor, normalize
@@ -38,22 +38,24 @@ def initials(name):
 
 def project_year(learner, year):
     owner = learner['_canonical_profile']
-    # The authoritative allocation is the progress row's own month/seconds.
+    # Stored allocations remain authoritative. Supplement empty direct saves
+    # with the same read projection as the learner and Case File totals.
     # Group all months once: the two summary cards remain programme-wide.
     activities = query('''SELECT reporting_month AS month,count(*) AS activities,
         coalesce(sum(greatest(coalesce(actual_seconds,0),0))
           FILTER (WHERE accepted IS TRUE),0) / 3600.0 AS accepted_hours
         FROM "Learner".learner_progress_entries
         WHERE learner_id=%s AND deleted_at IS NULL GROUP BY reporting_month''', [owner['id']])
-    # Extras have no planned component/progress save. Review controls their
-    # actual contribution, independently of any assignment in the same month.
     by_month = {row['month']: dict(row) for row in activities}
-    for extra in extra_activity_hour_records([owner])[owner['id']]:
-        month = extra['reporting_month']
+    for record in pending_hour_records([owner])[owner['id']]:
+        month = record.get('reporting_month')
         row = by_month.setdefault(month, {'month': month, 'activities': 0, 'accepted_hours': 0})
-        row['activities'] += 1
-        if extra['accepted']:
-            row['accepted_hours'] = float(row['accepted_hours']) + canonical.recorded_seconds(extra) / 3600
+        # Native saves are already counted by SQL; standalone extras have no
+        # progress row and contribute one activity, including pending review.
+        if record.get('actual_basis') == 'extra_activity_input':
+            row['activities'] += 1
+        if record.get('accepted') is True:
+            row['accepted_hours'] = float(row['accepted_hours']) + canonical.recorded_seconds(record) / 3600
     activities = list(by_month.values())
     targets = canonical.targets_for(owner)
     signs = query('''SELECT report_month AS month,

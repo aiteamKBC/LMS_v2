@@ -400,6 +400,10 @@ class KbcHistoryTests(unittest.TestCase):
             lambda value: value, date(2026, 10, 14), lecture_titles={1: 'Pricing strategy workshop'},
         )
         self.assertEqual(titled['301'][0]['lectureName'], 'Pricing strategy workshop')
+        shared = policy.build_live_records(
+            [{**rows[0], 'module_title': 'Shared module'}], occurrences,
+            {'s': 'Source module'}, {10: '301'}, lambda value: value, date(2026, 10, 14))
+        self.assertEqual(shared['301'][0]['moduleName'], 'Shared module')
         self.assertEqual(policy.build_live_records(
             rows, occurrences, {}, {10: '301'}, lambda value: value, date(2026, 10, 14), kbc_id='999',
         ), {})

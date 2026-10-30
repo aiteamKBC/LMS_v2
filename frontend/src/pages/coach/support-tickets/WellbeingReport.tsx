@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { coachViewAs } from '@/lib/coachViewAs';
 import { cn } from '@/lib/cn';
 import { formatSystemTimestamp } from '@/lib/format';

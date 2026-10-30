@@ -19,7 +19,8 @@ import {
   WORKSPACE_EDIT_PARAM,
 } from '../shared/entities/model';
 import { GroupFormDrawer } from '../shared/entities/forms';
-import { ModuleFormDrawer, moduleFormTarget, type ModuleFormTarget } from '../shared/entities/moduleForm';
+import { ModuleFormDrawer, type ModuleFormTarget } from '../shared/entities/moduleForm';
+import { moduleFormTarget } from '../shared/entities/moduleForm.helpers';
 import { archiveModuleWithConfirm } from '../shared/entities/archive';
 import { ScopeAchievementPanel } from '../shared/entities/scopeAchievement';
 import {

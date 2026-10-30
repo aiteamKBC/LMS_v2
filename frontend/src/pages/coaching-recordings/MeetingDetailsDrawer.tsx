@@ -63,19 +63,20 @@ export default function MeetingDetailsDrawer({ meeting, reference, timeZone, now
         <dl className="grid grid-cols-2 gap-x-5 gap-y-5 text-sm">
           {[['Date', formatFullDate(meetingDate(meeting.startsAt, timeZone))], ['Time', `${clock(meeting.startsAt)}–${clock(meeting.endsAt)} (${timeZone})${meetingDate(meeting.endsAt, timeZone) !== meetingDate(meeting.startsAt, timeZone) ? ` · Ends ${formatFullDate(meetingDate(meeting.endsAt, timeZone))}` : ''}`],
             ['Coach', coachName], ['Meeting type', categoryLabels[meetingCategory(meeting)]],
-            ['Learners', learnerNames.join(', ') || 'No learner linked'], ['Status', phase === 'ended' ? 'Ended' : phase === 'upcoming' ? 'Upcoming' : phase === 'cancelled' ? 'Cancelled' : 'In progress']].map(([label, value]) =>
+            ['Learners', learnerNames.join(', ') || 'No learner linked'], ['Calendar status', phase === 'ended' ? 'Ended' : phase === 'upcoming' ? 'Upcoming' : phase === 'cancelled' ? 'Cancelled' : 'Within scheduled time']].map(([label, value]) =>
             <div key={label} className="min-w-0"><dt className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">{label}</dt><dd className="mt-1 break-words font-medium text-foreground-800">{value}</dd></div>)}
         </dl>
+        <p className="mt-3 text-xs text-foreground-500">Calendar status follows scheduled times and does not confirm whether the call is still live. Published evidence is shown independently.</p>
         {qualityEnabled && <><button type="button" onClick={() => { setReviewId(undefined); setQualityOpen(true); }}
           className="mt-5 w-full rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-left text-sm font-semibold text-primary-800 hover:bg-primary-100">Quality Check<span className="mt-1 block text-xs font-normal">Choose a feedback form and complete a review for one learner</span></button>
           <MeetingQualityChecks meetingId={meeting.meetingId} refresh={qualityRefresh} onOpen={id => { setReviewId(id); setQualityOpen(true); }} onPreviewChange={setReportOpen} />
         </>}
         {meeting.match !== 'matched' && <details className="mt-5 rounded-lg border border-background-200 bg-background-50 p-3 text-xs text-foreground-600"><summary className="cursor-pointer font-semibold">LMS booking link: {meeting.match === 'external' ? 'not linked' : 'needs review'}</summary><p className="mt-2 leading-5">This Microsoft calendar meeting is not linked to one confirmed LMS booking. This is a booking comparison notice; recordings, attendance and transcripts are checked separately using the verified meeting identity.</p></details>}
         {Boolean(meeting.cancellationSources?.length) && <p className="mt-3 rounded-lg bg-rose-50 p-3 text-xs text-rose-900">Cancellation source: {meeting.cancellationSources!.map(source => source === 'lms' ? 'LMS' : 'Microsoft').join(' + ')}{phase !== 'cancelled' ? ' · Microsoft still shows an active meeting; needs review.' : ''}</p>}
-        {canReview && (phase === 'ended' || phase === 'cancelled') ? <SessionDetails eventKey={reference ? '' : meeting.eventKey!} reference={reference} category={meetingCategory(meeting)} timeZone={timeZone}
+        {canReview && phase !== 'upcoming' ? <SessionDetails eventKey={reference ? '' : meeting.eventKey!} reference={reference} category={meetingCategory(meeting)} timeZone={timeZone}
           activeTab={activeTab} onTabChange={onTabChange}
           analysisEventKey={meeting.eventKey || undefined} analysisContext={phase === 'ended' ? meeting.analysisContext : undefined} onPreviewChange={setReportOpen} />
-          : <p className="mt-6 rounded-lg bg-primary-50 p-4 text-sm text-primary-800">{phase === 'upcoming' || phase === 'in-progress' ? 'Recordings and attendance can be checked after this meeting ends.' : 'A verified recording or attendance source is not available for this meeting yet.'}</p>}
+          : <p className="mt-6 rounded-lg bg-primary-50 p-4 text-sm text-primary-800">{phase === 'upcoming' ? 'Recording and attendance checks start once the scheduled meeting begins. Published evidence can then be viewed before its scheduled end.' : 'A verified recording or attendance source is not available for this meeting yet.'}</p>}
       </div>
     </aside>
     {qualityOpen && <Suspense fallback={<div role="status" className="fixed inset-0 z-[90] flex items-center justify-center bg-white/95 text-sm">Loading the quality form…</div>}>

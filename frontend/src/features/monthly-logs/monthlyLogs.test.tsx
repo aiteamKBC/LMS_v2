@@ -9,18 +9,18 @@ vi.mock('@/features/coach/monthly-logs/api/monthlyLogsApi', async importOriginal
   ...await importOriginal<typeof import('@/features/coach/monthly-logs/api/monthlyLogsApi')>(),
   getCoachMonthlyLogLearners: vi.fn(), getCoachLogYear: vi.fn(), getCoachLogDetail: vi.fn(),
 }));
-import { completeLogMonth, getLogContent, getLogLearners, getLogMonth, getLogSummary, signLogMonth, type LogDetail, type LogSummary } from './api';
+import { completeLogMonth, correctLogManualTime, getLogContent, getLogLearners, getLogMonth, getLogSummary, signLogMonth, type LogDetail, type LogSummary } from './api';
 import { learnerNavItems, coachNavItems } from '@/mocks/navigation';
 import { rememberLearner } from '@/hooks/useMyLearner';
 
 const account = { id: 1, role: 'learner', subjectId: 7, displayName: 'Example learner', access: 'learner' };
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account } }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account } }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children, role }: { children: ReactNode; role: string }) => <div data-testid="workspace" data-role={role}>{children}</div> }));
 vi.mock('@/features/old-otjh/JournalDownloads', () => ({ JournalDownloads: () => <button>Download PDF</button> }));
 vi.mock('@/features/old-otjh/SignatureCapture', () => ({ SignatureCapture: ({ dialogRole, onDraftStart, onSave }: {
   dialogRole: string; onDraftStart: () => void; onSave: (blob: Blob, capture: 'draw') => void;
 }) => <button onClick={() => { onDraftStart(); onSave(new Blob(['signature']), 'draw'); }}>Sign as {dialogRole}</button> }));
-vi.mock('./api', () => ({ completeLogMonth: vi.fn(), getLogContent: vi.fn(), getLogLearners: vi.fn(), getLogMonth: vi.fn(), getLogSummary: vi.fn(), signLogMonth: vi.fn() }));
+vi.mock('./api', () => ({ completeLogMonth: vi.fn(), correctLogManualTime: vi.fn(), getLogContent: vi.fn(), getLogLearners: vi.fn(), getLogMonth: vi.fn(), getLogSummary: vi.fn(), signLogMonth: vi.fn() }));
 
 const current: LogDetail = { source: 'lms', month: '2026-09', status: 'awaiting_signature', row_count: 1,
   planned_hours: 2, actual_hours: 1, not_accepted_hours: 0, pending_revisions: 0, can_complete: false,
@@ -76,6 +76,52 @@ beforeEach(() => {
     url: 'https://example.org/reading', html: null, quiz: null }] });
 });
 afterEach(cleanup);
+
+it.each(['learner', 'coach'] as const)('lets the %s correct the same manual row and immediately shows the recalculated hours', async role => {
+  Object.assign(account, { role, access: role });
+  const original = { ...current, actual_hours: 30, rows: [{ ...current.rows[0], actual_hours: 30,
+    manual_time: { progress_id: 1, seconds: 108000, revision: 'original' } }] };
+  const corrected = { ...original, actual_hours: .5, rows: [{ ...original.rows[0], actual_hours: .5,
+    manual_time: { progress_id: 1, seconds: 1800, revision: 'corrected' } }] };
+  const totalSummary = { ...summary, months: [original, { ...retained, actual_hours: 10 }],
+    training_plan_totals: { accepted_hours: 40, planned_hours: 100 } };
+  vi.mocked(getLogSummary).mockResolvedValue(totalSummary);
+  vi.mocked(getLogMonth).mockResolvedValue(original);
+  vi.mocked(correctLogManualTime).mockImplementation(async () => {
+    vi.mocked(getLogMonth).mockResolvedValue(corrected);
+    vi.mocked(getLogSummary).mockResolvedValue({ ...totalSummary, months: [corrected, { ...retained, actual_hours: 10 }],
+      training_plan_totals: { accepted_hours: 10.5, planned_hours: 100 } });
+    return corrected;
+  });
+  page(role === 'learner' ? '/learner/monthly-logs' : '/coach/monthly-logs/7');
+  expect((await screen.findAllByText('40.00 h')).length).toBeGreaterThan(0);
+  fireEvent.click(screen.getByRole('link', { name: 'Review month: September 2026' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Correct manual time for Completed reading' }));
+  fireEvent.change(screen.getByLabelText('Hours'), { target: { value: '0' } });
+  fireEvent.change(screen.getByLabelText('Minutes'), { target: { value: '30' } });
+  fireEvent.change(screen.getByLabelText('Reason for correction'), { target: { value: 'Entered hours instead of minutes' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save correction' }));
+  await screen.findByText('Manual time corrected. This entry and its totals have been updated.');
+  expect(correctLogManualTime).toHaveBeenCalledWith('7', '2026-09', 1,
+    { seconds: 1800, revision: 'original', reason: 'Entered hours instead of minutes' }, 'csrf', role);
+  expect(within(screen.getByRole('button', { name: 'Completed reading' }).closest('tr')!).getByText('0h 30m')).toBeVisible();
+  expect(screen.queryByRole('dialog', { name: 'Correct manual time' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('link', { name: 'All months' }));
+  expect((await screen.findAllByText('10.50 h')).length).toBeGreaterThan(0);
+  expect(screen.queryByText('40.00 h')).not.toBeInTheDocument();
+});
+
+it.each(['learner', 'coach'] as const)('hides manual corrections from a %s when either party has signed the month', async role => {
+  Object.assign(account, { role, access: role });
+  vi.mocked(getLogMonth).mockResolvedValue({ ...current,
+    coach_signature: { signer_name: 'Coach', signed_at: '2026-10-01', url: '/signed.png' },
+    rows: [{ ...current.rows[0], manual_time: { progress_id: 1, seconds: 108000, revision: 'original' } }],
+  });
+  page(role === 'learner' ? '/learner/monthly-logs/2026-09' : '/coach/monthly-logs/7/2026-09');
+  await screen.findByRole('table', { name: 'Monthly activity log' });
+  expect(screen.queryByRole('button', { name: /Correct manual time/ })).not.toBeInTheDocument();
+  expect(correctLogManualTime).not.toHaveBeenCalled();
+});
 
 describe('monthly logs', () => {
   it.each(['learner', 'coach'] as const)('orders %s activities by date and time without changing the saved report', async role => {

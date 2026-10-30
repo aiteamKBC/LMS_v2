@@ -103,7 +103,7 @@ export default function MeetingTimeline({ start, end, timeZone, meetings, now, s
                 <span className="block truncate tabular-nums text-primary-800">{clock(row.startsAt)}–{clock(row.endsAt)}{meetingDate(row.startsAt, timeZone) < day ? ' · Continues' : ''}</span>
                 <span className={compact || owner ? 'sr-only' : 'mt-0.5 block truncate text-foreground-700'}>{coachName(row.coachEmail)}</span>
                 <span className={compact ? 'sr-only' : 'block truncate text-foreground-500'}>{people.slice(0, 2).join(', ') || 'No learner linked'}{people.length > 2 ? ` +${people.length - 2} more` : ''}</span>
-                <span className={`block truncate ${compact ? 'text-[10px] leading-3' : 'mt-0.5'} ${row.media.readyCount > 0 ? 'text-emerald-700' : 'text-foreground-500'}`}>{phase === 'upcoming' ? 'Upcoming' : phase === 'in-progress' ? 'In progress' : phase === 'cancelled' ? 'Cancelled' : `Ended · ${recordingLabel(row.media)}`}</span>
+                <span className={`block truncate ${compact ? 'text-[10px] leading-3' : 'mt-0.5'} ${row.media.readyCount > 0 ? 'text-emerald-700' : 'text-foreground-500'}`}>{phase === 'upcoming' ? 'Upcoming' : phase === 'in-progress' ? `Within scheduled time · ${recordingLabel(row.media)}` : phase === 'cancelled' ? 'Cancelled' : `Ended · ${recordingLabel(row.media)}`}</span>
               </button>
             </article>;
           })}

@@ -16,7 +16,7 @@ from django.utils import timezone
 from learner_api.models import LearnerProfile
 
 from .bulk_attendance_live_policy import build_live_records
-from .models import LiveSession, LiveSessionLearnerAttendance, LiveSessionOccurrence
+from .models import LiveSession, LiveSessionLearnerAttendance, LiveSessionOccurrence, ModuleAuthoringModule
 from .session_results_policy import instant
 
 logger = logging.getLogger(__name__)
@@ -87,6 +87,11 @@ def read_live_register_records(kbc_id=None):
         .filter(id__in={row['live_session_id'] for row in rows})
         .values_list('id', 'module_title')
     )
+    module_titles = dict(ModuleAuthoringModule.objects.filter(
+        module_catalogue_id__in={row['module_catalogue_id'] for row in rows}
+    ).values_list('module_catalogue_id', 'title'))
+    for row in rows:
+        row['module_title'] = module_titles.get(row['module_catalogue_id'])
     from coach_api.views import resolve_effective_aptem_ids
 
     # Only the identity columns: the full profile rows take tens of seconds.
@@ -166,7 +171,7 @@ def save_live_attendance(changes, *, actor=''):
     with transaction.atomic(using=database):
         rows = list(
             LiveSessionLearnerAttendance.objects.select_for_update()
-            .filter(id__in=ids).values('id', 'learner_profile_id', 'occurrence_id')
+                .filter(id__in=ids).values('id', 'learner_profile_id', 'occurrence_id', 'live_session_id', 'module_catalogue_id')
         )
         missing = sorted(set(ids) - {row['id'] for row in rows})
         if missing:
@@ -176,9 +181,12 @@ def save_live_attendance(changes, *, actor=''):
             LiveSessionLearnerAttendance.objects.filter(id=row_id).update(
                 attendance_status=status, updated_at=now,
             )
+        owners = dict(LiveSession.objects.using(database).filter(
+            id__in={row['live_session_id'] for row in rows}).values_list('id', 'module_catalogue_id'))
         for row in rows:
+            source_id = row['occurrence_id'] if owners.get(row['live_session_id']) == row['module_catalogue_id'] else f"{row['occurrence_id']}:{row['module_catalogue_id']}"
             CoachAttendanceSourceAdjustment.objects.using(database).update_or_create(
-                learner_id=row['learner_profile_id'], source='microsoft-teams', source_id=row['occurrence_id'],
+                learner_id=row['learner_profile_id'], source='microsoft-teams', source_id=source_id,
                 defaults={'status': changes[row['id']], 'is_deleted': False,
                           'owner_email': actor, 'updated_by': actor},
             )

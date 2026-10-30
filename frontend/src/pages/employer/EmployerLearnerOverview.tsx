@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { fetchEmployerLearnerPhoto, fetchEmployerLearnerSchedule, type EmployerLearnerDetail } from '@/api/employerPortal';
 import { useQuery } from '@tanstack/react-query';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { displayValue, EMPTY_VALUE, initialsFor } from '@/lib/format';
+import { learnerRecordedDates } from '@/lib/learnerRecordedDates';
 import { formatProgrammeStartDate, learnerHeaderPlan } from '@/pages/workspace/learner/learnerHeaderPlan';
 import { LearnerDashboardHero } from '@/pages/workspace/learner/LearnerDashboardHero';
 import overviewStyles from '@/pages/workspace/learner/Overview.module.css';
@@ -71,8 +72,14 @@ export function EmployerLearnerHeader({ employerId, kind, learner, onBack }: {
   const placeholder = schedule.loading ? 'Loading...' : schedule.error ? 'Unavailable' : EMPTY_VALUE;
   const coachName = schedule.data?.coach.name || (schedule.data ? 'Not yet assigned' : placeholder);
   const modulesLabel = current.modules.map((module) => module.title).join(' · ') || placeholder;
-  const startDate = formatProgrammeStartDate(schedule.data?.programmeStartDate ?? learner.startDate) || EMPTY_VALUE;
-  const plannedEnd = formatProgrammeStartDate(schedule.data?.programmeEndDate ?? learner.endDate) || EMPTY_VALUE;
+  // The same two dates the learner's own header shows: the dates recorded
+  // against the learner, with no programme-plan fallback. The schedule's
+  // programmeStartDate/EndDate come from the canonical plan and the detail's
+  // startDate/endDate from the enrolment's Start_date/End_date columns, so
+  // neither matches what the learner sees.
+  const recorded = learnerRecordedDates(learner);
+  const startDate = formatProgrammeStartDate(recorded.start) || EMPTY_VALUE;
+  const plannedEnd = formatProgrammeStartDate(recorded.end) || EMPTY_VALUE;
   const description = [learner.programme, learner.employer].filter(Boolean).join(' · ');
 
   return (

@@ -1,5 +1,5 @@
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from 'react-router-dom';
 
 /**

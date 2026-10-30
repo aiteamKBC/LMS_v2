@@ -13,7 +13,7 @@ import { ProgressReviewsListPage } from '../progress-reviews/page';
 vi.mock('@/hooks/useMyLearner', () => ({ useMyLearner: () => ({ kind: 'apprenticeship', id: '12' }), useLinkedLearner: () => ({ kind: 'apprenticeship', id: '12' }) }));
 vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => ({ canProgress: true }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
-vi.mock('@/pages/coach/progress-reviews/page', () => ({ buildProgressReviewSlidesDeck: vi.fn() }));
+vi.mock("@/pages/coach/progress-reviews/page.helpers", () => ({ buildProgressReviewSlidesDeck: vi.fn() }));
 let events: LearnerCalendarEvent[];
 let state: MeetingAttendance[];
 let posts: { url: string; init?: RequestInit }[];

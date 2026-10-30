@@ -130,6 +130,8 @@ class AptemAttendanceRefreshTests(SimpleTestCase):
                         'meetingLink': self.record.meeting_link},
         }
         with ExitStack() as stack:
+            # This synthetic snapshot fixture has no manually confirmed identity links.
+            stack.enter_context(patch('coach_api.review_attendance_links.saved_links', return_value=[]))
             def mock(name, **kwargs):
                 return stack.enter_context(patch(name, **kwargs))
             mock('coach_api.views.has_graph_credentials', return_value=True)

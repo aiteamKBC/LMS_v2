@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast";
 import {
   fetchLearningPlan,
   saveLearningPlan,
@@ -296,7 +296,7 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
   // Recurring Reviews the learner attends. Server-generated from the Review
   // Engine, so they do not change as modules are added or removed here — they
   // are listed for the commitment they represent, not edited.
-  const meetings = data?.meetings ?? [];
+  const meetings = useMemo(() => data?.meetings ?? [], [data?.meetings]);
 
   // Why the Meetings table is empty, in the words of whoever has to fix it.
   // Shown in place of rows rather than hiding the table: a table that explains

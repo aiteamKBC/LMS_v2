@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { coachNavItems } from '@/mocks/navigation';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -22,7 +22,7 @@ import { MonthBadge, RecordBadge, RecordProgress, SignatureChip } from './Record
 import styles from './design.module.css';
 import journal from './journal.module.css';
 import shell from './shell.module.css';
-import { useRecordHref } from './recordNavigation';
+import { useRecordHref, useRecordMonitoring } from './recordNavigation';
 
 const btnPrimary = styles.primaryButton;
 const btnSecondary = styles.secondaryButton;
@@ -36,7 +36,7 @@ function Shell({ children }: { children: ReactNode }) {
   const recordHref = useRecordHref();
   const learnerPreview = Boolean(aptemId) && new URLSearchParams(location.search).get('workspace') === 'learner';
   const student = auth.account?.role === 'learner';
-  const monitor = auth.account?.access === 'record-monitor';
+  const monitor = useRecordMonitoring();
   const backFallback = month ? recordHref(aptemId ? `/old-otjh/coach/${aptemId}/months` : '/old-otjh/months')
     : learnerPreview ? '/workspace/learner' : student ? '/old-otjh' : monitor ? '/old-otjh/monitor' : aptemId ? '/old-otjh/coach' : '/workspace/coach';
   if (student || learnerPreview) return <div className={`${styles.scope} ${shell.shell}`}>
@@ -163,6 +163,7 @@ function Portal() {
 }
 
 function MonthList({ aptemId }: { aptemId?: number }) {
+  const monitoring = useRecordMonitoring();
   const recordHref = useRecordHref();
   const query = useRecordSummary(aptemId, true);
   const { auth } = useAuth();
@@ -186,7 +187,8 @@ function MonthList({ aptemId }: { aptemId?: number }) {
   const remaining = Math.max(0, total - complete);
   const percent = total ? Math.min(100, Math.max(0, Math.round(complete / total * 100))) : 0;
   const student = auth.account?.role === 'learner';
-  const canBulkSign = auth.account?.access !== 'record-monitor' && (student || ['coach', 'super-admin'].includes(auth.account?.access || ''));
+  const grants = [auth.account?.access, ...(auth.account?.accessWorkspaces ?? []).map(workspace => workspace.access)];
+  const canBulkSign = !monitoring && !query.data?.read_only && (student || grants.some(grant => grant === 'coach' || grant === 'super-admin'));
   const unsigned = summary.months.filter(item => item.is_required !== false && (student ? item.status !== 'complete' : !item.coach_signature));
   const years = Array.from(new Set(summary.months.map(item => item.month.slice(0, 4)))).sort();
   const filteredMonths = summary.months.filter(item => {
@@ -241,7 +243,7 @@ function MonthList({ aptemId }: { aptemId?: number }) {
     </div>}
     {bulkMessage && <p role="status" className={styles.bulkSuccess}>{bulkMessage}</p>}
     {bulkOpen && <BulkSignDialog summary={summary} aptemId={aptemId} onClose={() => setBulkOpen(false)} onSaved={result => {
-      client.setQueryData(['old-otjh', auth.account?.id, 'summary', aptemId ?? 'me'], result.summary);
+      client.setQueryData(['old-otjh', auth.account?.id, 'summary', aptemId ?? 'me', monitoring], result.summary);
       void client.invalidateQueries({ queryKey: ['old-otjh', auth.account?.id] });
       setBulkOpen(false); setBulkMessage(result.summary.can_access_lms
         ? 'All months are complete. Your signatures are saved and LMS access is open.'
@@ -347,7 +349,7 @@ export default function OldOtjhPage() {
   const location = useLocation();
   const coachPath = location.pathname.startsWith('/old-otjh/coach');
   const student = auth.account?.role === 'learner';
-  const monitor = auth.account?.access === 'record-monitor';
+  const monitor = useRecordMonitoring();
   // Resolve learners before any staff/monitor branch, including direct URLs.
   // No route parameter can select another person's record for a learner.
   if (student) {

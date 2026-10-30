@@ -109,6 +109,7 @@ class LiveAttendanceDayRecordsTests(unittest.TestCase):
         register = SimpleNamespace(objects=Query([
             {"id": 1, "occurrence_id": "occ-1", "module_catalogue_id": "module-1", "learner_profile_id": 11, "attendance_status": "present"},
             {"id": 2, "occurrence_id": "occ-2", "module_catalogue_id": "module-1", "learner_profile_id": 11, "attendance_status": "absent"},
+            {"id": 3, "occurrence_id": "occ-1", "module_catalogue_id": "shared-module", "learner_profile_id": 11, "attendance_status": "absent"},
         ]))
 
         class Response:

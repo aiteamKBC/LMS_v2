@@ -15,11 +15,22 @@ import SyncReviewDrawer from './SyncReviewDrawer';
 import { readLocation, writeLocation, type CoachingLocation } from './location';
 
 const control = 'max-w-full min-w-0 rounded-lg border border-background-200 bg-white px-3 py-2 text-sm text-foreground-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500';
-const phaseLabels = { ended: 'Ended', upcoming: 'Upcoming', 'in-progress': 'In progress', cancelled: 'Cancelled' };
+const phaseLabels = { ended: 'Ended', upcoming: 'Upcoming', 'in-progress': 'Within scheduled time', cancelled: 'Cancelled' };
 const filterLabels = { ...phaseLabels, ready: 'Ready to action', attention: 'Needs attention', all: 'All meetings' };
+
+function coachPreference(value?: string): string {
+  try {
+    const account = window.localStorage.getItem('kbc_auth_email');
+    if (!account) return '';
+    const key = `coaching-calendar:coach:${account}`;
+    if (value !== undefined) window.localStorage.setItem(key, value);
+    return window.localStorage.getItem(key) || '';
+  } catch { return ''; } // Storage can be disabled; calendar selection still works.
+}
 
 export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { workspace?: 'curriculum' | 'coach' }) {
   const [params, setParams] = useSearchParams();
+  const setParamsRef = useRef(setParams); setParamsRef.current = setParams;
   const location = useMemo(() => readLocation(params), [params]);
   const { date, period, zone, coach, learner, phase, match, family, lectures: showLectures, meeting: linkedId, occurrenceDate, tab } = location;
   const locationRef = useRef(location); locationRef.current = location;
@@ -40,6 +51,7 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
   const [showLearners, setShowLearners] = useState(false);
   const [showSyncDetails, setShowSyncDetails] = useState(false);
   const [moreFilters, setMoreFilters] = useState(false);
+  const [coachSearch, setCoachSearch] = useState('');
   const [data, setData] = useState<CoachingCalendar | null>(null);
   const [directory, setDirectory] = useState<Pick<CoachingCalendar, 'coaches' | 'learners' | 'scope'> | null>(null);
   const [loading, setLoading] = useState(true);
@@ -63,6 +75,28 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
 
   useEffect(() => {
     const controller = new AbortController();
+    if (!coach) {
+      setData(null); snapshot.current = undefined; lastRequest.current = '';
+      setLoading(true); setRefreshing(false); setError(''); setSelectedSession(null);
+      void loadCoachingCalendar({ start: requested.start, end: requested.end, timeZone: zone }, controller.signal, { directoryOnly: true })
+        .then(value => {
+          if (controller.signal.aborted) return;
+          setDirectory(value);
+          const remembered = coachPreference();
+          const chosen = value.scope === 'own' ? value.coaches[0]?.email
+            : value.coaches.find(row => row.email === remembered)?.email;
+          if (chosen) {
+            const next = { ...locationRef.current, coach: chosen, learner: '' };
+            locationRef.current = next; setParamsRef.current(writeLocation(next), { replace: true });
+          }
+        }).catch(reason => {
+          if (!controller.signal.aborted) {
+            setDirectory(null);
+            setError(reason instanceof Error ? reason.message : 'The coach list could not be loaded.');
+          }
+        }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
+      return () => controller.abort();
+    }
     loadAttempt.current += 1;
     const key = JSON.stringify([requested.start, requested.end, zone, coach]);
     const refresh = lastRevision.current !== revision;
@@ -79,7 +113,10 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
     lastRequest.current = key;
     const query = { start: requested.start, end: requested.end, timeZone: zone, coachEmail: coach };
     const publish = (value: CoachingCalendar) => {
-      if (active && !timedOut) { snapshot.current = { query, data: value }; setData(value); setDirectory(value); }
+      if (active && !timedOut) {
+        snapshot.current = { query, data: value }; setData(value); setDirectory(value);
+        if (value.coaches.some(row => row.email === coach)) coachPreference(coach);
+      }
     };
     const slowTimer = window.setTimeout(() => setSlow(true), 12000);
     let requestTimer: number;
@@ -237,16 +274,17 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
       </div>
       {loading && <div role="status" className="mt-4 rounded-xl border border-primary-100 bg-white p-4">
         <div className="flex items-start gap-3"><Loader2 aria-hidden="true" size={19} className="mt-0.5 shrink-0 animate-spin text-primary-600 motion-reduce:animate-none" /><div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold">{data ? 'Loading the remaining coach calendars…' : 'Loading coach calendars…'}</p>
-          <p className="mt-1 text-xs text-foreground-600">{data ? `${data.coverage.checkedCoachEmails.length} of ${data.coverage.totalCoaches} calendars checked. You can use the meetings already loaded.` : 'The first coach appears as soon as their calendar is checked.'}</p>
+          <p className="text-sm font-semibold">{coach ? 'Loading coach calendar…' : 'Loading coach list…'}</p>
+          <p className="mt-1 text-xs text-foreground-600">{coach ? 'Checking the selected coach only. Saved meetings appear as soon as they are available.' : 'Choose one coach to load their meetings.'}</p>
           {data && <progress aria-label="Calendar loading progress" className="mt-3 h-1.5 w-full accent-primary-600" max={Math.max(1, data.coverage.totalCoaches)} value={data.coverage.checkedCoachEmails.length} />}
           {slow && <p className="mt-2 text-xs text-amber-800">Microsoft is responding slowly. Choose one coach to narrow the request; unavailable calendars will be identified separately.</p>}
         </div></div>
       </div>}
       <section aria-label="Calendar filters" className="mt-5 flex flex-wrap items-end gap-3 rounded-xl border border-background-200 bg-white p-4">
+        {catalog?.scope !== 'own' && <label className="grid gap-1 text-xs font-semibold">Search coaches<input type="search" className={control} value={coachSearch} onChange={event => setCoachSearch(event.target.value)} placeholder="Search by name or email" /></label>}
         <label className="grid gap-1 text-xs font-semibold">Coach<select aria-label="Coach" value={coach} className={control} onChange={event => navigate({ coach: event.target.value, learner: '' })}>
-          <option value="">{catalog?.scope === 'own' ? 'My calendar' : 'All coaches'}</option>
-          {catalog?.coaches.map(row => <option key={row.email} value={row.email}>{row.name}</option>)}
+          <option value="" disabled>Choose a coach</option>
+          {catalog?.coaches.filter(row => row.email === coach || `${row.name} ${row.email}`.toLowerCase().includes(coachSearch.toLowerCase())).map(row => <option key={row.email} value={row.email}>{row.name}</option>)}
           {coach && !catalog?.coaches.some(row => row.email === coach) && <option value={coach}>{coach}</option>}
         </select></label>
         <button type="button" className={`${control} inline-flex items-center gap-2 disabled:opacity-50`} disabled={!rosterCoach} onClick={() => setShowLearners(true)}><Users size={16} aria-hidden="true" />Coach learners</button>
@@ -275,6 +313,7 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
         </div>
         {!rosterCoach && <p className="w-full text-xs text-foreground-500">Choose one coach to view their learners.</p>}
       </section>
+      {!coach && !loading && !error && <p role="status" className="mt-4 rounded-xl border border-primary-200 bg-primary-50 p-4 text-sm">Choose a coach to view their meetings. Calendars load only after a coach is selected.</p>}
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <button className={control} aria-label="Previous period" onClick={() => shift(-1)}>‹</button>
         <button className={control} onClick={() => setDate(todayIso(zone))}>Today</button>
@@ -318,8 +357,8 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
         </section>
         {!loading && phase === 'ready' && <section aria-label="Ready to action summary" className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary-200 bg-primary-50 p-4 text-sm">
           <div className="min-w-0">
-            <p className="font-semibold">{visible.length} ended {visible.length === 1 ? 'meeting' : 'meetings'} · {visible.filter(row => hasPlayableRecording(row, now)).length} with playable recordings</p>
-            <p className="mt-1 text-xs text-foreground-600">Ready to action includes all ended meetings and lectures, with or without a recording. Attendance and AI are checked when you open a meeting.</p>
+            <p className="font-semibold">{visible.length} {visible.length === 1 ? 'meeting' : 'meetings'} ready to review · {visible.filter(row => hasPlayableRecording(row, now)).length} with playable recordings</p>
+            <p className="mt-1 text-xs text-foreground-600">Ready to action includes meetings past their scheduled end and started meetings with playable recordings, including lectures. Published evidence can be reviewed before the scheduled end; a recording does not confirm that the call has ended.</p>
             <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-foreground-700">{[...recordingStates].map(([label, count]) => <li key={label}>{count} · {label}</li>)}</ul>
             {hiddenReasons.length > 0 && <p className="mt-2 text-xs text-foreground-600">Outside Ready to action: {hiddenReasons.map(([label, count]) => `${count} ${label.toLowerCase()}`).join(' · ')}.</p>}
             {preparing && <p className="mt-1 text-xs">{updatesPaused ? 'Some recording checks are still pending.' : 'Initial recording checks are still pending.'}</p>}
@@ -330,7 +369,7 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
         <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
           <div className="hidden lg:block"><CoachMiniCalendar date={date} timeZone={zone} meetingDates={meetingDates} onSelectDay={selectDay} /></div>
           <section aria-label="Coaching meetings" className="min-w-0 space-y-4">
-            {!loading && !preparing && !visible.length && !cancellations.length && <p className="rounded-xl border border-background-200 bg-white p-6 text-sm text-foreground-600">{data.partial ? 'No meetings loaded for these filters. Some calendars or recordings could not be checked.' : phase === 'ready' ? 'No ended meetings match these filters in the selected period.' : 'No meetings match these filters in the selected period.'}</p>}
+            {!loading && !preparing && !visible.length && !cancellations.length && <p className="rounded-xl border border-background-200 bg-white p-6 text-sm text-foreground-600">{data.partial ? 'No meetings loaded for these filters. Some calendars or recordings could not be checked.' : phase === 'ready' ? 'No meetings ready to review match these filters in the selected period.' : 'No meetings match these filters in the selected period.'}</p>}
             <MeetingCalendar date={date} period={period} timeZone={zone} meetings={period === 'day' ? visible : visible.slice(0, agendaLimit)} totalMeetings={visible.length} now={now}
               selected={activeKey} coachName={coachName} learnerName={learnerName} onSelectDay={selectDay} onSelectMeeting={selectMeeting} />
             {period !== 'day' && visible.length > agendaLimit && <button className={control} onClick={() => setAgendaLimit(value => value + 30)}>Show more meetings ({visible.length - agendaLimit} remaining)</button>}

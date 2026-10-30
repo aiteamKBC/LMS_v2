@@ -1,0 +1,12 @@
+.panel { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 20px; background: #f5f8ff; border: 1px solid #d4dff3; border-radius: 14px; color: #203857; }
+.panel > div { flex: 1 1 240px; min-width: 0; }
+.panel h4 { margin: 0 0 6px; font-weight: 700; }
+.panel p { font-size: .875rem; line-height: 1.6; margin: 0; }
+.panel button { flex: none; display: flex; align-items: center; gap: 8px; border: 1px solid #a9bfdf; border-radius: 9px; padding: 10px 14px; color: #194d9a; background: #fff; font-size: .875rem; font-weight: 650; }
+.panel button:disabled { opacity: .6; cursor: wait; }
+.panel button:focus-visible { outline: 2px solid #2563eb; outline-offset: 3px; }
+.panel > p { flex-basis: 100%; }
+.panel .error { color: #a92020; }
+:global([data-theme="dark"]) .panel { background: #18283e; border-color: #455e80; color: #dceaff; }
+:global([data-theme="dark"]) .panel button { background: #233554; border-color: #6382ac; color: #dceaff; }
+:global([data-theme="dark"]) .panel .error { color: #ffb4b4; }

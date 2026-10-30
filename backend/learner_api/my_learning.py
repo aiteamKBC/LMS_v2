@@ -194,7 +194,7 @@ def next_title(items, today):
 
 def assemble_cards(native, current, courses, definitions, done, started, hours, metadata, records, modules, credits, *, search=None):
     """Programme-wide counts with the same explicit import/replacement identities as My Learning."""
-    from .progress_transfer_policy import credited_percent
+    from .progress_transfer_policy import merged_percent
     from .progress_demo import credit as demo_credit
     from .training_plan_dashboard import _canonical_module_progress, module_record_index
     from .live_session_progress import supplement_module_hours
@@ -228,6 +228,9 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
     links = {**metadata['imported_courses'], **metadata['replacement_courses']}
     uses = Counter(links.values())
     replaced = {ref for ref, old in links.items() if old in by_id and uses[old] == 1 and ref not in approved}
+    from .imported_course_continuation import continuation_components
+    continuations = continuation_components(metadata,
+        {ref: subject['_items'] for ref, subject in by_id.items()}, components, metadata['activity_dates'])
     skipped_titles = set()
     for module in current:
         ref = f"current:{module['id']}"
@@ -242,7 +245,10 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
         ref = f"current:{c['moduleId']}" if c.get('moduleId') else f"unlinked:{c.get('module')}"
         if ref in replaced:
             skipped_titles.add(str(c.get('module') or '').strip().casefold())
-            continue
+            extension = continuations.get(ref)
+            if not extension or c.get('componentId') not in extension['componentIds']:
+                continue
+            ref = extension['courseRef']
         subject = by_id.setdefault(ref, dict(id=ref, title=c.get('module') or 'Unnamed subject', source='current', _items=[]))
         ident = c.get('componentId') or f"quiz:{(c.get('quizMeta') or {}).get('quizId') or str(c.get('week')) + ':' + str(index)}"
         if ident in activity_ids[ref]:
@@ -323,7 +329,7 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
         transfer = approved.get(subject['id'])
         if transfer:
             completed_ids = [item['id'] for item in items if item['completed']]
-            subject['progress'] = credited_percent(transfer, completed_ids, count)
+            subject['progress'] = merged_percent(completed_ids, count)
             subject['transferredProgress'] = transfer['percent']
             if transfer.get('demoProgress'):
                 subject['demoProgress'] = True
@@ -332,7 +338,8 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             native_records = [record for record in records if str(record['id']) not in previous_ids]
             native_hours = supplement_module_hours(_canonical_module_progress(native_records, module_list), native_records, credits)
             subject['actualHours'] = round(transfer['hours'] + (native_hours.get(subject.get('moduleId'), {}).get('hours', {}).get('actual') or 0), 6)
-            subject['status'] = 'Completed' if subject['progress'] == 100 else 'In progress' if subject['progress'] > 0 else 'Upcoming'
+            # Keep the component-derived status, including a started native
+            # attempt with no completed components yet (0% is not "Upcoming").
         cards.append(subject)
     def totals(source):
         rows = [c for c in cards if c['source'] == source]
@@ -345,7 +352,7 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
                    'subjectCount': sum(not c.get('previousLearningFor') for c in cards)}
 
 
-def load_context(source, owner, subject_id=None, *, purpose='catalogue', records_override=None):
+def load_context(source, owner, subject_id=None, *, purpose='catalogue', records_override=None, include_personal_replacements=False):
     """One request-local owner/assignment/ledger snapshot; no write-on-read path."""
     from .weekly_learning import build_learning_content_summary
     from .dashboard_tabs import install_request_caches
@@ -436,7 +443,10 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
         current = [builder[f'current:{mid}'] for mid in ids if f'current:{mid}' in builder]
         with projection_stage('subject_metadata'):
             imports = resolved['imported_courses'] if resolved is not None and 'imported_courses' in resolved else read_imported_courses(cur, current)
-            replacements = read_replacement_courses(cur, current, source.pk)
+            # A personal transfer link must not hide the native module or merge
+            # its hours before approval. Only transfer review opts into it.
+            replacements = read_replacement_courses(cur, current, source.pk,
+                **({'include_personal': True} if include_personal_replacements else {}))
             groups = read_previous_learning_groups(cur, source.pk, current) if purpose != 'search' else {}
         settings = {}
         # Both imported modules and verified successors can receive a transfer.
@@ -640,15 +650,33 @@ def read_module(source, kind, owner, subject_id):
         excluded = set(demo_course['demo_progress']['excluded_activity_refs'])
         activity.update(summarize_activities([row for row in activity['activities']
             if f"{row.get('catalogue_kind')}:{row.get('source_activity_id')}" not in excluded]))
+    from .imported_course_continuation import continuation_cutoffs, continuation_components, teaching_date
+    continuation_dates, continuation_weeks = {}, []
+    if activity and scope_ids:
+        cutoff = continuation_cutoffs(metadata, {subject_id: activity.get('activities', [])}).get('current:' + mid)
+        if cutoff:
+            from .builder_activity_dates import read_builder_activity_dates
+            with connections['enrolment'].cursor() as cur:
+                continuation_dates = read_builder_activity_dates(cur, scope_ids)
+                candidate_ids = [ident for ident, placement in continuation_dates.items()
+                                 if teaching_date(placement) > cutoff['afterDate']]
+                if candidate_ids:
+                    from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+                    cur.execute(f'''SELECT DISTINCT c.week_id FROM curriculum.components c
+                        JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
+                        WHERE c.module_catalogue_id=ANY(%s) AND c.id=ANY(%s)
+                          AND {visible_child_sql('c')} AND {visible_week_sql('w')}''', [scope_ids,candidate_ids])
+                    continuation_weeks = [row[0] for row in cur.fetchall()]
     selected = copy(source)
-    native_scope_ids = scope_ids if subject_id.startswith('current:') else []
+    native_scope_ids = scope_ids if subject_id.startswith('current:') or continuation_weeks else []
     chosen_plan = [entry for entry in assigned if (entry.get('moduleId') in native_scope_ids
         if mid else subject_id.startswith('unlinked:') and not entry.get('moduleId') and entry.get('moduleTitle')==subject_id[9:])]
     selected.training_plan = chosen_plan
     selected.learning_plan = chosen_plan
     progress = tuple(native.get(bucket,[]) for bucket in ('quizAttempts','videoProgress','componentProgress'))
     detail = build_learning_content_summary(selected,source.pk,learning_summary=True,assigned_modules=chosen_plan,
-        progress=progress,strict=True,include_component_details=True)
+        progress=progress,strict=True,include_component_details=True,
+        **({'week_ids':continuation_weeks} if continuation_weeks else {}))
     global_by_id = {c.get('componentId'):c for c in [*native['components'],*native.get('retiredQuizComponents',[])] if c.get('componentId')}
     detail['components'] = [{**{k:v for k,v in c.items() if k != 'previousLearning'},
                             **{k:global_by_id.get(c.get('componentId'),{}).get(k) for k in ('attendanceCompleted',) if k in global_by_id.get(c.get('componentId'),{})}}
@@ -664,7 +692,7 @@ def read_module(source, kind, owner, subject_id):
     from .teams_attendance import annotate_attendance_completion
     from .live_session_progress import read_live_credits, supplement_component_progress
     detail['components'] = annotate_attendance_completion(detail['components'], source._case_file_profile)
-    credits = read_live_credits(source, module_ids=native_scope_ids)
+    credits = read_live_credits(source, **({'components':detail['components']} if continuation_weeks else {'module_ids':native_scope_ids}))
     detail['componentProgress'] = supplement_component_progress(detail['componentProgress'], credits)
     detail['name']=owner['name']
     detail['modules']=[subject_id[9:]] if subject_id.startswith('unlinked:') else list(dict.fromkeys(c.get('module') for c in detail['components'] if c.get('module')))
@@ -675,21 +703,29 @@ def read_module(source, kind, owner, subject_id):
     clean_metadata={k:{ref:value for ref,value in metadata[k].items() if ref in visible_refs}
         for k in ('covers','builder_subjects','imported_courses','replacement_courses','previous_learning_groups')}
     clean_metadata['current_subjects']=[m for m in metadata['current_subjects'] if m['id'] in native_scope_ids]
+    if continuation_weeks:
+        clean_metadata['imported_continuations'] = continuation_components(metadata,
+            {subject_id:activity.get('activities', [])},detail['components'],continuation_dates)
     if transfers:
         clean_metadata['approved_transfers'] = {ref: item['courseRef'] for ref,item in approved.items() if ref in visible_refs}
         clean_metadata['module_credits'] = {}
     transfer = approved.get(subject_id)
     if transfer:
-        from .progress_transfer_policy import credited_percent
+        from .progress_transfer_policy import merged_percent
         from .training_plan_dashboard import _canonical_module_progress
         from .live_session_progress import supplement_module_hours
-        components = [*detail['components'], *detail['retiredQuizComponents']]
-        component_ids = {c['componentId'] for c in components if c.get('componentId') and native_done(c, detail)}
+        # Same stable identities as the catalogue; duplicate placements must not
+        # inflate the denominator or count a completed component twice.
+        components = {}
+        for index, c in enumerate([*detail['components'], *detail['retiredQuizComponents']]):
+            ident = c.get('componentId') or f"quiz:{(c.get('quizMeta') or {}).get('quizId') or str(c.get('week')) + ':' + str(index)}"
+            components.setdefault(ident, c)
+        component_ids = {ident for ident, c in components.items() if native_done(c, detail)}
         previous_ids = set(transfer['recordIds'])
         native_records = [record for record in records if str(record['id']) not in previous_ids]
         native_hours = supplement_module_hours(_canonical_module_progress(native_records, list(modules.values())), native_records, credits)
         clean_metadata['module_credits'][subject_id] = {
-            'progress': credited_percent(transfer, component_ids, len(components)), 'transferredProgress': transfer['percent'],
+            'progress': merged_percent(component_ids, len(components)), 'transferredProgress': transfer['percent'],
             'actualHours': round(transfer['hours'] + (native_hours.get(mid, {}).get('hours', {}).get('actual') or 0), 6)}
         if transfer.get('demoProgress'):
             clean_metadata['module_credits'][subject_id]['demoProgress'] = True
@@ -704,7 +740,7 @@ def read_module(source, kind, owner, subject_id):
             clean_metadata['module_credits'][subject_id]['demoProgress'] = True
     from .builder_activity_dates import read_builder_activity_dates
     with connections['enrolment'].cursor() as cur:
-        dates = read_builder_activity_dates(cur, scope_ids)
+        dates = continuation_dates or read_builder_activity_dates(cur, scope_ids)
     clean_metadata['activity_dates']={key:value for key,value in dates.items() if key in component_set}
     from .subject_store import covers_for
     from .student_activity import _cover_url

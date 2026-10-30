@@ -8,7 +8,7 @@ import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { LearnerProfilePhoto } from '@/components/feature/LearnerProfilePhoto';
 

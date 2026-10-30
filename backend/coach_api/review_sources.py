@@ -6,7 +6,7 @@ local state; neither dates nor email addresses establish that relationship.
 from dataclasses import dataclass
 
 from django.db import DatabaseError
-from django.db.models import Q
+from django.db.models import BooleanField, Case, Q, Value, When
 
 from learner_api.student_activity_access import student_activity_available
 
@@ -251,7 +251,8 @@ def linked_booking(event, records, overlay=None, *, reconciliations=None):
 
 
 def load_imported_links(events, *, records=None, compact=False):
-    from .models import CoachCalendarEvent, ImportedReviewInstance
+    from .models import CoachCalendarEvent, ImportedReviewInstance, MigratedReviewRevision
+    from .migrated_reviews import completed_lms_revisions
 
     if not events:
         return {}, {}
@@ -260,9 +261,31 @@ def load_imported_links(events, *, records=None, compact=False):
     keys = {event["eventKey"] for event in events}
     overlay_query = ImportedReviewInstance.objects.filter(learner_id__in=profile_ids).filter(
         Q(source_review_id__in=review_ids) | Q(event_key__in=keys))
+    # Select a boolean rather than the frozen form body for compact lists.
+    # The first array element must exist; an object with a literal "0" key
+    # is not a sections array (has_key uses an object key, not an array index).
+    overlay_query = overlay_query.annotate(_has_lms_form=Case(
+        When(Q(source_review_id__isnull=False, template_snapshot__sections__0__isnull=False)
+             & ~Q(template_snapshot__sections__has_key="0"), then=Value(True)),
+        default=Value(False), output_field=BooleanField()))
     if compact:
         overlay_query = overlay_query.only('id', 'learner_id', 'source_review_id', 'event_key', 'owner_email', 'status', 'completed_at')
     overlays = list(overlay_query)
+    corrections = {row.pk: row for row in overlays if row._has_lms_form
+                   and row.source_review_id and row.status in {"in-progress", "awaiting-signature"}}
+    completed_history = set()
+    if corrections:
+        # Proof is scoped to this overlay, source and learner. Fetch only the
+        # identifying values, never archived answers, signatures or PDF bytes.
+        revisions = completed_lms_revisions(MigratedReviewRevision.objects.filter(overlay_id__in=corrections))
+        for overlay_id, source_id, learner_id in revisions.values_list(
+                "overlay_id", "snapshot__source_review_id", "snapshot__learner_id").distinct():
+            row = corrections[overlay_id]
+            if source_id == row.source_review_id and learner_id == row.learner_id:
+                completed_history.add(overlay_id)
+    for row in overlays:
+        row._has_lms_completion_history = bool(row._has_lms_form and row.source_review_id and (
+            (row.status == "completed" and row.completed_at) or row.pk in completed_history))
     if records is None:
         enrolment_ids = {int(event["enrolmentId"]) for event in events if str(event.get("enrolmentId", "")).isdigit()}
         records = list(CoachCalendarEvent.objects.filter(
@@ -379,12 +402,21 @@ def apply_imported_state(event, record=None, overlay=None, *, compact=False):
     """Pure read adapter. Never changes source evidence or a meeting identity."""
     event = dict(event)
     from learner_api.review_history import _normalise_status
+    from .booking_reservations import review_occupies_slot
+    from .migrated_reviews import has_completed_lms_form
 
+    event["bookingReserved"] = review_occupies_slot(record)
     source_status = _normalise_status(event.get("sourceStatus") or event.get("status"))
-    historical = source_status == "completed" or bool(event.get("sourceCompletedDate"))
+    lms_history = bool(overlay and (
+        getattr(overlay, "_has_lms_completion_history", False)
+        or (not compact and has_completed_lms_form(overlay))))
+    historical = (source_status == "completed" or bool(event.get("sourceCompletedDate"))) and not lms_history
     effective = "completed" if historical else source_status
-    migrated = bool(not compact and not historical and overlay and overlay.source_review_id
-                    and isinstance(overlay.template_snapshot, dict) and overlay.template_snapshot.get("sections"))
+    has_form = bool(overlay and overlay.source_review_id and (
+        getattr(overlay, "_has_lms_form", False) or (not compact
+        and isinstance(overlay.template_snapshot, dict)
+        and isinstance(overlay.template_snapshot.get("sections"), list) and overlay.template_snapshot["sections"])))
+    migrated = has_form and not historical
     if record:
         # Pending/failed sync must not claim a successful external booking.
         verified = bool(record.sync_state == "synced" and record.graph_event_id
@@ -417,6 +449,8 @@ def apply_imported_state(event, record=None, overlay=None, *, compact=False):
         event["localStatus"] = local
         if overlay.completed_at:
             event["reviewCompletedAt"] = overlay.completed_at.isoformat()
+        elif lms_history:
+            event["reviewCompletedAt"] = None
     event.update({"status": effective, "effectiveLmsStatus": effective, "migratedForm": migrated})
     if migrated:
         event["hasReviewForm"] = True
