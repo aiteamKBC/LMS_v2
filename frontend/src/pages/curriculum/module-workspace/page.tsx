@@ -25,7 +25,7 @@ import {
   teamsMeetingArtifactPreviewUrl,
   weekHeadingTitle,
   weekPlacementLabel,
-  zonedNaiveToUtcIso,
+  previewZonedNaiveToUtcIso,
   type KsbMapping,
   type ModuleCatalogueItem,
   type ModuleWeekSessionPlan,
@@ -476,7 +476,7 @@ export default function ModuleWorkspacePage() {
   const plannedOccurrences = useMemo(
     () => (plan?.sessions || []).map((session, index) => ({
       sessionNumber: session.sessionNumber || index + 1,
-      startDateTimeUtc: zonedNaiveToUtcIso(`${session.date}T${session.startTime || sessionStartTime}`),
+      startDateTimeUtc: previewZonedNaiveToUtcIso(`${session.date}T${session.startTime || sessionStartTime}`),
       durationMinutes: session.durationMinutes || sessionDurationMinutes,
     })),
     [plan, sessionDurationMinutes, sessionStartTime],

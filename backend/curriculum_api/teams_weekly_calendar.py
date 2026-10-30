@@ -529,6 +529,16 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                                              *([pending_warning(unapplied, (option_failures or [{}])[0])] if unapplied else [])]),
                 'updated_at': datetime.utcnow(),
             })
+        from .teams_graph_failure_log import EVENT_SAVE, record_graph_failure
+        record_graph_failure(EVENT_SAVE, str(exc), live_session_id=live_id, organizer=organizer)
+        if creating and getattr(exc, 'uncertain', False):
+            return v.json_error(
+                'Microsoft could not confirm every creation request. Check the organizer calendar before creating again.',
+                status=502, code='teams_calendar_create_uncertain', verificationRequired=True,
+                liveSessionId=live_id, partial=bool(live_id), calendarSeries=manifest,
+                graphStatus=getattr(exc, 'status_code', None), retryAfterSeconds=getattr(exc, 'retry_after', None),
+                requestId=getattr(exc, 'request_id', ''),
+            )
         return v.json_error('Teams could not finish every weekday series. Update this calendar to retry the remaining work.',
                             status=502, detail=str(exc), liveSessionId=live_id, partial=bool(live_id), calendarSeries=manifest)
 

@@ -15,6 +15,8 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 from urllib import parse as urllib_parse
 from zoneinfo import ZoneInfo
+from config.time_zones import calendar_zone, local_clock_to_utc
+from coach_api.graph_transport import GraphRequestError
 
 ROOT = Path(__file__).parent
 spec = importlib.util.spec_from_file_location('calendar_checks', ROOT / 'teams_calendar_checks.py')
@@ -71,7 +73,7 @@ class CalendarChecksTests(unittest.TestCase):
         self.corrupt = ''
         self.payload = self.make_payload()
         self.v = types.ModuleType('curriculum_api.views')
-        self.v.__dict__.update(datetime=datetime, timedelta=timedelta, timezone=timezone, ZoneInfo=ZoneInfo, hashlib=hashlib,
+        self.v.__dict__.update(calendar_zone=calendar_zone, local_clock_to_utc=local_clock_to_utc, datetime=datetime, timedelta=timedelta, timezone=timezone, ZoneInfo=ZoneInfo, hashlib=hashlib,
                               escape=escape, re=re, urllib_parse=urllib_parse, logger=logging.getLogger('calendar-test'),
                               TEAMS_REPEAT_VALUES={'none', 'weekly', 'daily', 'weekdays'},
                               TEAMS_LOBBY_VALUES={'invited', 'organizer', 'everyone'}, DEFAULT_TEAMS_LOBBY_BYPASS='everyone', LIVE_SESSIONS_TABLE='series', LIVE_SESSION_OCCURRENCES_TABLE='occurrences',
@@ -266,6 +268,22 @@ class CalendarChecksTests(unittest.TestCase):
     def create(self):
         return self.v.curriculum_teams_meeting(types.SimpleNamespace(method='POST'))
 
+    def test_unconfirmed_create_has_a_safe_message_and_does_not_claim_failure_is_final(self):
+        transport = sys.modules['coach_api.views']
+        transport.microsoft_graph_request = Mock(side_effect=GraphRequestError('Microsoft Graph POST events failed: HTTP 503',
+            status=503, retry_after=2, uncertain=True, request_id='SYNTHETIC-REQUEST'))
+        log = types.SimpleNamespace(EVENT_SAVE='calendar_event_save', record_graph_failure=Mock())
+        with patch.dict(sys.modules, {'curriculum_api.teams_graph_failure_log': log}):
+            response = self.create()
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response['code'], 'teams_calendar_create_uncertain')
+        self.assertTrue(response['verificationRequired'])
+        self.assertEqual((response['graphStatus'], response['retryAfterSeconds'], response['requestId']), (503, 2, 'SYNTHETIC-REQUEST'))
+        self.assertNotIn('detail', response)
+        self.assertEqual(self.series, [])
+        self.attach.assert_not_called()
+        log.record_graph_failure.assert_called_once()
+
     def test_verified_shared_calendar_attaches_before_response_without_browser_restore(self):
         result = self.create()
         self.assertEqual(result.status_code, 201, result)
@@ -301,6 +319,20 @@ class CalendarChecksTests(unittest.TestCase):
 
     def test_invalid_schedule_zone_is_refused_before_graph(self):
         self.payload['scheduleTimeZone'] = 'Invalid/Zone'
+        self.assertEqual(self.create().status_code, 400)
+        self.assertEqual(self.calls, [])
+
+    def test_saved_iana_calendar_zone_is_preserved_when_default_or_selection_differs(self):
+        for stored in ('Africa/Cairo', 'Egypt Standard Time'):
+            settings = self.v.teams_schedule_settings({'timezone': 'GMT Standard Time'},
+                {'scheduleTimeZone': 'Europe/London'}, {'timezone': stored})
+            self.assertEqual(settings['_schedule_timezone_iana'], 'Africa/Cairo')
+            self.assertEqual(settings['timezone'], 'Egypt Standard Time')
+
+    def test_mismatched_local_and_utc_clock_is_refused_before_graph(self):
+        self.payload['scheduleTimeZone'] = 'Europe/London'
+        self.payload['localStartDateTime'] = '2026-10-23T09:00:00'
+        self.payload['startDateTimeUtc'] = '2026-10-23T09:00:00Z'
         self.assertEqual(self.create().status_code, 400)
         self.assertEqual(self.calls, [])
 

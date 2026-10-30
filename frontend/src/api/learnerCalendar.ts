@@ -1,3 +1,4 @@
+import { ukOffsetForDate } from '@/lib/timeZones';
 ﻿import { createCachedResource } from './cachedRequest';
 import { readLearnerJson, invalidateLearnerReads, subscribeLearnerReadInvalidation, withCallerSignal } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
@@ -550,19 +551,8 @@ export async function fetchReviewSlots(
   return Array.isArray(result.times) ? result.times as string[] : [];
 }
 
-export function ukOffsetForDate(date: string): number {
-  return (
-    (12 -
-      Number(
-        new Intl.DateTimeFormat('en-GB', {
-          timeZone: 'Europe/London',
-          hour: '2-digit',
-          hourCycle: 'h23',
-        }).format(new Date(`${date}T12:00:00Z`)),
-      )) *
-    60
-  );
-}
+export { ukOffsetForDate } from '@/lib/timeZones';
+
 
 /** The bookable day, and whether the case owner's calendar was actually read. */
 export interface FirstSessionSlots {

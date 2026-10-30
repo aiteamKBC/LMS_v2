@@ -1,4 +1,5 @@
 import { requestSessionSync } from '@/api/sessionResults';
+import { localClockToUtcIso, zoneOffsetMs } from '@/lib/timeZones';
 import type { CurriculumKsbEntry, CurriculumModule, LibraryComponent } from '@/lib/curriculumApi';
 import {
   CurriculumApiError,
@@ -3322,20 +3323,6 @@ export function getCalendarTimeZone() {
   return calendarTimeZone;
 }
 
-function zoneOffsetMs(instant: Date, timeZone: string) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    hour12: false,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  }).formatToParts(instant).reduce<Record<string, number>>((acc, part) => {
-    if (part.type !== 'literal') acc[part.type] = Number(part.value);
-    return acc;
-  }, {});
-  const wallClock = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour % 24, parts.minute, parts.second);
-  return wallClock - instant.getTime();
-}
-
 /**
  * A stored timestamp as an instant, reading an offset-less string as UTC.
  *
@@ -3356,22 +3343,12 @@ export function parseUtcInstant(value: unknown): Date {
 
 /** Read a naive `YYYY-MM-DDTHH:mm` wall clock as a time in `timeZone`, as UTC ISO. */
 export function zonedNaiveToUtcIso(naiveLocal: string, timeZone = calendarTimeZone) {
-  const [datePart, timePart = '00:00'] = (naiveLocal || '').split('T');
-  const [year, month, day] = (datePart || '').split('-').map(Number);
-  const [hour, minute] = timePart.split(':').map(Number);
-  if ([year, month, day, hour, minute].some(value => !Number.isFinite(value))) {
-    return new Date(naiveLocal).toISOString();
-  }
-  const wallClock = Date.UTC(year, month - 1, day, hour, minute);
-  // Guess the instant as if the wall clock were UTC, then subtract the offset the zone
-  // actually had there. A second pass settles the hour a DST jump adds or removes.
-  let instant = wallClock;
-  for (let pass = 0; pass < 2; pass += 1) {
-    const corrected = wallClock - zoneOffsetMs(new Date(instant), timeZone);
-    if (corrected === instant) break;
-    instant = corrected;
-  }
-  return new Date(instant).toISOString();
+  return localClockToUtcIso(naiveLocal, timeZone);
+}
+
+/** A schedule preview can show an invalid clock without crashing its page. */
+export function previewZonedNaiveToUtcIso(naiveLocal: string, timeZone = calendarTimeZone) {
+  try { return zonedNaiveToUtcIso(naiveLocal, timeZone); } catch { return ''; }
 }
 
 /**

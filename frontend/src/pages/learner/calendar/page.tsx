@@ -999,10 +999,8 @@ function LearnerCalendarBody() {
       return;
     }
     const nextDay = new Date(Date.parse(`${bookDate}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
-    const start = aptemBooking ? new Date(bookingInstant(bookDate, '00:00')).toISOString()
-      : new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0).toISOString();
-    const end = aptemBooking ? new Date(bookingInstant(nextDay, '00:00')).toISOString()
-      : new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59).toISOString();
+    const start = new Date(bookingInstant(bookDate, '00:00')).toISOString();
+    const end = new Date(bookingInstant(nextDay, '00:00')).toISOString();
     let cancelled = false;
     setAvailabilityLoading(true);
     setAvailabilityUnconfirmed(false);
@@ -1076,12 +1074,10 @@ function LearnerCalendarBody() {
 
   const selectedSlotConflicts = useMemo(() => {
     if (!bookDate || !bookTime) return false;
-    const start = aptemBooking || reviewSlotBooking ? bookingInstant(bookDate, bookTime) : new Date(`${bookDate}T${bookTime}:00`).getTime();
+    const start = bookingInstant(bookDate, bookTime);
     const end = start + parseInt(bookDuration || '60') * 60_000;
     const rescheduledStart = rescheduleEvent?.isoDate && !rescheduleEvent.timeToBeConfirmed
-      ? aptemBooking || reviewSlotBooking
-        ? bookingInstant(rescheduleEvent.isoDate, rescheduleEvent.time.split('\u2013')[0].trim())
-        : new Date(`${rescheduleEvent.isoDate}T${rescheduleEvent.time.split('\u2013')[0].trim()}:00`).getTime()
+      ? bookingInstant(rescheduleEvent.isoDate, rescheduleEvent.time.split('\u2013')[0].trim())
       : null;
     const rescheduledEnd = rescheduledStart === null
       ? null
@@ -1092,7 +1088,7 @@ function LearnerCalendarBody() {
       if (slotStart === rescheduledStart && slotEnd === rescheduledEnd) return false;
       return start < slotEnd && end > slotStart;
     });
-  }, [bookDate, bookTime, bookDuration, busySlots, rescheduleEvent, aptemBooking, reviewSlotBooking]);
+  }, [bookDate, bookTime, bookDuration, busySlots, rescheduleEvent]);
 
   const availableReviewTimes = useMemo(() => reviewCoachSlots.filter(slot => {
     const start = bookingInstant(bookDate, slot);
@@ -1120,18 +1116,16 @@ function LearnerCalendarBody() {
 
   const selectedLmsConflict = useMemo(() => {
     if (!bookDate || !bookTime) return null;
-    const requestedStart = reviewSlotBooking ? bookingInstant(bookDate, bookTime) : new Date(`${bookDate}T${bookTime}:00`).getTime();
+    const requestedStart = bookingInstant(bookDate, bookTime);
     const requestedEnd = requestedStart + parseInt(bookDuration || '60') * 60_000;
     return myEvents.find((event) => {
       if (!event.isoDate || event.timeToBeConfirmed || event.needsInitialReviewBooking || event.id === rescheduleEvent?.id || event.id === bookingSourceEvent?.id) return false;
       const range = getEventTimeRange(event.time);
-      const existingStart = reviewSlotBooking
-        ? bookingInstant(event.isoDate, `${String(Math.floor(range.start / 60)).padStart(2, '0')}:${String(range.start % 60).padStart(2, '0')}`)
-        : new Date(`${event.isoDate}T00:00:00`).getTime() + range.start * 60_000;
+      const existingStart = bookingInstant(event.isoDate, `${String(Math.floor(range.start / 60)).padStart(2, '0')}:${String(range.start % 60).padStart(2, '0')}`);
       const existingEnd = existingStart + (event.durationMinutes || Math.max(range.end - range.start, 60)) * 60_000;
       return requestedStart < existingEnd && requestedEnd > existingStart;
     }) || null;
-  }, [bookDate, bookTime, bookDuration, bookingSourceEvent?.id, myEvents, rescheduleEvent?.id, reviewSlotBooking]);
+  }, [bookDate, bookTime, bookDuration, bookingSourceEvent?.id, myEvents, rescheduleEvent?.id]);
 
   const sameWeekSession = useMemo(() => {
     if (rescheduleEvent?.reviewTemplateId || bookingSourceEvent?.reviewTemplateId) return null;
@@ -1241,7 +1235,7 @@ function LearnerCalendarBody() {
             scheduledDate: bookDate,
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
-            timezoneOffsetMinutes: aptemBooking || reviewSlotBooking ? ukOffsetForDate(bookDate) : new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
+            timezoneOffsetMinutes: ukOffsetForDate(bookDate),
             ...(rescheduleEvent.bookingSnapshot ? {
               expectedBooking: rescheduleEvent.bookingSnapshot,
               notes: bookNotes.trim(),
@@ -1258,7 +1252,7 @@ function LearnerCalendarBody() {
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
             notes: requestNotes || undefined,
-            timezoneOffsetMinutes: aptemBooking || reviewSlotBooking ? ukOffsetForDate(bookDate) : new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
+            timezoneOffsetMinutes: ukOffsetForDate(bookDate),
           });
       // A read started before this save must not restore the old appointment.
       calendarWriteVersionRef.current += 1;

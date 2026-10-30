@@ -23,3 +23,8 @@ it('uses 23 and 25 hours for personal-calendar ranges spanning UK clock changes'
   expect((bookingInstant('2026-03-30', '00:00') - bookingInstant('2026-03-29', '00:00')) / 3_600_000).toBe(23);
   expect((bookingInstant('2026-10-26', '00:00') - bookingInstant('2026-10-25', '00:00')) / 3_600_000).toBe(25);
 });
+
+it('does not offer an invented booking instant in a missing or repeated hour', () => {
+  expect(bookingInstant('2026-03-29', '01:30')).toBeNaN();
+  expect(bookingInstant('2026-10-25', '01:30')).toBeNaN();
+});
