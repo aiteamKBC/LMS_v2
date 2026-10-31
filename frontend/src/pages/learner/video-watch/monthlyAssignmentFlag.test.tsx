@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import type { ReactNode } from 'react';
@@ -43,14 +43,11 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
-it('completes an unflagged assignment like an ordinary activity once the monthly assignment is flagged', async () => {
+it('opens the monthly submission for an unflagged assignment even when another is flagged', async () => {
   vi.mocked(fetchLearnerDetail).mockResolvedValue(plan(assignment('SLIDES', 'Lecture slide task'), assignment('MONTHLY', 'Month 1 assignment', true)));
   mount('SLIDES');
-  const brief = await screen.findByRole('region', { name: 'Assignment brief' });
-  expect(within(brief).getByText('Lecture slide task question')).toBeVisible();
-  expect(within(brief).getByRole('region', { name: 'Instructions' })).toHaveTextContent('Lecture slide task instructions');
-  expect(screen.getByRole('button', { name: 'Finish' })).toBeVisible();
-  expect(screen.queryByTestId('monthly-wizard')).toBeNull();
+  expect(await screen.findByTestId('monthly-wizard')).toHaveTextContent('Lecture slide task');
+  expect(screen.queryByRole('button', { name: 'Finish' })).toBeNull();
 });
 
 it('keeps the eight-step submission for the flagged monthly assignment', async () => {

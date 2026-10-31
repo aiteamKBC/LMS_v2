@@ -1,27 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import type { LearnerDetail } from '@/api/learnerDetail';
-import { buildLearnerJourney, isMonthlyAssignment, monthlyAssignmentFlagsInUse } from './learnerJourney';
+import { buildLearnerJourney, isMonthlyAssignment } from './learnerJourney';
 
 const assignment = (id: string, monthlyAssignment?: boolean) => ({ componentId: id, type: 'assignment', monthlyAssignment });
 const reading = { componentId: 'R1', type: 'reading', monthlyAssignment: true };
 
-describe('monthly assignment flag', () => {
-  it('treats every assignment as monthly until an author flags one', () => {
+describe('monthly assignment eligibility', () => {
+  it('includes every assignment when none has the legacy monthly flag', () => {
     const plan = [assignment('A1'), assignment('A2', false), reading];
-    expect(monthlyAssignmentFlagsInUse(plan)).toBe(false);
     expect(plan.map(component => isMonthlyAssignment(component, plan))).toEqual([true, true, false]);
   });
 
-  it('treats only flagged assignments as monthly once any assignment in the plan is flagged', () => {
+  it('includes unflagged assignments even when another assignment has the legacy flag', () => {
     const plan = [assignment('A1'), assignment('A2', true), assignment('A3', false), reading];
-    expect(monthlyAssignmentFlagsInUse(plan)).toBe(true);
-    expect(plan.map(component => isMonthlyAssignment(component, plan))).toEqual([false, true, false, false]);
+    expect(plan.map(component => isMonthlyAssignment(component, plan))).toEqual([true, true, true, false]);
   });
 
   it('accepts hyphenated or padded type names and ignores a flag on other component types', () => {
     expect(isMonthlyAssignment({ type: ' Assignment ' }, [])).toBe(true);
-    expect(monthlyAssignmentFlagsInUse([reading])).toBe(false);
     expect(isMonthlyAssignment(reading, [reading])).toBe(false);
+    for (const type of ['video', 'quiz', 'reflection', 'live_session', undefined]) {
+      expect(isMonthlyAssignment({ type, monthlyAssignment: true }, [reading])).toBe(false);
+    }
   });
 
   it('is safe before the plan has loaded', () => {
@@ -38,6 +38,6 @@ describe('monthly assignment flag', () => {
       ], quizAttempts: [] } as unknown as LearnerDetail;
     const components = buildLearnerJourney(detail)[0].weeks[0].components;
     expect(components.map(component => component.monthlyAssignment)).toEqual([true, false]);
-    expect(components.map(component => isMonthlyAssignment(component, detail.components))).toEqual([true, false]);
+    expect(components.map(component => isMonthlyAssignment(component, detail.components))).toEqual([true, true]);
   });
 });

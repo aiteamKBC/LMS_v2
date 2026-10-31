@@ -95,7 +95,6 @@ class SelectedActivityTimeTests(SimpleTestCase):
         for kind in ("commercial", "apprenticeship"):
             for hours in ("1", "0.1", "0.25", "3.5"):
                 with self.subTest(kind=kind, hours=hours), ExitStack() as stack:
-                    stack.enter_context(patch("learner_api.assignment_settings.monthly_assignment_required", return_value=True))
                     stack.enter_context(patch.object(components, "_assignment_form_ready", return_value=True))
                     connection = stack.enter_context(patch("learner_api.monthly_assignment.connections"))
                     stack.enter_context(patch("learner_api.monthly_assignment.transaction.atomic"))
