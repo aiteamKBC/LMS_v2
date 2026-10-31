@@ -159,6 +159,33 @@ class CanonicalLearningTests(unittest.TestCase):
         }))
         self.assertFalse(self.scope['counts_as_completed']({'activity_status': 'not accepted'}))
 
+    def test_untimed_completion_is_visible_for_review_without_awarding_hours(self):
+        entry = {'id': 'subject:50:10', 'component_title': 'Synthetic reading',
+                 'kind': 'component', 'completed': True, 'completion_only': True,
+                 'accepted': False, 'actual_seconds': None, 'ksbs': [],
+                 'reporting_month': '2026-10', 'reporting_started_at': '2026-10-12T10:00:00Z'}
+        self.query.return_value = []
+        row = self.scope['rows_for'](self.owner, [entry])[0]
+        self.assertEqual(row['reporting_month'], '2026-10')
+        self.assertEqual(row['activity_date'], '2026-10-12')
+        self.assertFalse(row['actual_hours_recorded'])
+        self.assertEqual(row['actual_hours'], 0)
+        self.assertFalse(row['accepted'])
+        self.assertEqual(self.scope['allocations'](entry), [])
+        self.assertEqual(self.scope['metrics_from_records']([entry], {})['otjh']['actual'], 0)
+        self.query.reset_mock()
+        content = self.scope['content'](row, self.owner, entry)
+        self.assertIn('without a recorded study duration', content['parts'][0]['html'])
+        self.query.assert_not_called()
+
+    def test_recorded_zero_duration_is_distinct_from_unavailable_duration(self):
+        self.query.return_value = []
+        entry = {'id': 1, 'accepted': True, 'actual_seconds': 0, 'ksbs': [],
+                 'reporting_month': '2026-09', 'component_title': 'Synthetic zero duration'}
+        row = self.scope['rows_for'](self.owner, [entry])[0]
+        self.assertTrue(row['actual_hours_recorded'])
+        self.assertEqual(row['actual_hours'], 0)
+
     def test_journal_date_corrects_an_import_timestamp_without_moving_hours(self):
         entry = {'id': 1, 'source_system': 'journal', 'accepted': True,
                  'actual_seconds': 2700, 'reporting_month': '2025-11', 'ksbs': [],

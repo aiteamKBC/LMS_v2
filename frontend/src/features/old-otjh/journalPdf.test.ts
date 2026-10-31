@@ -57,6 +57,16 @@ describe('learner journal PDF', () => {
     expect(pdfDuration(-1.5)).toBe('-1h 30m');
     expect(pdfDuration('1.999')).toBe('2h 00m');
   });
+  it('exports unavailable duration separately from a recorded zero', () => {
+    const report = { ...month, rows: [
+      { ...month.rows[0], title: 'Untimed activity', actual_hours: 0, actual_hours_recorded: false },
+      { ...month.rows[1], title: 'Recorded zero activity', actual_hours: 0, actual_hours_recorded: true },
+    ] };
+    const content = pdfText(buildJournalPdf(summary, [report], assets));
+    expect(content).toMatch(/Untimed activity.*Unavailable/);
+    expect(content).toMatch(/Recorded zero activity.*0h 00m/);
+    expect(content.match(/Unavailable/g)).toHaveLength(1);
+  });
   it('sorts all months and includes each month and its signatures once', () => {
     const earlier = { ...month, month: '2026-04', student_signature: { url: '/saved.png', signer_name: 'Saved name', signed_at: '2026-05-10' } };
     const doc = buildJournalPdf(summary, [month, earlier], { ...assets, signatures: new Map([['/saved.png', assets.logo]]) });

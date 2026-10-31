@@ -52,6 +52,26 @@ beforeEach(() => {
 afterEach(() => { clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('compact My Learning route', () => {
+  it.each([
+    ['commercial', false], ['commercial', true], ['apprenticeship', false], ['apprenticeship', true],
+  ] as const)('uses saved component completion inside the module and hides the old percentage (%s, completed=%s)', async (kind, completed) => {
+    const reference = { percent: 100, capturedAt: '2026-10-30T12:00:00+00:00' };
+    const catalogue = makeCatalogue(kind);
+    catalogue.modules[0].legacyProgressReference = reference;
+    const module = makeModule();
+    const detail = { ...module,
+      detail: { ...module.detail, componentProgress: completed ? [{ componentId: 'C1', kind: 'reading', passed: true }] : [] },
+      metadata: { ...module.metadata, legacy_progress_references: { 'current:M1': reference } } };
+    vi.mocked(fetch).mockImplementation(async input => reply(String(input).includes('/certificates/')
+      ? { template: null, csrfToken: '' } : String(input).includes('/modules/') ? detail : catalogue));
+    route(`/learner/my-learning/${kind}/7?subject=current%3AM1`);
+    const progress = within(await screen.findByRole('region', { name: 'Module progress' }));
+    expect(screen.queryByText(/Old LMS progress:/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Historical course progress')).not.toBeInTheDocument();
+    expect(progress.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', completed ? '100' : '0');
+    expect(progress.getByText(`${completed ? 1 : 0} of 1 completed`)).toBeVisible();
+  });
+
   it.each(['commercial', 'apprenticeship'] as const)('shows each module cohort independently of the learner cohort (%s)', async kind => {
     const catalogue = makeCatalogue(kind);
     catalogue.learner.cohort = 'Account cohort';

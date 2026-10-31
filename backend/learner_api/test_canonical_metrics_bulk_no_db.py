@@ -95,6 +95,22 @@ class CanonicalMetricsBulkTests(TestCase):
         self.assertEqual(result[10]['otjh']['actual'], 0)
         self.assertEqual(result[10]['ksb']['completed'], 0)
 
+    def test_untimed_completion_reaches_only_its_owner_in_coach_metrics(self):
+        def project(owners, records):
+            return {owner['enrolment_id']: current_learning.merge_attempts(records[owner['id']], [
+                {'group_id': 50, 'activity_id': 10, 'catalogue_kind': 'material',
+                 'completed': True, 'submitted_at': '2026-10-19T12:00:00Z',
+                 'title': 'Synthetic reading'},
+            ] if owner['enrolment_id'] == 10 else []) for owner in owners}
+
+        with patch.object(canonical_learning, 'current_records_bulk', side_effect=project):
+            result, _ = self.run_bulk([10, 11], learner_workspace=True)
+        self.assertEqual(result[10]['programme']['completed'], 2)
+        self.assertEqual(result[11]['programme']['completed'], 1)
+        for payload in result.values():
+            self.assertEqual(payload['otjh']['actual'], 1)
+            self.assertEqual(payload['ksb']['completed'], 1)
+
 
 class CanonicalKsbPointTests(TestCase):
     def test_points_expand_the_exact_pairs_counted_by_the_headline(self):

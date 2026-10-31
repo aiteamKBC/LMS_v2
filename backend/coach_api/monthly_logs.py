@@ -43,12 +43,20 @@ def project_year(learner, year):
     # Group all months once: the two summary cards remain programme-wide.
     activities = query('''SELECT reporting_month AS month,count(*) AS activities,
         coalesce(sum(greatest(coalesce(actual_seconds,0),0))
-          FILTER (WHERE accepted IS TRUE),0) / 3600.0 AS accepted_hours
+          FILTER (WHERE accepted IS TRUE),0) / 3600.0 AS accepted_hours,
+        jsonb_agg(jsonb_build_object('id',id,'title',component_title,
+            'actual_hours',greatest(coalesce(actual_seconds,0),0) / 3600.0,
+            'actual_hours_recorded',actual_seconds IS NOT NULL) ORDER BY id)
+          FILTER (WHERE nullif(reporting_month,'') IS NULL) AS unallocated_activities
         FROM "Learner".learner_progress_entries
         WHERE learner_id=%s AND deleted_at IS NULL GROUP BY reporting_month''', [owner['id']])
     by_month = {row['month']: dict(row) for row in activities}
+    unallocated = {str(item['id']): item for row in activities
+                   for item in row.get('unallocated_activities') or []}
     for record in pending_hour_records([owner])[owner['id']]:
         month = record.get('reporting_month')
+        if month:
+            unallocated.pop(str(record.get('id')), None)
         row = by_month.setdefault(month, {'month': month, 'activities': 0, 'accepted_hours': 0})
         # Native saves are already counted by SQL; standalone extras have no
         # progress row and contribute one activity, including pending review.
@@ -88,7 +96,7 @@ def project_year(learner, year):
                 'total': len(closed)},
                 'acceptedOtjhHours': round(sum(float(row['accepted_hours']) for row in activities), 4),
                 'trainingPlanHours': round(sum(targets.values()), 4) if targets else None},
-            'months': months}
+            'months': months, 'unallocatedActivities': list(unallocated.values())}
 
 
 @logs.endpoint('GET')

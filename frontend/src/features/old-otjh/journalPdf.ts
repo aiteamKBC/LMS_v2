@@ -133,7 +133,7 @@ function activityLog(doc: jsPDF, report: MonthDetail, learner: NonNullable<Journ
     body: report.rows.length ? report.rows.map(row => [
       date(row.activity_date, true), text(row.source_ref || String(row.id)), text(row.title),
       row.ksb_codes?.join(', ') || '-', text(row.category), text(row.timestamp_label || row.activity_time),
-      pdfDuration(row.actual_hours), row.accepted ? 'Yes' : 'No',
+      row.actual_hours_recorded === false ? 'Unavailable' : pdfDuration(row.actual_hours), row.accepted ? 'Yes' : 'No',
     ]) : [[{ content: 'No activities recorded for this month.', colSpan: 8 }]],
     foot: [
       [{ content: 'Accepted total', colSpan: 6, styles: { halign: 'right' } }, pdfDuration(report.actual_hours), ''],

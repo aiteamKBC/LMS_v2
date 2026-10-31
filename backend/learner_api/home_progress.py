@@ -17,6 +17,7 @@ from .subject_dates import as_date
 from .training_plan_dashboard import plan_planned_hours, rows
 from .otjh_totals import completed_otjh
 from . import canonical_learning
+from .current_learning import actual_time_seconds
 
 log = logging.getLogger(__name__)
 ACCEPTED = {'accepted', 'partial'}
@@ -64,8 +65,9 @@ def summarise_home(activities, native, progress, submissions, assigned, start, e
     assignment_ids.update(str(row['componentId']) for row in progress
                           if row.get('componentId') and row.get('componentType') == 'assignment')
     # Reflections can have a different activity id; component_ref is canonical.
+    assignment_submissions = [row for row in submissions if row.get('activity_type', 'assignment') == 'assignment']
     marking = {}
-    for row in submissions:
+    for row in assignment_submissions:
         component = str(row.get('component_ref') or row.get('activity_id') or '')
         if component in assignment_ids:
             marking[component] = row
@@ -94,7 +96,7 @@ def summarise_home(activities, native, progress, submissions, assigned, start, e
     # These records are already scoped to this learner. Retain earned time
     # when an activity is archived or replaced in the current curriculum, just
     # as the historical ledger retains previously completed learning.
-    actual = completed_otjh(native, progress, submissions, historical_hours)
+    actual = completed_otjh(native, progress, assignment_submissions, historical_hours)
     submitted, missing_submitted = 0, 0
     for component, row in marking.items():
         if row.get('imported'):
@@ -111,6 +113,16 @@ def summarise_home(activities, native, progress, submissions, assigned, start, e
         if row['status'] in SUBMITTED and component in assignment_ids:
             missing_submitted += value is None
             submitted += value or 0
+    # Extra activities have their own identities and no assigned component.
+    # Rows arrive oldest first, so a later review replaces the pending state.
+    extras = {str(row['activity_id']): row for row in submissions
+              if row.get('activity_type') == 'extra_activity' and row.get('activity_id')}
+    for row in extras.values():
+        if row.get('imported') or row.get('status') not in SUBMITTED:
+            continue
+        seconds = actual_time_seconds(row.get('actual_time_hours'))
+        missing_submitted += seconds is None
+        submitted += seconds / 3600 if seconds is not None else 0
     submitted = None if missing_submitted else round(submitted, 4)
 
     undated = sum(not as_date(row.get('date')) or bool(row.get('date_needs_review')) for row in activities)
@@ -159,10 +171,10 @@ def read_home_progress(
 ):
     start, _, _ = _group_dates(source)
     with connections['enrolment'].cursor() as cur:
-        cur.execute('''SELECT activity_id, component_ref, status, actual_time_hours,
+        cur.execute('''SELECT activity_type, activity_id, component_ref, status, actual_time_hours,
             full_submission->>'submissionOrigin' = 'imported_legacy' AS imported
             FROM "Learner".learning_reflection_submissions
-            WHERE learner_kind=%s AND learner_id=%s AND activity_type='assignment'
+            WHERE learner_kind=%s AND learner_id=%s AND activity_type IN ('assignment','extra_activity')
             ORDER BY submitted_at NULLS FIRST,id''', [kind, str(source.pk)])
         submissions = rows(cur)
         historical_hours = 0
