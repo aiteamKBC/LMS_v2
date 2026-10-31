@@ -1,5 +1,6 @@
 import { finishTeamsCreation, finishTeamsUpdate } from '../creationResult';
 import { syncTeamsCalendarState } from '../calendarState';
+import * as calendarHealth from '../calendarHealth';
 import { calendarAction } from '../calendarActions';
 import { compareTeamsAttendees } from '../attendeeComparison';
 import { loadModuleStructure, loadTeamsMeetingArtifacts, loadTeamsMeetingConfiguration, type ModuleCatalogueItem, type ModuleComponent } from '../../module-builder/moduleAuthoringData';
@@ -374,6 +375,36 @@ describe('Teams Meetings page', () => {
       expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
       expect(finishTeamsCreation).not.toHaveBeenCalled();
     } finally { clock.mockRestore(); }
+  });
+
+  it('refreshes the selected health report after an unchanged sync without reloading every calendar', async () => {
+    window.localStorage.setItem('curriculumTeamsAutoSync', 'off');
+    const response: calendarHealth.CalendarHealth = {
+      liveSessionId: 'LIVE-1', module: { moduleCatalogueId: 'MOD-1', title: 'Data Foundations', programme: '', cohort: '', group: '' },
+      mainMeeting: { eventId: 'E-1', onlineMeetingId: 'M-1', joinRef: 'synthetic' },
+      summary: { status: 'verification_pending', neverVerified: true, lastVerifiedAt: '', verificationStale: false,
+        lastVerificationFailure: null, auditLogAvailable: true,
+        counts: { plannedSessions: 2, mainSeries: 2, additionalMeetings: 0, standaloneReplacements: 0,
+          missingOccurrences: 0, linkConflicts: 0, lifecycleIssues: 0, auditIssues: 0, notInPlan: 0 } },
+      sessions: { items: [], page: 1, pageSize: 25, pages: 1, total: 0, filter: 'all' }, warnings: [], readOnly: true,
+    };
+    const read = vi.spyOn(calendarHealth, 'fetchCalendarHealth').mockResolvedValueOnce(response)
+      .mockResolvedValue({ ...response, summary: { ...response.summary, status: 'healthy', neverVerified: false, lastVerifiedAt: '2026-10-31T12:00:00Z' } });
+    try {
+      await renderPage();
+      await screen.findByText('Data Foundations');
+      await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+      const dialog = within(await screen.findByRole('dialog'));
+      expect(await dialog.findByTestId('calendar-health-status')).toHaveTextContent('Verification pending');
+      const summaryReads = fetchCurriculumTeamsMeetingSummaries.mock.calls.length;
+      vi.mocked(syncTeamsCalendarState).mockResolvedValueOnce({ changed: false, seriesStatus: 'active', cancelledSessions: [], errors: [], leftovers: [] });
+      await userEvent.click(dialog.getByRole('button', { name: 'Sync calendar status' }));
+      await waitFor(() => expect(dialog.getByTestId('calendar-health-status')).toHaveTextContent('Healthy'));
+      expect(read.mock.calls).toEqual([['LIVE-1', 'all', 1], ['LIVE-1', 'all', 1]]);
+      expect(fetchCurriculumTeamsMeetingSummaries).toHaveBeenCalledTimes(summaryReads);
+      expect(createTeamsMeeting).not.toHaveBeenCalled();
+      expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+    } finally { read.mockRestore(); }
   });
 
   it('honours auto-sync off, and a manual check records eligible Microsoft cancellations locally', async () => {

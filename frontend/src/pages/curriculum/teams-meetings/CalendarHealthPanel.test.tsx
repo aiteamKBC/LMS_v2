@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { coachFetch } from '@/lib/coachFetch';
 import { CalendarHealthPanel } from './CalendarHealthPanel';
@@ -97,6 +97,63 @@ beforeEach(() => { vi.clearAllMocks(); });
 afterEach(() => cleanup());
 
 describe('Calendar health', () => {
+  it('refreshes a completed status check without resetting the chosen filter or remounting', async () => {
+    let latest = healthResponse([session(1)], { status: 'verification_pending', neverVerified: true, lastVerifiedAt: '' });
+    vi.mocked(coachFetch).mockImplementation(async () => ok(latest));
+    const { rerender } = render(<CalendarHealthPanel liveSessionId="LIVE-1" refreshKey={0} />);
+    expect(await screen.findByTestId('calendar-health-status')).toHaveTextContent('Verification pending');
+    fireEvent.click(screen.getByRole('button', { name: 'Main series' }));
+    await waitFor(() => expect(calls()).toHaveLength(2));
+    latest = healthResponse([session(1)], { status: 'healthy' });
+    rerender(<CalendarHealthPanel liveSessionId="LIVE-1" refreshKey={1} />);
+    await waitFor(() => expect(screen.getByTestId('calendar-health-status')).toHaveTextContent('Healthy'));
+    expect(calls()).toHaveLength(3);
+    expect(calls()[2][0]).toContain('filter=main');
+    expect(calls().every(([, init]) => init?.method === 'GET')).toBe(true);
+    rerender(<CalendarHealthPanel liveSessionId="LIVE-1" refreshKey={1} disabled />);
+    expect(calls()).toHaveLength(3);
+  });
+
+  it('ignores an older pending response arriving after a fresh verified response', async () => {
+    let finishOld!: (response: Response) => void;
+    vi.mocked(coachFetch).mockReturnValueOnce(new Promise<Response>(resolve => { finishOld = resolve; }));
+    vi.mocked(coachFetch).mockResolvedValue(ok(healthResponse([session(1)], { status: 'healthy' })));
+    const { rerender } = render(<CalendarHealthPanel liveSessionId="LIVE-1" refreshKey={0} />);
+    await waitFor(() => expect(calls()).toHaveLength(1));
+    rerender(<CalendarHealthPanel liveSessionId="LIVE-1" refreshKey={1} />);
+    expect(await screen.findByTestId('calendar-health-status')).toHaveTextContent('Healthy');
+    await act(async () => finishOld(ok(healthResponse([session(1)], { status: 'verification_pending', neverVerified: true }))));
+    expect(screen.getByTestId('calendar-health-status')).toHaveTextContent('Healthy');
+  });
+
+  it('shows a failed status check after refresh without fabricating a healthy result', async () => {
+    route({ health: healthResponse([session(1)], { status: 'healthy' }) });
+    const { rerender } = render(<CalendarHealthPanel liveSessionId="LIVE-1" refreshKey={0} />);
+    expect(await screen.findByTestId('calendar-health-status')).toHaveTextContent('Healthy');
+    route({ health: healthResponse([session(1, { integrity: 'verification_failed' })], {
+      status: 'verification_failed', lastVerificationFailure: { at: '2026-10-31T12:00:00Z', message: 'Microsoft access was refused.' },
+    }) });
+    rerender(<CalendarHealthPanel liveSessionId="LIVE-1" refreshKey={1} />);
+    await screen.findByText(/Microsoft access was refused/);
+    expect(screen.getByTestId('calendar-health-status')).not.toHaveTextContent('Healthy');
+    expect(calls().every(([, init]) => init?.method === 'GET')).toBe(true);
+  });
+
+  it('distinguishes the current module plan from saved historical calendar sessions', async () => {
+    const response = healthResponse([session(1)], { status: 'healthy', counts: {
+      plannedSessions: 16, mainSeries: 16, additionalMeetings: 0, standaloneReplacements: 0,
+      missingOccurrences: 0, linkConflicts: 0, lifecycleIssues: 0, auditIssues: 0, notInPlan: 0,
+    } });
+    route({ health: response });
+    render(<CalendarHealthPanel liveSessionId="LIVE-1" planSessionCount={15} />);
+    await screen.findByTestId('calendar-health-status');
+    expect(screen.getByText('Current module plan').parentElement).toHaveTextContent('15');
+    expect(screen.getByText('Saved calendar sessions').parentElement).toHaveTextContent('16');
+    expect(screen.getByText(/The current module plan has 15 sessions; the saved calendar has 16/)).toHaveTextContent('Historical attendance and recordings remain attached');
+    expect(screen.getByTestId('calendar-health-status')).toHaveTextContent('Healthy');
+    expect(calls()).toHaveLength(1);
+  });
+
   it('shows the status, counts and all three warning categories from one read-only GET', async () => {
     route({ health: healthResponse([session(1), conflict, additional]) });
     render(<CalendarHealthPanel liveSessionId="LIVE-1" />);
