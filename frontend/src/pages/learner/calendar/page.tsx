@@ -44,8 +44,27 @@ import { LearnerReviewInstanceForm } from '../reviews/LearnerReviewInstanceForm'
 import { useLearnerReviewInstance } from "../reviews/LearnerReviewInstanceForm.helpers";
 import { bookingInstant, firstAvailableBookingDate, mcmBookingDateRestrictionMessage, parseBookingDay } from '../reviews/bookingDates';
 import CoachSessionTypePicker, { COACH_APPROVAL_SESSION_TYPES } from './CoachSessionTypePicker';
+import { BUSINESS_TIME_ZONE } from '@/lib/timeZones';
 
-type CalendarEvent = SharedCalendarEvent & { needsInitialReviewBooking?: boolean };
+type CalendarEvent = SharedCalendarEvent & Pick<ICSEvent, 'timeZone' | 'startsAt' | 'endsAt'> & { needsInitialReviewBooking?: boolean; isTimeEstimated?: boolean };
+
+function hasCalendarExportTime(event: CalendarEvent): boolean {
+  return !event.timeToBeConfirmed && (!event.isTimeEstimated || Boolean(event.startsAt && event.endsAt));
+}
+
+function calendarICSEvent(event: CalendarEvent): ICSEvent {
+  if (!event.isoDate) throw new Error('The full event date is unavailable. Refresh the calendar and try again.');
+  if (!hasCalendarExportTime(event)) throw new Error('This event time is still to be confirmed.');
+  if (!(event.startsAt && event.endsAt) && !event.timeZone) {
+    throw new Error('The event time zone is unavailable. Refresh the calendar and try again.');
+  }
+  return {
+    title: event.title, description: event.description, date: event.date,
+    time: event.time, location: event.location, isoDate: event.isoDate,
+    timeZone: event.timeZone, startsAt: event.startsAt, endsAt: event.endsAt,
+    durationMinutes: event.durationMinutes,
+  };
+}
 
 /** The header's secondary-actions menu — everything that isn't booking a
  * coach session (the primary action) moves in here so the toolbar stays a
@@ -221,6 +240,10 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
       ? `${ev.module || ev.title} live session${ev.group ? ` for ${ev.group}` : ''}.`
       : `${ev.title} session with your coach.`),
     isoDate: iso,
+    timeZone: ev.timeZone || (isLiveSession ? undefined : BUSINESS_TIME_ZONE),
+    startsAt: ev.startsAt,
+    endsAt: ev.endsAt,
+    isTimeEstimated: ev.isTimeEstimated,
     meetingLink: ev.meetingLink || undefined,
     eventKey: ev.calendarEventKey || ev.eventKey || ev.id,
     source: ev.source,
@@ -275,6 +298,8 @@ function mapBusySlot(slot: CalendarBusySlot): CalendarEvent | null {
     status: 'confirmed',
     description: 'Busy time from your connected personal calendar. Event details stay private.',
     isoDate,
+    startsAt: slot.start,
+    endsAt: slot.end,
   };
 }
 
@@ -1356,29 +1381,35 @@ function LearnerCalendarBody() {
   };
 
   const handleExportICS = (ev: CalendarEvent) => {
-    const icsEvent: ICSEvent = { title: ev.title, description: ev.description, date: ev.date, time: ev.time, location: ev.location };
-    downloadICS(icsEvent);
-    setAddToCalendarToast(`"${ev.title}" exported!`);
+    try {
+      downloadICS(calendarICSEvent(ev));
+      setAddToCalendarToast(`"${ev.title}" exported!`);
+    } catch (error) {
+      setAddToCalendarToast(`Could not export event: ${error instanceof Error ? error.message : 'Please try again.'}`);
+    }
     setTimeout(() => setAddToCalendarToast(null), 2500);
   };
 
   const handleExportAllICS = () => {
-    const confirmedEvents = myEvents.filter((ev) => ev.status === 'confirmed');
+    const confirmedEvents = myEvents.filter((ev) => ev.status === 'confirmed' && hasCalendarExportTime(ev));
     if (confirmedEvents.length === 0) { setAddToCalendarToast('No confirmed events to export'); setTimeout(() => setAddToCalendarToast(null), 2500); return; }
-    const icsEvents: ICSEvent[] = confirmedEvents.map((ev) => ({ title: ev.title, description: ev.description, date: ev.date, time: ev.time, location: ev.location }));
-    downloadAllICS(icsEvents);
-    setAddToCalendarToast(`${confirmedEvents.length} events exported!`);
+    try {
+      downloadAllICS(confirmedEvents.map(calendarICSEvent));
+      setAddToCalendarToast(`${confirmedEvents.length} events exported!`);
+    } catch (error) {
+      setAddToCalendarToast(`Could not export calendar: ${error instanceof Error ? error.message : 'Please try again.'}`);
+    }
     setTimeout(() => setAddToCalendarToast(null), 2500);
   };
 
   const handleCreateCustomEvent = () => {
     if (!customTitle.trim()) return;
-    const dateObj = new Date(customDate);
+    const dateObj = new Date(`${customDate}T12:00:00`);
     const day = dateObj.getDate();
     const monthName = MONTH_NAMES[dateObj.getMonth()].substring(0, 3);
     const dayName = DAYS_OF_WEEK[dateObj.getDay() === 0 ? 6 : dateObj.getDay() - 1];
     const reminderMinutes = parseInt(customReminder);
-    const newEvent: CalendarEvent = { id: `custom-${Date.now()}`, title: customTitle, date: `${day} ${monthName}`, dayName, time: `${customStartTime}\u2013${customEndTime}`, club: 'Personal', clubId: '', type: 'Personal', format: customLocation || 'Personal', location: customLocation || 'Personal Calendar', host: p.fullName, points: 0, status: 'confirmed', description: customDescription || `Reminder: ${customReminder} minutes before`, color: customColor, reminderMinutes, isoDate: customDate };
+    const newEvent: CalendarEvent = { id: `custom-${Date.now()}`, title: customTitle, date: `${day} ${monthName}`, dayName, time: `${customStartTime}\u2013${customEndTime}`, club: 'Personal', clubId: '', type: 'Personal', format: customLocation || 'Personal', location: customLocation || 'Personal Calendar', host: p.fullName, points: 0, status: 'confirmed', description: customDescription || `Reminder: ${customReminder} minutes before`, color: customColor, reminderMinutes, isoDate: customDate, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone };
     const conflict = hasConflict(myEvents, newEvent);
     if (conflict) { setConflictEvent(conflict); return; }
     setMyEvents((prev) => [newEvent, ...prev]);
@@ -1411,7 +1442,15 @@ function LearnerCalendarBody() {
   };
 
   const handleEnableNotifications = async () => { const result = await requestNotificationPermission(); setNotificationPermission(result); if (result === 'granted') { setAddToCalendarToast('Push notifications enabled!'); setTimeout(() => setAddToCalendarToast(null), 2500); } };
-  const handleGeneratePublicFeed = () => { const confirmedEvents = myEvents.filter((ev) => ev.status === 'confirmed'); const icsEvents: ICSEvent[] = confirmedEvents.map((ev) => ({ title: ev.title, description: ev.description, date: ev.date, time: ev.time, location: ev.location })); const url = createPublicFeedBlob(icsEvents); setPublicFeedUrl(url); };
+  const handleGeneratePublicFeed = () => {
+    try {
+      const confirmedEvents = myEvents.filter(ev => ev.status === 'confirmed' && hasCalendarExportTime(ev));
+      setPublicFeedUrl(createPublicFeedBlob(confirmedEvents.map(calendarICSEvent)));
+    } catch (error) {
+      setAddToCalendarToast(`Could not generate feed: ${error instanceof Error ? error.message : 'Please try again.'}`);
+      setTimeout(() => setAddToCalendarToast(null), 4000);
+    }
+  };
   const handleCopyFeedUrl = () => { if (publicFeedUrl) { navigator.clipboard.writeText(publicFeedUrl); setFeedCopied(true); setTimeout(() => setFeedCopied(false), 2000); } };
 
   const statusConfig: Record<string, { label: string; cls: string }> = { confirmed: { label: 'Confirmed', cls: 'bg-emerald-100 text-emerald-700' }, pending: { label: 'Pending', cls: 'bg-amber-100 text-amber-700' } };
@@ -1709,7 +1748,7 @@ function LearnerCalendarBody() {
               {showEventDetails.bookingStatus === 'scheduled' && showEventDetails.source === 'catch-up' && (
                 <button type="button" disabled={showEventDetails.changeClosed || cancelBusy} title={showEventDetails.changeClosed ? 'Catch-ups can be cancelled up to 12 hours before they start.' : undefined} onClick={() => void cancelCatchup(showEventDetails)} className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-600 transition-smooth hover:bg-red-50 cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-calendar-close-line h-4 w-4 shrink-0" /><span>{cancelBusy ? 'Cancelling…' : 'Cancel catch-up'}</span></button>
               )}
-              {!showEventDetails.timeToBeConfirmed && <button onClick={() => handleExportICS(showEventDetails)} className="inline-flex flex-1 items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-download-line h-4 w-4 shrink-0"></AppIcon><span>Export .ics</span></button>}
+              {hasCalendarExportTime(showEventDetails) && <button onClick={() => handleExportICS(showEventDetails)} className="inline-flex flex-1 items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-download-line h-4 w-4 shrink-0"></AppIcon><span>Export .ics</span></button>}
               {showEventDetails.id.startsWith('custom-') && (
                 <button onClick={() => handleRemoveFromCalendar(showEventDetails.id)} className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-red-200 text-sm font-semibold text-red-600 hover:bg-red-50 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-calendar-close-line h-4 w-4 shrink-0"></AppIcon><span>Remove</span></button>
               )}

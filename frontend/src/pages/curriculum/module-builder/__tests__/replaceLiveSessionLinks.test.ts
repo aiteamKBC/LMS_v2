@@ -44,7 +44,7 @@ function moduleFixture(): ModuleCatalogueItem {
 }
 
 describe('replaceLiveSessionLinksInWeeks', () => {
-  it('updates only live sessions in selected weeks and preserves Teams identity', () => {
+  it('updates only selected live sessions without claiming the former Teams identity', () => {
     const source = moduleFixture();
     const next = replaceLiveSessionLinksInWeeks(source, ['WEEK-A'], ' https://new.example/join ');
 
@@ -53,8 +53,9 @@ describe('replaceLiveSessionLinksInWeeks', () => {
       liveSessionUrl: 'https://new.example/join',
       teamsMeetingUrl: 'https://new.example/join',
       liveSessionLinkOverride: 'https://new.example/join',
-      teamsLiveSessionId: 'LIVE-A',
+      teamsCalendarBinding: 'unverified',
     });
+    expect(next.weekStructure[0].components[0].settings.teamsLiveSessionId).toBeUndefined();
     expect(next.weekStructure[0].components[1]).toBe(source.weekStructure[0].components[1]);
     expect(next.weekStructure[1]).toBe(source.weekStructure[1]);
   });

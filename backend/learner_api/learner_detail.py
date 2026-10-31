@@ -1962,16 +1962,18 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
         live_session_url = (
             _s(delivery.get('liveSessionUrl')) if delivery else _s(stored_live_link)
         ) or (
-            _s(settings.get("liveSessionUrl"))
+            _s(settings.get("liveSessionLinkOverride"))
+            or _s(settings.get("liveSessionUrl"))
             or _s(settings.get("teamsMeetingUrl"))
             or None
         )
         normalised_type = _s(ctype).strip().lower().replace("-", "_")
+        unconfirmed_calendar = not delivery and settings.get('teamsCalendarBinding') in {'unverified', 'missing', 'ambiguous'}
         fallback = (
             live_session_fallbacks.get((_s(_mid), _s(settings.get("sessionDate"))[:10]))
-            if normalised_type == "live_session" else None
+            if normalised_type == "live_session" and not unconfirmed_calendar else None
         )
-        stored_series_id = _s(settings.get("teamsLiveSessionId"))
+        stored_series_id = '' if unconfirmed_calendar else _s(settings.get("teamsLiveSessionId"))
         extra_series_id = (
             _s(settings.get("extraTeamsLiveSessionId"))
             if normalised_type == "live_session" and _s(settings.get("extraTeamsMeetingUrl")) else ""
@@ -1986,7 +1988,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             teams_session_number = settings.get("teamsSessionNumber") or fallback["teamsSessionNumber"]
         else:
             teams_live_session_id = stored_series_id or None
-            teams_session_number = settings.get("teamsSessionNumber") or None
+            teams_session_number = None if unconfirmed_calendar else settings.get("teamsSessionNumber") or None
         # Use the shared resolver, not a bare settings["videoUrl"] read: a video
         # can be authored as an embed snippet instead of a plain URL, and the
         # removal check below must not treat that as "video removed".

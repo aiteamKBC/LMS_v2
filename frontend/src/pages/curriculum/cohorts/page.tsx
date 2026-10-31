@@ -1,4 +1,5 @@
-import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
+import { LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
+import { LearnerStatusCounts } from '../shared/entities/LearnerStatusCounts';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -440,7 +441,7 @@ function CurriculumCohortsPageContent() {
                   )}
                   secondary={cohort.id}
                 />
-                  <AssignedLearners target={{ scope: 'cohort', id: cohort.id, name: cohort.name }} initialCount={cohort.learners} />
+                  <LearnerStatusCounts target={{ scope: 'cohort', id: cohort.id, name: cohort.name }} refreshKey={cohort} />
                 </div>
                 <StackedCell
                   primary={cohort.programme || 'Unassigned programme'}
