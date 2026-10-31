@@ -793,16 +793,11 @@ export function replaceLiveSessionLinksInWeeks(
           if (
             component.type !== 'live-session'
             || String(component.settings.extraTeamsMeetingUrl || '').trim()
-            || !String(component.settings.liveSessionUrl || component.settings.teamsMeetingUrl || '').trim()
+            || component.settings.teamsMeetingScope === 'additional'
           ) return component;
           return {
             ...component,
-            settings: {
-              ...component.settings,
-              liveSessionUrl: nextLink,
-              teamsMeetingUrl: nextLink,
-              liveSessionLinkOverride: nextLink,
-            },
+            settings: manualLiveSessionLinkSettings(component.settings, nextLink),
           };
         }),
       };
@@ -833,7 +828,7 @@ export function applyLiveSessionLinkToComponents(
           ...week,
           components: week.components.map(component => (
             ids.has(component.id)
-              ? { ...component, settings: { ...component.settings, liveSessionUrl: nextLink, teamsMeetingUrl: nextLink, liveSessionLinkOverride: nextLink } }
+              ? { ...component, settings: manualLiveSessionLinkSettings(component.settings, nextLink) }
               : component
           )),
         }
@@ -877,6 +872,73 @@ export async function replaceModuleTeamsLinks(
   // The components the cached module views describe have just changed.
   if (result.updated) invalidateCurriculumCacheByEntity('module');
   return result;
+}
+
+export interface ExistingTeamsSeriesReview {
+  previewToken: string;
+  matched: number;
+  unmatched: number;
+  organizer: string;
+  timeZone: string;
+  structureRevision: string;
+  sessions: Array<{ componentId: string; weekId: string; title: string; date: string; status: 'matched' | 'missing' | 'ambiguous'; holidays: unknown[] }>;
+}
+
+export async function previewExistingTeamsSeries(moduleId: string, input: { link: string; weekIds: string[]; calendarMailbox: string }) {
+  return apiJson<ExistingTeamsSeriesReview>(`/curriculum/modules/${encodeURIComponent(moduleId)}/teams-existing-series/`, {
+    method: 'POST', body: JSON.stringify({ action: 'preview', ...input }), timeoutMs: 120000,
+  });
+}
+
+export async function linkExistingTeamsSeries(moduleId: string, previewToken: string) {
+  const result = await apiJson<{ module: ModuleCatalogueItem; matched: number; unmatched: number; alreadyLinked: boolean }>(
+    `/curriculum/modules/${encodeURIComponent(moduleId)}/teams-existing-series/`, {
+      method: 'POST', body: JSON.stringify({ action: 'apply', previewToken }), timeoutMs: 120000,
+    },
+  );
+  invalidateCurriculumCacheByEntity('module');
+  return { ...result, module: recalculateModule(result.module) };
+}
+
+/** Editing one session's link must never change another week or retain the
+ * previous meeting's IDs as proof for an unrelated URL. */
+export function manualLiveSessionLinkSettings(
+  settings: ComponentSettings, link: string,
+  previousLink = String(settings.liveSessionUrl || settings.teamsMeetingUrl || '').trim(),
+): ComponentSettings {
+  if (String(settings.extraTeamsMeetingUrl || '').trim() || settings.teamsMeetingScope === 'additional') return settings;
+  if (previousLink === link.trim()) return settings;
+  const next = { ...settings };
+  const identityKeys = ['teamsLiveSessionId', 'teamsOccurrenceId', 'teamsSessionNumber', 'teamsEventId',
+    'teamsOnlineMeetingId', 'teamsStartDateTimeUtc', 'teamsCalendarSeries', 'teamsWebLink', 'teamsMeetingOptionsUrl'];
+  identityKeys.forEach(key => { delete next[key]; });
+  if (typeof next.legacySettings === 'string') {
+    try {
+      const legacy = JSON.parse(next.legacySettings);
+      if (legacy && typeof legacy === 'object' && !Array.isArray(legacy)) {
+        identityKeys.forEach(key => { delete legacy[key]; });
+        next.legacySettings = JSON.stringify(legacy);
+      }
+    } catch { /* Malformed legacy data cannot supply a provider identity. */ }
+  }
+  return { ...next, liveSessionUrl: link, teamsMeetingUrl: link,
+    liveSessionLinkOverride: link, teamsCalendarBinding: 'unverified' };
+}
+
+export function applyModuleComponentUpdate(module: ModuleCatalogueItem, componentId: string, updates: Partial<ModuleComponent>) {
+  return { ...module, weekStructure: module.weekStructure.map(week => ({
+    ...week, components: week.components.map(component => {
+      if (component.id !== componentId) return component;
+      const incoming = updates.settings;
+      const linkChanged = component.type === 'live-session' && incoming
+        && Object.prototype.hasOwnProperty.call(incoming, 'liveSessionUrl')
+        && String(incoming.liveSessionUrl || '').trim() !== String(component.settings.liveSessionUrl || component.settings.teamsMeetingUrl || '').trim();
+      return { ...component, ...updates, ...(linkChanged
+        ? { settings: manualLiveSessionLinkSettings({ ...component.settings, ...incoming }, String(incoming.liveSessionUrl || '').trim(),
+            String(component.settings.liveSessionUrl || component.settings.teamsMeetingUrl || '').trim()) }
+        : {}) };
+    }),
+  })) };
 }
 
 /**

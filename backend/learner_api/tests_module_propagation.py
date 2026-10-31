@@ -278,6 +278,41 @@ class LiveAssignedModuleTests(SimpleTestCase):
         fallback = _live_session_occurrence_fallbacks(rows)
         self.assertEqual(fallback[('MOD-NEW', '2026-10-06')]['teamsSessionNumber'], 1)
 
+    def test_unconfirmed_manual_link_does_not_recover_the_old_recording_by_date(self):
+        for binding in ('unverified', 'missing', 'ambiguous'):
+            with self.subTest(binding=binding):
+                result, _ = self.resolve([
+                    [('MOD-NEW', 'New module')],
+                    [('W-NEW', 'MOD-NEW', 'Week 1', 1, 0)],
+                    [('C-LIVE', 'W-NEW', 'MOD-NEW', 'live_session', 'Manual lesson', '',
+                      {'sessionDate': '2026-10-06', 'teamsCalendarBinding': binding,
+                       'liveSessionLinkOverride': 'https://teams.microsoft.com/manual'}, '', 0,
+                      [{'code': 'K1', 'weight': 1}], False, None, False)],
+                    [],
+                    [('MOD-NEW', 'OLD-SERIES', 'GMT Standard Time', 'OLD-OCC', 1,
+                      datetime(2026, 10, 6, 8, 30, tzinfo=timezone.utc))],
+                ], assigned=[MODULE])
+                live = result[2][0]
+                self.assertIsNone(live['teamsLiveSessionId'])
+                self.assertIsNone(live['teamsSessionNumber'])
+                self.assertEqual(live['liveSessionUrl'], 'https://teams.microsoft.com/manual')
+
+    def test_a_new_shared_link_can_use_its_unique_verified_delivery(self):
+        link = 'https://teams.microsoft.com/original'
+        delivery = {'teamsLiveSessionId': 'VERIFIED-SOURCE', 'teamsSessionNumber': 6,
+                    'teamsOccurrenceId': 'VERIFIED-OCC', 'sessionDate': '2026-10-06', 'liveSessionUrl': link}
+        result, _ = self.resolve([
+            [('MOD-NEW', 'New module')],
+            [('W-NEW', 'MOD-NEW', 'Week 1', 1, 0)],
+            [('C-LIVE', 'W-NEW', 'MOD-NEW', 'live_session', 'Shared lesson', '',
+              {'sessionDate': '2026-10-06', 'teamsCalendarBinding': 'unverified',
+               'liveSessionLinkOverride': link}, '', 0, [{'code': 'K1', 'weight': 1}], False, None, False)],
+            [], [],
+        ], assigned=[MODULE], shared_delivery={'C-LIVE': delivery})
+        live = result[2][0]
+        self.assertEqual((live['teamsLiveSessionId'], live['teamsSessionNumber']), ('VERIFIED-SOURCE', 6))
+        self.assertEqual(live['liveSessionUrl'], link)
+
     def test_removing_a_video_does_not_touch_other_components_in_the_week(self):
         result, _ = self.resolve([
             [('MOD-NEW', 'New module')],

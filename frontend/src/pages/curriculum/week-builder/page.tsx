@@ -62,7 +62,7 @@ import { buildKsbMappingPrompt, describeKsbImport, exportWeekKsbWorkbook, import
 import { KsbExcelPanel } from '@/pages/curriculum/module-builder/KsbExcelPanel';
 import { GroupPlacementPanel, type PlacementResult } from './PlaceComponentDrawer';
 import { moduleCountForGroup } from '../shared/entities/groupModuleMatch';
-import { loadModuleStructure, saveModuleStructure, type LiveSessionDateDrift } from '@/pages/curriculum/module-builder/moduleAuthoringData';
+import { loadModuleStructure, saveModuleStructure, manualLiveSessionLinkSettings, type LiveSessionDateDrift } from '@/pages/curriculum/module-builder/moduleAuthoringData';
 import { liveSessionDriftCause } from '@/pages/curriculum/shared/entities/liveSessionDriftCause';
 import { LiveSessionScheduleEditor } from '@/pages/curriculum/module-builder/LiveSessionScheduleEditor';
 import { LiveSessionArtifactsPanel, ModuleLiveSessionResults } from '@/pages/curriculum/shared/entities/liveSessionArtifacts';
@@ -2011,7 +2011,11 @@ export function ComponentEditor({ component, onChange, onBack, groupOptions, rul
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
   const issues = validateWeekComponent(component);
-  const setSetting = (key: string, value: ComponentSettingValue) => onChange({ settings: { ...component.settings, [key]: value } });
+  const setSetting = (key: string, value: ComponentSettingValue) => onChange({
+    settings: component.type === 'live-session' && key === 'liveSessionUrl'
+      ? manualLiveSessionLinkSettings(component.settings, String(value))
+      : { ...component.settings, [key]: value },
+  });
   const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks };
 
   return (
@@ -2307,6 +2311,11 @@ function LiveSessionResults({ liveSession, weekSessionDate, moduleId }: { liveSe
   const s = (key: string) => String(liveSession.settings[key] ?? '');
   const sessionDate = s('sessionDate') || weekSessionDate || '';
   const hasMeeting = Boolean(s('liveSessionUrl') || s('teamsMeetingUrl'));
+  if (['unverified', 'missing', 'ambiguous'].includes(s('teamsCalendarBinding'))) {
+    return <p className="rounded-xl border border-background-200 bg-background-50/60 p-4 text-[12px] text-foreground-500">
+      This join link has not been matched to its original calendar. Use Replace Teams links, then Existing Teams series, to connect its recording and attendance.
+    </p>;
+  }
   // A live session delivered by its own additional meeting reads that
   // meeting's results (a single event, so always session 1); every other live
   // session reads its occurrence of the module's calendar.
@@ -2408,7 +2417,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
   // someone repeats what the session plan already worked out.
   const sessionDate = s('sessionDate') || weekSessionDate || '';
   const sessionTime = s('sessionTime') || String(weekSessionTime || '').slice(0, 5) || '';
-  const hasMeeting = Boolean(s('liveSessionUrl') || s('teamsMeetingUrl'));
+  const hasMeeting = Boolean(s('teamsLiveSessionId') || s('extraTeamsLiveSessionId')) && s('teamsCalendarBinding') !== 'unverified';
 
   return (
     <>

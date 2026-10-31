@@ -146,7 +146,9 @@ class ModuleCalendarLinkingTests(unittest.TestCase):
         })
 
         self.assertEqual(len(self.updates), 1)
-        self.assertEqual(self.updates[0][2], ['LIVE-COPY'])
+        self.assertEqual(self.updates[0][2], ['LIVE-COPY', 'MOD-COPY'])
+        self.assertIn('module_catalogue_id IS NULL', self.updates[0][1])
+        self.assertIn('module_catalogue_id = %s', self.updates[0][1])
 
     def test_legacy_partial_save_keeps_metadata_fallback(self):
         self.ns['link_live_session_series_to_module']('MOD-LEGACY', {
@@ -154,7 +156,7 @@ class ModuleCalendarLinkingTests(unittest.TestCase):
         })
 
         self.assertEqual(len(self.updates), 1)
-        self.assertEqual(self.updates[0][2], ['LIVE-LEGACY'])
+        self.assertEqual(self.updates[0][2], ['LIVE-LEGACY', 'MOD-LEGACY'])
 
 
 def visit(start, end):

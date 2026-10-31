@@ -119,6 +119,7 @@ import {
   moduleAuthoredLiveSessions,
   applyLiveSessionLinkToComponents,
   replaceModuleTeamsLinks,
+  applyModuleComponentUpdate,
   // Which authored weeks a ticked holiday falls on. States the fact only --
   // the plan is unchanged, and what the week becomes is the author's call.
   weeksTouchedByHoliday,
@@ -2041,7 +2042,7 @@ function ModuleBuilderContent() {
     void showCurriculumAlert(result.updated
       ? {
         title: `${result.updated} Teams link${result.updated === 1 ? '' : 's'} replaced`,
-        text: `Saved across ${weekCount} week${weekCount === 1 ? '' : 's'}. The live sessions in those weeks now use the new link.${result.recordingsSourceModuleId ? ' Existing recordings and attendance for this Teams meeting are now available in this module.' : ''} The Teams meetings and their invitations were not changed.`,
+        text: `Saved across ${weekCount} week${weekCount === 1 ? '' : 's'}. The live sessions in those weeks now use the new link.${result.recordingsSourceModuleId ? ' Reopen the module to load recordings and attendance for dates that match the source calendar.' : ''} The Teams meetings and their invitations were not changed.`,
         icon: 'success',
       }
       : {
@@ -3729,47 +3730,9 @@ function ModuleBuilderContent() {
                   <EditScope kind="component" id={selectedComponent.id}>
                   <WeekComponentEditor
                     component={selectedComponent}
-                    onChange={updates => updateWorkingModule(module => {
-                      const updatedSettings = updates.settings as ModuleComponent['settings'] | undefined;
-                      const sharesTeamsLink = selectedComponent.type === 'live-session'
-                        && updatedSettings
-                        && Object.prototype.hasOwnProperty.call(updatedSettings, 'liveSessionUrl');
-                      const sharedTeamsUrl = sharesTeamsLink ? updatedSettings.liveSessionUrl : undefined;
-                      const selectedUpdates = sharesTeamsLink
-                        ? { ...updates, settings: { ...updatedSettings, liveSessionLinkOverride: '' } }
-                        : updates;
-                      let calendarSeries: NonNullable<TeamsMeetingResult['meeting']['calendarSeries']> = [];
-                      try { calendarSeries = JSON.parse(String(updatedSettings?.teamsCalendarSeries || '[]')); } catch { /* Legacy manual links have no series manifest. */ }
-                      return {
-                        ...module,
-                        weekStructure: module.weekStructure.map(week => ({
-                          ...week,
-                          components: week.components.map(component => {
-                            if (component.id === selectedComponent.id) return { ...component, ...selectedUpdates };
-                            if (sharesTeamsLink && component.type === 'live-session') {
-                              const date = String(component.settings.sessionDate || week.sessionDate || '');
-                              const day = /^\d{4}-\d{2}-\d{2}$/.test(date)
-                                ? new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`)) : '';
-                              const daySeries = calendarSeries.find(series => series.day === day);
-                              if (calendarSeries.length && !daySeries) return component;
-                              return {
-                                ...component,
-                                settings: { ...component.settings, liveSessionUrl: daySeries?.joinUrl || sharedTeamsUrl,
-                                  liveSessionLinkOverride: '',
-                                  ...(daySeries ? {
-                                    teamsMeetingUrl: daySeries.joinUrl, teamsEventId: daySeries.eventId,
-                                    teamsOnlineMeetingId: daySeries.onlineMeetingId || '',
-                                    teamsLiveSessionId: updatedSettings.teamsLiveSessionId,
-                                    teamsCalendarSeries: updatedSettings.teamsCalendarSeries,
-                                  } : {}),
-                                },
-                              };
-                            }
-                            return component;
-                          }),
-                        })),
-                      };
-                    })}
+                    onChange={updates => updateWorkingModule(module =>
+                      applyModuleComponentUpdate(module, selectedComponent.id, updates),
+                    )}
                     onBack={() => requestSelectionChange({ kind: 'week', weekId: selectedWeek.id })}
                     groupOptions={componentGroupOptions}
                     rulePoints={componentPointsByType[selectedComponent.type]}
@@ -3958,6 +3921,22 @@ function ModuleBuilderContent() {
         {replaceTeamsLinksOpen && workingModule && (
           <ReplaceTeamsLinksDialog
             weeks={workingModule.weekStructure}
+            moduleId={workingModule.catalogueId}
+            unsavedChanges={hasUnsavedWorkingModuleChanges}
+            onSeriesLinked={restored => {
+              if (restored.catalogueId !== workingModuleRef.current?.catalogueId) return;
+              const current = workingModuleRef.current;
+              if (savedModuleSnapshotRef.current && moduleSnapshot(current) !== savedModuleSnapshotRef.current) {
+                setActionMessage('The series was linked. Your newer unsaved edits were kept; save or reload this module to refresh its calendar.');
+                setReplaceTeamsLinksOpen(false);
+                return;
+              }
+              const next = recalculateModule({ ...current, ...restored, sourceModule: current.sourceModule || restored.sourceModule });
+              savedModuleSnapshotRef.current = moduleSnapshot(next);
+              serverRevisionRef.current = restored.structureRevision || '';
+              setWorkingModule(next);
+              setReplaceTeamsLinksOpen(false);
+            }}
             onClose={() => setReplaceTeamsLinksOpen(false)}
             onApply={applyTeamsLinkReplacement}
           />

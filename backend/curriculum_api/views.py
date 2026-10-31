@@ -2057,8 +2057,8 @@ def link_live_session_series_to_module(module_catalogue_id, payload):
     for live_session_id in live_session_ids:
         update_authoring_rows(
             LIVE_SESSIONS_TABLE,
-            'id = %s',
-            [live_session_id],
+            "id = %s AND (module_catalogue_id IS NULL OR module_catalogue_id = '' OR module_catalogue_id = %s)",
+            [live_session_id, module_catalogue_id],
             {'module_catalogue_id': module_catalogue_id, 'updated_at': datetime.utcnow()},
         )
 
@@ -17077,10 +17077,17 @@ SHARED_TEAMS_DELIVERY_SETTING_KEYS = {
 
 def strip_shared_teams_delivery_settings(settings):
     """Remove source-owned Teams identity from a shared-module payload."""
-    return {
+    result = {
         key: value for key, value in (settings or {}).items()
         if key not in SHARED_TEAMS_DELIVERY_SETTING_KEYS
     }
+    # A newly pasted URL is an explicit lack of proof, not a source-owned ID.
+    # Learner readers must retain that fact instead of reviving a positional
+    # source occurrence after the next full save.
+    if ((settings or {}).get('teamsCalendarBinding') == 'unverified'
+            and clean_str((settings or {}).get('liveSessionLinkOverride'))):
+        result['teamsCalendarBinding'] = 'unverified'
+    return result
 
 
 class ModuleAuthoringValidationError(ValueError):
@@ -18744,17 +18751,57 @@ def apply_shared_teams_settings_to_weeks(module, weeks):
         return weeks
     source_id = teams_module_owner_id(source_id)
     source_settings = shared_teams_component_settings(source_id)
-    if not source_settings:
-        return weeks
+    source_settings = [settings for settings in source_settings
+                       if not clean_str(settings.get('extraTeamsMeetingUrl'))
+                       and clean_str(settings.get('teamsMeetingScope')).lower() != 'additional']
     index = 0
     for week in weeks or []:
         for component in week.get('components') or []:
             if normalise_component_type(component.get('type')) != 'live_session':
                 continue
-            if index >= len(source_settings):
-                return weeks
             current = component.get('settings') if isinstance(component.get('settings'), dict) else {}
-            source = source_settings[index]
+            if (clean_str(current.get('extraTeamsMeetingUrl'))
+                    or clean_str(current.get('teamsMeetingScope')).lower() == 'additional'):
+                extra_link = clean_str(current.get('extraTeamsMeetingUrl') or current.get('liveSessionLinkOverride')
+                                       or current.get('liveSessionUrl') or current.get('teamsMeetingUrl'))
+                if extra_link:
+                    component['settings'] = {**current, 'liveSessionUrl': extra_link, 'teamsMeetingUrl': extra_link}
+                continue
+            if index >= len(source_settings) and current.get('teamsCalendarBinding') != 'unverified':
+                index += 1
+                continue
+            source = source_settings[index] if index < len(source_settings) else {}
+            own_link = clean_str(current.get('liveSessionLinkOverride'))
+            if current.get('teamsCalendarBinding') == 'unverified':
+                planned_date = clean_str(current.get('sessionDate') or week.get('sessionDate'))[:10]
+                matching = [item for item in source_settings
+                            if planned_date and clean_str(item.get('sessionDate'))[:10] == planned_date
+                            and (not clean_str(current.get('sessionTime'))
+                                 or clean_str(item.get('sessionTime'))[:5] == clean_str(current.get('sessionTime'))[:5])
+                            and clean_str(item.get('liveSessionUrl') or item.get('teamsMeetingUrl')) == own_link
+                            and clean_str(item.get('teamsOccurrenceId'))
+                            and clean_str(item.get('teamsLiveSessionId'))
+                            and item.get('teamsCalendarBinding') not in ('unverified', 'missing', 'ambiguous')]
+                if len(matching) != 1:
+                    # No positional guess for a newly pasted link. Legacy
+                    # shared copies keep their established projection below.
+                    if own_link:
+                        from .teams_external_calendar import manual_link_settings
+                        component['settings'] = manual_link_settings(
+                            {**current, 'liveSessionUrl': own_link, 'teamsMeetingUrl': own_link}, current,
+                        )
+                    index += 1
+                    continue
+                source = matching[0]
+            source_link = clean_str(source.get('liveSessionUrl') or source.get('teamsMeetingUrl'))
+            if own_link and own_link != source_link:
+                from .teams_external_calendar import manual_link_settings
+                component['settings'] = manual_link_settings(
+                    {**current, 'liveSessionUrl': own_link, 'teamsMeetingUrl': own_link},
+                    {'liveSessionUrl': source_link},
+                )
+                index += 1
+                continue
             merged = {
                 **current,
                 **{
@@ -18771,6 +18818,8 @@ def apply_shared_teams_settings_to_weeks(module, weeks):
             if own_link:
                 merged['liveSessionUrl'] = own_link
                 merged['teamsMeetingUrl'] = own_link
+            if current.get('teamsCalendarBinding') == 'unverified':
+                merged['teamsCalendarBinding'] = 'matched'
             component['settings'] = merged
             index += 1
     return weeks
@@ -19565,7 +19614,8 @@ def replaceable_live_session(row, *, shared=False):
     if frontend_component_type(row.get('type')) != 'live-session':
         return False
     settings = component_builder_settings(row)
-    if clean_str(settings.get('extraTeamsMeetingUrl')):
+    if (clean_str(settings.get('extraTeamsMeetingUrl'))
+            or clean_str(settings.get('teamsMeetingScope')).lower() == 'additional'):
         return False
     # A newly authored live session has no link yet.  It is still a legitimate
     # target for Replace Teams links; requiring an old link here made the
@@ -19688,6 +19738,20 @@ def curriculum_module_teams_links_replace(request, module_catalogue_id):
                 # environment has not yet provisioned recording tracking.
                 # There can be no saved recording to attach in that state.
                 logger.info('Teams result tracking is not provisioned; saved link without recording association.')
+            # A module-level alias affects EVERY week. A single pasted link
+            # must not silently switch the calendar/evidence of the unselected
+            # weeks to another module.
+            if source_module_id:
+                main_rows = [row for row in active_component_rows(authoring_fetch_all(
+                    AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [resolved_id],
+                )) if replaceable_live_session(row)]
+                if (not any(clean_str(row.get('week_id')) in week_ids for row in main_rows)
+                        or any(clean_str(row.get('week_id')) not in week_ids
+                               and clean_str(component_builder_settings(row).get('liveSessionLinkOverride')
+                                             or component_builder_settings(row).get('liveSessionUrl')
+                                             or component_builder_settings(row).get('teamsMeetingUrl')) != link
+                               for row in main_rows)):
+                    source_module_id = ''
             effective_shared = shared or bool(source_module_id)
             if source_module_id and source_module_id != clean_str(module_row.get('teams_shared_source_module_id')):
                 update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [resolved_id], {
@@ -19712,6 +19776,8 @@ def curriculum_module_teams_links_replace(request, module_catalogue_id):
                     # alias.  The source's current identity is projected on
                     # reads, while this component retains the chosen join URL.
                     settings = strip_shared_teams_delivery_settings(settings)
+                from .teams_external_calendar import manual_link_settings
+                settings = manual_link_settings({**settings, 'liveSessionUrl': link, 'teamsMeetingUrl': link}, settings)
                 update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [row.get('id')], {
                     'settings_json': json_db_value({
                         **settings,
@@ -23668,6 +23734,14 @@ def save_module_authoring_structure(
                 component_settings = preserve_additional_meeting_settings(
                     component_settings, stored_components_by_id.get(component_id),
                 )
+                if (frontend_component_type(component.get('type')) == 'live-session'
+                        and (not teams_shared_source_module_id
+                             or clean_str(component_settings.get('liveSessionLinkOverride')))):
+                    from .teams_external_calendar import manual_link_settings
+                    stored_row = stored_components_by_id.get(component_id)
+                    component_settings = manual_link_settings(
+                        component_settings, component_builder_settings(stored_row) if stored_row else {},
+                    )
                 if teams_shared_source_module_id:
                     component_settings = strip_shared_teams_delivery_settings(component_settings)
                 component_ksb_items, component_mapping_payloads = normalise_component_ksb_mappings(
