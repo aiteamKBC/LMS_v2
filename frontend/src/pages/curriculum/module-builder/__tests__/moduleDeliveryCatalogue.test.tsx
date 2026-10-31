@@ -7,6 +7,10 @@ import type { CurriculumCohort, CurriculumGroup, CurriculumModule, CurriculumPro
 import { fetchCurriculumDeliveryScope, fetchCurriculumOverview } from '@/lib/curriculumApi';
 import { fetchAssignedLearners } from '@/api/assignedLearners';
 vi.mock('@/api/assignedLearners', () => ({
+  fetchLearnerStatusCounts: vi.fn(async (_scope: string, ids: string[]) => Object.fromEntries(ids.map(id => {
+    const count = modules.find(module => module.moduleCatalogueId === id)?.assignments || 0;
+    return [id, { total: count, statuses: count ? { active: count } : {} }];
+  }))),
   fetchAssignedLearners: vi.fn(async () => ({ scope: 'module', id: 'MOD-1', status: 'active', total: 0, filteredTotal: 0, page: 1, pageSize: 25, learners: [] })),
 }));
 
@@ -113,7 +117,7 @@ const programmes = [
 const cohorts = [{ id: 'COHORT-1', name: 'Sept 2026', programmeId: 'PROG-DATA', programme: 'Data Analyst' }] as CurriculumCohort[];
 const groups = [{ id: 'GROUP-1', name: 'Group A', cohortId: 'COHORT-1', cohort: 'Sept 2026', programmeId: 'PROG-DATA', programme: 'Data Analyst' }] as CurriculumGroup[];
 
-const modules = [
+const initialModules = [
   {
     id: 'MOD-1',
     moduleCatalogueId: 'MOD-1',
@@ -150,6 +154,7 @@ const modules = [
     status: 'draft',
   },
 ] as CurriculumModule[];
+let modules = initialModules;
 
 vi.mock('@/hooks/useCurriculumModules', () => ({
   useCurriculumModules: () => ({ modules, loading: false, error: null, reload }),
@@ -234,7 +239,9 @@ function HistoryProbe() {
 
 describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
   beforeEach(() => {
+    modules = initialModules.map(module => ({ ...module, assignments: module.id === 'MOD-1' ? 3 : 0 }));
     reload.mockClear();
+    vi.mocked(fetchAssignedLearners).mockClear();
     vi.mocked(fetchCurriculumDeliveryScope).mockClear();
     vi.mocked(fetchCurriculumOverview).mockClear();
     fetchLearnerAssignments.mockReset().mockResolvedValue({
@@ -287,11 +294,56 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     expect(screen.getByText('Data Foundations')).toBeInTheDocument();
   });
 
-  it('opens the assignment drawer when the module has no assigned learners', async () => {
+  it('shows every module count, including zero, before opening any learner list and keeps it across filters', async () => {
+    const user = userEvent.setup();
     await renderCatalogue();
-    await userEvent.click(cardFor('Data Foundations').getByRole('button', { name: /view assigned learners$/ }));
-    expect(await screen.findByText('No assigned learners in this view.')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Assignments & progress' }));
+    expect(await cardFor('Data Foundations').findByRole('button', { name: 'Data Foundations: 3 all statuses learners' })).toHaveTextContent('3');
+    expect(await cardFor('Network Basics').findByRole('button', { name: 'Network Basics: 0 all statuses learners' })).toHaveTextContent('0');
+    await chooseOption(user, 'Programme', 'Data Analyst');
+    expect(screen.queryByText('Network Basics')).not.toBeInTheDocument();
+    await chooseOption(user, 'Programme', 'All programmes');
+    expect(cardFor('Data Foundations').getByRole('button', { name: 'Data Foundations: 3 all statuses learners' })).toBeInTheDocument();
+    expect(cardFor('Network Basics').getByRole('button', { name: 'Network Basics: 0 all statuses learners' })).toBeInTheDocument();
+    expect(fetchLearnerAssignments).not.toHaveBeenCalled();
+    expect(fetchCurriculumScopeLearnerKsbImpact).not.toHaveBeenCalled();
+    expect(fetchAssignedLearners).not.toHaveBeenCalled();
+  });
+
+  it('updates a mounted card from a fresh module summary without loading learner details', async () => {
+    const view = await renderCatalogue();
+    modules = modules.map(module => module.id === 'MOD-1' ? { ...module, assignments: 7 } : module);
+    const { default: ModuleBuilder } = await import('../page');
+    view.rerender(<MemoryRouter initialEntries={['/curriculum/module-builder']}><ModuleBuilder /></MemoryRouter>);
+    await waitFor(() => expect(cardFor('Data Foundations').getByRole('button', { name: 'Data Foundations: 7 all statuses learners' })).toHaveTextContent('7'));
+    expect(cardFor('Network Basics').getByRole('button', { name: 'Network Basics: 0 all statuses learners' })).toBeInTheDocument();
+    expect(fetchLearnerAssignments).not.toHaveBeenCalled();
+    expect(fetchAssignedLearners).not.toHaveBeenCalled();
+  });
+
+  it('keeps counts visible while management details load or fail and prevents duplicate management requests', async () => {
+    let reject!: (reason: Error) => void;
+    fetchLearnerAssignments.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+    const user = userEvent.setup();
+    await renderCatalogue();
+    const count = await cardFor('Data Foundations').findByRole('button', { name: 'Data Foundations: 3 all statuses learners' });
+    await user.click(count);
+    const button = await screen.findByRole('button', { name: 'Assignments & progress' });
+    await user.click(button);
+    expect(button).toBeDisabled();
+    expect(count).toHaveTextContent('3');
+    await user.click(button);
+    expect(fetchLearnerAssignments).toHaveBeenCalledTimes(1);
+    await act(async () => reject(new Error('Learner details unavailable')));
+    expect(await screen.findByText('Learner details unavailable')).toBeVisible();
+    expect(count).toHaveTextContent('3');
+    expect(cardFor('Network Basics').getByRole('button', { name: 'Network Basics: 0 all statuses learners' })).toBeInTheDocument();
+  });
+
+  it('opens the assignment drawer when the module has no assigned learners', async () => {
+    modules[0].assignments = 0;
+    await renderCatalogue();
+    await userEvent.click(await cardFor('Data Foundations').findByRole('button', { name: /Data Foundations: \d+ all statuses learners/ }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Assignments & progress' }));
 
     expect(await screen.findByRole('note')).toHaveTextContent('this module only');
     expect(screen.getByRole('note')).toHaveTextContent('Their programme, cohort and other module assignments stay as they are.');
@@ -300,7 +352,8 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
   });
 
   it('opens assigned learner progress when the module already has learners', async () => {
-    vi.mocked(fetchAssignedLearners).mockResolvedValueOnce({ scope: 'module', id: 'MOD-1', status: 'active', total: 1, filteredTotal: 1, page: 1, pageSize: 25,
+    modules[0].assignments = 1;
+    vi.mocked(fetchAssignedLearners).mockResolvedValueOnce({ scope: 'module', id: 'MOD-1', status: 'all', total: 1, filteredTotal: 1, page: 1, pageSize: 25,
       learners: [{ id: 'learner-1', name: 'A Learner', email: 'learner@example.com', status: 'active' }] });
     fetchLearnerAssignments.mockResolvedValueOnce({
       target: { scope: 'module', id: 'MOD-1', name: 'Data Foundations', moduleCount: 1, programmeName: 'Data Analyst' },
@@ -308,12 +361,11 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
       totals: { learnerCount: 1, assignedCount: 1 },
     });
     await renderCatalogue();
-    await userEvent.click(cardFor('Data Foundations').getByRole('button', { name: /view assigned learners$/ }));
-    await screen.findByText('1 assigned learners');
-    await userEvent.click(screen.getByRole('button', { name: 'Assignments & progress' }));
+    await userEvent.click(await cardFor('Data Foundations').findByRole('button', { name: 'Data Foundations: 1 all statuses learners' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Assignments & progress' }));
 
     expect(await screen.findByRole('dialog', { name: 'Data Foundations learner progress' })).toBeInTheDocument();
-    expect(cardFor('Data Foundations').getByRole('button', { name: 'Data Foundations: 1 active assigned learners' })).toBeInTheDocument();
+    expect(cardFor('Data Foundations').getByRole('button', { name: 'Data Foundations: 1 all statuses learners' })).toBeInTheDocument();
     expect(screen.getByText('A Learner')).toBeInTheDocument();
     expect(screen.getByText('KSB weights achieved')).toBeInTheDocument();
     expect(fetchCurriculumScopeLearnerKsbImpact).toHaveBeenCalledWith('module', 'MOD-1', { learnerStatus: 'all', moduleProgress: true });

@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { LearnerTarget } from '@/api/assignedLearners';
+import type { createLearnerStatusCountStore } from './learnerStatusCountStore';
 
 export type CountState = { count: number | null };
 export const keyFor = (target: LearnerTarget) => `${target.scope}:${target.id}`;
@@ -25,7 +26,8 @@ export function createCountStore() {
 
 interface DirectoryContext {
   store: ReturnType<typeof createCountStore>;
-  open: (target: LearnerTarget, manage?: () => void | Promise<unknown>) => void;
+  statusStore: ReturnType<typeof createLearnerStatusCountStore>;
+  open: (target: LearnerTarget, manage?: () => void | Promise<unknown>, status?: string) => void;
 }
 export const Context = createContext<DirectoryContext | null>(null);
 export function useRefreshAssignedLearners() { return useContext(Context)?.store.refresh; }
