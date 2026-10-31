@@ -26,7 +26,7 @@ class AssignedLearnerDirectoryTests(SimpleTestCase):
 
     def test_requested_list_reports_the_active_total_and_keeps_the_roster_out_of_shared_cache(self):
         result = json.loads(directory.learners(self.factory.get('/', {'scope': 'module', 'id': 'MOD-A'})).content)
-        self.members.assert_called_once_with('module', 'MOD-A', 'active', lineage={'found': True}, strict=True)
+        self.members.assert_called_once_with('module', 'MOD-A', '', lineage={'found': True}, strict=True)
         self.assertEqual((result['total'], result['learners'][0]['id']), (1, '1'))
         self.assertNotIn('learningPlan', result['learners'][0])
         self.cache.assert_not_called()
@@ -40,7 +40,7 @@ class AssignedLearnerDirectoryTests(SimpleTestCase):
         self.members.assert_called_once_with('cohort', 'C-A', '', lineage={'found': True}, strict=True)
 
     def test_pagination_search_and_unique_identity(self):
-        rows = [{'id': i, 'name': f'Learner {i:02}', 'email': f'{i}@example.invalid'} for i in range(60)]
+        rows = [{'id': i, 'name': f'Learner {i:02}', 'email': f'{i}@example.invalid', 'lifecycleStatus': 'active'} for i in range(60)]
         self.members.side_effect = None; self.members.return_value = rows + [rows[0]]
         result = json.loads(directory.learners(self.factory.get('/', {'scope': 'programme', 'id': 'P-A', 'page': '2'})).content)
         self.assertEqual((result['total'], len(result['learners']), result['learners'][0]['id']), (60, 25, '25'))

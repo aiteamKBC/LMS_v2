@@ -1,4 +1,5 @@
 import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
+import { LearnerStatusCounts } from '../shared/entities/LearnerStatusCounts';
 import { useRefreshAssignedLearners } from '../shared/entities/assignedLearnerDirectory';
 import { sessionDeliveryDate } from '@/lib/deliveryWeek';
 import { EditScope, ModulePresence } from './CollaborativeField';
@@ -1847,6 +1848,7 @@ function ModuleBuilderContent() {
           lifecycleStatus: learner.programmeStatus,
         }));
       const assignedCount = assignedLearners.length;
+      if (module.catalogueId) setLearnerCountOverrides(previous => ({ ...previous, [module.catalogueId]: assignedCount }));
       if (assignedCount === 0) {
         setLearnerAssignmentTarget(target);
         return 0;
@@ -8384,12 +8386,6 @@ function ModuleCatalogueCard({
   const subLabel = moduleListSubLabel(module);
   const primaryDelivery = (module.deliveryUsages || []).find(usage => usage.deliveryModuleId);
   const primaryDeliveryHref = primaryDelivery ? `/curriculum/modules/${encodeURIComponent(primaryDelivery.deliveryModuleId)}` : '';
-  // Seeded from the bulk overview count so the badge shows without a click;
-  // a click still refreshes it with the freshest number as the dialog opens.
-  // The card instance survives a list reload (same key), so a fresh overview
-  // count has to be pushed in rather than only read once at mount.
-  // Legacy fallbacks retained by the merge were:
-  // weekCount = module.weekStructure.length || module.weeks || 0
 
   return (
     <article className={`group relative overflow-hidden rounded-2xl border bg-background-50 shadow-sm transition-smooth hover:shadow-md ${hasContent ? 'border-foreground-200/70 hover:border-primary-200/80' : 'border-amber-200/70 hover:border-amber-300'}`}>
@@ -8428,7 +8424,7 @@ function ModuleCatalogueCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5 xl:justify-end">
-          <AssignedLearners target={{ scope: 'module', id: moduleLearnerIdentifier(module), name: module.title }} onManage={onLearners} />
+          <LearnerStatusCounts target={{ scope: 'module', id: moduleLearnerIdentifier(module), name: module.title }} onManage={onLearners} refreshKey={module.sourceModule} />
           {primaryDeliveryHref && (
             <Link
               to={primaryDeliveryHref}

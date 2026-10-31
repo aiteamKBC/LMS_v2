@@ -1,4 +1,5 @@
-import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
+import { LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
+import { LearnerStatusCounts } from '../shared/entities/LearnerStatusCounts';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -511,7 +512,7 @@ function CurriculumGroupsPageContent() {
                     )}
                     secondary={group.id}
                   />
-                  <AssignedLearners target={{ scope: 'group', id: group.id, name: group.name }} initialCount={group.learners} />
+                  <LearnerStatusCounts target={{ scope: 'group', id: group.id, name: group.name }} refreshKey={group} />
                 </div>
                   <StackedCell
                     href={context.cohortId ? `/curriculum/cohorts/${encodeURIComponent(context.cohortId)}` : undefined}
