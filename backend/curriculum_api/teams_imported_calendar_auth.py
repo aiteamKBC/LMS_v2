@@ -1,9 +1,9 @@
-"""Short-lived, delegated access to an imported meeting's original calendar.
+"""Delegated access to an imported meeting's original calendar.
 
 Reuses the registered Microsoft SSO callback, but never signs somebody into the
-LMS or changes a meeting. A connection belongs to one existing staff session and
-one imported series. Only an encrypted access token is cached, for at most 15
-minutes; refresh tokens are neither requested nor retained.
+LMS or changes a meeting. Personal connections stay session/series-bound and
+short-lived. Administrators may explicitly establish renewable, encrypted
+organization delegation for group calendars, shared by authorised staff.
 """
 import base64
 import hashlib
@@ -234,6 +234,15 @@ def imported_calendar_connection(request, live_session_id):
     try:
         series = _series(live_session_id)
         cfg = _configuration(request, series)
+        if request.GET.get('organization') == '1':
+            from . import teams_organization_calendar as organization
+            _actor_binding(request)
+            applicable = organization.group_calendar(series)
+            info = organization.status(cfg) if applicable else {
+                'connected': False, 'available': False, 'state': 'not_applicable', 'message': ''}
+            return JsonResponse({'configured': True, 'calendarKind': 'group', 'applicable': applicable,
+                                 'organizationManaged': info['connected'],
+                                 'canManageOrganization': request.login_account.role == 'admin', **info})
         access = delegated_calendar_access(request, live_session_id)
         public = {name: access[name] for name in
                   ('expiresAt', 'calendarKind', 'accountName', 'accountEmail')} if access else {}
@@ -242,7 +251,7 @@ def imported_calendar_connection(request, live_session_id):
                              'message': ('Connected for this staff session. Preview verifies original calendar access.' if access else
                                          'Connect the Microsoft account that can manage the original calendar.')})
     except CalendarConnectionError as exc:
-        if exc.status in {403, 404}:
+        if exc.status in {403, 404} or request.GET.get('organization') == '1':
             return _error(exc)
         return JsonResponse({'configured': False, 'connected': False, 'message': str(exc)})
     except DatabaseError:
@@ -259,21 +268,40 @@ def imported_calendar_connect(request, live_session_id):
             raise ValueError()
         payload = json.loads(request.body or b'{}')
         kind = payload.get('calendarKind', 'group') if isinstance(payload, dict) else ''
-        if kind not in SCOPES:
+        managed = payload.get('organizationManaged', False) if isinstance(payload, dict) else False
+        action = payload.get('action', 'connect') if isinstance(payload, dict) else ''
+        if kind not in SCOPES or not isinstance(managed, bool) or action not in ('connect', 'disconnect'):
             raise ValueError()
         binding = _actor_binding(request)
         series = _series(live_session_id)
         origin = _frontend_origin(request)
         cfg = _configuration(request, series, browser_origin=origin)
+        revision = ''
+        if managed:
+            from . import teams_organization_calendar as organization
+            organization.require_admin(request)
+            if kind != 'group' or not organization.group_calendar(series):
+                raise CalendarConnectionError('The organization connection is for original Microsoft group calendars only.')
+            if action == 'disconnect':
+                revision = payload.get('organizationRevision')
+                if not isinstance(revision, str) or not revision or len(revision) > 128:
+                    raise ValueError()
+                organization.disconnect(request, cfg, revision)
+                return JsonResponse({'disconnected': True, 'organizationManaged': False})
+            revision = organization.begin(request, cfg)
+        elif action != 'connect':
+            raise ValueError()
         nonce, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(48)
         nonce_hash = hash_token(nonce)
         # oid is required below to bind /me to the verified identity. Microsoft
         # emits that ID-token claim only when the OIDC profile scope is asked for.
-        scope = f'openid profile User.Read {SCOPES[kind]}'
+        scope = organization.OAUTH_SCOPE if managed else f'openid profile User.Read {SCOPES[kind]}'
         pending = {'binding': binding, 'liveId': str(live_session_id), 'seriesBinding': _series_binding(series),
                    'origin': origin, 'tenant': cfg['tenant'], 'clientId': cfg['client_id'],
                    'callback': cfg['callback'], 'calendarKind': kind, 'scope': scope,
                    'verifier': verifier, 'oidcNonce': secrets.token_urlsafe(32)}
+        if managed:
+            pending.update(organizationManaged=True, organizationRevision=revision)
         encrypted = _seal(pending)
         cache.set('teams-calendar:pending:' + nonce_hash, encrypted, STATE_TTL)
         if cache.get('teams-calendar:pending:' + nonce_hash) != encrypted:
@@ -369,10 +397,19 @@ def _exchange(code, cfg, pending):
         ttl = min(ACCESS_TTL, int(tokens.get('expires_in', 0)) - 60, int(float(claims['exp']) - time.time()) - 60)
         if ttl <= 60:
             raise CalendarConnectionError('Microsoft calendar access expired. Reconnect the calendar.')
-        return {'accessToken': token, 'actorId': text(person['id']), 'scopes': sorted(required),
-                'calendarKind': pending['calendarKind'], 'expires': int(time.time()) + ttl,
-                'accountName': text(person.get('displayName')),
-                'accountEmail': text(person.get('mail') or person.get('userPrincipalName'))}, ttl
+        access = {'accessToken': token, 'actorId': text(person['id']), 'scopes': sorted(required),
+                  'calendarKind': pending['calendarKind'], 'expires': int(time.time()) + ttl,
+                  'accountName': text(person.get('displayName')),
+                  'accountEmail': text(person.get('mail') or person.get('userPrincipalName'))}
+        if pending.get('organizationManaged'):
+            refresh = tokens.get('refresh_token')
+            if not isinstance(refresh, str) or not refresh:
+                raise CalendarConnectionError('Microsoft did not return renewable calendar access. Reconnect the organization calendar.')
+            access['refreshToken'] = refresh
+            # The cached personal flow retains its 15-minute limit. The
+            # institutional flow refreshes the actual token lifetime in SQL.
+            access['expires'] = int(time.time()) + int(tokens.get('expires_in', 0)) - 60
+        return access, ttl
 
 
 def _completion(ok, message, *, origin='', live_id=''):
@@ -421,6 +458,9 @@ def imported_calendar_callback(request):
                 pending['tenant'] != cfg['tenant'] or pending['clientId'] != cfg['client_id'] or
                 pending['callback'] != cfg['callback']):
             raise CalendarConnectionError('The imported meeting or Microsoft connection changed. Start again.')
+        if pending.get('organizationManaged'):
+            from . import teams_organization_calendar as organization
+            organization.require_admin(request)
         if not cache.add('teams-calendar:used:' + nonce_hash, True, STATE_TTL):
             raise CalendarConnectionError('This calendar connection has already been used. Start again.')
         cache.delete(key)
@@ -430,6 +470,19 @@ def imported_calendar_callback(request):
         if not code:
             raise CalendarConnectionError('Microsoft did not return a calendar authorization code.')
         access, ttl = _exchange(code, cfg, pending)
+        if pending.get('organizationManaged'):
+            from .teams_imported_calendar_update import CalendarClient, original_master, verify_master, Blocked, GraphRefusal
+            candidate = {**access, 'mode': 'delegated', 'tenantId': cfg['tenant']}
+            try:
+                with CalendarClient(candidate) as client:
+                    _, master = original_master(series, client)
+                    verify_master(master, series['join_url'])
+            except (Blocked, GraphRefusal) as exc:
+                raise CalendarConnectionError('The connected account could not verify this original group calendar. '
+                                              'No organization connection was saved.', 'organization_calendar_original_access') from exc
+            organization.save(request, cfg, access, pending['organizationRevision'])
+            return _completion(True, 'Organization calendar connected. Authorised staff use it automatically; no meeting was changed.',
+                               origin=origin, live_id=live_id)
         access.update(binding=pending['binding'], seriesBinding=pending['seriesBinding'],
                       tenant=cfg['tenant'], clientId=cfg['client_id'], origin=origin)
         encrypted = _seal(access)

@@ -14,6 +14,7 @@ import { AttendeeComparisonPanel } from './AttendeeComparisonPanel';
 import { MeetingScopePanel } from './MeetingScopePanel';
 import { ExternalCalendarPanel } from './ExternalCalendarPanel';
 import { ImportedCalendarUpdatePanel } from './ImportedCalendarUpdatePanel';
+import { OrganizationCalendarConnectionPanel } from './OrganizationCalendarConnectionPanel';
 import { ImportedParticipantsPanel } from './ImportedParticipantsPanel';
 import { pendingInvitations } from './attendeeComparison';
 import { emailList } from '../module-builder/EmailChipsInput.helpers';
@@ -722,7 +723,10 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                 {originalCalendar?.loading && <p role="status" className="text-xs text-foreground-600">Checking the original Teams calendar?</p>}
                 {(originalCalendar?.error || (originalCalendar?.data?.status !== 'editable' && originalCalendar?.data?.message)) && <p role="alert" className="text-xs text-red-700">{originalCalendar.error || originalCalendar.data?.message}</p>}
                 {originalCalendar && !originalCalendar.loading && (originalCalendarBlocked || updateDrawer.error) && <button type="button" onClick={refreshOriginalCalendar} className="text-xs font-bold text-primary-700 underline">Retry calendar check</button>}
-                {originalCalendar?.data?.connectionRequired && selected.summary && <ImportedCalendarUpdatePanel
+                {externalCalendar && selected.summary && <OrganizationCalendarConnectionPanel
+                  key={`organization:${selected.summary.liveSessionId}`} liveSessionId={selected.summary.liveSessionId}
+                  disabled={Boolean(blockedReason) || Boolean(busy)} onChanged={refreshOriginalCalendar} />}
+                {originalCalendar?.data?.connectionRequired && originalCalendar.data.connectionKind === 'user' && selected.summary && <ImportedCalendarUpdatePanel
                   connectionOnly liveSessionId={selected.summary.liveSessionId} disabled={Boolean(blockedReason) || Boolean(busy)}
                   editorConnectionKind={originalCalendar.data.connectionKind || 'group'} onEditorConnected={refreshOriginalCalendar}
                   onUpdated={async () => { refreshOriginalCalendar(); }} />}

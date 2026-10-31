@@ -8,7 +8,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import { fetchImportedMeetingParticipants, readImportedMeetingEditor } from '@/lib/curriculumApi';
+import { fetchImportedMeetingParticipants, readImportedMeetingEditor, fetchOrganizationCalendarConnection } from '@/lib/curriculumApi';
 import type {
   CurriculumCohort,
   CurriculumGroup,
@@ -198,6 +198,7 @@ const fetchModuleSessionPlan = vi.fn(async (moduleId: string) => ({
 vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
   readImportedMeetingEditor: vi.fn(async () => ({ status: 'blocked', message: 'Original calendar requires connection.' })),
+  fetchOrganizationCalendarConnection: vi.fn(),
   fetchImportedMeetingParticipants: vi.fn(async () => ({
     checkedAt: '2026-10-19T14:00:00Z',
     calendar: { status: 'unavailable', message: 'Not available' },
@@ -292,6 +293,7 @@ describe('Teams Meetings page', () => {
   beforeEach(() => {
     vi.mocked(readImportedMeetingEditor).mockReset();
     vi.mocked(readImportedMeetingEditor).mockResolvedValue({ status: 'blocked', message: 'Original calendar requires connection.', connectionRequired: true, connectionKind: 'group' });
+    vi.mocked(fetchOrganizationCalendarConnection).mockResolvedValue({ applicable: true, available: true, connected: false, state: 'disconnected', canManageOrganization: false, calendarKind: 'group', message: 'An administrator connects the organization calendar.' });
     vi.mocked(loadModuleStructure).mockReset();
     vi.mocked(loadModuleStructure).mockImplementation(async catalogueId => savedModule(catalogueId));
     vi.mocked(syncTeamsCalendarState).mockReset();
@@ -886,6 +888,7 @@ describe('Teams Meetings page', () => {
   });
 
   it('uses the original standard form and actions for a linked calendar, with visible access failure', async () => {
+    vi.mocked(fetchOrganizationCalendarConnection).mockResolvedValue({ applicable: true, available: true, connected: false, state: 'disconnected', canManageOrganization: true, calendarKind: 'group', message: 'An administrator connects the organization calendar.' });
     fetchCurriculumTeamsMeetingSummaries.mockResolvedValue(summaries.map(summary => summary.moduleCatalogueId === 'MOD-1'
       ? { ...summary, meetingType: 'linked-external', calendarManagement: 'external' as const } : summary));
     await renderPage();
@@ -903,7 +906,7 @@ describe('Teams Meetings page', () => {
     await userEvent.click(update);
     expect(dialog.getByRole('status', { name: 'Teams calendar action' })).toHaveFocus();
     expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
-    expect(dialog.getByRole('button', { name: 'Connect Microsoft calendar' })).toBeEnabled();
+    expect(dialog.getByRole('button', { name: 'Connect organization calendar' })).toBeEnabled();
     expect(dialog.queryByText('Series linked from Teams')).not.toBeInTheDocument();
     expect(dialog.queryByRole('region', { name: 'Edit original Teams meeting' })).not.toBeInTheDocument();
     expect(dialog.queryByRole('button', { name: 'Review Teams calendar update' })).not.toBeInTheDocument();

@@ -76,7 +76,11 @@ def claims(token):
 def access_for(request, live_id):
     from coach_api.views import microsoft_graph_token
     from .teams_imported_calendar_auth import delegated_calendar_access
+    from .teams_organization_calendar import for_series
 
+    organization = for_series(request, live_id)
+    if organization:
+        return organization
     delegated = delegated_calendar_access(request, live_id)
     if delegated:
         # Auth verified the ID-token signature and bound its tenant to this
