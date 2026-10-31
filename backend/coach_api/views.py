@@ -17169,6 +17169,7 @@ def _sync_calendar_record_to_review_instance_status(instance_row: dict) -> None:
         updated = CoachCalendarEvent.objects.filter(
             pk=calendar_event_id,
             status__in={
+                CoachCalendarEvent.STATUS_SCHEDULED,
                 CoachCalendarEvent.STATUS_IN_PROGRESS,
                 CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
             },
