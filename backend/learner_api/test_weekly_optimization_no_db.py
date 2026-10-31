@@ -129,6 +129,54 @@ class WeeklyHoursProjectionTests(SimpleTestCase):
         self.assertIn("s.activity_type='extra_activity'", query.call_args_list[1].args[0])
         self.assertEqual(query.call_args_list[1].args[1], [17, '201', 'commercial'])
 
+    def test_hours_can_return_the_same_stored_rows_for_weekly_completion(self):
+        stored = [{'id': 1, 'learner_id': 17, 'kind': 'component',
+                   'component_ref': 'C1', 'accepted': True, 'actual_seconds': 1800}]
+        with patch.object(canonical_learning, 'query', side_effect=[stored, []]):
+            hours, completion = canonical_learning.weekly_hour_records(
+                {'id': 17, 'enrolment_id': 201, 'learner_type': 'commercial'},
+                include_stored=True,
+            )
+        expected_hours = [{**stored[0], 'segments': []}]
+        expected_completion = [{
+            field: stored[0].get(field) for field in (
+                'kind', 'component_ref', 'quiz_ref', 'passed', 'submitted_at')
+        }]
+        self.assertEqual(completion, expected_completion)
+        self.assertEqual(hours, expected_hours)
+
+    def test_completion_reuse_preserves_soft_deleted_history_without_counting_its_hours(self):
+        active = {'id': 1, 'entry_order': 2, 'learner_id': 17, 'kind': 'component',
+                  'component_ref': 'C1', 'accepted': True, 'actual_seconds': 1800,
+                  'deleted_at': None}
+        deleted = {'id': 2, 'entry_order': 1, 'learner_id': 17, 'kind': 'quiz',
+                   'component_ref': 'C1', 'passed': True, 'actual_seconds': 900,
+                   'deleted_at': '2026-01-01T00:00:00Z'}
+        with patch.object(canonical_learning, 'query', side_effect=[[active, deleted], []]):
+            hours, completion = canonical_learning.weekly_hour_records(
+                {'id': 17, 'enrolment_id': 201, 'learner_type': 'commercial'},
+                include_stored=True,
+            )
+        completion_fields = ('kind', 'component_ref', 'quiz_ref', 'passed', 'submitted_at')
+        self.assertEqual(completion, [
+            {field: deleted.get(field) for field in completion_fields},
+            {field: active.get(field) for field in completion_fields},
+        ])
+        expected_hours = {
+            key: value for key, value in active.items()
+            if key not in {'entry_order', 'deleted_at'}
+        }
+        self.assertEqual(hours, [{**expected_hours, 'segments': []}])
+
+    def test_progress_transfer_keeps_frozen_hours_separate_from_live_completion(self):
+        frozen = [{'id': 'frozen', 'kind': 'component'}]
+        owner = {'id': 17, 'enrolment_id': 201, 'progress_transfer_active': True}
+        with patch.object(canonical_learning, 'entries_for', return_value=frozen) as entries:
+            hours, completion = canonical_learning.weekly_hour_records(owner, include_stored=True)
+        self.assertEqual(hours, frozen)
+        self.assertIsNone(completion)
+        entries.assert_called_once_with(owner, lineage_only=True)
+
     def test_standalone_reviewed_extra_matches_full_hour_projection(self):
         owner = {'id': 17, 'enrolment_id': 201, 'learner_type': 'commercial'}
         extra = dict(profile_id=17, id='extra', activity_type='extra_activity', status='accepted',

@@ -454,6 +454,38 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertIn('to_jsonb(h) ORDER BY h.id', legacy_sql)
         self.assertEqual(compact, legacy)
 
+    def test_student_activity_projection_keeps_display_fallback_and_lineage(self):
+        entry = {
+            'id': 1, 'learner_id': 510, 'kind': 'component',
+            'module_ref': None, 'module_title': '', 'group_ref': 'G1',
+            'group_title': 'Historical group', 'component_ref': 'C1',
+            'actual_seconds': 1800, 'accepted': True,
+            'source_payload': {
+                'original_source_ref': 'la:20:30',
+                'course_display_placement': {'course_id': 20, 'section': 'introduction'},
+                'reconciliation': {'reporting_allocation': {'estimated': False}},
+            },
+        }
+        self.query.return_value = [{
+            'payload': entry, 'ksbs': ['K1'], 'segments': [{'id': 2}],
+            'sources': [{'source_course_ref': '20', 'source_activity_id': 'material:30'}],
+            'journal_routes': [{'group_id': 20, 'activity_id': 30, 'source_ref': 'la:20:30'}],
+            'historical_components': [],
+        }]
+        compact = self.scope['entries_for'](self.owner, student_activity_summary=True)
+        sql, params = self.query.call_args.args
+        self.assertEqual(params, [self.owner['id']])
+        self.assertNotIn('SELECT progress.*', sql)
+        self.assertIn('progress.group_ref', sql)
+        self.assertIn('progress.group_title', sql)
+        self.assertIn('course_display_placement', sql)
+        self.assertIn('reconciliation', sql)
+        self.assertIn('journal_routes', sql)
+        self.assertEqual(compact[0]['group_title'], 'Historical group')
+        self.assertEqual(compact[0]['source_payload'], entry['source_payload'])
+        self.assertEqual(compact[0]['ksbs'], ['K1'])
+        self.assertEqual(compact[0]['sources'], self.query.return_value[0]['sources'])
+
     def test_selected_catalogue_filters_owned_courses_before_activity_read(self):
         self.query.return_value = []
         self.scope['source_subjects'](271, lambda items: {'activities': items},

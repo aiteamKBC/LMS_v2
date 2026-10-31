@@ -12,8 +12,11 @@ import type { LearnerAccessGate, LearnerLearningAccess } from '@/utils/learnerAc
 const BASE = '/learner_api/learner-detail';
 const detailResource = createCachedResource<LearnerDetail>('learner-detail', key =>
   readLearnerJson(`${BASE}/${key.replace(':', '/')}/?content=summary`));
-const quizDetailResource = createCachedResource<LearnerDetail>('learner-quiz-detail', key =>
-  readLearnerJson(`${BASE}/${key.replace(':', '/')}/?content=quiz`));
+const quizDetailResource = createCachedResource<LearnerDetail>('learner-quiz-detail', key => {
+  const [kind, id, quizId] = JSON.parse(key) as [LearnerKind, string, string];
+  const quizQuery = quizId ? `&quiz_id=${encodeURIComponent(quizId)}` : '';
+  return readLearnerJson(`${BASE}/${kind}/${id}/?content=quiz${quizQuery}`);
+});
 const componentResource = createCachedResource<LearnerDetail>('learner-component-detail', async key => {
   const [kind, id, componentId] = JSON.parse(key) as [LearnerKind, string, string];
   const detail = await readLearnerJson<LearnerDetail>(
@@ -344,7 +347,7 @@ export interface LearnerVideoProgress {
 export function invalidateLearnerDetailCache(kind?: LearnerKind, id?: string, scope?: WeeklyProgressScope): void {
   const key = kind && id ? `${kind}:${id}` : undefined;
   detailResource.invalidate(key);
-  quizDetailResource.invalidate(key);
+  quizDetailResource.invalidate();
   componentResource.invalidate();
   summaryResource.invalidate(key);
   invalidateWeeklyLearning(key, scope);
@@ -352,9 +355,12 @@ export function invalidateLearnerDetailCache(kind?: LearnerKind, id?: string, sc
 }
 
 /** Share the expensive workspace payload between learner pages. */
-export function fetchLearnerDetail(kind: LearnerKind, id: string, options: { force?: boolean; revalidate?: boolean; componentId?: string; quizView?: boolean } = {}): Promise<LearnerDetail> {
+export function fetchLearnerDetail(kind: LearnerKind, id: string, options: { force?: boolean; revalidate?: boolean; componentId?: string; quizView?: boolean; quizId?: string | number } = {}): Promise<LearnerDetail> {
   if (options.force) invalidateLearnerDetailCache(kind, id);
-  if (options.quizView) return quizDetailResource.read(`${kind}:${id}`, { revalidate: options.revalidate });
+  if (options.quizView) return quizDetailResource.read(
+    JSON.stringify([kind, id, options.quizId == null ? '' : String(options.quizId)]),
+    { revalidate: options.revalidate },
+  );
   if (options.componentId) return componentResource.read(JSON.stringify([kind, id, options.componentId]));
   return detailResource.read(`${kind}:${id}`, { revalidate: options.revalidate });
 }

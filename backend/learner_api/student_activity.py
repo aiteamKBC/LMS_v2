@@ -18,7 +18,7 @@ from login.sessions import authenticate_request
 
 from .learner_detail import SOURCE_MODELS
 from .active_users import completed_hours_value_from_progress
-from .models import EnrolmentUser, LearnerProfile, LearnerProgressEntry
+from .models import EnrolmentUser, LearnerProfile, LearnerProgressEntry, attach_programme_name
 from .selectors.assignments import _effective_plan_ids
 from .student_activity_data import (read_audit_hour_totals, read_evidenced_ksb_counts_bulk,
                                     read_student_activity, read_student_material)
@@ -249,7 +249,8 @@ def student_activity(request, kind, pk):
             owner = canonical_learning.profile(pk)
             # Share the exact accepted ledger snapshot with the course catalogue;
             # summing separately loaded old/current aggregates can double count.
-            records = canonical_learning.entries_for(owner) if owner is not None else None
+            records = canonical_learning.entries_for(
+                owner, student_activity_summary=True) if owner is not None else None
             payload = canonical_learning.source_subjects(pk, summarize_activities, owner=owner, records=records,
                 include_ledger=request.GET.get('view') != 'my-learning')
             # Historical describes lineage, not a failed refresh. This read
@@ -732,8 +733,9 @@ def _effective_current_subjects(cursor, learner_id):
     agree without writing anything during a learner read.
     """
     learner = EnrolmentUser.all_learners.only(
-        'programme', 'group', 'learning_plan', 'training_plan',
+        'group', 'learning_plan', 'training_plan',
     ).get(pk=learner_id)
+    attach_programme_name(learner)
     module_ids = _effective_plan_ids(learner, {})
     if not module_ids:
         return []

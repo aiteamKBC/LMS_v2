@@ -308,7 +308,7 @@ class MyLearningEndpointTests(SimpleTestCase):
         for kind in ('commercial','apprenticeship'):
             model=Mock();model.DoesNotExist=type('Missing',(Exception,),{})
             model.all_learners.only.return_value.get.return_value=SimpleNamespace(pk=7)
-            with patch.dict(learning.SOURCE_MODELS,{kind:model}), patch.object(canonical,'require_profile',return_value={'id':9}), patch.object(learning,'read_search',return_value={'matches':[{'id':'current:M1'}],'nextOffset':None}) as search:
+            with patch.dict(learning.SOURCE_MODELS,{kind:model}), patch.object(learning,'attach_programme_name'), patch.object(canonical,'require_profile',return_value={'id':9}), patch.object(learning,'read_search',return_value={'matches':[{'id':'current:M1'}],'nextOffset':None}) as search:
                 view=learning.my_learning.__wrapped__.__wrapped__.__wrapped__
                 self.assertEqual(view(RequestFactory().get('/?q=lesson'),kind,7,resource='search').status_code,200)
                 search.assert_called_once()
@@ -319,11 +319,12 @@ class MyLearningEndpointTests(SimpleTestCase):
         for kind in ('commercial','apprenticeship'):
             model=Mock();model.DoesNotExist=type('Missing',(Exception,),{})
             model.all_learners.only.return_value.get.return_value=SimpleNamespace(pk=7)
-            with patch.dict(learning.SOURCE_MODELS,{kind:model}), patch.object(canonical,'require_profile',return_value={'id':9}) as identity, patch.object(learning,'read_catalogue',return_value={'modules':[]}) as read:
+            with patch.dict(learning.SOURCE_MODELS,{kind:model}), patch.object(learning,'attach_programme_name') as programme, patch.object(canonical,'require_profile',return_value={'id':9}) as identity, patch.object(learning,'read_catalogue',return_value={'modules':[]}) as read:
                 response=learning.my_learning.__wrapped__.__wrapped__.__wrapped__(RequestFactory().get('/'),kind,7)
             self.assertEqual(response.status_code,200)
             self.assertEqual(response['Cache-Control'],'private, no-store')
             model.all_learners.only.assert_called_once_with(*learning.SOURCE_FIELDS)
+            programme.assert_called_once_with(model.all_learners.only.return_value.get.return_value)
             identity.assert_called_once_with(7)
             read.assert_called_once()
 

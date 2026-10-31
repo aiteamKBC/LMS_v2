@@ -152,7 +152,10 @@ def _progress(profile, *, active_only=False):
     return quizzes, list(videos.values()), list(components.values())
 
 
-def build_learning_content_summary(source, pk, *, learning_summary=False, assigned_modules=None, strict=False, week_ids=None, identities_only=False, progress=None, compact_content=False, preserve_legacy=False, include_component_details=False, resolved_metadata=None):
+def build_learning_content_summary(source, pk, *, learning_summary=False, assigned_modules=None, strict=False,
+                                   week_ids=None, component_ids=None, identities_only=False, progress=None,
+                                   compact_content=False, preserve_legacy=False, include_component_details=False,
+                                   resolved_metadata=None, quiz_id=None):
     from learner_api.projection_performance import projection_stage
 
     # Same readers as build_learner_detail, without its write-on-read repairs.
@@ -177,8 +180,12 @@ def build_learning_content_summary(source, pk, *, learning_summary=False, assign
     projection_options = {"week_ids": week_ids, "identities_only": identities_only} if identities_only or week_ids is not None else {}
     if compact_content:
         projection_options['compact_content'] = True
+    if component_ids is not None:
+        projection_options['component_ids'] = list(component_ids)
     if resolved_metadata is not None:
         projection_options['resolved_metadata'] = resolved_metadata
+    if quiz_id is not None:
+        projection_options['target_quiz_id'] = quiz_id
     if identities_only and preserve_legacy:
         projection_options['catalogue_facts'] = True
     with projection_stage('native_content'):
@@ -191,6 +198,8 @@ def build_learning_content_summary(source, pk, *, learning_summary=False, assign
     quiz_options = {"native_week_ids": True} if identities_only or week_ids is not None else {}
     if resolved_metadata is not None and 'quiz_modules' in resolved_metadata:
         quiz_options['resolved_metadata'] = resolved_metadata
+    if quiz_id is not None:
+        quiz_options['target_quiz_id'] = quiz_id
     with projection_stage('native_quizzes'):
         weeks, components = _append_week_quizzes(weeks, components, assigned_modules=assigned, **strict_options, **quiz_options)
 

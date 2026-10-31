@@ -10,7 +10,7 @@ from . import dashboard_monthly as monthly
 
 class MonthlyProjectionTests(SimpleTestCase):
     def fixture(self, query='', *, records=None, targets=None, subjects=None, bounds=None, sessions=None, reviews=None, fallback=None, lectures=None):
-        from . import dashboard_tabs, attendance_lectures, overview_week
+        from . import dashboard_tabs, attendance_lectures
         source = SimpleNamespace(pk=265, id=265, email='synthetic@example.invalid')
         owner = {'id': 17, 'start_date': date(2026, 1, 1), 'end_date': date(2027, 1, 1)}
         spine = {'modules': [{'id': 'M1', 'title': 'Module', 'start_date': '2026-01-01', 'end_date': '2027-01-01', 'tutor_name': 'Tutor', 'coach_name': ''}],
@@ -28,7 +28,9 @@ class MonthlyProjectionTests(SimpleTestCase):
              patch.object(monthly, 'connections', {'enrolment': SimpleNamespace(cursor=lambda: cursor)}), \
              patch.object(monthly.timezone, 'localdate', return_value=date(2026, 10, 15)), \
              patch.object(attendance_lectures, 'read_workspace', return_value={'lectures': lectures or []}) as attendance, \
-             patch.object(overview_week, 'read_week', return_value=fallback or {}) as week:
+             patch.object(monthly, 'native_module_ksb_codes', return_value={}), \
+             patch.object(monthly, 'direct_monthly_fallback',
+                          return_value=next(iter((fallback or {}).values()), None)) as week:
             result = monthly.read_monthly(source, 'commercial', owner, object(), RequestFactory().get('/monthly/' + query))
         return result, entries, schedule, session_rows, attendance, week
 
@@ -164,6 +166,39 @@ class MonthlyProjectionTests(SimpleTestCase):
 
 
 class MonthlySourceReadTests(SimpleTestCase):
+    def test_native_monthly_ksb_codes_keep_embedded_mapping_precedence(self):
+        cursor = MagicMock()
+        cursor.fetchall.side_effect = [
+            [('C1', 'M1', [{'code': 'B2'}]), ('C2', 'M1', None)],
+            [('C1', 'M1', 'SHOULD_NOT_REPLACE'), ('C2', 'M1', 'B1')],
+        ]
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(monthly, 'connections', {'enrolment': connection}):
+            result = monthly.native_module_ksb_codes(['M1', 'M1'])
+        self.assertEqual(result, {'M1': {'B1', 'B2'}})
+        self.assertEqual(cursor.execute.call_args_list[0].args[1], [['M1']])
+        self.assertEqual(cursor.execute.call_args_list[1].args[1], [['M1']])
+
+    def test_compact_component_scope_is_applied_in_the_master_sql(self):
+        from . import learner_detail
+        metadata = {'module_titles': {'M1': 'Module'},
+                    'weeks': [('W1', 'M1', 'Week 1', 1, 0)], 'quiz_links': {}}
+        component = ('C1', 'W1', 'M1', 'reading', 'Read', '', {}, None,
+                     0, None, False, None, False, 1)
+        cursor = MagicMock()
+        cursor.fetchall.side_effect = [[component], [], []]
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(learner_detail, 'connections', {'enrolment': connection}):
+            learner_detail._resolve_from_master([], [], [],
+                assigned_modules=[{'moduleId': 'M1'}], resolved_metadata=metadata,
+                component_ids=['C1'], compact=True, compact_content=True,
+                expected_otjh=True, live_session_ids=False, strict=True)
+        sql, parameters = cursor.execute.call_args_list[0].args
+        self.assertIn('AND id = ANY(%s)', sql)
+        self.assertEqual(parameters[:2], [['M1'], ['C1']])
+
     def test_compact_ksb_mapping_preserves_codes_weights_and_hours(self):
         from . import learner_detail
         metadata = {'module_titles': {'M1': 'Module'},
@@ -235,6 +270,8 @@ class MonthlySourceReadTests(SimpleTestCase):
         self.assertIn('ksb_mappings', sql)
         self.assertIn('expected_otjh', sql)
         self.assertIn("settings_json::jsonb - ARRAY['lessonContent'", sql)
+        self.assertIn("'transcript'", sql)
+        self.assertIn("'shortDescription'", sql)
         self.assertNotIn("regexp_replace(regexp_replace(coalesce(description", sql)
         self.assertIn("'assignmentTopics'", sql)
 
@@ -282,3 +319,17 @@ class MonthlySourceReadTests(SimpleTestCase):
             unused.assert_not_called()
         recovery.assert_called_once()
         missed.assert_called_once()
+
+    def test_compact_attendance_scopes_register_adjustments_to_rendered_occurrences(self):
+        from . import attendance_lectures as attendance
+        source = SimpleNamespace(pk=265, id=265)
+        scope = {('teams:81', '2026-10-10')}
+        with patch.object(attendance, 'lecture_register', return_value=[]) as normalized, \
+             patch.object(attendance, 'read_native_components', return_value=([], [])), \
+             patch.object(attendance, 'build_lectures', return_value=[]), \
+             patch.object(attendance, 'connections', {'enrolment': SimpleNamespace(cursor=lambda: MagicMock())}):
+            result = attendance.read_workspace(
+                source, 'commercial', monthly='2026-10', monthly_occurrences=scope,
+            )
+        self.assertEqual(result, {'lectures': []})
+        normalized.assert_called_once_with(source, occurrence_scope=scope, credit_projection=True)

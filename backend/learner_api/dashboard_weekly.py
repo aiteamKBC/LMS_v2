@@ -12,13 +12,13 @@ from old_otjh.service import ServiceError
 
 from coach_api.weekly_learning import assignment_projection, read_weekly_learning
 from . import canonical_learning, journal_sources
-from .identity import learner_profile_for_source
 from .learner_detail import SOURCE_MODELS
+from .models import LearnerProfile, attach_programme_name
 from .projection_performance import measure_projection
 from .weekly_learning import _weekly_component
 from .learner_detail import _resolve_from_master, _apply_programme_assignment_template
 
-WEEKLY_SOURCE_FIELDS = ('id', 'aptem_id', 'learner_type', 'username', 'email', 'programme', 'cohort', 'group')
+WEEKLY_SOURCE_FIELDS = ('id', 'aptem_id', 'learner_type', 'username', 'email', 'cohort', 'group')
 
 
 def slot_id(module_id, slot):
@@ -41,9 +41,13 @@ def _selection(week_id, module_id):
 
 def read_dashboard_weekly(source, pk, *, week_id=None, module_id=None):
     owner = canonical_learning.require_profile(pk)
-    profile = learner_profile_for_source(source, pk, heal=False, fields=('id', 'enrolment_id'))
-    if profile is None or profile.pk != owner['id'] or profile.enrolment_id != pk:
+    if owner.get('enrolment_id') != pk:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
+    # ``require_profile`` already validates the enrolment/profile bridge,
+    # account email and Aptem identity.  The weekly reader only needs a model
+    # identity for its reverse progress relation; constructing that identity
+    # avoids repeating the same profile lookup over the network.
+    profile = LearnerProfile(id=owner['id'], enrolment_id=owner['enrolment_id'])
     source._canonical_profile = owner
     source._case_file_profile = profile
     selection = _selection(week_id, module_id)
@@ -87,6 +91,7 @@ def dashboard_weekly(request, kind, pk, week_id=None):
     try:
         with measure_projection('dashboard-week-detail' if week_id else 'dashboard-weekly', kind=kind, learner_id=pk):
             source = assignment_projection(model.all_learners.only(*WEEKLY_SOURCE_FIELDS)).get(pk=pk)
+            attach_programme_name(source)
             source.training_plan = source._weekly_training_plan
             source.learning_plan = source._weekly_learning_plan
             payload = read_dashboard_weekly(source, pk, week_id=week_id, module_id=request.GET.get('moduleId'))

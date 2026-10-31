@@ -36,7 +36,7 @@ class SelectedActivityTimeTests(SimpleTestCase):
         while hasattr(view, "__wrapped__"):
             view = view.__wrapped__
         model = Mock()
-        model.objects.get.return_value = SimpleNamespace(id=19)
+        model.objects.defer.return_value.get.return_value = SimpleNamespace(id=19)
         profile = SimpleNamespace(training_plan_progress=[])
         with ExitStack() as stack:
             def mock(name, **kwargs):
@@ -55,6 +55,7 @@ class SelectedActivityTimeTests(SimpleTestCase):
             stack.enter_context(patch.object(endpoint.timezone, "now", return_value=now))
             stack.enter_context(patch("learner_api.working_rules.learner_holiday_details", return_value={}))
             response = view(request, "COMP-TIME")
+        model.objects.defer.assert_called_once_with("status")
         return response, save, queue
 
     def assert_selected_duration(self, response, save, selected, verified):

@@ -24,19 +24,25 @@ def _context(kind="apprenticeship", enrolment_id=17, profile_id=901):
 
 class QuizEntitlementSelectorTests(SimpleTestCase):
     def test_identity_uses_the_enrolment_bridge_not_equal_primary_keys(self):
-        source = SimpleNamespace(pk=17, id=17, learner_type="commercial")
+        source = SimpleNamespace(
+            pk=17, id=17, learner_type="commercial",
+            _weekly_training_plan=[{"moduleId": "M1"}],
+            _weekly_learning_plan=None,
+        )
         profile = SimpleNamespace(pk=901, id=901, enrolment_id=17, lifecycle_status="active")
         source_manager = Mock()
-        source_manager.using.return_value.filter.return_value.first.return_value = source
+        source_manager.using.return_value.only.return_value.filter.return_value.first.return_value = source
         profile_manager = Mock()
         profile_manager.using.return_value.only.return_value.filter.return_value.first.return_value = profile
 
         with patch.object(selectors.EnrolmentUser, "all_learners", source_manager), \
+             patch.object(selectors, "assignment_projection", side_effect=lambda query: query), \
              patch.object(selectors.LearnerProfile, "objects", profile_manager):
             result = selectors.resolve_quiz_learner(17)
 
         self.assertEqual((result.enrolment_id, result.profile.pk, result.kind), (17, 901, "commercial"))
-        source_manager.using.return_value.filter.assert_called_once_with(pk=17)
+        source_manager.using.return_value.only.assert_called_once_with(*selectors.QUIZ_SOURCE_FIELDS)
+        source_manager.using.return_value.only.return_value.filter.assert_called_once_with(pk=17)
         profile_manager.using.return_value.only.return_value.filter.assert_called_once_with(
             enrolment_id=17,
             lifecycle_status__iexact="active",
@@ -45,12 +51,17 @@ class QuizEntitlementSelectorTests(SimpleTestCase):
     def test_null_or_missing_bridge_fails_closed_for_both_learner_kinds(self):
         for kind in ("commercial", "apprenticeship"):
             with self.subTest(kind=kind):
-                source = SimpleNamespace(pk=17, id=17, learner_type=kind)
+                source = SimpleNamespace(
+                    pk=17, id=17, learner_type=kind,
+                    _weekly_training_plan=[{"moduleId": "M1"}],
+                    _weekly_learning_plan=None,
+                )
                 source_manager = Mock()
-                source_manager.using.return_value.filter.return_value.first.return_value = source
+                source_manager.using.return_value.only.return_value.filter.return_value.first.return_value = source
                 profile_manager = Mock()
                 profile_manager.using.return_value.only.return_value.filter.return_value.first.return_value = None
                 with patch.object(selectors.EnrolmentUser, "all_learners", source_manager), \
+                     patch.object(selectors, "assignment_projection", side_effect=lambda query: query), \
                      patch.object(selectors.LearnerProfile, "objects", profile_manager):
                     self.assertIsNone(selectors.resolve_quiz_learner(17))
 
@@ -69,6 +80,7 @@ class QuizEntitlementSelectorTests(SimpleTestCase):
         self.assertTrue(build.call_args.kwargs["strict"])
         self.assertTrue(build.call_args.kwargs["identities_only"])
         self.assertTrue(build.call_args.kwargs["preserve_legacy"])
+        self.assertEqual(build.call_args.kwargs["quiz_id"], 78)
 
 
 class QuizPermissionTests(SimpleTestCase):

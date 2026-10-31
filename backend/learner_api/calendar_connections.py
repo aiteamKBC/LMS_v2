@@ -131,7 +131,9 @@ def _learner(kind, learner_id):
     model = SOURCE_MODELS.get(kind)
     if model is None:
         return None
-    return model.all_learners.filter(pk=learner_id).first()
+    # This is an ownership/existence check only.  Selecting the unmanaged model
+    # wholesale hydrates legacy Created_users columns removed by normalization.
+    return model.all_learners.only("id").filter(pk=learner_id).first()
 
 
 def _row(kind, learner_id, provider):

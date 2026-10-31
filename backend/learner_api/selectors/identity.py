@@ -127,13 +127,16 @@ def resolve_many_for_enrolments(enrolment_ids, *, query):
     SELECT accounts.requested_enrolment_id,accounts.requested_position,
         accounts.account_match_count,
         l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
-        l.programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
+        coalesce(nullif(btrim(programme.name),''),l.programme_id,'') AS programme,
+        l.lifecycle_status,l.programme_status,l.cohort,l.cohort_id,
+        l.group_name,l.group_id,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
         accounts.account_record_id,accounts.account_email,accounts.account_aptem_id,
         accounts.programme_planned_hours,
         EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t
                WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active
       FROM account_matches accounts
       LEFT JOIN "Learner".learners l ON l.enrolment_id=accounts.account_record_id
+      LEFT JOIN curriculum.programmes programme ON programme.programme_id=l.programme_id
      ORDER BY accounts.requested_position,l.id''', [requested])
 
     grouped = {enrolment_id: [] for enrolment_id in requested}
@@ -190,12 +193,15 @@ def resolve_many_for_enrolments(enrolment_ids, *, query):
 
 def profile_for_enrolment(enrolment_id, *, query, error_type):
     records = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
-        l.programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
+        coalesce(nullif(btrim(programme.name),''),l.programme_id,'') AS programme,
+        l.lifecycle_status,l.programme_status,l.cohort,l.cohort_id,
+        l.group_name,l.group_id,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
         u."Planned_hours" AS programme_planned_hours,
         EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
+        LEFT JOIN curriculum.programmes programme ON programme.programme_id=l.programme_id
         WHERE l.enrolment_id=%s''', [enrolment_id])
     if not records:
         return None

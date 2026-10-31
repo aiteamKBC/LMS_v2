@@ -115,7 +115,18 @@ class Harness:
             return run
 
         self.spy = spy
+        def attach_programme(source):
+            source.__dict__["programme"] = source._manager.data[source.pk].get("programme") or ""
+            return source
+
+        def activity_scope(plan, component_id):
+            if component_id != "C0-0":
+                raise ServiceError("Activity not found in this learner's plan.", status=404)
+            return plan, ["A"], ["C0-0", "C0-1", "C0-2"]
+
         ns.update(_active_profile_for_source=spy('profile', lambda *a, **kw: self.profile),
+                  attach_programme_name=attach_programme,
+                  _activity_plan_scope=activity_scope,
                   to_learner_detail=spy('mapper', lambda *a, **kw: deepcopy(self.data)),
                   advance_learner=spy('advance'), hydrate_source_training_plan=spy('hydrate'),
                   access_gate=spy('access', {'blocked': False, 'reasons': []}),
@@ -172,6 +183,12 @@ class Harness:
         self.pending_fields = fields
         return self
 
+    def defer(self, *fields):
+        # The runtime queryset excludes compatibility-only Created_users
+        # columns. This source-only harness has no ORM projection layer; the
+        # dedicated projection tests assert the exact deferred field names.
+        return self
+
     def get(self, *, pk):
         fields = getattr(self, 'pending_fields', None)
         self.fields.append(fields)
@@ -220,10 +237,10 @@ class DetailTests(unittest.TestCase):
         self.assertEqual(len(old.sql), 1)
         self.assertEqual(old.calls, [])
         self.assertEqual(sum(c[0] == 'stored_plan' for c in old.assignment.calls), 1)
-        self.assertEqual(set(new.fields[0]), {'id', 'programme', 'cohort', 'group', 'learning_plan',
+        self.assertEqual(set(new.fields[0]), {'id', 'cohort', 'group', 'learning_plan',
                                               'training_plan', 'modules', 'weeks', 'components'})
         self.assertGreater(len(roster.FIELDS), len(new.fields[0]))
-        self.assertEqual(len(new.fields[0]), 9)
+        self.assertEqual(len(new.fields[0]), 8)
 
     def test_empty_one_multiple_native_source_and_mixed_graphs_all_modes(self):
         for count in (0, 1, 3):
@@ -293,7 +310,11 @@ class DetailTests(unittest.TestCase):
             for name in ('advance', 'hydrate', 'persist', 'snapshot'):
                 self.assertNotIn(name, names)
             if mode in ('quiz', 'activity'):
-                self.assertEqual(next(c[2] for c in new.calls if c[0] == 'profile'), {'heal': False})
+                profile_options = next(c[2] for c in new.calls if c[0] == 'profile')
+                self.assertFalse(profile_options['heal'])
+                if mode == 'activity':
+                    self.assertEqual(profile_options['progress_module_ids'], ['A'])
+                    self.assertEqual(profile_options['progress_component_ids'], ['C0-0', 'C0-1', 'C0-2'])
 
     def test_reading_assignment_variants_preserve_scope_and_title_only_fallback(self):
         plans = [None, [], [{'moduleId': 'A'}], [{'moduleId': 'A', 'assignmentMode': 'explicit'}],

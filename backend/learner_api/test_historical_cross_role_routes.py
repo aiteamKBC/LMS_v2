@@ -32,6 +32,7 @@ class HistoricalCrossRoleRouteTests(SimpleTestCase):
                                return_value=SimpleNamespace(role="learner", subject_id=121))
         replace("login.permissions._auth_gate_enabled", return_value=True)
         model = MagicMock()
+        self.model = model
         model.all_learners.filter.return_value.first.return_value = self.enrolment
         model.all_learners.only.return_value.filter.return_value.first.return_value = self.enrolment
         for module in (calendar, review_history):
@@ -80,6 +81,13 @@ class HistoricalCrossRoleRouteTests(SimpleTestCase):
             self.factory.get("/learner_api/enrolment/commercial/121/calendar/"),
             kind=kind, pk=pk,
         )
+
+    def test_calendar_lookup_projects_only_normalized_branch_columns(self):
+        with patch.object(calendar, 'coaching_events_for_learner', return_value=[]):
+            response = self.main_response()
+        self.assertEqual(response.status_code, 200)
+        self.model.all_learners.only.assert_called_with(*calendar.CALENDAR_SOURCE_FIELDS)
+        self.assertNotIn('status', calendar.CALENDAR_SOURCE_FIELDS)
 
     def payloads(self, kind="commercial"):
         self.cursor.description = [(key,) for key in self.row]

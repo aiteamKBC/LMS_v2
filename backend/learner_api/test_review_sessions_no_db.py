@@ -14,7 +14,7 @@ class ReviewSessionsTests(SimpleTestCase):
         self.source = SimpleNamespace(pk=125)
         self.profile = SimpleNamespace(id=25)
         self.model = MagicMock()
-        self.model.all_learners.filter.return_value.first.return_value = self.source
+        self.model.all_learners.defer.return_value.filter.return_value.first.return_value = self.source
         self.factory = RequestFactory()
         self.events = [{"id": "imported-review:1", "eventKey": "imported-review:1",
                         "source": "progress-review", "reviewSource": "aptem",
@@ -97,6 +97,6 @@ class ReviewSessionsTests(SimpleTestCase):
         self.read.assert_not_called()
 
     def test_missing_learner_is_not_an_empty_review_list(self):
-        self.model.all_learners.filter.return_value.first.return_value = None
+        self.model.all_learners.defer.return_value.filter.return_value.first.return_value = None
         self.assertEqual(self.request().status_code, 404)
         self.read.assert_not_called()

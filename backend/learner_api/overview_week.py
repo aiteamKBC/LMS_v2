@@ -17,7 +17,7 @@ from .dashboard_metrics import metrics_from_loaded, point_codes, ratio
 from .progress_rules import progress_counts_as_achieved
 from old_otjh.service import ServiceError
 from .learner_detail import SOURCE_MODELS
-from .models import LearnerProfile
+from .models import LearnerProfile, attach_programme_name
 from . import canonical_learning
 from .student_activity import CURRENT_SUBJECTS_SQL, _direct_progress_records, _direct_progress_otjh
 
@@ -53,7 +53,7 @@ HOME_SOURCE_FIELDS = (
     'id', 'aptem_id', 'email', 'username',
     # Read by the home card's programme period (_group_dates); deferring them
     # cost one query each.
-    'programme', 'cohort', 'start_date', 'end_date',
+    'cohort', 'start_date', 'end_date',
     'training_plan', 'learning_plan', 'group',
 )
 from .student_activity_data import read_curriculum_schedules, apply_curriculum_schedules
@@ -645,6 +645,8 @@ def overview_week(request, kind, pk):
                 source = source_for_case_file(request, kind, pk)
                 if source is None:
                     source = model.all_learners.only(*fields).get(pk=pk)
+                if home or home_summary:
+                    attach_programme_name(source)
                 with measurement.stage(section or 'overview'):
                     if home:
                         payload = read_week(source, home_kind=kind)

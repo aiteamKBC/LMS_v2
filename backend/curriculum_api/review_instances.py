@@ -81,6 +81,14 @@ REVIEW_INSTANCE_REOPENS_TABLE = 'review_instance_reopens'
 #: sql/2026-09-15_curriculum_learner_review_additions.sql for why this is a
 #: separate table instead of an extension.
 LEARNER_REVIEW_ADDITIONS_TABLE = 'learner_review_additions'
+# Learner calendars need the addition's identity, placement, date, reason and
+# soft-delete predicate only.  Keep audit actors/timestamps out of this read so
+# the scoped learner runtime role can use a narrow column grant rather than
+# table-wide SELECT.
+LEARNER_REVIEW_ADDITION_READ_COLUMNS = (
+    'id', 'review_template_id', 'programme_id', 'learner_id', 'target_date',
+    'reason_code', 'reason', 'deleted_at',
+)
 OVERRIDES_TABLE = review_schedule.OCCURRENCE_OVERRIDES_TABLE
 
 STATUS_NOT_SCHEDULED = 'not-scheduled'
@@ -524,8 +532,12 @@ def get_learner_review_addition(addition_id):
 
 def list_active_learner_review_additions(programme_id, learner_id):
     ensure_learner_review_additions_table()
+    selected = ', '.join(
+        curriculum_views.quote_ident(column)
+        for column in LEARNER_REVIEW_ADDITION_READ_COLUMNS
+    )
     return curriculum_views.fetch_all(
-        f'select * from {curriculum_views.table_name(LEARNER_REVIEW_ADDITIONS_TABLE)} '
+        f'select {selected} from {curriculum_views.table_name(LEARNER_REVIEW_ADDITIONS_TABLE)} '
         f'where programme_id = %s and learner_id = %s and deleted_at is null',
         [programme_id, learner_id],
     )

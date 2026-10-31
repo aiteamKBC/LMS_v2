@@ -20,6 +20,7 @@ from .attendance import combined_attendance_rows, _summarize_attendance
 from .attendance_rules import attendance_outcome
 from .dashboard_metrics import as_json
 from .learner_detail import SOURCE_MODELS
+from .models import attach_programme_name
 from .progress_rules import progress_record_counts_as_achieved as progress_counts_as_achieved
 from .student_activity import _direct_progress_records
 from .student_activity_access import student_activity_available
@@ -29,7 +30,7 @@ from .attendance_assignments import assigned_module_ids as effective_assigned_mo
 
 log = logging.getLogger(__name__)
 ATTENDANCE_SOURCE_FIELDS = ('id', 'username', 'email', 'aptem_id', 'employer_id', 'learner_type',
-                            'programme', 'group', 'training_plan', 'learning_plan')
+                            'group', 'training_plan', 'learning_plan')
 
 # The effective plan includes group inheritance and respects explicit/empty
 # selections, exactly as My Learning. A stale normalized mirror is not a
@@ -386,14 +387,21 @@ def normalize_native_occurrences(source, result):
     return result
 
 
-def lecture_register(source, *, module_ids=None, records=None, learner_profile_id=None, apply_adjustments=True, preloaded=None, scheduled=None, credit_projection=False):
+def lecture_register(source, *, module_ids=None, records=None, learner_profile_id=None, apply_adjustments=True,
+                     preloaded=None, scheduled=None, credit_projection=False, occurrence_scope=None):
     # Bulk consumers can preload source rows; all schedule, recovery and saved
     # confirmation rules still run through this same learner register.
     loaded_schedule = scheduled is None
     if credit_projection and records is None:
         if scheduled is None:
             scheduled = projection_call('attendance_schedule', read_native_occurrences, source, module_ids=module_ids) if preloaded is None else preloaded['scheduled']
-        records = projection_call('attendance_sources', combined_attendance_rows, source, credit_projection=True, register_schedule=scheduled)
+        report_schedule = scheduled
+        if occurrence_scope is not None:
+            wanted = set(occurrence_scope)
+            report_schedule = [row for row in scheduled
+                               if (session_key(row), row['session_date'].isoformat()) in wanted]
+        records = projection_call('attendance_sources', combined_attendance_rows, source,
+                                  credit_projection=True, register_schedule=report_schedule)
     else:
         records = combined_attendance_rows(source) if records is None else records
     if scheduled is None:
@@ -461,6 +469,16 @@ def lecture_register(source, *, module_ids=None, records=None, learner_profile_i
     result = projection_call('shared_series', apply_shared_attendance, result, source)
     # Ended sessions remain unmarked until evidence or a saved correction exists.
     result = [_ended_unmarked_status(row, now) for row in result]
+    if occurrence_scope is not None:
+        # Monthly renders at most three known occurrences.  Keep the complete
+        # schedule/evidence normalization above (including shared delivery and
+        # alternative attendance), then constrain the per-row recovery,
+        # confirmation, recording and coach-adjustment reads to those cards.
+        # apply_parallel_attendance explicitly supports a selected-session
+        # projection while still checking assignments outside this view.
+        occurrence_scope = set(occurrence_scope)
+        result = [row for row in result
+                  if (session_key(row), row['session_date'].isoformat()) in occurrence_scope]
     if attended_alternatives:
         result = projection_call('attendance_recovery', _apply_attended_alternatives, result, source.id, attended_alternatives, **({} if preloaded is None else {'targets': preloaded['targets']}))
     from .parallel_attendance import apply_parallel_attendance
@@ -1114,7 +1132,10 @@ def _mark_missed_catchups(lectures, reported):
 
 def read_workspace(source, kind, *, monthly=None, monthly_occurrences=None):
     from .attendance_mode import read_mode
-    register = lecture_register(source)
+    register = lecture_register(source, **(
+        {'occurrence_scope': monthly_occurrences, 'credit_projection': True}
+        if monthly is not None and monthly_occurrences is not None else {}
+    ))
     if monthly is not None:
         register = [row for row in register if row.get('source') == 'microsoft-teams' and row['session_date'].isoformat().startswith(monthly)]
         if monthly_occurrences is not None:
@@ -1231,6 +1252,7 @@ def attendance_lectures(request, kind, learner_id):
         source = model.all_learners.filter(pk=learner_id).only(*ATTENDANCE_SOURCE_FIELDS).first()
         if source is None:
             return JsonResponse({'error': 'Learner not found.'}, status=404)
+        attach_programme_name(source)
         if getattr(source, 'email', ''):
             # Catch-ups only: settle this learner's elapsed catch-ups before reading recoveries.
             from .catchup_outcomes import sync_catchup_outcomes

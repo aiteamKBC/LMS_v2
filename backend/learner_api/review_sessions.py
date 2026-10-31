@@ -10,6 +10,7 @@ from login.permissions import learner_self_or_staff
 from .booking_calendar import booking_calendar_payload
 from .calendar import _calendar_profile, coaching_events_for_learner
 from .learner_detail import SOURCE_MODELS
+from .models import attach_programme_name
 
 logger = logging.getLogger(__name__)
 REVIEW_SOURCES = frozenset({"mcr", "progress-review", "review"})
@@ -26,9 +27,10 @@ def learner_review_sessions(request, kind, pk):
     if content not in {"summary", "full"}:
         return JsonResponse({"error": "Unknown review content mode."}, status=400)
     try:
-        learner = model.all_learners.filter(pk=pk).first()
+        learner = model.all_learners.defer("status", "programme").filter(pk=pk).first()
         if learner is None:
             return JsonResponse({"error": "Learner not found."}, status=404)
+        attach_programme_name(learner)
         mirror = _calendar_profile(learner, pk)
         # Keep source selection, booking identity, signatures and local Aptem
         # continuations in the same reader as the calendar. Only list reads

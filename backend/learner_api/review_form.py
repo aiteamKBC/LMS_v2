@@ -31,7 +31,7 @@ from .calendar import ONBOARDING_REVIEW_LABELS, ONBOARDING_REVIEW_TYPES, _case_o
 from .constants import PROGRAMME_STATUS_CHOICES
 from .learner_detail import SOURCE_MODELS
 from .mappers import _s
-from .models import EnrolmentReview
+from .models import EnrolmentReview, attach_programme_name
 from .review_tables import sync_review_detail
 
 logger = logging.getLogger(__name__)
@@ -344,9 +344,10 @@ def _lookup(kind, pk, event_key):
             f"Unknown kind: {kind!r}. Expected 'commercial' or 'apprenticeship'.", 404
         )
 
-    learner = model.all_learners.filter(pk=pk).first()
+    learner = model.all_learners.defer("status", "programme").filter(pk=pk).first()
     if learner is None:
         return None, None, None, _error("Learner not found.", 404)
+    attach_programme_name(learner)
 
     # Scoped to this learner so one learner's event key cannot open another's form.
     review = EnrolmentReview.objects.filter(event_key=event_key, learner_id=pk).first()
@@ -665,9 +666,10 @@ def enrolment_review_documents(request, kind, pk):
         return _error(f"Unknown kind: {kind!r}. Expected 'commercial' or 'apprenticeship'.", 404)
 
     try:
-        learner = model.all_learners.filter(pk=pk).first()
+        learner = model.all_learners.defer("status", "programme").filter(pk=pk).first()
         if learner is None:
             return _error("Learner not found.", 404)
+        attach_programme_name(learner)
         rows = list(
             EnrolmentReview.objects.filter(learner_id=pk)
             .exclude(status=EnrolmentReview.STATUS_CANCELLED)
@@ -747,9 +749,10 @@ def _learner_for(kind, pk):
     model = SOURCE_MODELS.get(kind)
     if model is None:
         return None, _error(f"Unknown kind: {kind!r}. Expected 'commercial' or 'apprenticeship'.", 404)
-    learner = model.all_learners.filter(pk=pk).first()
+    learner = model.all_learners.defer("status", "programme").filter(pk=pk).first()
     if learner is None:
         return None, _error("Learner not found.", 404)
+    attach_programme_name(learner)
     return learner, None
 
 

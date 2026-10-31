@@ -528,6 +528,36 @@ class AttendanceLectureTests(SimpleTestCase):
 
     @patch('learner_api.attendance_lectures.read_native_occurrences')
     @patch('learner_api.attendance_lectures.combined_attendance_rows')
+    def test_selected_occurrence_scope_precedes_per_row_recovery_reads(self, combined, scheduled):
+        now = timezone.now()
+        kept = register_row(source='microsoft-teams', session_id='kept', attendance_status='pending',
+                            scheduled_start=now-timedelta(hours=2), scheduled_end=now-timedelta(hours=1))
+        other = {**kept, 'session_id': 'other'}
+        scheduled.return_value = [kept, other]
+        combined.return_value = [kept, other]
+        scope = {('teams:kept', kept['session_date'].isoformat())}
+        with patch('learner_api.parallel_attendance.apply_parallel_attendance', side_effect=lambda rows, *_a, **_kw: rows) as parallel, \
+             patch('learner_api.recorded_attendance.apply_recorded_attendance', side_effect=lambda rows, *_a, **_kw: rows) as recorded:
+            result = lecture_register(SimpleNamespace(id=12), occurrence_scope=scope, apply_adjustments=False)
+        self.assertEqual([row['session_id'] for row in result], ['kept'])
+        self.assertEqual([row['session_id'] for row in parallel.call_args.args[0]], ['kept'])
+        self.assertEqual([row['session_id'] for row in recorded.call_args.args[0]], ['kept'])
+
+    @patch('learner_api.attendance_lectures.read_native_occurrences')
+    @patch('learner_api.attendance_lectures.combined_attendance_rows')
+    def test_selected_credit_projection_scopes_teams_report_schedule(self, combined, scheduled):
+        kept = register_row(source='microsoft-teams', session_id='kept')
+        other = {**kept, 'session_id': 'other'}
+        scheduled.return_value = [kept, other]
+        combined.return_value = []
+        scope = {('teams:kept', kept['session_date'].isoformat())}
+        lecture_register(SimpleNamespace(id=12), occurrence_scope=scope,
+                         credit_projection=True, apply_adjustments=False)
+        self.assertEqual(combined.call_args.kwargs['credit_projection'], True)
+        self.assertEqual([row['session_id'] for row in combined.call_args.kwargs['register_schedule']], ['kept'])
+
+    @patch('learner_api.attendance_lectures.read_native_occurrences')
+    @patch('learner_api.attendance_lectures.combined_attendance_rows')
     def test_ended_teams_lecture_without_an_attendance_report_can_be_reported(self, combined, scheduled):
         # Regression: before its Teams report syncs an ended lecture is 'unmarked',
         # and it vanished from the absence form and could not be submitted.
@@ -1033,6 +1063,7 @@ class AttendanceLearnerLookupTests(SimpleTestCase):
                     self.assertTrue(json.loads(response.content)['csrfToken'])
                     read.assert_called_with(self.source, kind)
                     self.model.all_learners.filter.return_value.only.assert_called_with(*ATTENDANCE_SOURCE_FIELDS)
+                    self.assertNotIn('programme', ATTENDANCE_SOURCE_FIELDS)
 
     def test_mode_route_reads_commercial_learner_for_either_kind(self):
         with patch('learner_api.attendance_mode.SOURCE_MODELS', self.models), \
@@ -1212,6 +1243,19 @@ class AttendanceModeTests(SimpleTestCase):
         self.assertEqual(_manager(source), '')
         answers.return_value = {'employer': {'lineManagerEmail': 'manager@example.test'}}
         self.assertEqual(_manager(source), 'manager@example.test')
+
+    @patch('learner_api.attendance_mode.Employer.objects.filter')
+    def test_manager_projects_only_employer_identity_and_email(self, employer_filter):
+        queryset = employer_filter.return_value
+        queryset.only.return_value.first.return_value = SimpleNamespace(
+            email='manager@example.test',
+        )
+
+        source = SimpleNamespace(id=12, employer_id=9, email='learner@example.test')
+        self.assertEqual(_manager(source), 'manager@example.test')
+
+        employer_filter.assert_called_once_with(pk=9)
+        queryset.only.assert_called_once_with('id', 'email')
 
     def test_reminders_skip_reported_covered_future_and_old_absences(self):
         today = date(2026, 9, 12)

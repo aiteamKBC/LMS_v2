@@ -21,6 +21,7 @@ class DashboardHeaderTests(SimpleTestCase):
         self.assertEqual(source.training_plan, source._header_training_plan)
         self.assertEqual(source.learning_plan, {'legacy': True})
         fields = model.all_learners.only.call_args.args
+        self.assertNotIn('status', fields)
         self.assertNotIn('training_plan', fields)
         self.assertNotIn('learning_plan', fields)
         for call in query.annotate.call_args_list:
@@ -285,9 +286,26 @@ class DashboardHeaderTests(SimpleTestCase):
 
 
 class MinimalHeaderTests(SimpleTestCase):
+    def test_profile_delivery_window_is_reused_by_identity_without_extra_lookup(self):
+        source = SimpleNamespace(pk=7, programme='P', cohort='C', start_date='', end_date='2026-12-18',
+                                 email='learner@example.test', aptem_id='9')
+        profile = SimpleNamespace(id=9, email=source.email, aptem_id=9,
+                                  _header_delivery_window={'start': '2026-01-05', 'end': '2026-12-20'})
+        query = MagicMock()
+        query.annotate.return_value = query
+        query.only.return_value.__getitem__.return_value = [profile]
+        with patch.object(header.LearnerProfile, 'objects') as objects:
+            objects.filter.return_value = query
+            actual, owner = header.header_profile(source, 7, delivery_window=True)
+        self.assertIs(actual, profile)
+        self.assertEqual(owner['id'], 9)
+        self.assertEqual(source._resolved_group_dates,
+                         (date(2026, 1, 5), date(2026, 12, 18), 'learner/cohort'))
+        query.annotate.assert_called_once()
+
     def test_single_projection_preserves_actions_and_coach_without_candidates_dates(self):
         now = datetime(2026, 10, 15, 9, tzinfo=timezone.utc)
-        source = SimpleNamespace(programme='P', cohort='C', group='G')
+        source = SimpleNamespace(programme='P', cohort='C', group='G', programme_status='Active')
         identity = {'id': '7', 'name': 'Synthetic Learner', 'programmeStatus': 'Active'}
         modules = [{'id': ident, 'title': title, 'start_date': date(2026, 10, 1),
                     'end_date': date(2026, 10, 31), 'sessions_number': 1, 'week_count': 1}
@@ -334,7 +352,8 @@ class MinimalHeaderTests(SimpleTestCase):
         for status in ('Fresh user', 'Onboarding'):
             with patch.object(header, 'header_identity', return_value={'programmeStatus': status}), \
                  patch.object(header, 'header_profile', side_effect=AssertionError('Delivery forbidden')):
-                result = header.build_minimal_header(object(), 'apprenticeship', 7)
+                result = header.build_minimal_header(SimpleNamespace(programme_status=status),
+                                                     'apprenticeship', 7)
             self.assertEqual(result['modules'], [])
             self.assertIsNone(result['initialWeeklyModuleId'])
             self.assertIsNone(result['nextAssignment'])

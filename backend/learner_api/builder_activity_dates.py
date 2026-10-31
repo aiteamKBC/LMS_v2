@@ -46,7 +46,8 @@ COMPONENT_SCHEDULE_SETTINGS = '''jsonb_build_object(
 COMPONENT_ORDER = 'c.module_catalogue_id,c.display_order,c.id'
 
 
-def read_builder_activity_dates(cursor, module_ids, components=None, *, resolved_metadata=None):
+def read_builder_activity_dates(cursor, module_ids, components=None, *, resolved_metadata=None,
+                                component_modules=None):
     """Use the same full week plan as Module Builder, never upload timestamps.
 
     Read empty weeks too: they still consume delivery slots. Only select the
@@ -107,6 +108,8 @@ def read_builder_activity_dates(cursor, module_ids, components=None, *, resolved
         week = weeks.get((str(module_id), str(week_id)))
         if week_id and week is None:
             continue  # A directly deleted week must not reappear via its children.
+        if component_modules is not None:
+            component_modules[str(component_id)] = str(module_id)
         if isinstance(settings, str):
             settings = json.loads(settings)
         component = {'id': str(component_id), 'title': title,

@@ -266,7 +266,7 @@ class StudentActivityTests(SimpleTestCase):
                     "subjects": [], **summarize_activities([])}
         with patch("learner_api.student_activity.SOURCE_MODELS", {"commercial": model}), \
              patch("learner_api.canonical_learning.profile", return_value={'id': 10}) as profile, \
-             patch("learner_api.canonical_learning.entries_for", return_value=[]), \
+             patch("learner_api.canonical_learning.entries_for", return_value=[]) as entries, \
              patch("learner_api.canonical_learning.source_subjects", return_value=expected) as reader:
             request = self.factory.get("/?aptem_id=92&offset=999&category=attendance")
             response = student_activity(request, kind="commercial", pk=132)
@@ -274,6 +274,7 @@ class StudentActivityTests(SimpleTestCase):
         self.assertEqual(json.loads(response.content)["learner_name"], "Anna Rundell")
         model.all_learners.only.return_value.get.assert_called_once_with(pk=132)
         profile.assert_called_once_with(132)
+        entries.assert_called_once_with({'id': 10}, student_activity_summary=True)
         self.assertEqual(reader.call_args.args[:2], (132, summarize_activities))
         self.assertEqual(request.GET["aptem_id"], "92")
 
@@ -480,8 +481,10 @@ class SubjectBuilderCoverTests(SimpleTestCase):
         self.assertNotIn('legacy:99', links)
 
     @patch('learner_api.student_activity._effective_plan_ids')
+    @patch('learner_api.student_activity.attach_programme_name')
     @patch('learner_api.student_activity.EnrolmentUser')
-    def test_current_subjects_include_modules_inherited_by_the_effective_plan(self, users, effective_plan_ids):
+    def test_current_subjects_include_modules_inherited_by_the_effective_plan(
+            self, users, attach_programme, effective_plan_ids):
         learner = SimpleNamespace()
         users.all_learners.only.return_value.get.return_value = learner
         effective_plan_ids.return_value = ['SAVED-1', 'GROUP-NEW', 'SAVED-2']
@@ -499,6 +502,9 @@ class SubjectBuilderCoverTests(SimpleTestCase):
             {'id': 'GROUP-NEW', 'title': 'New from group'},
             {'id': 'SAVED-2', 'title': 'Second saved module'},
         ])
+        users.all_learners.only.assert_called_once_with(
+            'group', 'learning_plan', 'training_plan')
+        attach_programme.assert_called_once_with(learner)
         effective_plan_ids.assert_called_once_with(learner, {})
         self.assertEqual(cursor.execute.call_args.args[1], [['SAVED-1', 'GROUP-NEW', 'SAVED-2']])
 

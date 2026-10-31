@@ -24,6 +24,11 @@ class _Objects:
     def __init__(self, result=None, error=None):
         self.result = result
         self.error = error
+        self.deferred_fields = ()
+
+    def defer(self, *fields):
+        self.deferred_fields = fields
+        return self
 
     def get(self, **_kwargs):
         if self.error:
@@ -143,6 +148,7 @@ class ComponentCompletionSafeDatabaseErrorsTests(SimpleTestCase):
         self.assertEqual(payload["componentTitle"], "Activity")
         self.assertEqual(payload["componentType"], "activity")
         self.assertFalse(payload["awaitingCoachValidation"])
+        self.assertEqual(_FakeModel.objects.deferred_fields, ("status",))
         mock_save.assert_called_once()
 
     def _ready_to_persist(self):

@@ -231,13 +231,16 @@ def profile_for_enrolment(legacy_enrolment_id, *, query, error_type):
     preserve identity_review_required/409 and text/null/empty planned hours.
     """
     rows = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
-        l.programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
+        coalesce(nullif(btrim(programme.name),''),l.programme_id,'') AS programme,
+        l.lifecycle_status,l.programme_status,l.cohort,l.cohort_id,
+        l.group_name,l.group_id,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
         e.source_record_id AS account_record_id,e.source_email AS account_email,
         e.source_aptem_id AS account_aptem_id,e.programme_planned_hours,
         EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t
                WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active
         FROM "Learner".learners l
         LEFT JOIN "Learner".learner_identity_evidence e ON e.enrolment_id=l.enrolment_id
+        LEFT JOIN curriculum.programmes programme ON programme.programme_id=l.programme_id
         WHERE l.enrolment_id=%s LIMIT 2''', [legacy_enrolment_id])
     if not rows:
         return None

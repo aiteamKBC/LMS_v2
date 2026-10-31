@@ -30,6 +30,7 @@ class CompactLearnerLoadingTests(SimpleTestCase):
         self.assertEqual(payload['organization'], 'Example Organization')
         self.assertNotIn('components', payload)
         self.assertNotIn('learning_plan', model.all_learners.only.call_args.args)
+        self.assertNotIn('programme', model.all_learners.only.call_args.args)
         graph.assert_not_called()
 
     def build(self, compact, refreshed_ksbs, *, read_only=False, quiz_view=False, summary_view=False):
@@ -190,7 +191,7 @@ class CompactLearnerLoadingTests(SimpleTestCase):
     def test_quiz_projection_is_scoped_to_the_requested_learner(self):
         source = SimpleNamespace()
         model = MagicMock()
-        model.all_learners.get.return_value = source
+        model.all_learners.defer.return_value.get.return_value = source
         with patch.object(detail, 'SOURCE_MODELS', {'commercial': model}), patch.object(
             detail, 'build_learner_detail', return_value={'components': []}
         ) as build:
@@ -198,13 +199,47 @@ class CompactLearnerLoadingTests(SimpleTestCase):
                 RequestFactory().get('/?content=quiz'), 'commercial', 101,
             )
         self.assertEqual(response.status_code, 200)
-        model.all_learners.get.assert_called_once_with(pk=101)
+        model.all_learners.defer.assert_called_once_with('status', 'programme')
+        model.all_learners.defer.return_value.get.assert_called_once_with(pk=101)
         build.assert_called_once_with(source, 101, compact=True, read_only=True, quiz_view=True)
+
+    def test_targeted_quiz_projection_passes_the_quiz_identity(self):
+        source = SimpleNamespace(
+            _weekly_training_plan=[{'moduleId': 'M1', 'assignmentMode': 'explicit'}],
+            _weekly_learning_plan=None,
+        )
+        query = MagicMock()
+        query.get.return_value = source
+        model = MagicMock()
+        model.all_learners.defer.return_value = query
+        with patch.object(detail, 'SOURCE_MODELS', {'commercial': model}), \
+             patch('coach_api.weekly_learning.assignment_projection', side_effect=lambda value: value), \
+             patch.object(detail, 'build_learner_detail', return_value={'components': []}) as build:
+            response = detail.learner_detail.__wrapped__(
+                RequestFactory().get('/?content=quiz&quiz_id=77'), 'commercial', 101,
+            )
+        self.assertEqual(response.status_code, 200)
+        model.all_learners.defer.assert_called_once_with(
+            'status', 'programme', 'training_plan', 'learning_plan',
+        )
+        query.get.assert_called_once_with(pk=101)
+        build.assert_called_once_with(
+            source, 101, compact=True, read_only=True, quiz_view=True, quiz_id=77,
+        )
+
+    def test_targeted_quiz_projection_rejects_an_invalid_identity_before_database_read(self):
+        model = MagicMock()
+        with patch.object(detail, 'SOURCE_MODELS', {'commercial': model}):
+            response = detail.learner_detail.__wrapped__(
+                RequestFactory().get('/?content=quiz&quiz_id=not-a-number'), 'commercial', 101,
+            )
+        self.assertEqual(response.status_code, 400)
+        model.all_learners.get.assert_not_called()
 
     def test_summary_projection_is_scoped_and_explicitly_read_only(self):
         source = SimpleNamespace()
         model = MagicMock()
-        model.all_learners.get.return_value = source
+        model.all_learners.defer.return_value.get.return_value = source
         with patch.object(detail, 'SOURCE_MODELS', {'apprenticeship': model}), patch.object(
             detail, 'build_learner_detail', return_value={'components': []}
         ) as build:
@@ -212,7 +247,8 @@ class CompactLearnerLoadingTests(SimpleTestCase):
                 RequestFactory().get('/?content=summary'), 'apprenticeship', 202,
             )
         self.assertEqual(response.status_code, 200)
-        model.all_learners.get.assert_called_once_with(pk=202)
+        model.all_learners.defer.assert_called_once_with('status', 'programme')
+        model.all_learners.defer.return_value.get.assert_called_once_with(pk=202)
         build.assert_called_once_with(
             source, 202, compact=True, read_only=True, summary_view=True,
         )

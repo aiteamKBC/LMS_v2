@@ -50,7 +50,11 @@ class CanonicalMetricsBulkTests(TestCase):
 
         with patch.object(canonical_learning, "query", side_effect=load) as query, \
              patch.object(current_learning, "query", query):
-            result = canonical_learning.metrics_bulk(enrolment_ids, learner_workspace=learner_workspace, include_ksb_points=include_ksb_points)
+            result = canonical_learning.metrics_bulk(
+                enrolment_ids,
+                learner_workspace=learner_workspace,
+                include_ksb_points=include_ksb_points,
+            )
         return result, query.call_count
 
     def test_bulk_contract_matches_single_dashboard_calculator(self):
@@ -75,6 +79,14 @@ class CanonicalMetricsBulkTests(TestCase):
         self.assertEqual(len(one), 1)
         self.assertEqual(len(many), 25)
 
+    def test_representative_dataset_sizes_keep_contract_and_query_count(self):
+        for size in (1, 357, 1116, 3617):
+            with self.subTest(size=size):
+                result, count = self.run_bulk(range(10, 10 + size))
+                self.assertEqual(len(result), size)
+                self.assertEqual(count, 9)
+                self.assertEqual(result[10]["programme"]["completed"], 1)
+
     def test_workspace_bulk_uses_programme_plan_instead_of_monthly_targets(self):
         result, count = self.run_bulk([10, 11], learner_workspace=True)
         self.assertEqual(result[10]['otjh']['planned'], 576)
@@ -94,6 +106,46 @@ class CanonicalMetricsBulkTests(TestCase):
         self.assertEqual(result[10]['programme']['completed'], 1)
         self.assertEqual(result[10]['otjh']['actual'], 0)
         self.assertEqual(result[10]['ksb']['completed'], 0)
+
+    def test_single_metrics_uses_summary_projection_without_raw_evidence(self):
+        owner = {
+            "id": 700, "enrolment_id": 10, "aptem_id": 4000,
+            "learner_type": "apprenticeship", "programme_id": 1,
+            "programme_planned_hours": 576,
+        }
+        with patch.object(canonical_learning, "entries_for", return_value=[]) as entries, \
+             patch.object(canonical_learning, "targets_for", return_value={}):
+            canonical_learning.metrics(10, owner=owner)
+        entries.assert_called_once_with(owner, metrics_summary=True)
+
+    def test_single_metrics_preserves_frozen_projection_for_progress_transfer(self):
+        owner = {
+            "id": 700, "enrolment_id": 10, "aptem_id": 4000,
+            "learner_type": "apprenticeship", "programme_id": 1,
+            "programme_planned_hours": 576, "progress_transfer_active": True,
+        }
+        with patch.object(canonical_learning, "entries_for", return_value=[]) as entries, \
+             patch.object(canonical_learning, "targets_for", return_value={}):
+            canonical_learning.metrics(10, owner=owner)
+        entries.assert_called_once_with(owner, training_summary=True)
+
+    def test_metrics_projection_omits_unused_journal_and_wide_source_payloads(self):
+        owner = {
+            "id": 700, "enrolment_id": 10, "aptem_id": None,
+            "learner_type": "apprenticeship", "programme_id": 1,
+        }
+        with patch.object(canonical_learning, "query", return_value=[]) as load, \
+             patch.object(canonical_learning, "current_records", return_value=[]), \
+             patch("learner_api.journal_sources.enabled", return_value=False):
+            self.assertEqual(canonical_learning.entries_for(owner, metrics_summary=True), [])
+        sql = load.call_args.args[0]
+        self.assertNotIn("journal_routes AS", sql)
+        self.assertNotIn("'course_title'", sql)
+        self.assertNotIn("'source_activity_kind'", sql)
+        for required in ("'source_system'", "'source_activity_id'", "'source_course_ref'",
+                         "'completed'", "'activity_status'", "'retakeTimeChoice'",
+                         "'original_source_ref'"):
+            self.assertIn(required, sql)
 
 
 class CanonicalKsbPointTests(TestCase):
@@ -124,3 +176,21 @@ class CanonicalKsbPointTests(TestCase):
         self.assertEqual(result[11]['ksb']['points'][0]['activityId'], '2')
         for payload in result.values():
             self.assertEqual(len(payload['ksb']['points']), payload['ksb']['total'])
+
+    def test_metric_contract_preserves_null_decimal_and_code_ordering(self):
+        records = [
+            {'id': 2, 'accepted': False, 'actual_seconds': None, 'ksbs': ['S2', 'K1']},
+            {'id': 3, 'accepted': True, 'actual_seconds': 4500.5, 'ksbs': ['B1', 'K1']},
+        ]
+        result = canonical_learning.metrics_from_records(records, {'2026-09': 1.25, '2026-10': 2.5})
+        self.assertEqual(result['otjh']['actual'], round(4500.5 / 3600, 4))
+        self.assertEqual(result['otjh']['planned'], 3.75)
+        self.assertEqual([item['code'] for item in result['ksb']['codes']], ['B1', 'K1', 'S2'])
+        self.assertEqual(result['ksb']['status'], 'ready')
+
+    def test_empty_metrics_keep_null_percentage_and_stable_field_types(self):
+        result = canonical_learning.metrics_from_records([], {})
+        self.assertIsNone(result['programme']['percent'])
+        self.assertIsNone(result['ksb']['percent'])
+        self.assertEqual(result['otjh']['actual'], 0)
+        self.assertIsInstance(result['ksb']['codes'], list)

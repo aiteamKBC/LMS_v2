@@ -14,6 +14,7 @@ from login.permissions import learner_self_or_admin, learner_self_or_staff
 from .attendance_confirmation import read_confirmations, save_confirmation
 from .calendar import _calendar_profile, coaching_events_for_learner
 from .learner_detail import SOURCE_MODELS
+from .models import attach_programme_name
 
 log = logging.getLogger(__name__)
 MEETING_TYPES = {'mcr', 'progress-review'}
@@ -97,7 +98,10 @@ def absence_rows(source, kind):
 
 def _source(kind, pk):
     model = SOURCE_MODELS.get(kind)
-    return model.all_learners.filter(pk=pk).first() if model else None
+    if model is None:
+        return None
+    source = model.all_learners.defer("status", "programme").filter(pk=pk).first()
+    return attach_programme_name(source)
 
 
 @require_GET

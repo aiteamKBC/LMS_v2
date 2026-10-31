@@ -20,11 +20,12 @@ from old_otjh.service import ServiceError
 from . import canonical_learning as canonical
 from .journal_sources import learner_journal_view, enabled as journal_enabled
 from .learner_detail import SOURCE_MODELS
+from .models import attach_programme_name
 from .selectors.assignments import effective_training_plan, request_preset_cache
 from .progress_rules import progress_counts_as_achieved
 from .projection_performance import projection_stage, local_catalogue_trace
 
-SOURCE_FIELDS = ('id', 'aptem_id', 'email', 'programme', 'cohort', 'group',
+SOURCE_FIELDS = ('id', 'aptem_id', 'email', 'cohort', 'group',
                  'learning_plan', 'training_plan', 'modules', 'weeks', 'components', 'learner_type', 'username')
 UK = ZoneInfo('Europe/London')
 
@@ -739,6 +740,8 @@ def my_learning(request,kind,pk,subject_id=None,resource=None):
             # and the independent canonical owner check before returning its JSON.
             fields = ('id',) if resource == 'search' and not request.GET.get('q', '').strip() else SOURCE_FIELDS
             source=model.all_learners.only(*fields).get(pk=pk)
+            if fields == SOURCE_FIELDS:
+                attach_programme_name(source)
         with projection_stage('owner'):
             owner=canonical.require_profile(pk)
         if resource == 'search':

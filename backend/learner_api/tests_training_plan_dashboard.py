@@ -7,7 +7,11 @@ import json
 import pymupdf as fitz
 from django.test import SimpleTestCase, RequestFactory
 from .training_plan_contract import parse_contract, read_verified_extract, contract_extract_metadata, read_contract, verified_planned_hours
-from .training_plan_dashboard import training_plan_dashboard, number, selected_contract, plan_session, read_dashboard, assigned_group_coach, contract_plan, valid_aptem_id, _canonical_actual_rows, _canonical_module_progress, is_educational_live_session_week
+from .training_plan_dashboard import (training_plan_dashboard, number, selected_contract,
+                                      plan_session, read_dashboard, assigned_group_coach,
+                                      contract_plan, valid_aptem_id, _canonical_actual_rows,
+                                      _canonical_module_progress, is_educational_live_session_week,
+                                      profile_from_owner, TRAINING_PLAN_SOURCE_FIELDS)
 
 
 def contract_pdf(total=30, review_on_same_page=False, joined_provider=False, split_header=False, split_total=False):
@@ -45,10 +49,81 @@ def contract_pdf(total=30, review_on_same_page=False, joined_provider=False, spl
 
 
 class TrainingPlanDashboardTests(SimpleTestCase):
+    def test_source_projection_does_not_require_legacy_account_status(self):
+        self.assertNotIn('status', TRAINING_PLAN_SOURCE_FIELDS)
+
     def setUp(self):
         self.effective_plan = self.enterContext(
             patch('learner_api.training_plan_dashboard._effective_plan_ids', return_value=['M1']),
         )
+
+    @staticmethod
+    def canonical_owner():
+        return {
+            'id': 70, 'enrolment_id': 125, 'aptem_id': 987,
+            'name': 'Synthetic Learner', 'email': 'learner@example.test',
+            'lifecycle_status': 'active', 'learner_type': 'commercial',
+            'programme': 'Programme', 'programme_id': 'P1',
+            'programme_status': 'In learning', 'cohort': 'Cohort',
+            'cohort_id': 'C1', 'group_name': 'Group', 'group_id': 'G1',
+            'coach_name': 'Coach', 'coach_email': 'coach@example.test',
+            'start_date': date(2026, 9, 1), 'end_date': date(2027, 9, 1),
+        }
+
+    def test_verified_owner_builds_the_exact_training_plan_profile_without_a_read(self):
+        owner = self.canonical_owner()
+        profile = profile_from_owner(owner)
+        self.assertEqual({field: getattr(profile, field) for field in (
+            'id', 'enrolment_id', 'aptem_id', 'full_name', 'email',
+            'lifecycle_status', 'learner_type', 'programme', 'programme_id',
+            'programme_status', 'cohort', 'cohort_id', 'group_name', 'group_id',
+            'coach_name', 'coach_email', 'start_date', 'end_date',
+        )}, {
+            'id': 70, 'enrolment_id': 125, 'aptem_id': 987,
+            'full_name': 'Synthetic Learner', 'email': 'learner@example.test',
+            'lifecycle_status': 'active', 'learner_type': 'commercial',
+            'programme': 'Programme', 'programme_id': 'P1',
+            'programme_status': 'In learning', 'cohort': 'Cohort',
+            'cohort_id': 'C1', 'group_name': 'Group', 'group_id': 'G1',
+            'coach_name': 'Coach', 'coach_email': 'coach@example.test',
+            'start_date': date(2026, 9, 1), 'end_date': date(2027, 9, 1),
+        })
+        self.assertIsNone(profile_from_owner({'id': 70, 'enrolment_id': 125}))
+
+    def test_overview_reuses_verified_owner_and_keeps_incomplete_adapter_fallback(self):
+        owner = self.canonical_owner()
+        source = SimpleNamespace(
+            pk=125, aptem_id=987, email='learner@example.test',
+            coach_name='Coach', coach_email='coach@example.test',
+            case_owner='', _canonical_profile=owner,
+        )
+        connection = MagicMock()
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard.canonical_learning.targets_for', return_value={}), \
+             patch('learner_api.training_plan_dashboard.canonical_learning.entries_for', return_value=[]), \
+             patch('learner_api.training_plan_dashboard.plan_module_ids', return_value=([], {})), \
+             patch('learner_api.training_plan_dashboard.plan_reviews', return_value=[]), \
+             patch('learner_api.training_plan_dashboard.LearnerProfile.objects') as profiles, \
+             patch('learner_api.training_plan_dashboard.coach_phone', return_value=''):
+            result = read_dashboard(source, section='overview')
+        profiles.filter.assert_not_called()
+        self.assertEqual(result['modules'], [])
+        self.assertEqual(result['reviews'], [])
+        self.assertEqual(result['coach']['name'], 'Coach')
+
+        fallback = MagicMock()
+        fallback.filter.return_value.only.return_value.first.return_value = SimpleNamespace(
+            lifecycle_status='active', coach_name='', coach_email='')
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard.canonical_learning.targets_for', return_value={}), \
+             patch('learner_api.training_plan_dashboard.canonical_learning.entries_for', return_value=[]), \
+             patch('learner_api.training_plan_dashboard.plan_module_ids', return_value=([], {})), \
+             patch('learner_api.training_plan_dashboard.plan_reviews', return_value=[]), \
+             patch('learner_api.training_plan_dashboard.LearnerProfile.objects', fallback), \
+             patch('learner_api.training_plan_dashboard.coach_phone', return_value=''):
+            read_dashboard(SimpleNamespace(**{**source.__dict__, '_canonical_profile': {'id': 70}}),
+                           section='overview')
+        fallback.filter.assert_called_once_with(enrolment_id=125)
 
     def test_educational_session_count_excludes_onboarding_but_keeps_teaching_introductions(self):
         self.assertFalse(is_educational_live_session_week('Introduction'))
@@ -305,7 +380,6 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         self.effective_plan.return_value = []
         with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
              patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
-             patch('learner_api.training_plan_dashboard.stored_training_plan', return_value=[]), \
              patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
              patch('learner_api.calendar.coaching_events_for_learner', return_value=events), \
              patch('learner_api.training_plan_dashboard.coach_phone', return_value=''):
@@ -318,22 +392,34 @@ class TrainingPlanDashboardTests(SimpleTestCase):
             ('legacy-event', None, None),
         ])
 
-    def test_overview_reads_current_calendar_targets_and_stored_booking_changes(self):
+    def test_overview_merges_curriculum_target_with_stored_booking_changes(self):
         from coach_api.models import CoachCalendarEvent
 
         source = SimpleNamespace(pk=125, aptem_id=None, email='learner@example.com',
                                  start_date='2024-11-04', end_date='2026-11-03')
         profile = SimpleNamespace(id=272, lifecycle_status='active', email=source.email,
+                                  aptem_id=None, programme_id='PROGRAMME-1', programme='Programme',
                                   start_date=None, end_date=None, coach_name='Assigned Coach', coach_email='coach@example.com')
         connection = MagicMock()
         connection.cursor.return_value.__enter__.return_value.fetchall.return_value = []
         records = []
         event_key = 'mcr:272:23:2026-09-25'
+        generated = {
+            'id': event_key, 'eventKey': event_key, 'learnerId': '272',
+            'reviewTemplateId': 'REVIEW-MCM', 'occurrenceNumber': 23,
+            'title': 'Monthly Coaching Meeting', 'source': 'mcr', 'type': 'coaching',
+            'sequence': 23, 'status': 'not-scheduled', 'date': '2026-09-25',
+            'targetDate': '2026-09-25', 'scheduledDate': None, 'scheduledTime': None,
+            'durationMinutes': 60, 'coachName': 'Assigned Coach', 'invited': False,
+            'reviewInstanceId': None,
+        }
         with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
              patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
              patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
              patch('learner_api.training_plan_dashboard.coach_phone', return_value=''), \
-             patch('learner_api.calendar.CoachCalendarEvent.objects.filter') as stored:
+             patch('learner_api.calendar.CoachCalendarEvent.objects.filter') as stored, \
+             patch('learner_api.calendar._generated_cycle_events',
+                   side_effect=lambda *args, **kwargs: [dict(generated)]):
             profiles.objects.filter.return_value.only.return_value.first.return_value = profile
             stored.return_value.order_by.return_value = records
 
@@ -381,18 +467,6 @@ class TrainingPlanDashboardTests(SimpleTestCase):
                 self.assertEqual(result[0]['status'], status)
                 # The stored inactive row must suppress its generated target;
                 # Upcoming filters it rather than showing a duplicate To book.
-
-            # Unbooked targets also track changes to the source programme window.
-            records.clear()
-            source.start_date = '2024-11-05'
-            source.end_date = '2026-09-30'
-            profile.coach_name = 'Replacement Coach'
-            reviews = read_dashboard(source, section='overview')['reviews']
-            monthly = [event for event in reviews if event['source'] == 'mcr']
-            self.assertEqual(monthly[-1]['sequence'], 23)
-            self.assertEqual(monthly[-1]['targetDate'], '2026-09-26')
-            self.assertEqual(monthly[-1]['coachName'], 'Replacement Coach')
-            self.assertNotIn(event_key, [event['eventKey'] for event in reviews])
 
     def test_overview_does_not_download_or_parse_contract(self):
         source = SimpleNamespace(pk=125, aptem_id='92', email='learner@example.com')

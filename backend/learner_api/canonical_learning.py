@@ -114,8 +114,12 @@ def programme_planned_hours(learner_id, *, owner=None):
 def profile_by_aptem(aptem_id):
     """For already-authorized Audit callers; never use an Aptem ID as a PK."""
     records = query('''SELECT id,enrolment_id,aptem_id,programme_id,full_name AS name,
-        programme,coach_name,coach_email,email,start_date,end_date,learner_type
-        FROM "Learner".learners WHERE aptem_id=%s''', [aptem_id])
+        coalesce(nullif(btrim(programme.name),''),learners.programme_id,'') AS programme,
+        coach_name,coach_email,email,start_date,end_date,learner_type
+        FROM "Learner".learners learners
+        LEFT JOIN curriculum.programmes programme
+          ON programme.programme_id=learners.programme_id
+        WHERE aptem_id=%s''', [aptem_id])
     if len(records) != 1:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     return records[0]
@@ -128,7 +132,7 @@ def entries(learner_id):
     return entries_for(owner)
 
 
-def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=False, dashboard_metadata=False, training_summary=False, monthly_summary=False, catalogue_summary=False):
+def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=False, dashboard_metadata=False, training_summary=False, metrics_summary=False, monthly_summary=False, catalogue_summary=False, student_activity_summary=False):
     """``lineage_only`` keeps every progress column but replaces an object
     ``source_payload`` (raw evidence) with just its ``original_source_ref``,
     the only key the completion and hours projection reads.
@@ -140,9 +144,17 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     evidence bodies or reporting-segment/historical-component payloads. The
     complete learner fact set preserves cross-module native-save deduplication.
 
+    ``metrics_summary`` further narrows source lineage and omits journal route
+    bodies that do not participate in the Metrics response. Progress transfers
+    continue to use the broader frozen-record projection at the caller.
+
     ``monthly_summary`` uses explicit progress facts instead of progress.*,
     retaining full reporting segments, source links and historical attribution.
     It never restricts the learner-wide reconciliation population by month.
+
+    ``student_activity_summary`` keeps the same completion, display placement,
+    lineage and OTJH facts as the default Student Activity response while
+    omitting unrelated evidence, feed and audit-detail columns.
     """
     from learner_api.projection_performance import projection_stage
 
@@ -150,6 +162,10 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     # metrics or reporting-history bodies. Presence of segments still gates
     # unsynchronised saves; historical source identities still match attempts.
     if catalogue_summary:
+        training_summary = True
+    if metrics_summary:
+        training_summary = True
+    if student_activity_summary:
         training_summary = True
     # Optional caller-owned selection is applied before the evidence/lineage
     # joins. The learner predicate always remains mandatory.
@@ -174,7 +190,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             THEN to_jsonb(p)-'source_payload'||jsonb_build_object('source_payload',
                  jsonb_build_object('retakeTimeChoice',p.source_payload->'retakeTimeChoice','original_source_ref',p.source_payload->'original_source_ref'))
             ELSE to_jsonb(p) END'''
-    if dashboard_metadata or (training_summary and not catalogue_summary):
+    if dashboard_metadata or (training_summary and not catalogue_summary and not metrics_summary):
         # Dashboard summaries need the course's introduction marker and the
         # provisional-allocation verdict. Extract those object keys in SQL.
         # Preserve encoded-string/nonobject payloads as legacy lineage does;
@@ -191,14 +207,19 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     if overview_only or training_summary or monthly_summary:
         # Completion projection needs saved timing/attempt facts, never raw
         # evidence bodies. Keep lineage required by recorded course allocation.
-        columns = ','.join('progress.' + field for field in (
+        summary_fields = (
             'id', 'learner_id', 'kind', 'module_ref', 'module_title', 'component_ref',
             'component_title', 'component_type', 'quiz_ref', 'passed', 'reported_time',
             'submitted_at', 'declared_completed_at', 'started_at', 'time_tracking_source', 'claimed_seconds',
             'verified_seconds', 'expected_otjh', 'source_system', 'component_link_source',
             'actual_seconds', 'accepted', 'reporting_started_at', 'reporting_ended_at',
-            'reporting_month', 'achieved_score', 'total_score', 'activity_status'))
-        if catalogue_summary:
+            'reporting_month', 'achieved_score', 'total_score', 'activity_status')
+        if student_activity_summary:
+            # OTJH activity cards retain the historical group title when a row
+            # has no module title. Other compact projections do not consume it.
+            summary_fields += ('group_ref', 'group_title')
+        columns = ','.join('progress.' + field for field in summary_fields)
+        if catalogue_summary or metrics_summary:
             # Narrow evidence before materialising/serialising the canonical
             # CTE row, rather than putting its full body in to_jsonb(p) first.
             columns += """,CASE WHEN jsonb_typeof(progress.source_payload)='object'
@@ -214,6 +235,31 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     historical_payload = ("jsonb_build_object('source_system',h.source_system,"
         "'source_course_ref',h.source_course_ref,'source_activity_id',h.source_activity_id)"
         if training_summary else 'to_jsonb(h)')
+    activity_source_payload = ("jsonb_build_object("
+        "'source_system',s.source_system,'source_activity_id',s.source_activity_id,"
+        "'completed',s.completed,'source_course_ref',c.source_course_ref,"
+        "'activity_status',s.activity_status)"
+        if metrics_summary else "jsonb_build_object("
+        "'source_id',s.id,'source_system',s.source_system,'source_activity_id',s.source_activity_id,"
+        "'completed',s.completed,"
+        "'source_course_ref',c.source_course_ref,'source_course_id',c.id,"
+        "'course_title',c.source_course_title,'catalogue_id',a.id,"
+        "'component_ref',coalesce(nullif(s.curriculum_component_ref,''),a.curriculum_component_ref),"
+        "'module_ref',c.curriculum_module_ref,'group_ref',c.curriculum_group_ref,"
+        "'activity_status',s.activity_status,"
+        "'source_activity_kind',a.source_activity_kind)")
+    journal_cte = '' if metrics_summary else f''', journal_routes AS (
+            SELECT j.progress_id,jsonb_agg(jsonb_build_object(
+                'group_id',j.group_id,'activity_id',j.activity_id,'source_ref',j.source_ref,
+                'source_system',s.source_system,'month',j.month,'activity_date',j.activity_date) ORDER BY j.id) AS payload,
+                sum(j.planned_hours) AS planned
+            FROM "Learner".learner_journal_rows j
+            JOIN canonical p ON j.progress_id=p.id AND j.canonical_learner_id=p.learner_id
+            JOIN "Learner".learner_activity_sources s ON s.id=j.source_id
+              AND s.learner_id=p.learner_id AND s.canonical_progress_id=p.id AND s.deleted_at IS NULL
+            WHERE {journal_scope}j.deleted_at IS NULL
+            GROUP BY j.progress_id
+        )'''
     ksb_cte = '' if catalogue_summary else f''', progress_ksbs AS (
         SELECT k.progress_id,jsonb_agg(k.ksb_code ORDER BY k.position) AS payload
         FROM "Learner".learner_progress_ksbs k
@@ -233,33 +279,15 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             {reporting_scope}
             GROUP BY s.progress_id
         ), activity_sources AS (
-            SELECT s.canonical_progress_id AS progress_id,jsonb_agg(jsonb_build_object(
-                'source_id',s.id,'source_system',s.source_system,'source_activity_id',s.source_activity_id,
-                'completed',s.completed,
-                'source_course_ref',c.source_course_ref,'source_course_id',c.id,
-                'course_title',c.source_course_title,'catalogue_id',a.id,
-                'component_ref',coalesce(nullif(s.curriculum_component_ref,''),a.curriculum_component_ref),
-                'module_ref',c.curriculum_module_ref,'group_ref',c.curriculum_group_ref,
-                'activity_status',s.activity_status,
-                'source_activity_kind',a.source_activity_kind) ORDER BY s.id) AS payload
+            SELECT s.canonical_progress_id AS progress_id,jsonb_agg(
+                {activity_source_payload} ORDER BY s.id) AS payload
             FROM "Learner".learner_activity_sources s
             JOIN canonical p ON s.canonical_progress_id=p.id AND s.learner_id=p.learner_id
             LEFT JOIN curriculum.source_activities a ON a.id=s.source_catalog_activity_id AND a.deleted_at IS NULL
             LEFT JOIN curriculum.source_courses c ON c.id=a.source_course_id AND c.deleted_at IS NULL
             WHERE {activity_source_scope}s.deleted_at IS NULL
             GROUP BY s.canonical_progress_id
-        ), journal_routes AS (
-            SELECT j.progress_id,jsonb_agg(jsonb_build_object(
-                'group_id',j.group_id,'activity_id',j.activity_id,'source_ref',j.source_ref,
-                'source_system',s.source_system,'month',j.month,'activity_date',j.activity_date) ORDER BY j.id) AS payload,
-                sum(j.planned_hours) AS planned
-            FROM "Learner".learner_journal_rows j
-            JOIN canonical p ON j.progress_id=p.id AND j.canonical_learner_id=p.learner_id
-            JOIN "Learner".learner_activity_sources s ON s.id=j.source_id
-              AND s.learner_id=p.learner_id AND s.canonical_progress_id=p.id AND s.deleted_at IS NULL
-            WHERE {journal_scope}j.deleted_at IS NULL
-            GROUP BY j.progress_id
-        ), historical_components AS (
+        ){journal_cte}, historical_components AS (
             SELECT link.progress_id,jsonb_agg({historical_payload} ORDER BY h.id) AS payload
             FROM "Learner".learner_progress_historical_components link
             JOIN canonical p ON p.id=link.progress_id
@@ -271,14 +299,14 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
               {"'[]'::jsonb" if catalogue_summary else "coalesce(k.payload,'[]'::jsonb)"} AS ksbs,
               coalesce(seg.payload,'[]'::jsonb) AS segments,
               coalesce(src.payload,'[]'::jsonb) AS sources,
-              coalesce(j.payload,'[]'::jsonb) AS journal_routes,
-              j.planned AS journal_planned_hours,
+              {"'[]'::jsonb" if metrics_summary else "coalesce(j.payload,'[]'::jsonb)"} AS journal_routes,
+              {"NULL" if metrics_summary else "j.planned"} AS journal_planned_hours,
               coalesce(h.payload,'[]'::jsonb) AS historical_components
             FROM canonical p
             {'' if catalogue_summary else 'LEFT JOIN progress_ksbs k ON k.progress_id=p.id'}
             LEFT JOIN reporting_segments seg ON seg.progress_id=p.id
             LEFT JOIN activity_sources src ON src.progress_id=p.id
-            LEFT JOIN journal_routes j ON j.progress_id=p.id
+            {'' if metrics_summary else 'LEFT JOIN journal_routes j ON j.progress_id=p.id'}
             LEFT JOIN historical_components h ON h.progress_id=p.id
             ORDER BY p.reporting_month,p.reporting_started_at NULLS LAST,p.id''',
             params)
@@ -314,23 +342,34 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     return result
 
 
-def weekly_hour_records(owner):
+def weekly_hour_records(owner, *, include_stored=False):
     """Hours-only projection; retain learner-wide facts needed by native dedupe.
 
     Stored, measured legacy attempts contribute separate evidence without
     changing accepted ledger seconds. Only unsynchronised direct saves need
     current assignment markings. Reporting
     segments are a presence gate here, never additional hour allocations.
+
+    ``include_stored`` also returns the persisted five-field completion
+    projection so Weekly Learning can derive its existing verdicts without a
+    second progress query. Active transfer requests deliberately return no
+    reusable stored population: their completion reader keeps its established
+    live-query/frozen-hours split.
     """
     if owner.get('progress_transfer_active'):
-        return entries_for(owner, lineage_only=True)
+        result = entries_for(owner, lineage_only=True)
+        return (result, None) if include_stored else result
     from .current_learning import project_current, merge_attempts, subject_attempt_rows
     from .canonical_hours import extra_activity_hour_records
     fields = ('id', 'learner_id', 'kind', 'module_ref', 'module_title', 'component_ref',
               'component_type', 'quiz_ref', 'passed', 'reported_time', 'submitted_at', 'declared_completed_at',
               'started_at', 'time_tracking_source', 'claimed_seconds', 'verified_seconds',
               'source_system', 'component_link_source', 'actual_seconds', 'accepted')
-    records = query('''SELECT ''' + ','.join('progress.' + field for field in fields) + ''',
+    # The former Weekly completion ORM query included soft-deleted historical
+    # rows. Keep those available to that caller while continuing to exclude
+    # them from the canonical hours projection.
+    selected_fields = fields + (('entry_order', 'deleted_at') if include_stored else ())
+    stored_records = query('''SELECT ''' + ','.join('progress.' + field for field in selected_fields) + ''',
         to_jsonb(progress)->>'actual_basis' AS actual_basis,
         CASE WHEN jsonb_typeof(progress.source_payload)='object' THEN
           jsonb_build_object('retakeTimeChoice',progress.source_payload->'retakeTimeChoice','original_source_ref',progress.source_payload->'original_source_ref')
@@ -339,9 +378,35 @@ def weekly_hour_records(owner):
             WHERE s.progress_id=progress.id AND s.learner_id=progress.learner_id AND s.learner_id=%s)
           THEN '[{}]'::jsonb ELSE '[]'::jsonb END AS segments
         FROM "Learner".learner_progress_entries progress
-        WHERE progress.learner_id=%s AND progress.deleted_at IS NULL
+        WHERE progress.learner_id=%s''' + ('' if include_stored else ' AND progress.deleted_at IS NULL') + '''
           ORDER BY progress.reporting_month,progress.reporting_started_at NULLS LAST,progress.id''', [owner['id'], owner['id']])
-    records = [{**record, 'segments': decoded(record.get('segments'), [])} for record in records]
+    stored_records = [
+        {**record, 'segments': decoded(record.get('segments'), [])}
+        for record in stored_records
+    ]
+    completion_records = None
+    if include_stored:
+        # ``entry_order`` and ``deleted_at`` are needed only to reproduce the
+        # legacy completion relation. Do not let either field alter the hours
+        # records returned by the existing public projection.
+        records = [record for record in stored_records
+                   if record.get('deleted_at') is None]
+        if stored_records and all(
+                record.get('entry_order') is not None and record.get('id') is not None
+                for record in stored_records):
+            stored_records.sort(
+                key=lambda record: (record['entry_order'], record['id']))
+        completion_fields = ('kind', 'component_ref', 'quiz_ref', 'passed', 'submitted_at')
+        completion_records = [
+            {field: record.get(field) for field in completion_fields}
+            for record in stored_records
+        ]
+        for record in records:
+            record.pop('entry_order', None)
+            record.pop('deleted_at', None)
+        stored_records = None
+    else:
+        records = stored_records
     pending = sorted({str(record['component_ref']) for record in records
                       if record.get('component_ref') and record.get('component_type') == 'assignment'
                       and is_unsynchronised_direct_save(record)})
@@ -356,7 +421,8 @@ def weekly_hour_records(owner):
     projected = project_current(records, markings)
     projected = merge_attempts(projected, subject_attempt_rows(owner, timed_only=True))
     projected.extend(extra_activity_hour_records([owner])[owner['id']])
-    return progress_records_with_completion(records, projected)
+    result = progress_records_with_completion(records, projected)
+    return (result, completion_records) if include_stored else result
 
 
 def progress_records_with_completion(records, current):
@@ -1314,8 +1380,11 @@ def metrics(learner_id, *, owner=None):
     """
     owner = require_profile(learner_id) if owner is None else owner
     from learner_api import journal_sources
-    # Only counts and hours leave here, so raw evidence bodies are not loaded.
-    result = metrics_from_records(entries_for(owner, lineage_only=True), targets_for(owner))
+    # Metrics need timing, completion, lineage and KSB facts, not raw evidence,
+    # feedback or complete reporting/history JSON bodies.
+    projection = ({'training_summary': True} if owner.get('progress_transfer_active')
+                  else {'metrics_summary': True})
+    result = metrics_from_records(entries_for(owner, **projection), targets_for(owner))
     if journal_sources.enabled():
         planned = programme_planned_hours(learner_id, owner=owner)
         result['otjh']['planned'] = planned
@@ -1338,12 +1407,14 @@ def otjh_summary_bulk(learner_ids):
     if not enrolment_ids:
         return {}
     candidates = {}
-    for owner in query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.programme,
+    for owner in query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,
+        coalesce(nullif(btrim(programme.name),''),l.programme_id,'') AS programme,
         l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
         EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
+        LEFT JOIN curriculum.programmes programme ON programme.programme_id=l.programme_id
         WHERE l.enrolment_id=ANY(%s)''', [enrolment_ids]):
         candidates.setdefault(int(owner['enrolment_id']), []).append(owner)
     result = {enrolment_id: None for enrolment_id in enrolment_ids}
@@ -1429,12 +1500,14 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
         return {}
 
     owners = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
-        l.programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
+        coalesce(nullif(btrim(programme.name),''),l.programme_id,'') AS programme,
+        l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
         u."Planned_hours" AS programme_planned_hours,
         EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
+        LEFT JOIN curriculum.programmes programme ON programme.programme_id=l.programme_id
         WHERE l.enrolment_id=ANY(%s)''', [enrolment_ids])
     owner_candidates = {}
     for owner in owners:

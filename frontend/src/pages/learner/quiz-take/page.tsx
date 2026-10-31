@@ -246,7 +246,7 @@ export default function QuizTakePage() {
     setDetailLoading(true);
     setDetailError(null);
     setDetail(null);
-    fetchLearnerDetail(kind as LearnerKind, id, { quizView: true })
+    fetchLearnerDetail(kind as LearnerKind, id, { quizView: true, quizId })
       .then((d) => {
         if (!cancelled) {
           // Kept whole: the sidebar is built from the learner's plan, not just

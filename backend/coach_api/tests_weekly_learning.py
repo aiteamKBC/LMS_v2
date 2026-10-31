@@ -6,7 +6,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase, RequestFactory
-from .weekly_learning import read_weekly_learning, week_rows, activity_completion, progress_index, assignment_projection, derived_session, visible_week_rows
+from .weekly_learning import (read_weekly_learning, week_rows, activity_completion, progress_index,
+                              assignment_projection, derived_session, visible_week_rows,
+                              weekly_completion_records)
 from .case_file import case_file_section
 
 
@@ -96,7 +98,9 @@ class WeeklyLearningTests(SimpleTestCase):
         self.assertEqual(report['newTopLevel'], ['modules', 'weeks', 'selectedWeek'])
         self.assertGreater(report['reductionPercent'], 90)
 
-    def projection(self, selection='M1:1', kind='commercial', future_report=False, records=None, duration='60', reader_options=None, session_only=False, fallback_ksbs=None, live_evidence=None):
+    def projection(self, selection='M1:1', kind='commercial', future_report=False,
+                   records=None, duration='60', reader_options=None, session_only=False,
+                   fallback_ksbs=None, live_evidence=None, reuse_progress=True):
         context = MagicMock()
         context.source = SimpleNamespace(pk=201, email='learner@example.test', learner_type=kind)
         context.profile.progress_entries.filter.return_value.values.return_value = [
@@ -150,6 +154,9 @@ class WeeklyLearningTests(SimpleTestCase):
             datasets[3] = [{**session, 'module_catalogue_id': 'M1', 'day': start.date(),
                             'start': start, 'finish': session['scheduled_end'] or start + timedelta(minutes=session['duration_minutes'])}]
         context.profile.progress_entries.filter.return_value.filter.return_value = context.profile.progress_entries.filter.return_value
+        completion_rows = context.profile.progress_entries.filter.return_value.values.return_value
+        hour_records = records if records is not None else [
+            {'module_ref': 'M1', 'component_ref': 'C1', 'accepted': True, 'actual_seconds': 3600}]
         with patch('coach_api.weekly_learning.connections') as connections, \
              patch('coach_api.weekly_learning.read_weekly_live_evidence', return_value=live_evidence or ([], [])), \
              patch('learner_api.selectors.assignments._effective_plan_ids', return_value=['M1']), \
@@ -157,13 +164,71 @@ class WeeklyLearningTests(SimpleTestCase):
              patch('learner_api.canonical_learning.curriculum_module_ids_for', return_value=[]), \
              patch('learner_api.canonical_learning.entries_for', return_value=records if records is not None else [
                  {'module_ref': 'M1', 'component_ref': 'C1', 'accepted': True, 'actual_seconds': 3600}]), \
-             patch('learner_api.canonical_learning.weekly_hour_records', return_value=records if records is not None else [
-                 {'module_ref': 'M1', 'component_ref': 'C1', 'accepted': True, 'actual_seconds': 3600}]), \
+             patch('learner_api.canonical_learning.weekly_hour_records',
+                   return_value=(hour_records, completion_rows if reuse_progress else None)), \
              patch('learner_api.training_plan_dashboard.attach_curriculum_slots', side_effect=spine), \
              patch('learner_api.training_plan_dashboard.rows', side_effect=datasets):
             connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
             payload = read_weekly_learning(context, selection, **(reader_options or {}))
         return payload, cursor, context
+
+    def test_reused_stored_progress_preserves_response_and_removes_completion_read(self):
+        before, _, before_context = self.projection(reuse_progress=False)
+        after, _, after_context = self.projection(reuse_progress=True)
+        self.assertEqual(after, before)
+        before_context.profile.progress_entries.filter.assert_called()
+        after_context.profile.progress_entries.filter.assert_not_called()
+
+    def test_stored_completion_filter_matches_component_scope_and_quiz_fallback(self):
+        rows = [
+            {'id': 1, 'kind': 'component', 'component_ref': 'C1'},
+            {'id': 2, 'kind': 'video', 'component_ref': 'C2'},
+            {'id': 3, 'kind': 'quiz_reading', 'component_ref': 'C3'},
+            {'id': 4, 'kind': 'quiz', 'component_ref': 'OTHER'},
+            {'id': 5, 'kind': 'activity_event', 'component_ref': 'C1'},
+            {'id': 6, 'kind': 'component', 'component_ref': None},
+        ]
+        filtered = weekly_completion_records(rows, ['C1', 'C3'])
+        self.assertEqual([(row['kind'], row['component_ref']) for row in filtered],
+                         [('component', 'C1'), ('quiz_reading', 'C3'), ('quiz', 'OTHER')])
+        self.assertTrue(all(set(row) == {
+            'kind', 'component_ref', 'quiz_ref', 'passed', 'submitted_at'} for row in filtered))
+
+    def test_large_duplicate_and_null_history_keeps_filter_order_and_exact_fields(self):
+        rows = [{
+            'id': index,
+            'kind': ('quiz', 'component', 'video', 'quiz_reading', 'activity_event')[index % 5],
+            'component_ref': None if index % 11 == 0 else f'C{index % 7}',
+            'quiz_ref': str(index % 13) if index % 5 == 0 else None,
+            'passed': True if index % 3 == 0 else False if index % 3 == 1 else None,
+            'submitted_at': None,
+            'unused': 'not transferred',
+        } for index in range(3617)]
+        expected = [
+            {field: row.get(field) for field in (
+                'kind', 'component_ref', 'quiz_ref', 'passed', 'submitted_at')}
+            for row in rows
+            if row['kind'] in {'quiz', 'video', 'component', 'quiz_reading'}
+            and (row['kind'] == 'quiz' or str(row['component_ref']) in {'C1', 'C3'})
+        ]
+        self.assertEqual(weekly_completion_records(rows, ['C1', 'C3']), expected)
+
+    def test_no_training_plan_returns_empty_without_progress_hydration(self):
+        context = SimpleNamespace(
+            source=SimpleNamespace(pk=201, email='learner@example.test'),
+            profile=MagicMock(),
+        )
+        cursor = MagicMock()
+        with patch('coach_api.weekly_learning.connections') as connections, \
+             patch('learner_api.selectors.assignments._effective_plan_ids', return_value=[]), \
+             patch('learner_api.canonical_learning.require_profile', return_value={}), \
+             patch('learner_api.canonical_learning.curriculum_module_ids_for', return_value=[]), \
+             patch('learner_api.training_plan_dashboard.rows', return_value=[]), \
+             patch('learner_api.canonical_learning.weekly_hour_records') as hours:
+            connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
+            payload = read_weekly_learning(context)
+        self.assertEqual(payload, {'modules': [], 'weeks': [], 'selectedWeek': None})
+        hours.assert_not_called()
 
     def test_roles_have_identical_facts_and_reader_calls(self):
         from .weekly_contract import compact_weekly

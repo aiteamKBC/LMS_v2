@@ -1033,14 +1033,18 @@ def _component_marking_statuses(source, learner_profile):
         return {}
 
 
-def to_learner_detail(source, learner_profile, *, progress=None):
+def to_learner_detail(source, learner_profile, *, progress=None, training_plan=None):
     """Shape a CommercialUser/EnrolmentUser (+ its learner profile, if any)
     for the learner workspace page. A saved profile can exist before invitation
     and activation. The training plan itself comes straight from the
     source record's structured plan column, so it's visible even for learners
     who aren't currently active; KSBs, progress, and activity feed are read
     from the normalized Learner.* tables exposed through LearnerProfile."""
-    training_plan = get_training_plan(source)
+    # Activity reads already proved which assigned module owns the requested
+    # component.  Let that narrow reader pass the same-shaped one-module plan
+    # instead of flattening every module merely to open one activity.  All
+    # existing callers retain the complete source plan by default.
+    training_plan = get_training_plan(source) if training_plan is None else training_plan
     modules, week, components = flatten_training_plan(training_plan)
 
     # Unified progress log holds both quiz attempts and video completions,

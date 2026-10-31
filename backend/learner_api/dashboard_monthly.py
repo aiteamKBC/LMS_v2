@@ -190,6 +190,98 @@ def display_subjects(learning, *, deduplicate=True):
     return ordered
 
 
+def direct_monthly_fallback(source, profile, learning, month):
+    """Selected-month native OTJH from facts Monthly already loaded."""
+    from .overview_week import merged_activities, monthly_otjh_summary
+    from .student_activity import CURRENT_SUBJECTS_SQL, _direct_progress_records
+
+    with connections['enrolment'].cursor() as cur:
+        cur.execute(CURRENT_SUBJECTS_SQL, [source.pk])
+        module_ids = {str(row[0]) for row in cur.fetchall()}
+    dates = (learning.get('metadata') or {}).get('activity_dates') or {}
+    native = []
+    for component in (learning.get('detail') or {}).get('components', []):
+        component_id = str(component.get('componentId') or '')
+        module_id = str(component.get('moduleId') or '')
+        placement = dates.get(component_id) or {}
+        if (not component_id or module_id not in module_ids
+                or not str(placement.get('date') or '').startswith(month)
+                or placement.get('date_needs_review')):
+            continue
+        native.append({
+            'id': component_id, 'module_id': module_id,
+            'module_title': component.get('module') or '',
+            'title': component.get('component') or '', 'type': component.get('type') or '',
+            'expected_hours': component.get('expectedOtjh'),
+            'section_title': component.get('week') or '',
+            'date': placement.get('date'), 'date_needs_review': False,
+            'quiz_id': (component.get('quizMeta') or {}).get('quizId'),
+        })
+    progress = _direct_progress_records(source.pk, profile=profile)
+    activities = merged_activities([], native, progress, set(), {})
+    return monthly_otjh_summary(activities, progress).get(month)
+
+
+def native_module_ksb_codes(module_ids):
+    """Return the compact KSB-code set used by Monthly's legacy summary.
+
+    The historical response includes every KSB from a native subject whenever
+    that subject has any activity/session in the selected month.  Monthly now
+    hydrates only the selected month's component cards, so retain that response
+    rule with two narrow code-only reads instead of loading every component's
+    authored settings and presentation fields.
+    """
+    from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+    from .learner_detail import _component_ksb_items
+
+    module_ids = list(dict.fromkeys(str(value) for value in module_ids if value))
+    if not module_ids:
+        return {}
+    result = defaultdict(set)
+    embedded_components = set()
+    with connections['enrolment'].cursor() as cur:
+        cur.execute(
+            f'''SELECT component.id, component.module_catalogue_id, component.ksb_mappings
+                  FROM curriculum.components component
+                 WHERE component.module_catalogue_id=ANY(%s)
+                   AND {visible_child_sql('component')}
+                   AND (component.week_id IS NULL OR EXISTS (
+                       SELECT 1 FROM curriculum.weeks visible_parent
+                        WHERE visible_parent.id=component.week_id
+                          AND visible_parent.module_catalogue_id=component.module_catalogue_id
+                          AND {visible_week_sql('visible_parent')}
+                   ))''',
+            [module_ids],
+        )
+        for component_id, module_id, mappings in cur.fetchall():
+            items = _component_ksb_items(mappings)
+            if not items:
+                continue
+            embedded_components.add(str(component_id))
+            result[str(module_id)].update(
+                str(item.get('code') or '').strip() for item in items if item.get('code')
+            )
+        cur.execute(
+            f'''SELECT component.id, component.module_catalogue_id, mapping.ksb_code
+                  FROM curriculum.ksb_mappings mapping
+                  JOIN curriculum.components component ON component.id=mapping.component_id
+                 WHERE component.module_catalogue_id=ANY(%s)
+                   AND {visible_child_sql('component')}
+                   AND {visible_child_sql('mapping')}
+                   AND (component.week_id IS NULL OR EXISTS (
+                       SELECT 1 FROM curriculum.weeks visible_parent
+                        WHERE visible_parent.id=component.week_id
+                          AND visible_parent.module_catalogue_id=component.module_catalogue_id
+                          AND {visible_week_sql('visible_parent')}
+                   ))''',
+            [module_ids],
+        )
+        for component_id, module_id, code in cur.fetchall():
+            if str(component_id) not in embedded_components and code:
+                result[str(module_id)].add(str(code).strip())
+    return result
+
+
 def read_monthly(source, kind, owner, profile, request, *, canonical_contract=False):
     from .dashboard_tabs import learning_projection
     from .attendance_lectures import read_workspace
@@ -201,29 +293,37 @@ def read_monthly(source, kind, owner, profile, request, *, canonical_contract=Fa
     # Retain lineage context for direct-save replacement and manual corrections.
     records = canonical.entries_for(owner, lineage_only=True, dashboard_metadata=True, monthly_summary=True)
     targets = canonical.targets_for(owner)
+    projection_month = requested or current
     learning = learning_projection(source, owner, records, compact_content=True,
+                                   component_month=projection_month,
                                    **({'monthly_assignments': True} if v2 else {}))
     spine = schedule.read_dashboard(source, section='overview', targets=targets,
                                     dashboard_tab='monthly', compact_monthly=True)
-    subjects = display_subjects(learning)
     modules = {m['id']: m for m in spine['modules']}
     ids = list(modules)
     email = str(source.email or '').strip().casefold()
     with connections['enrolment'].cursor() as cur:
         bounds = schedule._plan_session_rows(cur, email, ids, rail_only=True, navigation_only=True) if ids else []
     session_bounds = {row['module_id']: row for row in bounds}
-    for subject in subjects:
-        module_id = (spine['moduleLinks'].get(subject['id']) or {}).get('id') or subject.get('moduleId') or (subject['id'][8:] if subject['id'].startswith('current:') else None)
-        subject['moduleId'] = module_id
-        module = modules.get(module_id) or {}
-        dates = [a['date'] for a in subject['activities'] if a['date'] and not a.get('needsReview')]
-        bound = session_bounds.get(module_id) or {}
-        dates.extend(day(bound.get(key)) for key in ('first_start', 'last_start') if bound.get(key))
-        subject['dates'] = dates
-        subject['sessionMonths'] = bound.get('session_months') or []
-        subject['start'] = day(module.get('start_date')) or min(dates, default='')
-        subject['end'] = day(module.get('end_date')) or max(dates, default=subject['start'])
-        subject['visualEnd'] = max(subject['end'], day(module.get('effectiveEndDate')))
+    def prepared_subjects(value):
+        prepared = display_subjects(value)
+        module_dates = (value.get('metadata') or {}).get('module_dates') or {}
+        for subject in prepared:
+            module_id = (spine['moduleLinks'].get(subject['id']) or {}).get('id') or subject.get('moduleId') or (subject['id'][8:] if subject['id'].startswith('current:') else None)
+            subject['moduleId'] = module_id
+            module = modules.get(module_id) or {}
+            dates = [a['date'] for a in subject['activities'] if a['date'] and not a.get('needsReview')]
+            dates.extend(module_dates.get(str(module_id), []))
+            bound = session_bounds.get(module_id) or {}
+            dates.extend(day(bound.get(key)) for key in ('first_start', 'last_start') if bound.get(key))
+            subject['dates'] = list(dict.fromkeys(dates))
+            subject['sessionMonths'] = bound.get('session_months') or []
+            subject['start'] = day(module.get('start_date')) or min(dates, default='')
+            subject['end'] = day(module.get('end_date')) or max(dates, default=subject['start'])
+            subject['visualEnd'] = max(subject['end'], day(module.get('effectiveEndDate')))
+        return prepared
+
+    subjects = prepared_subjects(learning)
     # These bounds are display context, never authorization or data ownership.
     programme_start = request.GET.get('programmeStartDate', getattr(source, 'learner_start_date', ''))
     programme_end = request.GET.get('programmeEndDate', owner.get('end_date'))
@@ -234,15 +334,21 @@ def read_monthly(source, kind, owner, profile, request, *, canonical_contract=Fa
     maximum = max([display_date(programme_end), *(s['visualEnd'] for s in subjects), *(m + '-28' for m in payload_months)], default='')
     minimum, maximum = minimum[:7], maximum[:7]
     month = requested or min(max(current, minimum or current), maximum or current)
+    if month != projection_month:
+        # The current month can be clamped to a programme boundary. Re-project
+        # details for that final month; navigation bounds still came from every
+        # component date above, so this does not alter the clamp decision.
+        learning = learning_projection(source, owner, records, compact_content=True,
+                                       component_month=month,
+                                       **({'monthly_assignments': True} if v2 else {}))
+        subjects = prepared_subjects(learning)
     start, end = month_window(month)
     with connections['enrolment'].cursor() as cur:
         sessions = schedule._plan_session_list(schedule._plan_session_rows(cur, email, ids, start, end)) if ids else []
     # A future/no-target month uses the established direct-learning fallback.
     fallback = None
     if month not in targets or month > current:
-        from .overview_week import read_week
-        # Only monthly OTJH is read here: skip the plan subjects and KSB lookups.
-        fallback = read_week(source, monthly_hours_only=True).get(month)
+        fallback = direct_monthly_fallback(source, profile, learning, month)
     actual_records = [a for r in records for a in canonical.allocations(r) if a.get('reporting_month') == month]
     signed = canonical.query('''SELECT 1 FROM "Learner".learner_monthly_signatures
         WHERE learner_id=%s AND report_month=%s AND review_confirmed IS TRUE LIMIT 1''', [owner['id'], month]) if month <= current and month not in targets and not actual_records else []
@@ -255,7 +361,24 @@ def read_monthly(source, kind, owner, profile, request, *, canonical_contract=Fa
     else:
         required = max(0, required)
     selected = next((s for s in subjects if s['id'] == request.GET.get('subject')), None) or next((s for s in subjects if s['start'] and s['start'][:7] <= month <= s['end'][:7]), None)
-    codes = sorted({code for s in subjects if month in s['sessionMonths'] or any(d.startswith(month) for d in s['dates']) for a in s['activities'] for code in a['ksbs']})[:4]
+    selected_subjects = [
+        subject for subject in subjects
+        if month in subject['sessionMonths'] or any(value.startswith(month) for value in subject['dates'])
+    ]
+    native_codes = native_module_ksb_codes(
+        subject.get('moduleId') for subject in selected_subjects
+        if subject['id'].startswith('current:')
+    )
+    codes = {
+        code for subject in selected_subjects
+        for activity in subject['activities'] for code in activity['ksbs']
+    }
+    codes.update(
+        code for subject in selected_subjects
+        for code in native_codes.get(str(subject.get('moduleId')), ())
+        if subject['id'].startswith('current:')
+    )
+    codes = sorted(codes)[:4]
     lecture_rows = []
     unique_sessions = {}
     sessions_by_module = {}

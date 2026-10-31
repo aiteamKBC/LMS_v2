@@ -206,6 +206,11 @@ class IdentityAndOwnershipTests(unittest.TestCase):
             self.assertEqual(row["programme_planned_hours"], hours)
             self.assertIn('e.source_email AS account_email', query.call_args.args[0])
             self.assertIn('"Learner".progress_transfer_requests', query.call_args.args[0])
+            self.assertIn("coalesce(nullif(btrim(programme.name),''),l.programme_id,'') AS programme",
+                          query.call_args.args[0])
+            self.assertIn('LEFT JOIN curriculum.programmes programme', query.call_args.args[0])
+            for field in ('lifecycle_status', 'programme_status', 'cohort_id', 'group_id'):
+                self.assertIn(f'l.{field}', query.call_args.args[0])
         self.assertIsNone(reads.profile_for_enrolment(271, query=Mock(return_value=[]), error_type=IdentityError))
         for rows in ([owner, owner], [dict(owner, account_record_id=None)],
                      [dict(owner, account_email="other@example.test")],
@@ -304,6 +309,7 @@ class BoundaryTests(unittest.TestCase):
                 '"Password_resets"', '"Login_audit"', 'auth_subjects',
                 'account_learner_links', 'learners', 'actor_grants',
                 'learner_identity_evidence', 'cohort_access_facts', 'progress_transfer_requests')}
+            allowed.add('curriculum.programmes')
             self.assertTrue(relations)
             self.assertTrue(set(relations) <= allowed)
             return [{"event_count": 0}] if 'AS event_count' in sql else []

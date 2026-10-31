@@ -3,17 +3,18 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 from django.db import DatabaseError, connections
+from django.db.models.expressions import RawSQL
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
 
 from . import canonical_learning, journal_sources
-from .apprenticeship_agreement import _group_dates
+from .apprenticeship_agreement import _group_dates, _to_date
 from .learner_detail import (SOURCE_MODELS, _first_session_unlocked, _iso_date,
                              DEFAULT_PROGRAMME_STATUS, programme_status, access_gate,
                              learning_access, student_activity_available, _s)
-from .models import LearnerProfile
+from .models import LearnerProfile, SafeJSONField, attach_programme_name
 from .selectors.assignments import _effective_plan_ids
 from .overview_week import upcoming_assignment_deadlines
 from .projection_performance import measure_projection
@@ -44,6 +45,7 @@ def read_header_source(model, pk, *, minimal=False):
                FROM jsonb_array_elements("{column}"::jsonb) WITH ORDINALITY AS entries(item,position))
               ELSE "{column}"::jsonb END''', [], output_field=SafeJSONField())})
     source = query.get(pk=pk)
+    attach_programme_name(source)
     source.training_plan = source._header_training_plan
     source.learning_plan = source._header_learning_plan
     return source
@@ -195,7 +197,7 @@ def next_review(reviews, now):
     return [candidate[3]] if candidate else []
 
 
-def header_profile(source, pk, *, identity_only=False):
+def header_profile(source, pk, *, identity_only=False, delivery_window=False):
     """Read the delivery profile once, retaining the canonical identity guard.
 
     The account side of the canonical join is the enrolment row already read by
@@ -203,7 +205,25 @@ def header_profile(source, pk, *, identity_only=False):
     never use a same-number profile or an email fallback.
     """
     fields = ('id', 'email', 'aptem_id') if identity_only else TRAINING_PLAN_PROFILE_FIELDS
-    profiles = list(LearnerProfile.objects.filter(enrolment_id=pk).only(*fields)[:2])
+    profiles = LearnerProfile.objects.filter(enrolment_id=pk)
+    if delivery_window:
+        # Minimal Header needs the same cohort fallback as ``header_identity``.
+        # Fold it into this already-required profile read instead of first
+        # resolving placement IDs and then issuing a separate cohort query.
+        profiles = profiles.annotate(_header_delivery_window=RawSQL(
+            '''CASE WHEN coalesce(btrim("Learner"."learners"."cohort_id"),'')<>'' THEN
+              (SELECT jsonb_build_object('start',c.start_date,'end',c.end_date)
+                 FROM curriculum.cohorts c
+                WHERE c.cohort_id="Learner"."learners"."cohort_id" LIMIT 1)
+              ELSE (SELECT jsonb_build_object('start',c.start_date,'end',c.end_date)
+                 FROM curriculum.cohorts c
+                WHERE lower(btrim(c.programme_name))=lower(%s)
+                  AND lower(btrim(c.cohort_name))=lower(%s)
+                ORDER BY c.updated_at DESC NULLS LAST LIMIT 1) END''',
+            [str(source.programme or '').strip(), str(source.cohort or '').strip()],
+            output_field=SafeJSONField(),
+        ))
+    profiles = list(profiles.only(*fields)[:2])
     if not profiles:
         raise ServiceError('The learner is not linked to the consolidated learning record.',
                            'ssot_identity_required', 409)
@@ -215,6 +235,18 @@ def header_profile(source, pk, *, identity_only=False):
         'account_record_id': source.pk, 'account_email': source.email,
         'account_aptem_id': source.aptem_id,
     })
+    if delivery_window:
+        start = _to_date(getattr(source, 'start_date', None))
+        end = _to_date(getattr(source, 'end_date', None))
+        window = getattr(profile, '_header_delivery_window', None) or {}
+        cohort_start = _to_date(window.get('start'))
+        cohort_end = _to_date(window.get('end'))
+        inherited = (start is None and cohort_start) or (end is None and cohort_end)
+        source._resolved_group_dates = (
+            start or cohort_start,
+            end or cohort_end,
+            ('cohort' if start is None and end is None else 'learner/cohort') if inherited else 'learner',
+        )
     return profile, owner
 
 
@@ -343,15 +375,21 @@ def selected_header_modules(candidates, today):
 def build_minimal_header(source, kind, pk, now=None, include_pending_delivery=False):
     """One canonical read; never builds Bootstrap or Presentation responses."""
     now = now or datetime.now(timezone.utc)
+    status = programme_status(source) or DEFAULT_PROGRAMME_STATUS
+    redirected = status.strip().casefold() in ('fresh user', 'onboarding')
+    profile = owner = None
+    if include_pending_delivery or not redirected:
+        # This required read also carries the cohort delivery-window fallback,
+        # so identity does not pay two preceding placement/date round trips.
+        profile, owner = header_profile(source, pk, delivery_window=True)
     identity = header_identity(source, minimal=True)
     # These facts are consumed by the existing workspace/nav/redirect gates.
     payload = {'learner': identity, 'coach': {'name': ''}, 'modules': [], 'moduleLabel': 'Module',
                'initialWeeklyModuleId': None, 'nextAssignment': None,
                'nextLiveSession': None, 'nextReview': None}
-    if not include_pending_delivery and identity['programmeStatus'].strip().casefold() in ('fresh user', 'onboarding'):
+    if not include_pending_delivery and redirected:
         return payload
     # Review cycle and coach contact share the canonical profile read.
-    profile, owner = header_profile(source, pk)
     ids, modules = dashboard_modules(source, owner)
     contact = current_coach(source, profile, None)
     name, email = contact['coach_name'], contact['coach_email']

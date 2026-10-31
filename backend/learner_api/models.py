@@ -413,6 +413,59 @@ class EnrolmentUser(models.Model):
         return f"{self.username or 'Unnamed'} <{self.email or 'no-email'}>"
 
 
+@lru_cache(maxsize=8)
+def created_users_uses_programme_fk(using):
+    """Return whether this database uses the normalized programme FK."""
+    with connections[using].cursor() as cursor:
+        cursor.execute(
+            """SELECT EXISTS (
+                   SELECT 1 FROM information_schema.columns
+                    WHERE table_schema='enrolment'
+                      AND table_name='Created_users'
+                      AND column_name='programme_id'
+               )"""
+        )
+        return bool(cursor.fetchone()[0])
+
+
+def attach_programme_name(source, *, using=None):
+    """Load Created_users' programme name without assuming either schema.
+
+    Older deployed schemas store the display name in ``Programme``.  The
+    normalized learner branches store an enforced ``programme_id`` FK instead.
+    Targeted reads defer the legacy ORM field and call this read-only adapter;
+    assigning into ``__dict__`` satisfies Django's deferred-field descriptor
+    without changing the established string response contract.
+    """
+    values = getattr(source, "__dict__", {})
+    if source is None or not isinstance(source, EnrolmentUser) or "programme" in values:
+        return source
+    source_id = getattr(source, "pk", None)
+    if isinstance(source_id, bool) or not isinstance(source_id, int) or source_id <= 0:
+        return source
+    state_alias = getattr(getattr(source, "_state", None), "db", None)
+    alias = using or (state_alias if isinstance(state_alias, str) else None) or "enrolment"
+    with connections[alias].cursor() as cursor:
+        if created_users_uses_programme_fk(alias):
+            cursor.execute(
+                """SELECT COALESCE(NULLIF(btrim(p.name), ''), u.programme_id, '')
+                     FROM enrolment."Created_users" u
+                     LEFT JOIN curriculum.programmes p
+                       ON p.programme_id = u.programme_id
+                    WHERE u.id = %s""",
+                [source_id],
+            )
+        else:
+            cursor.execute(
+                """SELECT COALESCE("Programme", '')
+                     FROM enrolment."Created_users" WHERE id = %s""",
+                [source_id],
+            )
+        row = cursor.fetchone()
+    values["programme"] = str(row[0] or "").strip() if row else ""
+    return source
+
+
 class CommercialUser(EnrolmentUser):
     """Commercial (delivery) learners — a view onto the merged learner table.
 

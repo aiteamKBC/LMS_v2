@@ -120,8 +120,11 @@ class ReplacementHoursReadTests(SimpleTestCase):
                 self.assertEqual(json.loads(response.content)['replacement_hours']['current:M']['accepted_hours'], 2)
                 self.assertEqual(response['Cache-Control'], 'private, no-store')
                 owner.assert_called_once_with(12)
-                records.assert_called_once_with({'id': 30})
-                self.assertEqual(catalogue.call_args.kwargs, {'owner': {'id': 30}, 'records': [{'id': 'record'}]})
+                records.assert_called_once_with({'id': 30}, student_activity_summary=True)
+                self.assertEqual(catalogue.call_args.kwargs, {
+                    'owner': {'id': 30}, 'records': [{'id': 'record'}],
+                    'include_ledger': True,
+                })
                 self.assertEqual(hours.call_args.args[:1], (12,))
                 self.assertEqual(hours.call_args.args[2:4], ({'id': 30}, [{'id': 'record'}]))
                 hours.side_effect = DatabaseError('private connection details')

@@ -144,7 +144,10 @@ class LearnerDetailPrefetchTests(SimpleTestCase):
 
     @patch("learner_api.learner_detail.prefetch_related_objects")
     @patch("learner_api.learner_detail.learner_profile_for_source")
-    def test_prefetches_the_complete_progress_graph(self, resolve_profile, prefetch):
+    def test_prefetches_the_complete_progress_graph_without_internal_columns(self, resolve_profile, prefetch):
+        from django.db.models import Prefetch
+        from .learner_detail import LEARNER_DETAIL_DEFERRED_PROGRESS_FIELDS
+
         source = SimpleNamespace(email="learner@example.com")
         profile = Mock()
         resolve_profile.return_value = profile
@@ -152,13 +155,105 @@ class LearnerDetailPrefetchTests(SimpleTestCase):
         self.assertIs(_active_profile_for_source(source, 19), profile)
 
         resolve_profile.assert_called_once_with(source, 19)
-        prefetch.assert_called_once_with(
-            [profile],
-            "ksb_assignment__profile_version__definitions",
-            "progress_entries__ksb_links",
-            "progress_entries__quiz_answers__chosen_answers",
-            "progress_entries__quiz_answers__correct_answers",
+        prefetch.assert_called_once()
+        instance_list, ksb_lookup, progress_lookup = prefetch.call_args.args
+        self.assertEqual(instance_list, [profile])
+        self.assertEqual(ksb_lookup, "ksb_assignment__profile_version__definitions")
+        self.assertIsInstance(progress_lookup, Prefetch)
+        self.assertEqual(progress_lookup.prefetch_through, "progress_entries")
+        self.assertEqual(
+            progress_lookup.queryset.query.deferred_loading,
+            (frozenset(LEARNER_DETAIL_DEFERRED_PROGRESS_FIELDS), True),
         )
+        self.assertEqual(
+            progress_lookup.queryset._prefetch_related_lookups,
+            (
+                "ksb_links",
+                "quiz_answers__chosen_answers",
+                "quiz_answers__correct_answers",
+            ),
+        )
+
+    def test_deferred_internal_columns_preserve_progress_and_feed_projection(self):
+        from .learner_detail import LEARNER_DETAIL_DEFERRED_PROGRESS_FIELDS
+        from .models import LearnerProgressEntry, LearnerProgressKsb, LearnerQuizAnswer
+
+        profile = LearnerProfile(id=19)
+        complete = LearnerProgressEntry(
+            id=1,
+            learner_id=profile.id,
+            entry_order=9,
+            kind="quiz",
+            programme_ref="P1",
+            programme_title="Programme",
+            cohort_ref="C1",
+            cohort_title="Cohort",
+            group_ref="G1",
+            group_title="Group",
+            module_ref="M1",
+            module_title="Module",
+            week_ref="W1",
+            week_title="Week",
+            component_ref="ACT-1",
+            component_title="Assessment",
+            component_type="quiz",
+            quiz_ref="42",
+            attempt=1,
+            passed=True,
+            feedback="Well done",
+            feed_kind="quiz",
+            feed_action="Completed quiz",
+            component_link_status="linked",
+            legacy_component_ref="legacy-activity",
+            component_link_source="quiz_ref",
+        )
+        field_names = [
+            field.attname
+            for field in LearnerProgressEntry._meta.concrete_fields
+            if field.name not in LEARNER_DETAIL_DEFERRED_PROGRESS_FIELDS
+        ]
+        deferred = LearnerProgressEntry.from_db(
+            "enrolment",
+            field_names,
+            [getattr(complete, name) for name in field_names],
+        )
+        self.assertEqual(
+            deferred.get_deferred_fields(),
+            set(LEARNER_DETAIL_DEFERRED_PROGRESS_FIELDS),
+        )
+
+        for entry in (complete, deferred):
+            ksb = LearnerProgressKsb(
+                progress=entry,
+                position=1,
+                ksb_code="K1",
+                ksb_description="Knowledge",
+            )
+            answer = LearnerQuizAnswer(
+                id=2,
+                progress=entry,
+                question_ref=7,
+                chosen_answer_ref=8,
+                is_correct=True,
+            )
+            answer._prefetched_objects_cache = {
+                "chosen_answers": [],
+                "correct_answers": [],
+            }
+            entry._prefetched_objects_cache = {
+                "ksb_links": [ksb],
+                "quiz_answers": [answer],
+            }
+
+        profile._prefetched_objects_cache = {"progress_entries": [complete]}
+        expected_progress = profile.training_plan_progress
+        expected_feed = profile.activity_feed_entries(newest_first=True)
+        profile._prefetched_objects_cache = {"progress_entries": [deferred]}
+
+        # SimpleTestCase blocks database access. Any accidental read of a
+        # deferred field would therefore fail instead of silently adding N+1.
+        self.assertEqual(profile.training_plan_progress, expected_progress)
+        self.assertEqual(profile.activity_feed_entries(newest_first=True), expected_feed)
 
     @patch("learner_api.learner_detail.prefetch_related_objects")
     @patch("learner_api.learner_detail.learner_profile_for_source", return_value=None)
@@ -1809,7 +1904,7 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
     def _run(self, save_side_effect=None, tutor_validation_required=False, **post_options):
         profile = SimpleNamespace(training_plan_progress=[])
         with patch("learner_api.components.SOURCE_MODELS", {"apprenticeship": Mock()}) as models:
-            models["apprenticeship"].objects.get.return_value = SimpleNamespace(id=19)
+            models["apprenticeship"].objects.defer.return_value.get.return_value = SimpleNamespace(id=19)
             with patch("learner_api.components._component_meta", return_value=("podcast", "Podcast")):
                 with patch("learner_api.components.component_ksb_codes", return_value=["K1"]):
                     with patch("learner_api.components._completion_criteria", return_value=(True, None)):

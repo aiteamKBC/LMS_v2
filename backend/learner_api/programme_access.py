@@ -7,7 +7,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 
 from .apprenticeship_agreement import _to_date
-from .models import EnrolmentUser
+from .models import EnrolmentUser, attach_programme_name
 from .placement_links import placement_ids
 
 
@@ -118,7 +118,12 @@ def _start_refusal(account, *, submitting=False):
             if source is None:
                 raise EnrolmentUser.DoesNotExist
         else:
-            source = EnrolmentUser.all_learners.only('programme', 'cohort', 'start_date').get(pk=account.subject_id)
+            # Current learner branches store programme_id rather than the
+            # retired Created_users.Programme text column. Keep the start gate
+            # on the normalized projection and restore the established display
+            # value through the read-only compatibility adapter.
+            source = EnrolmentUser.all_learners.only('cohort', 'start_date').get(pk=account.subject_id)
+            attach_programme_name(source)
         access = learning_access(source)
     except EnrolmentUser.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)

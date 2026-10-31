@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { readLearnerJson, invalidateLearnerReads, LEARNER_READ_TIMEOUT_MS, LEARNER_SOURCE_READ_TIMEOUT_MS, MY_LEARNING_READ_TIMEOUT_MS } from '../learnerRead';
+import { readLearnerJson, invalidateLearnerReads, LEARNER_DASHBOARD_READ_TIMEOUT_MS, LEARNER_READ_TIMEOUT_MS, LEARNER_SOURCE_READ_TIMEOUT_MS, MY_LEARNING_READ_TIMEOUT_MS } from '../learnerRead';
 import { clearAllCachedResources } from '../cachedRequest';
 import { fetchLearnerDetail, fetchLearnerSummary, peekLearnerDetail, invalidateLearnerDetailCache } from '../learnerDetail';
 import { fetchStudentActivity, peekStudentActivity } from '../studentActivity';
@@ -85,6 +85,23 @@ describe('learner data transport', () => {
     vi.mocked(fetch).mockReturnValueOnce(new Promise(() => {}));
     const stuck = expect(readLearnerJson(`/learner_api/${resource}/commercial/126/`)).rejects.toMatchObject({ code: 'timeout' });
     await vi.advanceTimersByTimeAsync(LEARNER_SOURCE_READ_TIMEOUT_MS);
+    await stuck;
+    expect(vi.mocked(fetch).mock.calls[1][1]?.signal?.aborted).toBe(true);
+  });
+  it('lets a cold dashboard projection finish beyond the generic learner deadline', async () => {
+    vi.useFakeTimers();
+    const network = pending<Response>();
+    vi.mocked(fetch).mockReturnValueOnce(network.promise);
+    const request = readLearnerJson('/learner_api/dashboard/commercial/125/monthly/plan/');
+    await vi.advanceTimersByTimeAsync(LEARNER_READ_TIMEOUT_MS + 1);
+    expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(false);
+    network.resolve(reply({ version: 2 }));
+    await expect(request).resolves.toEqual({ version: 2 });
+
+    vi.mocked(fetch).mockReturnValueOnce(new Promise(() => {}));
+    const stuck = expect(readLearnerJson('/learner_api/dashboard/commercial/126/overview/'))
+      .rejects.toMatchObject({ code: 'timeout' });
+    await vi.advanceTimersByTimeAsync(LEARNER_DASHBOARD_READ_TIMEOUT_MS);
     await stuck;
     expect(vi.mocked(fetch).mock.calls[1][1]?.signal?.aborted).toBe(true);
   });

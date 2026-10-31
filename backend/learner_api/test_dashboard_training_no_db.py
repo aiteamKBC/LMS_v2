@@ -141,6 +141,38 @@ class TrainingProjectionTests(SimpleTestCase):
         response = training.training_module(factory.post('/module/'), kind='commercial', pk=265, module_id='current:M1')
         self.assertEqual(response.status_code, 405)
 
+    def test_module_endpoint_reuses_the_verified_canonical_profile(self):
+        import os
+        from . import identity, case_file_sources
+        from login import permissions
+        owner = {
+            'id': 8, 'enrolment_id': 265, 'aptem_id': 987,
+            'name': 'Synthetic Learner', 'email': 'learner@example.test',
+            'lifecycle_status': 'active', 'learner_type': 'commercial',
+            'programme': 'Programme', 'programme_id': 'P1',
+            'programme_status': 'In learning', 'cohort': 'Cohort',
+            'cohort_id': 'C1', 'group_name': 'Group', 'group_id': 'G1',
+            'coach_name': 'Coach', 'coach_email': 'coach@example.test',
+            'start_date': None, 'end_date': None,
+        }
+        source = SimpleNamespace(pk=265)
+        factory = RequestFactory()
+        with patch.dict(os.environ, {'LEARNER_API_REQUIRE_AUTH': '1'}), \
+             patch.object(permissions, 'authenticate_request',
+                          return_value=SimpleNamespace(role='learner', subject_id=265)), \
+             patch.object(case_file_sources, 'source_for_case_file', return_value=source), \
+             patch.object(identity, 'learner_profile_for_source') as legacy_profile, \
+             patch.object(training.canonical, 'require_profile', return_value=owner), \
+             patch.object(training, 'read_training', return_value={'id': 'current:M1'}) as read:
+            response = training.training_module(
+                factory.get('/learner_api/dashboard/commercial/265/training/modules/current:M1/'),
+                kind='commercial', pk=265, module_id='current:M1')
+        self.assertEqual(response.status_code, 200)
+        legacy_profile.assert_not_called()
+        profile = read.call_args.args[3]
+        self.assertEqual((profile.pk, profile.enrolment_id, profile.lifecycle_status),
+                         (8, 265, 'active'))
+
     def test_timeline_keeps_undated_modules_and_does_not_publish_detail(self):
         subject = {'id': 'current:M1', 'title': 'Undated', 'activities': []}
         rows = training.display_modules([subject], {'M1': {'id': 'M1', 'description': 'private detail',

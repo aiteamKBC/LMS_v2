@@ -102,7 +102,9 @@ class AssignmentCompletionTests(SimpleTestCase):
         while hasattr(view, '__wrapped__'):
             view = view.__wrapped__
         model = Mock()
-        model.objects.get.return_value = SimpleNamespace(id=19, username='Learner', programme='Programme')
+        model.objects.defer.return_value.get.return_value = SimpleNamespace(
+            id=19, username='Learner', programme='Programme',
+        )
         with ExitStack() as stack:
             def mock(target, **kwargs):
                 return stack.enter_context(patch(target, **kwargs))

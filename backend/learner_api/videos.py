@@ -19,7 +19,7 @@ from django.views.decorators.csrf import csrf_exempt
 from .active_users import ComponentReferenceError, save_progress_record, sync_active_user
 from .components import component_ksb_codes
 from .identity import learner_profile_for_source
-from .models import CommercialUser, EnrolmentUser
+from .models import CommercialUser, EnrolmentUser, attach_programme_name
 from .time_tracking import (
     TrackingSessionError,
     tracking_session_already_used,
@@ -119,7 +119,11 @@ def submit_video_progress(request, component_id):
         video_title, _ctype = _video_title(component_id)
 
     try:
-        source = model.objects.get(pk=learner_id)
+        # Match generic component completion: the optional legacy account
+        # status is not consumed by identity resolution or progress writes and
+        # is absent from some established Created_users schemas.
+        source = model.objects.defer("status", "programme").get(pk=learner_id)
+        attach_programme_name(source)
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
     except (DatabaseError, ValueError) as exc:

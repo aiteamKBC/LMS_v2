@@ -97,9 +97,19 @@ class ReviewSourceSeparationTests(SimpleTestCase):
     @patch("learner_api.models.LearnerProfile")
     def test_missing_enrolment_link_uses_unique_aptem_id_without_email_or_writes(self, model):
         person = profile(); person.enrolment_id = None
-        model.objects.filter.side_effect = [[], [person]]
+        model._meta.concrete_fields = [
+            SimpleNamespace(name="id"),
+            SimpleNamespace(name="enrolment_id"),
+            SimpleNamespace(name="programme"),
+            SimpleNamespace(name="aptem_id"),
+        ]
+        profiles = model.objects.only.return_value
+        profiles.filter.side_effect = [[], [person]]
         self.assertIs(review_profile_for_source(source()), person)
-        self.assertEqual(model.objects.filter.call_args.kwargs, {"aptem_id": 6301})
+        selected = set(model.objects.only.call_args.args)
+        self.assertNotIn("programme", selected)
+        self.assertIn("enrolment_id", selected)
+        self.assertEqual(profiles.filter.call_args.kwargs, {"aptem_id": 6301})
         model.objects.update.assert_not_called()
 
     def test_same_email_does_not_override_true_aptem_conflict(self):

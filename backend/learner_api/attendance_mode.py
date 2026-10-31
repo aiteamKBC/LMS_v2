@@ -31,7 +31,13 @@ log = logging.getLogger(__name__)
 
 def _manager(source):
     employer_id = getattr(source, 'employer_id', None)
-    employer = Employer.objects.filter(pk=employer_id).first() if employer_id else None
+    # Attendance approval only needs the employer contact email.  Keep this
+    # projection explicit so the scoped learner runtime role does not require
+    # read access to the employer's address, signature, or other profile data.
+    employer = (
+        Employer.objects.filter(pk=employer_id).only('id', 'email').first()
+        if employer_id else None
+    )
     if employer and employer.email:
         email = employer.email.strip()
     else:

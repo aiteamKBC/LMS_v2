@@ -30,6 +30,7 @@ class HomeSummarySectionTests(SimpleTestCase):
         with patch.dict('learner_api.overview_week.SOURCE_MODELS', {'commercial': model}), \
              patch('learner_api.read_model.get_learner_home') as shared, \
              patch('learner_api.read_model.enqueue_learner_home_refresh') as enqueue, \
+             patch('learner_api.overview_week.attach_programme_name') as programme, \
              patch('learner_api.overview_week.read_week', return_value={'homeProgress': {}}) as live:
             response = overview_week.__wrapped__.__wrapped__(
                 RequestFactory().get('/?section=home-summary'), 'commercial', 265)
@@ -37,12 +38,14 @@ class HomeSummarySectionTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn('X-LMS-Cache', response)
         model.all_learners.only.assert_called_once_with(*HOME_SOURCE_FIELDS)
+        programme.assert_called_once_with(source)
         live.assert_called_once_with(source, home_kind='commercial', home_summary=True)
         shared.assert_not_called()
         enqueue.assert_not_called()
 
     def test_home_source_loads_the_programme_period_fields(self):
-        self.assertTrue({'programme', 'cohort', 'start_date', 'end_date'} <= set(HOME_SOURCE_FIELDS))
+        self.assertTrue({'cohort', 'start_date', 'end_date'} <= set(HOME_SOURCE_FIELDS))
+        self.assertNotIn('programme', HOME_SOURCE_FIELDS)
 
     def test_unknown_sections_are_still_rejected(self):
         response = overview_week.__wrapped__.__wrapped__(
@@ -133,7 +136,7 @@ class HomeSummarySectionTests(SimpleTestCase):
 
     def test_home_assignment_fields_are_loaded_without_dropping_original_fields(self):
         self.assertEqual(set(HOME_SOURCE_FIELDS), {'id', 'aptem_id', 'email', 'username',
-            'programme', 'cohort', 'start_date', 'end_date', 'training_plan', 'learning_plan', 'group'})
+            'cohort', 'start_date', 'end_date', 'training_plan', 'learning_plan', 'group'})
 
     def test_missing_identity_prevents_even_the_assignment_navigation_read(self):
         with patch.object(week_module.canonical_learning, 'require_profile',

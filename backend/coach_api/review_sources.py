@@ -96,20 +96,32 @@ def review_profile_for_source(source, profile=None):
 
     source_pk = getattr(source, "pk", None)
     if profile is None:
-        matches = list(LearnerProfile.objects.filter(enrolment_id=source_pk)[:2]) if source_pk else []
+        # Normalized learner branches store programme_id and no longer carry
+        # the legacy Learner.learners.programme text column. Review identity
+        # needs the full profile except that compatibility-only field.
+        profile_fields = tuple(
+            field.name for field in LearnerProfile._meta.concrete_fields
+            if field.name != "programme"
+        )
+        profiles = LearnerProfile.objects.only(*profile_fields)
+        matches = list(profiles.filter(enrolment_id=source_pk)[:2]) if source_pk else []
         if not matches and student_activity_available(getattr(source, "aptem_id", None)):
-            matches = list(LearnerProfile.objects.filter(aptem_id=int(str(source.aptem_id).strip()))[:2])
+            matches = list(profiles.filter(aptem_id=int(str(source.aptem_id).strip()))[:2])
             if any(item.enrolment_id not in (None, source_pk) for item in matches):
                 raise ReviewIdentityConflict("The Aptem profile belongs to another enrolment.")
         if not matches and not student_activity_available(getattr(source, "aptem_id", None)):
             email = str(getattr(source, "email", "") or "").strip()
             if email:
-                matches = list(LearnerProfile.objects.filter(email__iexact=email, enrolment_id__isnull=True)[:2])
+                matches = list(profiles.filter(email__iexact=email, enrolment_id__isnull=True)[:2])
                 if matches and EnrolmentUser.all_learners.filter(email__iexact=email).exclude(pk=source_pk).exists():
                     raise ReviewIdentityConflict("The legacy Review profile is ambiguous.")
         if len(matches) > 1:
             raise ReviewIdentityConflict("More than one Review profile matches this learner.")
         profile = matches[0] if matches else None
+        if profile is not None:
+            profile.__dict__["programme"] = str(
+                getattr(source, "__dict__", {}).get("programme") or ""
+            ).strip()
     if source_for_learner(source, profile).kind == "conflict":
         raise ReviewIdentityConflict("Conflicting Aptem learner identities.")
     return profile

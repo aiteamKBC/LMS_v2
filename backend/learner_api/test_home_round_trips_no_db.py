@@ -124,6 +124,7 @@ class NarrowedReviewEventsTests(SimpleTestCase):
         self.assertTrue({"aptem_id", "enrolment_id", "learner_type"}
                         <= set(training_plan_dashboard.TRAINING_PLAN_PROFILE_FIELDS))
         self.assertIn("learner_type", training_plan_dashboard.TRAINING_PLAN_SOURCE_FIELDS)
+        self.assertNotIn("status", training_plan_dashboard.TRAINING_PLAN_SOURCE_FIELDS)
 
 
 class DatesOnlyImportedReviewTests(SimpleTestCase):
@@ -169,13 +170,13 @@ class DatesOnlyImportedReviewTests(SimpleTestCase):
 
 
 class CanonicalMetricsPayloadTests(SimpleTestCase):
-    def test_metrics_read_progress_without_raw_evidence_bodies(self):
+    def test_metrics_use_the_training_summary_projection(self):
         from learner_api import canonical_learning
         owner = {"id": 21, "enrolment_id": 121}
         with patch.object(canonical_learning, "entries_for", return_value=[]) as entries, \
              patch.object(canonical_learning, "targets_for", return_value={}):
             canonical_learning.metrics(121, owner=owner)
-        entries.assert_called_once_with(owner, lineage_only=True)
+        entries.assert_called_once_with(owner, training_summary=True)
 
     def test_only_an_object_payload_is_reduced_to_its_lineage_reference(self):
         from learner_api import canonical_learning

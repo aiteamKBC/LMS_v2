@@ -88,6 +88,16 @@ def progress_index(entries):
     return result
 
 
+def weekly_completion_records(records, component_ids):
+    """Match the former ORM completion filter on already-loaded stored rows."""
+    component_ids = {str(value) for value in component_ids}
+    fields = ('kind', 'component_ref', 'quiz_ref', 'passed', 'submitted_at')
+    return [{field: record.get(field) for field in fields} for record in records
+            if record.get('kind') in {'quiz', 'video', 'component', 'quiz_reading'}
+            and (record.get('kind') == 'quiz'
+                 or str(record.get('component_ref')) in component_ids)]
+
+
 def week_rows(modules, today):
     result = []
     for module in modules:
@@ -216,15 +226,24 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
         components = [row for row in rows(cur) if row['has_content'] or row['is_quiz']]
         register, live_credits = read_weekly_live_evidence(source, owner, schedule_ids, sorted(content_ids))
         credits_by_component = {credit['componentId']: credit for credit in live_credits}
-        progress_query = context.profile.progress_entries.filter(kind__in=['quiz', 'video', 'component', 'quiz_reading'])
-        from django.db.models import Q
-        # Restrict completion to the assigned projection, retaining quiz-only
-        # legacy attempts and all attempts for each selected component.
-        # Keep quiz refs in their legacy text forms (e.g. leading zeroes):
-        # progress_index owns their numeric normalization.
-        progress_query = progress_query.filter(Q(component_ref__in=[row['id'] for row in components])
-                                               | Q(kind='quiz'))
-        progress = progress_index(progress_query.values('kind', 'component_ref', 'quiz_ref', 'passed', 'submitted_at'))
+        # Hours need the complete canonical population later in this request.
+        # Reuse its persisted rows for the existing completion index instead of
+        # loading the same learner progress a second time through the ORM.
+        records, stored_progress = canonical_learning.weekly_hour_records(owner, include_stored=True)
+        if stored_progress is None:
+            # A progress transfer intentionally keeps live completion separate
+            # from the frozen hours view.
+            progress_query = context.profile.progress_entries.filter(
+                kind__in=['quiz', 'video', 'component', 'quiz_reading'])
+            from django.db.models import Q
+            progress_query = progress_query.filter(
+                Q(component_ref__in=[row['id'] for row in components]) | Q(kind='quiz'))
+            completion_records = progress_query.values(
+                'kind', 'component_ref', 'quiz_ref', 'passed', 'submitted_at')
+        else:
+            completion_records = weekly_completion_records(
+                stored_progress, [row['id'] for row in components])
+        progress = progress_index(completion_records)
         def completion_for_week(component, week):
             credit = credits_by_component.get(str(component['id']))
             if credit is not None and credit_in_week(credit, week):
@@ -383,7 +402,6 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
     codes = {code for item in activities for code in item['ksbCodes']}
     achieved = {code for item in activities if item['status'] == 'completed' for code in item['ksbCodes']}
     planned = sum(item['expectedHours'] or 0 for item in activities)
-    records = canonical_learning.weekly_hour_records(owner)
     activity_hours = module_activity_hours(records, modules)
     activity_hours = add_live_activity_hours(activity_hours, records,
         [credit for credit in live_credits if credit_in_week(credit, selected)

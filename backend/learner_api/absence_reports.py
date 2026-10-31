@@ -29,7 +29,7 @@ from .evidence_storage import (
     upload_to_quarantine,
 )
 from .identity import learner_profile_for_source
-from .models import CommercialUser, EnrolmentUser
+from .models import CommercialUser, EnrolmentUser, attach_programme_name
 from .alternative_recovery import (
     ALTERNATIVE_METHOD,
     alternative_event_key,
@@ -100,7 +100,8 @@ def _source_learner(kind, learner_id):
     model = {"commercial": CommercialUser, "apprenticeship": EnrolmentUser}.get(kind)
     if model is None:
         return None
-    return model.all_learners.filter(pk=learner_id).first()
+    learner = model.all_learners.defer("status", "programme").filter(pk=learner_id).first()
+    return attach_programme_name(learner)
 
 
 def _attendance_rows_for_learner(learner, learner_id, *, meetings=False, kind=None):

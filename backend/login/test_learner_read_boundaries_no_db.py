@@ -86,6 +86,26 @@ class SessionReadBoundaryTests(unittest.TestCase):
 
 
 class AccountReadBoundaryTests(unittest.TestCase):
+    def test_learner_subject_lookup_projects_only_auth_payload_fields(self):
+        row = SimpleNamespace(pk=17)
+        projected = Mock()
+        projected.get.return_value = row
+        manager = Mock()
+        manager.only.return_value = projected
+        learner_model = SimpleNamespace(all_learners=manager, DoesNotExist=LookupError)
+        fetch = load_function("login/identity.py", "fetch_subject", dict(
+            SUBJECT_LEARNER="learner", EnrolmentUser=learner_model,
+            attach_programme_name=lambda source: source,
+            subject_model=lambda _subject_type: learner_model,
+        ))
+
+        self.assertIs(fetch("learner", 17), row)
+        manager.only.assert_called_once_with(
+            "learner_type", "aptem_id",
+            "email", "username", "preferred_name",
+        )
+        projected.get.assert_called_once_with(pk=17)
+
     def test_email_lookup_refuses_zero_or_multiple_accounts(self):
         for matches in ([], [object()], [object(), object()]):
             manager = Mock()

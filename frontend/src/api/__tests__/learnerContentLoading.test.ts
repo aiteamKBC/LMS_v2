@@ -8,8 +8,14 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(String(input), 'http://localhost');
     const componentId = url.searchParams.get('component_id');
-    return new Response(JSON.stringify(componentId ? { componentId, contentHtml: `<p>${componentId} reading</p>` }
-      : { components: ['C1', 'C2'].map(componentId => ({ componentId, hasReadingContent: true })) }));
+    return new Response(JSON.stringify({
+      id: '125',
+      components: ['C1', 'C2'].map(id => ({
+        componentId: id,
+        hasReadingContent: true,
+        ...(id === componentId ? { contentHtml: `<p>${id} reading</p>` } : {}),
+      })),
+    }));
   }));
 });
 afterEach(() => { clearAllCachedResources(); vi.unstubAllGlobals(); });
@@ -22,8 +28,8 @@ describe('learner content loading', () => {
     await fetchLearnerDetail('commercial', '125', { componentId: 'C1' });
     expect(vi.mocked(fetch).mock.calls.map(call => call[0])).toEqual([
       '/learner_api/learner-detail/commercial/125/?content=summary',
-      '/learner_api/learner-detail/commercial/125/?content=reading&component_id=C1',
-      '/learner_api/learner-detail/commercial/125/?content=reading&component_id=C2',
+      '/learner_api/learner-detail/commercial/125/?content=activity&component_id=C1',
+      '/learner_api/learner-detail/commercial/125/?content=activity&component_id=C2',
     ]);
   });
 
@@ -31,7 +37,7 @@ describe('learner content loading', () => {
     await fetchLearnerDetail('commercial', '125', { componentId: 'C1' });
     invalidateLearnerDetailCache('commercial', '125');
     await fetchLearnerDetail('commercial', '125', { componentId: 'C1' });
-    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it('adds only the requested HTML without changing the cached list or its siblings', async () => {
@@ -43,18 +49,18 @@ describe('learner content loading', () => {
     expect(await fetchLearnerDetail('commercial', '125')).toBe(plan);
   });
 
-  it('opens a video from the shared plan without another detail request', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ components: [{ componentId: 'V1', type: 'video', videoUrl: 'https://example.com/video' }] })));
+  it('opens a video from its scoped activity response', async () => {
+    vi.mocked(fetch).mockImplementation(async () => new Response(JSON.stringify({ id: '125', components: [{ componentId: 'V1', type: 'video', videoUrl: 'https://example.com/video' }] })));
     await fetchLearnerDetail('commercial', '125');
     const opened = await fetchLearnerDetail('commercial', '125', { componentId: 'V1' });
     expect(opened.components[0].videoUrl).toBe('https://example.com/video');
-    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it('loads embedded reading markup even when there is no visible text', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ components: [
-      { componentId: 'C1', type: 'reading', hasReadingContent: false, resourceUrl: 'https://example.com/reading.pdf' },
-    ] }))).mockResolvedValueOnce(new Response(JSON.stringify({ componentId: 'C1', contentHtml: '<iframe src="https://example.com/lesson"></iframe>' })));
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ id: '125', components: [
+      { componentId: 'C1', type: 'reading', hasReadingContent: true, contentHtml: '<iframe src="https://example.com/lesson"></iframe>' },
+    ] })));
     const opened = await fetchLearnerDetail('commercial', '125', { componentId: 'C1' });
     expect(opened.components[0].contentHtml).toContain('<iframe');
   });
@@ -69,12 +75,12 @@ describe('learner content loading', () => {
 
 
 it('loads quizzes independently from the dashboard graph and invalidates them after progress changes', async () => {
-  await fetchLearnerDetail('commercial', '101', { quizView: true });
-  await fetchLearnerDetail('commercial', '101', { quizView: true });
+  await fetchLearnerDetail('commercial', '101', { quizView: true, quizId: 5572 });
+  await fetchLearnerDetail('commercial', '101', { quizView: true, quizId: 5572 });
   expect(vi.mocked(fetch).mock.calls.map(call => call[0])).toEqual([
-    '/learner_api/learner-detail/commercial/101/?content=quiz',
+    '/learner_api/learner-detail/commercial/101/?content=quiz&quiz_id=5572',
   ]);
   invalidateLearnerDetailCache('commercial', '101');
-  await fetchLearnerDetail('commercial', '101', { quizView: true });
+  await fetchLearnerDetail('commercial', '101', { quizView: true, quizId: 5572 });
   expect(fetch).toHaveBeenCalledTimes(2);
 });

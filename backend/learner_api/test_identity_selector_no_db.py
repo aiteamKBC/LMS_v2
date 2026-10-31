@@ -64,6 +64,27 @@ class IdentitySelectorTests(unittest.TestCase):
         except IdentityError as error:
             return ('error', type(error), str(error), error.code, error.status)
 
+    def assert_query_parity_with_training_profile_projection(self):
+        new_sql, new_params = self.new_query.call_args.args
+        old_sql, old_params = self.old_query.call_args.args
+        added = ('l.lifecycle_status,l.programme_status,l.cohort,l.cohort_id,\n'
+                 '        l.group_name,l.group_id,')
+        resolved_programme = (
+            "coalesce(nullif(btrim(programme.name),''),l.programme_id,'') AS programme"
+        )
+        programme_join = (
+            '        LEFT JOIN curriculum.programmes programme '
+            'ON programme.programme_id=l.programme_id\n'
+        )
+        self.assertIn(added, new_sql)
+        self.assertIn(resolved_programme, new_sql)
+        self.assertIn(programme_join, new_sql)
+        normalized = new_sql.replace(added, '')
+        normalized = normalized.replace(resolved_programme, 'l.programme')
+        normalized = normalized.replace(programme_join, '')
+        self.assertEqual(''.join(normalized.split()), ''.join(old_sql.split()))
+        self.assertEqual(new_params, old_params)
+
     def assert_parity(self, changes):
         old = {**deepcopy(self.owner), **changes}
         new = deepcopy(old)
@@ -73,7 +94,7 @@ class IdentitySelectorTests(unittest.TestCase):
         expected = self.outcome(lambda: self.legacy['profile'](271))
         actual = self.outcome(lambda: self.wrappers['profile'](271))
         self.assertEqual(actual, expected)
-        self.assertEqual(self.new_query.call_args_list, self.old_query.call_args_list)
+        self.assert_query_parity_with_training_profile_projection()
         self.assertEqual(self.new_query.call_count, 1)
         self.assertEqual(new, before)
         if actual[0] == 'return':
@@ -121,7 +142,7 @@ class IdentitySelectorTests(unittest.TestCase):
         self.old_query.return_value = self.new_query.return_value = [self.owner]
         self.assertIs(self.legacy['profile'](271), self.owner)
         self.assertIs(self.wrappers['profile'](271), self.owner)
-        self.assertEqual(self.new_query.call_args_list, self.old_query.call_args_list)
+        self.assert_query_parity_with_training_profile_projection()
         self.assertEqual(self.new_query.call_count, 1)
 
     def test_empty_and_duplicate_results_preserve_errors_and_query_count(self):
@@ -130,7 +151,7 @@ class IdentitySelectorTests(unittest.TestCase):
                 self.old_query.return_value = self.new_query.return_value = rows
                 self.assertEqual(self.outcome(lambda: self.wrappers['profile'](271)),
                                  self.outcome(lambda: self.legacy['profile'](271)))
-                self.assertEqual(self.new_query.call_args_list, self.old_query.call_args_list)
+                self.assert_query_parity_with_training_profile_projection()
                 self.assertEqual(self.new_query.call_count, 1)
                 self.old_query.reset_mock()
                 self.new_query.reset_mock()

@@ -15,7 +15,7 @@ from login.permissions import learner_self_or_staff
 from old_otjh.coach_booking import booking_url
 from old_otjh.service import ServiceError
 from .learner_detail import SOURCE_MODELS
-from .models import LearnerProfile, StaffUser
+from .models import LearnerProfile, StaffUser, attach_programme_name
 from .learning_plan import _aptem_subject_modules
 from .selectors.assignments import _effective_plan_ids, request_preset_cache
 from .coach_assignment import current_coach, source_coach
@@ -45,8 +45,8 @@ def is_educational_live_session_week(title):
 # large JSON/text columns and the dashboard previously selected every one of
 # them before issuing its real projection queries.
 TRAINING_PLAN_SOURCE_FIELDS = (
-    'id', 'aptem_id', 'email', 'status', 'programme_status',
-    'programme', 'cohort', 'group',
+    'id', 'aptem_id', 'email', 'programme_status',
+    'cohort', 'group',
     'learning_plan', 'training_plan', 'modules', 'weeks', 'components',
     'case_owner', 'coach_name', 'coach_email',
     'start_date', 'end_date', 'learner_start_date',
@@ -57,12 +57,39 @@ TRAINING_PLAN_SOURCE_FIELDS = (
 
 TRAINING_PLAN_PROFILE_FIELDS = (
     'id', 'full_name', 'email', 'lifecycle_status',
-    'programme', 'programme_id', 'programme_status',
+    'programme_id', 'programme_status',
     'cohort', 'cohort_id', 'group_name', 'group_id',
     'coach_name', 'coach_email', 'start_date', 'end_date',
     # Review source and imported Review identity; deferring them cost a query each.
     'aptem_id', 'enrolment_id', 'learner_type',
 )
+
+
+def profile_from_owner(owner):
+    """Build the already-validated profile model without a duplicate SELECT.
+
+    Older adapters and focused mocks may not expose the complete projection;
+    returning ``None`` keeps their established ORM fallback intact.
+    """
+    fields = (
+        'id', 'enrolment_id', 'aptem_id', 'name', 'email', 'lifecycle_status',
+        'learner_type', 'programme', 'programme_id', 'programme_status',
+        'cohort', 'cohort_id', 'group_name', 'group_id', 'coach_name',
+        'coach_email', 'start_date', 'end_date',
+    )
+    if owner is None or any(field not in owner for field in fields):
+        return None
+    return LearnerProfile(
+        id=owner['id'], enrolment_id=owner['enrolment_id'],
+        aptem_id=owner['aptem_id'], full_name=owner['name'], email=owner['email'],
+        lifecycle_status=owner['lifecycle_status'], learner_type=owner['learner_type'],
+        programme=owner['programme'], programme_id=owner['programme_id'],
+        programme_status=owner['programme_status'], cohort=owner['cohort'],
+        cohort_id=owner['cohort_id'], group_name=owner['group_name'],
+        group_id=owner['group_id'], coach_name=owner['coach_name'],
+        coach_email=owner['coach_email'], start_date=owner['start_date'],
+        end_date=owner['end_date'],
+    )
 
 
 def number(value):
@@ -558,7 +585,7 @@ def read_upcoming(source, now=None):
     monday, friday, start, end = next_week_window(now or datetime.now(timezone.utc))
     owner = getattr(source, '_canonical_profile', None)
     email = str(source.email or '').strip().casefold()
-    profile = getattr(source, '_case_file_profile', None) or (
+    profile = getattr(source, '_case_file_profile', None) or profile_from_owner(owner) or (
         LearnerProfile.objects.filter(enrolment_id=source.pk)
         .only(*TRAINING_PLAN_PROFILE_FIELDS)
         .first()
@@ -608,12 +635,13 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
         'programmeStartDate': date_only(owner.get('start_date')) if owner else None,
         'programmeEndDate': date_only(owner.get('end_date')) if owner else None,
     }
-    profile = getattr(source, '_case_file_profile', None) or (
-        LearnerProfile.objects.filter(enrolment_id=source.pk)
-        .only(*TRAINING_PLAN_PROFILE_FIELDS)
-        .first()
-        if section not in ('contract', 'learning', 'my-learning') else None
-    )
+    profile = None
+    if section not in ('contract', 'learning', 'my-learning'):
+        profile = getattr(source, '_case_file_profile', None) or profile_from_owner(owner) or (
+            LearnerProfile.objects.filter(enrolment_id=source.pk)
+            .only(*TRAINING_PLAN_PROFILE_FIELDS)
+            .first()
+        )
     with connections['enrolment'].cursor() as cur:
         if section == 'contract':
             return contract_data
@@ -770,6 +798,7 @@ def training_plan_dashboard(request, kind, pk):
             source = source_for_case_file(request, kind, pk)
             if source is None:
                 source = model.all_learners.only(*TRAINING_PLAN_SOURCE_FIELDS).get(pk=pk)
+            attach_programme_name(source)
             source._canonical_profile = canonical_learning.require_profile(pk)
         # ``learning`` is the detailed weekly dashboard projection.  Keep it
         # on the same read path as overview so clients can request the weekly

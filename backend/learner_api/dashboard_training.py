@@ -285,10 +285,12 @@ def read_module_request(request, kind, pk, module_id):
             source = source_for_case_file(request, kind, pk)
             if source is None:
                 source = model.all_learners.only(*schedule.TRAINING_PLAN_SOURCE_FIELDS).get(pk=pk)
+            schedule.attach_programme_name(source)
             owner = canonical.require_profile(source.pk)
             source._canonical_profile = owner
-            profile = learner_profile_for_source(source, source.pk, heal=False,
-                                                 fields=schedule.TRAINING_PLAN_PROFILE_FIELDS)
+            profile = schedule.profile_from_owner(owner) or learner_profile_for_source(
+                source, source.pk, heal=False,
+                fields=schedule.TRAINING_PLAN_PROFILE_FIELDS)
             if profile is None or profile.pk != owner['id'] or profile.enrolment_id != source.pk:
                 raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
             source._case_file_profile = profile

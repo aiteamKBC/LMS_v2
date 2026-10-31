@@ -1,10 +1,10 @@
 """Effective attendance assignments; isolated reads, no database or Teams calls."""
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
-from .attendance_assignments import assigned_module_ids, module_roster
+from .attendance_assignments import assigned_module_ids, module_roster, roster_sources
 from .attendance_lectures import read_assigned_modules, read_native_components, read_native_occurrences
 from curriculum_api.session_results import effective_module_register_rows, merge_session_register_rows
 
@@ -16,6 +16,17 @@ def learner(pk=1, **values):
 
 
 class EffectiveAttendanceAssignmentsTests(SimpleTestCase):
+    def test_roster_projection_resolves_programme_from_fk(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = []
+        with patch('learner_api.attendance_assignments.connections', {'enrolment': connection}):
+            self.assertEqual(roster_sources(), [])
+        sql = cursor.execute.call_args.args[0]
+        self.assertIn("coalesce(nullif(btrim(programme.name),''),u.programme_id,'') AS programme", sql)
+        self.assertIn('LEFT JOIN curriculum.programmes programme', sql)
+        self.assertNotIn('u."Programme"', sql)
+
     def test_inherited_modules_match_learning_plan_for_both_learner_types(self):
         for kind in ('commercial', 'apprenticeship'):
             with self.subTest(kind=kind), patch('learner_api.selectors.assignments._group_module_ids', return_value=['NEW', 'OLD']):

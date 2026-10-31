@@ -142,6 +142,31 @@ class DashboardTabEndpointTests(SimpleTestCase):
                         self.assertEqual(response['Cache-Control'], 'private, no-store')
                         read.assert_called_once()
 
+    def test_endpoint_attaches_normalized_programme_before_shared_tab_readers(self):
+        from . import learner_detail, case_file_sources
+        model = MagicMock()
+        model.DoesNotExist = type('Missing', (Exception,), {})
+        source = SimpleNamespace(pk=201)
+        model.all_learners.only.return_value.get.return_value = source
+        account = SimpleNamespace(role='learner', subject_id=201)
+        request = RequestFactory().get('/learner_api/dashboard/commercial/201/monthly/plan/')
+        request.login_account = account
+
+        def attach(item):
+            item.programme = 'Normalized programme'
+
+        with patch('login.permissions.authenticate_request', return_value=account), \
+             patch.dict(learner_detail.SOURCE_MODELS, {'commercial': model}), \
+             patch.object(case_file_sources, 'source_for_case_file', return_value=None), \
+             patch.object(dashboard_tabs, 'attach_programme_name', side_effect=attach) as programme, \
+             patch.object(dashboard_tabs, 'read_tab', return_value={'schedule': {}}) as read:
+            response = dashboard_tabs.dashboard_tab(
+                request, kind='commercial', pk=201, tab='monthly', canonical_contract=True)
+
+        self.assertEqual(response.status_code, 200)
+        programme.assert_called_once_with(source)
+        self.assertEqual(read.call_args.args[0].programme, 'Normalized programme')
+
     def test_other_learner_employer_and_signed_out_cannot_read(self):
         for account, expected in ((SimpleNamespace(role='learner', subject_id=202), 404),
                                   (SimpleNamespace(role='employer', subject_id=201), 403), (None, 401)):

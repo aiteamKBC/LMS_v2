@@ -112,3 +112,24 @@ class LearnerEntryTests(SimpleTestCase):
         request = RequestFactory().post('/login_api/learner-entry/', {'signed': True})
         request.login_account = self.user
         self.assertEqual(entry.entry_status(request).status_code, 405)
+
+
+class RepositoryProgrammeReadTests(SimpleTestCase):
+    def test_student_read_uses_normalized_programme_fk_when_present(self):
+        row = {'id': 7, 'aptem_id': '42', 'programme': 'Data Programme'}
+        with patch.object(repo, 'created_users_uses_programme_fk', return_value=True), \
+             patch.object(repo, 'query', return_value=[row]) as query:
+            self.assertEqual(repo.student(7), row)
+        sql, params = query.call_args.args
+        self.assertIn('p.programme_id=c.programme_id', sql)
+        self.assertNotIn('"Programme" AS programme', sql)
+        self.assertEqual(params, [7])
+
+    def test_student_read_preserves_legacy_programme_column(self):
+        row = {'id': 7, 'aptem_id': '42', 'programme': 'Legacy Programme'}
+        with patch.object(repo, 'created_users_uses_programme_fk', return_value=False), \
+             patch.object(repo, 'query', return_value=[row]) as query:
+            self.assertEqual(repo.student(7), row)
+        sql, params = query.call_args.args
+        self.assertIn('"Programme" AS programme', sql)
+        self.assertEqual(params, [7])

@@ -17,15 +17,19 @@ def roster_sources():
     """Fetch membership keys, not every learner's nested weeks and activities."""
     projections = []
     for column in ('Training_plan', 'Learning_plan'):
-        projections.append(f'''CASE WHEN jsonb_typeof("{column}"::jsonb)='array'
+        projections.append(f'''CASE WHEN jsonb_typeof(u."{column}"::jsonb)='array'
             THEN (SELECT coalesce(jsonb_agg(jsonb_build_object(
                 'moduleId',entry->'moduleId','assignmentMode',entry->'assignmentMode')), '[]'::jsonb)
-                FROM jsonb_array_elements("{column}"::jsonb) entry
+                FROM jsonb_array_elements(u."{column}"::jsonb) entry
                 WHERE jsonb_typeof(entry)='object')
-            ELSE "{column}"::jsonb END''')
+            ELSE u."{column}"::jsonb END''')
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute('''SELECT id,"Username","Email","Programme","Group",'''
-                       + ','.join(projections) + ' FROM enrolment."Created_users"')
+        cursor.execute('''SELECT u.id,u."Username",u."Email",
+            coalesce(nullif(btrim(programme.name),''),u.programme_id,'') AS programme,
+            u."Group",''' + ','.join(projections) + '''
+            FROM enrolment."Created_users" u
+            LEFT JOIN curriculum.programmes programme
+              ON programme.programme_id=u.programme_id''')
         return [SimpleNamespace(**dict(zip(
             ('pk', 'username', 'email', 'programme', 'group', 'training_plan', 'learning_plan'), row,
         ))) for row in cursor.fetchall()]

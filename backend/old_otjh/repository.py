@@ -12,6 +12,7 @@ from threading import RLock
 from django.db import DatabaseError, connections, transaction
 
 from audit_api.db_source import resolve
+from learner_api.models import created_users_uses_programme_fk
 
 DB = 'enrolment'
 SOURCE_DB = 'audit'
@@ -99,9 +100,17 @@ def source_connection():
 
 
 def student(learner_id):
-    rows = query('SELECT id, "Email" AS email, "Username" AS name, '
-                 '"Programme" AS programme, aptem_id '
-                 'FROM enrolment."Created_users" WHERE id=%s', [learner_id])
+    if created_users_uses_programme_fk(DB):
+        rows = query('''SELECT c.id, c."Email" AS email, c."Username" AS name,
+                     COALESCE(NULLIF(btrim(p.name), ''), c.programme_id, '') AS programme,
+                     c.aptem_id
+                FROM enrolment."Created_users" c
+                LEFT JOIN curriculum.programmes p ON p.programme_id=c.programme_id
+               WHERE c.id=%s''', [learner_id])
+    else:
+        rows = query('SELECT id, "Email" AS email, "Username" AS name, '
+                     '"Programme" AS programme, aptem_id '
+                     'FROM enrolment."Created_users" WHERE id=%s', [learner_id])
     return rows[0] if rows else None
 
 

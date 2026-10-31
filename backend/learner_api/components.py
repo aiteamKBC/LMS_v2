@@ -21,7 +21,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from .active_users import ComponentReferenceError, save_progress_record, sync_active_user
 from .identity import learner_profile_for_source
-from .models import CommercialUser, EnrolmentUser
+from .models import CommercialUser, EnrolmentUser, attach_programme_name
 from .time_tracking import (
     TrackingSessionError,
     tracking_session_already_used,
@@ -333,7 +333,12 @@ def submit_component_progress(request, component_id):
     component_title = client_title or live_title or TYPE_ACTIONS.get(component_type, (None, "Activity"))[1]
 
     try:
-        source = model.objects.get(pk=learner_id)
+        # Completion uses programme/identity/plan fields, never the optional
+        # legacy account-status column.  Established Created_users schemas do
+        # not all contain its leading-space ``" Status"`` name, so selecting
+        # the complete unmanaged model turns a valid progress write into 502.
+        source = model.objects.defer("status", "programme").get(pk=learner_id)
+        attach_programme_name(source)
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
     except (DatabaseError, ValueError):

@@ -121,7 +121,8 @@ class ProgrammeAccessTests(SimpleTestCase):
         self.cursor.fetchone.return_value = None
         self.cursor.fetchall.return_value = [('Oct 2026', date(2026, 9, 15))]
         self.now.return_value = datetime(2026, 10, 16, tzinfo=timezone.utc)
-        with patch('learner_api.programme_access.EnrolmentUser.all_learners') as manager:
+        with patch('learner_api.programme_access.EnrolmentUser.all_learners') as manager, \
+                patch('learner_api.programme_access.attach_programme_name', side_effect=lambda source: source) as attach:
             manager.only.return_value.get.return_value = self.source
             for path in ['/learner_api/quizzes/1/submit/',
                          '/learner_api/videos/video-1/complete/',
@@ -129,6 +130,8 @@ class ProgrammeAccessTests(SimpleTestCase):
                 with self.subTest(path=path):
                     self.assertIsNone(refusal(path, self.account, 'POST'))
             self.assertIsNone(submission_refusal(self.account))
+        manager.only.assert_called_with('cohort', 'start_date')
+        attach.assert_called()
 
     def test_direct_and_batch_activity_reads_cannot_bypass_the_start_date(self):
         with patch('login.api_gate._enabled', return_value=True), \

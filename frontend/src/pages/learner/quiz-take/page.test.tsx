@@ -62,7 +62,7 @@ describe('quiz requirements loading', () => {
     mocks.detail.mockReturnValue(new Promise(done => { resolve = done; }));
     renderPage();
     await act(async () => {});
-    expect(mocks.detail).toHaveBeenCalledWith('commercial', '501', { quizView: true });
+    expect(mocks.detail).toHaveBeenCalledWith('commercial', '501', { quizView: true, quizId: '1' });
     expect(screen.queryByRole('button', { name: 'Start Quiz' })).not.toBeInTheDocument();
     await act(async () => resolve(detail));
     fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));

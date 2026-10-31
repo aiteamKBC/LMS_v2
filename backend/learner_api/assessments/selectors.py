@@ -8,9 +8,17 @@ matches are deliberately not fallbacks.
 from dataclasses import dataclass
 from typing import Any
 
+from coach_api.weekly_learning import assignment_projection
+
 from ..learning_plan import effective_training_plan, request_preset_cache
-from ..models import EnrolmentUser, LearnerProfile
+from ..models import EnrolmentUser, LearnerProfile, attach_programme_name
 from ..weekly_learning import build_learning_content_summary
+
+
+QUIZ_SOURCE_FIELDS = (
+    "id", "learner_type", "cohort", "group",
+    "modules", "weeks", "components",
+)
 
 
 @dataclass(frozen=True)
@@ -30,13 +38,18 @@ def resolve_quiz_learner(enrolment_id):
     if enrolment_id <= 0:
         return None
 
-    source = (
-        EnrolmentUser.all_learners.using("enrolment")
-        .filter(pk=enrolment_id)
-        .first()
+    # The stored plans can contain thousands of historical component snapshots.
+    # Authorization needs only current module membership and assignment mode;
+    # project those keys in SQL instead of transferring the whole JSON row.
+    source_query = assignment_projection(
+        EnrolmentUser.all_learners.using("enrolment").only(*QUIZ_SOURCE_FIELDS)
     )
+    source = source_query.filter(pk=enrolment_id).first()
     if source is None:
         return None
+    attach_programme_name(source)
+    source.training_plan = source._weekly_training_plan
+    source.learning_plan = source._weekly_learning_plan
 
     profile = (
         LearnerProfile.objects.using("enrolment")
@@ -81,6 +94,7 @@ def learner_has_quiz_entitlement(context, quiz_id):
         identities_only=True,
         preserve_legacy=True,
         progress=([], [], []),
+        quiz_id=quiz_id,
     )
     expected = str(quiz_id)
     return any(

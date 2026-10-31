@@ -179,6 +179,26 @@ class ReadOnlyIdentityTests(SimpleTestCase):
 
 
 class WeeklyLearningEndpointTests(SimpleTestCase):
+    def test_canonical_owner_reuses_profile_identity_without_second_lookup(self):
+        source = SimpleNamespace(pk=201, id=201)
+        owner = {'id': 17, 'enrolment_id': 201}
+        payload = {'modules': [], 'weeks': [], 'selectedWeek': None}
+        with patch.object(dashboard_weekly.canonical_learning, 'require_profile', return_value=owner), \
+             patch.object(dashboard_weekly, 'read_weekly_learning', return_value=payload) as read:
+            self.assertIs(dashboard_weekly.read_dashboard_weekly(source, 201), payload)
+        context = read.call_args.args[0]
+        self.assertEqual((context.profile.pk, context.profile.enrolment_id), (17, 201))
+        self.assertIs(source._case_file_profile, context.profile)
+
+    def test_canonical_owner_with_wrong_enrolment_still_fails_closed(self):
+        source = SimpleNamespace(pk=201, id=201)
+        with patch.object(dashboard_weekly.canonical_learning, 'require_profile',
+                          return_value={'id': 17, 'enrolment_id': 202}), \
+             patch.object(dashboard_weekly, 'read_weekly_learning') as read:
+            with self.assertRaises(dashboard_weekly.ServiceError):
+                dashboard_weekly.read_dashboard_weekly(source, 201)
+        read.assert_not_called()
+
     def call(self, view, account, *, method='get', error=None, missing=False):
         model = MagicMock()
         model.DoesNotExist = type('Missing', (Exception,), {})

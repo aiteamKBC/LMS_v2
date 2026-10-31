@@ -40,6 +40,14 @@ def booking(scheduled_date, *, status="scheduled"):
     )
 
 
+def projected_manager(learner):
+    return SimpleNamespace(
+        only=lambda *fields: SimpleNamespace(
+            filter=lambda **kw: SimpleNamespace(first=lambda: learner)
+        )
+    )
+
+
 class FirstSessionAccessTests(SimpleTestCase):
     def call(self, *, record=None, aptem_id=None, owner=("ann@kbc.test", "Ann Coach"),
              programme_status="Fresh user", learner_start_date=None, kind="commercial",
@@ -50,11 +58,7 @@ class FirstSessionAccessTests(SimpleTestCase):
         )
         if learner_type is not None:
             learner.learner_type = learner_type
-        model = SimpleNamespace(
-            all_learners=SimpleNamespace(
-                filter=lambda **kw: SimpleNamespace(first=lambda: learner)
-            )
-        )
+        model = SimpleNamespace(all_learners=projected_manager(learner))
         chain = SimpleNamespace(
             exclude=lambda **kw: SimpleNamespace(
                 order_by=lambda *a: SimpleNamespace(first=lambda: record)
@@ -76,6 +80,13 @@ class FirstSessionAccessTests(SimpleTestCase):
         self.assertFalse(payload["booked"])
         self.assertIsNone(payload["startsOn"])
         self.assertEqual(payload["caseOwner"], {"name": "Ann Coach", "email": "ann@kbc.test"})
+
+    def test_lookup_projection_uses_only_the_gate_fields(self):
+        self.assertEqual(
+            learner_calendar.FIRST_SESSION_SOURCE_FIELDS,
+            ("id", "aptem_id", "case_owner", "learner_type", "programme_status"),
+        )
+        self.assertNotIn("status", learner_calendar.FIRST_SESSION_SOURCE_FIELDS)
 
     def test_a_session_still_ahead_holds_the_learner(self):
         ahead = learner_calendar.first_session_uk_today() + timedelta(days=3)
@@ -251,9 +262,7 @@ class CancelledFirstSessionTests(SimpleTestCase):
         seen = {}
 
         learner = SimpleNamespace(pk=7, aptem_id=None)
-        model = SimpleNamespace(
-            all_learners=SimpleNamespace(filter=lambda **kw: SimpleNamespace(first=lambda: learner))
-        )
+        model = SimpleNamespace(all_learners=projected_manager(learner))
 
         def exclude(**kwargs):
             seen["excluded"] = kwargs

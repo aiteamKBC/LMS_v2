@@ -139,14 +139,24 @@ def fetch_subject(subject_type, subject_id):
 
     Learners are read through ``all_learners``: the default manager on
     EnrolmentUser is scoped to apprenticeships, and a commercial learner must
-    still be able to sign in.
+    still be able to sign in.  Keep this auth lookup to the fields consumed by
+    ``describe_subject`` and ``account_payload``.  Loading the whole unmanaged
+    learner model makes sign-in depend on every optional Created_users column,
+    even though authentication does not use them.
     """
     if subject_type == SUBJECT_LEARNER:
-        manager = EnrolmentUser.all_learners
+        manager = EnrolmentUser.all_learners.only(
+            "learner_type", "aptem_id",
+            "email", "username", "preferred_name",
+        )
     else:
         manager = subject_model(subject_type).objects
     try:
-        return manager.get(pk=subject_id)
+        subject = manager.get(pk=subject_id)
+        if subject_type == SUBJECT_LEARNER:
+            from learner_api.models import attach_programme_name
+            attach_programme_name(subject)
+        return subject
     except (subject_model(subject_type).DoesNotExist, ValueError, TypeError):
         return None
 

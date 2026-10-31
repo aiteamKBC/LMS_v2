@@ -25,7 +25,7 @@ from coach_api.review_sources import (
 from .learner_detail import SOURCE_MODELS
 from .identity import learner_profile_for_source
 from .mappers import _s
-from .models import EnrolmentReview, LearnerProfile, StaffUser
+from .models import EnrolmentReview, LearnerProfile, StaffUser, attach_programme_name
 from .booking_calendar import booking_calendar_payload, booking_date_restriction, mcm_booking_date_restriction
 # The first session's own vocabulary: its event type, and the college's today.
 # Imported rather than restated so the gate, the booking and the calendar
@@ -43,12 +43,22 @@ from login.sessions import authenticate_request
 
 logger = logging.getLogger(__name__)
 
+# Calendar identity only.  Loading the unmanaged Created_users model without a
+# projection also selects legacy columns (notably `` Status``) that normalized
+# learner branches do not contain.
+CALENDAR_SOURCE_FIELDS = ('id', 'username', 'email', 'aptem_id', 'programme_status')
+
 
 def _calendar_profile(learner, pk):
-    if source_for_learner(learner, None).kind == "aptem":
-        profile = review_profile_for_source(learner)
-        return profile if profile is None or profile.lifecycle_status == "active" else None
-    return learner_profile_for_source(learner, pk, active_only=True)
+    # The normalized Learner branch stores programme_id and resolves the
+    # display name through curriculum.programmes; selecting the unmanaged ORM
+    # model wholesale still asks PostgreSQL for the removed `programme` column.
+    # Reuse the canonical, already validated projection used by Dashboard.
+    from . import canonical_learning
+    from .training_plan_dashboard import profile_from_owner
+
+    profile = profile_from_owner(canonical_learning.profile(pk))
+    return profile if profile is None or profile.lifecycle_status == "active" else None
 
 EVENT_TITLES = {
     "mcr": "Monthly Coaching",
@@ -1560,7 +1570,7 @@ def learner_calendar(request, kind, pk):
 
     try:
         # all_learners: the default manager is scoped to apprenticeship rows.
-        learner = model.all_learners.filter(pk=pk).first()
+        learner = model.all_learners.only(*CALENDAR_SOURCE_FIELDS).filter(pk=pk).first()
     except DatabaseError as exc:
         logger.exception("learner_calendar: learner lookup failed")
         return _error(f"Database error: {exc}", 502)
@@ -2687,9 +2697,10 @@ def learner_onboarding_reviews(request, kind, pk):
         return _error(f"Unknown kind: {kind!r}. Expected 'commercial' or 'apprenticeship'.", 404)
 
     try:
-        learner = model.all_learners.filter(pk=pk).first()
+        learner = model.all_learners.defer("status", "programme").filter(pk=pk).first()
         if learner is None:
             return _error("Learner not found.", 404)
+        attach_programme_name(learner)
         booked = {
             record.event_type: record
             for record in CoachCalendarEvent.objects.filter(
@@ -2806,6 +2817,11 @@ def _may_book_first_session_early(kind, learner):
     return learner_signed_compliance_documents(learner_type, learner.pk)
 
 
+FIRST_SESSION_SOURCE_FIELDS = (
+    "id", "aptem_id", "case_owner", "learner_type", "programme_status",
+)
+
+
 @learner_self_or_staff(kwarg="pk")
 def learner_first_session(request, kind, pk):
     """Whether this learner has booked their first session, and when.
@@ -2845,7 +2861,10 @@ def learner_first_session(request, kind, pk):
         return _error(f"Unknown kind: {kind!r}. Expected 'commercial' or 'apprenticeship'.", 404)
 
     try:
-        learner = model.all_learners.filter(pk=pk).first()
+        # This gate needs five scalar fields, not the entire unmanaged learner
+        # row.  Keeping the projection explicit also prevents an optional
+        # Created_users column from taking the learner's whole workspace down.
+        learner = model.all_learners.only(*FIRST_SESSION_SOURCE_FIELDS).filter(pk=pk).first()
         if learner is None:
             return _error("Learner not found.", 404)
         record = (
