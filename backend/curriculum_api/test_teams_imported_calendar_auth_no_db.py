@@ -183,7 +183,7 @@ class ImportedCalendarConnectionTests(SimpleTestCase):
 
     def test_connect_requests_only_selected_calendar_scope_with_pkce_and_bound_nonce(self):
         response, query = self.begin()
-        self.assertEqual(query['scope'], ['openid User.Read Group.ReadWrite.All'])
+        self.assertEqual(query['scope'], ['openid profile User.Read Group.ReadWrite.All'])
         self.assertNotIn('offline_access', query['scope'][0])
         self.assertEqual(query['code_challenge_method'], ['S256'])
         self.assertEqual(query['redirect_uri'], [CONFIG['callback']])
@@ -199,7 +199,36 @@ class ImportedCalendarConnectionTests(SimpleTestCase):
 
     def test_user_calendar_scope_is_separate(self):
         _, query = self.begin('user')
-        self.assertEqual(query['scope'], ['openid User.Read Calendars.ReadWrite'])
+        self.assertEqual(query['scope'], ['openid profile User.Read Calendars.ReadWrite'])
+
+    def test_real_exchange_can_verify_the_object_identity_requested_by_the_connect_flow(self):
+        response, query = self.begin()
+        client = Mock()
+
+        def issue_tokens(url, *, data):
+            # Microsoft emits oid only when profile was requested. Model both
+            # authorize and token scopes so this reproduces the deployed bug.
+            requested = set(query['scope'][0].split()) & set(data['scope'].split())
+            token, keys = CalendarIdentityVerificationTests().signed_token(
+                nonce=query['nonce'][0], oid=OID if 'profile' in requested else None,
+            )
+            client.get.side_effect = lambda path, **kwargs: keys.get.return_value if path.endswith('/keys') else Mock(
+                status_code=200, json=Mock(return_value={'id': OID, 'displayName': 'Test organiser',
+                                                       'userPrincipalName': 'organiser@example.test'}))
+            return Mock(status_code=200, json=Mock(return_value={
+                'token_type': 'Bearer', 'scope': 'User.Read Group.ReadWrite.All',
+                'id_token': token, 'access_token': 'server-only-access-token', 'expires_in': 3600,
+            }))
+
+        client.post.side_effect = issue_tokens
+        with patch.object(auth.httpx, 'Client') as transport:
+            transport.return_value.__enter__.return_value = client
+            completed = self.finish(response, query)
+        self.assertIn('"ok": true', completed.content.decode())
+        access = auth.delegated_calendar_access(self.request(), 'LIVE-TEST')
+        self.assertEqual(access['actorId'], OID)
+        self.assertEqual(access['calendarKind'], 'group')
+        self.assertNotIn('server-only-access-token', completed.content.decode())
 
     def test_completion_stores_encrypted_session_scoped_token_and_status_never_returns_it(self):
         response, query = self.begin()
@@ -265,6 +294,62 @@ class ImportedCalendarConnectionTests(SimpleTestCase):
         with self.assertRaises(auth.CalendarConnectionError):
             auth._frontend_origin(request)
 
+    def test_callback_reports_oauth_diagnostic_without_echoing_microsoft_description(self):
+        response, query = self.begin()
+        request = self.request(data={
+            'state': query['state'][0], 'error': 'access_denied',
+            'error_description': 'AADSTS65004: Private account private@example.test; token=do-not-reflect',
+        })
+        request.COOKIES[auth.NONCE_COOKIE] = response.cookies[auth.NONCE_COOKIE].value
+        with patch.object(auth, '_exchange') as exchange:
+            completed = auth.imported_calendar_callback(request)
+        exchange.assert_not_called()
+        body = completed.content.decode()
+        self.assertIn('AADSTS65004', body)
+        self.assertIn('Group.ReadWrite.All', body)
+        self.assertNotIn('private@example.test', body)
+        self.assertNotIn('do-not-reflect', body)
+        self.assertNotIn('"ok": true', body)
+
+
+class CalendarTokenExchangeFailureTests(SimpleTestCase):
+    def rejected_exchange(self, error, error_codes):
+        client = Mock()
+        client.post.return_value = Mock(status_code=400, json=Mock(return_value={
+            'error': error, 'error_codes': error_codes,
+            'error_description': 'Sensitive account information and secret should not be shown.',
+        }))
+        with patch.object(auth.httpx, 'Client') as transport:
+            transport.return_value.__enter__.return_value = client
+            with self.assertRaises(auth.CalendarConnectionError) as caught:
+                auth._exchange('one-use-code', CONFIG, {
+                    'scope': 'openid User.Read Group.ReadWrite.All', 'verifier': 'pkce-verifier',
+                    'oidcNonce': 'signed-nonce', 'calendarKind': 'group',
+                })
+        client.post.assert_called_once()
+        client.get.assert_not_called()
+        self.assertNotIn('Sensitive account', str(caught.exception))
+        return caught.exception
+
+    def test_invalid_client_is_a_configuration_error_not_an_instruction_to_grant_more_permissions(self):
+        error = self.rejected_exchange('invalid_client', [7000215])
+        self.assertEqual(error.code, 'calendar_connection_configuration')
+        self.assertIn('configuration', str(error))
+        self.assertIn('AADSTS7000215', str(error))
+        self.assertNotIn('administrator consent', str(error))
+
+    def test_interaction_required_requests_interactive_sign_in_without_changing_access(self):
+        error = self.rejected_exchange('interaction_required', [50076])
+        self.assertEqual(error.code, 'calendar_connection_interaction')
+        self.assertIn('sign-in', str(error))
+        self.assertIn('AADSTS50076', str(error))
+
+    def test_invalid_grant_requests_a_fresh_connection_not_a_different_app_permission(self):
+        error = self.rejected_exchange('invalid_grant', [70000])
+        self.assertEqual(error.code, 'calendar_connection_restart')
+        self.assertIn('Start a fresh', str(error))
+        self.assertIn('AADSTS70000', str(error))
+
 
 class CalendarIdentityVerificationTests(SimpleTestCase):
     def signed_token(self, **changes):
@@ -294,7 +379,7 @@ class CalendarIdentityVerificationTests(SimpleTestCase):
         client.get.assert_called_once_with(f'{auth.AUTHORITY}/{TENANT}/discovery/v2.0/keys')
 
     def test_wrong_tenant_audience_nonce_or_expired_identity_is_refused(self):
-        for change in ({'tid': OID}, {'aud': 'other-client'}, {'nonce': 'other-browser'}, {'exp': time.time() - 1}):
+        for change in ({'tid': OID}, {'aud': 'other-client'}, {'nonce': 'other-browser'}, {'oid': None}, {'exp': time.time() - 1}):
             with self.subTest(change=list(change)):
                 token, client = self.signed_token(**change)
                 with self.assertRaises(auth.CalendarConnectionError):

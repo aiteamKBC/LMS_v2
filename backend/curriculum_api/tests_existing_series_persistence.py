@@ -110,6 +110,86 @@ class ExistingSeriesPersistenceTests(CurriculumPersistenceTransactionHarness):
         self.assertEqual(after[0]['sessionPurpose'], 'Keep outline')
         self.assertTrue(all(call.args[0] == 'GET' for call in self.graph.call_args_list))
 
+    def test_unmatched_weekday_restore_preserves_persisted_links_and_history(self):
+        self.apply(self.preview()['previewToken'])
+        series = v.authoring_fetch_all(v.LIVE_SESSIONS_TABLE, 'module_catalogue_id=%s', [self.module_id])[0]
+        before = self.components()
+        occurrences = v.authoring_fetch_all(v.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id=%s', [series['id']])
+        unresolved = []
+        v.attach_teams_meeting_to_module_weeks(self.module_id,
+            {**series, 'meeting_type': 'live-session', 'calendar_series': [{'day': 'Friday'}]},
+            v.live_session_row_to_component_settings(series), [], unresolved_components=unresolved)
+        after = self.components()
+        self.assertCountEqual(unresolved, [row['id'] for row in before])
+        for old, new in zip(before, after):
+            self.assertEqual(new['live_sessions_link'], old['live_sessions_link'])
+            old_settings, new_settings = v.component_builder_settings(old), v.component_builder_settings(new)
+            self.assertEqual(new_settings['teamsCalendarBinding'], 'missing')
+            old_settings.pop('teamsCalendarBinding', None)
+            new_settings.pop('teamsCalendarBinding', None)
+            self.assertEqual(new_settings, old_settings)
+        self.assertEqual(v.authoring_fetch_all(v.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id=%s', [series['id']]), occurrences)
+
+    def test_schedule_with_an_unresolved_saved_identity_sends_no_graph_update(self):
+        self.apply(self.preview()['previewToken'])
+        series = v.authoring_fetch_all(v.LIVE_SESSIONS_TABLE, 'module_catalogue_id=%s', [self.module_id])[0]
+        v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id=%s', [series['id']], {'meeting_type': 'live-session'})
+        component = self.components()[0]
+        settings = {**v.component_builder_settings(component), 'teamsOccurrenceId': 'MISSING-ORIGINAL'}
+        v.update_authoring_rows(v.AUTHORING_COMPONENTS_TABLE, 'id=%s', [component['id']], {'settings_json': v.json_db_value(settings)})
+        before = self.components()
+        with patch('coach_api.views.has_graph_credentials', return_value=True), \
+             patch('coach_api.views.microsoft_graph_request') as graph:
+            response = self.client.patch(f'/curriculum_api/curriculum/teams-meetings/{series["id"]}/schedule/',
+                data=json.dumps({'peopleOnly': False}), content_type='application/json')
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertEqual(response.json()['code'], 'teams_component_binding_unresolved')
+        self.assertEqual(self.components(), before)
+        graph.assert_not_called()
+
+    def test_people_only_http_save_preserves_all_sql_week_and_occurrence_fields(self):
+        from coach_api.tests_support.graph_calendar import GraphCalendar
+        self.apply(self.preview()['previewToken'])
+        series = v.authoring_fetch_all(v.LIVE_SESSIONS_TABLE, 'module_catalogue_id=%s', [self.module_id])[0]
+        rows = v.authoring_fetch_all(v.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id=%s', [series['id']], 'session_number')
+        components = self.components()
+        for weekday in (False, True):
+            with self.subTest(weekday=weekday):
+                manifest = ([{'day': 'Friday', 'eventId': series['graph_event_id'], 'joinUrl': LINK,
+                    'onlineMeetingId': series['online_meeting_id'], 'sessionNumbers': [8, 12], 'verified': True}] if weekday else [])
+                v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id=%s', [series['id']],
+                    {'meeting_type': 'live-session' if weekday else 'linked-external', 'calendar_series': v.json_db_value(manifest)})
+                graph = GraphCalendar(event_id=series['graph_event_id'], meeting_id=series['online_meeting_id'],
+                    join_suffix='synthetic', owner=series['organizer_email'], subject=series['module_title'],
+                    starts=[v.utc_iso_value(row['scheduled_start']) for row in rows], duration=120)
+                graph.event['onlineMeeting']['joinUrl'] = LINK
+                for event in graph.instances:
+                    event['onlineMeeting']['joinUrl'] = LINK
+                with patch('coach_api.views.microsoft_graph_request', side_effect=graph) as transport, \
+                     patch('curriculum_api.teams_original_calendar.calendar_authorized', return_value=True), \
+                     patch('coach_api.views.get_graph_settings', return_value={
+                         'base_url': 'https://graph.microsoft.com/v1.0', 'timezone': 'GMT Standard Time',
+                         'tenant_id': 'synthetic', 'client_id': 'synthetic', 'client_secret': 'synthetic',
+                         'scope': 'https://graph.microsoft.com/.default'}):
+                    response = self.client.patch(f'/curriculum_api/curriculum/teams-meetings/{series["id"]}/schedule/',
+                        data=json.dumps({'peopleOnly': True, 'invitationsOnly': True,
+                            'attendees': ['synthetic.learner@example.invalid'], 'title': series['module_title'],
+                            'startDateTimeUtc': v.utc_iso_value(rows[0]['scheduled_start']),
+                            'localStartDateTime': '2026-10-23T09:00:00', 'durationMinutes': 120,
+                            'repeat': 'weekly', 'repeatOccurrences': len(rows),
+                            'scheduledOccurrences': [{'sessionNumber': row['session_number'],
+                                'startDateTimeUtc': v.utc_iso_value(row['scheduled_start']), 'durationMinutes': 120} for row in rows]}),
+                        content_type='application/json')
+                self.assertEqual(response.status_code, 200, response.content)
+                self.assertEqual(self.components(), components)
+                self.assertEqual(v.authoring_fetch_all(v.LIVE_SESSION_OCCURRENCES_TABLE,
+                    'live_session_id=%s', [series['id']], 'session_number'), rows)
+                saved = v.authoring_fetch_all(v.LIVE_SESSIONS_TABLE, 'id=%s', [series['id']])[0]
+                self.assertEqual(v.parse_json_value(saved['calendar_series'], []), manifest)
+                self.assertEqual(saved['join_url'], LINK)
+                self.assertEqual(v.teams_series_email_list(saved['attendees']), ['synthetic.learner@example.invalid'])
+                self.assertFalse(any(call.args[0] in ('POST', 'DELETE') for call in transport.call_args_list))
+
     def test_command_applies_and_replays_on_the_verified_sql_fixture_without_duplicate_rows(self):
         for _ in range(2):
             output = io.StringIO()
