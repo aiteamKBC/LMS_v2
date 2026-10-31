@@ -276,22 +276,22 @@ async function renderWorkspace(query = '') {
   return result;
 }
 
-it('shows status-count columns for programme, cohort, group and module scopes without opening learner lists', async () => {
+it.each([
+  ['Overview', 'programme', 'PROG-DATA', 'Data Analyst: 8 active learners'],
+  ['Cohorts', 'cohort', 'COHORT-1', 'Sept 2026: 8 active learners'],
+  ['Groups', 'group', 'GROUP-1', 'Group A: 2 on break learners'],
+  ['Modules', 'module', 'MOD-1', 'Data Foundations: 12 all statuses learners'],
+])('shows %s status counts without opening learner lists', async (tab, scope, id, label) => {
   vi.mocked(fetchAssignedLearners).mockClear();
   vi.mocked(fetchLearnerStatusCounts).mockClear();
   await renderWorkspace();
-  expect(await screen.findByRole('button', { name: 'Data Analyst: 8 active learners' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Data Analyst: 2 withdrawn learners' })).toHaveAttribute('title', 'Withdrawn: 2 learners');
-  await openTab(/Cohorts/);
-  expect(await screen.findByRole('button', { name: 'Sept 2026: 8 active learners' })).toBeVisible();
-  await openTab(/Groups/);
-  expect(await screen.findByRole('button', { name: 'Group A: 2 on break learners' })).toBeVisible();
-  await openTab(/Modules/);
-  expect(await screen.findByRole('button', { name: 'Data Foundations: 12 all statuses learners' })).toBeVisible();
-  expect(fetchAssignedLearners).not.toHaveBeenCalled();
-  for (const [scope, id] of [['programme', 'PROG-DATA'], ['cohort', 'COHORT-1'], ['group', 'GROUP-1'], ['module', 'MOD-1']]) {
-    expect(fetchLearnerStatusCounts).toHaveBeenCalledWith(scope, expect.arrayContaining([id]), expect.any(AbortSignal));
+  if (tab !== 'Overview') await openTab(new RegExp(tab));
+  expect(await screen.findByRole('button', { name: label })).toBeVisible();
+  if (scope === 'programme') {
+    expect(screen.getByRole('button', { name: 'Data Analyst: 2 withdrawn learners' })).toHaveAttribute('title', 'Withdrawn: 2 learners');
   }
+  expect(fetchAssignedLearners).not.toHaveBeenCalled();
+  expect(fetchLearnerStatusCounts).toHaveBeenCalledWith(scope, expect.arrayContaining([id]), expect.any(AbortSignal));
 });
 
 it('opens the selected table row and lifecycle status without changing its assignment action', async () => {
