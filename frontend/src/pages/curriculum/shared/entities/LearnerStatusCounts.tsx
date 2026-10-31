@@ -27,7 +27,14 @@ export function LearnerStatusCounts({ target, onManage, refreshKey }: { target: 
     if (refreshKey !== undefined) context?.statusStore.refresh({ scope, id, name }, refreshKey);
   }, [context?.statusStore, scope, id, name, refreshKey]);
   if (!state.value) return <span className="inline-flex items-center gap-1 text-[11px] text-foreground-500" aria-label={`${name}: learner counts`}>
-    {state.loading ? <span role="status">Loading counts…</span> : <button type="button" onClick={event => { event.stopPropagation(); context?.statusStore.refresh(target); }}
+    {state.loading ? <span role="status" className="inline-flex gap-1"><span className="sr-only">Loading learner counts…</span>
+      {['all', 'active', 'withdrawn', 'on break'].map(status => {
+        const meta = statusMeta(status);
+        return <span key={status} aria-hidden="true" className={`inline-flex min-h-7 items-center gap-1 rounded-lg border px-1.5 py-1 font-bold ${meta.tone}`}>
+          <AppIcon className={meta.icon} /><span>…</span>
+        </span>;
+      })}
+    </span> : <button type="button" onClick={event => { event.stopPropagation(); context?.statusStore.refresh(target); }}
       title={state.error} className="font-semibold text-red-700 underline">Retry learner counts</button>}
   </span>;
   const keys = ['all', 'active', 'withdrawn', ...Object.keys(state.value.statuses).filter(key => !['active', 'withdrawn'].includes(key))];

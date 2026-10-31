@@ -196,7 +196,7 @@ def next_title(items, today):
     return next((i['title'] for i in entries if not i['completed']), None)
 
 
-def assemble_cards(native, current, courses, definitions, done, started, hours, metadata, records, modules, credits, *, search=None):
+def assemble_cards(native, current, courses, definitions, done, started, hours, metadata, records, modules, credits, *, search=None, include_activity_items=False):
     """Programme-wide counts with the same explicit import/replacement identities as My Learning."""
     from .progress_transfer_policy import merged_percent
     from .progress_demo import credit as demo_credit
@@ -347,6 +347,12 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             subject['actualHours'] = round(transfer['hours'] + (native_hours.get(subject.get('moduleId'), {}).get('hours', {}).get('actual') or 0), 6)
             # Keep the component-derived status, including a started native
             # attempt with no completed components yet (0% is not "Upcoming").
+        if include_activity_items:
+            # Internal curriculum-directory projection of this exact population.
+            # Bodies, evidence and resource URLs never leave the reader.
+            subject['_activityItems'] = [dict(
+                completed=bool(item['completed']), schedule=item.get('schedule') or {},
+            ) for item in items]
         cards.append(subject)
     def totals(source):
         rows = [c for c in cards if c['source'] == source]
