@@ -21,7 +21,7 @@ import { emailList } from '../module-builder/EmailChipsInput.helpers';
 import { forwardScheduleEmail } from './forwardScheduleEmail';
 import { updateProgressSteps } from './updateProgress';
 import { reviewDateLabel } from './calendarTime';
-import { offScheduleRunSentence } from './offScheduleRuns';
+import { OffScheduleRunDetails } from './OffScheduleRunDetails';
 import { createPortal } from 'react-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
@@ -388,7 +388,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
     graphStatus, checkGraphConfiguration,
     checkCalendarAction, selectedForDisplay, createCalendar, createDrawer, createRecovery,
     createDraft, createDraftSaving, saveCreateDraft, leftoverCancelling, cancelLeftover,
-    runCalendarSync, calendarSyncing, autoSyncEnabled, setAutoSyncEnabled,
+    runCalendarSync, calendarSyncing, calendarCheckRevisions, autoSyncEnabled, setAutoSyncEnabled,
     detailError, loadDetail, holidayLabelFor,
     detailOccurrenceFor, now, setPreview, setTranscriptPreview, invitedPrefilling, prefillNotice, prefillInvitees, preview,
     transcriptPreview, settingsDrawer, drawerTarget, saveSettings, blockedReason,
@@ -651,6 +651,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
             {/* Where this module stands, in the same chips the table uses. */}
             <div className="mb-4 flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wide">
               <span className={`inline-flex items-center rounded-full border px-2.5 py-1 ${STATE_TONES[selected.state]}`}>
+                <span className="mr-1 normal-case">Module plan:</span>
                 {externalCalendar && !selected.summary ? 'Existing link · dates unconfirmed' : STATE_LABELS[selected.state]}
               </span>
               <span className="inline-flex items-center rounded-full border border-background-200 bg-background-100 px-2.5 py-1 text-foreground-600">
@@ -805,6 +806,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                 <ModuleSessionSchedulePreview
                   row={selectedForDisplay || selected}
                   title="Module dates sent to Teams"
+                  preserveExistingDates={Boolean(externalCalendar?.originalSeriesId)}
                   holidayLabelFor={holidayLabelFor}
                   renderActions={(index, durationMinutes, teamsUtc) => {
                     const plannedUtc = (selectedForDisplay || selected).plannedStarts[index] || '';
@@ -882,11 +884,8 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     if (!attended && !artifacts.length && !offSchedule.length) return null;
                     return (
                       <>
-                        {offSchedule.map(run => (
-                          <span key={`${run.runStartUtc}-${run.runEndUtc}`} role="note" className="basis-full font-semibold text-amber-800">
-                            {offScheduleRunSentence(run, iso => reviewDateLabel(iso, detail?.series.timeZoneIana || 'Europe/London'))}
-                          </span>
-                        ))}
+                        <OffScheduleRunDetails runs={offSchedule}
+                          when={iso => reviewDateLabel(iso, detail?.series.timeZoneIana || 'Europe/London')} />
                         {Boolean(attended) && (
                           <span className="font-semibold text-foreground-600">{attended} attended</span>
                         )}
@@ -1016,6 +1015,8 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                         link integrity, lifecycle and attribution for every session. */}
                     <CalendarHealthPanel
                       liveSessionId={selected.summary?.liveSessionId || ''}
+                      refreshKey={calendarCheckRevisions[selected.summary?.liveSessionId || ''] || 0}
+                      planSessionCount={(selectedForDisplay || selected).sessions.length}
                       disabled={!graphConfigured}
                     />
                   </section>

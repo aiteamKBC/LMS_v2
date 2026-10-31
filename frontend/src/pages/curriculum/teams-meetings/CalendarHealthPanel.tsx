@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { DetailRow, InlineError } from '../shared/entities/ui';
-import { offScheduleRunLabel, offScheduleRunSentence } from './offScheduleRuns';
+import { OffScheduleRunDetails } from './OffScheduleRunDetails';
 import {
   EVENT_LABELS, FILTER_LABELS, INTEGRITY_EXPLANATIONS, INTEGRITY_LABELS, INTEGRITY_TONES, LIFECYCLE_LABELS,
   MEETING_TYPE_EXPLANATIONS, MEETING_TYPE_LABELS, MEMBERSHIP_LABELS, STATUS_LABELS, STATUS_TONES,
@@ -18,23 +18,39 @@ import {
  * resolution review that shows what will and will not change, and only after
  * the person ticks that they have read it and confirms.
  */
-export function CalendarHealthPanel({ liveSessionId, disabled }: { liveSessionId: string; disabled?: boolean }) {
+export function CalendarHealthPanel({ liveSessionId, disabled, refreshKey = 0, planSessionCount }: {
+  liveSessionId: string; disabled?: boolean; refreshKey?: number; planSessionCount?: number;
+}) {
   const [health, setHealth] = useState<CalendarHealth | null>(null);
   const [filter, setFilter] = useState<HealthFilter>('all');
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [openSession, setOpenSession] = useState<HealthSession | null>(null);
+  const readId = useRef(0);
+  const previousRefresh = useRef({ liveSessionId, refreshKey });
 
   const load = useCallback(async (nextFilter: HealthFilter, nextPage: number) => {
     if (!liveSessionId) return;
+    const attempt = ++readId.current;
     setLoading(true); setError('');
-    try { setHealth(await fetchCalendarHealth(liveSessionId, nextFilter, nextPage)); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : 'Calendar health could not be loaded.'); }
-    finally { setLoading(false); }
+    try {
+      const value = await fetchCalendarHealth(liveSessionId, nextFilter, nextPage);
+      if (readId.current === attempt) setHealth(value);
+    } catch (reason) {
+      if (readId.current === attempt) setError(reason instanceof Error ? reason.message : 'Calendar health could not be loaded.');
+    } finally { if (readId.current === attempt) setLoading(false); }
   }, [liveSessionId]);
 
-  useEffect(() => { setHealth(null); setFilter('all'); setPage(1); setOpenSession(null); void load('all', 1); }, [liveSessionId, load]);
+  useEffect(() => {
+    setHealth(null); setFilter('all'); setPage(1); setOpenSession(null); void load('all', 1);
+    return () => { readId.current += 1; };
+  }, [liveSessionId, load]);
+  useEffect(() => {
+    const previous = previousRefresh.current;
+    previousRefresh.current = { liveSessionId, refreshKey };
+    if (previous.liveSessionId === liveSessionId && previous.refreshKey !== refreshKey) void load(filter, page);
+  }, [liveSessionId, refreshKey, load, filter, page]);
 
   const choose = (next: HealthFilter) => { setFilter(next); setPage(1); void load(next, 1); };
   const go = (next: number) => { setPage(next); void load(filter, next); };
@@ -83,8 +99,12 @@ export function CalendarHealthPanel({ liveSessionId, disabled }: { liveSessionId
             </p>
           )}
           <dl className="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-5">
+            {planSessionCount !== undefined && <div className="rounded-lg bg-background-50 px-2 py-1.5">
+              <dt className="text-foreground-500">Current module plan</dt>
+              <dd className="text-[14px] font-bold text-foreground-900">{planSessionCount}</dd>
+            </div>}
             {([
-              ['Planned sessions', summary.counts.plannedSessions],
+              ['Saved calendar sessions', summary.counts.plannedSessions],
               ['Main series', summary.counts.mainSeries],
               ['Additional meetings', summary.counts.additionalMeetings],
               ['Standalone replacements', summary.counts.standaloneReplacements],
@@ -100,6 +120,11 @@ export function CalendarHealthPanel({ liveSessionId, disabled }: { liveSessionId
               </div>
             ))}
           </dl>
+          {planSessionCount !== undefined && planSessionCount !== summary.counts.plannedSessions && <p role="note"
+            className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-900">
+            The current module plan has {planSessionCount} sessions; the saved calendar has {summary.counts.plannedSessions}.
+            {' '}Review the date differences before changing the schedule. Historical attendance and recordings remain attached to their saved sessions.
+          </p>}
           {health.warnings.map(warning => (
             <div key={warning.category} role={warning.severity === 'error' ? 'alert' : 'note'}
               className={`rounded-lg border p-3 text-[12px] ${warning.severity === 'notice' ? 'border-slate-200 bg-slate-50 text-slate-800'
@@ -182,10 +207,7 @@ function SessionTable({ sessions, onView }: { sessions: HealthSession[]; onView:
                   ? <span className="block font-semibold text-red-700">Issue</span>
                   : session.lifecycleIssues.length > 0 && <span className="block text-amber-800">Check</span>}
                 {Boolean(session.offScheduleRuns?.length) && (
-                  <span className="block text-amber-800"
-                    title={(session.offScheduleRuns || []).map(run => offScheduleRunSentence(run, formatWhen)).join(' ')}>
-                    {offScheduleRunLabel(session.offScheduleRuns)}
-                  </span>
+                  <OffScheduleRunDetails runs={session.offScheduleRuns || []} when={formatWhen} />
                 )}
               </td>
               <td className="py-1.5 pr-2">{session.auditIssues.length ? 'Unknown attribution' : 'Known or not required'}</td>
@@ -336,12 +358,7 @@ function SessionDetails({ detail }: { detail: SessionDetail }) {
             {issue.message}
           </p>
         ))}
-        {(detail.offScheduleRuns || []).map(run => (
-          <p key={`${run.runStartUtc}-${run.runEndUtc}`} role="note"
-            className="mt-1 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-900">
-            {offScheduleRunSentence(run, formatWhen)}
-          </p>
-        ))}
+        <OffScheduleRunDetails runs={detail.offScheduleRuns || []} when={formatWhen} />
         <DetailRow label="Calendar membership" value={MEMBERSHIP_LABELS[detail.membership]} />
       </div>
       <div>

@@ -20,6 +20,20 @@ const held = planned.filter((_, index) => index !== 4);
 const cairoDay = (value: string) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Cairo' }).format(new Date(value));
 
 describe('pairing the module plan with the Teams calendar by date', () => {
+  it('keeps a linked calendar historical date visible without promising its deletion', () => {
+    const shortened = { ...row, sessions: row.sessions.filter((_, index) => index !== 2),
+      plannedStarts: planned.filter((_, index) => index !== 2), teamsStarts: planned, summary: { liveSessionId: 'LIVE-PAIR' } };
+    const { rerender } = render(<ModuleSessionSchedulePreview row={shortened} preserveExistingDates />);
+    expect(screen.getByText(/The original calendar also holds/)).toHaveTextContent('17 Sept 2026');
+    expect(screen.getByText(/The original calendar also holds/)).toHaveTextContent('kept when this linked calendar is updated');
+    expect(screen.queryByText(/sending removes/)).not.toBeInTheDocument();
+    // The ordinary managed-calendar preview retains its existing contract.
+    rerender(<ModuleSessionSchedulePreview row={shortened} />);
+    expect(screen.getByText(/Teams also holds/)).toHaveTextContent('sending removes it');
+    expect(teamsCalendarOccurrences(shortened)).toHaveLength(9);
+    expect(shortened.teamsStarts).toEqual(planned);
+  });
+
   it('reads one missing session as that session, not as every later one moving', () => {
     const { paired, extra } = pairHeldDates(planned, held, cairoDay);
     expect(paired[4]).toBe('');

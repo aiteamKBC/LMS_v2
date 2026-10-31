@@ -122,6 +122,7 @@ export function ModuleSessionSchedulePreview({
   renderFacts,
   overrideDuration = 0,
   showAlternateTimeZones = true,
+  preserveExistingDates = false,
 }: {
   row: TeamsSchedulePreviewRow;
   title?: string;
@@ -144,6 +145,8 @@ export function ModuleSessionSchedulePreview({
    */
   overrideDuration?: number;
   showAlternateTimeZones?: boolean;
+  /** Imported calendars retain their original instances, including historical dates outside this plan. */
+  preserveExistingDates?: boolean;
 }) {
   const plan = buildHolidayShiftPlan(row.sessions, holidayLabelFor);
   const hasCalendar = Boolean(row.summary);
@@ -199,12 +202,12 @@ export function ModuleSessionSchedulePreview({
       matches: gap.matches,
       actions: renderActions?.(index, durationMinutes, teamsUtc),
       extra: (driftedCountryPair || !session || facts || gap.note) ? (
-        <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           {driftedCountryPair && <span className="font-semibold">{driftedCountryPair}</span>}
           {!session && <span className="font-semibold text-amber-700">Held on Teams, but the module has no session on this date.</span>}
           {facts}
           {gap.note && <span className="font-semibold text-amber-700">{gap.note}</span>}
-        </span>
+        </div>
       ) : undefined,
     };
   });
@@ -272,9 +275,10 @@ export function ModuleSessionSchedulePreview({
           />
           {pairing.extra.length > 0 && (
             <p className="border-t border-background-200 px-3 py-2 text-[11px] font-semibold text-amber-700">
-              Teams also holds {pairing.extra.map(value => calendarLabel(value, row.timeZone)).join('; ')}, which
+              {preserveExistingDates ? <>The original calendar also holds {pairing.extra.map(value => calendarLabel(value, row.timeZone)).join('; ')}.
+                {' '}{pairing.extra.length === 1 ? 'This date is' : 'These dates are'} outside the current module plan and kept when this linked calendar is updated. Existing attendance and recordings are preserved. Review these dates separately before changing the schedule.</> : <>Teams also holds {pairing.extra.map(value => calendarLabel(value, row.timeZone)).join('; ')}, which
               {' '}{pairing.extra.length === 1 ? 'is not a session' : 'are not sessions'} in this module — sending removes
-              {' '}{pairing.extra.length === 1 ? 'it' : 'them'}.
+              {' '}{pairing.extra.length === 1 ? 'it' : 'them'}.</>}
             </p>
           )}
           {/* A note about a pending change is only useful next to the thing

@@ -461,6 +461,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   const calendarSyncAttempts = useRef<Map<string, number>>(new Map());
   const calendarSyncStatuses = useRef<Map<string, string>>(new Map());
   const [calendarSyncing, setCalendarSyncing] = useState<Set<string>>(() => new Set());
+  const [calendarCheckRevisions, setCalendarCheckRevisions] = useState<Record<string, number>>({});
   const [resultsModule, setResultsModule] = useState('');
   const [preview, setPreview] = useState<{ liveSessionId: string; artifact: TeamsMeetingArtifact; title: string } | null>(null);
   /**
@@ -1095,6 +1096,11 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       return undefined;
     } finally {
       calendarSyncInFlight.current.delete(liveSessionId);
+      // A check can save verification without changing any session. Refresh
+      // only this calendar's report, including a newly recorded failed check.
+      if (calendarSyncEligibility.current.get(liveSessionId)?.allowed) {
+        setCalendarCheckRevisions(current => ({ ...current, [liveSessionId]: (current[liveSessionId] || 0) + 1 }));
+      }
       setCalendarSyncing(current => {
         const next = new Set(current);
         next.delete(liveSessionId);
@@ -2192,7 +2198,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     teamsLoading, teamsLoaded, teamsError, graphConfigured, graphStatus, checkGraphConfiguration, timeZoneLabel,
     selectedId, setSelectedId, calendarActionTarget, setCalendarActionTarget,
     busy, notice, setNotice, detail, detailLoading, detailError, loadDetail, detailOccurrenceFor,
-    artifactSyncing, autoSyncEnabled, setAutoSyncEnabled, calendarSyncing, resultsModule, setResultsModule,
+    artifactSyncing, autoSyncEnabled, setAutoSyncEnabled, calendarSyncing, calendarCheckRevisions, resultsModule, setResultsModule,
     preview, setPreview, transcriptPreview, setTranscriptPreview, pendingComponents, now,
     settingsDrawer, createDrawer, createDraft, createDraftSaving, saveCreateDraft, leftoverCancelling, cancelLeftover, updateDrawer, drawerTarget, invitedPrefilling, prefillNotice,
     loadTeamsState, holidayLabelFor, rows, selected, selectedForDisplay, stats,
