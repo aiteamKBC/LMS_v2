@@ -16,7 +16,7 @@ function restore(key: string): Draft | null {
 }
 
 /** One draft per learner/course/type/activity. Never count hidden or paused time. */
-export function useLegacyStudySession(key: string, enabled: boolean, suspended: boolean, element?: RefObject<HTMLElement | null>) {
+export function useLegacyStudySession(key: string, enabled: boolean, suspended: boolean, element?: RefObject<HTMLElement | null>, playbackOnly = false) {
   const [draft, setDraft] = useState<Draft | null>(() => restore(key));
   const [paused, setPaused] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -36,7 +36,7 @@ export function useLegacyStudySession(key: string, enabled: boolean, suspended: 
   }, [key]);
   useEffect(() => { if (current) persist(current); }, [current, persist]);
   const running = !!current && enabled && !suspended && !paused
-    && (current.timing.countingMode !== 'active_playback' || playing);
+    && (!(playbackOnly || current.timing.countingMode === 'active_playback') || playing);
   useEffect(() => {
     let last = performance.now();
     const visibility = () => { visibleRef.current = document.visibilityState === 'visible'; last = performance.now(); };

@@ -17,8 +17,8 @@ def tracking_identity(group_id, activity_id, catalogue_kind, attempt_id):
 def supports_playback_timing(item):
     """Match the media players that expose audible playback events.
 
-    Vimeo/Spotify and arbitrary embeds use visible-page time, explicitly shown
-    as such in the UI; they must not pretend to report playback events.
+    Unsupported audio embeds use visible-page time. Video sessions always
+    require playback; unsupported video players use manual time entry.
     """
     if item.get('can_embed') is False:
         return False
@@ -37,12 +37,17 @@ def create_session(kind, learner_id, group_id, activity_id, definition):
     from .time_tracking import issue_tracking_session
     attempt_id = str(uuid4())
     activity_kind = 'quiz' if definition.get('quiz') else 'component'
-    # Mixed reading/media and embedded documents use visible-page time, just
-    # like native readings. Standalone audio/video uses actual playback.
+    # Video lessons use playback even when they include companion text or a
+    # protected source URL. Players without playback events use manual input;
+    # opening an iframe must never be counted as watching a video.
     media = definition.get('media') or []
+    video_hosts = {'youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be',
+                   'vimeo.com', 'www.vimeo.com', 'player.vimeo.com'}
+    video_activity = any((item.get('kind') == 'video' and urlparse(str(item.get('url') or '')).hostname != 'open.spotify.com')
+                         or urlparse(str(item.get('url') or '')).hostname in video_hosts for item in media)
     playback_only = (not definition.get('has_reading') and not definition.get('reading_html')
                      and media and all(supports_playback_timing(item) for item in media))
-    mode = 'active_quiz' if activity_kind == 'quiz' else 'active_playback' if playback_only else 'visible_page'
+    mode = 'active_quiz' if activity_kind == 'quiz' else 'active_playback' if video_activity or playback_only else 'visible_page'
     session = issue_tracking_session(activity_kind=activity_kind,
         activity_id=tracking_identity(group_id, activity_id, definition.get('catalogue_kind', 'material'), attempt_id),
         learner_kind=kind, learner_id=learner_id, counting_mode=mode)

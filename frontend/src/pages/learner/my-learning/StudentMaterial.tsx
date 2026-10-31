@@ -18,6 +18,15 @@ import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
 const AttachmentPreview = lazy(() => import('../video-watch/page').then((module) => ({ default: module.InlineAttachmentPreview })));
 type StartedAttempt = { attempt_id: string; definition: Partial<SubjectMaterial>; timing: TimeTrackingSession };
 const pendingStarts = new Map<string, Promise<StartedAttempt>>();
+const videoProviders = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be',
+  'vimeo.com', 'www.vimeo.com', 'player.vimeo.com']);
+
+function isVideoMaterial(item: SubjectMaterial['media'][number]) {
+  try {
+    const url = new URL(item.url, window.location.origin);
+    return url.hostname !== 'open.spotify.com' && (item.kind === 'video' || videoProviders.has(url.hostname));
+  } catch { return false; }
+}
 
 function studyClock(seconds: number) {
   const total = Math.floor(seconds);
@@ -67,8 +76,8 @@ function Html({ value }: { value: string }) {
   </div>;
 }
 
-export function Media({ value, kind, title, fileName, canEmbed = true, onEnded, onPlayingChange }: {
-  value: string; kind: string; title: string; fileName?: string; canEmbed?: boolean; onEnded?: () => void; onPlayingChange?: (playing: boolean) => void;
+export function Media({ value, kind, title, fileName, canEmbed = true, onEnded, onPlayingChange, onUnsupported }: {
+  value: string; kind: string; title: string; fileName?: string; canEmbed?: boolean; onEnded?: () => void; onPlayingChange?: (playing: boolean) => void; onUnsupported?: () => void;
 }) {
   let url: URL;
   try { url = new URL(value, window.location.origin); } catch { return <p>Material link is unavailable.</p>; }
@@ -82,13 +91,12 @@ export function Media({ value, kind, title, fileName, canEmbed = true, onEnded, 
   // Legacy type labels can describe the lesson rather than its linked media.
   // Provider pages need their embedded player, even in a reading/audio lesson.
   const spotify = url.hostname === 'open.spotify.com';
-  const providerVideo = ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be',
-    'vimeo.com', 'www.vimeo.com', 'player.vimeo.com'].includes(url.hostname);
+  const providerVideo = videoProviders.has(url.hostname);
   const providerUrl = spotify || providerVideo ? previewUrl(fileUrl) || fileUrl : fileUrl;
   const parsedVideo = parseVideoUrl(providerUrl);
   // Preserve private Vimeo access parameters already handled by previewUrl.
   if (providerVideo && parsedVideo.kind === 'vimeo') parsedVideo.src = providerUrl;
-  if (!spotify && (kind === 'video' || providerVideo)) return <section className="space-y-2"><div className="relative aspect-video overflow-hidden rounded-xl bg-black"><VideoPlayer parsed={storedFile ? { kind: 'file', src: fileUrl } : parsedVideo} title={title} onEnded={onEnded} onPlayingChange={onPlayingChange} /></div>{original}</section>;
+  if (!spotify && (kind === 'video' || providerVideo)) return <section className="space-y-2"><div className="relative aspect-video overflow-hidden rounded-xl bg-black"><VideoPlayer parsed={storedFile ? { kind: 'file', src: fileUrl } : parsedVideo} title={title} onEnded={onEnded} onPlayingChange={onPlayingChange} onUnsupported={onUnsupported} /></div>{original}</section>;
   if (kind === 'pdf') return <section className="space-y-2"><Suspense fallback={<p role="status">Loading file preview…</p>}><AttachmentPreview url={fileUrl} title={title} fileName={fileName || 'document.pdf'} /></Suspense>{original}</section>;
   if (kind === 'audio' && !spotify) {
     const drive = url.href.match(/drive\.google\.com\/(?:file\/d\/|(?:open|uc)\?[^#]*id=)([\w-]{10,})/);
@@ -141,6 +149,7 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
   const [correction, setCorrection] = useState<{ reason: WorkingRuleReason | ''; holidayName: string } | null>(null);
   const [result, setResult] = useState('');
   const [savedResult, setSavedResult] = useState<SubjectAttemptResult | null>(null);
+  const [untrackedVideo, setUntrackedVideo] = useState(false);
   const { confirmTime, timeConfirmation } = useManualTimeConfirmation();
   const mounted = useRef(true);
   const requestPending = useRef(false);
@@ -156,8 +165,11 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
   const timerKey = `legacy-study:v1:${encodeURIComponent(kind)}:${encodeURIComponent(learnerId)}:${groupId}:${catalogueQuiz || reviewQuiz ? 'quiz' : 'material'}:${activityId}`;
   const currentIdentity = useRef(timerKey);
   currentIdentity.current = timerKey;
+  // Follow the rendered video, including protected source-file URLs and
+  // videos with companion text. Older drafts may still say visible_page.
+  const videoActivity = !!data && !data.quiz && data.media.some(isVideoMaterial);
   const study = useLegacyStudySession(timerKey, !!data?.can_attempt && !!data?.available && !readOnly && !reviewQuiz
-    && !((catalogueQuiz || !data?.quiz) && (completed || data?.completed || savedResult?.completed)), busy || !!correction || !!timeConfirmation, activityElement);
+    && !((catalogueQuiz || !data?.quiz) && (completed || data?.completed || savedResult?.completed)), busy || !!correction || !!timeConfirmation, activityElement, videoActivity);
   const attemptId = study.draft?.attemptId || null;
   const answers = study.draft?.answers || {};
   const confirmed = study.draft?.confirmed || false;
@@ -282,9 +294,9 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
   return <div ref={activityElement} className="space-y-6 rounded-2xl border border-foreground-200 bg-white p-4 sm:p-6">
     {!data.available && <p>No material is available for this activity yet.</p>}
     {data.media.map((item, index) => <Media key={`${index}:${item.url}`} value={item.url} kind={item.kind} title={item.title} fileName={item.file_name} canEmbed={item.can_embed} onPlayingChange={playing => {
-      if (playing) playingMedia.current.add(index); else playingMedia.current.delete(index);
+      if (playing && (!videoActivity || isVideoMaterial(item))) playingMedia.current.add(index); else playingMedia.current.delete(index);
       study.setPlaying(playingMedia.current.size > 0);
-    }} onEnded={() => setConfirmed(true)} />)}
+    }} onUnsupported={() => { if (isVideoMaterial(item)) setUntrackedVideo(true); }} onEnded={() => setConfirmed(true)} />)}
     {data.reading_html && <Html value={data.reading_html} />}
     {data.unavailable_attachments?.map((name, index) => <p key={index} className="text-sm text-amber-800">Attachment unavailable: {name}</p>)}
     {quiz && <section className="space-y-4" aria-label="Activity quiz">
@@ -317,7 +329,9 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
       </div>}
       {!reviewOnly && !!attemptId && <div className="flex flex-wrap items-center gap-3 text-xs text-foreground-600">
         <button type="button" disabled={actionsDisabled} className="rounded-lg border border-primary-300 px-3 py-1 font-semibold" onClick={() => study.setPaused(!study.paused)}>{study.paused ? 'Resume timer' : 'Pause timer'}</button>
-        <span>{study.paused ? 'Timer paused.' : study.draft?.timing.countingMode === 'active_playback' ? 'Time counts during audible playback while this page is visible.' : 'Time counts while this page is visible.'}</span>
+        <span>{videoActivity && (untrackedVideo || data.media.some(item => isVideoMaterial(item) && item.can_embed === false))
+          ? 'This video cannot report playback time. Enter your study time manually.'
+          : study.paused ? 'Timer paused.' : videoActivity || study.draft?.timing.countingMode === 'active_playback' ? 'Time counts during audible playback while this page is visible.' : 'Time counts while this page is visible.'}</span>
         <span>{manualSeconds == null ? 'Only enter a time if you need to correct it.' : 'Your manual time will be saved. Clear both fields to use the timer.'}</span>
       </div>}
       {study.storageError && <p role="alert" className="text-sm text-amber-800">{study.storageError}</p>}

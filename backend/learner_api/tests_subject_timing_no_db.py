@@ -91,13 +91,26 @@ class LegacyTimingTests(unittest.TestCase):
         for media, expected in [
             ([{'kind': 'video', 'url': 'https://example.org/video.mp4'}], 'active_playback'),
             ([{'kind': 'audio', 'url': 'https://example.org/audio.mp3'}], 'active_playback'),
-            ([{'kind': 'video', 'url': 'https://vimeo.com/1234'}], 'visible_page'),
+            ([{'kind': 'video', 'url': 'https://vimeo.com/1234'}], 'active_playback'),
             ([{'kind': 'audio', 'url': 'https://open.spotify.com/episode/example'}], 'visible_page'),
         ]:
             _, definition = self.session(has_reading=False, media=media)
             self.assertEqual(definition['studyTimingSession']['countingMode'], expected)
         _, definition = self.session(quiz={'id': 'q'})
         self.assertEqual(definition['studyTimingSession']['countingMode'], 'active_quiz')
+
+    def test_video_with_companion_reading_or_protected_source_counts_only_playback(self):
+        for media in (
+            [{'kind': 'video', 'url': 'https://example.org/source-without-extension', 'source_material_file': True}],
+            [{'kind': 'video', 'url': '/learner_api/student-activity/commercial/9/50/60/source-file/'}],
+            [{'kind': 'document', 'url': 'https://www.youtube.com/watch?v=example1234'}],
+            [{'kind': 'video', 'url': 'https://drive.google.com/file/d/example123456/view'}],
+        ):
+            with self.subTest(media=media):
+                _, definition = self.session(reading_html='<p>Video introduction</p>', media=media)
+                self.assertEqual(definition['studyTimingSession']['countingMode'], 'active_playback')
+                _, quiz = self.session(reading_html='<p>Read before answering</p>', media=media, quiz={'id': 'q'})
+                self.assertEqual(quiz['studyTimingSession']['countingMode'], 'active_quiz')
 
     def test_outside_hours_requires_correction_but_keeps_real_submission(self):
         attempt, definition = self.session()

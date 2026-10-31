@@ -31,9 +31,55 @@ function activity(learnerId = '9', props: Partial<ComponentProps<typeof StudentM
 const finishReady = async () => waitFor(() => expect(screen.getByRole('button', { name: 'Finish' })).toBeEnabled());
 
 beforeEach(() => { localStorage.clear(); vi.resetAllMocks(); respond(); });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('legacy activities use the native time controls', () => {
+  it.each(['fresh', 'restored'])('counts video playback rather than opening a video with companion text (%s)', async draft => {
+    vi.useFakeTimers();
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    respond(material({ media: [{ kind: 'video', title: 'Synthetic recording',
+      url: '/learner_api/student-activity/commercial/9/50/60/source-file/' }] }));
+    const key = 'legacy-study:v1:commercial:9:50:material:60';
+    const initial = draft === 'restored' ? 12 : 0;
+    if (draft === 'restored') localStorage.setItem(key, JSON.stringify({ key, attemptId: 'draft', timing,
+      elapsedSeconds: initial, answers: {}, confirmed: false }));
+    let view!: ReturnType<typeof render>;
+    await act(async () => { view = render(activity()); });
+    expect(screen.getByRole('button', { name: 'Finish' })).toBeEnabled();
+    const video = view.container.querySelector('video')!;
+    const tick = (seconds: number) => act(() => vi.advanceTimersByTime(seconds * 1000));
+    const recorded = () => JSON.parse(localStorage.getItem(key)!).elapsedSeconds;
+    tick(5);
+    expect(recorded()).toBe(initial);
+    // A volume event on an unloaded/paused video cannot start the clock.
+    fireEvent.volumeChange(video); tick(2); expect(recorded()).toBe(initial);
+    fireEvent.playing(video); tick(3); expect(recorded()).toBe(initial + 3);
+    fireEvent.pause(video); tick(4); expect(recorded()).toBe(initial + 3);
+    fireEvent.playing(video); video.muted = true; fireEvent.volumeChange(video);
+    tick(2); expect(recorded()).toBe(initial + 3);
+    video.muted = false; fireEvent.volumeChange(video); tick(2);
+    expect(recorded()).toBe(initial + 5);
+    fireEvent.waiting(video); tick(2); expect(recorded()).toBe(initial + 5);
+    fireEvent.playing(video); fireEvent.seeking(video); tick(2);
+    expect(recorded()).toBe(initial + 5);
+    fireEvent.playing(video);
+    visibility.mockReturnValue('hidden'); fireEvent(document, new Event('visibilitychange'));
+    tick(5); expect(recorded()).toBe(initial + 5);
+    visibility.mockReturnValue('visible'); fireEvent(document, new Event('visibilitychange'));
+    tick(2); expect(recorded()).toBe(initial + 7);
+    fireEvent.ended(video); tick(5); expect(recorded()).toBe(initial + 7);
+    expect(starts()).toHaveLength(draft === 'restored' ? 0 : 1);
+    expect(screen.getByText('Time counts during audible playback while this page is visible.')).toBeVisible();
+  });
+
+  it('explains manual timing for a video player that cannot report playback', async () => {
+    respond(material({ media: [{ kind: 'video', title: 'Synthetic Vimeo recording', url: 'https://vimeo.com/123456789' }] }));
+    render(activity());
+    await finishReady();
+    expect(screen.getByText('This video cannot report playback time. Enter your study time manually.')).toBeVisible();
+    expect(screen.getByRole('timer')).toHaveAccessibleName('Time on this activity: 00 hours, 00 minutes, 00 seconds');
+  });
+
   it.each(['commercial', 'apprenticeship'])('starts once under StrictMode and saves only after Finish (%s)', async kind => {
     render(<StrictMode>{activity('9', { kind })}</StrictMode>);
     await finishReady();
