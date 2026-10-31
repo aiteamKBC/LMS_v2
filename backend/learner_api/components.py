@@ -324,13 +324,9 @@ def submit_component_progress(request, component_id):
     except (DatabaseError, ValueError) as exc:
         return _error(f"Database error: {exc}", 502)
 
-    # Only the monthly assignment goes through the eight-step submission. Once
-    # an author flags one, the plan's other assignments complete like any other
-    # activity (see assignment_settings).
-    monthly_submission = False
-    if normalise_component_type(live_type or client_type) == "assignment":
-        from .assignment_settings import monthly_assignment_required
-        monthly_submission = bool(assignment_topic) or monthly_assignment_required(component_id, source)
+    # Every assignment uses the monthly submission. Legacy author flags on
+    # this component or elsewhere in the plan must not bypass its checks.
+    monthly_submission = normalise_component_type(live_type or client_type) == "assignment"
     if monthly_submission and not _assignment_form_ready(
         component_id, kind, learner_id, assignment_topic,
     ):

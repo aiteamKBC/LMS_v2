@@ -5087,25 +5087,30 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                   event.preventDefault();
                   onDropReorder(week.id);
                 }}
-                className="group/week flex items-center gap-2.5 px-2.5 py-2.5"
+                className="group/week grid grid-cols-[20px_28px_28px_minmax(0,1fr)] items-start gap-x-1.5 gap-y-2 px-2.5 py-2.5"
               >
                 <button type="button" aria-label="Drag to reorder" className="grid h-7 w-5 shrink-0 place-items-center text-foreground-300 hover:text-foreground-600 cursor-grab active:cursor-grabbing touch-none"><AppIcon className="ri-draggable"></AppIcon></button>
                 <button type="button" onClick={() => toggleExpanded(week.id)} aria-label={expanded ? `Collapse ${week.title || `Week ${week.weekNumber}`}` : `Expand ${week.title || `Week ${week.weekNumber}`}`} aria-expanded={expanded} className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700">
                   <AppIcon className={expanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'}></AppIcon>
                 </button>
                 <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[11px] font-bold shadow-sm ${active ? 'bg-primary-500 text-white ring-4 ring-primary-100' : 'bg-background-200 text-foreground-600'}`}>{index + 1}</span>
-                <button onClick={() => onSelectWeek(week.id)} className="min-w-0 flex-1 text-left">
-                  <p onMouseEnter={showFullTextWhenTruncated} className="truncate text-[12px] font-bold text-foreground-900">{week.title || `Week ${week.weekNumber}`}</p>
-                  <p className="mt-0.5 flex items-center gap-1.5 text-[10px] font-medium text-foreground-400">
+                <button type="button" onClick={() => onSelectWeek(week.id)} className="min-w-0 text-left">
+                  <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                    <span className="min-w-0 break-words text-[12px] font-bold text-foreground-900 [overflow-wrap:anywhere]">{week.title || `Week ${week.weekNumber}`}</span>
+                    {moduleWeekDeliveryDate(week) && (
+                      <span className="inline-flex flex-wrap items-center gap-x-1 text-[10px] font-medium text-foreground-400">
+                        <AppIcon className="ri-calendar-line shrink-0" />
+                        Delivery:
+                        <time dateTime={moduleWeekDeliveryDate(week)} className="whitespace-nowrap tabular-nums">{formatDateLabel(moduleWeekDeliveryDate(week))}</time>
+                      </span>
+                    )}
+                  </span>
+                </button>
+                <div className="col-span-4 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 pl-7">
+                  <p className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1 text-[10px] font-medium text-foreground-400">
                     <span>{activeTypeFilter ? `${shownComponents.length} ${activeTypeLabel} of ${week.components.length}` : `${week.components.length} components`}</span>
                     <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
                     <span>{totalOtjh.toFixed(1)}h</span>
-                    {moduleWeekDeliveryDate(week) && (
-                      <>
-                        <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
-                        <span className="truncate">{formatDateLabel(moduleWeekDeliveryDate(week))}</span>
-                      </>
-                    )}
                     {!hasDeliveryDate && (
                       <>
                         <span className="h-1 w-1 rounded-full bg-amber-400"></span>
@@ -5122,44 +5127,43 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                       </>
                     )}
                   </p>
-                </button>
-                {/* Duplicating copies the week's components in full. The live
-                    session comes too, but without the booking behind it -- a
-                    copied meeting id is the ORIGINAL's meeting, not a second one
-                    (see `duplicateWeekInModule`) -- so the twin's card carries
-                    the note above until its own meeting is created. */}
-                <button
-                  type="button"
-                  onMouseDown={event => event.stopPropagation()}
-                  onClick={event => {
-                    event.stopPropagation();
-                    onDuplicateWeek(week.id);
-                  }}
-                  className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 opacity-0 transition-smooth hover:bg-primary-50 hover:text-primary-600 group-hover/week:opacity-100"
-                  title="Duplicate week — copies every component; the live session comes without its Teams meeting"
-                  aria-label={`Duplicate ${week.title || `Week ${week.weekNumber}`}`}
-                >
-                  <AppIcon className="ri-file-copy-line text-sm"></AppIcon>
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={event => event.stopPropagation()}
-                  onClick={event => {
-                    event.stopPropagation();
-                    onDeleteWeek(week.id);
-                  }}
-                  className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 opacity-0 transition-smooth hover:bg-red-50 hover:text-red-600 group-hover/week:opacity-100"
-                  title="Delete week"
-                  aria-label={`Delete ${week.title || `Week ${week.weekNumber}`}`}
-                >
-                  <AppIcon className="ri-delete-bin-line text-sm"></AppIcon>
-                </button>
+                  <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                    {/* Duplicating copies the week's components in full. The live
+                        session comes too, but without the booking behind it -- a
+                        copied meeting id is the ORIGINAL's meeting, not a second one
+                        (see `duplicateWeekInModule`) -- so the twin's card carries
+                        the note above until its own meeting is created. */}
+                    <button
+                      type="button"
+                      onMouseDown={event => event.stopPropagation()}
+                      onClick={event => {
+                        event.stopPropagation();
+                        onDuplicateWeek(week.id);
+                      }}
+                      className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 transition-smooth hover:bg-primary-50 hover:text-primary-600"
+                      title="Duplicate week — copies every component; the live session comes without its Teams meeting"
+                      aria-label={`Duplicate ${week.title || `Week ${week.weekNumber}`}`}
+                    >
+                      <AppIcon className="ri-file-copy-line text-sm"></AppIcon>
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={event => event.stopPropagation()}
+                      onClick={event => {
+                        event.stopPropagation();
+                        onDeleteWeek(week.id);
+                      }}
+                      className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 transition-smooth hover:bg-red-50 hover:text-red-600"
+                      title="Delete week"
+                      aria-label={`Delete ${week.title || `Week ${week.weekNumber}`}`}
+                    >
+                      <AppIcon className="ri-delete-bin-line text-sm"></AppIcon>
+                    </button>
+                  </div>
+                </div>
               </div>
-              {/* Its own strip rather than a pill on the meta line: the line
-                  already carries three facts at 10px in a narrow rail, and a
-                  fourth pushed the components count onto a second row and
-                  truncated the date to "2…". Here it also survives selection,
-                  which repaints the card primary. */}
+              {/* Holiday notices keep their own strip below the week header,
+                  so their text stays readable alongside the expanded components. */}
               {/* Stated on the week it belongs to, on the card's own
                   background: this week is completely ordinary and its live
                   session runs as authored. Whether it becomes a reading week,
@@ -5183,7 +5187,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
               {pastModuleEndDate && <WeekPastEndDateNotice weekDate={latestWeekDeliveryDate} moduleEndDate={moduleEndDate} />}
               {unbookedCopiedSessions > 0 && <CopiedLiveSessionNotice count={unbookedCopiedSessions} />}
               {expanded && (
-                <div className="border-t border-background-200 pb-2 pl-11 pr-2 pt-2">
+                <div className="border-t border-background-200 pb-2 pl-3 pr-2 pt-2">
                   {/* `holidayDates` is drawn from the same slots the week's
                       own notice above uses, so the warning on the week and the
                       warning on its live session always name the same day. It
@@ -6293,7 +6297,7 @@ function TypeSpecificFields({
     return (
       <EditorBlock title="Assignment">
         <TextInput label="Title shown to learners" value={getString('learnerTitle')} onChange={value => onSettingChange('learnerTitle', value)} />
-        <Checkbox label="Monthly assignment (8-step submission)" checked={getBool('isMonthlyAssignment')} onChange={value => onSettingChange('isMonthlyAssignment', value)} />
+        <p className="text-[11px] text-foreground-400">All assignments appear automatically in Monthly submission and use the 8-step submission.</p>
         <AssignmentTopicsEditor value={component.settings.assignmentTopics}
           legacyQuestion={getString('assignmentBrief') || getString('assignmentContent')}
           legacyInstructions={getString('submissionInstructions')}
