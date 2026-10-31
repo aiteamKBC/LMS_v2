@@ -44,6 +44,7 @@ export type Activity = {
   id: number; category: string; title: string; activity_date: string | null;
   activity_time: string | null; planned_hours: string | number; actual_hours: string | number;
   actual_pending?: boolean;
+  actual_hours_recorded?: boolean;
   actual_estimated?: boolean;
   actual_status_label?: string;
   provisional?: boolean;

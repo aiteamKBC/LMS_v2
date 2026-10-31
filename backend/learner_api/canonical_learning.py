@@ -512,7 +512,10 @@ def input_activity_date(entry):
 
 def rows_for(owner, records=None):
     result = []
-    for entry in (part for record in (records if records is not None else entries_for(owner)) for part in allocations(record)):
+    # Untimed completions belong in the activity log for review. They still
+    # contribute no allocations/hours to metrics or the monthly charts.
+    for entry in (part for record in (records if records is not None else entries_for(owner))
+                  for part in ([record] if record.get('completion_only') else allocations(record))):
         source = source_payload_metadata(entry.get('source_payload'))
         at = local_instant(entry.get('reporting_started_at') or entry.get('reporting_ended_at'))
         ref = f"canonical:{entry['id']}"
@@ -862,6 +865,13 @@ def source_quiz_parts(item, owner, record):
 def content(item, owner=None, record=None):
     if owner is not None and record is None:
         record = next((r for r in entries_for(owner) if str(r['id']) == str(item.get('progress_id'))), None)
+    if record is not None and record.get('completion_only'):
+        # These owned attempt projections have no numeric progress ID. Do not
+        # send their synthetic IDs to the historical-progress SQL readers.
+        return {'id': item['id'], 'parts': [{'id': item['id'], 'title': item['title'],
+            'category': item['category'], 'url': None, 'quiz': None,
+            'html': '<p>This activity was completed without a recorded study duration. '
+                    'The duration is unavailable for review.</p>'}]}
     if owner is not None and record is not None and record.get('actual_basis') in {'legacy_activity_verified_timer', 'legacy_activity_manual_time'}:
         # This evidence belongs to a persisted subject attempt, not a numeric
         # learner_progress_entries ID. Keep its preview in that owned store.

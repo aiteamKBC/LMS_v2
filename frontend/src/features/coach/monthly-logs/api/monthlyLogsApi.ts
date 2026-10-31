@@ -1,8 +1,9 @@
 import { coachFetch } from '@/lib/coachFetch';
-import type { LogLearner, LogSummary, LogDetail } from '@/features/monthly-logs/api';
+import type { LogLearner, LogSummary, LogDetail, UnallocatedActivity } from '@/features/monthly-logs/api';
 import type { MonthlyActivityResponse } from '@/pages/coach/monthly-cycle/types';
 
 export type CoachLogYear = {
+  unallocatedActivities?: UnallocatedActivity[];
   learner: LogLearner & { initials: string }; year: number; years: number[];
   summary: { coachSignatures: { completed: number; total: number }; acceptedOtjhHours: number; trainingPlanHours: number | null };
   months: Array<{ month: string; activities: number; acceptedOtjhHours: number; targetHours: number | null;
