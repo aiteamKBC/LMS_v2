@@ -11,9 +11,9 @@ const people = [
   { id: '1', name: 'Alex Example', email: 'alex@example.invalid' },
   { id: '2', name: 'Jamie Example', email: 'jamie@example.invalid' },
 ];
-function Picker({ single = false, initial = '', includeGuests = false, showCount = false }) {
+function Picker({ single = false, initial = '', includeGuests = false, showCount = false, warnOnDuplicate = false }) {
   const [value, setValue] = useState(initial);
-  return <><EntraPeopleInput label="Presenter" value={value} onChange={setValue} single={single} includeGuests={includeGuests} showCount={showCount} /><output data-testid="value">{value}</output><button type="button">Outside</button></>;
+  return <><EntraPeopleInput label="Presenter" value={value} onChange={setValue} single={single} includeGuests={includeGuests} showCount={showCount} warnOnDuplicate={warnOnDuplicate} /><output data-testid="value">{value}</output><button type="button">Outside</button></>;
 }
 beforeEach(() => {
   vi.clearAllMocks();
@@ -47,11 +47,67 @@ it('shows the attendee count when the shared create/edit fields are prefilled', 
       onPrefill={() => setForm(previous => ({ ...previous, attendees: 'one@example.invalid\nONE@example.invalid\ntwo@example.invalid' }))} />;
   }
   render(<MeetingFields />);
-  expect(screen.getByLabelText('Attendees selected count')).toHaveTextContent('0 selected');
+  const count = screen.getByLabelText('Attendees selected count');
+  expect(count).toHaveTextContent('0 selected');
+  expect(count.compareDocumentPosition(screen.getByRole('combobox', { name: 'Attendees' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   await userEvent.click(screen.getByRole('button', { name: /Prefill from/ }));
   expect(screen.getByLabelText('Attendees selected count')).toHaveTextContent('2 selected');
+  fireEvent.change(screen.getByRole('combobox', { name: 'Attendees' }), { target: { value: 'ONE@example.invalid' } });
+  fireEvent.keyDown(screen.getByRole('combobox', { name: 'Attendees' }), { key: 'Enter' });
+  expect(screen.getByRole('status')).toHaveTextContent(/already exists/);
+  expect(count).toHaveTextContent('2 selected');
   await userEvent.click(screen.getByRole('button', { name: 'Remove two@example.invalid' }));
   expect(screen.getByLabelText('Attendees selected count')).toHaveTextContent('1 selected');
+});
+
+it('reports an existing attendee without changing the saved email spelling or emitting an edit', () => {
+  const onChange = vi.fn();
+  render(<EntraPeopleInput label="Attendees" value="alex@example.invalid" onChange={onChange} showCount warnOnDuplicate />);
+  const input = screen.getByRole('combobox', { name: 'Attendees' });
+  fireEvent.change(input, { target: { value: ' ALEX@example.invalid ' } });
+  fireEvent.keyDown(input, { key: 'Enter' });
+  expect(screen.getByText(/ALEX@example.invalid already exists/)).toHaveAttribute('role', 'status');
+  expect(onChange).not.toHaveBeenCalled();
+  expect(screen.getByLabelText('Attendees selected count')).toHaveTextContent('1 selected');
+  expect(screen.getAllByRole('button', { name: 'Remove alex@example.invalid' })).toHaveLength(1);
+});
+
+it('adds only new pasted attendees once and reports existing and repeated pasted addresses', async () => {
+  const user = userEvent.setup();
+  render(<Picker showCount warnOnDuplicate initial="alex@example.invalid" />);
+  await user.click(screen.getByRole('combobox'));
+  await user.paste('ALEX@example.invalid; guest@example.invalid; GUEST@example.invalid');
+  expect(screen.getByTestId('value').textContent).toBe('alex@example.invalid\nguest@example.invalid');
+  expect(screen.getByText(/ALEX@example.invalid, GUEST@example.invalid already exist/)).toHaveAttribute('role', 'status');
+  expect(screen.getByLabelText('Presenter selected count')).toHaveTextContent('2 selected');
+  await user.type(screen.getByRole('combobox'), 'jamie@example.invalid{Enter}');
+  expect(screen.queryByText(/Duplicate emails were not added/)).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Presenter selected count')).toHaveTextContent('3 selected');
+});
+
+it('reports a duplicate selected from Entra without adding a second chip', async () => {
+  const user = userEvent.setup();
+  render(<Picker showCount warnOnDuplicate initial="alex@example.invalid" />);
+  await user.type(screen.getByRole('combobox'), 'Alex');
+  await user.click(await screen.findByRole('option', { name: /Alex Example/ }));
+  expect(screen.getByText(/alex@example.invalid already exists/)).toHaveAttribute('role', 'status');
+  expect(screen.getByTestId('value')).toHaveTextContent('alex@example.invalid');
+  expect(screen.getAllByRole('button', { name: 'Remove alex@example.invalid' })).toHaveLength(1);
+  expect(screen.getByLabelText('Presenter selected count')).toHaveTextContent('1 selected');
+});
+
+it('reports a duplicate on blur and keeps removal undo available', async () => {
+  const user = userEvent.setup();
+  render(<Picker showCount warnOnDuplicate initial={'alex@example.invalid\njamie@example.invalid'} />);
+  await user.click(screen.getByRole('button', { name: 'Remove jamie@example.invalid' }));
+  await user.type(screen.getByRole('combobox'), 'ALEX@example.invalid');
+  await user.click(screen.getByRole('button', { name: 'Outside' }));
+  expect(screen.getByText(/ALEX@example.invalid already exists/)).toHaveAttribute('role', 'status');
+  expect(screen.getByLabelText('Presenter selected count')).toHaveTextContent('1 selected');
+  await user.click(screen.getByRole('combobox'));
+  await user.keyboard('{Control>}z{/Control}');
+  expect(screen.getByTestId('value').textContent).toBe('alex@example.invalid\njamie@example.invalid');
+  expect(screen.getByLabelText('Presenter selected count')).toHaveTextContent('2 selected');
 });
 
 it('selects a named Entra result while preserving the email payload', async () => {
