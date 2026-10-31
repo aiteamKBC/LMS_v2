@@ -1,3 +1,4 @@
+import { CollaborativeField } from '../module-builder/CollaborativeField';
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
 import { componentFileList, legacyComponentFile, serialiseComponentFiles, type ComponentFile } from '@/lib/componentFiles';
 import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -61,7 +62,7 @@ import { buildKsbMappingPrompt, describeKsbImport, exportWeekKsbWorkbook, import
 import { KsbExcelPanel } from '@/pages/curriculum/module-builder/KsbExcelPanel';
 import { GroupPlacementPanel, type PlacementResult } from './PlaceComponentDrawer';
 import { moduleCountForGroup } from '../shared/entities/groupModuleMatch';
-import { loadModuleStructure, saveModuleStructure, type LiveSessionDateDrift } from '@/pages/curriculum/module-builder/moduleAuthoringData';
+import { loadModuleStructure, saveModuleStructure, manualLiveSessionLinkSettings, type LiveSessionDateDrift } from '@/pages/curriculum/module-builder/moduleAuthoringData';
 import { liveSessionDriftCause } from '@/pages/curriculum/shared/entities/liveSessionDriftCause';
 import { LiveSessionScheduleEditor } from '@/pages/curriculum/module-builder/LiveSessionScheduleEditor';
 import { LiveSessionArtifactsPanel, ModuleLiveSessionResults } from '@/pages/curriculum/shared/entities/liveSessionArtifacts';
@@ -1037,6 +1038,7 @@ interface RailNodeProps {
   selected: boolean;
   focused?: boolean;
   issues: number;
+  nested?: boolean;
   weekSessionDate?: string;
   /**
    * The delivery days of this week a ticked holiday falls on, as `YYYY-MM-DD`.
@@ -1088,7 +1090,7 @@ function SortableRailNode(props: RailNodeProps) {
   );
 }
 
-function RailNodeCard({ component, index, selected, focused = false, issues, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, otherWeeks, onCopyToWeek, onMoveToWeek, linkLabel = '', moveNote = '', handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
+function RailNodeCard({ component, index, selected, focused = false, issues, nested = false, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, otherWeeks, onCopyToWeek, onMoveToWeek, linkLabel = '', moveNote = '', handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
   const isLiveSession = component.type === 'live-session';
@@ -1138,21 +1140,28 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
         </SpineGutter>
         <div
           onClick={onSelect}
-          className={`min-w-0 flex-1 my-1 flex flex-wrap items-center gap-2 rounded-xl border px-2.5 py-2.5 transition-all cursor-pointer ${dragging ? 'border-primary-300 bg-background-50 shadow-xl ring-2 ring-primary-200' : focused ? 'border-primary-400 bg-primary-50 shadow-md ring-4 ring-primary-200/70' : selected ? `${tone.border} ${tone.soft} shadow-sm` : 'border-background-200 bg-background-50 hover:border-background-300 hover:shadow-sm'}`}
+          className={`min-w-0 flex-1 my-1 ${nested ? 'grid grid-cols-[20px_32px_minmax(0,1fr)] items-start gap-x-2 gap-y-1.5' : 'flex flex-wrap items-center gap-2'} rounded-xl border px-2.5 py-2.5 transition-all cursor-pointer ${dragging ? 'border-primary-300 bg-background-50 shadow-xl ring-2 ring-primary-200' : focused ? 'border-primary-400 bg-primary-50 shadow-md ring-4 ring-primary-200/70' : selected ? `${tone.border} ${tone.soft} shadow-sm` : 'border-background-200 bg-background-50 hover:border-background-300 hover:shadow-sm'}`}
         >
           <button type="button" {...(handleProps || {})} onClick={e => e.stopPropagation()} aria-label="Drag to reorder" className="grid place-items-center w-5 h-8 -ml-0.5 shrink-0 text-foreground-300 hover:text-foreground-600 cursor-grab active:cursor-grabbing touch-none rounded"><AppIcon className="ri-draggable"></AppIcon></button>
           <span className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip}`}><AppIcon className={`${definition.icon} text-base`}></AppIcon></span>
           <span className="flex-1 min-w-0">
-          <span className="flex min-w-0 items-center gap-2">
-            <span onMouseEnter={showFullTextWhenTruncated} className={`min-w-0 flex-1 text-[13px] font-bold truncate ${unedited ? 'text-foreground-500' : 'text-foreground-900'}`}>{component.title || weekTypeLabel(component.type)}</span>
+          <span className={`flex min-w-0 gap-2 ${nested ? 'items-start' : 'items-center'}`}>
+            <span onMouseEnter={showFullTextWhenTruncated} className={`min-w-0 flex-1 text-[13px] font-bold ${nested ? 'break-words [overflow-wrap:anywhere]' : 'truncate'} ${unedited ? 'text-foreground-500' : 'text-foreground-900'}`}>{component.title || weekTypeLabel(component.type)}</span>
             {issues > 0 && <span className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-600"><AppIcon className="ri-error-warning-fill"></AppIcon>{issues}</span>}
           </span>
+          {nested && scheduledDate && (
+            <span className="mt-1 flex flex-wrap items-center gap-x-1 text-[10px] text-foreground-400">
+              <AppIcon className="ri-calendar-line shrink-0" />
+              Session:
+              <time dateTime={scheduledDate} className="whitespace-nowrap tabular-nums">{formatDateLabel(scheduledDate)}</time>
+            </span>
+          )}
           <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-foreground-400">
             <span className={`font-semibold ${tone.text}`}>{weekTypeLabel(component.type)}</span>
             <span className="tabular-nums">{formatHoursMinutes(component.expectedOtjh)}</span>
             <span className="tabular-nums">{component.points}pts</span>
             {component.ksbMappings.length > 0 && <span className="tabular-nums">{component.ksbMappings.length} KSB</span>}
-            {scheduledDate && <span className="tabular-nums">{formatDateLabel(scheduledDate)}</span>}
+            {!nested && scheduledDate && <span className="tabular-nums">{formatDateLabel(scheduledDate)}</span>}
             {isLiveSession && ['missing', 'ambiguous'].includes(String(component.settings?.teamsCalendarBinding || '')) && (
               <span
                 title={externalTeamsCalendar
@@ -1206,7 +1215,7 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
           </span>
         </span>
         {(onDuplicate || onDelete) && (
-          <span className="flex shrink-0 items-center gap-0.5">
+          <span className={`flex shrink-0 items-center gap-0.5 ${nested ? 'col-span-3 justify-end border-t border-background-200 pt-1' : ''}`}>
             {onDuplicate && (
               <CloneComponentButton
                 label={component.title || weekTypeLabel(component.type)}
@@ -1236,7 +1245,7 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
             title={`${liveSessionDriftCause(dateDrift)?.sentence ? `${liveSessionDriftCause(dateDrift)?.sentence} ` : ''}Teams calendar currently has this meeting on ${formatDateLabel(dateDrift.storedDate)}. This week is now planned for ${dateDrift.weekDates.map(formatDateLabel).join(' and ')}. ${externalTeamsCalendar
               ? 'This is an imported Teams series. Open Update Teams meeting to review and re-match its saved dates. If the planned date is missing, the organizer must update the original series in Teams before its dates can be imported. The LMS keeps the existing link and does not reschedule this series.'
               : 'This session keeps its confirmed date because attendees were invited to it. Open the Teams Meetings page and run Update to move the Microsoft meeting to the planned date and notify attendees.'}`}
-            className="basis-full rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[10px] leading-snug text-amber-900"
+            className={`${nested ? 'col-span-3' : 'basis-full'} rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[10px] leading-snug text-amber-900`}
           >
             <p className="flex items-center gap-1 font-bold">
               <AppIcon className="ri-calendar-schedule-line text-[11px] text-amber-600"></AppIcon>
@@ -1710,6 +1719,7 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
                 <Fragment key={component.id}>
                   <SortableRailNode
                     component={component}
+                    nested={nested}
                     index={index}
                     selected={component.id === selectedId}
                     focused={component.id === focusedId}
@@ -1733,7 +1743,7 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
             </div>
           </SortableContext>
           <DragOverlay>
-            {activeComponent ? <RailNodeCard component={activeComponent} index={components.findIndex(c => c.id === activeComponent.id)} selected dragging issues={0} weekSessionDate={weekSessionDate} holidayDates={holidayDates} dateDrift={dateDriftByComponentId?.get(activeComponent.id)} /> : null}
+            {activeComponent ? <RailNodeCard component={activeComponent} index={components.findIndex(c => c.id === activeComponent.id)} selected dragging issues={0} nested={nested} weekSessionDate={weekSessionDate} holidayDates={holidayDates} dateDrift={dateDriftByComponentId?.get(activeComponent.id)} /> : null}
           </DragOverlay>
         </DndContext>
       )}
@@ -1905,8 +1915,8 @@ export function WeekOverviewPanel({ components, ksbMappings, summary, learningOu
 
         {/* Editable week detail */}
         <Section title="Week detail">
-          <Field label="Summary"><textarea value={summary} onChange={e => onChangeSummary(e.target.value)} rows={2} placeholder="What this week is about…" className={`${inputClass} resize-none`} /></Field>
-          <Field label="Learning outcomes" className="mt-4"><textarea value={learningOutcomes.join('\n')} onChange={e => onChangeLearningOutcomes(e.target.value.split('\n'))} rows={3} placeholder="One outcome per line" className={`${inputClass} resize-none`} /></Field>
+          <Field editField="summary" label="Summary"><textarea value={summary} onChange={e => onChangeSummary(e.target.value)} rows={2} placeholder="What this week is about…" className={`${inputClass} resize-none`} /></Field>
+          <Field editField="learningOutcomes" label="Learning outcomes" className="mt-4"><textarea value={learningOutcomes.join('\n')} onChange={e => onChangeLearningOutcomes(e.target.value.split('\n'))} rows={3} placeholder="One outcome per line" className={`${inputClass} resize-none`} /></Field>
           <p className="mt-3 text-[11px] text-foreground-400"><AppIcon className="ri-lightbulb-flash-line mr-1 text-amber-500"></AppIcon>Hover the spine between parts to insert exactly where you want.</p>
         </Section>
       </div>
@@ -2001,7 +2011,11 @@ export function ComponentEditor({ component, onChange, onBack, groupOptions, rul
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
   const issues = validateWeekComponent(component);
-  const setSetting = (key: string, value: ComponentSettingValue) => onChange({ settings: { ...component.settings, [key]: value } });
+  const setSetting = (key: string, value: ComponentSettingValue) => onChange({
+    settings: component.type === 'live-session' && key === 'liveSessionUrl'
+      ? manualLiveSessionLinkSettings(component.settings, String(value))
+      : { ...component.settings, [key]: value },
+  });
   const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks };
 
   return (
@@ -2052,23 +2066,23 @@ function GenericComponentBody({ component, onChange, setSetting, rulePoints }: C
     <>
       <Section title="Basics">
         <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_repeat(2,minmax(0,1fr))]">
-          <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
-          <Field label="Expected OTJH"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
+          <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
+          <Field editField="expectedOtjh" label="Expected OTJH"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for ${weekTypeLabel(component.type)} (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
-        <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} className={`${inputClass} resize-none`} /></Field>
+        <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} className={`${inputClass} resize-none`} /></Field>
       </Section>
 
       <Section title="Requirements" hint="What completing this part demands">
         <div className="flex flex-wrap gap-2">
-          <Toggle label="Reflection" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-          <Toggle label="Workplace evidence" checked={component.workplaceEvidenceRequired} onChange={value => onChange({ workplaceEvidenceRequired: value })} />
-          <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <Toggle editField="reflectionRequired" label="Reflection" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+          <Toggle editField="workplaceEvidenceRequired" label="Workplace evidence" checked={component.workplaceEvidenceRequired} onChange={value => onChange({ workplaceEvidenceRequired: value })} />
+          <Toggle editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
           <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder={`What should the learner reflect on after this ${weekTypeLabel(component.type).toLowerCase()}?`} className={`${inputClass} resize-none`} /></Field>
+          <Field editField="reflectionQuestion" label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder={`What should the learner reflect on after this ${weekTypeLabel(component.type).toLowerCase()}?`} className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
@@ -2168,8 +2182,8 @@ function SessionRecordingBody({ component, onChange, setSetting, rulePoints, wee
   return (
     <>
       <Section title="Recording details">
-        <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
-        <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What learners will watch…" className={`${inputClass} resize-none`} /></Field>
+        <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
+        <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What learners will watch…" className={`${inputClass} resize-none`} /></Field>
       </Section>
 
       <Section title="Linked live session" hint={target ? (linked ? 'Linked' : 'Link needs attention') : 'Not linked'}>
@@ -2264,13 +2278,13 @@ function SessionRecordingBody({ component, onChange, setSetting, rulePoints, wee
         {linked ? (
           <LiveSessionResults liveSession={linked.liveSession} weekSessionDate={sessionWeekDate} moduleId={target?.moduleId || moduleId} />
         ) : (
-          <Field label="Recording link"><input value={String(component.settings.recordingUrl ?? '')} onChange={e => setSetting('recordingUrl', e.target.value)} placeholder="https://…" className={inputClass} /></Field>
+          <Field editField="settings.recordingUrl" label="Recording link"><input value={String(component.settings.recordingUrl ?? '')} onChange={e => setSetting('recordingUrl', e.target.value)} placeholder="https://…" className={inputClass} /></Field>
         )}
       </Section>
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
+          <Field editField="expectedOtjh" label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for ${weekTypeLabel(component.type)} (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -2278,12 +2292,12 @@ function SessionRecordingBody({ component, onChange, setSetting, rulePoints, wee
 
       <Section title="Assurance">
         <div className="flex flex-wrap gap-2">
-          <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-          <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <Toggle editField="reflectionRequired" label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+          <Toggle editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
           <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after watching?" className={`${inputClass} resize-none`} /></Field>
+          <Field editField="reflectionQuestion" label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after watching?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
     </>
@@ -2297,6 +2311,11 @@ function LiveSessionResults({ liveSession, weekSessionDate, moduleId }: { liveSe
   const s = (key: string) => String(liveSession.settings[key] ?? '');
   const sessionDate = s('sessionDate') || weekSessionDate || '';
   const hasMeeting = Boolean(s('liveSessionUrl') || s('teamsMeetingUrl'));
+  if (['unverified', 'missing', 'ambiguous'].includes(s('teamsCalendarBinding'))) {
+    return <p className="rounded-xl border border-background-200 bg-background-50/60 p-4 text-[12px] text-foreground-500">
+      This join link has not been matched to its original calendar. Use Replace Teams links, then Existing Teams series, to connect its recording and attendance.
+    </p>;
+  }
   // A live session delivered by its own additional meeting reads that
   // meeting's results (a single event, so always session 1); every other live
   // session reads its occurrence of the module's calendar.
@@ -2398,13 +2417,13 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
   // someone repeats what the session plan already worked out.
   const sessionDate = s('sessionDate') || weekSessionDate || '';
   const sessionTime = s('sessionTime') || String(weekSessionTime || '').slice(0, 5) || '';
-  const hasMeeting = Boolean(s('liveSessionUrl') || s('teamsMeetingUrl'));
+  const hasMeeting = Boolean(s('teamsLiveSessionId') || s('extraTeamsLiveSessionId')) && s('teamsCalendarBinding') !== 'unverified';
 
   return (
     <>
       <Section title="Session details">
-        <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
-        <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this session is about…" className={`${inputClass} resize-none`} /></Field>
+        <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
+        <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this session is about…" className={`${inputClass} resize-none`} /></Field>
 
         {hasMeeting ? (
           // Meeting created: the join link is read-only (copy/open only).
@@ -2417,7 +2436,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
           </div>
         )}
 
-        <Field label="Session outline" className="mt-4"><textarea value={s('sessionPurpose')} onChange={e => setSetting('sessionPurpose', e.target.value)} rows={3} placeholder="A short summary of what this session covers…" className={`${inputClass} resize-none`} /></Field>
+        <Field editField="settings.sessionPurpose" label="Session outline" className="mt-4"><textarea value={s('sessionPurpose')} onChange={e => setSetting('sessionPurpose', e.target.value)} rows={3} placeholder="A short summary of what this session covers…" className={`${inputClass} resize-none`} /></Field>
       </Section>
 
       {/* Read this component's saved results through the same archive-backed
@@ -2431,7 +2450,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
+          <Field editField="expectedOtjh" label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the "Attendance" points rule for live sessions (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -2439,18 +2458,18 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
 
       <Section title="Assurance">
         <div className="flex flex-wrap gap-2">
-          <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-          <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <Toggle editField="reflectionRequired" label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+          <Toggle editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
           <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this session?" className={`${inputClass} resize-none`} /></Field>
+          <Field editField="reflectionQuestion" label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this session?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
       <Section title="Publishing">
         <div className="grid gap-4 max-w-md">
-          <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
+          <Field editField="settings.version" label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>
 
@@ -2473,8 +2492,8 @@ function VideoBody({ component, onChange, setSetting, rulePoints }: ComponentBod
   return (
     <>
       <Section title="Video details">
-        <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
-        <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this video is about…" className={`${inputClass} resize-none`} /></Field>
+        <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
+        <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this video is about…" className={`${inputClass} resize-none`} /></Field>
 
         <div className="mt-4 grid gap-4 sm:grid-cols-[220px_minmax(0,1fr)]">
           <Field label="Source type">
@@ -2483,24 +2502,24 @@ function VideoBody({ component, onChange, setSetting, rulePoints }: ComponentBod
             </select>
           </Field>
           {sourceType === 'Embed' ? (
-            <Field label="Embed iframe content"><textarea value={s('embedCode')} onChange={e => setSetting('embedCode', e.target.value)} rows={4} className={`${inputClass} resize-none`} /></Field>
+            <Field editField="settings.embedCode" label="Embed iframe content"><textarea value={s('embedCode')} onChange={e => setSetting('embedCode', e.target.value)} rows={4} className={`${inputClass} resize-none`} /></Field>
           ) : (
-            <Field label={sourceType === 'HTML (MP4)' ? 'MP4 file URL' : 'Video URL'}><input value={s('videoUrl')} onChange={e => setSetting('videoUrl', e.target.value)} placeholder="https://…" className={inputClass} /></Field>
+            <Field editField="settings.videoUrl" label={sourceType === 'HTML (MP4)' ? 'MP4 file URL' : 'Video URL'}><input value={s('videoUrl')} onChange={e => setSetting('videoUrl', e.target.value)} placeholder="https://…" className={inputClass} /></Field>
           )}
         </div>
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2 max-w-md">
           <Field label="Component duration (minutes)"><input type="number" min="0" value={Number(component.settings.durationMinutes) || 0} onChange={e => setSetting('durationMinutes', Number(e.target.value) || 0)} className={`${inputClass} tabular-nums`} /></Field>
-          <Field label="Required progress (%)"><input type="number" min="0" max="100" value={Number(component.settings.requiredProgressPercentage) || 0} onChange={e => setSetting('requiredProgressPercentage', Number(e.target.value) || 0)} className={`${inputClass} tabular-nums`} /></Field>
+          <Field editField="settings.requiredProgressPercentage" label="Required progress (%)"><input type="number" min="0" max="100" value={Number(component.settings.requiredProgressPercentage) || 0} onChange={e => setSetting('requiredProgressPercentage', Number(e.target.value) || 0)} className={`${inputClass} tabular-nums`} /></Field>
         </div>
         {/* The same editor as the Module Builder writes this key with: its
             content is HTML, which a plain textarea showed as raw tags. */}
-        <div className="mt-4"><RichTextDraft label="Component content" value={s('lessonContent')} onChange={value => setSetting('lessonContent', value)} rows={6} /></div>
+        <div className="mt-4"><RichTextDraft editField="settings.lessonContent" label="Component content" value={s('lessonContent')} onChange={value => setSetting('lessonContent', value)} rows={6} /></div>
       </Section>
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
+          <Field editField="expectedOtjh" label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for videos (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -2508,18 +2527,18 @@ function VideoBody({ component, onChange, setSetting, rulePoints }: ComponentBod
 
       <Section title="Assurance">
         <div className="flex flex-wrap gap-2">
-          <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-          <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <Toggle editField="reflectionRequired" label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+          <Toggle editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
           <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this video?" className={`${inputClass} resize-none`} /></Field>
+          <Field editField="reflectionQuestion" label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this video?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
       <Section title="Publishing">
         <div className="grid gap-4 max-w-md">
-          <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
+          <Field editField="settings.version" label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>
 
@@ -2585,8 +2604,8 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
   return (
     <>
       <Section title="Reading details">
-        <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
-        <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this reading covers…" className={`${inputClass} resize-none`} /></Field>
+        <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
+        <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this reading covers…" className={`${inputClass} resize-none`} /></Field>
 
         <div className="mt-4">
           <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">Source</span>
@@ -2601,7 +2620,7 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
 
         {sourceMode === 'Text' ? (
           <div className="mt-4">
-            <RichTextDraft label="Component content" value={s('readingContent')} onChange={value => setSetting('readingContent', value)} rows={14} htmlOnly />
+            <RichTextDraft editField="settings.readingContent" label="Component content" value={s('readingContent')} onChange={value => setSetting('readingContent', value)} rows={14} htmlOnly />
             <div className="mt-3 flex justify-end">
               <button type="button" disabled={!s('readingContent').trim()} onClick={() => setWrittenPreviewOpen(current => !current)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50" aria-expanded={writtenPreviewOpen}>
                 <AppIcon className={writtenPreviewOpen ? 'ri-eye-off-line' : 'ri-eye-line'} />
@@ -2640,7 +2659,7 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
+          <Field editField="expectedOtjh" label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for reading materials (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -2648,18 +2667,18 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
 
       <Section title="Assurance">
         <div className="flex flex-wrap gap-2">
-          <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-          <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <Toggle editField="reflectionRequired" label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+          <Toggle editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
           <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this reading?" className={`${inputClass} resize-none`} /></Field>
+          <Field editField="reflectionQuestion" label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this reading?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
       <Section title="Publishing">
         <div className="grid gap-4 max-w-md">
-          <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
+          <Field editField="settings.version" label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>
 
@@ -2702,10 +2721,10 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
   return (
     <>
       <Section title="Podcast details">
-        <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
-        <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this podcast is about…" className={`${inputClass} resize-none`} /></Field>
+        <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
+        <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this podcast is about…" className={`${inputClass} resize-none`} /></Field>
 
-        <Field label="Source type" className="mt-4">
+        <Field editField="settings.podcastSource" label="Source type" className="mt-4">
           <select value={sourceType} onChange={e => setSetting('podcastSource', e.target.value)} className={inputClass}>
             {PODCAST_SOURCE_TYPES_WEEK.map(type => <option key={type} value={type}>{type}</option>)}
           </select>
@@ -2731,10 +2750,10 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
             <p className="mt-2 text-[11px] text-foreground-400">Accepted formats: MP3, OGG, WAV (plus M4A, AAC, WEBM).</p>
           </div>
         ) : sourceType === 'External Link' ? (
-          <Field label="Podcast URL" className="mt-4"><input value={s('podcastUrl')} onChange={e => setSetting('podcastUrl', e.target.value)} placeholder="https://…" className={inputClass} /></Field>
+          <Field editField="settings.podcastUrl" label="Podcast URL" className="mt-4"><input value={s('podcastUrl')} onChange={e => setSetting('podcastUrl', e.target.value)} placeholder="https://…" className={inputClass} /></Field>
         ) : (
           <div className="mt-4">
-            <Field label="Embed code"><textarea value={s('podcastEmbedCode')} onChange={e => setSetting('podcastEmbedCode', e.target.value)} rows={4} placeholder="Paste the Apple Podcasts / SoundCloud / Deezer / Spotify embed snippet…" className={`${inputClass} resize-none`} /></Field>
+            <Field editField="settings.podcastEmbedCode" label="Embed code"><textarea value={s('podcastEmbedCode')} onChange={e => setSetting('podcastEmbedCode', e.target.value)} rows={4} placeholder="Paste the Apple Podcasts / SoundCloud / Deezer / Spotify embed snippet…" className={`${inputClass} resize-none`} /></Field>
             {s('podcastEmbedCode') && (
               <div className="mt-3">
                 <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">Preview</span>
@@ -2748,13 +2767,13 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
       <Section title="Listening settings">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
           <Field label="Duration (minutes)"><input type="number" min="0" value={Number(component.settings.durationMinutes) || 0} onChange={e => setSetting('durationMinutes', Number(e.target.value) || 0)} className={`${inputClass} tabular-nums`} /></Field>
-          <Field label="Required progress (%)"><input type="number" min="0" max="100" value={Number(component.settings.requiredProgressPercentage) || 0} onChange={e => setSetting('requiredProgressPercentage', Number(e.target.value) || 0)} className={`${inputClass} tabular-nums`} /></Field>
+          <Field editField="settings.requiredProgressPercentage" label="Required progress (%)"><input type="number" min="0" max="100" value={Number(component.settings.requiredProgressPercentage) || 0} onChange={e => setSetting('requiredProgressPercentage', Number(e.target.value) || 0)} className={`${inputClass} tabular-nums`} /></Field>
         </div>
       </Section>
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
+          <DurationFields editField="expectedOtjh" value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for podcasts (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -2762,18 +2781,18 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
 
       <Section title="Assurance">
         <div className="flex flex-wrap gap-2">
-          <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-          <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <Toggle editField="reflectionRequired" label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+          <Toggle editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
           <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this podcast?" className={`${inputClass} resize-none`} /></Field>
+          <Field editField="reflectionQuestion" label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this podcast?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
       <Section title="Publishing">
         <div className="grid gap-4 max-w-md">
-          <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
+          <Field editField="settings.version" label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>
 
@@ -2825,8 +2844,8 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
   return (
     <>
       <Section title="PowerPoint details">
-        <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
-        <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this presentation covers…" className={`${inputClass} resize-none`} /></Field>
+        <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
+        <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this presentation covers…" className={`${inputClass} resize-none`} /></Field>
 
         <div className="mt-4">
           <WeekComponentFileUpload
@@ -2842,15 +2861,15 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
           <p className="mt-2 text-[11px] text-foreground-400">Accepted formats: PowerPoint (.ppt, .pptx, .pps, .ppsx) or PDF. The preview below is what a learner sees.</p>
         </div>
 
-        <Field label="Speaker notes" className="mt-4"><textarea value={s('speakerNotes')} onChange={e => setSetting('speakerNotes', e.target.value)} rows={3} placeholder="Notes for whoever presents or reviews this deck…" className={`${inputClass} resize-none`} /></Field>
+        <Field editField="settings.speakerNotes" label="Speaker notes" className="mt-4"><textarea value={s('speakerNotes')} onChange={e => setSetting('speakerNotes', e.target.value)} rows={3} placeholder="Notes for whoever presents or reviews this deck…" className={`${inputClass} resize-none`} /></Field>
         <div className="mt-3">
-          <Toggle label="Download allowed" checked={component.settings.downloadAllowed !== false} onChange={value => setSetting('downloadAllowed', value)} />
+          <Toggle editField="settings.downloadAllowed" label="Download allowed" checked={component.settings.downloadAllowed !== false} onChange={value => setSetting('downloadAllowed', value)} />
         </div>
       </Section>
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
+          <Field editField="expectedOtjh" label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-time-line mr-1 text-primary-500"></AppIcon>2 hours is the starting estimate for a PowerPoint component. It is not calculated from the uploaded file or slide count; adjust it to the learner's expected off-the-job learning time.</p>
@@ -2859,18 +2878,18 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
 
       <Section title="Assurance">
         <div className="flex flex-wrap gap-2">
-          <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-          <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <Toggle editField="reflectionRequired" label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+          <Toggle editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
           <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this presentation?" className={`${inputClass} resize-none`} /></Field>
+          <Field editField="reflectionQuestion" label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this presentation?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
       <Section title="Publishing">
         <div className="grid gap-4 max-w-md">
-          <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
+          <Field editField="settings.version" label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>
 
@@ -3039,7 +3058,7 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
       )}
 
       <Section title="Quiz source">
-        <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} placeholder="e.g. Week 1 knowledge check" className={inputClass} /></Field>
+        <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} placeholder="e.g. Week 1 knowledge check" className={inputClass} /></Field>
 
         {weekScope.courseType === 'paid' && (
           <p className="mt-2 text-[11px] text-foreground-400">
@@ -3115,7 +3134,7 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
+          <Field editField="expectedOtjh" label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for a passed quiz (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -3123,12 +3142,12 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
 
       <Section title="Assurance">
         <div className="flex flex-wrap gap-2">
-          <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-          <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <Toggle editField="reflectionRequired" label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+          <Toggle editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
           <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this quiz?" className={`${inputClass} resize-none`} /></Field>
+          <Field editField="reflectionQuestion" label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this quiz?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
@@ -3191,15 +3210,11 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
   return (
     <>
       <Section title="Assignment details">
-        <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
-        <Field label="Title shown to learners" className="mt-4"><input value={s('learnerTitle')} onChange={e => setSetting('learnerTitle', e.target.value)} placeholder="Leave blank to show the title above" className={inputClass} /></Field>
+        <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
+        <Field editField="settings.learnerTitle" label="Title shown to learners" className="mt-4"><input value={s('learnerTitle')} onChange={e => setSetting('learnerTitle', e.target.value)} placeholder="Leave blank to show the title above" className={inputClass} /></Field>
         <p className="mt-1 text-[11px] text-foreground-400">Use the name learners were given, for example the assignment named in their training plan.</p>
-        <label className="mt-4 flex items-start gap-2 text-[12px] text-foreground-700">
-          <input type="checkbox" checked={component.settings.isMonthlyAssignment === true} onChange={e => setSetting('isMonthlyAssignment', e.target.checked)} className="mt-0.5" />
-          <span><span className="font-semibold">Monthly assignment (8-step submission)</span>
-            <span className="block text-[11px] text-foreground-400">Once any assignment in a learner's plan is ticked, only ticked assignments use the 8-step monthly submission and appear under Monthly submission. The others are completed like ordinary activities.</span></span>
-        </label>
-        <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this assignment asks the learner to do…" className={`${inputClass} resize-none`} /></Field>
+        <p className="mt-4 text-[11px] text-foreground-400">All assignments appear automatically in Monthly submission and use the 8-step submission.</p>
+        <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this assignment asks the learner to do…" className={`${inputClass} resize-none`} /></Field>
 
         <div className="mt-4">
           <AssignmentTopicsEditor value={component.settings.assignmentTopics}
@@ -3213,7 +3228,7 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
+          <Field editField="expectedOtjh" label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for assignments (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -3221,18 +3236,18 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
 
       <Section title="Assurance">
         <div className="flex flex-wrap gap-2">
-          <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-          <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <Toggle editField="reflectionRequired" label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+          <Toggle editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
           <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this assignment?" className={`${inputClass} resize-none`} /></Field>
+          <Field editField="reflectionQuestion" label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this assignment?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
       <Section title="Publishing">
         <div className="grid gap-4 max-w-md">
-          <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
+          <Field editField="settings.version" label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>
 
@@ -3590,25 +3605,15 @@ function formatFileSize(size: number) {
 function AssignedGroupsSection({ component, onChange, groupOptions, programmeId, groupName }: Pick<ComponentBodyProps, 'component' | 'onChange' | 'groupOptions'> & { programmeId: string; groupName?: string }) {
   const rawSelectedKeys = component.settings.selectedGroupKeys as string[] | undefined;
   const norm = (value?: string) => String(value ?? '').trim().toLowerCase();
-  // The module was built for this group, so it's never really optional — shown
-  // It starts selected, but remains editable and can be cleared by the tutor.
+  // Legacy components inherit the module's group for display. Opening their
+  // editor must not write that default and mark the module as edited. An
+  // explicit empty selection stays empty; only an assignment action persists it.
   const moduleGroupOption = groupName ? groupOptions.find(option => norm(option.name) === norm(groupName)) : undefined;
-  const storedKeys = rawSelectedKeys ?? [];
-  const selectedKeys = storedKeys;
-  const hasStoredSelection = Array.isArray(component.settings.selectedGroupKeys);
+  const selectedKeys = Array.isArray(rawSelectedKeys) ? rawSelectedKeys : moduleGroupOption ? [moduleGroupOption.key] : [];
   const [browsingKey, setBrowsingKey] = useState<string | null>(null);
   const setGroups = (keys: string[]) => onChange({
     settings: { ...component.settings, selectedGroupKeys: keys, selectedGroupNames: groupOptions.filter(option => keys.includes(option.key)).map(option => option.name) },
   });
-
-  // Self-heals a never-touched (or pre-existing) component so the locked group
-  // is actually persisted as assigned, not just shown that way — otherwise a
-  // week saved without ever touching this list would still store it as
-  // unassigned underneath.
-  useEffect(() => {
-    if (moduleGroupOption && !hasStoredSelection) setGroups([moduleGroupOption.key]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [moduleGroupOption?.key, hasStoredSelection]);
 
   // Placed copies this component has produced elsewhere, one entry per copy
   // (parallel arrays — ComponentSettingValue has no object type). A single
@@ -4037,16 +4042,16 @@ function IconButton({ label, icon, tone = 'default', onClick }: { label: string;
   );
 }
 
-function Field({ label, children, className = '' }: { label: string; children: ReactNode; className?: string }) {
+function Field({ label, children, className = '', editField }: { label: string; children: ReactNode; className?: string; editField?: string }) {
   return (
     <label className={`block ${className}`}>
       <span className="block text-[11px] font-semibold text-foreground-500 mb-1">{label}</span>
-      {children}
+      <CollaborativeField field={editField}>{children}</CollaborativeField>
     </label>
   );
 }
 
-function DurationFields({ value, onChange, label = 'Expected OTJH' }: { value: number; onChange: (value: number) => void; label?: string }) {
+function DurationFieldsControl({ value, onChange, label = 'Expected OTJH' }: { value: number; onChange: (value: number) => void; label?: string }) {
   const { hours, minutes } = splitHoursMinutes(value);
   const update = (nextHours: number, nextMinutes: number) => {
     onChange(hoursMinutesToHours(nextHours, nextMinutes));
@@ -4067,7 +4072,7 @@ function DurationFields({ value, onChange, label = 'Expected OTJH' }: { value: n
 // puts on its Coach validation checkbox.
 function CoachValidationToggle({ component, onChange }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void }) {
   return (
-    <Toggle
+    <Toggle editField="coachValidationRequired"
       label="Coach validation"
       checked={component.coachValidationRequired}
       onChange={value => {
@@ -4088,7 +4093,7 @@ function CoachValidationToggle({ component, onChange }: { component: ModuleCompo
   );
 }
 
-function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
+function ToggleControl({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
   return (
     <button onClick={() => onChange(!checked)} className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-bold transition-all ${checked ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-background-200 bg-background-50 text-foreground-500 hover:border-background-300'}`}>
       <AppIcon className={checked ? 'ri-checkbox-circle-fill' : 'ri-circle-line'}></AppIcon>{label}
@@ -4108,4 +4113,12 @@ function ModalShell({ title, children, onClose }: { title: string; children: Rea
       </div>
     </div>
   );
+}
+
+function Toggle({ editField, ...props }: Parameters<typeof ToggleControl>[0] & { editField?: string }) {
+  return <CollaborativeField field={editField}><ToggleControl {...props} /></CollaborativeField>;
+}
+
+function DurationFields({ editField, ...props }: Parameters<typeof DurationFieldsControl>[0] & { editField?: string }) {
+  return <CollaborativeField field={editField}><DurationFieldsControl {...props} /></CollaborativeField>;
 }

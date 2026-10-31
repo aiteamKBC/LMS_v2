@@ -14,6 +14,7 @@ import {
   weekComponentRows,
   weekDisplayLabel,
   weekMonthHeadings,
+  sidebarWeekRanges,
   type SidebarWeek,
 } from './weekPreview';
 
@@ -153,7 +154,16 @@ export function ActivitySidebar({
   const contentAvailableFor = canOpen || hasComponentContent;
   const openableFor = canOpen || ((c: JourneyComponent) => hasComponentContent(c) && isNavigableComponent(c));
   const hasUnavailableContent = weekComponents.some((c) => !contentAvailableFor(c));
-  const monthHeadings = monthHeadingFor ? weeks.map(monthHeadingFor) : weekMonthHeadings(weeks, plannedModule?.start_date);
+  const deliveryRanges = sidebarWeekRanges(weeks, plannedModule?.curriculumSlots);
+  const rangeLabel = (index: number) => {
+    const range = deliveryRanges[index];
+    if (!range?.start) return undefined;
+    const format = (date: string) => new Date(`${date}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+    return `${format(range.start)}${range.end ? ` – ${format(range.end)}` : ''}`;
+  };
+  const currentDateLabel = weekDateLabel ?? rangeLabel(activeWeekIndex);
+  const dateLabel = (week: SidebarWeek, index: number) => dateLabelFor ? dateLabelFor(week, index) : rangeLabel(index);
+  const monthHeadings = monthHeadingFor ? weeks.map(monthHeadingFor) : weekMonthHeadings(weeks, plannedModule?.curriculumSlots);
   // Only weeks the curriculum team published a holiday hint for appear here.
   const holidayNotes = weekHolidayNotes(plannedModule?.curriculumSlots);
   const currentWeekNote = holidayNotes.get(weeks.find(w => w.active)?.weekId
@@ -188,7 +198,7 @@ export function ActivitySidebar({
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-primary-600">{weekHeading}</p>
           <h2 className="text-sm font-heading font-bold text-primary-900">{currentWeekLabel || 'This week'}</h2>
           <p className="text-[11px] text-foreground-400 mt-0.5">
-            {weekDateLabel && <span className="mb-1 block text-foreground-500">{weekDateLabel}</span>}
+            {currentDateLabel && <span className="mb-1 block text-foreground-500">{currentDateLabel}</span>}
             {weekComponents.length} components{' '}
             {weekDoneCount > 0 && <span className="text-emerald-600 font-semibold"> · {weekDoneCount} done</span>}
           </p>
@@ -316,7 +326,7 @@ export function ActivitySidebar({
                         {weekDisplayLabel(weeks, index)}
                       </span>
                       <span className={`block text-[10px] ${weekComplete ? 'text-emerald-700' : 'text-foreground-400'}`}>
-                        {dateLabelFor?.(w, index) && <span className="mb-1 block text-foreground-500">{dateLabelFor(w, index)}</span>}
+                        {dateLabel(w, index) && <span className="mb-1 block text-foreground-500">{dateLabel(w, index)}</span>}
                         {w.count} components{weekComplete ? ' complete' : ''}
                       </span>
                     </span>

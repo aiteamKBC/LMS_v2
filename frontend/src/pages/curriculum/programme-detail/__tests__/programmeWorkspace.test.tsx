@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
+import { fetchAssignedLearners, fetchLearnerStatusCounts } from '@/api/assignedLearners';
 import type {
   CurriculumCohort,
   CurriculumComponent,
@@ -166,6 +167,12 @@ function summaryOf(rows: CurriculumComponent[]): CurriculumComponentSummaryRow[]
   return [...buckets.values()];
 }
 
+vi.mock('@/api/assignedLearners', () => ({
+  fetchLearnerStatusCounts: vi.fn(async (_scope: string, ids: string[]) => Object.fromEntries(ids.map(id => [id, { total: 12, statuses: { active: 8, withdrawn: 2, 'on break': 2 } }]))),
+  fetchAssignedLearners: vi.fn(async () => ({ scope: 'group', id: 'GROUP-1', status: 'all', total: 1, filteredTotal: 1, page: 1, pageSize: 25,
+    learners: [{ id: 'synthetic-former', name: 'Former learner', email: 'former@example.invalid', status: 'withdrawn' }] })),
+}));
+
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
@@ -268,6 +275,34 @@ async function renderWorkspace(query = '') {
   await screen.findByRole('heading', { name: 'Data Analyst' });
   return result;
 }
+
+it.each([
+  ['Overview', 'programme', 'PROG-DATA', 'Data Analyst: 8 active learners'],
+  ['Cohorts', 'cohort', 'COHORT-1', 'Sept 2026: 8 active learners'],
+  ['Groups', 'group', 'GROUP-1', 'Group A: 2 on break learners'],
+  ['Modules', 'module', 'MOD-1', 'Data Foundations: 12 all statuses learners'],
+])('shows %s status counts without opening learner lists', async (tab, scope, id, label) => {
+  vi.mocked(fetchAssignedLearners).mockClear();
+  vi.mocked(fetchLearnerStatusCounts).mockClear();
+  await renderWorkspace();
+  if (tab !== 'Overview') await openTab(new RegExp(tab));
+  expect(await screen.findByRole('button', { name: label })).toBeVisible();
+  if (scope === 'programme') {
+    expect(screen.getByRole('button', { name: 'Data Analyst: 2 withdrawn learners' })).toHaveAttribute('title', 'Withdrawn: 2 learners');
+  }
+  expect(fetchAssignedLearners).not.toHaveBeenCalled();
+  expect(fetchLearnerStatusCounts).toHaveBeenCalledWith(scope, expect.arrayContaining([id]), expect.any(AbortSignal));
+});
+
+it('opens the selected table row and lifecycle status without changing its assignment action', async () => {
+  vi.mocked(fetchAssignedLearners).mockClear();
+  await renderWorkspace();
+  await openTab(/Modules/);
+  await userEvent.click(await screen.findByRole('button', { name: 'Data Foundations: 2 withdrawn learners' }));
+  expect(await screen.findByText('Former learner')).toBeVisible();
+  expect(fetchAssignedLearners).toHaveBeenCalledWith({ scope: 'module', id: 'MOD-1', name: 'Data Foundations' }, 'all', '', 1, expect.any(AbortSignal), 'withdrawn');
+  expect(screen.getByLabelText('Status')).toHaveValue('withdrawn');
+});
 
 /** The tab strip, which is the page's table of contents. */
 function tabStrip() {

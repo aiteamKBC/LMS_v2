@@ -77,6 +77,13 @@ def external_calendar_settings(settings, series, planned, occurrences, claimed, 
         start = instant(row.get('scheduled_start'))
         if start and start.astimezone(zone).date().isoformat() == day:
             matches.append(row)
+    # Two deliveries on one date are legitimate. Their local clock can
+    # disambiguate them; never resolve a duplicate simply by list position.
+    if len(matches) > 1 and text((planned or {}).get('startTime')):
+        at_clock = [row for row in matches if instant(row.get('scheduled_start')).astimezone(zone).strftime('%H:%M')
+                    == text(planned['startTime'])[:5]]
+        if len(at_clock) == 1:
+            matches = at_clock
     matched = matches[0] if len(matches) == 1 and text(matches[0].get('id')) not in claimed else None
     result = {
         'liveSessionUrl': join_url, 'teamsMeetingUrl': join_url,
@@ -112,6 +119,51 @@ def external_calendar_settings(settings, series, planned, occurrences, claimed, 
         minutes = int((end - start) / timedelta(minutes=1))
         result.update(durationMinutes=minutes, teamsDurationMinutes=minutes)
     claimed.add(text(matched.get('id')))
+    return result
+
+
+UNVERIFIED_IDENTITY_KEYS = {
+    'teamsLiveSessionId', 'teamsOccurrenceId', 'teamsSessionNumber',
+    'teamsEventId', 'teamsOnlineMeetingId', 'teamsStartDateTimeUtc',
+    'teamsCalendarSeries', 'teamsWebLink', 'teamsMeetingOptionsUrl',
+}
+
+
+def manual_link_settings(settings, previous=None):
+    """A typed URL is not proof that the old meeting's provider IDs still apply.
+
+    Keep authored dates, explicit recording-source links and all unrelated
+    fields. Retain a verified identity when its URL is unchanged. An editor
+    opened before a manual replacement cannot reintroduce the former IDs.
+    """
+    incoming = meeting_settings(settings)
+    stored = meeting_settings(previous)
+    if (text(stored.get('extraTeamsMeetingUrl')) or text(incoming.get('extraTeamsMeetingUrl'))
+            or text(incoming.get('teamsMeetingScope') or stored.get('teamsMeetingScope')).lower() == 'additional'):
+        return settings
+    next_link = text(incoming.get('liveSessionUrl')) or text(incoming.get('teamsMeetingUrl'))
+    old_link = text(stored.get('liveSessionUrl')) or text(stored.get('teamsMeetingUrl'))
+    # Preserve the existing import/create payload contract on a component's
+    # first structural save. Actual manual UI edits are explicitly unverified;
+    # changes to an already stored URL are always checked below.
+    if (not stored and incoming.get('teamsCalendarBinding') != 'unverified'
+            and any(text(incoming.get(key)) for key in ('teamsLiveSessionId', 'teamsOccurrenceId', 'teamsEventId'))):
+        return settings
+    changed = next_link != old_link
+    pending = stored.get('teamsCalendarBinding') == 'unverified'
+    if not changed and not pending:
+        return settings
+    result = {key: value for key, value in incoming.items() if key not in UNVERIFIED_IDENTITY_KEYS}
+    legacy = result.get('legacySettings')
+    if isinstance(legacy, str):
+        try:
+            legacy = json.loads(legacy)
+        except (TypeError, ValueError):
+            legacy = None
+    if isinstance(legacy, dict):
+        result['legacySettings'] = {key: value for key, value in legacy.items() if key not in UNVERIFIED_IDENTITY_KEYS}
+    result.update(liveSessionUrl=next_link, teamsMeetingUrl=next_link,
+                  liveSessionLinkOverride=next_link, teamsCalendarBinding='unverified')
     return result
 
 

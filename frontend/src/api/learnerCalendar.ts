@@ -44,6 +44,11 @@ export interface LearnerCalendarEvent {
   targetDate: string | null;
   scheduledDate: string | null;
   scheduledTime: string | null;
+  /** Source clock and authoritative instants, when supplied by Live sessions. */
+  timeZone?: string | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  isTimeEstimated?: boolean;
   durationMinutes: number;
   coachName: string;
   coachEmail: string;

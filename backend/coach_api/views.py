@@ -9572,6 +9572,11 @@ def build_live_session_calendar_event(
     tracked_occurrence = tracked_occurrence or {}
     tracked_series = tracked_series or {}
     tracked_start = tracked_occurrence.get("scheduled_start")
+    def export_instant(value):
+        if not isinstance(value, datetime):
+            return None
+        # Occurrence columns store UTC; legacy naive values use that same contract.
+        return value.replace(tzinfo=value.tzinfo or datetime_timezone.utc).astimezone(datetime_timezone.utc).isoformat()
     event_date = tracked_start.date().isoformat() if isinstance(tracked_start, datetime) else session["date"]
     session_date = date.fromisoformat(event_date)
     module_name = clean_text(row.get("module_name")) or "Live Session"
@@ -9605,6 +9610,9 @@ def build_live_session_calendar_event(
         # The Teams occurrence this slot is tracked by, when one exists; read by
         # live_session_outcomes to show whether the session was attended.
         "occurrenceId": clean_text(tracked_occurrence.get("id")) or None,
+        "timeZone": clean_text(tracked_series.get("timezone")) or timezone.get_default_timezone_name(),
+        "startsAt": export_instant(tracked_start),
+        "endsAt": export_instant(tracked_occurrence.get("scheduled_end")),
         "ownerEmail": owner_email,
         "ownerName": owner_name,
         "learnerId": "",
@@ -17161,6 +17169,7 @@ def _sync_calendar_record_to_review_instance_status(instance_row: dict) -> None:
         updated = CoachCalendarEvent.objects.filter(
             pk=calendar_event_id,
             status__in={
+                CoachCalendarEvent.STATUS_SCHEDULED,
                 CoachCalendarEvent.STATUS_IN_PROGRESS,
                 CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
             },

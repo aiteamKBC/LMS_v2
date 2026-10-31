@@ -164,6 +164,9 @@ def next_title(items, today):
     for item in items:
         placement = item.get('schedule') or {}
         start, end = placement.get('week_start'), placement.get('week_end')
+        delivery = placement.get('delivery_week')
+        if delivery:
+            start, end = delivery.get('start'), delivery.get('end')
         raw = placement.get('date')
         if not start and raw:
             at = date.fromisoformat(raw[:10])
@@ -171,11 +174,12 @@ def next_title(items, today):
         if start and not end:
             end = (date.fromisoformat(start) + timedelta(days=6)).isoformat()
         source, label = placement.get('date_source'), item.get('week') or item.get('section_title') or ''
-        month = placement.get('month')
+        month = delivery.get('month') if delivery else placement.get('month')
         month = month if month and len(month) == 7 else None
         special = 'introduction' if source == 'introduction' else 'extra' if source == 'extra_activity' else ''
         key = 'introduction' if special == 'introduction' else 'extra:' + label if special else (
-            start or item.get('weekId') or (f'{month}:{label or "activities"}' if month else label or 'undated'))
+            (f"week:{delivery['module_id']}:{delivery['id']}" if delivery else '')
+            or start or item.get('weekId') or (f'{month}:{label or "activities"}' if month else label or 'undated'))
         rank = -1 if special == 'introduction' else 2 if special else 0 if start or month else 1
         group = groups.setdefault(key, {'rank': rank, 'start': None if special else start,
             'end': None if special else end, 'sort': start or month or key, 'items': []})
@@ -259,6 +263,7 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             continue
         placement = metadata['activity_dates'].get(ident) or {}
         if not placement or placement.get('date_source') in ('original_created_at', 'source_date', 'undated'):
+            delivery = placement.get('delivery_week')
             raw = c.get('sessionDate')
             placement = {'date': raw[:10] if raw else None}
             if raw:
@@ -269,6 +274,8 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
                 else:
                     monday = at-timedelta(days=at.weekday())
                     placement.update(month=raw[:7],week_start=monday.isoformat(),week_end=(monday+timedelta(days=6)).isoformat())
+            if delivery:
+                placement['delivery_week'] = delivery
         subject['_items'].append(dict(id=ident, title=c.get('component') or '', completed=native_done(c, native) if search is None else False,
             position=index, week=c.get('week'), weekId=c.get('weekId'), schedule=placement, component=c,
             started=(c.get('componentId') in attempted_components or str((c.get('quizMeta') or {}).get('quizId')) in attempted_quizzes) if c.get('isQuiz') else False))

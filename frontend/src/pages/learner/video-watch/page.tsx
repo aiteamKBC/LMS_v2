@@ -305,8 +305,8 @@ export default function ComponentViewPage() {
   // and verify the submitted duration.
   const isLiveSession = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session';
   const hasActivityPanel = isVideo || isLiveSession;
-  // The monthly assignment uses the eight-step submission. Once an author flags
-  // one, the plan's other assignments are completed like any other activity.
+  // Every assignment uses the eight-step monthly submission, regardless of
+  // legacy author flags elsewhere in the learner's plan.
   const isAssignment = isMonthlyAssignment(component, detail?.components);
   const isPlainAssignment = !isAssignment && componentRequiresEvidence(component?.type);
   const completed = !!component && isComponentComplete(component, completedIds);

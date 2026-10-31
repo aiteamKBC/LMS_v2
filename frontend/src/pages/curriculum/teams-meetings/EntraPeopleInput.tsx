@@ -4,8 +4,8 @@ import { searchEntraPeople, type EntraPerson } from './entraDirectory';
 
 const isEmail = (value: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value);
 
-export function EntraPeopleInput({ value, onChange, label, single = false, includeGuests = false }: {
-  value: string; onChange: (value: string) => void; label: string; single?: boolean; includeGuests?: boolean;
+export function EntraPeopleInput({ value, onChange, label, single = false, includeGuests = false, showCount = false }: {
+  value: string; onChange: (value: string) => void; label: string; single?: boolean; includeGuests?: boolean; showCount?: boolean;
 }) {
   type RemovedEmail = { email: string; index: number; remaining: string[] };
   const [draft, setDraft] = useState('');
@@ -22,6 +22,7 @@ export function EntraPeopleInput({ value, onChange, label, single = false, inclu
   const input = useRef<HTMLInputElement>(null);
   const listId = useId();
   const emails = emailList(value);
+  const selectedCount = new Set(emails.filter(isEmail).map(email => email.toLowerCase())).size;
 
   useEffect(() => {
     setPeople([]);
@@ -141,7 +142,8 @@ export function EntraPeopleInput({ value, onChange, label, single = false, inclu
           {hasMore && <p className="px-3 py-2 text-[11px] text-foreground-500">Type more to narrow the results.</p>}
         </div>
       )}
-      <div aria-live="polite" className="mt-1 text-[11px]">
+      <div aria-live="polite" className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+        {showCount && <span aria-label={`${label} selected count`} className="rounded-full border border-primary-100 bg-primary-50 px-2 py-0.5 font-semibold text-primary-700">{selectedCount} selected</span>}
         {error ? <span className="text-red-700">{error}</span> : loading ? <span>Searching Entra...</span>
           : searchError ? <span className="text-red-700">{searchError}</span>
           : open && draft.trim().length >= 2 && !people.length ? <span>No matching account. You can enter a full email address.</span> : null}

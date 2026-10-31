@@ -7,6 +7,8 @@ from . import activity, learner_assignments, programme_audit, quality, review_sc
 from .archive_index import curriculum_archive_index
 from .record_snapshots import curriculum_record_snapshot
 from .module_live import curriculum_live, curriculum_module_changes
+from .module_collaboration import collaboration_configuration
+from . import learner_directory
 from .teams_attendee_compare import teams_meeting_attendee_comparison
 from .teams_permission_check import teams_meeting_permission_check
 from .teams_imported_participants import imported_meeting_participants
@@ -15,6 +17,7 @@ from .teams_imported_calendar_auth import imported_calendar_connect, imported_ca
 from .teams_dial_in import teams_meeting_dial_in
 from .teams_options_retry import teams_meeting_options_retry
 from .teams_endpoint_guard import teams_staff_required
+from .teams_existing_series import existing_series
 from .teams_create_guard import teams_create_status, teams_meeting_collection
 from .teams_create_drafts import teams_create_draft
 from .teams_schedule_delivery import forward_schedule_email, schedule_email
@@ -43,6 +46,9 @@ from .home_summary import curriculum_home_summary
 
 
 urlpatterns = [
+    path('curriculum/learner-directory/counts/', learner_directory.counts),
+    path('curriculum/learner-directory/learners/', learner_directory.learners),
+    path('curriculum/modules/<str:module_id>/collaboration/', collaboration_configuration, name='module-collaboration'),
     path('curriculum/bulk-attendance/learners/', bulk_attendance_learners, name='curriculum-bulk-attendance-learners'),
     path('curriculum/bulk-attendance/kbc-history/', bulk_attendance_kbc_history, name='curriculum-bulk-attendance-kbc-history'),
     path('curriculum/bulk-attendance/kbc-recent/', bulk_attendance_kbc_recent, name='curriculum-bulk-attendance-kbc-recent'),
@@ -176,6 +182,7 @@ urlpatterns = [
     path('curriculum/modules/<str:module_catalogue_id>/ai-material/', views.curriculum_module_ai_material, name='curriculum-module-ai-material'),
     path('curriculum/modules/<str:module_catalogue_id>/teams-meetings/restore/', teams_staff_required(views.curriculum_module_teams_meeting_restore), name='curriculum-module-teams-meeting-restore'),
     path('curriculum/modules/<str:module_catalogue_id>/teams-links/', teams_staff_required(views.curriculum_module_teams_links_replace), name='curriculum-module-teams-links-replace'),
+    path('curriculum/modules/<str:module_catalogue_id>/teams-existing-series/', teams_staff_required(existing_series), name='curriculum-module-teams-existing-series'),
     # A one-off meeting on a single week, with its own organiser and guests.
     # Separate from the module's calendar above in both directions -- see
     # teams_week_meeting.py.

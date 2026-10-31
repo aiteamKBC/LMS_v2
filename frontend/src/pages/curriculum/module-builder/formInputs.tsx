@@ -1,3 +1,4 @@
+import { CollaborativeField } from './CollaborativeField';
 import { useEffect, useState } from 'react';
 import { hoursMinutesToHours, splitHoursMinutes } from '@/lib/format';
 
@@ -6,7 +7,7 @@ import { hoursMinutesToHours, splitHoursMinutes } from '@/lib/format';
 // Week Builder also renders) can reuse them without importing the whole page —
 // which would create a page <-> modal import cycle.
 
-export function TextInput({ label, value, onChange, required, error }: { label: string; value: string; onChange: (value: string) => void; required?: boolean; error?: string }) {
+function TextInputControl({ label, value, onChange, required, error }: { label: string; value: string; onChange: (value: string) => void; required?: boolean; error?: string }) {
   return (
     <label className="block">
       <span className="text-[10px] font-semibold text-foreground-400 uppercase">{label}{required ? ' *' : ''}</span>
@@ -25,7 +26,7 @@ export function ReadOnlyInput({ label, value }: { label: string; value: string }
   );
 }
 
-export function TextArea({ label, value, onChange, rows = 3, error }: { label: string; value: string; onChange: (value: string) => void; rows?: number; error?: string }) {
+function TextAreaControl({ label, value, onChange, rows = 3, error }: { label: string; value: string; onChange: (value: string) => void; rows?: number; error?: string }) {
   return (
     <label className="block">
       <span className="text-[10px] font-semibold text-foreground-400 uppercase">{label}</span>
@@ -45,7 +46,7 @@ function parseNumberDraft(value: string) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-export function NumberInput({ label, value, onChange, min, max, step, error }: { label: string; value: number; onChange: (value: number) => void; min?: number; max?: number; step?: number; error?: string }) {
+function NumberInputControl({ label, value, onChange, min, max, step, error }: { label: string; value: number; onChange: (value: number) => void; min?: number; max?: number; step?: number; error?: string }) {
   const [draft, setDraft] = useState(formatNumberDraft(value));
   const [focused, setFocused] = useState(false);
 
@@ -86,7 +87,7 @@ export function NumberInput({ label, value, onChange, min, max, step, error }: {
 }
 
 /** Edit a duration as whole hours plus minutes while keeping the API value in decimal hours. */
-export function DurationInput({ label, value, onChange, error }: { label: string; value: number; onChange: (value: number) => void; error?: string }) {
+function DurationInputControl({ label, value, onChange, error }: { label: string; value: number; onChange: (value: number) => void; error?: string }) {
   const { hours, minutes } = splitHoursMinutes(value);
   const update = (nextHours: number, nextMinutes: number) => {
     onChange(hoursMinutesToHours(nextHours, nextMinutes));
@@ -109,7 +110,7 @@ export function DurationInput({ label, value, onChange, error }: { label: string
   );
 }
 
-export function SelectInput({
+function SelectInputControl({
   label,
   value,
   options,
@@ -145,11 +146,35 @@ export function SelectInput({
   );
 }
 
-export function Checkbox({ label, checked, onChange, disabled = false }: { label: string; checked: boolean; onChange: (value: boolean) => void; disabled?: boolean }) {
+function CheckboxControl({ label, checked, onChange, disabled = false }: { label: string; checked: boolean; onChange: (value: boolean) => void; disabled?: boolean }) {
   return (
     <label className={`flex items-center gap-2 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[12px] font-semibold text-foreground-700 ${disabled ? 'opacity-60' : ''}`}>
       <input type="checkbox" checked={checked} disabled={disabled} onChange={event => onChange(event.target.checked)} className="accent-primary-600" />
       <span>{label}</span>
     </label>
   );
+}
+
+export function TextInput({ editField, ...props }: Parameters<typeof TextInputControl>[0] & { editField?: string }) {
+  return <CollaborativeField field={editField}><TextInputControl {...props} /></CollaborativeField>;
+}
+
+export function TextArea({ editField, ...props }: Parameters<typeof TextAreaControl>[0] & { editField?: string }) {
+  return <CollaborativeField field={editField}><TextAreaControl {...props} /></CollaborativeField>;
+}
+
+export function NumberInput({ editField, ...props }: Parameters<typeof NumberInputControl>[0] & { editField?: string }) {
+  return <CollaborativeField field={editField}><NumberInputControl {...props} /></CollaborativeField>;
+}
+
+export function DurationInput({ editField, ...props }: Parameters<typeof DurationInputControl>[0] & { editField?: string }) {
+  return <CollaborativeField field={editField}><DurationInputControl {...props} /></CollaborativeField>;
+}
+
+export function SelectInput({ editField, ...props }: Parameters<typeof SelectInputControl>[0] & { editField?: string }) {
+  return <CollaborativeField field={editField}><SelectInputControl {...props} /></CollaborativeField>;
+}
+
+export function Checkbox({ editField, ...props }: Parameters<typeof CheckboxControl>[0] & { editField?: string }) {
+  return <CollaborativeField field={editField}><CheckboxControl {...props} /></CollaborativeField>;
 }

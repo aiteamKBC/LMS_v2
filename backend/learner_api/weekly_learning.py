@@ -127,6 +127,8 @@ def _weekly_component(c):
         # its authored activity by these dates (liveSessionRoute.ts).
         row["sessionDate"] = c.get("sessionDate")
         row["sessionDateTimeUtc"] = c.get("sessionDateTimeUtc")
+        if c.get("additionalMeeting") is True:
+            row["additionalMeeting"] = True
     # As learner-detail's compact mode: omitted means null to every consumer.
     return {key: value for key, value in row.items()
             if value is not None or key in {"module", "week", "component", "expectedOtjh"}}

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
   type ReactNode,
@@ -368,6 +369,8 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
   const [forwardError, setForwardError] = useState('');
   const [forwardNotice, setForwardNotice] = useState('');
   const [updateConfirmOpen, setUpdateConfirmOpen] = useState(false);
+  const actionFeedbackId = useId();
+  const actionFeedbackRef = useRef<HTMLParagraphElement>(null);
   const onSecondTab = Boolean(secondTab) && activeTab === 'second';
   // Coming back from the additional-meeting tab: a week may have been booked or
   // cancelled there, which changes which calendar runs it.
@@ -392,6 +395,17 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
     comparison, comparing, comparisonError, compareAttendees, publishedInvitees,
     originalCalendar, originalCalendarBlocked, refreshOriginalCalendar,
   } = workspace;
+  const actionBlockedReason = blockedReason
+    || (!graphConfigured ? 'Microsoft Teams is not connected. Check the Microsoft connection, then try again.' : '')
+    || (originalCalendarBlocked ? 'The original calendar is not ready to edit. Check its connection and permissions above, then try again.' : '')
+    || (externalCalendar && !selected?.summary ? 'Check this module\'s saved meeting links before updating its existing Teams calendar.' : '')
+    || (selected && !(selectedForDisplay || selected).sessions.length
+      ? 'This module has no saved live sessions. Add a Live session, save the module, then reopen Teams.' : '');
+  const actionError = selected?.summary ? updateDrawer.error
+    : createProgress || (createRecovery && createRecovery.phase !== 'failed') ? ''
+      : createRecovery?.phase === 'failed' ? createRecovery.message : createDrawer.error;
+  const actionMessage = actionBlockedReason || actionError;
+  const explainBlockedAction = () => actionFeedbackRef.current?.focus({ preventScroll: true });
   // Who the author has typed in but not saved. Named under the comparison so a
   // reader can see why Microsoft does not have them.
   const pendingInvitees = selected
@@ -451,6 +465,11 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                there acting on a calendar the reader is not looking at. */
             footer={!teamsLoaded || calendarLinksLoading || calendarLinksError || onSecondTab ? undefined : (
               <div className="flex w-full flex-wrap items-center justify-end gap-2">
+                {actionMessage && <p id={actionFeedbackId} ref={actionFeedbackRef} role="status" aria-live="polite" aria-atomic="true"
+                  aria-label="Teams calendar action" tabIndex={-1}
+                  className="w-full max-h-32 overflow-y-auto rounded-lg border border-primary-200 bg-primary-50 p-3 text-[12px] font-semibold leading-relaxed text-foreground-700 outline-none focus:ring-2 focus:ring-primary-300">
+                  <AppIcon className="ri-information-line mr-1.5" aria-hidden="true" />{actionMessage}
+                </p>}
                 {/* Only the actions this module can actually take: a footer of
                     greyed-out buttons reads as broken rather than as guidance.
                     Closing is the title bar's X — no second Close down here. */}
@@ -524,12 +543,15 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     <button
                       type="button"
                       onClick={() => {
+                        if (actionBlockedReason) { explainBlockedAction(); return; }
                         if (!updateConfirmOpen) { setUpdateConfirmOpen(true); return; }
                         void pushDates(selectedForDisplay || selected);
                       }}
                       // Waits for the calendar's own read, so the invitation
                       // fields it sends with the dates hold the saved values.
-                      disabled={!(selectedForDisplay || selected).sessions.length || Boolean(busy) || Boolean(updateProgress) || (Boolean(blockedReason) || originalCalendarBlocked) || detailLoading || updateDrawer.saving || !graphConfigured}
+                      disabled={Boolean(busy) || Boolean(updateProgress) || detailLoading || updateDrawer.saving}
+                      aria-disabled={Boolean(actionBlockedReason)}
+                      aria-describedby={actionMessage ? actionFeedbackId : undefined}
                       title="Move the Teams calendar onto this module's stored session dates, holiday shifts included, with any changes to the invitations below."
                       className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white shadow-sm transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
@@ -563,11 +585,16 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                   </button>
                   <button
                     type="button"
-                    onClick={() => void createCalendar(selected)}
+                    onClick={() => {
+                      if (actionBlockedReason) { explainBlockedAction(); return; }
+                      void createCalendar(selected);
+                    }}
                     // While a lost Create is being checked, still running, or ended
                     // uncertain, a second Create is exactly what must not be sent.
-                    disabled={!(selectedForDisplay || selected).sessions.length || createDrawer.saving || Boolean(busy) || (Boolean(blockedReason) || originalCalendarBlocked) || !graphConfigured
+                    disabled={createDrawer.saving || Boolean(busy)
                       || Boolean(createRecovery && createRecovery.phase !== 'failed')}
+                    aria-disabled={Boolean(actionBlockedReason)}
+                    aria-describedby={actionMessage ? actionFeedbackId : undefined}
                     title="Create one Teams meeting on each of this module's stored session dates."
                     className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
@@ -980,7 +1007,6 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                       disabled={!graphConfigured}
                     />
                   </section>
-                  {updateDrawer.error && <InlineError message={updateDrawer.error} />}
                   {addedInvitees(selected).length > 0 && (
                     <p role="note" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] font-semibold text-amber-900">
                       With Save without notifying, added people will be saved to the Teams meeting but will not receive an invitation or LMS email. Use Save and invite added people to send them both.
@@ -1055,11 +1081,6 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                   prefillNotice={prefillNotice}
                   onPrefill={() => void prefillInvitees(selected, createDrawer.patch)}
                 />
-                {createRecovery?.phase === 'failed' ? (
-                  <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-                    <p className="font-semibold">{createRecovery.message}</p>
-                  </div>
-                ) : createDrawer.error && <InlineError message={createDrawer.error} />}
               </div>
               )
             )}

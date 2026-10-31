@@ -24,6 +24,7 @@ import { useCoachingReviewDefinitions } from '../monthly-coaching/useCoachingRev
 import { LearnerReviewInstanceForm } from '../reviews/LearnerReviewInstanceForm';
 import { useLearnerReviewInstance } from "../reviews/LearnerReviewInstanceForm.helpers";
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
+import { progressReviewCalendarContent } from './progressReviewCalendar';
 
 const learnerNav = roleNavMap.learner;
 
@@ -351,12 +352,13 @@ export default function ProgressReviewsPage() {
 
   const addToCalendar = () => {
     if (!selected?.scheduledDate || !selected.scheduledTime) return;
-    const start = `${selected.scheduledDate.replaceAll('-', '')}T${selected.scheduledTime.replace(':', '')}00`;
-    const startDate = new Date(`${selected.scheduledDate}T${selected.scheduledTime}:00`);
-    const endDate = new Date(startDate.getTime() + selected.durationMinutes * 60_000);
-    const pad = (value: number) => String(value).padStart(2, '0');
-    const end = `${endDate.getFullYear()}${pad(endDate.getMonth() + 1)}${pad(endDate.getDate())}T${pad(endDate.getHours())}${pad(endDate.getMinutes())}00`;
-    const content = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT', `DTSTART:${start}`, `DTEND:${end}`, `SUMMARY:${progressReviewTitle(selected)}`, selected.meetingLink ? `URL:${selected.meetingLink}` : '', 'END:VEVENT', 'END:VCALENDAR'].filter(Boolean).join('\r\n');
+    const content = progressReviewCalendarContent({
+      scheduledDate: selected.scheduledDate,
+      scheduledTime: selected.scheduledTime,
+      durationMinutes: selected.durationMinutes,
+      title: progressReviewTitle(selected),
+      meetingLink: selected.meetingLink,
+    });
     const url = URL.createObjectURL(new Blob([content], { type: 'text/calendar' }));
     const anchor = document.createElement('a');
     anchor.href = url;

@@ -89,7 +89,7 @@ ATOMIC_PATTERNS = frozenset({
 
 CONTROL_KEYS = frozenset({
     'saveMode', 'structureDelta', 'structureBase', 'expectedRevision', 'expected_revision',
-    'weekStructure', 'weeks', 'restoreIds',
+    'weekStructure', 'weeks', 'restoreIds', 'collaboration',
 })
 
 

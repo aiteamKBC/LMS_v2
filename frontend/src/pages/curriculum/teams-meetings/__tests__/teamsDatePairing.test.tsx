@@ -46,7 +46,7 @@ describe('pairing the module plan with the Teams calendar by date', () => {
     render(<ModuleSessionSchedulePreview
       row={{ ...row, plannedStarts: planned, teamsStarts: held, summary: { liveSessionId: 'LIVE-PAIR' } } as never}
       renderActions={renderActions} />);
-    expect(screen.getAllByText('Not on the Teams calendar yet — sending adds it.')).toHaveLength(1);
+    expect(screen.getAllByText('Not on the Teams calendar yet — Update Teams calendar adds it.')).toHaveLength(1);
     expect(screen.queryByText(/Teams still holds/)).not.toBeInTheDocument();
     // The 1 Oct row has no Teams session to act on; 8 Oct acts on 8 Oct's, and
     // 5 Nov -- which Teams does hold -- on its own.

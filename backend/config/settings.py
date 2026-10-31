@@ -500,6 +500,13 @@ TEMPLATES = [
 WSGI_APPLICATION = 'config.wsgi.application'
 ASGI_APPLICATION = 'config.asgi.application'
 
+# Module Builder coordination is opt-in for a measured pilot. It does not
+# enable chat. Empty module list means all modules once explicitly enabled.
+CURRICULUM_COLLABORATION_ENABLED = os.environ.get('CURRICULUM_COLLABORATION_ENABLED', 'false').lower() == 'true'
+CURRICULUM_COLLABORATION_MODULES = tuple(value.strip() for value in os.environ.get('CURRICULUM_COLLABORATION_MODULES', '').split(',') if value.strip())
+CURRICULUM_COLLABORATION_REDIS_URL = os.environ.get('CURRICULUM_COLLABORATION_REDIS_URL', '')
+
+
 # DRF is used by the chat API. Session authentication keeps it compatible with
 # Django's existing browser login flow; projects using another auth mechanism
 # can add it here without changing chat permissions.

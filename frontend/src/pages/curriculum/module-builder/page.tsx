@@ -1,3 +1,12 @@
+import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
+import { LearnerStatusCounts } from '../shared/entities/LearnerStatusCounts';
+import { useRefreshAssignedLearners } from '../shared/entities/assignedLearnerDirectory';
+import { sessionDeliveryDate } from '@/lib/deliveryWeek';
+import { EditScope, ModulePresence } from './CollaborativeField';
+import { CollaborationContext } from './collaborationContext';
+import { useModuleCollaboration } from './useModuleCollaboration';
+import { dirtyFields, projectAvailable } from './collaborationProtocol';
+import { ModuleEditReservedError } from './moduleAuthoringData';
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -83,6 +92,7 @@ import {
   createEmptyWeek,
   createNewModule,
   groupWeeksByMonth,
+  moduleWeekDeliveryDate,
   deleteModuleStructure,
   curriculumModuleToCatalogue,
   duplicateModuleStructure,
@@ -110,6 +120,7 @@ import {
   moduleAuthoredLiveSessions,
   applyLiveSessionLinkToComponents,
   replaceModuleTeamsLinks,
+  applyModuleComponentUpdate,
   // Which authored weeks a ticked holiday falls on. States the fact only --
   // the plan is unchanged, and what the week becomes is the author's call.
   weeksTouchedByHoliday,
@@ -676,6 +687,11 @@ async function showDuplicateModuleSwal(
 }
 
 export default function ModuleBuilder() {
+  return <LearnerDirectoryProvider><ModuleBuilderContent /></LearnerDirectoryProvider>;
+}
+
+function ModuleBuilderContent() {
+  const refreshAssignedLearners = useRefreshAssignedLearners();
   const { auth } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedCreateScopeRef = useRef({
@@ -711,6 +727,7 @@ export default function ModuleBuilder() {
    * every keystroke made while it was in the air -- the same out-of-order
    * overwrite the save path guards against, arriving by a different door.
    */
+  const collaboration = useModuleCollaboration(workingModule?.catalogueId || '', () => { void liveSyncRef.current('live'); });
   const workingModuleRef = useRef<ModuleCatalogueItem | null>(null);
   workingModuleRef.current = workingModule;
   /**
@@ -1831,6 +1848,7 @@ export default function ModuleBuilder() {
           lifecycleStatus: learner.programmeStatus,
         }));
       const assignedCount = assignedLearners.length;
+      if (module.catalogueId) setLearnerCountOverrides(previous => ({ ...previous, [module.catalogueId]: assignedCount }));
       if (assignedCount === 0) {
         setLearnerAssignmentTarget(target);
         return 0;
@@ -1922,7 +1940,7 @@ export default function ModuleBuilder() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const requestedModule = params.get('module') || params.get('moduleId') || params.get('catalogueId') || params.get('moduleTitle') || '';
+    const requestedModule = params.get('module') || params.get('moduleId') || params.get('catalogueId') || '';
     const requestedKey = requestedModule.trim();
     // Carried only so the not-found message can name the module the way the
     // reader saw it. It is NOT a lookup key: titles are not unique (the same
@@ -1930,7 +1948,7 @@ export default function ModuleBuilder() {
     // only ever guess, and a guess here opens a different module's weeks and
     // OTJH under the name the reader clicked.
     const requestedTitle = (params.get('moduleTitle') || '').trim();
-    const dedupeKey = requestedKey || requestedTitle;
+    const dedupeKey = requestedKey || (requestedTitle ? `title:${requestedTitle}` : '');
     if (!dedupeKey || workingModule || deepLinkedModuleRef.current === dedupeKey) return;
 
     // A canonical id names its module outright -- every link this workspace
@@ -2026,7 +2044,7 @@ export default function ModuleBuilder() {
     void showCurriculumAlert(result.updated
       ? {
         title: `${result.updated} Teams link${result.updated === 1 ? '' : 's'} replaced`,
-        text: `Saved across ${weekCount} week${weekCount === 1 ? '' : 's'}. The live sessions in those weeks now use the new link.${result.recordingsSourceModuleId ? ' Existing recordings and attendance for this Teams meeting are now available in this module.' : ''} The Teams meetings and their invitations were not changed.`,
+        text: `Saved across ${weekCount} week${weekCount === 1 ? '' : 's'}. The live sessions in those weeks now use the new link.${result.recordingsSourceModuleId ? ' Reopen the module to load recordings and attendance for dates that match the source calendar.' : ''} The Teams meetings and their invitations were not changed.`,
         icon: 'success',
       }
       : {
@@ -2313,6 +2331,7 @@ export default function ModuleBuilder() {
     // on after the `finally` has released the in-flight guard, because the
     // retry is a second save and the overlap guard would otherwise refuse it.
     let retryAfterMerge = '';
+    let retryAfterReservation = false;
     // What the server said both editors changed, kept for after the merge: the
     // browser's own merge normally finds the same things, and when it cannot
     // (a row deleted that this copy never knew of) these are what is asked.
@@ -2325,7 +2344,7 @@ export default function ModuleBuilder() {
     }
     // Someone else changed what this author changed, and they have not chosen
     // yet. Sending now would decide it for them.
-    if (moduleConflictsRef.current.length) {
+    if (moduleConflictsRef.current.length && !collaboration.enabled) {
       setActionMessage(MODULE_CONFLICT_CHOICE_NOTICE);
       return null;
     }
@@ -2343,7 +2362,7 @@ export default function ModuleBuilder() {
       ksbProfileSourceId: workingModuleScopeLock.ksbSourceId || liveModule.ksbProfileSourceId,
     } : liveModule;
     const validationIssues = validateModuleAuthoringStructure(scopedWorkingModule);
-    if (validationIssues.length) {
+    if (validationIssues.length && !collaboration.enabled) {
       setActionMessage(firstValidationMessage(validationIssues));
       return null;
     }
@@ -2366,12 +2385,49 @@ export default function ModuleBuilder() {
     setActionMessage(null);
     const normalisedModule = normaliseComponentTitles(scopedWorkingModule);
     const selectedKsbSourceId = cleanKsbSourceId(workingModuleScopeLock?.locked ? workingModuleScopeLock.ksbSourceId : normalisedModule.ksbProfileSourceId);
-    const moduleToSave = recalculateModule({
+    let moduleToSave = recalculateModule({
       ...normalisedModule,
       ksbProfileSourceId: selectedKsbSourceId && (workingModuleScopeLock?.locked || ksbSourceMatchesModule(selectedKsbSourceId, ksbSets, standards, normalisedModule, curriculumProgrammes))
         ? selectedKsbSourceId
         : '',
     });
+    const base = savedModuleSnapshotRef.current
+      ? JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem : null;
+    const draftBeforeSave = moduleToSave;
+    let ownership: { editorId: string; proofs: Record<string, string> } | undefined;
+    let pendingFields = false;
+    try {
+      if (collaboration.enabled) {
+        // A disagreement blocks that field, not independent work elsewhere.
+        moduleConflictsRef.current.forEach(conflict => { moduleToSave = applyTheirs(moduleToSave, conflict); });
+        if (!base) throw new Error('Read the saved module before saving collaboratively. Your draft is retained.');
+        const prepared = await collaboration.prepare(base, moduleToSave);
+        moduleToSave = prepared.module;
+        let validationDraft = scopedWorkingModule;
+        moduleConflictsRef.current.forEach(conflict => { validationDraft = applyTheirs(validationDraft, conflict); });
+        const availableIssues = validateModuleAuthoringStructure(projectAvailable(base, validationDraft, prepared.blocked));
+        if (availableIssues.length) {
+          setActionMessage(firstValidationMessage(availableIssues));
+          return null;
+        }
+        ownership = prepared.collaboration;
+        pendingFields = prepared.blocked.length > 0 || moduleConflictsRef.current.length > 0;
+        if (pendingFields) autoSaveArmedRef.current = false;
+        if (pendingFields && !dirtyFields(base, moduleToSave).length) {
+          setActionMessage('These fields are reserved or need your choice. Your draft is retained; other fields remain editable.');
+          return null;
+        }
+      }
+    } catch (error) {
+      setActionMessage(error instanceof Error ? error.message : 'Editing coordination is unavailable. Your draft is retained.');
+      return null;
+    } finally {
+      // Preparation may return before the content-save try/finally below.
+      savingRef.current = false;
+      setSaving(false);
+    }
+    savingRef.current = true;
+    setSaving(true);
     // Exactly what this request carries. Everything below compares against it
     // rather than against "is the module dirty", because those become different
     // questions the moment somebody types while the request is in the air.
@@ -2385,15 +2441,14 @@ export default function ModuleBuilder() {
     // payload -- the one thing a refusal must not do.
     autoSaveAttemptRef.current = sentSnapshot;
     try {
-      setWorkingModule(moduleToSave);
+      if (!pendingFields) setWorkingModule(moduleToSave);
       // The copy the server holds at that revision, so only what the reader
       // changed since is sent and written. Without one -- a module never saved
       // -- the whole structure goes, as it always did.
-      const base = savedModuleSnapshotRef.current
-        ? JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem
-        : null;
+
       const saved = await saveModuleStructure(moduleToSave.catalogueId, moduleToSave, {
         expectedRevision: serverRevisionRef.current,
+        collaboration: ownership,
         source,
         base,
         // Lets the server merge this save with one that landed first, item by
@@ -2428,23 +2483,31 @@ export default function ModuleBuilder() {
         // depends only on `current`, so a repeated call cannot leave the two
         // disagreeing.
         const unchangedSinceSent = moduleSnapshot(current) === sentSnapshot;
+        if (pendingFields) {
+          savedModuleSnapshotRef.current = moduleSnapshot(saved);
+          return mergeModuleStructures(moduleToSave, current, saved).module;
+        }
         savedModuleSnapshotRef.current = unchangedSinceSent ? moduleSnapshot(saved) : sentSnapshot;
         return unchangedSinceSent ? saved : current;
       });
+      await collaboration.saved(moduleToSave, workingModuleRef.current || draftBeforeSave);
       setStorageVersion(version => version + 1);
-      setActionMessage(null);
+      setActionMessage(pendingFields ? 'Available changes saved. Reserved fields and unresolved choices remain in your draft.' : null);
       setSaveFailure(null);
       // No dialog on a successful save. The footer already reads "All changes
       // saved" with a green Saved button, and a modal on every save is an
       // interruption in a screen people save constantly.
       reload();
-      return saved;
+      return pendingFields ? null : saved;
     } catch (err) {
       // Nothing is reset, reloaded or refetched here on purpose. Every refusal
       // leaves the weeks, components, OTJH and KSB mappings the reader has
       // authored exactly where they are -- `savedModuleSnapshotRef` is left
       // alone too, so the workspace still knows it has unsaved work.
-      if (err instanceof ModuleStructureConflictError) {
+      if (err instanceof ModuleEditReservedError && collaboration.enabled && err.fields.length && rebasesLeft > 0) {
+        collaboration.rejectFields(err.fields);
+        retryAfterReservation = true;
+      } else if (err instanceof ModuleStructureConflictError) {
         serverConflicts = err.conflicts.length ? conflictsFromServer(moduleToSave, err.conflicts) : [];
         // Somebody else's write got there first. Re-sending this payload as it
         // stands would replace every week and component with the pre-edit ones,
@@ -2502,12 +2565,13 @@ export default function ModuleBuilder() {
     // already returned. The merge installs the stored weeks alongside the
     // reader's and moves the workspace onto the revision that refused this
     // save, which is what makes the second attempt a legal one.
+    if (retryAfterReservation) return persistRef.current(source, rebasesLeft - 1);
     if (retryAfterMerge) {
       const merged = await mergeStoredRef.current(retryAfterMerge).catch(() => false);
       if (!moduleConflictsRef.current.length && serverConflicts.length) {
         setModuleConflicts(serverConflicts);
       }
-      if (moduleConflictsRef.current.length) {
+      if (moduleConflictsRef.current.length && !collaboration.enabled) {
         // A real disagreement: the merge has put their side next to this
         // author's, and nothing goes until the author chooses.
         autoSaveArmedRef.current = false;
@@ -2523,7 +2587,7 @@ export default function ModuleBuilder() {
       setActionMessage(MODULE_CONFLICT_UNREADABLE_NOTICE);
     }
     return null;
-  }, [curriculumProgrammes, ksbSets, reload, setModuleConflicts, standards, workingModule, workingModuleProgrammeArchived, workingModuleScopeLock]);
+  }, [collaboration, curriculumProgrammes, ksbSets, reload, setModuleConflicts, standards, workingModule, workingModuleProgrammeArchived, workingModuleScopeLock]);
   /**
    * `persistWorkingModule` and the live merge, readable from inside each other.
    *
@@ -2861,6 +2925,7 @@ export default function ModuleBuilder() {
   }, [clearWorkingModule, searchParams, workingModule]);
 
   const restoreSavedWorkingModule = useCallback(() => {
+    collaboration.cancel();
     if (!savedModuleSnapshotRef.current) return workingModule;
     try {
       const restored = recalculateModule(JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem);
@@ -2873,7 +2938,7 @@ export default function ModuleBuilder() {
     } catch {
       return workingModule;
     }
-  }, [workingModule]);
+  }, [collaboration, workingModule]);
 
   const applySelectionSafely = useCallback((nextSelection: Selection, moduleOverride?: ModuleCatalogueItem | null) => {
     const source = moduleOverride || workingModule;
@@ -3219,7 +3284,7 @@ export default function ModuleBuilder() {
   useModuleLiveSync({
     moduleId: workingModule ? moduleStructureIdentifier(workingModule) : '',
     groupId: workingModule?.groupId || '',
-    enabled: Boolean(workingModule) && !openingModule,
+    enabled: Boolean(workingModule) && !openingModule && !collaboration.connected,
     onChange: () => { void liveSyncRef.current('live'); },
   });
 
@@ -3276,10 +3341,21 @@ export default function ModuleBuilder() {
     }
   }, [hasUnsavedWorkingModuleChanges, persistWorkingModule, restoreSavedWorkingModule, saving]);
 
+  const pendingSelectionRef = useRef<{ catalogueId: string; selection: Selection } | null>(null);
   const requestSelectionChange = useCallback((nextSelection: Selection) => {
     setFocusedComponentId('');
-    applySelectionSafely(nextSelection);
-  }, [applySelectionSafely]);
+    pendingSelectionRef.current = { catalogueId: workingModuleRef.current?.catalogueId || '', selection: nextSelection };
+    setSelection(nextSelection);
+  }, []);
+
+  useEffect(() => {
+    const pending = pendingSelectionRef.current;
+    if (!pending) return;
+    pendingSelectionRef.current = null;
+    // A rail can append and select a component in the same event. Validate
+    // after React commits both updates, against the module that owns the click.
+    if (pending.catalogueId === workingModule?.catalogueId) applySelectionSafely(pending.selection, workingModule);
+  }, [selection, workingModule, applySelectionSafely]);
 
   useEffect(() => {
     if (!focusedComponentId) return undefined;
@@ -3426,6 +3502,8 @@ export default function ModuleBuilder() {
 
   if (workingModule) {
     return (
+      <CollaborationContext.Provider value={collaboration}>
+      <EditScope kind="module" id={workingModule.catalogueId}>
       <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Module Builder" pageSubtitle={`${workingModule.title} - authoring workspace`} userName="Rachel Myers" userRole="Curriculum Designer">
         <div className="min-h-[calc(100vh-96px)] bg-background-100 px-3 py-4 sm:px-5 lg:px-6">
           <div className="mx-auto flex w-full max-w-[1840px] flex-col gap-4">
@@ -3460,6 +3538,7 @@ export default function ModuleBuilder() {
           <div className="flex flex-wrap justify-end gap-2 py-3">
             <button type="button" onClick={() => setPreviewOpen(true)} className="rounded-lg border border-primary-200 bg-white px-4 py-2 text-sm font-semibold text-primary-700">Preview as learner</button>
             <button type="button" onClick={() => setAiMaterialOpen(true)} className="rounded-lg border border-primary-200 bg-white px-4 py-2 text-sm font-semibold text-primary-700">AI Material</button>
+            <AssignedLearners target={{ scope: 'module', id: workingModule.catalogueId, name: workingModule.title }} />
             <button type="button" onClick={() => setSessionResultsOpen(true)} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white">Sessions & Recordings</button>
           </div>
           {sessionResultsOpen && <SessionResultsDialog moduleId={workingModule.catalogueId || workingModule.id} onClose={() => setSessionResultsOpen(false)} />}
@@ -3567,6 +3646,7 @@ export default function ModuleBuilder() {
               reader is looking at or typing into moves. */}
           <ModuleConflictPanel
             conflicts={moduleConflicts}
+            saveOtherFields={collaboration.enabled}
             onKeepMine={keepMineInConflict}
             onUseTheirs={takeTheirsInConflict}
           />
@@ -3649,49 +3729,12 @@ export default function ModuleBuilder() {
                       This is the component you opened from Audit Trail.
                     </div>
                   )}
+                  <EditScope kind="component" id={selectedComponent.id}>
                   <WeekComponentEditor
                     component={selectedComponent}
-                    onChange={updates => updateWorkingModule(module => {
-                      const updatedSettings = updates.settings as ModuleComponent['settings'] | undefined;
-                      const sharesTeamsLink = selectedComponent.type === 'live-session'
-                        && updatedSettings
-                        && Object.prototype.hasOwnProperty.call(updatedSettings, 'liveSessionUrl');
-                      const sharedTeamsUrl = sharesTeamsLink ? updatedSettings.liveSessionUrl : undefined;
-                      const selectedUpdates = sharesTeamsLink
-                        ? { ...updates, settings: { ...updatedSettings, liveSessionLinkOverride: '' } }
-                        : updates;
-                      let calendarSeries: NonNullable<TeamsMeetingResult['meeting']['calendarSeries']> = [];
-                      try { calendarSeries = JSON.parse(String(updatedSettings?.teamsCalendarSeries || '[]')); } catch { /* Legacy manual links have no series manifest. */ }
-                      return {
-                        ...module,
-                        weekStructure: module.weekStructure.map(week => ({
-                          ...week,
-                          components: week.components.map(component => {
-                            if (component.id === selectedComponent.id) return { ...component, ...selectedUpdates };
-                            if (sharesTeamsLink && component.type === 'live-session') {
-                              const date = String(component.settings.sessionDate || week.sessionDate || '');
-                              const day = /^\d{4}-\d{2}-\d{2}$/.test(date)
-                                ? new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`)) : '';
-                              const daySeries = calendarSeries.find(series => series.day === day);
-                              if (calendarSeries.length && !daySeries) return component;
-                              return {
-                                ...component,
-                                settings: { ...component.settings, liveSessionUrl: daySeries?.joinUrl || sharedTeamsUrl,
-                                  liveSessionLinkOverride: '',
-                                  ...(daySeries ? {
-                                    teamsMeetingUrl: daySeries.joinUrl, teamsEventId: daySeries.eventId,
-                                    teamsOnlineMeetingId: daySeries.onlineMeetingId || '',
-                                    teamsLiveSessionId: updatedSettings.teamsLiveSessionId,
-                                    teamsCalendarSeries: updatedSettings.teamsCalendarSeries,
-                                  } : {}),
-                                },
-                              };
-                            }
-                            return component;
-                          }),
-                        })),
-                      };
-                    })}
+                    onChange={updates => updateWorkingModule(module =>
+                      applyModuleComponentUpdate(module, selectedComponent.id, updates),
+                    )}
                     onBack={() => requestSelectionChange({ kind: 'week', weekId: selectedWeek.id })}
                     groupOptions={componentGroupOptions}
                     rulePoints={componentPointsByType[selectedComponent.type]}
@@ -3702,8 +3745,10 @@ export default function ModuleBuilder() {
                     moduleId={workingModule.catalogueId || workingModule.id}
                     recordingLinks={recordingLinks}
                   />
+                  </EditScope>
                 </ModuleBuilderScrollArea>
               ) : selectedWeek ? (
+                <EditScope kind="week" id={selectedWeek.id}>
                 <ModuleWeekPanel
                   week={selectedWeek}
                   module={workingModule}
@@ -3717,6 +3762,7 @@ export default function ModuleBuilder() {
                   }}
                   onReuseComponents={() => setReusePickerWeekId(selectedWeek.id)}
                 />
+                </EditScope>
               ) : (
                 <EmptyEditor onAddWeek={() => {
                   const week = createEmptyWeek(workingModule.id, 1);
@@ -3726,6 +3772,8 @@ export default function ModuleBuilder() {
               )}
             </div>
 
+              <div className={collaboration.enabled ? 'min-w-0 self-start xl:sticky xl:top-4' : 'contents'}>
+              <ModulePresence collaboration={collaboration} />
               <ApprenticeshipSettings
                 module={workingModule}
                 week={selectedWeek}
@@ -3740,6 +3788,7 @@ export default function ModuleBuilder() {
               onUpdateKsbWeight={(target, mappingId, weight) => updateWorkingModule(module => updateKsbMappingWeight(module, target, mappingId, weight))}
               onUpdateKsbWeightClass={(target, mappingId, weightClass) => updateWorkingModule(module => updateKsbMappingWeightClass(module, target, mappingId, weightClass))}
             />
+              </div>
           </div>
           </fieldset>
           <WorkspaceActionFooter
@@ -3874,6 +3923,22 @@ export default function ModuleBuilder() {
         {replaceTeamsLinksOpen && workingModule && (
           <ReplaceTeamsLinksDialog
             weeks={workingModule.weekStructure}
+            moduleId={workingModule.catalogueId}
+            unsavedChanges={hasUnsavedWorkingModuleChanges}
+            onSeriesLinked={restored => {
+              if (restored.catalogueId !== workingModuleRef.current?.catalogueId) return;
+              const current = workingModuleRef.current;
+              if (savedModuleSnapshotRef.current && moduleSnapshot(current) !== savedModuleSnapshotRef.current) {
+                setActionMessage('The series was linked. Your newer unsaved edits were kept; save or reload this module to refresh its calendar.');
+                setReplaceTeamsLinksOpen(false);
+                return;
+              }
+              const next = recalculateModule({ ...current, ...restored, sourceModule: current.sourceModule || restored.sourceModule });
+              savedModuleSnapshotRef.current = moduleSnapshot(next);
+              serverRevisionRef.current = restored.structureRevision || '';
+              setWorkingModule(next);
+              setReplaceTeamsLinksOpen(false);
+            }}
             onClose={() => setReplaceTeamsLinksOpen(false)}
             onApply={applyTeamsLinkReplacement}
           />
@@ -3923,6 +3988,8 @@ export default function ModuleBuilder() {
           />
         )}
       </WorkspaceShell>
+      </EditScope>
+      </CollaborationContext.Provider>
     );
   }
 
@@ -4008,6 +4075,7 @@ export default function ModuleBuilder() {
               <SelectMenu
                 ariaLabel="Programme"
                 value={programmeFilter}
+                placeholder={programmeFilter === 'All' ? 'All programmes' : programmeFilter}
                 onChange={value => changeFilter(() => {
                   setProgrammeFilter(value);
                   setCohortFilter('');
@@ -4206,6 +4274,7 @@ export default function ModuleBuilder() {
             const catalogueId = learnerAssignmentModuleIdRef.current;
             setLearnerAssignmentTarget(null);
             if (catalogueId) setLearnerCountOverrides(previous => ({ ...previous, [catalogueId]: result.learnerCount }));
+            if (catalogueId) refreshAssignedLearners?.({ scope: 'module', id: catalogueId, name: '' });
             void reload({ silent: true });
           }}
         />
@@ -4236,6 +4305,7 @@ export default function ModuleBuilder() {
                 : current);
               const catalogueId = learnerAssignmentModuleIdRef.current;
               if (catalogueId) {
+                refreshAssignedLearners?.({ scope: 'module', id: catalogueId, name: '' });
                 setLearnerCountOverrides(previous => ({
                   ...previous,
                   [catalogueId]: Math.max(0, (previous[catalogueId] ?? learnerProgress.assignedLearners.length) - 1),
@@ -4615,8 +4685,12 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   // plan has not loaded yet reads exactly as it did before rather than blank.
   const sessionDatesOf = (week: ModuleWeek): string[] => {
     const run = sessionDatesByWeekId.get(week.id);
+    const mainSessions = week.components.filter(component => component.type === 'live-session' && !component.settings?.extraTeamsMeetingUrl);
+    const delivered = mainSessions.map((component, index) => sessionDeliveryDate(component.settings || {}) || run?.[index] || '').filter(Boolean);
+    if (delivered.length) return delivered;
     if (run?.length) return run;
-    return week.sessionDate ? [cleanText(week.sessionDate).slice(0, 10)] : [];
+    const date = moduleWeekDeliveryDate(week);
+    return date ? [date] : [];
   };
   const deliveryDays = Array.from(new Set([
     ...(module.weeklySchedule || []).map(slot => cleanText(slot.day)),
@@ -4994,25 +5068,30 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                   event.preventDefault();
                   onDropReorder(week.id);
                 }}
-                className="group/week flex items-center gap-2.5 px-2.5 py-2.5"
+                className="group/week grid grid-cols-[20px_28px_28px_minmax(0,1fr)] items-start gap-x-1.5 gap-y-2 px-2.5 py-2.5"
               >
                 <button type="button" aria-label="Drag to reorder" className="grid h-7 w-5 shrink-0 place-items-center text-foreground-300 hover:text-foreground-600 cursor-grab active:cursor-grabbing touch-none"><AppIcon className="ri-draggable"></AppIcon></button>
                 <button type="button" onClick={() => toggleExpanded(week.id)} aria-label={expanded ? `Collapse ${week.title || `Week ${week.weekNumber}`}` : `Expand ${week.title || `Week ${week.weekNumber}`}`} aria-expanded={expanded} className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700">
                   <AppIcon className={expanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'}></AppIcon>
                 </button>
                 <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[11px] font-bold shadow-sm ${active ? 'bg-primary-500 text-white ring-4 ring-primary-100' : 'bg-background-200 text-foreground-600'}`}>{index + 1}</span>
-                <button onClick={() => onSelectWeek(week.id)} className="min-w-0 flex-1 text-left">
-                  <p onMouseEnter={showFullTextWhenTruncated} className="truncate text-[12px] font-bold text-foreground-900">{week.title || `Week ${week.weekNumber}`}</p>
-                  <p className="mt-0.5 flex items-center gap-1.5 text-[10px] font-medium text-foreground-400">
+                <button type="button" onClick={() => onSelectWeek(week.id)} className="min-w-0 text-left">
+                  <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                    <span className="min-w-0 break-words text-[12px] font-bold text-foreground-900 [overflow-wrap:anywhere]">{week.title || `Week ${week.weekNumber}`}</span>
+                    {moduleWeekDeliveryDate(week) && (
+                      <span className="inline-flex flex-wrap items-center gap-x-1 text-[10px] font-medium text-foreground-400">
+                        <AppIcon className="ri-calendar-line shrink-0" />
+                        Delivery:
+                        <time dateTime={moduleWeekDeliveryDate(week)} className="whitespace-nowrap tabular-nums">{formatDateLabel(moduleWeekDeliveryDate(week))}</time>
+                      </span>
+                    )}
+                  </span>
+                </button>
+                <div className="col-span-4 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 pl-7">
+                  <p className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1 text-[10px] font-medium text-foreground-400">
                     <span>{activeTypeFilter ? `${shownComponents.length} ${activeTypeLabel} of ${week.components.length}` : `${week.components.length} components`}</span>
                     <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
                     <span>{totalOtjh.toFixed(1)}h</span>
-                    {week.sessionDate && (
-                      <>
-                        <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
-                        <span className="truncate">{formatDateLabel(week.sessionDate)}</span>
-                      </>
-                    )}
                     {!hasDeliveryDate && (
                       <>
                         <span className="h-1 w-1 rounded-full bg-amber-400"></span>
@@ -5029,44 +5108,43 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                       </>
                     )}
                   </p>
-                </button>
-                {/* Duplicating copies the week's components in full. The live
-                    session comes too, but without the booking behind it -- a
-                    copied meeting id is the ORIGINAL's meeting, not a second one
-                    (see `duplicateWeekInModule`) -- so the twin's card carries
-                    the note above until its own meeting is created. */}
-                <button
-                  type="button"
-                  onMouseDown={event => event.stopPropagation()}
-                  onClick={event => {
-                    event.stopPropagation();
-                    onDuplicateWeek(week.id);
-                  }}
-                  className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 opacity-0 transition-smooth hover:bg-primary-50 hover:text-primary-600 group-hover/week:opacity-100"
-                  title="Duplicate week — copies every component; the live session comes without its Teams meeting"
-                  aria-label={`Duplicate ${week.title || `Week ${week.weekNumber}`}`}
-                >
-                  <AppIcon className="ri-file-copy-line text-sm"></AppIcon>
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={event => event.stopPropagation()}
-                  onClick={event => {
-                    event.stopPropagation();
-                    onDeleteWeek(week.id);
-                  }}
-                  className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 opacity-0 transition-smooth hover:bg-red-50 hover:text-red-600 group-hover/week:opacity-100"
-                  title="Delete week"
-                  aria-label={`Delete ${week.title || `Week ${week.weekNumber}`}`}
-                >
-                  <AppIcon className="ri-delete-bin-line text-sm"></AppIcon>
-                </button>
+                  <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                    {/* Duplicating copies the week's components in full. The live
+                        session comes too, but without the booking behind it -- a
+                        copied meeting id is the ORIGINAL's meeting, not a second one
+                        (see `duplicateWeekInModule`) -- so the twin's card carries
+                        the note above until its own meeting is created. */}
+                    <button
+                      type="button"
+                      onMouseDown={event => event.stopPropagation()}
+                      onClick={event => {
+                        event.stopPropagation();
+                        onDuplicateWeek(week.id);
+                      }}
+                      className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 transition-smooth hover:bg-primary-50 hover:text-primary-600"
+                      title="Duplicate week — copies every component; the live session comes without its Teams meeting"
+                      aria-label={`Duplicate ${week.title || `Week ${week.weekNumber}`}`}
+                    >
+                      <AppIcon className="ri-file-copy-line text-sm"></AppIcon>
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={event => event.stopPropagation()}
+                      onClick={event => {
+                        event.stopPropagation();
+                        onDeleteWeek(week.id);
+                      }}
+                      className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 transition-smooth hover:bg-red-50 hover:text-red-600"
+                      title="Delete week"
+                      aria-label={`Delete ${week.title || `Week ${week.weekNumber}`}`}
+                    >
+                      <AppIcon className="ri-delete-bin-line text-sm"></AppIcon>
+                    </button>
+                  </div>
+                </div>
               </div>
-              {/* Its own strip rather than a pill on the meta line: the line
-                  already carries three facts at 10px in a narrow rail, and a
-                  fourth pushed the components count onto a second row and
-                  truncated the date to "2…". Here it also survives selection,
-                  which repaints the card primary. */}
+              {/* Holiday notices keep their own strip below the week header,
+                  so their text stays readable alongside the expanded components. */}
               {/* Stated on the week it belongs to, on the card's own
                   background: this week is completely ordinary and its live
                   session runs as authored. Whether it becomes a reading week,
@@ -5090,7 +5168,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
               {pastModuleEndDate && <WeekPastEndDateNotice weekDate={latestWeekDeliveryDate} moduleEndDate={moduleEndDate} />}
               {unbookedCopiedSessions > 0 && <CopiedLiveSessionNotice count={unbookedCopiedSessions} />}
               {expanded && (
-                <div className="border-t border-background-200 pb-2 pl-11 pr-2 pt-2">
+                <div className="border-t border-background-200 pb-2 pl-3 pr-2 pt-2">
                   {/* `holidayDates` is drawn from the same slots the week's
                       own notice above uses, so the warning on the week and the
                       warning on its live session always name the same day. It
@@ -5538,7 +5616,7 @@ function ModuleWeekPanel({ week, module, groupOptions, onChange, onOpenSessionKs
             <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700">{totalOtjh.toFixed(1)}h OTJH</span>
           </div>
           <div className="mt-1.5">
-            <TextInput label="Week title" value={week.title} onChange={value => onChange({ title: value })} />
+            <TextInput editField="title" label="Week title" value={week.title} onChange={value => onChange({ title: value })} />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
@@ -5724,8 +5802,8 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
 
       <div className="space-y-5 p-5">
         <EditorSection title="Identity" icon="ri-edit-line">
-          <TextInput label="Title" value={readableComponentTitle(component.title)} onChange={value => onChange({ title: value })} error={fieldError('title')} />
-          <TextArea label="Description" value={component.description} onChange={value => onChange({ description: value })} rows={4} />
+          <TextInput editField="title" label="Title" value={readableComponentTitle(component.title)} onChange={value => onChange({ title: value })} error={fieldError('title')} />
+          <TextArea editField="description" label="Description" value={component.description} onChange={value => onChange({ description: value })} rows={4} />
         </EditorSection>
 
         <EditorSection title="Component content" icon="ri-file-list-3-line">
@@ -5745,22 +5823,22 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
 
         <EditorSection title="Completion and reward" icon="ri-checkbox-circle-line">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <NumberInput label="Expected OTJH hours" value={component.expectedOtjh} min={0} step={0.25} onChange={value => onChange({ expectedOtjh: value })} error={fieldError('expectedOtjh')} />
-            <NumberInput label="Points" value={component.points} min={0} step={1} onChange={value => onChange({ points: value })} error={fieldError('points')} />
+            <NumberInput editField="expectedOtjh" label="Expected OTJH hours" value={component.expectedOtjh} min={0} step={0.25} onChange={value => onChange({ expectedOtjh: value })} error={fieldError('expectedOtjh')} />
+            <NumberInput editField="points" label="Points" value={component.points} min={0} step={1} onChange={value => onChange({ points: value })} error={fieldError('points')} />
           </div>
         </EditorSection>
 
         {showApprenticeshipSettings && (
           <EditorSection title="Apprenticeship settings" icon="ri-settings-3-line">
             <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-              <Checkbox label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-              <Checkbox label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+              <Checkbox editField="reflectionRequired" label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+              <Checkbox editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
             </div>
             <TextArea label="Completion rule" value={String(component.settings.completionRule ?? 'Mark complete')} onChange={value => onSettingChange('completionRule', value)} rows={2} />
             {/* Only asked for once reflection is required — there is nowhere for
                 the learner's answer to go while the toggle above is off. */}
             {component.reflectionRequired && (
-              <TextArea label="Reflection question" value={component.reflectionQuestion} onChange={value => onChange({ reflectionQuestion: value })} rows={3} error={fieldError('reflectionQuestion')} />
+              <TextArea editField="reflectionQuestion" label="Reflection question" value={component.reflectionQuestion} onChange={value => onChange({ reflectionQuestion: value })} rows={3} error={fieldError('reflectionQuestion')} />
             )}
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <SelectInput label="Status" value={String(component.settings.contentStatus ?? 'Draft')} options={CONTENT_STATUSES} onChange={value => onSettingChange('contentStatus', value)} error={fieldError('settings.contentStatus')} />
@@ -6190,7 +6268,7 @@ function TypeSpecificFields({
         {/* For a reflection component the question *is* its content, so this is
             the same first-class field the assurance section edits -- not a
             second copy of it in `settings`. */}
-        <TextArea label="Reflection question" value={component.reflectionQuestion} onChange={value => onChange({ reflectionQuestion: value })} rows={4} />
+        <TextArea editField="reflectionQuestion" label="Reflection question" value={component.reflectionQuestion} onChange={value => onChange({ reflectionQuestion: value })} rows={4} />
         <NumberInput label="Minimum word count" value={getNumber('minimumWordCount')} min={0} step={50} onChange={value => onSettingChange('minimumWordCount', value)} />
       </EditorBlock>
     );
@@ -6200,7 +6278,7 @@ function TypeSpecificFields({
     return (
       <EditorBlock title="Assignment">
         <TextInput label="Title shown to learners" value={getString('learnerTitle')} onChange={value => onSettingChange('learnerTitle', value)} />
-        <Checkbox label="Monthly assignment (8-step submission)" checked={getBool('isMonthlyAssignment')} onChange={value => onSettingChange('isMonthlyAssignment', value)} />
+        <p className="text-[11px] text-foreground-400">All assignments appear automatically in Monthly submission and use the 8-step submission.</p>
         <AssignmentTopicsEditor value={component.settings.assignmentTopics}
           legacyQuestion={getString('assignmentBrief') || getString('assignmentContent')}
           legacyInstructions={getString('submissionInstructions')}
@@ -6787,12 +6865,12 @@ function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, 
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
           <SettingsSection title="Basic details">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <TextInput label="Module title" value={module.title} onChange={value => onChange({ title: value })} />
-              <SelectInput label="Status" value={module.status} options={['draft', 'review', 'published']} onChange={value => onChange({ status: value })} />
+              <TextInput editField="title" label="Module title" value={module.title} onChange={value => onChange({ title: value })} />
+              <SelectInput editField="status" label="Status" value={module.status} options={['draft', 'review', 'published']} onChange={value => onChange({ status: value })} />
               <NumberInput label="Weeks" value={module.weeks} min={1} step={1} onChange={value => resizeWeeks(module, value, onChange)} />
               <NumberInput label="Total OTJH hours" value={module.declaredTotalOtjh ?? module.totalOtjh} min={0} step={0.25} onChange={value => onChange({ declaredTotalOtjh: value })} />
             </div>
-            <TextArea label="Short description" value={module.description} onChange={value => onChange({ description: value })} rows={3} />
+            <TextArea editField="description" label="Short description" value={module.description} onChange={value => onChange({ description: value })} rows={3} />
           </SettingsSection>
 
           <SettingsSection title="KSBs targeted by this module">
@@ -6805,9 +6883,9 @@ function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, 
           </SettingsSection>
 
           <SettingsSection title="Compliance/context fields">
-            <TextArea label="Background" value={module.background} onChange={value => onChange({ background: value })} rows={3} />
-            <TextArea label="EPA Requirements Covered" value={module.epaRequirements.join('\n')} onChange={value => onChange({ epaRequirements: lines(value) })} rows={4} />
-            <TextArea label="Professional Qualification Outcomes" value={module.qualificationOutcomes.join('\n')} onChange={value => onChange({ qualificationOutcomes: lines(value) })} rows={4} />
+            <TextArea editField="background" label="Background" value={module.background} onChange={value => onChange({ background: value })} rows={3} />
+            <TextArea editField="epaRequirements" label="EPA Requirements Covered" value={module.epaRequirements.join('\n')} onChange={value => onChange({ epaRequirements: lines(value) })} rows={4} />
+            <TextArea editField="qualificationOutcomes" label="Professional Qualification Outcomes" value={module.qualificationOutcomes.join('\n')} onChange={value => onChange({ qualificationOutcomes: lines(value) })} rows={4} />
           </SettingsSection>
 
           <SettingsSection title="Completion criteria">
@@ -8308,15 +8386,6 @@ function ModuleCatalogueCard({
   const subLabel = moduleListSubLabel(module);
   const primaryDelivery = (module.deliveryUsages || []).find(usage => usage.deliveryModuleId);
   const primaryDeliveryHref = primaryDelivery ? `/curriculum/modules/${encodeURIComponent(primaryDelivery.deliveryModuleId)}` : '';
-  // Seeded from the bulk overview count so the badge shows without a click;
-  // a click still refreshes it with the freshest number as the dialog opens.
-  const [assignedLearnerCount, setAssignedLearnerCount] = useState<number | null>(module.assignedLearnerCount ?? null);
-  const [learnersLoading, setLearnersLoading] = useState(false);
-  // The card instance survives a list reload (same key), so a fresh overview
-  // count has to be pushed in rather than only read once at mount.
-  useEffect(() => { setAssignedLearnerCount(module.assignedLearnerCount ?? null); }, [module.assignedLearnerCount]);
-  // Legacy fallbacks retained by the merge were:
-  // weekCount = module.weekStructure.length || module.weeks || 0
 
   return (
     <article className={`group relative overflow-hidden rounded-2xl border bg-background-50 shadow-sm transition-smooth hover:shadow-md ${hasContent ? 'border-foreground-200/70 hover:border-primary-200/80' : 'border-amber-200/70 hover:border-amber-300'}`}>
@@ -8355,26 +8424,7 @@ function ModuleCatalogueCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5 xl:justify-end">
-          <button
-            type="button"
-            onClick={async () => {
-              if (learnersLoading) return;
-              setLearnersLoading(true);
-              try {
-                const count = await onLearners();
-                if (count !== null) setAssignedLearnerCount(count);
-              } finally {
-                setLearnersLoading(false);
-              }
-            }}
-            disabled={learnersLoading}
-            aria-busy={learnersLoading}
-            title={assignedLearnerCount === 0 ? 'Assign learners to this module' : assignedLearnerCount === null ? 'Assign learners or view learner progress' : 'View assigned learners and their progress'}
-            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:border-primary-300 hover:bg-primary-100 disabled:cursor-wait disabled:opacity-60"
-          >
-            <AppIcon name={learnersLoading ? 'ri-loader-4-line' : assignedLearnerCount ? 'ri-group-line' : 'ri-user-add-line'} className={learnersLoading ? 'animate-spin' : ''} size={15}></AppIcon>
-            {learnersLoading ? 'Loading learners...' : assignedLearnerCount === 0 ? 'Assign learners' : assignedLearnerCount === null ? 'Learners' : `Learners (${assignedLearnerCount})`}
-          </button>
+          <LearnerStatusCounts target={{ scope: 'module', id: moduleLearnerIdentifier(module), name: module.title }} onManage={onLearners} refreshKey={module.sourceModule} />
           {primaryDeliveryHref && (
             <Link
               to={primaryDeliveryHref}

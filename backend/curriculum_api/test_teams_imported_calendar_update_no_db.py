@@ -17,6 +17,8 @@ from unittest.mock import Mock, patch
 from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo
 
+from config.time_zones import local_clock_to_utc
+
 
 ROOT = Path(__file__).parent
 JOIN = 'https://teams.microsoft.com/l/meetup-join/synthetic-series'
@@ -45,6 +47,7 @@ def load_functions(path, namespace, names=None):
 def fixture_namespace():
     namespace = dict(copy=copy, hashlib=hashlib, json=json, uuid=uuid, date=date,
         datetime=datetime, timedelta=timedelta, timezone=timezone, ZoneInfo=ZoneInfo,
+        local_clock_to_utc=local_clock_to_utc,
         quote=quote, urlencode=urlencode, text=lambda value: str(value or '').strip(),
         httpx=types.SimpleNamespace(HTTPError=TransportError), DatabaseError=DatabaseError,
         transaction=types.SimpleNamespace(atomic=nullcontext),
