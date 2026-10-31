@@ -8,6 +8,7 @@ import { bookLearnerCalendarSession, cancelLearnerCalendarSession, fetchLearnerC
 import { fetchReviewHistory } from '@/api/reviewHistory';
 import { fetchMeetingAttendance } from '@/api/meetingAttendance';
 import { meetingCalendarHref } from '../reviews/meetingBooking';
+import * as ics from '@/utils/ics-generator';
 
 vi.mock('@/hooks/useMyLearner', () => ({ useLinkedLearner: () => ({ kind: 'commercial', id: '125' }) }));
 vi.mock('@/pages/coach/shared/CoachMeetingArtifactsPanel', () => ({ CoachMeetingArtifactsPanel: () => <div>Meeting recordings</div> }));
@@ -66,6 +67,66 @@ beforeEach(() => {
   localStorage.clear();
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
+
+describe('calendar exports', () => {
+  it.each(['catch-up', 'mcr', 'progress-review'])('exports the full source year and UK clock for %s', async source => {
+    const download = vi.spyOn(ics, 'downloadICS').mockImplementation(() => {});
+    setup([event({ source, title: 'Future session', date: '2027-01-04', scheduledDate: '2027-01-04', scheduledTime: '09:00' })], '?date=2027-01-04');
+    fireEvent.click((await screen.findAllByRole('button', { name: /Future session/ }))[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Export .ics' }));
+    expect(download).toHaveBeenCalledWith(expect.objectContaining({ isoDate: '2027-01-04', timeZone: 'Europe/London' }));
+    expect(ics.generateICS(download.mock.calls[0][0])).toContain('DTSTART:20270104T090000Z');
+  });
+
+  it('keeps Live source instants and its saved Cairo zone', async () => {
+    const download = vi.spyOn(ics, 'downloadICS').mockImplementation(() => {});
+    setup([event({ source: 'live-session', title: 'Cairo live session',
+      timeZone: 'Egypt Standard Time', startsAt: '2026-09-23T06:00:00Z', endsAt: '2026-09-23T07:00:00Z', isTimeEstimated: true })]);
+    fireEvent.click((await screen.findAllByRole('button', { name: /Cairo live session/ }))[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Export .ics' }));
+    expect(download).toHaveBeenCalledWith(expect.objectContaining({ timeZone: 'Egypt Standard Time', startsAt: '2026-09-23T06:00:00Z' }));
+    expect(ics.generateICS(download.mock.calls[0][0])).toContain('DTSTART:20260923T060000Z');
+  });
+
+  it('passes the same full timing to bulk export and the feed, excluding unconfirmed clocks', async () => {
+    const download = vi.spyOn(ics, 'downloadAllICS').mockImplementation(() => {});
+    const feed = vi.spyOn(ics, 'createPublicFeedBlob').mockReturnValue('blob:synthetic');
+    setup([event(), event({ id: 'tbc', eventKey: 'tbc', source: 'live-session', title: 'Time pending', isTimeEstimated: true })]);
+    await screen.findAllByRole('button', { name: /Catch-up with your coach/ });
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Export All Events' }));
+    expect(download).toHaveBeenCalledWith([expect.objectContaining({ isoDate, timeZone: 'Europe/London' })]);
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Share Calendar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Generate Public Feed' }));
+    expect(feed).toHaveBeenCalledWith(download.mock.calls[0][0]);
+  });
+
+  it('shows missing Live time zone information instead of claiming a successful export', async () => {
+    const download = vi.spyOn(ics, 'downloadICS').mockImplementation(() => {});
+    setup([event({ source: 'live-session', title: 'Legacy live session' })]);
+    fireEvent.click((await screen.findAllByRole('button', { name: /Legacy live session/ }))[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Export .ics' }));
+    expect(download).not.toHaveBeenCalled();
+    expect(screen.getByText(/Could not export event: The event time zone is unavailable/)).toBeVisible();
+  });
+
+  it('records the device zone on a personal event rather than assuming UK time', async () => {
+    const download = vi.spyOn(ics, 'downloadICS').mockImplementation(() => {});
+    const options = new Intl.DateTimeFormat().resolvedOptions();
+    vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({ ...options, timeZone: 'Africa/Cairo' });
+    setup([]);
+    await waitFor(() => expect(fetchLearnerCalendarEvents).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Create Event' }));
+    fireEvent.change(screen.getByPlaceholderText('e.g. Study session, Team meeting...'), { target: { value: 'Personal study' } });
+    fireEvent.change(document.querySelector('input[type="date"]')!, { target: { value: '2027-01-04' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create Event' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Export .ics' }));
+    expect(download).toHaveBeenCalledWith(expect.objectContaining({ isoDate: '2027-01-04', timeZone: 'Africa/Cairo' }));
+    expect(ics.generateICS(download.mock.calls[0][0])).toContain('DTSTART:20270104T120000Z');
+  });
+});
 
 describe('calendar event previews', () => {
   it.each(['mcr', 'progress-review'] as const)('books and then reschedules an imported %s without connecting a personal calendar', async source => {
