@@ -81,7 +81,8 @@ class CalendarChecksTests(unittest.TestCase):
                               json_error=lambda message, status=400, **kwargs: Response({'error': message, **kwargs}, status),
                               graph_timezone_iana=lambda settings: settings.get('_schedule_timezone_iana') or 'Europe/London', teams_calendar_subject=lambda payload, series=None: payload.get('title', 'Synthetic'),
                               GRAPH_WINDOWS_TO_IANA={'GMT Standard Time': 'Europe/London', 'Egypt Standard Time': 'Africa/Cairo'},
-                              attach_teams_meeting_to_module_weeks=self.attach,
+                              attach_teams_meeting_to_module_weeks=self.attach, AUTHORING_COMPONENTS_TABLE='components',
+                              active_component_rows=lambda rows: rows,
                               live_session_row_to_component_settings=lambda row: {'liveSessionUrl': row['join_url']},
                               calendar_targets=checks.calendar_targets, local_calendar_recurrence=checks.local_calendar_recurrence,
                               CalendarMismatch=checks.CalendarMismatch, safe_teams_join_url=checks.safe_teams_join_url,
@@ -179,7 +180,7 @@ class CalendarChecksTests(unittest.TestCase):
         return result
 
     def fetch_rows(self, table, where='', values=(), *args):
-        return self.series if table == 'series' else self.tracked
+        return self.series if table == 'series' else self.tracked if table == 'occurrences' else []
 
     def persist_series(self, payload, event, warnings, settings, organizer, attendees, presenters, *args, **kwargs):
         self.series = [{'id': 'LIVE-SYNTHETIC', 'graph_event_id': event['id'], 'organizer_email': organizer,
@@ -1178,6 +1179,43 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200, result)
         self.v.apply_teams_meeting_options.assert_not_called()
         self.assertEqual(result['optionGroupsSent'], [])
+
+    def assert_people_save_preserves_schedule(self, weekday):
+        if weekday:
+            self.prepare_weekday_path()
+        self.assertEqual(self.create().status_code, 201)
+        if weekday:
+            self.v.stored_calendar_series = lambda series: series.get('calendar_series') or []
+        before_rows = copy.deepcopy(self.tracked)
+        before_series = copy.deepcopy(self.series[0])
+        self.attach.reset_mock()
+        self.calls.clear()
+        writes = []
+        original_update = self.v.update_authoring_rows
+        def record(table, where, params, values):
+            writes.append((table, copy.deepcopy(values)))
+            return original_update(table, where, params, values)
+        self.v.update_authoring_rows = record
+        result = self.save(peopleOnly=True, invitationsOnly=True,
+                           attendees=['learner@example.invalid', 'added@example.invalid'])
+        self.assertEqual(result.status_code, 200, result)
+        self.assertEqual(self.tracked, before_rows, 'A roster save must not upsert or renumber occurrences.')
+        self.attach.assert_not_called()
+        protected = {'calendar_series', 'graph_event_id', 'join_url', 'start_datetime',
+                     'duration_minutes', 'repeat_pattern', 'repeat_occurrences', 'module_title'}
+        self.assertEqual({key: self.series[0].get(key) for key in protected},
+                         {key: before_series.get(key) for key in protected})
+        self.assertTrue(writes)
+        self.assertTrue(all(table == 'series' and not (protected & set(values)) for table, values in writes))
+        self.assertFalse([call for call in self.calls if call[0] in ('POST', 'DELETE')])
+        self.assertTrue(all(set(payload) <= {'attendees', 'hideAttendees'}
+                            for method, _path, payload in self.calls if method == 'PATCH'))
+
+    def test_shared_people_save_never_reattaches_week_links(self):
+        self.assert_people_save_preserves_schedule(False)
+
+    def test_weekday_people_save_never_rewrites_occurrences_or_week_links(self):
+        self.assert_people_save_preserves_schedule(True)
 
     def test_weekday_403_on_settings_is_partial_and_keeps_the_confirmed_setting(self):
         self.prepare_weekday_path()

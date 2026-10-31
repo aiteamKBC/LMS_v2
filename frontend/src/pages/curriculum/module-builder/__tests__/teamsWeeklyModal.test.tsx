@@ -328,8 +328,8 @@ it('shows the invitation fields under the dates, every role filled, and saves on
   fireEvent.change(attendees, { target: { value: 'new@example.invalid' } });
   fireEvent.keyDown(attendees, { key: 'Enter' });
   await waitFor(() => expect(save).toBeEnabled());
-  // Adding someone says, before saving, that this button tells them nothing.
-  expect(dialog.getByText(/added people will be saved to the Teams meeting but will not receive an invitation or LMS email/))
+  // The choice controls LMS mail; it must not promise Microsoft inbox delivery.
+  expect(dialog.getByText(/Save without notifying saves added people without an LMS email\. Microsoft may still send a calendar update/))
     .toBeInTheDocument();
   await act(async () => { await userEvent.click(save); });
   await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
@@ -344,7 +344,7 @@ it('shows the invitation fields under the dates, every role filled, and saves on
   expect((payload.scheduledOccurrences as Array<{ startDateTimeUtc: string }>).map(item => item.startDateTimeUtc))
     .toEqual(['2026-09-02T08:30:00.000Z', '2026-09-09T08:30:00.000Z']);
   await waitFor(() => expect(showCurriculumAlert).toHaveBeenCalledWith(expect.objectContaining({
-    title: 'Saved without notifying', text: expect.stringContaining('Nobody was emailed, including the 1 person you added'),
+    title: 'Saved without notifying', text: expect.stringContaining('No LMS email was sent. Microsoft may send a calendar update.'),
   })));
   expect(finishTeamsUpdate).not.toHaveBeenCalled();
 });

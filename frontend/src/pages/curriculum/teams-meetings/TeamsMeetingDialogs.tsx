@@ -14,6 +14,7 @@ import { AttendeeComparisonPanel } from './AttendeeComparisonPanel';
 import { MeetingScopePanel } from './MeetingScopePanel';
 import { ExternalCalendarPanel } from './ExternalCalendarPanel';
 import { ImportedCalendarUpdatePanel } from './ImportedCalendarUpdatePanel';
+import { ImportedParticipantsPanel } from './ImportedParticipantsPanel';
 import { pendingInvitations } from './attendeeComparison';
 import { emailList } from '../module-builder/EmailChipsInput.helpers';
 import { forwardScheduleEmail } from './forwardScheduleEmail';
@@ -948,9 +949,16 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                   <div>
                     <h3 id="teams-invitations-heading" className="text-[11px] font-bold uppercase tracking-wider text-foreground-400">Invitations and meeting settings</h3>
                     <p className="mt-1 text-[11px] text-foreground-500">
-                      Only what you change here is updated, and the join link stays the same, and no session date moves. Save without notifying sends nothing to anybody. Save and invite added people sends the Teams invitation and the schedule email to the people you added, and to nobody else.
+                      Only the people and settings you change here are updated. Session dates and join links stay unchanged. Save without notifying sends no LMS email; Microsoft may still send a calendar update. Save and invite added people also requests invitations and schedule emails for the people you add.
                     </p>
                   </div>
+                  {originalCalendarBlocked && originalCalendar && !originalCalendar.loading && <>
+                    <p role="note" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                      The original invitation list is not verified. Saved LMS fields below are read-only and may be incomplete. Connect the original calendar before saving; a failed read does not mean nobody is invited.
+                    </p>
+                    <ImportedParticipantsPanel key={originalCalendar.id} liveSessionId={originalCalendar.id}
+                      savedOrganizer={selected.summary.organizerEmail} />
+                  </>}
                   <fieldset disabled={originalCalendarBlocked} className="grid gap-4 sm:grid-cols-2 disabled:opacity-60">
                     <FormField label="Organizer Microsoft 365 email" hint="This organizer owns the existing calendar.">
                       <input aria-label="Organizer" readOnly value={updateDrawer.form.organizerEmail}
@@ -962,7 +970,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                       patch={updateDrawer.patch}
                       prefilling={invitedPrefilling}
                       prefillNotice={prefillNotice}
-                      onPrefill={() => void prefillInvitees(selected, updateDrawer.patch)}
+                      onPrefill={() => void prefillInvitees(selected, updateDrawer.patch, 'update')}
                     />
                   </fieldset>
                   {/* Beside the fields it reports on, and above Save rather
@@ -1009,7 +1017,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                   </section>
                   {addedInvitees(selected).length > 0 && (
                     <p role="note" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] font-semibold text-amber-900">
-                      With Save without notifying, added people will be saved to the Teams meeting but will not receive an invitation or LMS email. Use Save and invite added people to send them both.
+                      Save without notifying saves added people without an LMS email. Microsoft may still send a calendar update. Use Save and invite added people to request their Teams invitation and schedule email.
                     </p>
                   )}
                   <div className="flex flex-wrap items-center justify-end gap-3">
@@ -1018,7 +1026,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                       type="button"
                       onClick={() => void saveInvitations(selected)}
                       disabled={!updateDrawer.dirty || updateDrawer.saving || Boolean(busy) || (Boolean(blockedReason) || originalCalendarBlocked) || detailLoading || !graphConfigured}
-                      title="Save only these invitation and setting changes. Nobody is emailed, including people you add, and every session date stays where Teams holds it."
+                      title="Save people and settings without an LMS email. Microsoft may send a calendar update. Session dates and join links stay unchanged."
                       className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <AppIcon className={updateDrawer.saving ? 'ri-loader-4-line animate-spin text-sm' : 'ri-save-line text-sm'}></AppIcon>
