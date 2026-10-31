@@ -1,4 +1,4 @@
-"""Small, read-only assigned-learner directory; no progress aggregation."""
+"""Small assigned-learner directory; progress is loaded separately on demand."""
 from django.http import JsonResponse
 from django.db import DatabaseError
 from django.views.decorators.http import require_GET
@@ -38,6 +38,8 @@ def roster(scope, identifier, status):
         'id': str(row['id']), 'name': row.get('name') or '',
         'email': row.get('email') or '',
         'status': str(row.get('lifecycleStatus') or '').strip() or str(row.get('programmeStatus') or '').strip(),
+        'programme': row.get('programme') or '',
+        'enrolmentId': row.get('enrolmentId'),
     } for row in rows}
     if status == 'active':
         # Match the count buckets, including legacy programme-status fallback.

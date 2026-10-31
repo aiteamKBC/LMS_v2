@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { fetchAssignedLearners, fetchLearnerStatusCounts } from '../assignedLearners';
+import { fetchAssignedLearners, fetchLearnerStatusCounts, fetchAssignedLearnerProgress, changeProgrammeMembership } from '../assignedLearners';
 const target = { scope: 'module' as const, id: 'MOD-A', name: 'Module A' };
 const page = { scope: 'module', id: 'MOD-A', status: 'active', total: 0, filteredTotal: 0, page: 1, pageSize: 25, learners: [] };
 afterEach(() => vi.unstubAllGlobals());
@@ -62,4 +62,33 @@ it('sends a selected lifecycle filter separately from the existing active/all co
   await fetchAssignedLearners(target, 'all', '', 1, new AbortController().signal, 'on break');
   const [url] = transport.mock.calls[0] as unknown as [string];
   expect(url).toContain('lifecycle_status=on+break');
+});
+
+it('reads one bounded progress batch with cancellation and keeps unavailable distinct from zero', async () => {
+  const learners = { '1': { due: null, available: { completed: 0, total: 0, percent: null }, undatedActivities: 1, asOfDate: '2026-10-31', timeZone: 'Europe/London' }, '2': { error: 'Identity review required' } };
+  const transport = vi.fn(async () => new Response(JSON.stringify({ learners })));
+  vi.stubGlobal('fetch', transport);
+  const signal = new AbortController().signal;
+  await expect(fetchAssignedLearnerProgress(target, ['1', '2'], signal)).resolves.toEqual(learners);
+  expect(transport).toHaveBeenCalledTimes(1);
+  expect(transport).toHaveBeenCalledWith(expect.stringContaining('learnerIds=1%2C2'), expect.objectContaining({ signal, cache: 'no-store', credentials: 'include' }));
+});
+
+it('rejects missing or impossible progress rather than displaying an invented percentage', async () => {
+  for (const learners of [{}, { '1': { due: null, available: { completed: 4, total: 2, percent: 200 } } }]) {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ learners }))));
+    await expect(fetchAssignedLearnerProgress(target, ['1'], new AbortController().signal)).rejects.toThrow('Learner progress is unavailable.');
+  }
+});
+
+it('posts only scoped membership fields with cookie authentication and CSRF verification', async () => {
+  const transport = vi.fn(async (url: string) => new Response(JSON.stringify(url.includes('/csrf') ? { csrfToken: 'synthetic-csrf' } : { learnerId: '1', status: 'withdrawn' })));
+  vi.stubGlobal('fetch', transport);
+  await changeProgrammeMembership(target, { id: '1', enrolmentId: 91, name: 'Example', email: 'example@example.invalid', status: 'active', programme: 'Example programme' }, 'remove');
+  const calls = transport.mock.calls as unknown as [string, RequestInit][];
+  const [url, init] = calls.find(([url]) => url.includes('/membership/'))!;
+  expect(url).toContain('/learner-directory/membership/');
+  expect(init).toMatchObject({ method: 'POST', credentials: 'include' });
+  expect((init.headers as Headers).get('X-CSRFToken')).toBe('synthetic-csrf');
+  expect(JSON.parse(init.body as string)).toEqual({ scope: 'module', id: 'MOD-A', learnerId: '1', expectedStatus: 'active', expectedProgramme: 'Example programme', action: 'remove' });
 });

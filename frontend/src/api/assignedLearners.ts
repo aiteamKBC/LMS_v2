@@ -2,7 +2,9 @@ import { coachFetch } from '@/lib/coachFetch';
 
 export type LearnerScope = 'programme' | 'cohort' | 'group' | 'module';
 export interface LearnerTarget { scope: LearnerScope; id: string; name: string }
-export interface AssignedLearner { id: string; name: string; email: string; status: string }
+export interface AssignedLearner { id: string; name: string; email: string; status: string; programme?: string; enrolmentId?: number | null }
+export interface ActivityMetric { completed: number; total: number; percent: number | null }
+export type AssignedLearnerProgress = { due: ActivityMetric | null; available: ActivityMetric; undatedActivities: number; asOfDate: string; timeZone: string } | { error: string };
 export interface LearnerDirectoryPage {
   scope: LearnerScope; id: string; status: 'active' | 'all';
   total: number; filteredTotal: number; page: number; pageSize: number; learners: AssignedLearner[];
@@ -44,4 +46,36 @@ export async function fetchAssignedLearners(target: LearnerTarget, status: 'acti
     throw new Error(typeof data.error === 'string' ? data.error : fallback);
   }
   return response.json() as Promise<LearnerDirectoryPage>;
+}
+
+async function directoryResponse(response: Response, fallback: string) {
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(typeof data?.error === 'string' ? data.error : fallback);
+  return data;
+}
+
+export async function fetchAssignedLearnerProgress(target: LearnerTarget, learnerIds: string[], signal: AbortSignal): Promise<Record<string, AssignedLearnerProgress>> {
+  const query = new URLSearchParams({ scope: target.scope, id: target.id, learnerIds: learnerIds.join(',') });
+  const response = await coachFetch(`${API_BASE_URL}/curriculum/learner-directory/progress/?${query}`, { signal, cache: 'no-store' });
+  const data = await directoryResponse(response, 'Could not load learner progress. Please retry.');
+  const metric = (value: ActivityMetric) => value && Number.isInteger(value.completed) && Number.isInteger(value.total)
+    && value.completed >= 0 && value.total >= value.completed
+    && (value.total === 0 ? value.percent === null : typeof value.percent === 'number' && Number.isFinite(value.percent) && value.percent >= 0 && value.percent <= 100);
+  if (!data?.learners || learnerIds.some(id => {
+    const row = data.learners[id];
+    return !row || (typeof row.error !== 'string' && (!metric(row.available) || (row.due !== null && !metric(row.due))
+      || !Number.isInteger(row.undatedActivities) || row.undatedActivities < 0 || typeof row.asOfDate !== 'string' || row.timeZone !== 'Europe/London'));
+  })) throw new Error('Learner progress is unavailable. Please retry.');
+  return data.learners;
+}
+
+export async function changeProgrammeMembership(target: LearnerTarget, learner: AssignedLearner, action: 'remove' | 'restore'): Promise<void> {
+  const response = await coachFetch(`${API_BASE_URL}/curriculum/learner-directory/membership/`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scope: target.scope, id: target.id, learnerId: learner.id, expectedStatus: learner.status, expectedProgramme: learner.programme, action }),
+  });
+  const data = await directoryResponse(response, 'Could not update programme membership. Please retry.');
+  if (data?.learnerId !== learner.id || data.status !== (action === 'remove' ? 'withdrawn' : 'active')) {
+    throw new Error('The membership result could not be verified. Reload the list.');
+  }
 }
