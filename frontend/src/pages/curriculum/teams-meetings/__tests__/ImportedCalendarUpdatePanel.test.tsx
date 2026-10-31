@@ -64,7 +64,7 @@ beforeEach(() => {
     authorizationUrl: 'https://login.microsoftonline.com/example/oauth2/v2.0/authorize',
     callbackOrigin: 'https://lms.example.invalid',
   });
-  vi.mocked(fetchImportedCalendarConnection).mockReset().mockResolvedValue({ connected: true });
+  vi.mocked(fetchImportedCalendarConnection).mockReset().mockResolvedValue({ connected: true, calendarKind: 'group' });
   vi.mocked(coachFetch).mockReset().mockRejectedValue(new Error('Unexpected authenticated request'));
   // Every panel call is mocked. Contract cases replace this boundary with a
   // synthetic response; an accidental real request always fails the test.
@@ -372,6 +372,63 @@ describe('updating an imported calendar through review', () => {
     }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Calendar access was not granted.');
     expect(previewImportedCalendarUpdate).toHaveBeenCalledOnce();
+    expect(confirmImportedCalendarUpdate).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('keeps a failed reconnection visible even when an older connection still exists', async () => {
+    const popup = { location: { href: '' }, closed: false, close: vi.fn() } as unknown as Window;
+    vi.spyOn(window, 'open').mockReturnValue(popup);
+    const onEditorConnected = vi.fn();
+    const { unmount } = render(<ImportedCalendarUpdatePanel liveSessionId={liveSessionId} disabled={false}
+      connectionOnly editorConnectionKind="group" onEditorConnected={onEditorConnected} onUpdated={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Connect Microsoft calendar' }));
+    fireEvent(window, new MessageEvent('message', {
+      source: popup, origin: 'https://lms.example.invalid', data: {
+        type: 'lms:teams-calendar-connected', liveSessionId, ok: false,
+        error: 'Microsoft requires administrator consent for Group.ReadWrite.All (AADSTS65001).',
+      },
+    }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('AADSTS65001');
+    expect(fetchImportedCalendarConnection).not.toHaveBeenCalled();
+    expect(onEditorConnected).not.toHaveBeenCalled();
+    expect(previewImportedCalendarUpdate).not.toHaveBeenCalled();
+    expect(confirmImportedCalendarUpdate).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('does not unlock a group calendar with a connection for a user calendar', async () => {
+    vi.mocked(fetchImportedCalendarConnection).mockResolvedValue({ connected: true, calendarKind: 'user' });
+    const popup = { location: { href: '' }, closed: false, close: vi.fn() } as unknown as Window;
+    vi.spyOn(window, 'open').mockReturnValue(popup);
+    const onEditorConnected = vi.fn();
+    const { unmount } = render(<ImportedCalendarUpdatePanel liveSessionId={liveSessionId} disabled={false}
+      connectionOnly editorConnectionKind="group" onEditorConnected={onEditorConnected} onUpdated={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Connect Microsoft calendar' }));
+    fireEvent(window, new MessageEvent('message', {
+      source: popup, origin: 'https://lms.example.invalid', data: { type: 'lms:teams-calendar-connected', liveSessionId, ok: true },
+    }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/group calendar/i);
+    expect(onEditorConnected).not.toHaveBeenCalled();
+    expect(previewImportedCalendarUpdate).not.toHaveBeenCalled();
+    expect(confirmImportedCalendarUpdate).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('refreshes the original editor after the server confirms the requested calendar connection', async () => {
+    const popup = { location: { href: '' }, closed: false, close: vi.fn() } as unknown as Window;
+    vi.spyOn(window, 'open').mockReturnValue(popup);
+    const onEditorConnected = vi.fn();
+    const { unmount } = render(<ImportedCalendarUpdatePanel liveSessionId={liveSessionId} disabled={false}
+      connectionOnly editorConnectionKind="group" onEditorConnected={onEditorConnected} onUpdated={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Connect Microsoft calendar' }));
+    fireEvent(window, new MessageEvent('message', {
+      source: popup, origin: 'https://lms.example.invalid', data: { type: 'lms:teams-calendar-connected', liveSessionId, ok: true },
+    }));
+    await waitFor(() => expect(onEditorConnected).toHaveBeenCalledOnce());
+    expect(fetchImportedCalendarConnection).toHaveBeenCalledExactlyOnceWith(liveSessionId);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(previewImportedCalendarUpdate).not.toHaveBeenCalled();
     expect(confirmImportedCalendarUpdate).not.toHaveBeenCalled();
     unmount();
   });

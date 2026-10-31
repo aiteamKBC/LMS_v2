@@ -10,6 +10,7 @@ import hashlib
 import html
 import json
 import os
+import re
 import secrets
 import time
 from datetime import datetime, timezone
@@ -48,6 +49,39 @@ class CalendarConnectionError(RuntimeError):
     def __init__(self, message, code='calendar_connection_unavailable', status=409):
         super().__init__(message)
         self.code, self.status = code, status
+
+
+def _oauth_error(details, kind):
+    """Classify by OAuth error; expose only a numeric Microsoft diagnostic.
+
+    Microsoft descriptions can contain account details. AADSTS numbers are
+    diagnostic context only, never a basis for authorization or recovery.
+    """
+    details = details if isinstance(details, dict) else {}
+    error = details.get('error')
+    code = 'calendar_connection_unavailable'
+    if error in {'invalid_client', 'unauthorized_client', 'invalid_request', 'invalid_scope', 'invalid_resource'}:
+        message = 'Microsoft rejected the calendar sign-in configuration. Ask the LMS administrator to check its registered app and callback.'
+        code = 'calendar_connection_configuration'
+    elif error in {'interaction_required', 'login_required', 'account_selection_required'}:
+        message = 'Complete Microsoft sign-in and any security checks in the connection window, then reconnect this calendar.'
+        code = 'calendar_connection_interaction'
+    elif error == 'invalid_grant':
+        message = 'The Microsoft sign-in could not be redeemed. Start a fresh calendar connection from the LMS.'
+        code = 'calendar_connection_restart'
+    elif error == 'temporarily_unavailable':
+        message = 'Microsoft sign-in is temporarily unavailable. Retry the calendar connection shortly.'
+    else:
+        scope = SCOPES.get(kind, SCOPES['group'])
+        message = f'Microsoft did not grant this calendar connection. Sign in with an account allowed to manage the original calendar and approve {scope} if requested.'
+    numbers = details.get('error_codes')
+    diagnostic = next((str(number) for number in numbers[:10] if re.fullmatch(r'[0-9]{4,12}', str(number))), '') if isinstance(numbers, list) else ''
+    if not diagnostic:
+        match = re.search(r'\bAADSTS([0-9]{4,12})\b', text(details.get('error_description'))[:2048])
+        diagnostic = match.group(1) if match else ''
+    if diagnostic:
+        message += f' (AADSTS{diagnostic})'
+    return CalendarConnectionError(message, code)
 
 
 def _error(exc):
@@ -233,7 +267,9 @@ def imported_calendar_connect(request, live_session_id):
         cfg = _configuration(request, series, browser_origin=origin)
         nonce, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(48)
         nonce_hash = hash_token(nonce)
-        scope = f'openid User.Read {SCOPES[kind]}'
+        # oid is required below to bind /me to the verified identity. Microsoft
+        # emits that ID-token claim only when the OIDC profile scope is asked for.
+        scope = f'openid profile User.Read {SCOPES[kind]}'
         pending = {'binding': binding, 'liveId': str(live_session_id), 'seriesBinding': _series_binding(series),
                    'origin': origin, 'tenant': cfg['tenant'], 'clientId': cfg['client_id'],
                    'callback': cfg['callback'], 'calendarKind': kind, 'scope': scope,
@@ -310,7 +346,11 @@ def _exchange(code, cfg, pending):
             'scope': pending['scope'], 'code_verifier': pending['verifier'],
         })
         if response.status_code != 200:
-            raise CalendarConnectionError('Microsoft did not authorize the calendar connection. If consent is required, ask your Microsoft administrator to approve the requested delegated permission.')
+            try:
+                details = response.json()
+            except ValueError:
+                details = {}
+            raise _oauth_error(details, pending['calendarKind'])
         tokens = response.json()
         scopes = text(tokens.get('scope')).split()
         required = {'User.Read', SCOPES[pending['calendarKind']]}
@@ -385,7 +425,7 @@ def imported_calendar_callback(request):
             raise CalendarConnectionError('This calendar connection has already been used. Start again.')
         cache.delete(key)
         if request.GET.get('error'):
-            raise CalendarConnectionError('Microsoft calendar connection was cancelled or consent was not granted. No calendar was changed.')
+            raise _oauth_error(request.GET, pending['calendarKind'])
         code = text(request.GET.get('code'))
         if not code:
             raise CalendarConnectionError('Microsoft did not return a calendar authorization code.')

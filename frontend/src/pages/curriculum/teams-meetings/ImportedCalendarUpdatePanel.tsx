@@ -118,6 +118,7 @@ export function ImportedCalendarUpdatePanel({ liveSessionId, disabled, onUpdated
     if (!popup) { setFailure('Allow the Microsoft sign-in popup, then try connecting again.'); return; }
     inFlight.current = true;
     setBusy('connect'); setFailure('');
+    const requestedKind = editorConnectionKind || result?.connectionKind || preview?.connectionKind || 'user';
     let timer: ReturnType<typeof setInterval> | undefined;
     let complete = false;
     const cleanup = () => {
@@ -131,10 +132,17 @@ export function ImportedCalendarUpdatePanel({ liveSessionId, disabled, onUpdated
       complete = true;
       cleanup();
       try {
+        // An older cached connection cannot turn a failed reconnection into
+        // success. The callback's explicit failure must stay visible.
+        if (message) { if (active.current) setFailure(message); return; }
         const connection = await fetchImportedCalendarConnection(liveSessionId);
         if (!active.current) return;
         if (!connection.connected) {
           setFailure(message || connection.message || 'Microsoft calendar access was not connected. Sign in with an account authorised to edit this original calendar.');
+          return;
+        }
+        if (connection.calendarKind !== requestedKind) {
+          setFailure(`This connection cannot manage the original ${requestedKind} calendar. Connect again before editing it.`);
           return;
         }
         if (editorConnectionKind && !uncertain) {
@@ -144,8 +152,8 @@ export function ImportedCalendarUpdatePanel({ liveSessionId, disabled, onUpdated
         inFlight.current = false;
         if (uncertain) await check();
         else await review();
-      } catch {
-        if (active.current) setFailure('The calendar connection could not be verified. Retry connecting before updating the series.');
+      } catch (error) {
+        if (active.current) setFailure(error instanceof Error ? error.message : 'The calendar connection could not be verified. Retry connecting before updating the series.');
       } finally {
         inFlight.current = false;
         if (active.current) setBusy(null);
@@ -158,7 +166,7 @@ export function ImportedCalendarUpdatePanel({ liveSessionId, disabled, onUpdated
     };
     disconnectPopup.current = cleanup;
     try {
-      const connection = await connectImportedCalendar(liveSessionId, editorConnectionKind || result?.connectionKind || preview?.connectionKind || 'user');
+      const connection = await connectImportedCalendar(liveSessionId, requestedKind);
       if (!active.current) { popup.close(); return; }
       const authorization = new URL(connection.authorizationUrl);
       if (authorization.protocol !== 'https:' || authorization.hostname !== 'login.microsoftonline.com') throw new Error('Unsupported Microsoft sign-in address.');

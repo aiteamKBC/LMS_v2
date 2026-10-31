@@ -3729,6 +3729,7 @@ export interface ImportedCalendarUpdateResult {
 export interface ImportedCalendarConnection {
   connected: boolean;
   configured?: boolean;
+  calendarKind?: 'user' | 'group';
   expiresAt?: string;
   message?: string;
 }
