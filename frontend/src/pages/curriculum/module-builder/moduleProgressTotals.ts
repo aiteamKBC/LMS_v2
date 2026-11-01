@@ -1,11 +1,13 @@
 import type { CurriculumScopeLearnerKsbImpactResponse } from '@/lib/curriculumApi';
 
+type ModuleHoursLearner = NonNullable<CurriculumScopeLearnerKsbImpactResponse['activityLogOtjh']>['learners'][number];
+
 /** Recompute each header from exactly the visible, explicitly resolved learners. */
 export function moduleProgressTotals(impact: CurriculumScopeLearnerKsbImpactResponse, learnerIds: Array<string | null>) {
   const lookup = <T extends { learnerId: string | number }>(rows: T[] | undefined) =>
     learnerIds.map(id => id == null ? undefined : rows?.find(row => String(row.learnerId) === id));
   const activities = lookup(impact.activityLogProgress?.learners);
-  const hours = lookup(impact.activityLogOtjh?.learners ?? impact.otjhAchievement?.learners);
+  const hours = lookup<ModuleHoursLearner>(impact.activityLogOtjh?.learners ?? impact.otjhAchievement?.learners);
   const ksbs = lookup(impact.learnerKsbConsumption);
   const activitiesKnown = activities.every(Boolean);
   const hoursKnown = hours.every(row => row && row.achievedOtjh != null);
