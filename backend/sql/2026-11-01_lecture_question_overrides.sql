@@ -1,4 +1,4 @@
--- Manual Neon SQL Editor equivalent of engagement_api migration 0009 on this branch.
+-- Manual Neon SQL Editor equivalent of engagement_api migration 0009.
 -- Apply before deploying code that reads recipient question overrides.
 -- This creates schema only; no questions, assignments or responses change.
 -- Manual execution does not record the Django migration as applied.

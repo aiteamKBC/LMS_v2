@@ -512,7 +512,7 @@ class FeedbackForm(models.Model):
         ('post_event', 'Post-event'), ('event_rsvp', 'Event RSVP'),
         ('post_mcm_review', 'MCM Feedback'),
         ('post_progress_review', 'Progress Review Feedback'),
-        ('mid_module', 'Mid-module Feedback'),
+        ('mid_module', 'Well being'),
         ('end_module', 'End-module Feedback'),
     ]
     DELIVERY_SCOPE_CHOICES = [('manual', 'Manual'), ('all_modules', 'All modules'), ('module', 'One module')]
@@ -615,6 +615,7 @@ class FeedbackDelivery(models.Model):
     module_catalogue_id = models.CharField(max_length=255)
     module_name = models.CharField(max_length=500, blank=True, default='')
     session_title = models.CharField(max_length=500, blank=True, default='')
+    tutor_name = models.CharField(max_length=255, blank=True, default='')
     starts_at = models.DateTimeField(null=True, blank=True)
     ends_at = models.DateTimeField(null=True, blank=True)
     available_at = models.DateTimeField()
