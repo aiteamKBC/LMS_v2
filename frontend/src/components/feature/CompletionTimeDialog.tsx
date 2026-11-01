@@ -148,7 +148,7 @@ export function CompletionTimeDialog({
 
         <div className="min-h-0 space-y-4 overflow-y-auto overscroll-contain p-5 sm:p-6">
           <div role="note" className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-            <p className="font-bold">The selected completion time is outside official working rules.</p>
+            <p className="font-bold">Your first submission was outside official working rules.</p>
             <p className="mt-1 text-xs font-semibold">Reason: {reasonHeadline(reason, holidayName)}</p>
             <p className="mt-2 text-xs leading-5 text-amber-900/80">
               Your activity has not been completed yet. Select the date and time you
