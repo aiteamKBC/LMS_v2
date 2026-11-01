@@ -189,9 +189,10 @@ describe('Module Builder keeps the reader\'s place in its address', { timeout: 1
   });
 
   it('returns with the same search, filters and learner list open', async () => {
-    await renderCatalogue('?programme=Data+Analyst&cohort=COHORT-1&group=GROUP-1&tutor=Tutor+One&q=Foundations&learners=MOD-1');
+    await renderCatalogue('?programme=Data+Analyst&cohort=COHORT-1&group=GROUP-1&tutor=Tutor+One&q=Foundations&learners=MOD-1&learnerStatus=withdrawn');
 
     expect(await screen.findByRole('dialog', { name: 'Data Foundations learner progress' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Learner status')).toHaveValue('withdrawn');
     expect(fetchLearnerAssignments).toHaveBeenCalledWith(expect.objectContaining({ scope: 'module', id: 'MOD-1' }));
     expect(screen.getByPlaceholderText('Search modules, tutors, cohorts...')).toHaveValue('Foundations');
     expect(within(screen.getByLabelText('Programme')).getByText('Data Analyst')).toBeInTheDocument();
@@ -223,15 +224,17 @@ describe('Module Builder keeps the reader\'s place in its address', { timeout: 1
     await waitFor(() => expect(address().get('q')).toBe('Foundations'));
 
     const card = screen.getByText('Data Foundations').closest('article')!;
-    await user.click(await within(card).findByRole('button', { name: /Data Foundations: \d+ all statuses learners/ }));
-    await user.click(await screen.findByRole('button', { name: 'Assignments & progress' }));
+    await user.click(await within(card).findByRole('button', { name: /Data Foundations: \d+ learners/ }));
     await screen.findByRole('dialog', { name: 'Data Foundations learner progress' });
     await waitFor(() => expect(address().get('learners')).toBe('MOD-1'));
+    await user.selectOptions(screen.getByLabelText('Learner status'), 'on break');
+    await waitFor(() => expect(address().get('learnerStatus')).toBe('on break'));
     // Each change replaces the current entry: Back still leaves in one step.
     expect(address().get('q')).toBe('Foundations');
 
     await user.click(screen.getByRole('button', { name: 'Close learner progress' }));
     await waitFor(() => expect(address().has('learners')).toBe(false));
+    expect(address().has('learnerStatus')).toBe(false);
     expect(address().get('q')).toBe('Foundations');
   });
 
