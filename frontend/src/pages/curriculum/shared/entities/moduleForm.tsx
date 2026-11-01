@@ -86,6 +86,8 @@ import {
   type MultiSelectOption,
 } from './ui';
 import { useFormFieldMerge, useFormSeedGuard, useRecordGuard, useRecordRebaseRetry } from './useDrawerState';
+import { ModuleHoursTargetField } from '../components/ModuleHours';
+import { useModuleHoursDraft } from '../components/moduleHoursState';
 
 export interface ModuleFormDefaults {
   programmeId?: string;
@@ -237,6 +239,7 @@ export function ModuleFormDrawer({
   const [coverImage, setCoverImage] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const moduleHours = useModuleHoursDraft(module?.id, open && !chain?.chained);
   // 'later' lets a brand-new module save with no programme, cohort or group at
   // all -- the same catalogue-draft save `createNewModule` already supports,
   // just no longer blocked by the placement checks below. Only offered on a
@@ -1017,6 +1020,17 @@ export function ModuleFormDrawer({
   const showSchedule = lockGroup || showPlacement;
 
   const submit = async () => {
+    const hoursError = moduleHours.validate();
+    if (hoursError) { setError(hoursError); return; }
+    // A target-only edit must not reschedule or reload the authored structure.
+    // An explicitly requested tutor email still uses the existing save flow.
+    if (module && !dirty && moduleHours.dirty && (!notifyTutor || tutorFullyEmailed)) {
+      setSaving(true); setError(null);
+      try { await moduleHours.save(); onClose(); }
+      catch (reason) { setError(reason instanceof Error ? reason.message : 'The hours target could not be saved.'); }
+      finally { setSaving(false); }
+      return;
+    }
     const renameOnly = Boolean(module && isNameOnlyEdit(liveValues, baseline.current));
     const trimmed = name.trim();
     if (!trimmed) { setError('Give the module a name.'); return; }
@@ -1178,6 +1192,7 @@ export function ModuleFormDrawer({
     setError(null);
     setTutorConflictGroup(null);
     let failingGroup: CurriculumGroup | null = null;
+    let savingHoursAfterDetails = false;
     try {
       if (module) {
         // Only sent when this drawer actually changed it. The Weeks box is
@@ -1270,6 +1285,9 @@ export function ModuleFormDrawer({
         // numbers. Closing first left a window -- as long as the round-trip, which
         // is seconds on a slow connection -- where reopening the drawer offered the
         // pre-save weeks and saving again wrote them straight back.
+        savingHoursAfterDetails = moduleHours.dirty;
+        await moduleHours.save();
+        savingHoursAfterDetails = false;
         await onSaved({ catalogueId: module.id, name: trimmed, created: false, ...savedParents() });
         const editedEmailNote = await notifyTutorIfAsked();
         // In a chain the wizard owns closing and confirming, so that a run of
@@ -1383,8 +1401,9 @@ export function ModuleFormDrawer({
       // `err.message` instead showed the reader "Curriculum API returned 400
       // for /curriculum/modules/MOD-…/" with the sentence buried after it.
       setError(
-        tutorConflictMessage(err)
-        || curriculumErrorMessage(err, err instanceof Error ? err.message : 'The module could not be saved.'),
+        (savingHoursAfterDetails ? 'Module details were saved, but the hours target was not saved. ' : '')
+        + (tutorConflictMessage(err)
+        || curriculumErrorMessage(err, err instanceof Error ? err.message : 'The module could not be saved.')),
       );
       if (isTutorConflictError(err) && failingGroup) {
         setTutorConflictGroup({ groupId: failingGroup.id, groupName: failingGroup.name });
@@ -1433,7 +1452,7 @@ export function ModuleFormDrawer({
       width={chain?.width || 'w-[760px]'}
       saving={saving}
       error={error}
-      dirty={dirty}
+      dirty={dirty || moduleHours.dirty}
     >
       <CoEditNotice notices={coEdit.notices} onDismiss={coEdit.dismiss} />
       {!module && !lockGroup && !chained && (
@@ -1782,6 +1801,7 @@ export function ModuleFormDrawer({
           alt={`${name || 'Module'} cover`}
         />
       </FormField>
+      {module && !chained && <ModuleHoursTargetField state={moduleHours} disabled={saving} />}
     </EntityDrawer>
   );
 }

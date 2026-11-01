@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearAllCachedResources } from '@/api/cachedRequest';
 import type { ReactNode } from 'react';
 import type { CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
 
@@ -69,6 +70,8 @@ const programmes = [
   { id: 'program-data', sourceId: 'PROG-DATA', name: 'Data Analyst' },
   { id: 'program-mm', sourceId: 'PROG-MM', name: 'Marketing Manager' },
 ] as CurriculumProgramme[];
+
+vi.mock('@/api/moduleCatalogueActivity', () => ({ fetchModuleCatalogueActivity: vi.fn(async () => Object.fromEntries(modules.map(module => [module.moduleCatalogueId!, { source: 'new_lms', startDate: '2000-01-01', lastLiveDate: '2099-12-31' }]))) }));
 
 const modules = [
   {
@@ -162,6 +165,7 @@ function historyKey() {
 
 describe('Module Builder deep links', { timeout: 15000 }, () => {
   beforeEach(() => {
+    clearAllCachedResources();
     createNewModule.mockClear();
     loadModuleStructure.mockClear();
   });

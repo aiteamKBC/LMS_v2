@@ -11,7 +11,7 @@ const classes: { key: FeedbackScoreClass; label: string; color: string; tone: st
   { key: 'negative', label: 'Negative', color: '#f43f5e', tone: 'bg-rose-50 text-rose-800' },
   { key: 'unscored', label: 'Unscored', color: '#94a3b8', tone: 'bg-slate-100 text-slate-700' },
 ];
-const typeLabels: Record<FeedbackFormType, string> = { general: 'General', post_lecture: 'Live Sessions Feedback', post_event: 'Events', event_rsvp: 'Event RSVP', post_mcm_review: 'MCM', post_progress_review: 'Progress review', mid_module: 'Mid-module', end_module: 'End-module' };
+const typeLabels: Record<FeedbackFormType, string> = { general: 'General', post_lecture: 'Live Sessions Feedback', post_event: 'Events', event_rsvp: 'Event RSVP', post_mcm_review: 'MCM', post_progress_review: 'Progress review', mid_module: 'Well being', end_module: 'End-module' };
 const month = (value: string) => new Intl.DateTimeFormat('en-GB', { month: 'short', year: '2-digit', timeZone: 'UTC' }).format(new Date(`${value}-01T00:00:00Z`));
 const date = (value: string | null) => value ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Europe/London' }).format(new Date(value)) : 'Date unavailable';
 

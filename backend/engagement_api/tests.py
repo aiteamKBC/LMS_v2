@@ -91,7 +91,7 @@ class FeedbackValidationTests(SimpleTestCase):
                 occurrence, [feedback_delivery.Attendee('7', 'ATT-7')], attendance_finalized=True,
             )
 
-        delivery_upsert.assert_called_once_with(occurrence_key='OCC-1', defaults=mock.ANY)
+        delivery_upsert.assert_called_once_with(occurrence_key='OCC-1', defaults=mock.ANY, create_defaults=mock.ANY)
         self.assertIs(delivery_upsert.call_args.kwargs['defaults']['form'], form)
         pin_questions.assert_called_once_with(delivery, form)
         recipient_upsert.assert_called_once_with(delivery=delivery, learner_id='7', defaults=mock.ANY)

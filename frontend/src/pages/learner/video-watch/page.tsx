@@ -187,6 +187,7 @@ export default function ComponentViewPage() {
   const lastReflectionRef = useRef<{ ksbs: string[]; feedback: string; reportedTime: string; assignmentTopicId?: string; timeTakenSeconds?: number; timeEntrySource?: 'timer' | 'input' }>({
     ksbs: [], feedback: '', reportedTime: '',
   });
+  const lastReflectionSkippedRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const [expiredTiming, setExpiredTiming] = useState(false);
   const [recoveringTiming, setRecoveringTiming] = useState(false);
@@ -659,9 +660,11 @@ export default function ComponentViewPage() {
     const limitIssue = !isAssignment ? activityTimeIssue(timeDecision?.previousSeconds ?? 0, finalTimeSeconds, timeDecision?.choice) : '';
     if (limitIssue) { setTimeLimitIssue(limitIssue); return; }
     lastReflectionRef.current = reflection;
+    lastReflectionSkippedRef.current = options.skipReflection === true;
     completionInFlightRef.current = true;
     setSubmitting(true);
     setSubmitError(null);
+    if (declared) setCorrectionError('');
     setRefreshError(null);
     try {
       if (finalTimeSource === 'input' && !options.manualTimeConfirmed && confirmedManualTime.current !== finalTimeSeconds
@@ -746,7 +749,9 @@ export default function ComponentViewPage() {
         if (options.rethrow) throw e;
         return;
       }
-      setSubmitError(e instanceof Error ? e.message : 'Could not save progress');
+      const message = e instanceof Error ? e.message : 'Could not save progress';
+      if (declared) setCorrectionError(message);
+      else setSubmitError(message);
       if (options.rethrow) throw e;
     } finally {
       completionInFlightRef.current = false;
@@ -755,7 +760,11 @@ export default function ComponentViewPage() {
   };
 
   const submitDeclared = (declaredAt: string) => {
-    void finalizeSubmit(lastReflectionRef.current, { declaredCompletedAt: declaredAt, manualTimeConfirmed: true });
+    void finalizeSubmit(lastReflectionRef.current, {
+      declaredCompletedAt: declaredAt,
+      manualTimeConfirmed: true,
+      skipReflection: lastReflectionSkippedRef.current,
+    });
   };
 
   const activityHeading = component && (

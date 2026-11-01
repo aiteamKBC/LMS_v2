@@ -33,10 +33,12 @@ from .helpers import json_body, json_error
 from .feedback_delivery import ensure_delivery_questions, lecture_after_form_creation
 from .feedback_analytics import lecture_analytics_options, question_analytics
 from .feedback_scoring import validate_analytics_settings
+from .feedback_question_overrides import effective_question_ids
 from .module_feedback import MODULE_FORM_TYPES, assigned_active_module_ids, module_delivery_accessible, sync_module_feedback
 from .review_feedback import REVIEW_FORM_TYPES, sync_review_feedback
 from .models import (
     FeedbackAnswer, FeedbackAssignment, FeedbackDelivery, FeedbackDeliveryRecipient,
+    FeedbackDeliveryQuestionOverride,
     FeedbackEventCampaign, FeedbackEventRecipient, FeedbackForm, FeedbackQuestion, FeedbackResponse,
     FeedbackReviewDelivery, FeedbackSection, FeedbackUpload,
 )
@@ -803,17 +805,22 @@ def _response_dict(response, *, include_answers=False):
     anonymous = response.form.anonymous_responses
     data = {
         'id': response.id, 'formId': response.form_id, 'formTitle': response.form.title,
+        'formType': response.form.form_type,
         'learnerId': None if anonymous else response.learner_id,
         'learnerName': 'Anonymous learner' if anonymous else response.learner_name,
         'programme': '' if anonymous else response.programme,
         'deliveryId': response.delivery_id,
         'sessionTitle': response.delivery.session_title if response.delivery_id else '',
+        'tutorName': (response.delivery.tutor_name if response.delivery_id and response.form.form_type == 'post_lecture' else ''),
         'status': response.status, 'startedAt': _iso(response.started_at),
         'updatedAt': _iso(response.updated_at), 'submittedAt': _iso(response.submitted_at),
     }
     if include_answers:
         by_question = {a.question_id: a.answer for a in response.answers.all()}
-        selected_ids = _selected_delivery_question_ids(response.delivery)
+        recipient = (FeedbackDeliveryRecipient.objects.filter(
+            delivery_id=response.delivery_id, learner_id=response.learner_id,
+        ).first() if response.delivery_id else None)
+        selected_ids = _selected_delivery_question_ids(response.delivery, recipient, response)
         data['sections'] = [{
             'id': s.id, 'title': s.title,
             'questions': [{**_question_dict(q), 'answer': by_question.get(q.id)} for q in s.questions.all()
@@ -1477,10 +1484,17 @@ def _learner_feedback_context(
     return form, None, None
 
 
-def _selected_delivery_question_ids(delivery):
+def _selected_delivery_question_ids(delivery, recipient=None, response=None):
     if delivery is None or not getattr(delivery, 'question_set_pinned', False):
         return None  # Existing deliveries predate the bank and retain every question.
-    return set(delivery.selected_questions.values_list('question_id', flat=True))
+    selected = set(delivery.selected_questions.values_list('question_id', flat=True))
+    if recipient is None:
+        return selected
+    replacements = FeedbackDeliveryQuestionOverride.objects.filter(
+        recipient_id=recipient.id,
+    ).values_list('original_question_id', 'replacement_question_id', 'effective_at')
+    return effective_question_ids(selected, replacements, response.started_at if response else None,
+                                  as_of=timezone.now())
 
 
 def learner_form_detail(request, pk=None, delivery_id=None, event_recipient_id=None, review_delivery_id=None):
@@ -1517,7 +1531,7 @@ def learner_form_detail(request, pk=None, delivery_id=None, event_recipient_id=N
     response = FeedbackResponse.objects.filter(**response_filter).prefetch_related('answers').first()
     answers = {str(a.question_id): a.answer for a in response.answers.all()} if response else {}
     data = form_dict(form, include_structure=True)
-    selected_ids = _selected_delivery_question_ids(delivery)
+    selected_ids = _selected_delivery_question_ids(delivery, recipient, response)
     if selected_ids is not None:
         for section in data['sections']:
             section['questions'] = [question for question in section['questions'] if question['id'] in selected_ids]
@@ -1615,14 +1629,6 @@ def learner_response_save(request, pk=None, delivery_id=None, event_recipient_id
         return json_error('This form does not allow saving before submission.', status=409)
     if not isinstance(answers, dict):
         return json_error('Answers must be an object keyed by question ID.')
-    selected_ids = _selected_delivery_question_ids(delivery)
-    questions = {str(q.id): q for q in FeedbackQuestion.objects.filter(section__form=form)
-                 if selected_ids is None or q.id in selected_ids}
-    if any(str(question_id) not in questions for question_id in answers):
-        return json_error('One or more question IDs do not belong to this form.')
-    for question_id, value in answers.items():
-        if not _valid_answer(questions[str(question_id)], value):
-            return json_error(f'Invalid answer for question {question_id}.')
     response_filter = {'form': form, 'learner_id': learner_id}
     if event_recipient_id is not None:
         response_filter['event_recipient'] = recipient
@@ -1634,6 +1640,14 @@ def learner_response_save(request, pk=None, delivery_id=None, event_recipient_id
             'rsvp_recipient__isnull': True, 'review_delivery__isnull': True,
         })
     existing_response = FeedbackResponse.objects.filter(**response_filter).prefetch_related('answers').first()
+    selected_ids = _selected_delivery_question_ids(delivery, recipient, existing_response)
+    questions = {str(q.id): q for q in FeedbackQuestion.objects.filter(section__form=form)
+                 if selected_ids is None or q.id in selected_ids}
+    if any(str(question_id) not in questions for question_id in answers):
+        return json_error('One or more question IDs do not belong to this form.')
+    for question_id, value in answers.items():
+        if not _valid_answer(questions[str(question_id)], value):
+            return json_error(f'Invalid answer for question {question_id}.')
     if existing_response and existing_response.status == 'completed' and not form.allow_edit_after_submission:
         return json_error('This response has already been submitted.', status=409)
     effective_answers = {str(a.question_id): a.answer for a in existing_response.answers.all()} if existing_response else {}
@@ -1707,7 +1721,10 @@ def learner_photo_upload(request, pk=None, question_id=None, delivery_id=None, r
         question = FeedbackQuestion.objects.get(pk=question_id, section__form=form, question_type='photo_upload')
     except FeedbackQuestion.DoesNotExist:
         return json_error('Feedback form or photo question not found.', status=404)
-    selected_ids = _selected_delivery_question_ids(delivery)
+    existing_response = (FeedbackResponse.objects.filter(
+        form=form, delivery=delivery, learner_id=learner_id,
+    ).first() if delivery is not None else None)
+    selected_ids = _selected_delivery_question_ids(delivery, recipient, existing_response)
     if selected_ids is not None and question.id not in selected_ids:
         return json_error('Feedback form or photo question not found.', status=404)
     if not evidence_storage.azure_configured():

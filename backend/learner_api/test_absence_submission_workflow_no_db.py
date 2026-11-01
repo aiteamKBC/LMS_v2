@@ -2,6 +2,9 @@
 from contextlib import ExitStack, nullcontext
 from datetime import date, datetime, time, timezone
 import json
+from pathlib import Path
+import re
+import sqlite3
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -188,6 +191,54 @@ class AbsenceSubmissionWorkflowTests(SimpleTestCase):
         self.reports.create.assert_called_once()
         self.calendar.create.assert_called_once()
         self.notify.assert_called_once()
+
+    def test_pending_catchup_save_and_booking_link_satisfy_the_database_constraint(self):
+        # Execute the deployment CHECK, rather than mocking away the rejection
+        # which used to stop this form before its booking request could run.
+        sql = (Path(__file__).resolve().parents[1] / "sql" / "attendance_absence_recovery.sql").read_text()
+        check = re.search(r"ADD CONSTRAINT coach_absence_recovery_valid CHECK (\([\s\S]+\));", sql).group(1)
+        report_factory = self.reports.create.side_effect
+        from .session_recovery import link_report_to_catchup
+
+        for kind in ("commercial", "apprenticeship"):
+            with self.subTest(kind=kind), sqlite3.connect(":memory:") as database:
+                database.execute("CREATE TABLE synthetic_report (recovery_method TEXT NOT NULL, "
+                                 "catchup_event_key TEXT, CHECK " + check + ")")
+                saved = []
+
+                def create_report(**fields):
+                    database.execute("INSERT INTO synthetic_report VALUES (?, ?)",
+                                     (fields["recovery_method"], fields["catchup_event_key"]))
+                    report = report_factory(**fields)
+                    report.pk = report.id
+                    report.save = lambda **kwargs: database.execute(
+                        "UPDATE synthetic_report SET recovery_method=?, catchup_event_key=?",
+                        (report.recovery_method, report.catchup_event_key),
+                    )
+                    saved.append(report)
+                    return report
+
+                self.reports.create.side_effect = create_report
+                self.booking.reset_mock()
+                response = self.submit(kind=kind, recovery="catch-up", catchupEventKey="", catchupPending="1")
+                self.assertEqual(response.status_code, 201)
+                self.assertEqual(json.loads(response.content)["recoveryMethod"], "catch-up")
+                self.assertEqual(database.execute("SELECT * FROM synthetic_report").fetchall(), [("catch-up", None)])
+                self.booking.assert_not_called()
+                self.assertEqual(self.ledger.call_args.kwargs["recovery_method"], "")
+
+                with patch("learner_api.session_recovery.check_report_can_take_catchup", return_value=saved[0]), \
+                     patch("learner_api.session_recovery._record_linked_catchup") as ledger, \
+                     patch("learner_api.session_recovery._cancel_replaced_catchup") as cancel:
+                    linked = link_report_to_catchup(self.source, self.profile, 12, 7, "catch-up:99:1")
+                self.assertEqual(database.execute("SELECT * FROM synthetic_report").fetchall(),
+                                 [("catch-up", "catch-up:99:1")])
+                self.assertEqual(linked.status, "approved")
+                self.booking.assert_called_once_with(
+                    self.source, self.profile, "catch-up:99:1", saved[0].session_date, lock=True, for_report_id=7,
+                )
+                ledger.assert_called_once_with(12, saved[0].attendance_id, "catch-up:99:1")
+                cancel.assert_not_called()
 
 
 class SharedAbsenceCatchupTests(SimpleTestCase):

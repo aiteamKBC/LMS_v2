@@ -986,6 +986,8 @@ export interface CurriculumScopeKsbTypeSummary {
 }
 
 export interface CurriculumScopeKsbAchievement {
+  historicalAchievedWeightTotal?: number;
+  unallocatedPlannedWeightTotal?: number;
   learnerCount: number;
   requiredCount: number;
   ksbCount: number;
@@ -1139,6 +1141,8 @@ export interface CurriculumLearnerKsbConsumptionItem {
 }
 
 export interface CurriculumLearnerKsbConsumption {
+  historicalConsumedWeightTotal?: number;
+  unallocatedPlannedWeight?: number;
   learnerId: number | string;
   learnerName: string;
   email: string;
@@ -1350,10 +1354,19 @@ export interface CurriculumScopeLearnerRosterResponse {
 export type CurriculumProgrammeLearnerRosterResponse = CurriculumScopeLearnerRosterResponse;
 
 export interface CurriculumScopeLearnerKsbImpactResponse {
+  moduleProgressBasis?: 'current_activities';
+  activityLogProgress?: {
+    learners: Array<{ learnerId: number | string; totalActivities: number; completedActivities: number;
+      inProgressActivities: number; earlierRecords: number; earlierCompleted: number; earlierOtjh?: number }>;
+    completedActivities: number; totalActivities: number; earlierRecords: number; source?: string;
+  };
   activityLogOtjh?: {
-    learners: Array<{ learnerId: number | string; plannedOtjh: number; achievedOtjh: number | null; unallocatedAcceptedRecords?: number }>;
+    learners: Array<{ learnerId: number | string; plannedOtjh: number; achievedOtjh: number | null; unallocatedAcceptedRecords?: number;
+      historicalOtjh?: number; historicalUnallocatedRecords?: number }>;
     achievedTotal: number | null; plannedTotal: number; source: string;
     unallocatedAcceptedRecords?: number;
+    historicalTotal?: number;
+    historicalUnallocatedRecords?: number;
   };
   scope: CurriculumLearnerScope | string;
   identifier: string;

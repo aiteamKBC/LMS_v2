@@ -24,7 +24,7 @@ const QUESTION_TYPES: { value: FeedbackQuestionType; label: string }[] = [
 const CHOICE_TYPES = new Set<FeedbackQuestionType>(['single_choice', 'multiple_choice', 'dropdown', 'likert']);
 const FORM_TYPE_OPTIONS: BuilderSelectOption[] = [
   { value: 'post_lecture', label: 'Live Sessions Feedback', description: 'Sent automatically after finalized attendance', icon: 'ri-graduation-cap-line' },
-  { value: 'mid_module', label: 'Mid-module Feedback', description: 'Opens halfway between the module start and end dates', icon: 'ri-calendar-check-line' },
+  { value: 'mid_module', label: 'Well being', description: 'Opens halfway between the module start and end dates', icon: 'ri-calendar-check-line' },
   { value: 'end_module', label: 'End-module Feedback', description: 'Opens on the module end date', icon: 'ri-flag-line' },
   { value: 'post_mcm_review', label: 'MCM Feedback', description: 'Used after completed monthly coaching meetings', icon: 'ri-team-line' },
   { value: 'post_progress_review', label: 'Progress Review Feedback', description: 'Used after completed progress reviews', icon: 'ri-line-chart-line' },

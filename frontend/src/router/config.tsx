@@ -4,6 +4,7 @@ import { CHAT_ENABLED, LEARNER_FEEDBACK_ENABLED, LEARNER_POST_LECTURE_FEEDBACK_E
 import { RequireAuth } from "@/components/feature/RequireAuth";
 import { lazyRoute } from "./lazyRoute";
 import { LearnerDashboardRedirect } from "./LearnerDashboardRedirect";
+import { LearnerFeedbackFormRoute } from "./LearnerFeedbackFormRoute";
 import { studentWorkspaceRoutes } from "./studentWorkspaceRoutes";
 
 // Route components are code-split: each page becomes its own chunk, fetched on
@@ -663,11 +664,11 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/feedback/review/:reviewDeliveryId",
-    element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackFormPage /> : <Navigate to="/workspace/learner" replace />,
+    element: <LearnerFeedbackFormRoute><LearnerFeedbackFormPage /></LearnerFeedbackFormRoute>,
   },
   {
     path: "/learner/feedback/:formId",
-    element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackFormPage /> : <Navigate to="/workspace/learner" replace />,
+    element: <LearnerFeedbackFormRoute><LearnerFeedbackFormPage /></LearnerFeedbackFormRoute>,
   },
   {
     path: "/learner/feedback/delivery/:deliveryId",
