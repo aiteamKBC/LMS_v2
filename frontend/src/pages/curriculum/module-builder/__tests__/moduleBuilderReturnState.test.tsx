@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearAllCachedResources } from '@/api/cachedRequest';
 import type { ReactNode } from 'react';
 import type { CurriculumCohort, CurriculumGroup, CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
 import { fetchCurriculumDeliveryScope } from '@/lib/curriculumApi';
@@ -127,6 +128,7 @@ function address() {
 
 describe('Module Builder keeps the reader\'s place in its address', { timeout: 15000 }, () => {
   beforeEach(() => {
+    clearAllCachedResources();
     modulesStore.set(false);
     vi.mocked(fetchCurriculumDeliveryScope).mockClear();
     fetchLearnerAssignments.mockReset().mockResolvedValue({
@@ -173,7 +175,7 @@ describe('Module Builder keeps the reader\'s place in its address', { timeout: 1
     expect(screen.getByRole('button', { name: 'All modules' })).toHaveAttribute('aria-pressed', 'true');
     await user.type(screen.getByPlaceholderText('Search modules, tutors, cohorts...'), 'Foundations');
     await waitFor(() => expect(address().get('catalogue')).toBe('all'));
-    await user.click(screen.getByRole('button', { name: 'All modules' }));
+    await user.click(screen.getByRole('button', { name: 'Active' }));
     await waitFor(() => expect(address().has('catalogue')).toBe(false));
     expect(address().get('cohort')).toBe('COHORT-1');
     expect(address().get('group')).toBe('GROUP-1');

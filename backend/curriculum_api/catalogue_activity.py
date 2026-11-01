@@ -5,7 +5,7 @@ are evidence of teaching, independent of publication and learner completion.
 """
 from datetime import date, datetime, timedelta, timezone as utc_timezone
 
-from django.db import DatabaseError, connection
+from django.db import DatabaseError
 from django.http import JsonResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
@@ -16,7 +16,6 @@ from . import views
 
 
 CANCELLED = {'cancelled', 'canceled'}
-DATE_KEYS = ('sessionDateTimeUtc', 'teamsStartDateTimeUtc', 'sessionDate')
 
 
 def teaching_day(value):
@@ -51,8 +50,7 @@ def source_label(value):
     return 'unknown'
 
 
-def catalogue_facts(modules, components, series):
-    series_by_id = {str(row['id']): row for row in series}
+def catalogue_facts(modules, series):
     last_dates = {}
 
     def keep(module_id, value):
@@ -69,25 +67,13 @@ def catalogue_facts(modules, components, series):
         if not row.get('occurrence_count'):
             last = row.get('start_datetime')
             if last:
-                instant = last if isinstance(last, datetime) else parse_datetime(str(last))
-                if instant:
-                    last = instant + timedelta(minutes=max(0, int(row.get('duration_minutes') or 0)))
+                try:
+                    instant = last if isinstance(last, datetime) else parse_datetime(str(last))
+                    if instant:
+                        last = instant + timedelta(minutes=max(0, int(row.get('duration_minutes') or 0)))
+                except (ValueError, TypeError, OverflowError):
+                    last = None
         keep(str(row['module_catalogue_id']), last)
-
-    for row in components:
-        bound_series = series_by_id.get(str(row.get('teamsLiveSessionId') or ''))
-        if bound_series and str(bound_series.get('status') or '').lower() in CANCELLED:
-            continue
-        if str(row.get('occurrence_status') or '').lower() in CANCELLED:
-            continue
-        if bound_series and bound_series.get('occurrence_count') and not (
-            bound_series.get('last_live_end') or bound_series.get('last_live_start')
-        ):
-            continue
-        for key in DATE_KEYS:
-            if teaching_day(row.get(key)):
-                keep(str(row['module_catalogue_id']), row[key])
-                break
 
     # A shared calendar has one owner, but every explicitly linked copy uses
     # its dates. Keep each copy's own start and provenance.
@@ -112,7 +98,7 @@ def read_catalogue_facts():
         ensure_tables=False, columns=['module_catalogue_id', 'start_date', 'source_type', 'status', 'teams_shared_source_module_id', *flags])
     modules = [row for row in modules if not views.programme_deleted_row(row)
                and str(row.get('status') or '').lower() != 'archived']
-    components, series = [], []
+    series = []
     # Bound SQL parameters even for a large catalogue; never a read per card.
     ids = [str(row['module_catalogue_id']) for row in modules]
     for offset in range(0, len(ids), 400):
@@ -129,37 +115,15 @@ def read_catalogue_facts():
                     THEN coalesce(o.scheduled_end, o.scheduled_start) END) AS last_live_end
             FROM {live_table} s LEFT JOIN {occurrences} o ON o.live_session_id = s.id
             WHERE s.module_catalogue_id IN ({slots})
+              AND lower(trim(coalesce(s.provider, ''))) = 'microsoft teams'
+              AND (trim(coalesce(s.graph_event_id, '')) <> ''
+                   OR trim(coalesce(s.online_meeting_id, '')) <> ''
+                   OR trim(coalesce(s.join_url, '')) <> '')
             GROUP BY s.id, s.module_catalogue_id, s.status, s.start_datetime, s.duration_minutes
         ''', batch))
-        table = views.AUTHORING_COMPONENTS_TABLE
-        conditions, values = views.live_authoring_rows_sql(table, flags)
-        # Qualify optional visibility flags after adding the occurrence join.
-        for flag in flags:
-            conditions = conditions.replace(views.quote_ident(flag), f'c.{views.quote_ident(flag)}')
-        week_conditions, week_values = views.live_authoring_rows_sql(views.AUTHORING_WEEKS_TABLE, flags)
-        for flag in flags:
-            week_conditions = week_conditions.replace(views.quote_ident(flag), f'w.{views.quote_ident(flag)}')
-        for alias, table_name in [('c', table), ('w', views.AUTHORING_WEEKS_TABLE)]:
-            if views.has_column(table_name, 'library_state'):
-                conditions += ((' AND ' if conditions else '')
-                               + f"lower(trim(coalesce({alias}.library_state, ''))) <> 'library'")
-        def setting(key):
-            if connection.vendor == 'postgresql':
-                return f"c.settings_json ->> '{key}'"
-            return f"json_extract(c.settings_json, '$.{key}')"
-        projection = ', '.join(f'{setting(key)} AS {views.quote_ident(key)}'
-                               for key in (*DATE_KEYS, 'teamsLiveSessionId'))
-        components.extend(views.fetch_all(f'''
-            SELECT DISTINCT c.module_catalogue_id, {projection}, o.status AS occurrence_status
-            FROM {views.authoring_table_name(table)} c
-            JOIN {views.authoring_table_name(views.AUTHORING_WEEKS_TABLE)} w
-              ON w.id = c.week_id AND w.module_catalogue_id = c.module_catalogue_id
-            LEFT JOIN {occurrences} o ON o.id = {setting('teamsOccurrenceId')}
-            WHERE c.module_catalogue_id IN ({slots}) AND c.type IN ('live_session','live-session')
-            {('AND ' + conditions) if conditions else ''}
-            {('AND ' + week_conditions) if week_conditions else ''}
-        ''', [*batch, *values, *week_values]))
-    return catalogue_facts(modules, components, series)
+    # The tracked Teams calendar is authoritative. Draft component dates can
+    # lag a reschedule, or exist without any meeting, so never read them here.
+    return catalogue_facts(modules, series)
 
 
 @require_GET

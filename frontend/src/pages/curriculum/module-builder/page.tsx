@@ -932,7 +932,8 @@ function ModuleBuilderContent() {
   // which forced a rebuild from Neon and cost these two ~9s and ~14s.
   const { modules, loading, error, reload } = useCurriculumModules({ compact: true, revalidate: true });
   const catalogueActivityKey = modules.map(module => [module.moduleCatalogueId || module.id, module.lastUpdated, module.startDate, module.endDate, module.sourceType].join(':')).join('|');
-  const catalogueActivity = useCatalogueActivity(catalogueActivityKey);
+  const catalogueAccountScope = JSON.stringify([auth?.account?.id, auth?.account?.role, auth?.account?.access, auth?.tenant?.id]);
+  const catalogueActivity = useCatalogueActivity(catalogueActivityKey, catalogueAccountScope);
   const { programmes: curriculumProgrammes } = useCurriculumProgrammes({ revalidate: true, visibility: 'all' });
   const programmeDesignUrl = useMemo(() => {
     const requested = (searchParams.get('programme') || searchParams.get('programmeId') || '').trim();
@@ -1565,8 +1566,7 @@ function ModuleBuilderContent() {
 
   const deliveryFiltersActive = Boolean(cohortFilter || groupFilter || tutorFilter);
 
-  const filtered = catalogueModules.filter(module => {
-    if (!allModules && !catalogueModuleActive(catalogueActivity.data?.[module.catalogueId], catalogueActivity.today)) return false;
+  const matchingModules = catalogueModules.filter(module => {
     const text = `${module.title} ${module.catalogueId} ${module.programmeName} ${moduleIdentityText(module)} ${moduleDeliverySearchText(module)}`.toLowerCase();
     if (search && !text.includes(search.toLowerCase())) return false;
     if (programmeFilter !== 'All' && !moduleBelongsToProgrammeFilter(module, programmeFilter, curriculumProgrammes)) return false;
@@ -1580,6 +1580,8 @@ function ModuleBuilderContent() {
       && (!tutorFilter || normaliseDeepLinkValue(usage.tutor) === normaliseDeepLinkValue(tutorFilter))
     ));
   });
+  const activeModules = matchingModules.filter(module => catalogueModuleActive(catalogueActivity.data?.[module.catalogueId], catalogueActivity.today));
+  const filtered = allModules ? matchingModules : activeModules;
 
   const deliveryStats = useMemo(() => ({
     deliveries: deliveryUsages.length,
@@ -4082,7 +4084,7 @@ function ModuleBuilderContent() {
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-[13px] font-bold text-foreground-950">Module catalogue</p>
                 <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{filtered.length} shown</span>
-                {!allModules && <span className="text-[10px] font-semibold text-foreground-500">Active modules</span>}
+                <span className={`text-[10px] font-semibold ${allModules ? 'text-foreground-500' : 'text-emerald-700'}`}>{allModules ? 'All modules' : 'Active modules'}</span>
               </div>
               <p className="mt-1 text-[11px] text-foreground-500">Scoped modules can share titles while keeping their own programme, delivery and KSB mapping.</p>
             </div>
@@ -4144,12 +4146,23 @@ function ModuleBuilderContent() {
               />
               <button
                 type="button"
+                aria-pressed={!allModules}
+                onClick={() => changeFilter(() => setAllModules(false))}
+                className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold transition-smooth ${!allModules ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}
+              >
+                <AppIcon className="ri-checkbox-circle-line text-sm" />
+                Active
+                <span className="text-[10px]" aria-hidden="true">{catalogueActivity.data ? activeModules.length : '—'}</span>
+              </button>
+              <button
+                type="button"
                 aria-pressed={allModules}
-                onClick={() => changeFilter(() => setAllModules(value => !value))}
+                onClick={() => changeFilter(() => setAllModules(true))}
                 className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold transition-smooth ${allModules ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}
               >
                 <AppIcon className="ri-stack-line text-sm" />
                 All modules
+                <span className="text-[10px]" aria-hidden="true">{loading && !modules.length ? '—' : matchingModules.length}</span>
               </button>
               <button
                 type="button"
@@ -4188,6 +4201,7 @@ function ModuleBuilderContent() {
                   <ModuleCatalogueCard
                     key={module.catalogueId}
                     module={module}
+                    active={catalogueModuleActive(catalogueActivity.data?.[module.catalogueId], catalogueActivity.today)}
                     source={catalogueActivity.data?.[module.catalogueId]?.source || (module.sourceModule?.sourceType === 'mba-legacy' ? 'old_lms' : ['module_authoring', 'authoring', 'training_plan'].includes(module.sourceModule?.sourceType || '') ? 'new_lms' : 'unknown')}
                     teamsSummary={teamsByModule.get(normaliseDeepLinkValue(module.catalogueId))}
                     onKsbMap={() => { void openKsbMap(module); }}
@@ -8400,6 +8414,7 @@ function ReadOnlyMetricChip({ label, value, suffix, tone }: {
 function ModuleCatalogueCard({
   module,
   source,
+  active,
   teamsSummary,
   onKsbMap,
   ksbMapLoading,
@@ -8411,6 +8426,7 @@ function ModuleCatalogueCard({
 }: {
   module: ModuleBuilderListItem;
   source: ModuleCatalogueActivity['source'];
+  active: boolean;
   teamsSummary?: CurriculumTeamsMeetingSummary;
   onKsbMap: () => void;
   ksbMapLoading: boolean;
@@ -8446,9 +8462,13 @@ function ModuleCatalogueCard({
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <h3 className="truncate text-[15px] font-heading font-bold text-foreground-950">{module.title}</h3>
-                <span className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[9px] font-bold ring-1 ${source === 'old_lms' ? 'bg-amber-50 text-amber-800 ring-amber-200' : source === 'new_lms' ? 'bg-primary-50 text-primary-700 ring-primary-100' : 'bg-background-100 text-foreground-500 ring-background-200'}`}>
+                <span className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[9px] font-bold ring-1 ${source === 'old_lms' ? 'bg-sky-50 text-sky-800 ring-sky-200' : source === 'new_lms' ? 'bg-amber-50 text-amber-800 ring-amber-200' : 'bg-background-100 text-foreground-500 ring-background-200'}`}>
                   {source === 'old_lms' ? 'Old LMS' : source === 'new_lms' ? 'New LMS' : 'Source not set'}
                 </span>
+                {active && <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-800 ring-1 ring-emerald-200" title="Started module with a non-cancelled Teams teaching date that has not passed">
+                  <AppIcon className="ri-checkbox-circle-line text-[10px]" />
+                  Active
+                </span>}
                 {!hasContent && (
                   <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700 ring-1 ring-amber-100">
                     <AppIcon className="ri-error-warning-line text-[10px]"></AppIcon>

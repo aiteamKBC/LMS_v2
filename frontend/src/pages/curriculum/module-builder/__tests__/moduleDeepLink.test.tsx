@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearAllCachedResources } from '@/api/cachedRequest';
 import type { ReactNode } from 'react';
 import type { CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
 
@@ -164,6 +165,7 @@ function historyKey() {
 
 describe('Module Builder deep links', { timeout: 15000 }, () => {
   beforeEach(() => {
+    clearAllCachedResources();
     createNewModule.mockClear();
     loadModuleStructure.mockClear();
   });
