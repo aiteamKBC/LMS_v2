@@ -134,6 +134,7 @@ CREATE TABLE IF NOT EXISTS "Feedback".feedback_deliveries (
     module_catalogue_id varchar(255) NOT NULL,
     module_name varchar(500) NOT NULL DEFAULT '',
     session_title varchar(500) NOT NULL DEFAULT '',
+    tutor_name varchar(255) NOT NULL DEFAULT '',
     starts_at timestamptz NULL,
     ends_at timestamptz NULL,
     available_at timestamptz NOT NULL,
@@ -151,6 +152,9 @@ ALTER TABLE "Feedback".feedback_deliveries
   ADD COLUMN IF NOT EXISTS group_id varchar(255) NOT NULL DEFAULT '',
   ADD COLUMN IF NOT EXISTS group_name varchar(255) NOT NULL DEFAULT '',
   ADD COLUMN IF NOT EXISTS module_name varchar(500) NOT NULL DEFAULT '';
+
+ALTER TABLE "Feedback".feedback_deliveries
+  ADD COLUMN IF NOT EXISTS tutor_name varchar(255) NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS "Feedback".feedback_delivery_recipients (
     id bigserial PRIMARY KEY,
