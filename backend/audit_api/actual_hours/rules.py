@@ -11,13 +11,16 @@ only at the storage boundary, in Decimal, never in binary floating point.
 
 from __future__ import annotations
 
-import datetime
 import re
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
+from config.working_hours import (
+    WORKING_TIMEZONE, WORKING_DAY_START, WORKING_DAY_END,
+    WORKING_WEEKDAYS, WORKING_HOURS_RULE_VERSION,
+)
 
 
-RULE_VERSION = "actual-hours/2026-08-14"
+RULE_VERSION = f"actual-hours/{WORKING_HOURS_RULE_VERSION}"
 
 # --- canonical constants (seconds) ------------------------------------------
 
@@ -50,13 +53,6 @@ MINIMUM_DURATION_SECONDS = MINUTE                                 # below this i
 # Auditor-entered Reading/Quiz values are reported on a 5-minute grid, so a
 # report reads 15/20/25/30/35/40 rather than 14/19/24/29/34/39.
 INPUT_GRID_SECONDS = 5 * MINUTE
-
-# --- working time -----------------------------------------------------------
-
-WORKING_TIMEZONE = "Europe/London"
-WORKING_DAY_START = datetime.time(9, 0, 0)
-WORKING_DAY_END = datetime.time(17, 0, 0)
-WORKING_WEEKDAYS = frozenset({0, 1, 2, 3, 4})                     # Mon-Fri
 
 # --- domain vocabulary ------------------------------------------------------
 
@@ -255,19 +251,19 @@ def working_time_findings(activity_date, start_time, end_time, *, holiday_status
     if start_time < WORKING_DAY_START:
         findings.append(_finding(
             CODE_START_BEFORE_HOURS,
-            f"Starts at {start_time.isoformat()}, before 09:00:00.",
+            f"Starts at {start_time.isoformat()}, before {WORKING_DAY_START.isoformat()} UK time.",
             start=start_time.isoformat(),
         ))
     if start_time >= WORKING_DAY_END:
         findings.append(_finding(
             CODE_START_AT_OR_AFTER_CLOSE,
-            f"Starts at {start_time.isoformat()}, at or after 17:00:00.",
+            f"Starts at {start_time.isoformat()}, at or after {WORKING_DAY_END.isoformat()} UK time.",
             start=start_time.isoformat(),
         ))
     if end_time > WORKING_DAY_END:
         findings.append(_finding(
             CODE_END_AFTER_CLOSE,
-            f"Ends at {end_time.isoformat()}, after 17:00:00.",
+            f"Ends at {end_time.isoformat()}, after {WORKING_DAY_END.isoformat()} UK time.",
             end=end_time.isoformat(),
         ))
     if end_time <= start_time:
