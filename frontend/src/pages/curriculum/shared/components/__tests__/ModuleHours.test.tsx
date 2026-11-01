@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchModuleHoursTarget, saveModuleHoursTarget, ModuleHoursError } from '@/api/moduleHours';
-import { ModuleHoursStrip, ModuleHoursTargetField } from '../ModuleHours';
+import { ModuleFixedHoursCard, ModuleHoursTargetField } from '../ModuleHours';
 import { useModuleHoursDraft } from '../moduleHoursState';
 import { AuthContext, type RbacContextValue } from '@/hooks/useAuth.helpers';
 
@@ -24,46 +24,51 @@ describe('module hours comparison and target editing', () => {
     vi.mocked(saveModuleHoursTarget).mockImplementation(async (moduleId, targetMinutes, revision) => ({ moduleId, targetMinutes, revision: revision + 1, canMatch: true }));
   });
 
-  it('compares the whole module and updates from below, to equal, to exceeded, and back', async () => {
-    const view = render(<ModuleHoursStrip moduleId="M1" totalHours={490} />);
-    const counter = await screen.findByRole('button', { name: /Module planned hours: 490 h/ });
+  it('keeps the fixed value while component totals move below, to equal, above, and back', async () => {
+    const view = render(<ModuleFixedHoursCard moduleId="M1" totalHours={490} />);
+    const counter = await screen.findByRole('button', { name: /Component hours: 490 h/ });
     expect(counter).toHaveClass('text-emerald-800');
-    view.rerender(<ModuleHoursStrip moduleId="M1" totalHours={500} />);
-    expect(screen.getByText('Target matched')).toBeInTheDocument();
+    expect(counter).toHaveTextContent('500 h');
+    view.rerender(<ModuleFixedHoursCard moduleId="M1" totalHours={500} />);
+    expect(counter).toHaveAttribute('title', expect.stringContaining('Target matched'));
     expect(counter).toHaveClass('text-emerald-800');
-    view.rerender(<ModuleHoursStrip moduleId="M1" totalHours={501.5} unsaved />);
+    view.rerender(<ModuleFixedHoursCard moduleId="M1" totalHours={501.5} unsaved />);
     expect(counter).toHaveClass('text-red-800');
+    expect(counter).toHaveTextContent('500 h');
     expect(counter).toHaveAttribute('title', expect.stringContaining('1 h 30 min over target'));
-    expect(screen.getByText(/Includes unsaved changes/)).toBeInTheDocument();
+    expect(counter).toHaveAttribute('title', expect.stringContaining('Includes unsaved component changes'));
     await userEvent.click(counter);
-    expect(screen.getByText(/Adjust the component hours/)).toBeInTheDocument();
-    view.rerender(<ModuleHoursStrip moduleId="M1" totalHours={499} />);
+    expect(screen.getByText(/1 h 30 min over target/, { selector: 'p' })).toBeVisible();
+    await userEvent.keyboard('{Escape}');
+    expect(counter).toHaveAttribute('aria-expanded', 'false');
+    view.rerender(<ModuleFixedHoursCard moduleId="M1" totalHours={499} />);
     expect(counter).toHaveClass('text-emerald-800');
+    expect(saveModuleHoursTarget).not.toHaveBeenCalled();
   });
 
   it('shows an unset target neutrally rather than claiming a match or zero target', async () => {
     vi.mocked(fetchModuleHoursTarget).mockResolvedValue({ ...target, targetMinutes: null });
-    render(<ModuleHoursStrip moduleId="M1" totalHours={10} />);
-    expect(await screen.findByText('No fixed target set')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Module planned hours: 10 h/ })).toHaveClass('text-foreground-600');
+    render(<ModuleFixedHoursCard moduleId="M1" totalHours={10} />);
+    expect(await screen.findByText('Not set')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Component hours: 10 h.*No fixed target set/ })).toHaveClass('text-foreground-600');
   });
 
   it('does not display a previous module target during a switch', async () => {
-    const view = render(<ModuleHoursStrip moduleId="M1" totalHours={10} />);
-    await screen.findByText('490 h remaining');
+    const view = render(<ModuleFixedHoursCard moduleId="M1" totalHours={10} />);
+    await screen.findByRole('button', { name: /490 h remaining/ });
     vi.mocked(fetchModuleHoursTarget).mockImplementation(() => new Promise(() => {}));
-    view.rerender(<ModuleHoursStrip moduleId="M2" totalHours={10} />);
-    expect(screen.queryByText('490 h remaining')).not.toBeInTheDocument();
-    expect(screen.getByText('Loading module hours…')).toBeInTheDocument();
+    view.rerender(<ModuleFixedHoursCard moduleId="M2" totalHours={10} />);
+    expect(screen.queryByRole('button', { name: /490 h remaining/ })).not.toBeInTheDocument();
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
   });
 
   it('keeps failures visible and retries without fabricating an unset target', async () => {
     vi.mocked(fetchModuleHoursTarget).mockRejectedValueOnce(new Error('Unavailable'));
-    render(<ModuleHoursStrip moduleId="M1" totalHours={10} />);
-    await screen.findByText('Module hours target unavailable');
-    expect(screen.queryByText('No fixed target set')).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await screen.findByText('490 h remaining');
+    render(<ModuleFixedHoursCard moduleId="M1" totalHours={10} />);
+    const retry = await screen.findByRole('button', { name: /Module hours target unavailable/ });
+    expect(screen.queryByText('Not set')).not.toBeInTheDocument();
+    await userEvent.click(retry);
+    await screen.findByRole('button', { name: /490 h remaining/ });
   });
 
   it('hides target inputs unless the server explicitly grants Match Module Hours', async () => {
@@ -122,13 +127,13 @@ describe('module hours comparison and target editing', () => {
   });
 
   it('reloads after this module target is saved but not another module', async () => {
-    render(<ModuleHoursStrip moduleId="M1" totalHours={490} />);
-    await screen.findByText('10 h remaining');
+    render(<ModuleFixedHoursCard moduleId="M1" totalHours={490} />);
+    await screen.findByRole('button', { name: /10 h remaining/ });
     act(() => window.dispatchEvent(new CustomEvent('module-hours-updated', { detail: { moduleId: 'M2', canonicalId: 'M2' } })));
     expect(fetchModuleHoursTarget).toHaveBeenCalledTimes(1);
     vi.mocked(fetchModuleHoursTarget).mockResolvedValue({ ...target, targetMinutes: 28800, revision: 3 });
     act(() => window.dispatchEvent(new CustomEvent('module-hours-updated', { detail: { moduleId: 'M1', canonicalId: 'M1' } })));
-    await screen.findByText('10 h over target');
+    await screen.findByRole('button', { name: /10 h over target/ });
   });
 
   it('does not carry an unsaved target into another signed-in account', async () => {
