@@ -512,7 +512,7 @@ class FeedbackForm(models.Model):
         ('post_event', 'Post-event'), ('event_rsvp', 'Event RSVP'),
         ('post_mcm_review', 'MCM Feedback'),
         ('post_progress_review', 'Progress Review Feedback'),
-        ('mid_module', 'Mid-module Feedback'),
+        ('mid_module', 'Well being'),
         ('end_module', 'End-module Feedback'),
     ]
     DELIVERY_SCOPE_CHOICES = [('manual', 'Manual'), ('all_modules', 'All modules'), ('module', 'One module')]

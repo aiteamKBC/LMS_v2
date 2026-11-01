@@ -110,7 +110,7 @@ type AnalyticsFormType = 'all' | FeedbackFormType;
 const ANALYTICS_FORM_TYPES: ThemedSelectOption<AnalyticsFormType>[] = [
   { value: 'all', label: 'All feedback types' },
   { value: 'post_lecture', label: 'Live Sessions Feedback' },
-  { value: 'mid_module', label: 'Mid-module Feedback' },
+  { value: 'mid_module', label: 'Well being' },
   { value: 'end_module', label: 'End-module Feedback' },
   { value: 'post_mcm_review', label: 'MCM Feedback' },
   { value: 'post_progress_review', label: 'Progress Review Feedback' },

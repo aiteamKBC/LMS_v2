@@ -208,7 +208,7 @@ describe('feedback form version history', () => {
     expect(screen.getByRole('region', { name: 'Question analytics' })).toBeVisible();
 
     let currentType = 'All feedback types';
-    for (const label of ['Live Sessions Feedback', 'Mid-module Feedback', 'End-module Feedback', 'MCM Feedback', 'Progress Review Feedback', 'Event Feedback', 'Event RSVP', 'General Feedback', 'All feedback types']) {
+    for (const label of ['Live Sessions Feedback', 'Well being', 'End-module Feedback', 'MCM Feedback', 'Progress Review Feedback', 'Event Feedback', 'Event RSVP', 'General Feedback', 'All feedback types']) {
       await user.click(screen.getByRole('button', { name: currentType }));
       await user.click(screen.getByRole('option', { name: label }));
       if (label === 'Live Sessions Feedback') {
