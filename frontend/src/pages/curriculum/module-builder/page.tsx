@@ -2,7 +2,7 @@ import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/A
 import { ModuleLearnerCount } from './ModuleLearnerCount';
 import { catalogueModuleActive, useCatalogueActivity } from './useCatalogueActivity';
 import type { ModuleCatalogueActivity } from '@/api/moduleCatalogueActivity';
-import { ModuleHoursStrip } from '../shared/components/ModuleHours';
+import { ModuleFixedHoursCard } from '../shared/components/ModuleHours';
 import { Context as LearnerDirectoryContext, useRefreshAssignedLearners } from '../shared/entities/assignedLearnerDirectory';
 import { sessionDeliveryDate } from '@/lib/deliveryWeek';
 import { EditScope, ModulePresence } from './CollaborativeField';
@@ -3750,7 +3750,6 @@ function ModuleBuilderContent() {
                   )}
                   <EditScope kind="component" id={selectedComponent.id}>
                   <WeekComponentEditor
-                    moduleHoursSummary={<ModuleHoursStrip moduleId={workingModule.catalogueId || workingModule.id} totalHours={workingModule.totalOtjh} unsaved={hasUnsavedWorkingModuleChanges} />}
                     component={selectedComponent}
                     onChange={updates => updateWorkingModule(module =>
                       applyModuleComponentUpdate(module, selectedComponent.id, updates),
@@ -4441,7 +4440,7 @@ function SaveStatusPanel({ saving, elapsedSeconds, error, module }: {
   );
 }
 
-function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOptions, ksbProfileValue, scopeLock, standardsLoading, onBack, onProgrammeChange, onKsbProfileChange }: {
+function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOptions, ksbProfileValue, scopeLock, standardsLoading, saved, onBack, onProgrammeChange, onKsbProfileChange }: {
   module: ModuleCatalogueItem;
   programmeOptions: string[];
   hierarchy: ModuleHierarchyInfo | null;
@@ -4465,7 +4464,7 @@ function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOption
 
   return (
     <div className="rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
-      <div className="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between lg:px-5">
+      <div className="flex flex-col gap-3 px-4 py-3 xl:flex-row xl:items-center xl:justify-between lg:px-5">
         <div className="flex min-w-0 items-center gap-3">
           <button onClick={onBack} className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm shadow-primary-500/20 transition-smooth hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-200 focus:ring-offset-1" title="Back to modules" aria-label="Back to modules">
             <AppIcon className="ri-arrow-left-line text-base"></AppIcon>
@@ -4480,7 +4479,7 @@ function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOption
         </div>
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center lg:justify-end">
-          <div className="grid grid-cols-3 gap-2">
+          <div role="group" aria-label="Module totals" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {moduleMetrics.map(metric => (
               <div key={metric.label} className="min-w-[78px] rounded-lg border border-background-200 bg-background-100/50 px-2.5 py-1.5">
                 <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-foreground-400">
@@ -4489,6 +4488,7 @@ function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOption
                 <div className="mt-0.5 text-[15px] font-heading font-bold text-foreground-950">{metric.value}</div>
               </div>
             ))}
+            <ModuleFixedHoursCard moduleId={module.catalogueId || module.id} totalHours={module.totalOtjh} unsaved={saved === false} />
           </div>
         </div>
       </div>

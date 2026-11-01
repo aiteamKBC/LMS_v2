@@ -7,6 +7,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { fetchLearnerEventReviewInstance, signLearnerProgressReview, type LearnerCalendarEvent, type LearnerReviewDefinition } from '@/api/learnerCalendar';
 
 const access = vi.hoisted(() => ({ canProgress: true }));
+vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ isInitialized: true, auth: { account: { role: 'learner', subjectId: 12 } } }) }));
 vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => access }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <main>{children}</main> }));
 vi.mock('@/api/learnerCalendar', async (importOriginal) => ({

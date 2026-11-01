@@ -22,23 +22,25 @@ export function ModuleHoursTargetField({ state, disabled }: { state: ReturnType<
   </section>;
 }
 
-export function ModuleHoursStrip({ moduleId, totalHours, unsaved = false }: { moduleId: string; totalHours: number; unsaved?: boolean }) {
+export function ModuleFixedHoursCard({ moduleId, totalHours, unsaved = false }: { moduleId: string; totalHours: number; unsaved?: boolean }) {
   const { data, loading, error, reload } = useModuleHours(moduleId);
   const [details, setDetails] = useState(false);
-  if (loading) return <div className="border-b border-background-200 px-5 py-3 text-[12px] text-foreground-500" role="status">Loading module hours…</div>;
-  if (error || !data) return <div className="flex items-center justify-between gap-3 border-b border-background-200 px-5 py-3 text-[12px] text-amber-800" role="status"><span>Module hours target unavailable</span><button type="button" onClick={reload} className="underline">Retry</button></div>;
+  useEffect(() => { setDetails(false); }, [moduleId]);
+  const baseClass = 'min-w-[90px] rounded-lg border px-2.5 py-1.5 text-left';
+  const label = <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide"><AppIcon className="ri-time-line text-[12px]" />Fixed hours</span>;
+  if (loading) return <div className={`${baseClass} border-background-200 bg-background-100/50 text-foreground-400`} role="status">{label}<span className="mt-0.5 block text-[12px]">Loading…</span></div>;
+  if (error || !data) return <button type="button" onClick={reload} title="Module hours target unavailable. Retry loading fixed hours." aria-label="Module hours target unavailable. Retry loading fixed hours." className={`${baseClass} border-amber-200 bg-amber-50 text-amber-800`}>{label}<span className="mt-0.5 block text-[12px]">Retry</span></button>;
   const total = Math.max(0, Math.round(totalHours * 60));
   const target = data.targetMinutes;
   const over = target !== null && total > target;
   const summary = target === null ? 'No fixed target set' : over ? `${formatModuleHours(total - target)} over target` : total === target ? 'Target matched' : `${formatModuleHours(target - total)} remaining`;
-  const description = `Module planned hours: ${formatModuleHours(total)}.${target !== null ? ` Fixed target: ${formatModuleHours(target)}.` : ''} ${summary}.${over ? ' Adjust the component hours.' : ''}${unsaved ? ' Includes unsaved component changes.' : ''}`;
-  return <section className="border-b border-background-200 px-5 py-3" aria-label="Module planned hours">
-    <div className="flex flex-wrap items-center justify-between gap-3" role="status" aria-live="polite">
-      <div><p className="text-[12px] font-semibold text-foreground-800">Module planned hours</p><p className={`mt-0.5 text-[11px] ${over ? 'font-semibold text-red-700' : 'text-foreground-500'}`}>{summary}{unsaved ? ' · Includes unsaved changes' : ''}</p></div>
-      <button type="button" title={description} aria-label={description} aria-expanded={details} onClick={() => setDetails(value => !value)} className={`inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-[12px] font-bold tabular-nums ${target === null ? 'bg-background-100 text-foreground-600' : over ? 'bg-red-50 text-red-800 ring-1 ring-inset ring-red-200' : 'bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-200'}`}>
-        <AppIcon className={target === null ? 'ri-time-line' : over ? 'ri-alarm-warning-line' : 'ri-checkbox-circle-line'} />{formatModuleHours(total)}{target !== null && ` / ${formatModuleHours(target)}`}
+  const description = `Component hours: ${formatModuleHours(total)}.${target !== null ? ` Fixed hours target: ${formatModuleHours(target)}.` : ''} ${summary}.${unsaved ? ' Includes unsaved component changes.' : ''}`;
+  return <div className="relative" role="status" aria-live="polite">
+      <button type="button" title={description} aria-label={description} aria-expanded={details} onClick={() => setDetails(value => !value)} onBlur={() => setDetails(false)} onKeyDown={event => { if (event.key === 'Escape') setDetails(false); }} className={`${baseClass} h-full w-full tabular-nums transition-colors focus:outline-none focus:ring-2 focus:ring-primary-300 ${target === null ? 'border-background-200 bg-background-100/50 text-foreground-600' : over ? 'border-red-300 bg-red-50 text-red-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+        {label}
+        <span className="mt-0.5 flex items-center gap-1.5 text-[15px] font-heading font-bold"><AppIcon className={target === null ? 'ri-subtract-line text-[12px]' : over ? 'ri-alarm-warning-line text-[12px]' : 'ri-checkbox-circle-line text-[12px]'} />{target === null ? 'Not set' : formatModuleHours(target)}</span>
       </button>
-    </div>
-    {details && <p className={`mt-2 text-[11px] leading-5 ${over ? 'text-red-700' : 'text-foreground-600'}`}>{description}</p>}
-  </section>;
+    <span className="sr-only">{description}</span>
+    {details && <p className={`absolute right-0 top-full z-30 mt-2 w-64 max-w-[calc(100vw-2rem)] rounded-lg border bg-background-50 p-3 text-[11px] leading-5 shadow-lg ${over ? 'border-red-200 text-red-700' : 'border-background-200 text-foreground-600'}`}>{description}</p>}
+  </div>;
 }
