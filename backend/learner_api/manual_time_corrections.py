@@ -78,6 +78,31 @@ def require_open_month(owner, month):
             raise ServiceError('This monthly log has an audit signature. No time was changed.', 'month_signed', 409)
 
 
+def require_activity_time_month(owner, month, mode):
+    """A new attempt may follow a signature; correcting reviewed time may not.
+
+    The caller holds the learner/signing locks. Never unlock the month or
+    replace its signatures/snapshots. Preserve separate administrative closure.
+    """
+    if mode not in {'add', 'retry'}:
+        return require_open_month(owner, month)
+    locked = repository.query('''SELECT report_month FROM "Learner".learner_monthly_locks
+        WHERE learner_id=%s AND report_month=%s AND locked_at IS NOT NULL AND unlocked_at IS NULL''', [owner['id'], month])
+    if locked:
+        # Monthly Logs automatically locks after both people sign. That lock
+        # still protects corrections, but it must not prohibit a new attempt.
+        signs = repository.query('''SELECT signer_role FROM "Learner".learner_monthly_signatures
+            WHERE learner_id=%s AND report_month=%s AND review_confirmed IS TRUE
+              AND signer_role IN ('learner','coach')''', [owner['id'], month])
+        if {row['signer_role'] for row in signs} != {'learner', 'coach'}:
+            raise ServiceError('This monthly log is locked. No time was changed.', 'month_locked', 409)
+    if owner.get('aptem_id'):
+        events = repository.query('''SELECT event_type FROM "Learner".manual_month_finalization_events
+            WHERE aptem_id=%s AND report_month=%s ORDER BY id DESC LIMIT 1''', [owner['aptem_id'], month])
+        if events and events[0]['event_type'] == 'finalized':
+            raise ServiceError('This monthly log is finalized. No time was changed.', 'month_finalized', 409)
+
+
 def queue_refresh(owner):
     if not getattr(settings, 'READ_MODEL_OUTBOX_ENABLED', False):
         return
