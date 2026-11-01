@@ -1,6 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearAllCachedResources } from '@/api/cachedRequest';
 import type { ReactNode } from 'react';
 import type { CurriculumArchivedModule, CurriculumCohort, CurriculumGroup, CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
 
@@ -152,6 +153,7 @@ async function renderCatalogue(route = '/curriculum/module-builder') {
 
 describe('Module Builder archive', { timeout: 15000 }, () => {
   beforeEach(() => {
+    clearAllCachedResources();
     reload.mockClear();
     fetchArchivedCurriculumModules.mockClear();
     restoreCurriculumModule.mockClear();
