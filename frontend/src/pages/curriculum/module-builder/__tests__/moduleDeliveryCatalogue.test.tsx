@@ -313,8 +313,8 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     await renderCatalogue();
     expect(screen.getByRole('button', { name: 'Active' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: 'All modules' })).toHaveAttribute('aria-pressed', 'false');
-    expect(cardFor('Data Foundations').getByText('New LMS')).toHaveClass('bg-amber-50');
-    expect(cardFor('Network Basics').getByText('Old LMS')).toHaveClass('bg-sky-50');
+    expect(cardFor('Data Foundations').getByText('New LMS')).toHaveClass('bg-gradient-to-r', 'from-indigo-600', 'to-violet-600', 'text-white');
+    expect(cardFor('Network Basics').getByText('Old LMS')).toHaveClass('bg-blue-50', 'text-blue-800');
     expect(cardFor('Data Foundations').getByText('Active', { exact: true })).toHaveClass('bg-emerald-50');
     expect(screen.getByRole('button', { name: 'Active' })).toHaveTextContent('2');
     expect(screen.getByRole('button', { name: 'All modules' })).toHaveTextContent('6');
