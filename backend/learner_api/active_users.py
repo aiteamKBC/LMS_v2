@@ -1165,8 +1165,9 @@ def save_progress_record(learner, record, activity=None, *, monthly_assignment=F
         if 'countedSeconds' in authoritative_record:
             record['countedSeconds'] = authoritative_record['countedSeconds']
         if record.get('retakeTimeChoice') in ('correct', 'add', 'retry'):
-            # A new learner decision cannot rewrite signed or staff-reviewed time.
-            from .manual_time_corrections import require_open_month
+            # Add/retry append a new attempt. Only a correction must reject a
+            # signed month; historical/staff-reviewed allocations stay protected.
+            from .manual_time_corrections import require_activity_time_month
             from old_otjh.repository import query
             from old_otjh.service import ServiceError
             reference = ('quiz_ref', str(record['quizId'])) if record.get('quizId') else ('component_ref', component_id)
@@ -1183,8 +1184,8 @@ def save_progress_record(learner, record, activity=None, *, monthly_assignment=F
                     months.add(entry.get('reporting_month') or stamp(at).strftime('%Y-%m'))
             for month in months:
                 try:
-                    require_open_month({'id': learner.pk, 'enrolment_id': learner.enrolment_id,
-                                        'aptem_id': learner.aptem_id}, month)
+                    require_activity_time_month({'id': learner.pk, 'enrolment_id': learner.enrolment_id,
+                                        'aptem_id': learner.aptem_id}, month, record['retakeTimeChoice'])
                 except ServiceError as error:
                     raise ValueError(str(error)) from error
         next_order = (

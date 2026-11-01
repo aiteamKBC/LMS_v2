@@ -7,6 +7,7 @@ import type { CurriculumCohort, CurriculumGroup, CurriculumModule, CurriculumPro
 import { fetchCurriculumDeliveryScope, fetchCurriculumOverview } from '@/lib/curriculumApi';
 import { fetchAssignedLearners } from '@/api/assignedLearners';
 import { fetchModuleCatalogueActivity } from '@/api/moduleCatalogueActivity';
+import { clearAllCachedResources } from '@/api/cachedRequest';
 vi.mock('@/api/moduleCatalogueActivity', () => ({ fetchModuleCatalogueActivity: vi.fn() }));
 vi.mock('@/api/assignedLearners', () => ({
   fetchLearnerStatusCounts: vi.fn(async (_scope: string, ids: string[]) => Object.fromEntries(ids.map(id => {
@@ -241,6 +242,7 @@ function HistoryProbe() {
 
 describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
   beforeEach(() => {
+    clearAllCachedResources();
     modules = initialModules.map(module => ({ ...module, assignments: module.id === 'MOD-1' ? 3 : 0 }));
     vi.mocked(fetchModuleCatalogueActivity).mockReset().mockImplementation(async () => Object.fromEntries(modules.map(module => [module.moduleCatalogueId!, { source: 'new_lms' as const, startDate: '2000-01-01', lastLiveDate: '2099-12-31' }])));
     reload.mockClear();
@@ -309,15 +311,30 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
       'MOD-6': { source: 'new_lms', startDate: '2000-01-01', lastLiveDate: '' },
     });
     await renderCatalogue();
+    expect(screen.getByRole('button', { name: 'Active' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: 'All modules' })).toHaveAttribute('aria-pressed', 'false');
-    expect(cardFor('Data Foundations').getByText('New LMS')).toHaveClass('bg-primary-50');
-    expect(cardFor('Network Basics').getByText('Old LMS')).toHaveClass('bg-amber-50');
+    expect(cardFor('Data Foundations').getByText('New LMS')).toHaveClass('bg-amber-50');
+    expect(cardFor('Network Basics').getByText('Old LMS')).toHaveClass('bg-sky-50');
+    expect(cardFor('Data Foundations').getByText('Active', { exact: true })).toHaveClass('bg-emerald-50');
+    expect(screen.getByRole('button', { name: 'Active' })).toHaveTextContent('2');
+    expect(screen.getByRole('button', { name: 'All modules' })).toHaveTextContent('6');
     for (const name of ['Future teaching', 'Finished teaching', 'Missing start', 'Resources only']) expect(screen.queryByRole('heading', { name })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'All modules' }));
+    expect(screen.getByRole('button', { name: 'Active' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'All modules' })).toHaveAttribute('aria-pressed', 'true');
     for (const name of ['Future teaching', 'Finished teaching', 'Missing start', 'Resources only']) expect(screen.getByRole('heading', { name })).toBeInTheDocument();
+    expect(cardFor('Resources only').queryByText('Active', { exact: true })).not.toBeInTheDocument();
+    // Selecting the same view again does not toggle back or request data.
     await user.click(screen.getByRole('button', { name: 'All modules' }));
+    expect(screen.getByRole('heading', { name: 'Resources only' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Active' }));
     expect(screen.queryByRole('heading', { name: 'Resources only' })).not.toBeInTheDocument();
     expect(cardFor('Network Basics').getByText('Old LMS')).toBeInTheDocument();
+    expect(fetchModuleCatalogueActivity).toHaveBeenCalledTimes(1);
+    await chooseOption(user, 'Programme', 'Data Analyst');
+    expect(screen.getByRole('button', { name: 'Active' })).toHaveTextContent('1');
+    expect(screen.getByRole('button', { name: 'All modules' })).toHaveTextContent('5');
+    expect(fetchModuleCatalogueActivity).toHaveBeenCalledTimes(1);
   });
 
   it('reports an unavailable activity check and keeps All modules and retry usable', async () => {
@@ -331,7 +348,7 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     vi.mocked(fetchModuleCatalogueActivity).mockResolvedValue({ 'MOD-1': { source: 'new_lms', startDate: '2000-01-01', lastLiveDate: '2099-12-31' } });
     await user.click(screen.getByRole('button', { name: 'Retry activity check' }));
     await waitFor(() => expect(screen.queryByText('Module activity could not be verified. Try again or view all modules.')).not.toBeInTheDocument());
-    await user.click(screen.getByRole('button', { name: 'All modules' }));
+    await user.click(screen.getByRole('button', { name: 'Active' }));
     expect(screen.getByRole('heading', { name: 'Data Foundations' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Network Basics' })).not.toBeInTheDocument();
   });

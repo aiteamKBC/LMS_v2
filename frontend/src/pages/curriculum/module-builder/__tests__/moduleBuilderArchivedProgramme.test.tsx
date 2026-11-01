@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearAllCachedResources } from '@/api/cachedRequest';
 import type { ReactNode } from 'react';
 import type { CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
 
@@ -182,6 +183,7 @@ const ARCHIVED_NOTICE = 'This module belongs to an archived programme. Restore t
 
 describe('Module Builder under an archived programme', { timeout: 20000 }, () => {
   beforeEach(() => {
+    clearAllCachedResources();
     reload.mockClear();
     saveModuleStructure.mockReset();
     loadModuleStructure.mockReset();
