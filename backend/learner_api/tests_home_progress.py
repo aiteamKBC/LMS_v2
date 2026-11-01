@@ -38,7 +38,7 @@ class HomeLiveHoursTests(SimpleTestCase):
              patch('learner_api.live_session_progress.read_live_credits', return_value=credits) as read, \
              patch('learner_api.module_progress.canonical_module_progress', return_value=modules or []) as catalogue, \
              patch('learner_api.home_progress.canonical_learning.entries_for', return_value=list(records)) as entries, \
-             patch('learner_api.home_progress.plan_planned_hours', return_value=175):
+             patch('learner_api.training_plan_dashboard.plan_planned_hours', return_value=175):
             result = read_home_progress(source, 'commercial', [], [], [], [('M1', 'Synthetic')], END,
                                        canonical_metrics=metrics)
         register.assert_called_once()
@@ -84,10 +84,10 @@ class HomeLiveHoursTests(SimpleTestCase):
         self.assertIsNone(result['lectures'])
         entries.assert_not_called()
 
-    def test_plan_fallback_uses_the_supplemented_hours(self):
+    def test_missing_plan_keeps_supplemented_actual_without_inventing_planned_hours(self):
         result, _ = self.read(planned=None)
         self.assertEqual((result['otjh']['actual'], result['otjh']['planned'], result['otjh']['percent']),
-                         (4, 175, 2.29))
+                         (4, None, None))
 
     def test_activities_count_the_full_my_learning_catalogue_not_saved_records(self):
         result, _ = self.read(modules=[{'id': 'current:M1', 'completed': 2, 'total': 851},
@@ -286,7 +286,7 @@ class HomeProgressTests(SimpleTestCase):
              patch('learner_api.home_progress._group_dates', return_value=(START, END, 'learner')), \
              patch('learner_api.home_progress.rows', return_value=[]), \
              patch('learner_api.home_progress.lecture_register', return_value=[]), \
-             patch('learner_api.home_progress.plan_planned_hours', return_value=None), \
+             patch('learner_api.training_plan_dashboard.plan_planned_hours', return_value=None), \
              patch('learner_api.home_progress.canonical_learning.profile', return_value=None), \
              patch('learner_api.home_progress.canonical_learning.metrics', return_value=canonical) as metrics:
             result = read_home_progress(source, 'commercial', [], [], [], [], END)
@@ -294,21 +294,21 @@ class HomeProgressTests(SimpleTestCase):
         self.assertIsNone(result['otjh']['percent'])
         metrics.assert_called_once_with(499)
 
-    def test_home_planned_falls_back_to_the_learning_plan_without_an_ssot_plan(self):
+    def test_home_planned_stays_unknown_without_an_ssot_plan(self):
         connection = MagicMock()
         source = SimpleNamespace(pk=499, aptem_id=None, _canonical_profile={'id': 7})
         with patch('learner_api.home_progress.connections', {'enrolment': connection}), \
              patch('learner_api.home_progress._group_dates', return_value=(START, END, 'learner')), \
              patch('learner_api.home_progress.rows', return_value=[]), \
              patch('learner_api.home_progress.lecture_register', return_value=[]), \
-             patch('learner_api.home_progress.plan_planned_hours', return_value=200) as plan, \
+             patch('learner_api.training_plan_dashboard.plan_planned_hours', return_value=200) as plan, \
              patch('learner_api.home_progress.canonical_learning.metrics',
                    return_value={'otjh': {'actual': 12.5, 'planned': None}}):
             result = read_home_progress(source, 'commercial', [], [], [], [], END)
-        plan.assert_called_once_with(source, {'id': 7})
-        self.assertEqual(result['otjh']['planned'], 200)
-        self.assertEqual(result['otjh']['percent'], 6.25)
-        self.assertEqual(result['otjh']['missingPlannedActivities'], 0)
+        plan.assert_not_called()
+        self.assertIsNone(result['otjh']['planned'])
+        self.assertIsNone(result['otjh']['percent'])
+        self.assertIsNone(result['otjh']['missingPlannedActivities'])
 
     def test_home_endpoint_keeps_route_enrolment_and_ignores_query_identity(self):
         model = MagicMock()

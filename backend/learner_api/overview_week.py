@@ -53,7 +53,7 @@ HOME_SOURCE_FIELDS = (
     'id', 'aptem_id', 'email', 'username',
     # Read by the home card's programme period (_group_dates); deferring them
     # cost one query each.
-    'programme', 'cohort', 'start_date', 'end_date',
+    'start_date', 'end_date',
 )
 from .student_activity_data import read_curriculum_schedules, apply_curriculum_schedules
 from .subject_dates import activity_schedule, as_date

@@ -39,7 +39,8 @@ class HomeSummarySectionTests(SimpleTestCase):
         enqueue.assert_not_called()
 
     def test_home_source_loads_the_programme_period_fields(self):
-        self.assertTrue({'programme', 'cohort', 'start_date', 'end_date'} <= set(HOME_SOURCE_FIELDS))
+        self.assertTrue({'start_date', 'end_date'} <= set(HOME_SOURCE_FIELDS))
+        self.assertTrue({'programme', 'cohort', 'group'}.isdisjoint(HOME_SOURCE_FIELDS))
 
     def test_unknown_sections_are_still_rejected(self):
         response = overview_week.__wrapped__.__wrapped__(

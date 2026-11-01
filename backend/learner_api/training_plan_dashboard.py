@@ -45,7 +45,6 @@ def is_educational_live_session_week(title):
 # them before issuing its real projection queries.
 TRAINING_PLAN_SOURCE_FIELDS = (
     'id', 'aptem_id', 'email', 'status', 'programme_status',
-    'programme', 'cohort', 'group',
     'learning_plan', 'training_plan', 'modules', 'weeks', 'components',
     'case_owner', 'coach_name', 'coach_email',
     'start_date', 'end_date', 'learner_start_date',
@@ -56,8 +55,8 @@ TRAINING_PLAN_SOURCE_FIELDS = (
 
 TRAINING_PLAN_PROFILE_FIELDS = (
     'id', 'full_name', 'email', 'lifecycle_status',
-    'programme', 'programme_id', 'programme_status',
-    'cohort', 'cohort_id', 'group_name', 'group_id',
+    'programme_id', 'programme_status',
+    'cohort_id', 'group_id',
     'coach_name', 'coach_email', 'start_date', 'end_date',
     # Review source and imported Review identity; deferring them cost a query each.
     'aptem_id', 'enrolment_id', 'learner_type',

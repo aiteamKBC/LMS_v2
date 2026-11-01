@@ -2521,8 +2521,8 @@ def learner_summary(request, kind, pk):
 
     try:
         source = model.all_learners.only(
-            "id", "username", "email", "phone_number", "programme",
-            "programme_status", "cohort", "group", "employer", "employer_id", "organization",
+            "id", "username", "email", "phone_number",
+            "programme_status", "employer", "employer_id", "organization",
             "learner_type", "aptem_id", "start_date", "end_date",
             "learner_start_date", "learner_end_date",
             "practical_period_end_date", "apprenticeship_end_date",
@@ -2535,46 +2535,49 @@ def learner_summary(request, kind, pk):
         resolved_status = programme_status(source) or DEFAULT_PROGRAMME_STATUS
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DatabaseError:
+        return _error("Could not load learner summary. Please try again.", 502)
 
-    from .apprenticeship_agreement import _group_dates
+    try:
+        from .apprenticeship_agreement import _group_dates
 
-    start, end, origin = _group_dates(source)
-    # access_gate resolves the same programme start; reuse this request's answer
-    # instead of reading the cohort again.
-    source._resolved_group_dates = (start, end, origin)
-    return JsonResponse({
-        "id": str(source.id),
-        "name": _s(source.username),
-        "email": _s(source.email),
-        "phone": _s(source.phone_number),
-        "programme": _s(source.programme),
-        "programmeStatus": resolved_status,
-        # 'Submitted' once the learner hands in their enrolment wizard,
-        # 'Completed' once staff sign it off; the learner's Reviews unlock then.
-        "onboardingStatus": _s(getattr(source, "onboarding_status", "")),
-        # A Delivery apprentice's First Learning Session tab unlocks once they
-        # have signed all four compliance documents (the sidebar reads this).
-        "firstSessionUnlocked": _first_session_unlocked(source, resolved_status),
-        "cohort": _s(source.cohort),
-        "group": _s(source.group),
-        "employer": _s(source.employer),
-        "employerId": source.employer_id,
-        "organization": _s(getattr(source, "organization", "")),
-        "learnerType": _s(getattr(source, "learner_type", "")) or "apprenticeship",
-        "isActive": resolved_status.casefold() == "active",
-        "programmeStartDate": _iso_date(start),
-        # See mappers.learner_detail_payload: the learner's own recorded start,
-        # unmediated by the cohort fallback that programmeStartDate applies.
-        "learnerStartDate": _s(getattr(source, "learner_start_date", None)),
-        # Mirrors learnerStartDate: the learner's own recorded end, straight
-        # from Created_users.Learner_end_date. programmeEndDate below resolves
-        # through the programme/apprenticeship columns, which stay empty for a
-        # learner whose end date is only recorded against themselves.
-        "learnerEndDate": _s(getattr(source, "learner_end_date", None)),
-        "programmeEndDate": _iso_date(source.end_date or source.practical_period_end_date or source.apprenticeship_end_date or end),
-        "accessGate": access_gate(source),
-        "learningAccess": learning_access(source),
-        "studentActivityAvailable": student_activity_available(getattr(source, "aptem_id", None)),
-    })
+        start, end, origin = _group_dates(source)
+        # access_gate resolves the same programme start; reuse this request's answer
+        # instead of reading the cohort again.
+        source._resolved_group_dates = (start, end, origin)
+        return JsonResponse({
+            "id": str(source.id),
+            "name": _s(source.username),
+            "email": _s(source.email),
+            "phone": _s(source.phone_number),
+            "programme": _s(source.programme),
+            "programmeStatus": resolved_status,
+            # 'Submitted' once the learner hands in their enrolment wizard,
+            # 'Completed' once staff sign it off; the learner's Reviews unlock then.
+            "onboardingStatus": _s(getattr(source, "onboarding_status", "")),
+            # A Delivery apprentice's First Learning Session tab unlocks once they
+            # have signed all four compliance documents (the sidebar reads this).
+            "firstSessionUnlocked": _first_session_unlocked(source, resolved_status),
+            "cohort": _s(source.cohort),
+            "group": _s(source.group),
+            "employer": _s(source.employer),
+            "employerId": source.employer_id,
+            "organization": _s(getattr(source, "organization", "")),
+            "learnerType": _s(getattr(source, "learner_type", "")) or "apprenticeship",
+            "isActive": resolved_status.casefold() == "active",
+            "programmeStartDate": _iso_date(start),
+            # See mappers.learner_detail_payload: the learner's own recorded start,
+            # unmediated by the cohort fallback that programmeStartDate applies.
+            "learnerStartDate": _s(getattr(source, "learner_start_date", None)),
+            # Mirrors learnerStartDate: the learner's own recorded end, straight
+            # from Created_users.Learner_end_date. programmeEndDate below resolves
+            # through the programme/apprenticeship columns, which stay empty for a
+            # learner whose end date is only recorded against themselves.
+            "learnerEndDate": _s(getattr(source, "learner_end_date", None)),
+            "programmeEndDate": _iso_date(source.end_date or source.practical_period_end_date or source.apprenticeship_end_date or end),
+            "accessGate": access_gate(source),
+            "learningAccess": learning_access(source),
+            "studentActivityAvailable": student_activity_available(getattr(source, "aptem_id", None)),
+        })
+    except DatabaseError:
+        return _error("Could not load learner summary. Please try again.", 502)

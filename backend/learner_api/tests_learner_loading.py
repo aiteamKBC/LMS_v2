@@ -56,6 +56,8 @@ class CompactLearnerLoadingTests(SimpleTestCase):
             quizzes = stack.enter_context(patch.object(
                 detail, "_append_week_quizzes", side_effect=lambda w, c, **kw: (w, c),
             ))
+            replacement_read = stack.enter_context(patch(
+                "learner_api.progress_transfer_store.read_state", return_value={"items": []}))
             totals = stack.enter_context(patch.object(detail, "_live_otjh_snapshot", return_value={}))
             result = detail.build_learner_detail(
                 SimpleNamespace(programme="", attendance_type="Recorded"), 125, compact=compact, read_only=quiz_view, quiz_view=quiz_view,
@@ -65,6 +67,7 @@ class CompactLearnerLoadingTests(SimpleTestCase):
                 for task in work.values():
                     if task is not work["_apply_cohort_schedule"]:
                         task.assert_not_called()
+            replacement_read.assert_called_once_with(125)
             self.resolved_plan = master.call_args.kwargs["assigned_modules"]
             self.quiz_plan = quizzes.call_args.kwargs["assigned_modules"]
         return result, resolve.call_count
