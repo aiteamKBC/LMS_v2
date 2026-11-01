@@ -1,9 +1,10 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createGroupModule, previewModuleSessionPlan, previewTutorAvailabilityRoster, updateCurriculumModule } from '@/lib/curriculumApi';
 import type { CurriculumGroup } from '@/lib/curriculumApi';
+import { fetchModuleHoursTarget } from '@/api/moduleHours';
 import { ModuleFormDrawer, type ModuleFormTarget } from '../moduleForm';
 
 /**
@@ -24,6 +25,10 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
   createGroupModule: vi.fn(), updateCurriculumModule: vi.fn(),
   previewModuleSessionPlan: vi.fn(), previewTutorAvailabilityRoster: vi.fn(),
+}));
+vi.mock('@/api/moduleHours', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/api/moduleHours')>()),
+  fetchModuleHoursTarget: vi.fn(), saveModuleHoursTarget: vi.fn(),
 }));
 
 const group = {
@@ -80,6 +85,7 @@ async function choose(field: string, value: string) {
 describe('module drawer co-editing', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(fetchModuleHoursTarget).mockImplementation(async moduleId => ({ moduleId, targetMinutes: null, revision: 0, canMatch: false }));
     vi.mocked(createGroupModule).mockResolvedValue({ created: [{ moduleCatalogueId: 'MOD-NEW' }] } as never);
     vi.mocked(updateCurriculumModule).mockResolvedValue({ updated: true } as never);
     vi.mocked(previewTutorAvailabilityRoster).mockResolvedValue({ sessionDates: [], startTime: '', endTime: '', bookable: false, results: [], availableCount: 0, busyCount: 0 });
@@ -98,13 +104,15 @@ describe('module drawer co-editing', () => {
     expect(screen.queryByTestId('co-edit-notice')).not.toBeInTheDocument();
   });
 
-  it('does not expose delivery pattern fields for co-editing', () => {
-    renderDrawer(storedModule());
+  it('shows saved module dates without exposing group delivery pattern fields for co-editing', async () => {
+    renderDrawer(storedModule({ startDate: '2026-09-09', endDate: '2026-10-06' }));
+    await waitFor(() => expect(screen.queryByText(/Loading module hours settings/)).not.toBeInTheDocument());
 
     expect(screen.queryByRole('combobox', { name: /Sessions per week/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('group', { name: /Delivery days/i })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/^Start date/i)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/^End date/i)).not.toBeInTheDocument();
+    // Module dates remain editable independently of the group's delivery pattern.
+    expect(screen.getByRole('combobox', { name: 'Start date' })).toHaveValue('09/09/2026');
+    expect(screen.getByRole('combobox', { name: 'End date' })).toHaveValue('06/10/2026');
   });
 
   it('keeps the module name edit when a refresh carries group-owned schedule data', async () => {

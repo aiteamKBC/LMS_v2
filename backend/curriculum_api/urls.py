@@ -9,6 +9,7 @@ from .record_snapshots import curriculum_record_snapshot
 from .module_live import curriculum_live, curriculum_module_changes
 from .module_collaboration import collaboration_configuration
 from . import learner_directory
+from . import learner_directory_details
 from .teams_attendee_compare import teams_meeting_attendee_comparison
 from .teams_permission_check import teams_meeting_permission_check
 from .teams_imported_participants import imported_meeting_participants
@@ -43,11 +44,17 @@ from . import recordings_library, session_results, tutor_notifications, recordin
 from .attendance_corrections import session_attendance_correction
 from .learner_activity_status import activity_status
 from .home_summary import curriculum_home_summary
+from .module_hours import module_target
+from .catalogue_activity import catalogue_activity
 
 
 urlpatterns = [
+    path('curriculum/modules/catalogue-activity/', catalogue_activity, name='module-catalogue-activity'),
+    path('curriculum/modules/<str:module_id>/hours-target/', module_target, name='module-hours-target'),
     path('curriculum/learner-directory/counts/', learner_directory.counts),
     path('curriculum/learner-directory/learners/', learner_directory.learners),
+    path('curriculum/learner-directory/progress/', learner_directory_details.progress),
+    path('curriculum/learner-directory/membership/', learner_directory_details.membership),
     path('curriculum/modules/<str:module_id>/collaboration/', collaboration_configuration, name='module-collaboration'),
     path('curriculum/bulk-attendance/learners/', bulk_attendance_learners, name='curriculum-bulk-attendance-learners'),
     path('curriculum/bulk-attendance/kbc-history/', bulk_attendance_kbc_history, name='curriculum-bulk-attendance-kbc-history'),

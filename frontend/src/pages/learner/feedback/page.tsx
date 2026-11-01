@@ -23,7 +23,7 @@ interface FeedbackCategoryConfig {
 }
 
 const CATEGORIES: FeedbackCategoryConfig[] = [
-  { id: 'mid-module', title: 'Mid-module Feedback', shortTitle: 'Mid-module', icon: 'ri-calendar-check-line', tone: 'bg-teal-100 text-teal-700 ring-teal-200', bar: 'bg-teal-500' },
+  { id: 'mid-module', title: 'Well being', shortTitle: 'Well being', icon: 'ri-calendar-check-line', tone: 'bg-teal-100 text-teal-700 ring-teal-200', bar: 'bg-teal-500' },
   { id: 'end-module', title: 'End-module Feedback', shortTitle: 'End-module', icon: 'ri-flag-line', tone: 'bg-indigo-100 text-indigo-700 ring-indigo-200', bar: 'bg-indigo-500' },
   { id: 'lecture', title: 'Live Sessions Feedback', shortTitle: 'Live Sessions', icon: 'ri-presentation-line', tone: 'bg-violet-100 text-violet-700 ring-violet-200', bar: 'bg-violet-500' },
   { id: 'mcm', title: 'MCM Feedback', shortTitle: 'MCM', icon: 'ri-user-voice-line', tone: 'bg-fuchsia-100 text-fuchsia-700 ring-fuchsia-200', bar: 'bg-fuchsia-500' },

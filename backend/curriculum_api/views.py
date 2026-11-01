@@ -4269,6 +4269,18 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         weekday_groups = [] if payload.get('peopleOnly') else calendar_groups(payload, graph_settings)
     except (TypeError, ValueError) as exc:
         return json_error(str(exc), status=400)
+    if not people_only and clean_str(series.get('module_catalogue_id')):
+        from .teams_update_preservation import unresolved_saved_bindings
+        components = authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s',
+                                         [series['module_catalogue_id']])
+        saved_rows = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_session_id])
+        unresolved = unresolved_saved_bindings(live_session_id,
+            [{'id': row['id'], 'settings': component_builder_settings(row)} for row in active_component_rows(components)
+             if frontend_component_type(row.get('type')) == 'live-session'], saved_rows,
+            join_url=clean_str(series.get('join_url')))
+        if unresolved:
+            return json_error('Some saved week links could not be matched to their original sessions. No Teams change was sent. Review Calendar health before updating these dates.',
+                              status=409, code='teams_component_binding_unresolved')
     if stored_calendar_series(series) or weekday_groups:
         return with_schedule_change_notice(save_weekday_calendar(payload, graph_settings, series), live_session_id, schedule_before,
                                            request=None if invitations_only else request, notify=notify_attendees, series_before=series)
@@ -4383,6 +4395,8 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         'session_number asc',
     )
     current_occurrences = [row for row in slot_rows if clean_str(row.get('status')).lower() != 'superseded']
+    from .teams_update_preservation import calendar_occurrence_details
+    current_occurrences = calendar_occurrence_details(series, current_occurrences)
     dates_already_verified = False
     # Sessions the last save already reported missing from the series. They are
     # under review in Calendar health, so their absence is not re-read as drift
@@ -4726,7 +4740,8 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         'updated_at': datetime.utcnow(),
     }
     if payload.get('peopleOnly'):
-        for field in ('module_title', 'start_datetime', 'duration_minutes', 'repeat_pattern', 'repeat_occurrences'):
+        for field in ('module_title', 'start_datetime', 'duration_minutes', 'repeat_pattern', 'repeat_occurrences',
+                      'join_url', 'online_meeting_id', 'web_link'):
             series_update.pop(field, None)
     if people_changed:
         series_update['attendees'] = json_db_value(attendees)
@@ -4734,10 +4749,15 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         series_update['co_organizers'] = json_db_value(co_organizers)
     update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], series_update)
     module_id = clean_str(series.get('module_catalogue_id'))
-    if module_id:
+    unresolved_components = []
+    if module_id and not people_only:
         saved = {**series, **series_update}
         attach_teams_meeting_to_module_weeks(module_id, saved, live_session_row_to_component_settings(saved),
-                                             occurrence_rows if payload.get('peopleOnly') else saved_live_session_occurrences(live_session_id))
+                                             saved_live_session_occurrences(live_session_id),
+                                             unresolved_components=unresolved_components)
+    if unresolved_components:
+        warnings.append({'code': 'teams_component_binding_missing',
+                         'message': f'{len(unresolved_components)} existing session link(s) were preserved because their calendar occurrence could not be matched. Review Calendar health before changing those sessions.'})
     return with_schedule_change_notice(JsonResponse({
         'updated': True,
         'meeting': {
@@ -19084,7 +19104,7 @@ def preserve_additional_meeting_settings(payload_settings, stored_row):
     return {**payload_settings, **kept, 'liveSessionUrl': join_url, 'teamsMeetingUrl': join_url}
 
 
-def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series_settings, occurrence_rows, *, create_missing=False, dry_run=False):
+def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series_settings, occurrence_rows, *, create_missing=False, dry_run=False, unresolved_components=None):
     """Write a tracked Teams meeting onto the weeks of a module.
 
     A module's live sessions and its meeting's sessions are one list, read in
@@ -19194,8 +19214,7 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         tracked = next((row for row in occurrence_rows if (
             clean_str(row.get('id')) not in claimed_occurrence_ids
             and (
-                (tracked_id and clean_str(row.get('id')) == tracked_id)
-                or (
+                (clean_str(row.get('id')) == tracked_id) if tracked_id else (
                     tracked_series == clean_str(series_row.get('id'))
                     and tracked_number > 0
                     and parse_int(row.get('session_number'), 0) == tracked_number
@@ -19215,7 +19234,7 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
             return found
         return next((row for row in occurrence_rows if clean_str(row.get('id')) not in claimed_occurrence_ids), None)
 
-    def settings_for_session(slot_index, occurrence, existing_settings=None):
+    def settings_for_session(slot_index, occurrence, existing_settings=None, existing_link=''):
         """Everything that belongs to one live session.
 
         ``slot_index`` is the position in the module's dated plan. A
@@ -19226,6 +19245,14 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         """
         existing_settings = existing_settings if isinstance(existing_settings, dict) else {}
         if not occurrence and stored_calendar_series(series_row):
+            saved_link = clean_str(existing_settings.get('liveSessionUrl') or existing_settings.get('teamsMeetingUrl') or existing_link)
+            if saved_link:
+                # A failed match is not an instruction to erase an existing
+                # booking. Keep its identity/history and expose the unresolved
+                # binding; a later verified update can match it again.
+                return {**existing_settings, 'liveSessionUrl': saved_link,
+                        'teamsMeetingUrl': clean_str(existing_settings.get('teamsMeetingUrl')) or saved_link,
+                        'teamsCalendarBinding': 'missing'}
             empty_settings = {key: '' for key in ('teamsMeetingUrl', 'liveSessionUrl', 'teamsEventId', 'teamsOnlineMeetingId', 'teamsOccurrenceId', 'teamsLiveSessionId', 'teamsSessionNumber', 'sessionDateTimeUtc', 'teamsStartDateTimeUtc')}
             if 'teamsCalendarBinding' in existing_settings:
                 empty_settings['teamsCalendarBinding'] = 'missing'
@@ -19357,7 +19384,9 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
             occurrence = occurrence_for_component(existing_settings, session_index)
             if occurrence:
                 claimed_occurrence_ids.add(clean_str(occurrence.get('id')))
-            settings_for_week = settings_for_session(session_index, occurrence, existing_settings)
+            settings_for_week = settings_for_session(session_index, occurrence, existing_settings, row.get('live_sessions_link'))
+            if not occurrence and settings_for_week.get('teamsCalendarBinding') == 'missing' and unresolved_components is not None:
+                unresolved_components.append(clean_str(row.get('id')))
             session_index += 1
             handled_component_ids.add(clean_str(row.get('id')))
             if not dry_run:

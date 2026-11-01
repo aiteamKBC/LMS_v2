@@ -4,8 +4,8 @@ import { searchEntraPeople, type EntraPerson } from './entraDirectory';
 
 const isEmail = (value: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value);
 
-export function EntraPeopleInput({ value, onChange, label, single = false, includeGuests = false, showCount = false }: {
-  value: string; onChange: (value: string) => void; label: string; single?: boolean; includeGuests?: boolean; showCount?: boolean;
+export function EntraPeopleInput({ value, onChange, label, single = false, includeGuests = false, showCount = false, warnOnDuplicate = false }: {
+  value: string; onChange: (value: string) => void; label: string; single?: boolean; includeGuests?: boolean; showCount?: boolean; warnOnDuplicate?: boolean;
 }) {
   type RemovedEmail = { email: string; index: number; remaining: string[] };
   const [draft, setDraft] = useState('');
@@ -13,6 +13,7 @@ export function EntraPeopleInput({ value, onChange, label, single = false, inclu
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [duplicateNotice, setDuplicateNotice] = useState('');
   // Kept apart from `error` so the next search clears a failed one without
   // also clearing a message about the typed text.
   const [searchError, setSearchError] = useState('');
@@ -48,15 +49,34 @@ export function EntraPeopleInput({ value, onChange, label, single = false, inclu
   }, [draft, includeGuests, open]);
 
   const commit = (raw: string) => {
+    setDuplicateNotice('');
     const additions = emailList(raw);
     if (!additions.length) return;
     if (!additions.every(isEmail) || (single && additions.length > 1)) {
       setError(single ? 'Choose one person or enter one full email address.' : 'Choose a search result or enter full email addresses.');
       return;
     }
-    const next = single ? additions : [...emails, ...additions];
-    onChange(Array.from(new Map(next.map(email => [email.toLowerCase(), email])).values()).join('\n'));
-    setUndoStack([]);
+    if (warnOnDuplicate && !single) {
+      const seen = new Set(emails.map(email => email.toLowerCase()));
+      const duplicates = new Map<string, string>();
+      const fresh = additions.filter(email => {
+        const key = email.toLowerCase();
+        if (seen.has(key)) { duplicates.set(key, email); return false; }
+        seen.add(key);
+        return true;
+      });
+      if (duplicates.size) {
+        setDuplicateNotice(`${Array.from(duplicates.values()).join(', ')} ${duplicates.size === 1 ? 'already exists' : 'already exist'} in this list. Duplicate emails were not added.`);
+      }
+      if (fresh.length) {
+        onChange([...emails, ...fresh].join('\n'));
+        setUndoStack([]);
+      }
+    } else {
+      const next = single ? additions : [...emails, ...additions];
+      onChange(Array.from(new Map(next.map(email => [email.toLowerCase(), email])).values()).join('\n'));
+      setUndoStack([]);
+    }
     setDraft('');
     setPeople([]);
     setError('');
@@ -66,6 +86,7 @@ export function EntraPeopleInput({ value, onChange, label, single = false, inclu
   const removeAt = (index: number) => {
     const email = emails[index];
     if (!email) return;
+    setDuplicateNotice('');
     const remaining = emails.filter((_, i) => i !== index);
     onChange(remaining.join('\n'));
     setUndoStack(stack => [...stack, { email, index, remaining }].slice(-20));
@@ -75,6 +96,7 @@ export function EntraPeopleInput({ value, onChange, label, single = false, inclu
   const undoLastRemoval = () => {
     const entry = undoStack[undoStack.length - 1];
     if (!entry) return;
+    setDuplicateNotice('');
     const current = emailList(value);
     // Do not reinsert a stale deletion after another edit changed the field.
     if (current.join('\n') !== entry.remaining.join('\n')) {
@@ -99,10 +121,14 @@ export function EntraPeopleInput({ value, onChange, label, single = false, inclu
         setOpen(false);
       }
     }}>
+      {showCount && <div aria-live="polite" className="mb-1.5 text-[11px]">
+        <span aria-label={`${label} selected count`} className="inline-flex rounded-full border border-primary-100 bg-primary-50 px-2 py-0.5 font-semibold text-primary-700">{label}: {selectedCount} selected</span>
+      </div>}
       <div className={`flex w-full flex-wrap items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-2.5 py-2 focus-within:border-primary-300 ${single ? 'min-h-11' : 'min-h-[84px]'}`}>
         {emails.map((email, index) => (
           <span key={`${email}-${index}`} className={`inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold ${isEmail(email) ? 'border-primary-200 bg-primary-50 text-primary-800' : 'border-red-200 bg-red-50 text-red-700'}`}>
             <button type="button" className="truncate text-left hover:underline" title="Click to edit" onClick={() => {
+              setDuplicateNotice('');
               setDraft(email); onChange(emails.filter((_, i) => i !== index).join('\n')); setUndoStack([]); setOpen(true); input.current?.focus();
             }}>{email}</button>
             <button type="button" aria-label={`Remove ${email}`} className="rounded px-1 hover:bg-black/10" onClick={() => removeAt(index)}>×</button>
@@ -113,7 +139,7 @@ export function EntraPeopleInput({ value, onChange, label, single = false, inclu
           aria-activedescendant={active >= 0 && people[active] ? `${listId}-${active}` : undefined}
           placeholder={single && emails.length ? 'Search to replace...' : 'Search Entra by name or email...'}
           className="min-w-[160px] flex-1 bg-transparent p-1 text-[13px] text-foreground-900 outline-none placeholder:text-foreground-400"
-          onChange={event => { setDraft(event.target.value); setError(''); setOpen(true); }}
+          onChange={event => { setDraft(event.target.value); setError(''); setDuplicateNotice(''); setOpen(true); }}
           onFocus={() => { setError(''); setOpen(true); }}
           onKeyDown={event => {
             if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -143,7 +169,7 @@ export function EntraPeopleInput({ value, onChange, label, single = false, inclu
         </div>
       )}
       <div aria-live="polite" className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
-        {showCount && <span aria-label={`${label} selected count`} className="rounded-full border border-primary-100 bg-primary-50 px-2 py-0.5 font-semibold text-primary-700">{selectedCount} selected</span>}
+        {duplicateNotice && <span role="status" className="min-w-0 [overflow-wrap:anywhere] text-amber-800">{duplicateNotice}</span>}
         {error ? <span className="text-red-700">{error}</span> : loading ? <span>Searching Entra...</span>
           : searchError ? <span className="text-red-700">{searchError}</span>
           : open && draft.trim().length >= 2 && !people.length ? <span>No matching account. You can enter a full email address.</span> : null}

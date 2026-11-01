@@ -986,6 +986,8 @@ export interface CurriculumScopeKsbTypeSummary {
 }
 
 export interface CurriculumScopeKsbAchievement {
+  historicalAchievedWeightTotal?: number;
+  unallocatedPlannedWeightTotal?: number;
   learnerCount: number;
   requiredCount: number;
   ksbCount: number;
@@ -1139,6 +1141,8 @@ export interface CurriculumLearnerKsbConsumptionItem {
 }
 
 export interface CurriculumLearnerKsbConsumption {
+  historicalConsumedWeightTotal?: number;
+  unallocatedPlannedWeight?: number;
   learnerId: number | string;
   learnerName: string;
   email: string;
@@ -1350,10 +1354,19 @@ export interface CurriculumScopeLearnerRosterResponse {
 export type CurriculumProgrammeLearnerRosterResponse = CurriculumScopeLearnerRosterResponse;
 
 export interface CurriculumScopeLearnerKsbImpactResponse {
+  moduleProgressBasis?: 'current_activities';
+  activityLogProgress?: {
+    learners: Array<{ learnerId: number | string; totalActivities: number; completedActivities: number;
+      inProgressActivities: number; earlierRecords: number; earlierCompleted: number; earlierOtjh?: number }>;
+    completedActivities: number; totalActivities: number; earlierRecords: number; source?: string;
+  };
   activityLogOtjh?: {
-    learners: Array<{ learnerId: number | string; plannedOtjh: number; achievedOtjh: number | null; unallocatedAcceptedRecords?: number }>;
+    learners: Array<{ learnerId: number | string; plannedOtjh: number; achievedOtjh: number | null; unallocatedAcceptedRecords?: number;
+      historicalOtjh?: number; historicalUnallocatedRecords?: number }>;
     achievedTotal: number | null; plannedTotal: number; source: string;
     unallocatedAcceptedRecords?: number;
+    historicalTotal?: number;
+    historicalUnallocatedRecords?: number;
   };
   scope: CurriculumLearnerScope | string;
   identifier: string;
@@ -3729,6 +3742,8 @@ export interface ImportedCalendarUpdateResult {
 export interface ImportedCalendarConnection {
   connected: boolean;
   configured?: boolean;
+  calendarKind?: 'user' | 'group';
+  organizationManaged?: boolean;
   expiresAt?: string;
   message?: string;
 }
@@ -3763,8 +3778,32 @@ export async function fetchImportedCalendarConnection(liveSessionId: string): Pr
   return data;
 }
 
-export function connectImportedCalendar(liveSessionId: string, calendarKind: 'group' | 'user') {
-  return importedCalendarPost<{ authorizationUrl: string; callbackOrigin: string }>(liveSessionId, 'connect', { calendarKind });
+export interface OrganizationCalendarConnection extends ImportedCalendarConnection {
+  applicable: boolean;
+  available: boolean;
+  state: 'active' | 'disconnected' | 'reauth_required' | 'migration_required' | 'not_applicable';
+  canManageOrganization: boolean;
+  revision?: string;
+}
+
+export async function fetchOrganizationCalendarConnection(liveSessionId: string): Promise<OrganizationCalendarConnection> {
+  const path = `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/imported-calendar/connection/?organization=1`;
+  const response = await coachFetch(`${API_BASE_URL}${path}`, { cache: 'no-store' });
+  const data = await response.json();
+  if (!response.ok) throw new CurriculumApiError(data?.error || data?.message || 'The organization calendar connection could not be read.', response.status, path, data);
+  return data;
+}
+
+export function disconnectOrganizationCalendar(liveSessionId: string, revision: string) {
+  return importedCalendarPost<{ disconnected: boolean }>(liveSessionId, 'connect', {
+    calendarKind: 'group', organizationManaged: true, action: 'disconnect', organizationRevision: revision,
+  });
+}
+
+export function connectImportedCalendar(liveSessionId: string, calendarKind: 'group' | 'user', organizationManaged = false) {
+  return importedCalendarPost<{ authorizationUrl: string; callbackOrigin: string }>(liveSessionId, 'connect', {
+    calendarKind, ...(organizationManaged ? { organizationManaged: true } : {}),
+  });
 }
 
 export function previewImportedCalendarUpdate(liveSessionId: string) {

@@ -153,7 +153,7 @@ export function ImportedMeetingEditor({ liveSessionId, disabled, onUpdated, onEd
       <div className="grid gap-4 sm:grid-cols-2">
         {data.options && <TeamsMeetingOptionFields form={calendarForm} patch={patch} />}
         {data.rolesEditable ? <TeamsPeopleFields form={calendarForm} patch={patch} />
-          : <FormField label="Attendees"><EntraPeopleInput label="Attendees" includeGuests showCount value={calendarForm.attendees} onChange={attendees => patch({ attendees })} /></FormField>}
+          : <FormField label="Attendees"><EntraPeopleInput label="Attendees" includeGuests showCount warnOnDuplicate value={calendarForm.attendees} onChange={attendees => patch({ attendees })} /></FormField>}
       </div>
       {!data.options && <p className="text-xs text-amber-800">Online meeting settings could not be verified for editing. Calendar invitees can still be updated.</p>}
       <details><summary className="cursor-pointer text-xs font-bold">Edit future session times ({data.timeZone})</summary>

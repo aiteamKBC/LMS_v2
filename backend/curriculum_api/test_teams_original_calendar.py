@@ -100,6 +100,72 @@ class OriginalCalendarBindingTests(SimpleTestCase):
     def setUp(self):
         self.series, self.rows, self.master, self.events = fixtures()
 
+    def test_unmatched_existing_week_keeps_link_identity_clock_and_evidence(self):
+        for column_only in (False, True):
+            with self.subTest(column_only=column_only), ExitStack() as stack:
+                settings = {'teamsMeetingScope': 'main', 'teamsLiveSessionId': 'LIVE',
+                    'teamsOccurrenceId': 'HISTORICAL-OCC', 'teamsEventId': 'HISTORICAL-EVENT',
+                    'teamsOnlineMeetingId': 'ONLINE', 'teamsSessionNumber': 8, 'sessionDate': '2026-10-28',
+                    'sessionTime': '09:00', 'sessionDateTimeUtc': '2026-10-28T09:00:00Z',
+                    'recordingSourceUrl': 'https://example.invalid/recording', 'attendanceRequired': True}
+                if not column_only:
+                    settings.update(liveSessionUrl=JOIN, teamsMeetingUrl=JOIN)
+                component = {'id': 'COMP', 'week_id': 'WEEK', 'type': 'live_session',
+                             'live_sessions_link': JOIN, 'settings_json': settings}
+                before = copy.deepcopy(component)
+                def fetch(table, *_args, **_kwargs):
+                    return {views.AUTHORING_MODULES_TABLE: [{'module_catalogue_id': 'MODULE'}],
+                            views.AUTHORING_WEEKS_TABLE: [{'id': 'WEEK'}],
+                            views.AUTHORING_COMPONENTS_TABLE: [component]}.get(table, [])
+                mocks = {'authoring_fetch_all': fetch, 'active_week_rows': lambda rows: rows,
+                    'active_component_rows': lambda rows: rows, 'module_has_booked_series': lambda *_: True,
+                    'module_structure_uses_session_rows': lambda *_: False, 'module_stored_session_count': lambda *_: 1,
+                    'delivery_days_per_week': lambda *_: 1, 'module_week_session_plan': lambda *_: [],
+                    'module_session_clock': lambda *_: ('09:00', '11:00', 120),
+                    'invalidate_curriculum_cache': lambda: None}
+                for name, replacement in mocks.items():
+                    stack.enter_context(patch.object(views, name, replacement))
+                write = stack.enter_context(patch.object(views, 'update_authoring_rows'))
+                unresolved = []
+                views.attach_teams_meeting_to_module_weeks('MODULE',
+                    {**self.series, 'meeting_type': 'live-session', 'calendar_series': [{'day': 'Wednesday'}]},
+                    {'sessionTimeZone': 'Europe/London'}, [], unresolved_components=unresolved)
+                write.assert_called_once()
+                saved = views.parse_json_value(write.call_args.args[3]['settings_json'], {})
+                self.assertEqual(write.call_args.args[3]['live_sessions_link'], JOIN)
+                self.assertEqual(saved['liveSessionUrl'], JOIN)
+                self.assertEqual(saved['teamsMeetingUrl'], JOIN)
+                self.assertEqual(saved['teamsCalendarBinding'], 'missing')
+                self.assertEqual({key: saved[key] for key in settings}, settings)
+                self.assertEqual(unresolved, ['COMP'])
+                self.assertEqual(component, before)
+
+    def test_occurrence_id_takes_priority_over_a_stale_number(self):
+        settings = {'teamsMeetingScope': 'main', 'teamsLiveSessionId': 'LIVE', 'teamsOccurrenceId': 'RIGHT',
+                    'teamsSessionNumber': 1, 'liveSessionUrl': JOIN}
+        component = {'id': 'COMP', 'week_id': 'WEEK', 'type': 'live_session', 'settings_json': settings}
+        rows = [{'id': 'WRONG', 'session_number': 1, 'scheduled_start': '2026-10-21T09:00:00Z', 'join_url': JOIN},
+                {'id': 'RIGHT', 'session_number': 8, 'scheduled_start': '2026-10-28T09:00:00Z', 'join_url': JOIN}]
+        def fetch(table, *_args, **_kwargs):
+            return {views.AUTHORING_MODULES_TABLE: [{'module_catalogue_id': 'MODULE'}],
+                    views.AUTHORING_WEEKS_TABLE: [{'id': 'WEEK'}],
+                    views.AUTHORING_COMPONENTS_TABLE: [component]}.get(table, [])
+        with ExitStack() as stack:
+            for name, replacement in {'authoring_fetch_all': fetch, 'active_week_rows': lambda rows: rows,
+                'active_component_rows': lambda rows: rows, 'module_has_booked_series': lambda *_: True,
+                'module_structure_uses_session_rows': lambda *_: False, 'module_stored_session_count': lambda *_: 1,
+                'delivery_days_per_week': lambda *_: 1, 'module_week_session_plan': lambda *_: [],
+                'module_session_clock': lambda *_: ('09:00', '11:00', 120),
+                'invalidate_curriculum_cache': lambda: None}.items():
+                stack.enter_context(patch.object(views, name, replacement))
+            write = stack.enter_context(patch.object(views, 'update_authoring_rows'))
+            views.attach_teams_meeting_to_module_weeks('MODULE', {**self.series, 'meeting_type': 'live-session'},
+                {'sessionTimeZone': 'Europe/London'}, rows)
+            saved = views.parse_json_value(write.call_args.args[3]['settings_json'], {})
+            self.assertEqual(saved['teamsOccurrenceId'], 'RIGHT')
+            self.assertEqual(saved['teamsSessionNumber'], 8)
+            self.assertEqual(saved['sessionDate'], '2026-10-28')
+
     def test_main_update_preserves_a_selected_week_meeting_and_the_following_slots(self):
         weeks = [{'id': f'W{i}', 'week_number': i + 1} for i in range(3)]
         components = [{'id': f'C{i}', 'week_id': f'W{i}', 'type': 'live_session',

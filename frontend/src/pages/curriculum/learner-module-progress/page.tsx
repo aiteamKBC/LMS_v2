@@ -229,7 +229,7 @@ export default function LearnerModuleProgressPage() {
   const logSummary = data?.activityLogOtjh?.learners.find(row => String(row.learnerId) === profileId);
   const unallocatedRecords = logSummary?.unallocatedAcceptedRecords ?? activities.reduce((sum, row) => sum + ('logState' in row.activity ? row.activity.logState?.unallocatedAcceptedRecords || 0 : 0), 0);
   const actualHours = logSummary ? logSummary.achievedOtjh : logHours === undefined ? otjh?.achievedOtjh : logHours;
-  const othPercent = otjh && actualHours != null ? ratioPercent(actualHours, otjh.plannedOtjh) : null;
+  const othPercent = otjh && actualHours != null && unallocatedRecords === 0 ? ratioPercent(actualHours, otjh.plannedOtjh) : null;
   const ksbPercent = consumption ? ratioPercent(consumption.cappedConsumedWeightTotal, consumption.expectedWeightTotal) : null;
   const overall = overallPercent(othPercent, ksbPercent, activityPercent);
   const points = plannedPoints(activities);
@@ -298,10 +298,10 @@ export default function LearnerModuleProgressPage() {
     pageTitle="Learner Module Progress" hideBreadcrumbs showBackButton={false}>
     <div className="lmp-page">
       <header className="lmp-page-heading"><div><h1>Learner Module Progress</h1><p>Review a learner’s progress for this module, including activity completion, OTH, KSBs and assessment status.</p></div>
-        <Link className="lmp-back-button" to={`/curriculum/module-builder?module=${encodeURIComponent(moduleId)}`} onClick={event => {
+        <Link className="lmp-back-button" to={`/curriculum/module-builder?learners=${encodeURIComponent(moduleId)}${params.get('learnerStatus') ? `&learnerStatus=${encodeURIComponent(params.get('learnerStatus')!)}` : ''}`} onClick={event => {
           // Opened from the module's learner list: Back is one step in history,
           // so the catalogue returns with its filters, search and that list open.
-          // Opened any other way, the link still lands on the module.
+          // Direct/new-tab visits reopen assignments & progress for this module.
           if (!openedFromModuleBuilder || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
           event.preventDefault();
           navigate(-1);
@@ -324,11 +324,20 @@ export default function LearnerModuleProgressPage() {
               <OverviewCard label="OTH Progress" tone="green" percent={othPercent}
                 value={otjh && actualHours != null ? `${formatHoursClock(actualHours)} / ${formatHoursClock(otjh.plannedOtjh)}` : 'Not available'} detail={`${logHours === undefined ? 'Credited / planned hours' : 'Activity Log accepted / planned hours'}${unallocatedRecords ? ` · ${unallocatedRecords} accepted record(s) without allocated time` : ''}`} />
               <OverviewCard label="KSB Progress" tone="purple" percent={ksbPercent}
-                value={consumption ? `${numberLabel(consumption.consumedWeightTotal)} / ${numberLabel(consumption.expectedWeightTotal)}` : 'Not available'} detail="Achieved / mapped weight" />
+                value={consumption ? `${numberLabel(consumption.cappedConsumedWeightTotal)} / ${numberLabel(consumption.expectedWeightTotal)}` : 'Not available'} detail="Achieved / current activity target, capped per KSB" />
               <OverviewCard label="Activities Progress" tone="blue" percent={activityPercent} value={`${completed} / ${activities.length} completed`} detail="All assigned activities" />
               <OverviewCard label="Points" tone="orange" percent={null} value={points == null ? 'Not available' : `${numberLabel(points)} planned`} detail="Earned points not available" />
             </div><div className="lmp-overall"><div><strong>Overall Progress</strong><b>{overall == null ? 'N/A' : `${overall}%`}</b></div>
-              <ProgressBar percent={overall} label="Overall module progress" tone="purple" /><small>Average of OTH, KSB and Activities progress · All assigned activities</small></div></section>
+              <ProgressBar percent={overall} label="Overall module progress" tone="purple" /><small>Average of OTH, KSB and Activities progress · All assigned activities</small></div>
+            {Boolean(logSummary?.historicalOtjh || logSummary?.historicalUnallocatedRecords || consumption?.historicalConsumedWeightTotal || consumption?.unallocatedPlannedWeight || (consumption && consumption.consumedWeightTotal > consumption.cappedConsumedWeightTotal)) && <div role="region" className="mt-4 rounded-lg border border-background-200 p-3 text-xs" aria-label="Historical and unallocated progress">
+              <h2>Historical and unallocated records</h2>
+              <p>These records are preserved separately and excluded from current activity progress.</p>
+              {Boolean(logSummary?.historicalOtjh) && <p>Historical OTJH: {formatHoursClock(logSummary!.historicalOtjh!)}</p>}
+              {Boolean(logSummary?.historicalUnallocatedRecords) && <p>{logSummary!.historicalUnallocatedRecords} historical accepted record(s) without allocated time.</p>}
+              {Boolean(consumption?.historicalConsumedWeightTotal) && <p>Historical KSB weight: {numberLabel(consumption!.historicalConsumedWeightTotal!)}</p>}
+              {Boolean(consumption?.unallocatedPlannedWeight) && <p>KSB weight mapped without a current activity target: {numberLabel(consumption!.unallocatedPlannedWeight!)}</p>}
+              {Boolean(consumption && consumption.consumedWeightTotal > consumption.cappedConsumedWeightTotal) && <p>Recorded current KSB weight: {numberLabel(consumption!.consumedWeightTotal)}. Progress is capped per KSB target.</p>}
+            </div>}</section>
             <section className="lmp-panel" aria-labelledby="lmp-type-heading"><h2 id="lmp-type-heading">Activity Type Breakdown</h2><div className="lmp-type-breakdown">
               {types.length ? types.map(type => {
                 const rows = activities.filter(row => row.type === type); const done = rows.filter(row => row.status === 'completed').length; const percent = ratioPercent(done, rows.length);

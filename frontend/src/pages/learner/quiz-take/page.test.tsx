@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import QuizTakePage from './page';
@@ -487,5 +487,21 @@ describe('quiz submit working rules', () => {
 
     expect(screen.queryByText('Please review your completion date and time')).not.toBeInTheDocument();
     expect(mocks.submit.mock.calls[0][3].declaredCompletedAt).toBeUndefined();
+  });
+
+  it('keeps a non-calendar save failure visible inside the completion dialog', async () => {
+    mocks.submit
+      .mockRejectedValueOnce(new CompletionValidationError('Sunday is not a working day.', 'weekend'))
+      .mockRejectedValueOnce(new Error('The saved activity time changed. Reload the activity and choose again. Your answers are kept.'));
+    await answerAndFinish();
+    const dialog = await screen.findByRole('dialog', { name: /review your completion date and time/i });
+    fireEvent.change(within(dialog).getByLabelText('Completion date'), { target: { value: '2026-10-30' } });
+    fireEvent.change(within(dialog).getByLabelText('Completion time'), { target: { value: '09' } });
+    fireEvent.change(within(dialog).getByLabelText('Completion minutes'), { target: { value: '16' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Final Submit' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('The saved activity time changed.');
+    expect(within(dialog).getByLabelText('Completion date')).toHaveValue('2026-10-30');
+    expect(within(dialog).getByLabelText('Completion time')).toHaveValue('09');
+    expect(within(dialog).getByLabelText('Completion minutes')).toHaveValue('16');
   });
 });

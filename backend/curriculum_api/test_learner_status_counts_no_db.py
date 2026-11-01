@@ -63,7 +63,7 @@ class LearnerStatusReductionTests(SimpleTestCase):
         self.assertEqual(result['manual'], {'total': 0, 'statuses': {}})
 
     def test_a_batch_reads_learner_facts_once_and_resolves_programme_candidates_once(self):
-        with patch('curriculum_api.views.scope_placement_lineage', side_effect=lambda scope, ident: lineage(groupId=ident)), \
+        with patch.object(counts, 'placement_lineages', side_effect=lambda scope, ids: {ident: lineage(groupId=ident) for ident in ids}), \
              patch('curriculum_api.views.programme_identity_candidates', return_value=['Programme']) as candidates, \
              patch.object(counts, 'learner_facts', return_value=[fact(1)]) as facts:
             result = counts.status_counts('group', ['G1', 'G2'])

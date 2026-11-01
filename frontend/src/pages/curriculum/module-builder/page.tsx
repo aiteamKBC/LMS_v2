@@ -1,6 +1,9 @@
 import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
-import { LearnerStatusCounts } from '../shared/entities/LearnerStatusCounts';
-import { useRefreshAssignedLearners } from '../shared/entities/assignedLearnerDirectory';
+import { ModuleLearnerCount } from './ModuleLearnerCount';
+import { catalogueModuleActive, useCatalogueActivity } from './useCatalogueActivity';
+import type { ModuleCatalogueActivity } from '@/api/moduleCatalogueActivity';
+import { ModuleFixedHoursCard } from '../shared/components/ModuleHours';
+import { Context as LearnerDirectoryContext, useRefreshAssignedLearners } from '../shared/entities/assignedLearnerDirectory';
 import { sessionDeliveryDate } from '@/lib/deliveryWeek';
 import { EditScope, ModulePresence } from './CollaborativeField';
 import { CollaborationContext } from './collaborationContext';
@@ -8,7 +11,7 @@ import { useModuleCollaboration } from './useModuleCollaboration';
 import { dirtyFields, projectAvailable } from './collaborationProtocol';
 import { ModuleEditReservedError } from './moduleAuthoringData';
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -692,6 +695,7 @@ export default function ModuleBuilder() {
 
 function ModuleBuilderContent() {
   const refreshAssignedLearners = useRefreshAssignedLearners();
+  const learnerDirectory = useContext(LearnerDirectoryContext);
   const { auth } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedCreateScopeRef = useRef({
@@ -703,6 +707,7 @@ function ModuleBuilderContent() {
   // Kept in the address with the filters (as `q`), so Back from a learner's
   // progress page returns to the catalogue exactly as it was left.
   const [search, setSearch] = useState(() => searchParams.get('q') || '');
+  const [allModules, setAllModules] = useState(() => searchParams.get('catalogue') === 'all');
   const [programmeFilter, setProgrammeFilter] = useState<string>(() => requestedCreateScopeRef.current.programmeName || 'All');
   // The delivery filters the Modules page used to carry. They read the module's
   // own deliveries rather than a second fetch of cohorts and groups, so the
@@ -782,6 +787,7 @@ function ModuleBuilderContent() {
   // figure, so it paints it here and the next successful list read takes over.
   const [learnerCountOverrides, setLearnerCountOverrides] = useState<Record<string, number>>({});
   const learnerAssignmentModuleIdRef = useRef('');
+  const learnerRequestRef = useRef(0);
   const [learnerProgress, setLearnerProgress] = useState<{
     target: LearnerAssignmentTarget;
     impact: CurriculumScopeLearnerKsbImpactResponse;
@@ -925,6 +931,9 @@ function ModuleBuilderContent() {
   // What it no longer does is send Cache-Control: no-cache on the *mount* read,
   // which forced a rebuild from Neon and cost these two ~9s and ~14s.
   const { modules, loading, error, reload } = useCurriculumModules({ compact: true, revalidate: true });
+  const catalogueActivityKey = modules.map(module => [module.moduleCatalogueId || module.id, module.lastUpdated, module.startDate, module.endDate, module.sourceType].join(':')).join('|');
+  const catalogueAccountScope = JSON.stringify([auth?.account?.id, auth?.account?.role, auth?.account?.access, auth?.tenant?.id]);
+  const catalogueActivity = useCatalogueActivity(catalogueActivityKey, catalogueAccountScope);
   const { programmes: curriculumProgrammes } = useCurriculumProgrammes({ revalidate: true, visibility: 'all' });
   const programmeDesignUrl = useMemo(() => {
     const requested = (searchParams.get('programme') || searchParams.get('programmeId') || '').trim();
@@ -1536,9 +1545,10 @@ function ModuleBuilderContent() {
       ['group', groupFilter],
       ['tutor', tutorFilter],
       ['q', search],
+      ['catalogue', allModules ? 'all' : ''],
     ] as const).forEach(([key, value]) => { if (value) next.set(key, value); else next.delete(key); });
     if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
-  }, [cohortFilter, groupFilter, programmeFilter, search, searchParams, setSearchParams, tutorFilter]);
+  }, [allModules, cohortFilter, groupFilter, programmeFilter, search, searchParams, setSearchParams, tutorFilter]);
 
   const changeFilter = useCallback((apply: () => void) => {
     filtersTouchedRef.current = true;
@@ -1556,7 +1566,7 @@ function ModuleBuilderContent() {
 
   const deliveryFiltersActive = Boolean(cohortFilter || groupFilter || tutorFilter);
 
-  const filtered = catalogueModules.filter(module => {
+  const matchingModules = catalogueModules.filter(module => {
     const text = `${module.title} ${module.catalogueId} ${module.programmeName} ${moduleIdentityText(module)} ${moduleDeliverySearchText(module)}`.toLowerCase();
     if (search && !text.includes(search.toLowerCase())) return false;
     if (programmeFilter !== 'All' && !moduleBelongsToProgrammeFilter(module, programmeFilter, curriculumProgrammes)) return false;
@@ -1570,6 +1580,8 @@ function ModuleBuilderContent() {
       && (!tutorFilter || normaliseDeepLinkValue(usage.tutor) === normaliseDeepLinkValue(tutorFilter))
     ));
   });
+  const activeModules = matchingModules.filter(module => catalogueModuleActive(catalogueActivity.data?.[module.catalogueId], catalogueActivity.today));
+  const filtered = allModules ? matchingModules : activeModules;
 
   const deliveryStats = useMemo(() => ({
     deliveries: deliveryUsages.length,
@@ -1812,12 +1824,16 @@ function ModuleBuilderContent() {
     setSearchParams(previous => {
       const next = new URLSearchParams(previous);
       if (catalogueId) next.set('learners', catalogueId);
-      else next.delete('learners');
+      else {
+        next.delete('learners');
+        next.delete('learnerStatus');
+      }
       return next;
     }, { replace: true });
   }, [setSearchParams]);
 
   const openLearnerAction = useCallback(async (module: ModuleBuilderListItem) => {
+    const request = ++learnerRequestRef.current;
     const identifier = moduleLearnerIdentifier(module);
     if (!identifier) {
       setActionMessage(`Unable to open learner assignments for ${module.title}: no module identifier was returned.`);
@@ -1831,6 +1847,7 @@ function ModuleBuilderContent() {
     setActionMessageRetry(null);
     try {
       const directory = await fetchLearnerAssignments(target);
+      if (request !== learnerRequestRef.current) return null;
       // The assignment directory is the membership authority. The impact
       // endpoint adds OTJH/KSB progress, but may not return a newly/directly
       // assigned learner that has no placement or activity to aggregate yet.
@@ -1854,10 +1871,12 @@ function ModuleBuilderContent() {
         return 0;
       }
       const impact = await fetchCurriculumScopeLearnerKsbImpact('module', identifier, { learnerStatus: 'all', moduleProgress: true });
+      if (request !== learnerRequestRef.current) return null;
       setLearnerProgress({ target, impact, assignedLearners });
       rememberOpenLearners(module.catalogueId);
       return assignedCount;
     } catch (err) {
+      if (request !== learnerRequestRef.current) return null;
       setActionMessage(err instanceof Error ? err.message : `Unable to load learners for ${module.title}.`);
       return null;
     }
@@ -4064,6 +4083,7 @@ function ModuleBuilderContent() {
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-[13px] font-bold text-foreground-950">Module catalogue</p>
                 <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{filtered.length} shown</span>
+                <span className={`text-[10px] font-semibold ${allModules ? 'text-foreground-500' : 'text-emerald-700'}`}>{allModules ? 'All modules' : 'Active modules'}</span>
               </div>
               <p className="mt-1 text-[11px] text-foreground-500">Scoped modules can share titles while keeping their own programme, delivery and KSB mapping.</p>
             </div>
@@ -4125,8 +4145,29 @@ function ModuleBuilderContent() {
               />
               <button
                 type="button"
-                disabled={!search && programmeFilter === 'All' && !deliveryFiltersActive}
+                aria-pressed={!allModules}
+                onClick={() => changeFilter(() => setAllModules(false))}
+                className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold transition-smooth ${!allModules ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}
+              >
+                <AppIcon className="ri-checkbox-circle-line text-sm" />
+                Active
+                <span className="text-[10px]" aria-hidden="true">{catalogueActivity.data ? activeModules.length : '—'}</span>
+              </button>
+              <button
+                type="button"
+                aria-pressed={allModules}
+                onClick={() => changeFilter(() => setAllModules(true))}
+                className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold transition-smooth ${allModules ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}
+              >
+                <AppIcon className="ri-stack-line text-sm" />
+                All modules
+                <span className="text-[10px]" aria-hidden="true">{loading && !modules.length ? '—' : matchingModules.length}</span>
+              </button>
+              <button
+                type="button"
+                disabled={!allModules && !search && programmeFilter === 'All' && !deliveryFiltersActive}
                 onClick={() => changeFilter(() => {
+                  setAllModules(false);
                   setSearch('');
                   setProgrammeFilter('All');
                   setCohortFilter('');
@@ -4140,6 +4181,10 @@ function ModuleBuilderContent() {
               </button>
             </div>
           </div>
+          {catalogueActivity.error && <div role="status" className="flex flex-wrap items-center gap-2 px-4 py-2 text-[12px] text-amber-800">
+            <span>{catalogueActivity.error}</span>
+            <button type="button" onClick={catalogueActivity.reload} className="font-semibold underline">Retry activity check</button>
+          </div>}
           <div className="module-catalogue-scroll max-h-[calc(100vh-270px)] min-h-[480px] overflow-auto bg-background-100/35 p-3">
             {/* The skeleton stands in for a catalogue that has never been read.
                 Once rows are on screen a re-read keeps them there: somebody
@@ -4147,7 +4192,7 @@ function ModuleBuilderContent() {
                 through their own work, and replacing what they are reading with
                 grey bars loses their scroll position and their place for no
                 reason. The subtitle already says a read is in flight. */}
-            {loading && !modules.length ? (
+            {(loading && !modules.length) || (!allModules && !catalogueActivity.data && !catalogueActivity.error) ? (
               <ModuleListSkeleton />
             ) : filtered.length > 0 ? (
               <div className="space-y-3">
@@ -4155,6 +4200,8 @@ function ModuleBuilderContent() {
                   <ModuleCatalogueCard
                     key={module.catalogueId}
                     module={module}
+                    active={catalogueModuleActive(catalogueActivity.data?.[module.catalogueId], catalogueActivity.today)}
+                    source={catalogueActivity.data?.[module.catalogueId]?.source || (module.sourceModule?.sourceType === 'mba-legacy' ? 'old_lms' : ['module_authoring', 'authoring', 'training_plan'].includes(module.sourceModule?.sourceType || '') ? 'new_lms' : 'unknown')}
                     teamsSummary={teamsByModule.get(normaliseDeepLinkValue(module.catalogueId))}
                     onKsbMap={() => { void openKsbMap(module); }}
                     ksbMapLoading={ksbMapLoadingId === (module.catalogueId || moduleStructureIdentifier(module) || module.title)}
@@ -4175,12 +4222,13 @@ function ModuleBuilderContent() {
                   <AppIcon className="ri-search-eye-line text-2xl"></AppIcon>
                 </span>
                 <div>
-                  <p className="text-[13px] font-semibold text-foreground-700">No modules match the current filters.</p>
-                  <p className="mt-1 text-[12px] text-foreground-400">Try changing the search, or the programme, cohort, group or tutor filter.</p>
+                  <p className="text-[13px] font-semibold text-foreground-700">{allModules ? 'No modules match the current filters.' : 'No active modules match the current filters.'}</p>
+                  <p className="mt-1 text-[12px] text-foreground-400">{allModules ? 'Try changing the search, or the programme, cohort, group or tutor filter.' : 'Choose All modules to see other modules, or adjust the current filters.'}</p>
                 </div>
                 <button
                   type="button"
                   onClick={() => changeFilter(() => {
+                    setAllModules(false);
                     setSearch('');
                     setProgrammeFilter('All');
                     setCohortFilter('');
@@ -4275,15 +4323,24 @@ function ModuleBuilderContent() {
             setLearnerAssignmentTarget(null);
             if (catalogueId) setLearnerCountOverrides(previous => ({ ...previous, [catalogueId]: result.learnerCount }));
             if (catalogueId) refreshAssignedLearners?.({ scope: 'module', id: catalogueId, name: '' });
+            if (learnerAssignmentTarget) learnerDirectory?.statusStore.refresh(learnerAssignmentTarget);
             void reload({ silent: true });
           }}
         />
         {learnerProgress && (
           <ModuleLearnerProgressDialog
+            key={learnerProgress.target.id}
             moduleName={learnerProgress.target.name}
             moduleId={learnerProgress.target.id}
             impact={learnerProgress.impact}
             assignedLearners={learnerProgress.assignedLearners}
+            initialStatus={searchParams.get('learnerStatus') || 'all'}
+            onStatusChange={status => setSearchParams(previous => {
+              const next = new URLSearchParams(previous);
+              if (status === 'all') next.delete('learnerStatus');
+              else next.set('learnerStatus', status);
+              return next;
+            }, { replace: true })}
             onClose={() => {
               setLearnerProgress(null);
               rememberOpenLearners('');
@@ -4303,6 +4360,7 @@ function ModuleBuilderContent() {
               setLearnerProgress(current => current
                 ? { ...current, assignedLearners: current.assignedLearners.filter(row => String(row.id) !== learnerId) }
                 : current);
+              learnerDirectory?.statusStore.refresh(learnerProgress.target);
               const catalogueId = learnerAssignmentModuleIdRef.current;
               if (catalogueId) {
                 refreshAssignedLearners?.({ scope: 'module', id: catalogueId, name: '' });
@@ -4382,7 +4440,7 @@ function SaveStatusPanel({ saving, elapsedSeconds, error, module }: {
   );
 }
 
-function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOptions, ksbProfileValue, scopeLock, standardsLoading, onBack, onProgrammeChange, onKsbProfileChange }: {
+function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOptions, ksbProfileValue, scopeLock, standardsLoading, saved, onBack, onProgrammeChange, onKsbProfileChange }: {
   module: ModuleCatalogueItem;
   programmeOptions: string[];
   hierarchy: ModuleHierarchyInfo | null;
@@ -4406,7 +4464,7 @@ function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOption
 
   return (
     <div className="rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
-      <div className="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between lg:px-5">
+      <div className="flex flex-col gap-3 px-4 py-3 xl:flex-row xl:items-center xl:justify-between lg:px-5">
         <div className="flex min-w-0 items-center gap-3">
           <button onClick={onBack} className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm shadow-primary-500/20 transition-smooth hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-200 focus:ring-offset-1" title="Back to modules" aria-label="Back to modules">
             <AppIcon className="ri-arrow-left-line text-base"></AppIcon>
@@ -4421,7 +4479,7 @@ function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOption
         </div>
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center lg:justify-end">
-          <div className="grid grid-cols-3 gap-2">
+          <div role="group" aria-label="Module totals" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {moduleMetrics.map(metric => (
               <div key={metric.label} className="min-w-[78px] rounded-lg border border-background-200 bg-background-100/50 px-2.5 py-1.5">
                 <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-foreground-400">
@@ -4430,6 +4488,7 @@ function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOption
                 <div className="mt-0.5 text-[15px] font-heading font-bold text-foreground-950">{metric.value}</div>
               </div>
             ))}
+            <ModuleFixedHoursCard moduleId={module.catalogueId || module.id} totalHours={module.totalOtjh} unsaved={saved === false} />
           </div>
         </div>
       </div>
@@ -8354,6 +8413,8 @@ function ReadOnlyMetricChip({ label, value, suffix, tone }: {
 
 function ModuleCatalogueCard({
   module,
+  source,
+  active,
   teamsSummary,
   onKsbMap,
   ksbMapLoading,
@@ -8364,6 +8425,8 @@ function ModuleCatalogueCard({
   onDelete,
 }: {
   module: ModuleBuilderListItem;
+  source: ModuleCatalogueActivity['source'];
+  active: boolean;
   teamsSummary?: CurriculumTeamsMeetingSummary;
   onKsbMap: () => void;
   ksbMapLoading: boolean;
@@ -8399,6 +8462,14 @@ function ModuleCatalogueCard({
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <h3 className="truncate text-[15px] font-heading font-bold text-foreground-950">{module.title}</h3>
+                <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold ring-1 ${source === 'old_lms' ? 'bg-blue-50 text-blue-800 ring-blue-200' : source === 'new_lms' ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white ring-violet-400/30 shadow-sm shadow-violet-600/20' : 'bg-background-100 text-foreground-500 ring-background-200'}`}>
+                  {source !== 'unknown' && <AppIcon className={`${source === 'new_lms' ? 'ri-stack-line' : 'ri-archive-line'} text-[10px]`} />}
+                  {source === 'old_lms' ? 'Old LMS' : source === 'new_lms' ? 'New LMS' : 'Source not set'}
+                </span>
+                {active && <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-800 ring-1 ring-emerald-200" title="Started module with a non-cancelled Teams teaching date that has not passed">
+                  <AppIcon className="ri-checkbox-circle-line text-[10px]" />
+                  Active
+                </span>}
                 {!hasContent && (
                   <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700 ring-1 ring-amber-100">
                     <AppIcon className="ri-error-warning-line text-[10px]"></AppIcon>
@@ -8424,7 +8495,7 @@ function ModuleCatalogueCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5 xl:justify-end">
-          <LearnerStatusCounts target={{ scope: 'module', id: moduleLearnerIdentifier(module), name: module.title }} onManage={onLearners} refreshKey={module.sourceModule} />
+          <ModuleLearnerCount moduleId={moduleLearnerIdentifier(module)} moduleName={module.title} onOpen={onLearners} refreshKey={module.sourceModule} />
           {primaryDeliveryHref && (
             <Link
               to={primaryDeliveryHref}

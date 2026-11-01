@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearAllCachedResources } from '@/api/cachedRequest';
 import type { ReactNode } from 'react';
 import type { CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
 import { ModuleStructureConflictError } from '../moduleAuthoringData';
@@ -89,6 +90,8 @@ vi.mock('../moduleAuthoringData', async importOriginal => ({
 const programmes = [
   { id: 'program-mm', sourceId: 'PROG-MM', name: 'Marketing Manager' },
 ] as CurriculumProgramme[];
+
+vi.mock('@/api/moduleCatalogueActivity', () => ({ fetchModuleCatalogueActivity: vi.fn(async () => Object.fromEntries(modules.map(module => [module.moduleCatalogueId!, { source: 'new_lms', startDate: '2000-01-01', lastLiveDate: '2099-12-31' }]))) }));
 
 const modules = [
   {
@@ -242,6 +245,7 @@ async function openWorkspaceSaving() {
 
 describe('Module Builder auto-save', { timeout: 25000 }, () => {
   beforeEach(() => {
+    clearAllCachedResources();
     collaborationTest.enabled = false;
     collaborationTest.claim.mockClear();
     reload.mockClear();

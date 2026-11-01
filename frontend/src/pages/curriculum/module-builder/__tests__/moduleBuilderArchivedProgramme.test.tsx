@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearAllCachedResources } from '@/api/cachedRequest';
 import type { ReactNode } from 'react';
 import type { CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
 
@@ -68,6 +69,8 @@ const programmes = [
   { id: 'program-live', sourceId: 'PROG-LIVE', name: 'Live Programme', status: 'active', isArchived: false },
   { id: 'program-dead', sourceId: 'PROG-DEAD', name: 'Dead Programme', status: 'archived', isArchived: true },
 ] as CurriculumProgramme[];
+
+vi.mock('@/api/moduleCatalogueActivity', () => ({ fetchModuleCatalogueActivity: vi.fn(async () => Object.fromEntries(modules.map(module => [module.moduleCatalogueId!, { source: 'new_lms', startDate: '2000-01-01', lastLiveDate: '2099-12-31' }]))) }));
 
 const modules = [
   {
@@ -180,6 +183,7 @@ const ARCHIVED_NOTICE = 'This module belongs to an archived programme. Restore t
 
 describe('Module Builder under an archived programme', { timeout: 20000 }, () => {
   beforeEach(() => {
+    clearAllCachedResources();
     reload.mockClear();
     saveModuleStructure.mockReset();
     loadModuleStructure.mockReset();
