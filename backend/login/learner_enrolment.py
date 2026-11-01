@@ -65,7 +65,8 @@ def existing_learner_record(email):
     email = normalize_email(email)
     if not email:
         return None
-    return EnrolmentUser.all_learners.filter(email__iexact=email).first()
+    return (EnrolmentUser.all_learners.filter(email__iexact=email)
+            .only("id", "learner_type").first())
 
 
 def can_add_learner_record(account):

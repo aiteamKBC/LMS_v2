@@ -45,7 +45,7 @@ from .identity import learner_profile_for_source
 from .account_deletion import delete_learner_account
 from .learner_dates import save_enrolment_fields
 from .coach_assignment import case_owner_coach, current_coach
-from .directory import learner_directory_queryset
+from .directory import learner_directory_queryset, to_directory_row
 from .learner_progression import ACTIVE_STATUS, advance_learner
 from login.services import sync_account
 
@@ -731,14 +731,15 @@ def enrolment_users(request):
             # Progression still runs on document/signature and learner updates,
             # and the scheduled ``advance_learner_statuses`` sweep handles
             # date-driven transitions between reads.
-            rows = [to_list_row(u) for u in learners]
+            rows = [to_directory_row(u) for u in learners]
             # Whether each person already has a sign-in account, so the
             # directory can offer "Send invitation" only where it applies.
             # Batched deliberately: asking per row would be one query per
             # learner across the whole directory.
             _annotate_account_state(rows, "learner")
         except DatabaseError as exc:
-            return _error(f"Database error: {exc}", 502)
+            logger.error("Users directory database failure: type=%s", type(exc).__name__)
+            return _error("Unable to load the users directory. Please try again.", 502)
         return JsonResponse({"count": len(rows), "results": rows})
 
     if request.method == "POST":

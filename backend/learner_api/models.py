@@ -19,7 +19,7 @@ Neon connection pooler may reject.
 """
 import json
 import uuid
-from functools import lru_cache
+from functools import cached_property, lru_cache
 
 from django.db import DatabaseError, connections, models
 from django.db.models.functions import Lower, Trim
@@ -212,6 +212,28 @@ class ApprenticeshipManager(models.Manager):
         return LearnerTypeQuerySet(self.model, using=self._db).exclude(learner_type="commercial")
 
 
+def _learner_placement_names(record, *, by_enrolment):
+    """Read display labels through the canonical learner's verified ID links.
+
+    The enrolment and learner primary keys are independent. An enrolment with
+    no linked learner has no canonical placement to project. Cache only on the
+    loaded instance (see the model properties), never across people/requests.
+    """
+    if record.pk is None:
+        return (None, None, None)
+    key = 'enrolment_id' if by_enrolment else 'id'
+    using = record._state.db or 'enrolment'
+    with connections[using].cursor() as cursor:
+        cursor.execute(f'''SELECT p.name, c.cohort_name, g.group_name
+            FROM "Learner".learners l
+            LEFT JOIN curriculum.programmes p ON p.programme_id = l.programme_id
+            LEFT JOIN curriculum.cohorts c ON c.cohort_id = l.cohort_id
+            LEFT JOIN curriculum.groups g ON g.group_id = l.group_id
+            WHERE l.{key} = %s''', [record.pk])
+        names = cursor.fetchone()
+    return names if names is not None else (None, None, None)
+
+
 class EnrolmentUser(models.Model):
     # `objects` is scoped to apprenticeship learners; `all_learners` spans both
     # kinds (used by lookups that resolve a learner by id regardless of type).
@@ -258,14 +280,11 @@ class EnrolmentUser(models.Model):
     status = models.TextField(db_column=" Status", null=True, blank=True)  # NB: leading space
     type = models.TextField(db_column="Type", null=True, blank=True)
     programme_status = models.TextField(db_column="Programme_status", null=True, blank=True)
-    programme = models.TextField(db_column="Programme", null=True, blank=True)
-    cohort = models.TextField(db_column="Cohort", null=True, blank=True)
-    group = models.TextField(db_column="Group", null=True, blank=True)
-    # Cohort delivery window, copied from curriculum."cohort_authoring_details"
-    # (matched by Programme + Cohort name — see cohort_dates in active_users.py).
-    # Populated on create; refreshed on the Active mirror.
-    start_date = models.DateField(db_column="Start_date", null=True, blank=True)
-    end_date = models.DateField(db_column="End_date", null=True, blank=True)
+    # These are existing enrolment links, not the canonical learner placement.
+    # Display labels below are read through Learner.learners.enrolment_id.
+    programme_id = models.CharField()
+    cohort_id = models.CharField(null=True, blank=True)
+    group_id = models.CharField(max_length=128, null=True, blank=True)
     # Structured training plan (see mappers.TRAINING_PLAN docstring for shape).
     # This column pre-existed as unused free text; repurposed here since apprentice
     # learners previously had no way to persist a training plan at all.
@@ -302,8 +321,8 @@ class EnrolmentUser(models.Model):
     # apply_created_users_employer_id command.
     employer_id = models.IntegerField(db_column="Employer_id", null=True, blank=True)
     line_manager = models.TextField(db_column="Line_manager", null=True, blank=True)
-    learner_start_date = models.TextField(db_column="Learner_start_date", null=True, blank=True)
-    learner_end_date = models.TextField(db_column="Learner_end_date", null=True, blank=True)
+    learner_start_date = models.DateField(null=True, blank=True)
+    learner_end_date = models.DateField(null=True, blank=True)
     # NOTE: "First_session_booked" and "First_session_booked_at" exist on this
     # table (see sql/2026-09-17_first_session_booking_on_created_users.sql) but
     # are deliberately NOT mapped here, exactly like the "Learner_signature"
@@ -316,8 +335,8 @@ class EnrolmentUser(models.Model):
     # learner_api.first_session through raw SQL that checks for them first, so a
     # database without them degrades to "not recorded" instead of "nobody can
     # sign in".
-    start_date = models.TextField(db_column="Start_date", null=True, blank=True)
-    end_date = models.TextField(db_column="End_date", null=True, blank=True)
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
     practical_period_end_date = models.TextField(db_column="Practical_period_end_date", null=True, blank=True)
     apprenticeship_end_date = models.TextField(db_column="Apprenticeship_End_date", null=True, blank=True)
     minimum_required_hours = models.TextField(db_column="Minimum_required_hours", null=True, blank=True)
@@ -388,6 +407,22 @@ class EnrolmentUser(models.Model):
     review_documents = models.JSONField(db_column=" Review_documents", null=True, blank=True)  # leading space
     documents = models.JSONField(db_column="Documents", null=True, blank=True)
     subscription_details = models.JSONField(db_column="Subscription_details", null=True, blank=True)
+
+    @cached_property
+    def _placement_names(self):
+        return _learner_placement_names(self, by_enrolment=True)
+
+    @property
+    def programme(self):
+        return self._placement_names[0]
+
+    @property
+    def cohort(self):
+        return self._placement_names[1]
+
+    @property
+    def group(self):
+        return self._placement_names[2]
 
     class Meta:
         managed = False
@@ -585,27 +620,11 @@ class LearnerProfile(models.Model):
     # no enrolment record to read it from.
     learner_type = models.CharField(max_length=32, blank=True, null=True, db_index=True)
 
-    programme = models.TextField(blank=True)
-    # curriculum.programmes.programme_id for `programme`. The name is what the
-    # enrolment form captures; this is the stable key it resolves to, so a
-    # renamed programme does not orphan the learner.
+    # Existing database FKs. Keep the scalar ID attributes used by callers;
+    # display labels below are read-only projections through these links.
     programme_id = models.CharField(max_length=64, blank=True, null=True)
     programme_status = models.CharField(max_length=100, blank=True)
-    cohort = models.TextField(blank=True)
-    # curriculum.cohorts.cohort_id for `cohort`, and curriculum.groups.group_id
-    # for `group_name` -- the same relationship programme_id has to `programme`,
-    # for the two levels below it. The names stay: they are what the enrolment
-    # screens capture and edit, and what every consumer that has not been moved
-    # over still reads. These are the stable keys those names resolve to, so a
-    # renamed cohort or group no longer drops its learners off the curriculum
-    # rosters that used to find them by comparing text.
-    #
-    # NULL means "not resolved" -- an unmatched or ambiguous name -- and every
-    # reader falls back to matching by name for those rows. Added out of band by
-    # sql/2026-09-02_learner_placement_ids.sql, like programme_id before them,
-    # so an environment that has not run it simply never sees them populated.
     cohort_id = models.CharField(max_length=64, blank=True, null=True)
-    group_name = models.TextField(blank=True)
     group_id = models.CharField(max_length=64, blank=True, null=True)
     completed_hours = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     target_hours = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
@@ -617,7 +636,6 @@ class LearnerProfile(models.Model):
     otjh_status = models.CharField(max_length=50, blank=True)
     coach_name = models.TextField(blank=True)
     coach_email = models.EmailField(max_length=320, blank=True)
-    coach_rag = models.CharField(max_length=20, blank=True)
 
     # What a coach has actually decided about this learner's work. Recomputed
     # from Learner.learning_reflection_submissions after every marking decision
@@ -638,9 +656,9 @@ class LearnerProfile(models.Model):
     # means no plan has been assigned, which for most learners is the honest
     # answer rather than a missing mirror.
     learning_plan = models.JSONField(null=True, blank=True)
-    # Header dates mirror Created_users; the new start column uses capital S.
-    learner_start_date = models.TextField(db_column="Learner_Start_date", null=True, blank=True)
-    learner_end_date = models.TextField(db_column="Learner_end_date", null=True, blank=True)
+    # Programme and individual learner dates are distinct physical date columns.
+    learner_start_date = models.DateField(null=True, blank=True)
+    learner_end_date = models.DateField(null=True, blank=True)
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
     gateway_review_date = models.DateField(null=True, blank=True)
@@ -652,6 +670,22 @@ class LearnerProfile(models.Model):
     # Django supply the timestamps itself.
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    @cached_property
+    def _placement_names(self):
+        return _learner_placement_names(self, by_enrolment=False)
+
+    @property
+    def programme(self):
+        return self._placement_names[0] or ''
+
+    @property
+    def cohort(self):
+        return self._placement_names[1] or ''
+
+    @property
+    def group_name(self):
+        return self._placement_names[2] or ''
 
     class Meta:
         managed = False

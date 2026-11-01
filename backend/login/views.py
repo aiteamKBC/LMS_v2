@@ -31,6 +31,8 @@ project's JSON endpoints are written (``@csrf_exempt`` throughout learner_api).
 from __future__ import annotations
 
 import json
+import logging
+from functools import wraps
 
 from django.db import DatabaseError
 from django.http import JsonResponse
@@ -77,10 +79,33 @@ from .sessions import (
 
 #: Returned for every bad sign-in, regardless of the underlying cause.
 GENERIC_LOGIN_ERROR = "Incorrect email or password."
+DATABASE_UNAVAILABLE_ERROR = "Unable to complete authentication. Please try again."
+logger = logging.getLogger(__name__)
 
 
 def _error(message, status=400, **extra):
     return JsonResponse({"error": message, **extra}, status=status)
+
+
+def _database_unavailable(operation, exc):
+    # Database exception messages and tracebacks can contain SQL, addresses and
+    # credentials. Keep only the operation, exception class and SQLSTATE here.
+    sqlstate = getattr(exc.__cause__, "sqlstate", None)
+    if not isinstance(sqlstate, str) or len(sqlstate) != 5 or not sqlstate.isalnum():
+        sqlstate = "unknown"
+    logger.error("Authentication database failure: operation=%s type=%s sqlstate=%s",
+                 operation, type(exc).__name__, sqlstate)
+    return _error(DATABASE_UNAVAILABLE_ERROR, 502)
+
+
+def _authentication_database_errors(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        try:
+            return view(*args, **kwargs)
+        except DatabaseError as exc:
+            return _database_unavailable(view.__name__, exc)
+    return wrapped
 
 
 def _body(request):
@@ -119,6 +144,7 @@ def _reject_cross_site(request):
 
 @csrf_exempt
 @require_POST
+@_authentication_database_errors
 def login(request):
     """Exchange credentials for a session cookie."""
     blocked = _reject_cross_site(request)
@@ -150,20 +176,14 @@ def login(request):
             code="throttled",
         )
 
-    try:
-        account = identity.account_for_email(email)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    account = identity.account_for_email(email)
 
     if is_default_learner_password(password) and (account is None or not account.has_password):
         # A learner who has never set a password, using the shared first-sign-in
         # password: no session, only their own set-password link (see
         # security.DEFAULT_LEARNER_PASSWORD). Anyone else falls through to the
         # ordinary failure below, indistinguishable from a wrong password.
-        try:
-            setup_path = default_password_setup(email, ip=ip, user_agent=ua)
-        except DatabaseError as exc:
-            return _error(f"Database error: {exc}", 502)
+        setup_path = default_password_setup(email, ip=ip, user_agent=ua)
         if setup_path:
             record(EVENT_LOGIN, email=email, succeeded=False, reason="default_password_setup", ip=ip, user_agent=ua)
             response = JsonResponse({"passwordSetupRequired": True, "setPasswordPath": setup_path})
@@ -249,15 +269,13 @@ def logout(request):
 
 
 @require_GET
+@_authentication_database_errors
 def me(request):
     """The signed-in identity, or 401. The SPA calls this on every page load."""
     account = authenticate_request(request)
     if account is None:
         return _error("Not authenticated.", 401, code="unauthenticated")
-    try:
-        return JsonResponse({"user": identity.account_payload(account)})
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    return JsonResponse({"user": identity.account_payload(account)})
 
 
 @require_GET
