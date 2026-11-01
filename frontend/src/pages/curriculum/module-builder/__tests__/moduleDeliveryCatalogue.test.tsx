@@ -6,6 +6,8 @@ import type { ReactNode } from 'react';
 import type { CurriculumCohort, CurriculumGroup, CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
 import { fetchCurriculumDeliveryScope, fetchCurriculumOverview } from '@/lib/curriculumApi';
 import { fetchAssignedLearners } from '@/api/assignedLearners';
+import { fetchModuleCatalogueActivity } from '@/api/moduleCatalogueActivity';
+vi.mock('@/api/moduleCatalogueActivity', () => ({ fetchModuleCatalogueActivity: vi.fn() }));
 vi.mock('@/api/assignedLearners', () => ({
   fetchLearnerStatusCounts: vi.fn(async (_scope: string, ids: string[]) => Object.fromEntries(ids.map(id => {
     const count = modules.find(module => module.moduleCatalogueId === id)?.assignments || 0;
@@ -192,7 +194,7 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   fetchCurriculumScopeLearnerKsbImpact: (...args: unknown[]) => fetchCurriculumScopeLearnerKsbImpact(...args),
 }));
 
-async function renderCatalogue(search = '') {
+async function renderCatalogue(search = '', expectedTitle = 'Data Foundations') {
   window.history.replaceState({}, '', `/curriculum/module-builder${search}`);
   const { default: ModuleBuilder } = await import('../page');
   const result = render(
@@ -200,7 +202,7 @@ async function renderCatalogue(search = '') {
       <ModuleBuilder />
     </MemoryRouter>,
   );
-  await screen.findByText('Data Foundations');
+  if (expectedTitle) await screen.findByText(expectedTitle);
   return result;
 }
 
@@ -240,6 +242,7 @@ function HistoryProbe() {
 describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
   beforeEach(() => {
     modules = initialModules.map(module => ({ ...module, assignments: module.id === 'MOD-1' ? 3 : 0 }));
+    vi.mocked(fetchModuleCatalogueActivity).mockReset().mockImplementation(async () => Object.fromEntries(modules.map(module => [module.moduleCatalogueId!, { source: 'new_lms' as const, startDate: '2000-01-01', lastLiveDate: '2099-12-31' }])));
     reload.mockClear();
     vi.mocked(fetchAssignedLearners).mockClear();
     vi.mocked(fetchCurriculumDeliveryScope).mockClear();
@@ -292,6 +295,45 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     await waitFor(() => expect(fetchCurriculumDeliveryScope).toHaveBeenCalledTimes(1));
     expect(fetchCurriculumOverview).not.toHaveBeenCalled();
     expect(screen.getByText('Data Foundations')).toBeInTheDocument();
+  });
+
+  it('defaults to dated live teaching from both LMS sources and reveals the rest only with All modules', async () => {
+    const user = userEvent.setup();
+    modules = [...modules, ...['Future teaching', 'Finished teaching', 'Missing start', 'Resources only'].map((name, index) => ({ ...initialModules[0], id: `MOD-${index + 3}`, moduleCatalogueId: `MOD-${index + 3}`, name }))];
+    vi.mocked(fetchModuleCatalogueActivity).mockResolvedValue({
+      'MOD-1': { source: 'new_lms', startDate: '2000-01-01', lastLiveDate: '2099-12-31' },
+      'MOD-2': { source: 'old_lms', startDate: '2000-01-01', lastLiveDate: '2099-12-31' },
+      'MOD-3': { source: 'new_lms', startDate: '2099-01-01', lastLiveDate: '2099-12-31' },
+      'MOD-4': { source: 'old_lms', startDate: '2000-01-01', lastLiveDate: '2000-12-31' },
+      'MOD-5': { source: 'new_lms', startDate: '', lastLiveDate: '2099-12-31' },
+      'MOD-6': { source: 'new_lms', startDate: '2000-01-01', lastLiveDate: '' },
+    });
+    await renderCatalogue();
+    expect(screen.getByRole('button', { name: 'All modules' })).toHaveAttribute('aria-pressed', 'false');
+    expect(cardFor('Data Foundations').getByText('New LMS')).toHaveClass('bg-primary-50');
+    expect(cardFor('Network Basics').getByText('Old LMS')).toHaveClass('bg-amber-50');
+    for (const name of ['Future teaching', 'Finished teaching', 'Missing start', 'Resources only']) expect(screen.queryByRole('heading', { name })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'All modules' }));
+    for (const name of ['Future teaching', 'Finished teaching', 'Missing start', 'Resources only']) expect(screen.getByRole('heading', { name })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'All modules' }));
+    expect(screen.queryByRole('heading', { name: 'Resources only' })).not.toBeInTheDocument();
+    expect(cardFor('Network Basics').getByText('Old LMS')).toBeInTheDocument();
+  });
+
+  it('reports an unavailable activity check and keeps All modules and retry usable', async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchModuleCatalogueActivity).mockRejectedValue(new Error('Synthetic unavailable'));
+    await renderCatalogue('', '');
+    await screen.findByText('Module activity could not be verified. Try again or view all modules.');
+    expect(screen.queryByRole('heading', { name: 'Data Foundations' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'All modules' }));
+    expect(screen.getByRole('heading', { name: 'Data Foundations' })).toBeInTheDocument();
+    vi.mocked(fetchModuleCatalogueActivity).mockResolvedValue({ 'MOD-1': { source: 'new_lms', startDate: '2000-01-01', lastLiveDate: '2099-12-31' } });
+    await user.click(screen.getByRole('button', { name: 'Retry activity check' }));
+    await waitFor(() => expect(screen.queryByText('Module activity could not be verified. Try again or view all modules.')).not.toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: 'All modules' }));
+    expect(screen.getByRole('heading', { name: 'Data Foundations' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Network Basics' })).not.toBeInTheDocument();
   });
 
   it('shows every module count, including zero, before opening any learner list and keeps it across filters', async () => {

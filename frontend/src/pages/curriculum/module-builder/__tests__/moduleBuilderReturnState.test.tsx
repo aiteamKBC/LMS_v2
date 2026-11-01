@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CurriculumCohort, CurriculumGroup, CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
 import { fetchCurriculumDeliveryScope } from '@/lib/curriculumApi';
+vi.mock('@/api/moduleCatalogueActivity', () => ({ fetchModuleCatalogueActivity: vi.fn(async () => Object.fromEntries(['MOD-1', 'MOD-2', 'MOD-3'].map(id => [id, { source: 'new_lms', startDate: '2000-01-01', lastLiveDate: '2099-12-31' }]))) }));
 
 /**
  * Back from a learner's progress page is one step in history, so everything the
@@ -163,6 +164,20 @@ describe('Module Builder keeps the reader\'s place in its address', { timeout: 1
       expect(address().has('programme')).toBe(false);
       expect(screen.getAllByRole('article')).toHaveLength(3);
     }
+  });
+
+  it('restores All modules from the address and changes it without losing delivery filters', async () => {
+    const user = userEvent.setup();
+    await renderCatalogue('?catalogue=all&programme=Data+Analyst&cohort=COHORT-1&group=GROUP-1');
+    await screen.findByText('Data Foundations');
+    expect(screen.getByRole('button', { name: 'All modules' })).toHaveAttribute('aria-pressed', 'true');
+    await user.type(screen.getByPlaceholderText('Search modules, tutors, cohorts...'), 'Foundations');
+    await waitFor(() => expect(address().get('catalogue')).toBe('all'));
+    await user.click(screen.getByRole('button', { name: 'All modules' }));
+    await waitFor(() => expect(address().has('catalogue')).toBe(false));
+    expect(address().get('cohort')).toBe('COHORT-1');
+    expect(address().get('group')).toBe('GROUP-1');
+    expect(address().get('q')).toBe('Foundations');
   });
 
   it.each(['programme', 'programmeId'])('clears a restored %s filter and its dependent filters with Reset', async key => {
