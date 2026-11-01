@@ -72,6 +72,34 @@ describe('feedback form version history', () => {
     expect(screen.getByText('Historical')).toBeInTheDocument();
   });
 
+  it('shows the saved tutor in staff Responses and marks old lecture tutors as not recorded', async () => {
+    const user = userEvent.setup();
+    const base = {
+      formId: 20, formTitle: 'Lecture feedback', formType: 'post_lecture' as const,
+      learnerId: '61', learnerName: 'Synthetic Learner', programme: 'Business',
+      status: 'completed' as const, startedAt: '2026-10-20T09:00:00Z',
+      updatedAt: '2026-10-20T10:00:00Z', submittedAt: '2026-10-20T10:00:00Z',
+    };
+    vi.mocked(feedbackApi.responses).mockResolvedValue({ responses: [
+      { ...base, id: 91, deliveryId: 30, sessionTitle: 'Marketing - Session 1', tutorName: 'Original Tutor' },
+      { ...base, id: 92, deliveryId: 31, sessionTitle: 'Marketing - Session 2', tutorName: '' },
+    ] });
+    vi.mocked(feedbackApi.response).mockResolvedValue({ response: {
+      ...base, id: 91, deliveryId: 30, sessionTitle: 'Marketing - Session 1', tutorName: 'Original Tutor', sections: [],
+    } });
+
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+    await user.click(await screen.findByRole('button', { name: 'Responses' }));
+    expect(screen.getByRole('columnheader', { name: 'Lecture' })).toBeVisible();
+    expect(screen.getByRole('columnheader', { name: 'Tutor' })).toBeVisible();
+    expect(screen.getByText('Original Tutor')).toBeVisible();
+    expect(screen.getByText('Not recorded')).toBeVisible();
+    await user.click(screen.getByText('Marketing - Session 1'));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Original Tutor')).toBeVisible();
+    expect(within(dialog).getByText('Marketing - Session 1')).toBeVisible();
+  });
+
   it('opens assigned learners on the latest lecture and can select another lecture', async () => {
     const user = userEvent.setup();
     render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
@@ -118,7 +146,7 @@ describe('feedback form version history', () => {
   it('shows completion analytics and reloads metrics for a feedback type', async () => {
     const user = userEvent.setup();
     vi.mocked(feedbackApi.responses).mockResolvedValue({ responses: [{
-      id: 91, formId: 20, formTitle: 'Lecture feedback', learnerId: '61', learnerName: 'Test Learner',
+      id: 91, formId: 20, formTitle: 'Lecture feedback', formType: 'post_lecture', deliveryId: 30, sessionTitle: 'Marketing - Session 1', tutorName: 'Test Tutor', learnerId: '61', learnerName: 'Test Learner',
       programme: 'Business', status: 'completed', startedAt: '2026-10-20T09:00:00Z',
       updatedAt: '2026-10-20T09:10:00Z', submittedAt: '2026-10-20T09:10:00Z',
     }] });
@@ -281,7 +309,7 @@ describe('feedback form version history', () => {
         responses: [{ responseId: 99, formId: 20, formTitle: 'Lecture feedback', formType: 'post_lecture', version: 2, respondent: 'Anonymous learner', score: 0, classification: 'negative', scoredQuestions: 2, submittedAt: '2026-10-20T10:00:00Z' }],
       } },
     } });
-    vi.mocked(feedbackApi.response).mockResolvedValue({ response: { id: 99, formId: 20, formTitle: 'Lecture feedback', learnerId: null, learnerName: 'Anonymous learner', programme: '', status: 'completed', startedAt: '2026-10-20T09:00:00Z', updatedAt: '2026-10-20T10:00:00Z', submittedAt: '2026-10-20T10:00:00Z', sections: [] } });
+    vi.mocked(feedbackApi.response).mockResolvedValue({ response: { id: 99, formId: 20, formTitle: 'Lecture feedback', formType: 'post_lecture', deliveryId: 30, sessionTitle: 'Marketing - Session 1', tutorName: 'Test Tutor', learnerId: null, learnerName: 'Anonymous learner', programme: '', status: 'completed', startedAt: '2026-10-20T09:00:00Z', updatedAt: '2026-10-20T10:00:00Z', submittedAt: '2026-10-20T10:00:00Z', sections: [] } });
     render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
     await user.click(await screen.findByRole('button', { name: 'Analytics' }));
     expect(screen.getByRole('region', { name: 'Score-based response classification' })).toBeVisible();
@@ -300,7 +328,7 @@ describe('feedback form version history', () => {
         responses: [{ responseId: 101, formId: 20, formTitle: 'Lecture feedback', formType: 'post_lecture', version: 2, respondent: 'Anonymous learner', score: 0, classification: 'negative', scoredQuestions: 2, submittedAt: null, contextTitle: 'Synthetic lecture session' }],
       } },
     } });
-    vi.mocked(feedbackApi.response).mockResolvedValue({ response: { id: 101, formId: 20, formTitle: 'Lecture feedback', learnerId: null, learnerName: 'Anonymous learner', programme: '', status: 'completed', startedAt: '2026-10-20T09:00:00Z', updatedAt: '2026-10-20T10:00:00Z', submittedAt: null, sections: [] } });
+    vi.mocked(feedbackApi.response).mockResolvedValue({ response: { id: 101, formId: 20, formTitle: 'Lecture feedback', formType: 'post_lecture', deliveryId: 30, sessionTitle: 'Marketing - Session 1', tutorName: 'Test Tutor', learnerId: null, learnerName: 'Anonymous learner', programme: '', status: 'completed', startedAt: '2026-10-20T09:00:00Z', updatedAt: '2026-10-20T10:00:00Z', submittedAt: null, sections: [] } });
     render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
     await user.click(await screen.findByRole('button', { name: 'Feedback Insights' }));
     expect(await screen.findByText('Synthetic lecture session')).toBeVisible();

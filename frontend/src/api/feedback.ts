@@ -138,6 +138,7 @@ export interface LearnerFeedbackListItem {
 
 export interface FeedbackResponse {
   id: number; formId: number; formTitle: string; learnerId: string | null;
+  formType: FeedbackFormType; deliveryId: number | null; sessionTitle: string; tutorName: string;
   learnerName: string; programme: string; status: 'in_progress' | 'completed';
   startedAt: string; updatedAt: string; submittedAt: string | null;
   sections?: FeedbackSection[];

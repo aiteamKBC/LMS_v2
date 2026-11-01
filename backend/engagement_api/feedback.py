@@ -803,11 +803,13 @@ def _response_dict(response, *, include_answers=False):
     anonymous = response.form.anonymous_responses
     data = {
         'id': response.id, 'formId': response.form_id, 'formTitle': response.form.title,
+        'formType': response.form.form_type,
         'learnerId': None if anonymous else response.learner_id,
         'learnerName': 'Anonymous learner' if anonymous else response.learner_name,
         'programme': '' if anonymous else response.programme,
         'deliveryId': response.delivery_id,
         'sessionTitle': response.delivery.session_title if response.delivery_id else '',
+        'tutorName': (response.delivery.tutor_name if response.delivery_id and response.form.form_type == 'post_lecture' else ''),
         'status': response.status, 'startedAt': _iso(response.started_at),
         'updatedAt': _iso(response.updated_at), 'submittedAt': _iso(response.submitted_at),
     }

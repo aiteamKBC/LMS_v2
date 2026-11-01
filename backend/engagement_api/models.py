@@ -615,6 +615,7 @@ class FeedbackDelivery(models.Model):
     module_catalogue_id = models.CharField(max_length=255)
     module_name = models.CharField(max_length=500, blank=True, default='')
     session_title = models.CharField(max_length=500, blank=True, default='')
+    tutor_name = models.CharField(max_length=255, blank=True, default='')
     starts_at = models.DateTimeField(null=True, blank=True)
     ends_at = models.DateTimeField(null=True, blank=True)
     available_at = models.DateTimeField()

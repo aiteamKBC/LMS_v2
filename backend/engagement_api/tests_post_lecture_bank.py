@@ -21,7 +21,7 @@ class PostLectureCreationBoundaryTests(SimpleTestCase):
         # old attendance whose feedback delivery has already been deleted.
         # Exercise the actual hook, SQL adapter, UTC conversion and matcher.
         columns = (
-            'occurrence_id', 'module_catalogue_id', 'module_title', 'programme_id', 'programme_name',
+            'occurrence_id', 'module_catalogue_id', 'module_title', 'lecture_tutor_name', 'programme_id', 'programme_name',
             'cohort_id', 'cohort_name', 'group_id', 'group_name', 'session_number', 'scheduled_start',
             'session_end', 'attendance_report_id', 'attendance_id', 'learner_name', 'attendance_status', 'learner_id',
         )
@@ -32,7 +32,7 @@ class PostLectureCreationBoundaryTests(SimpleTestCase):
             ('TODAY-1', datetime(2026, 10, 27, 11)),
             ('TODAY-2', datetime(2026, 10, 27, 12)),
         ), start=1):
-            rows.append((key, 'MOD-1', 'Synthetic module', '', '', '', '', '', '', index,
+            rows.append((key, 'MOD-1', 'Synthetic module', 'Original Tutor', '', '', '', '', '', '', index,
                          starts_at, starts_at + timedelta(hours=1), f'REPORT-{index}', index,
                          'Synthetic Learner', 'present', 7))
         cursor = mock.MagicMock()
@@ -42,10 +42,10 @@ class PostLectureCreationBoundaryTests(SimpleTestCase):
         form = SimpleNamespace(id=4, created_at=self.created_at, due_date=None)
         saved = {}
 
-        def upsert_delivery(*, occurrence_key, defaults):
+        def upsert_delivery(*, occurrence_key, defaults, create_defaults):
             created = occurrence_key not in saved
             if created:
-                saved[occurrence_key] = SimpleNamespace(id=len(saved) + 1, **defaults)
+                saved[occurrence_key] = SimpleNamespace(id=len(saved) + 1, **create_defaults)
             return saved[occurrence_key], created
 
         selected = mock.Mock()
@@ -67,7 +67,9 @@ class PostLectureCreationBoundaryTests(SimpleTestCase):
             mock.patch.object(feedback_delivery, 'ensure_delivery_questions') as ensure,
             mock.patch.object(feedback_delivery.transaction, 'atomic'),
         ):
-            for _ in range(2):
+            for attempt in range(2):
+                if attempt:
+                    cursor.fetchall.return_value = [row[:3] + ('Replacement Tutor',) + row[4:] for row in rows]
                 result_hook('SERIES-1')
                 self.assertEqual(set(saved), {'TODAY-1', 'TODAY-2'})
             self.assertEqual([call.kwargs['occurrence_key'] for call in upsert.call_args_list],
@@ -80,6 +82,27 @@ class PostLectureCreationBoundaryTests(SimpleTestCase):
         self.assertEqual(cursor.execute.call_args.args[1], [['SERIES-1']])
         self.assertEqual(saved['TODAY-1'].starts_at, self.created_at)
         self.assertEqual(saved['TODAY-1'].available_at, self.created_at + timedelta(hours=1))
+        self.assertEqual(saved['TODAY-1'].tutor_name, 'Original Tutor')
+        self.assertNotIn('tutor_name', upsert.call_args.kwargs['defaults'])
+        self.assertIn('lecture_module.module_catalogue_id = s.module_catalogue_id', cursor.execute.call_args.args[0])
+
+    def test_staff_response_uses_saved_lecture_tutor_only_for_live_sessions(self):
+        form = SimpleNamespace(title='Live Sessions Feedback', form_type='post_lecture', anonymous_responses=False)
+        delivery = SimpleNamespace(session_title='Synthetic module - Session 2', tutor_name='Original Tutor')
+        response = SimpleNamespace(
+            id=1, form_id=4, form=form, learner_id='7', learner_name='Synthetic Learner',
+            programme='Synthetic Programme', delivery_id=11, delivery=delivery,
+            status='completed', started_at=self.created_at, updated_at=self.created_at,
+            submitted_at=self.created_at,
+        )
+        result = feedback._response_dict(response)
+        self.assertEqual((result['formType'], result['sessionTitle'], result['tutorName']),
+                         ('post_lecture', 'Synthetic module - Session 2', 'Original Tutor'))
+        delivery.tutor_name = ''
+        self.assertEqual(feedback._response_dict(response)['tutorName'], '')
+        form.form_type = 'mid_module'
+        delivery.tutor_name = 'Different Tutor'
+        self.assertEqual(feedback._response_dict(response)['tutorName'], '')
 
     def test_finalized_attendance_only_assigns_lectures_starting_at_or_after_form_creation(self):
         for scope in ('module', 'all_modules'):

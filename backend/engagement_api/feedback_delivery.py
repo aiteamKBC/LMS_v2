@@ -31,6 +31,7 @@ class LectureOccurrence:
     group_name: str = ''
     module_name: str = ''
     title: str = ''
+    tutor_name: str = ''
     starts_at: datetime | None = None
     ends_at: datetime | None = None
     attendance_source: str = 'attendance'
@@ -178,26 +179,28 @@ def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=Fa
         for form in forms:
             tag_transaction(connection)
             audit('write_attempt', occurrence_key=occurrence_key, form=form, starts_at=occurrence.starts_at)
+            delivery_defaults = {
+                'form': form,
+                'attendance_source': _required(occurrence.attendance_source, 'Attendance source'),
+                'attendance_reference': str(occurrence.attendance_reference or '').strip(),
+                'programme_id': str(occurrence.programme_id or '').strip(),
+                'programme_name': str(occurrence.programme_name or '').strip(),
+                'cohort_id': str(occurrence.cohort_id or '').strip(),
+                'cohort_name': str(occurrence.cohort_name or '').strip(),
+                'group_id': str(occurrence.group_id or '').strip(),
+                'group_name': str(occurrence.group_name or '').strip(),
+                'module_catalogue_id': module_id,
+                'module_name': str(occurrence.module_name or '').strip(),
+                'session_title': str(occurrence.title or '').strip(),
+                'starts_at': occurrence.starts_at,
+                'ends_at': occurrence.ends_at,
+                'available_at': available_at,
+                'status': 'open',
+            }
             delivery, created = FeedbackDelivery.objects.update_or_create(
                 occurrence_key=occurrence_key,
-                defaults={
-                    'form': form,
-                    'attendance_source': _required(occurrence.attendance_source, 'Attendance source'),
-                    'attendance_reference': str(occurrence.attendance_reference or '').strip(),
-                    'programme_id': str(occurrence.programme_id or '').strip(),
-                    'programme_name': str(occurrence.programme_name or '').strip(),
-                    'cohort_id': str(occurrence.cohort_id or '').strip(),
-                    'cohort_name': str(occurrence.cohort_name or '').strip(),
-                    'group_id': str(occurrence.group_id or '').strip(),
-                    'group_name': str(occurrence.group_name or '').strip(),
-                    'module_catalogue_id': module_id,
-                    'module_name': str(occurrence.module_name or '').strip(),
-                    'session_title': str(occurrence.title or '').strip(),
-                    'starts_at': occurrence.starts_at,
-                    'ends_at': occurrence.ends_at,
-                    'available_at': available_at,
-                    'status': 'open',
-                },
+                defaults=delivery_defaults,
+                create_defaults={**delivery_defaults, 'tutor_name': str(occurrence.tutor_name or '').strip()},
             )
             if created:
                 _pin_delivery_questions(delivery, form)
@@ -294,6 +297,7 @@ def sync_post_lecture_feedback_from_attendance(*, live_session_ids=None, occurre
             SELECT a.occurrence_id,
                    a.module_catalogue_id,
                    coalesce(nullif(m.title, ''), nullif(s.module_title, ''), a.module_catalogue_id) AS module_title,
+                   coalesce(nullif(btrim(lecture_module.tutor_name), ''), '') AS lecture_tutor_name,
                    coalesce(p.programme_id::text, '') AS programme_id,
                    coalesce(nullif(p.name, ''), m.programme_name, '') AS programme_name,
                    coalesce(c.cohort_id::text, '') AS cohort_id,
@@ -312,6 +316,7 @@ def sync_post_lecture_feedback_from_attendance(*, live_session_ids=None, occurre
               JOIN curriculum.live_session_occurrences o ON o.id = a.occurrence_id
               JOIN curriculum.live_sessions s ON s.id = o.live_session_id
          LEFT JOIN curriculum.modules m ON m.module_catalogue_id = a.module_catalogue_id
+         LEFT JOIN curriculum.modules lecture_module ON lecture_module.module_catalogue_id = s.module_catalogue_id
          LEFT JOIN curriculum.groups g ON g.group_id = m.group_id
          LEFT JOIN curriculum.cohorts c ON c.cohort_id = g.cohort_id
          LEFT JOIN curriculum.programmes p ON p.programme_id = c.programme_id
@@ -361,6 +366,7 @@ def sync_post_lecture_feedback_from_attendance(*, live_session_ids=None, occurre
                     group_name=row['group_name'],
                     module_name=row['module_title'],
                     title=title,
+                    tutor_name=row.get('lecture_tutor_name') or '',
                     starts_at=_aware_utc(row['scheduled_start']),
                     ends_at=_aware_utc(row['session_end']),
                     attendance_source='curriculum.live_session_learner_attendance',
