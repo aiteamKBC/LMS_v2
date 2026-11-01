@@ -57,6 +57,25 @@ function withLogStates() {
 }
 
 describe('Activity status and Overall Progress', () => {
+  it('uses current hours and capped KSB weight, while showing historical and unallocated evidence separately', async () => {
+    const data = withLogStates();
+    data.moduleProgressBasis = 'current_activities';
+    data.activityLogOtjh = { learners: [{ learnerId: 'profile-1', plannedOtjh: 6, achievedOtjh: 1, historicalOtjh: 5 }],
+      achievedTotal: 1, plannedTotal: 6, historicalTotal: 5, source: 'Activity Log' };
+    data.learnerKsbConsumption[0] = { ...data.learnerKsbConsumption[0], consumedWeightTotal: 80,
+      cappedConsumedWeightTotal: 50, expectedWeightTotal: 100, historicalConsumedWeightTotal: 30, unallocatedPlannedWeight: 10 };
+    fetchImpact.mockResolvedValue(data);
+    open();
+    await screen.findByText('Test reading c1');
+    expect(screen.getByRole('article', { name: 'OTH Progress' })).toHaveTextContent('01:00:00 / 06:00:00');
+    expect(screen.getByRole('article', { name: 'KSB Progress' })).toHaveTextContent('50 / 100');
+    const history = screen.getByRole('region', { name: 'Historical and unallocated progress' });
+    expect(history).toHaveTextContent('Historical OTJH: 05:00:00');
+    expect(history).toHaveTextContent('Historical KSB weight: 30');
+    expect(history).toHaveTextContent('Recorded current KSB weight: 80');
+    expect(overallPercent(150, 100, 100)).toBe(100);
+  });
+
   it('keeps known accepted hours in overview and weekly totals when another activity has no time', async () => {
     const data = withLogStates();
     data.learnerActivityPlan![1].logState = { ...data.learnerActivityPlan![1].logState!,

@@ -1,6 +1,6 @@
 import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
-import { LearnerStatusCounts } from '../shared/entities/LearnerStatusCounts';
-import { useRefreshAssignedLearners } from '../shared/entities/assignedLearnerDirectory';
+import { ModuleLearnerCount } from './ModuleLearnerCount';
+import { Context as LearnerDirectoryContext, useRefreshAssignedLearners } from '../shared/entities/assignedLearnerDirectory';
 import { sessionDeliveryDate } from '@/lib/deliveryWeek';
 import { EditScope, ModulePresence } from './CollaborativeField';
 import { CollaborationContext } from './collaborationContext';
@@ -8,7 +8,7 @@ import { useModuleCollaboration } from './useModuleCollaboration';
 import { dirtyFields, projectAvailable } from './collaborationProtocol';
 import { ModuleEditReservedError } from './moduleAuthoringData';
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -692,6 +692,7 @@ export default function ModuleBuilder() {
 
 function ModuleBuilderContent() {
   const refreshAssignedLearners = useRefreshAssignedLearners();
+  const learnerDirectory = useContext(LearnerDirectoryContext);
   const { auth } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedCreateScopeRef = useRef({
@@ -782,6 +783,7 @@ function ModuleBuilderContent() {
   // figure, so it paints it here and the next successful list read takes over.
   const [learnerCountOverrides, setLearnerCountOverrides] = useState<Record<string, number>>({});
   const learnerAssignmentModuleIdRef = useRef('');
+  const learnerRequestRef = useRef(0);
   const [learnerProgress, setLearnerProgress] = useState<{
     target: LearnerAssignmentTarget;
     impact: CurriculumScopeLearnerKsbImpactResponse;
@@ -1812,12 +1814,16 @@ function ModuleBuilderContent() {
     setSearchParams(previous => {
       const next = new URLSearchParams(previous);
       if (catalogueId) next.set('learners', catalogueId);
-      else next.delete('learners');
+      else {
+        next.delete('learners');
+        next.delete('learnerStatus');
+      }
       return next;
     }, { replace: true });
   }, [setSearchParams]);
 
   const openLearnerAction = useCallback(async (module: ModuleBuilderListItem) => {
+    const request = ++learnerRequestRef.current;
     const identifier = moduleLearnerIdentifier(module);
     if (!identifier) {
       setActionMessage(`Unable to open learner assignments for ${module.title}: no module identifier was returned.`);
@@ -1831,6 +1837,7 @@ function ModuleBuilderContent() {
     setActionMessageRetry(null);
     try {
       const directory = await fetchLearnerAssignments(target);
+      if (request !== learnerRequestRef.current) return null;
       // The assignment directory is the membership authority. The impact
       // endpoint adds OTJH/KSB progress, but may not return a newly/directly
       // assigned learner that has no placement or activity to aggregate yet.
@@ -1854,10 +1861,12 @@ function ModuleBuilderContent() {
         return 0;
       }
       const impact = await fetchCurriculumScopeLearnerKsbImpact('module', identifier, { learnerStatus: 'all', moduleProgress: true });
+      if (request !== learnerRequestRef.current) return null;
       setLearnerProgress({ target, impact, assignedLearners });
       rememberOpenLearners(module.catalogueId);
       return assignedCount;
     } catch (err) {
+      if (request !== learnerRequestRef.current) return null;
       setActionMessage(err instanceof Error ? err.message : `Unable to load learners for ${module.title}.`);
       return null;
     }
@@ -4275,15 +4284,24 @@ function ModuleBuilderContent() {
             setLearnerAssignmentTarget(null);
             if (catalogueId) setLearnerCountOverrides(previous => ({ ...previous, [catalogueId]: result.learnerCount }));
             if (catalogueId) refreshAssignedLearners?.({ scope: 'module', id: catalogueId, name: '' });
+            if (learnerAssignmentTarget) learnerDirectory?.statusStore.refresh(learnerAssignmentTarget);
             void reload({ silent: true });
           }}
         />
         {learnerProgress && (
           <ModuleLearnerProgressDialog
+            key={learnerProgress.target.id}
             moduleName={learnerProgress.target.name}
             moduleId={learnerProgress.target.id}
             impact={learnerProgress.impact}
             assignedLearners={learnerProgress.assignedLearners}
+            initialStatus={searchParams.get('learnerStatus') || 'all'}
+            onStatusChange={status => setSearchParams(previous => {
+              const next = new URLSearchParams(previous);
+              if (status === 'all') next.delete('learnerStatus');
+              else next.set('learnerStatus', status);
+              return next;
+            }, { replace: true })}
             onClose={() => {
               setLearnerProgress(null);
               rememberOpenLearners('');
@@ -4303,6 +4321,7 @@ function ModuleBuilderContent() {
               setLearnerProgress(current => current
                 ? { ...current, assignedLearners: current.assignedLearners.filter(row => String(row.id) !== learnerId) }
                 : current);
+              learnerDirectory?.statusStore.refresh(learnerProgress.target);
               const catalogueId = learnerAssignmentModuleIdRef.current;
               if (catalogueId) {
                 refreshAssignedLearners?.({ scope: 'module', id: catalogueId, name: '' });
@@ -8424,7 +8443,7 @@ function ModuleCatalogueCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5 xl:justify-end">
-          <LearnerStatusCounts target={{ scope: 'module', id: moduleLearnerIdentifier(module), name: module.title }} onManage={onLearners} refreshKey={module.sourceModule} />
+          <ModuleLearnerCount moduleId={moduleLearnerIdentifier(module)} moduleName={module.title} onOpen={onLearners} refreshKey={module.sourceModule} />
           {primaryDeliveryHref && (
             <Link
               to={primaryDeliveryHref}

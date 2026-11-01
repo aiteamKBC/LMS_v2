@@ -9,7 +9,7 @@ import { fetchAssignedLearners } from '@/api/assignedLearners';
 vi.mock('@/api/assignedLearners', () => ({
   fetchLearnerStatusCounts: vi.fn(async (_scope: string, ids: string[]) => Object.fromEntries(ids.map(id => {
     const count = modules.find(module => module.moduleCatalogueId === id)?.assignments || 0;
-    return [id, { total: count, statuses: count ? { active: count } : {} }];
+    return [id, { total: count, statuses: count ? { active: count - 1, withdrawn: 1 } : {} }];
   }))),
   fetchAssignedLearners: vi.fn(async () => ({ scope: 'module', id: 'MOD-1', status: 'active', total: 0, filteredTotal: 0, page: 1, pageSize: 25, learners: [] })),
 }));
@@ -297,13 +297,14 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
   it('shows every module count, including zero, before opening any learner list and keeps it across filters', async () => {
     const user = userEvent.setup();
     await renderCatalogue();
-    expect(await cardFor('Data Foundations').findByRole('button', { name: 'Data Foundations: 3 all statuses learners' })).toHaveTextContent('3');
-    expect(await cardFor('Network Basics').findByRole('button', { name: 'Network Basics: 0 all statuses learners' })).toHaveTextContent('0');
+    expect(await cardFor('Data Foundations').findByRole('button', { name: 'Data Foundations: 3 learners' })).toHaveTextContent('3');
+    expect(cardFor('Data Foundations').queryByRole('button', { name: /active learners|withdrawn learners|on break learners/ })).not.toBeInTheDocument();
+    expect(await cardFor('Network Basics').findByRole('button', { name: 'Network Basics: 0 learners' })).toHaveTextContent('0');
     await chooseOption(user, 'Programme', 'Data Analyst');
     expect(screen.queryByText('Network Basics')).not.toBeInTheDocument();
     await chooseOption(user, 'Programme', 'All programmes');
-    expect(cardFor('Data Foundations').getByRole('button', { name: 'Data Foundations: 3 all statuses learners' })).toBeInTheDocument();
-    expect(cardFor('Network Basics').getByRole('button', { name: 'Network Basics: 0 all statuses learners' })).toBeInTheDocument();
+    expect(cardFor('Data Foundations').getByRole('button', { name: 'Data Foundations: 3 learners' })).toBeInTheDocument();
+    expect(cardFor('Network Basics').getByRole('button', { name: 'Network Basics: 0 learners' })).toBeInTheDocument();
     expect(fetchLearnerAssignments).not.toHaveBeenCalled();
     expect(fetchCurriculumScopeLearnerKsbImpact).not.toHaveBeenCalled();
     expect(fetchAssignedLearners).not.toHaveBeenCalled();
@@ -314,8 +315,8 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     modules = modules.map(module => module.id === 'MOD-1' ? { ...module, assignments: 7 } : module);
     const { default: ModuleBuilder } = await import('../page');
     view.rerender(<MemoryRouter initialEntries={['/curriculum/module-builder']}><ModuleBuilder /></MemoryRouter>);
-    await waitFor(() => expect(cardFor('Data Foundations').getByRole('button', { name: 'Data Foundations: 7 all statuses learners' })).toHaveTextContent('7'));
-    expect(cardFor('Network Basics').getByRole('button', { name: 'Network Basics: 0 all statuses learners' })).toBeInTheDocument();
+    await waitFor(() => expect(cardFor('Data Foundations').getByRole('button', { name: 'Data Foundations: 7 learners' })).toHaveTextContent('7'));
+    expect(cardFor('Network Basics').getByRole('button', { name: 'Network Basics: 0 learners' })).toBeInTheDocument();
     expect(fetchLearnerAssignments).not.toHaveBeenCalled();
     expect(fetchAssignedLearners).not.toHaveBeenCalled();
   });
@@ -325,9 +326,9 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     fetchLearnerAssignments.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
     const user = userEvent.setup();
     await renderCatalogue();
-    const count = await cardFor('Data Foundations').findByRole('button', { name: 'Data Foundations: 3 all statuses learners' });
+    const count = await cardFor('Data Foundations').findByRole('button', { name: 'Data Foundations: 3 learners' });
     await user.click(count);
-    const button = await screen.findByRole('button', { name: 'Assignments & progress' });
+    const button = count;
     await user.click(button);
     expect(button).toBeDisabled();
     expect(count).toHaveTextContent('3');
@@ -336,14 +337,13 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     await act(async () => reject(new Error('Learner details unavailable')));
     expect(await screen.findByText('Learner details unavailable')).toBeVisible();
     expect(count).toHaveTextContent('3');
-    expect(cardFor('Network Basics').getByRole('button', { name: 'Network Basics: 0 all statuses learners' })).toBeInTheDocument();
+    expect(cardFor('Network Basics').getByRole('button', { name: 'Network Basics: 0 learners' })).toBeInTheDocument();
   });
 
   it('opens the assignment drawer when the module has no assigned learners', async () => {
     modules[0].assignments = 0;
     await renderCatalogue();
-    await userEvent.click(await cardFor('Data Foundations').findByRole('button', { name: /Data Foundations: \d+ all statuses learners/ }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Assignments & progress' }));
+    await userEvent.click(await cardFor('Data Foundations').findByRole('button', { name: /Data Foundations: \d+ learners/ }));
 
     expect(await screen.findByRole('note')).toHaveTextContent('this module only');
     expect(screen.getByRole('note')).toHaveTextContent('Their programme, cohort and other module assignments stay as they are.');
@@ -361,17 +361,37 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
       totals: { learnerCount: 1, assignedCount: 1 },
     });
     await renderCatalogue();
-    await userEvent.click(await cardFor('Data Foundations').findByRole('button', { name: 'Data Foundations: 1 all statuses learners' }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Assignments & progress' }));
+    await userEvent.click(await cardFor('Data Foundations').findByRole('button', { name: 'Data Foundations: 1 learners' }));
 
     expect(await screen.findByRole('dialog', { name: 'Data Foundations learner progress' })).toBeInTheDocument();
-    expect(cardFor('Data Foundations').getByRole('button', { name: 'Data Foundations: 1 all statuses learners' })).toBeInTheDocument();
+    expect(screen.queryByText('Plan to date')).not.toBeInTheDocument();
+    expect(fetchAssignedLearners).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Learner status')).toHaveValue('all');
+    expect(cardFor('Data Foundations').getByRole('button', { name: 'Data Foundations: 1 learners' })).toBeInTheDocument();
     expect(screen.getByText('A Learner')).toBeInTheDocument();
     expect(screen.getByText('KSB weights achieved')).toBeInTheDocument();
     expect(fetchCurriculumScopeLearnerKsbImpact).toHaveBeenCalledWith('module', 'MOD-1', { learnerStatus: 'all', moduleProgress: true });
 
     await userEvent.click(screen.getByRole('button', { name: 'Assign more learners' }));
     expect(await screen.findByRole('note')).toHaveTextContent('this module only');
+  });
+
+  it('keeps the last selected module when an earlier assignment read arrives late', async () => {
+    let finishFirst!: (directory: unknown) => void;
+    const assigned = [{ id: 'learner-2', name: 'Network learner', email: 'network@example.invalid',
+      programme: 'Network Engineer', company: '', cohort: '', group: '', programmeStatus: 'active',
+      learnerType: 'apprentice', assigned: true, moduleCount: 1 }];
+    fetchLearnerAssignments.mockImplementationOnce(() => new Promise(resolve => { finishFirst = resolve; }))
+      .mockResolvedValueOnce({ learners: assigned });
+    await renderCatalogue();
+    await userEvent.click(await cardFor('Data Foundations').findByRole('button', { name: 'Data Foundations: 3 learners' }));
+    await userEvent.click(await cardFor('Network Basics').findByRole('button', { name: 'Network Basics: 0 learners' }));
+    expect(await screen.findByRole('dialog', { name: 'Network Basics learner progress' })).toHaveTextContent('Network learner');
+    await act(async () => finishFirst({ learners: assigned }));
+    expect(screen.getByRole('dialog', { name: 'Network Basics learner progress' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Data Foundations learner progress' })).not.toBeInTheDocument();
+    expect(fetchCurriculumScopeLearnerKsbImpact).toHaveBeenCalledTimes(1);
+    expect(fetchCurriculumScopeLearnerKsbImpact).toHaveBeenCalledWith('module', 'MOD-2', { learnerStatus: 'all', moduleProgress: true });
   });
 
   it('shows each module with the delivery it runs in', async () => {
