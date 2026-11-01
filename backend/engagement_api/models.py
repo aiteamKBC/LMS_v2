@@ -663,6 +663,26 @@ class FeedbackDeliveryRecipient(models.Model):
         db_table = 'Feedback"."feedback_delivery_recipients'
 
 
+class FeedbackDeliveryQuestionOverride(models.Model):
+    """One recipient's corrected question, without rewriting a started response."""
+
+    recipient = models.ForeignKey(
+        FeedbackDeliveryRecipient, on_delete=models.PROTECT, related_name='question_overrides',
+        db_column='recipient_id',
+    )
+    original_question = models.ForeignKey(
+        FeedbackQuestion, on_delete=models.PROTECT, related_name='+', db_column='original_question_id',
+    )
+    replacement_question = models.ForeignKey(
+        FeedbackQuestion, on_delete=models.PROTECT, related_name='+', db_column='replacement_question_id',
+    )
+    effective_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_delivery_question_overrides'
+
+
 class FeedbackReviewDelivery(models.Model):
     """One future completed imported review pinned to its feedback template."""
 
