@@ -14,6 +14,7 @@ from coach_api.migrated_completion_views import (
 )
 from coach_api.migrated_reopening_views import party_revision_pdf
 from coach_api.personal_support_access import prepare_learner_personal_support
+from coach_api.learner_review_prepare import prepare_learner_review, preview_learner_review
 from curriculum_api import recording_views
 from . import monthly_logs
 from .dashboard_metrics import learner_metrics
@@ -61,6 +62,8 @@ urlpatterns = [
     path('migrated-reviews/csrf', migrated_review_party_csrf, name='migrated-review-party-csrf'),
     path('migrated-reviews/<str:review_id>/party', migrated_review_party_detail, name='migrated-review-party-detail'),
     path('migrated-reviews/<str:review_id>/prepare-psp', prepare_learner_personal_support, name='learner-prepare-personal-support'),
+    path('migrated-reviews/<str:review_id>/prepare-review', prepare_learner_review, name='learner-prepare-migrated-review'),
+    path('migrated-reviews/<str:review_id>/preview-review/<str:kind>/<int:pk>', preview_learner_review, name='admin-preview-migrated-review'),
     path('migrated-reviews/<str:review_id>/party-pdf', migrated_review_party_pdf, name='migrated-review-party-pdf'),
     path('migrated-reviews/<str:review_id>/revisions/<int:number>/pdf', party_revision_pdf, name='migrated-review-party-revision-pdf'),
     path('migrated-reviews/<str:review_id>/party-sign', migrated_review_party_sign, name='migrated-review-party-sign'),
