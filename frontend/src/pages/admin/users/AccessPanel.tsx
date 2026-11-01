@@ -27,6 +27,7 @@ import { useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { ACCESS_OPTIONS, updateStaffUser, type StaffAccess } from '@/api/staffUsers';
 import type { PlatformAccount } from '@/api/platformAdmin';
+import { ModuleHoursAccessPanel } from './ModuleHoursAccessPanel';
 
 const SUPER_ADMIN: StaffAccess = 'super-admin';
 
@@ -275,6 +276,7 @@ export function AccessPanel({
                 </div>
               )}
 
+              <ModuleHoursAccessPanel accountId={account.id} isAdmin={account.role === 'admin'} />
               {error && (
                 <div className="bg-red-50 border border-red-200/60 rounded-xl p-3 flex items-start gap-2.5">
                   <AppIcon className="ri-error-warning-line text-red-600 text-sm mt-0.5 shrink-0"></AppIcon>
