@@ -1,5 +1,6 @@
 import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
 import { ModuleLearnerCount } from './ModuleLearnerCount';
+import { ModuleHoursStrip } from '../shared/components/ModuleHours';
 import { Context as LearnerDirectoryContext, useRefreshAssignedLearners } from '../shared/entities/assignedLearnerDirectory';
 import { sessionDeliveryDate } from '@/lib/deliveryWeek';
 import { EditScope, ModulePresence } from './CollaborativeField';
@@ -3740,6 +3741,7 @@ function ModuleBuilderContent() {
                   )}
                   <EditScope kind="component" id={selectedComponent.id}>
                   <WeekComponentEditor
+                    moduleHoursSummary={<ModuleHoursStrip moduleId={workingModule.catalogueId || workingModule.id} totalHours={workingModule.totalOtjh} unsaved={hasUnsavedWorkingModuleChanges} />}
                     component={selectedComponent}
                     onChange={updates => updateWorkingModule(module =>
                       applyModuleComponentUpdate(module, selectedComponent.id, updates),
