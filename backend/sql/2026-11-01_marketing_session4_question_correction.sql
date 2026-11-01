@@ -1,4 +1,4 @@
--- Apply only AFTER 0010 and the recipient-specific question code are deployed.
+-- Apply only AFTER the question-override schema and recipient-specific code are deployed.
 -- One completed response keeps its original question. Eight unstarted learners
 -- receive the replacement from the effective instant onward. If the roster or
 -- response count changed, this transaction aborts for a fresh review.

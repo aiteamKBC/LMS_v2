@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import type { ReactNode } from 'react';
@@ -56,8 +56,8 @@ const detail = () => ({
   components: [first], quizAttempts: [], videoProgress: [], componentProgress: [], ksbs: [],
 }) as unknown as LearnerDetail;
 
-function mount() {
-  return render(<MemoryRouter initialEntries={['/learner/component/apprenticeship/1/C1']}>
+function mount(kind = 'apprenticeship') {
+  return render(<MemoryRouter initialEntries={[`/learner/component/${kind}/1/C1`]}>
     <Routes><Route path="/learner/component/:kind/:id/:componentId" element={<ComponentViewPage />} /></Routes>
   </MemoryRouter>);
 }
@@ -225,6 +225,81 @@ describe('the correction dialog', () => {
 
     expect(await screen.findByText('The completion date and time cannot be in the future.')).toBeInTheDocument();
     expect(screen.getByRole('dialog', { name: /review your completion date and time/i })).toBeVisible();
+  });
+
+  it('shows a save failure inside the correction dialog and keeps the chosen date for retry', async () => {
+    vi.mocked(submitComponentProgress)
+      .mockRejectedValueOnce(new CompletionValidationError('Sunday is not a working day.', 'weekend'))
+      .mockRejectedValueOnce(new Error('The saved activity time changed. Reload the activity and choose again. Your answers are kept.'));
+    mount();
+    await pressFinish();
+    const dialog = await screen.findByRole('dialog', { name: /review your completion date and time/i });
+    fireEvent.change(within(dialog).getByLabelText('Completion date'), { target: { value: '2026-10-30' } });
+    fireEvent.change(within(dialog).getByLabelText('Completion time'), { target: { value: '09' } });
+    fireEvent.change(within(dialog).getByLabelText('Completion minutes'), { target: { value: '16' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Final Submit' }));
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('The saved activity time changed.');
+    expect(within(dialog).getByLabelText('Completion date')).toHaveValue('2026-10-30');
+    expect(within(dialog).getByLabelText('Completion time')).toHaveValue('09');
+    expect(within(dialog).getByLabelText('Completion minutes')).toHaveValue('16');
+    expect(within(dialog).getByRole('button', { name: 'Final Submit' })).toBeEnabled();
+  });
+
+  it('preserves the skipped reflection when resubmitting the completion date', async () => {
+    vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [{ ...first, reflectionRequired: true }] } as LearnerDetail);
+    vi.mocked(submitComponentProgress)
+      .mockRejectedValueOnce(new CompletionValidationError('Sunday is not a working day.', 'weekend'))
+      .mockResolvedValueOnce({ record: progress } as unknown as ComponentProgressResponse);
+    mount();
+    fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '20' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'No, finish without reflection' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
+    const dialog = await screen.findByRole('dialog', { name: /review your completion date and time/i });
+    fireEvent.change(within(dialog).getByLabelText('Completion date'), { target: { value: '2026-10-30' } });
+    fireEvent.change(within(dialog).getByLabelText('Completion time'), { target: { value: '09' } });
+    fireEvent.change(within(dialog).getByLabelText('Completion minutes'), { target: { value: '16' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Final Submit' }));
+    await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledTimes(2));
+    const [original, corrected] = vi.mocked(submitComponentProgress).mock.calls.map(call => call[3]);
+    expect(original.skipReflection).toBe(true);
+    expect(corrected).toEqual({ ...original, declaredCompletedAt: '2026-10-30T09:16:00' });
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  });
+
+  it.each(['commercial', 'apprenticeship'])('preserves all three time decisions through Friday correction for %s learners', async kind => {
+    for (const [choice, label] of [
+      ['correct', 'Correct recorded time'], ['add', 'Add more learning time'], ['retry', 'Record another attempt'],
+    ] as const) {
+      vi.mocked(submitComponentProgress).mockReset();
+      const reading = { ...first, type: 'reading', component: 'Reading', contentHtml: '<p>Synthetic learning material</p>' };
+      const original = { ...progress, claimedSeconds: 3600, timeTrackingSource: 'signed:input', timeTaken: '60:00' };
+      vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading], componentProgress: [original] } as unknown as LearnerDetail);
+      vi.mocked(submitComponentProgress)
+        .mockRejectedValueOnce(new CompletionValidationError('Sunday is not a working day.', 'weekend'))
+        .mockResolvedValueOnce({ record: progress } as unknown as ComponentProgressResponse);
+      mount(kind);
+      fireEvent.click(await screen.findByRole('button', { name: 'Record another attempt' }));
+      fireEvent.click(screen.getByRole('radio', { name: new RegExp('^' + label) }));
+      if (choice === 'correct') fireEvent.change(screen.getByRole('textbox', { name: 'Reason for time correction' }), { target: { value: 'Correcting a synthetic duration.' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+      fireEvent.change(await screen.findByLabelText('Hours spent'), { target: { value: '0' } });
+      await pressFinish();
+      const dialog = await screen.findByRole('dialog', { name: /review your completion date and time/i });
+      fireEvent.change(within(dialog).getByLabelText('Completion date'), { target: { value: '2026-10-30' } });
+      fireEvent.change(within(dialog).getByLabelText('Completion time'), { target: { value: '09' } });
+      fireEvent.change(within(dialog).getByLabelText('Completion minutes'), { target: { value: '16' } });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Final Submit' }));
+      await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledTimes(2));
+      const [firstSubmit, corrected] = vi.mocked(submitComponentProgress).mock.calls.map(call => call[3]);
+      expect(corrected).toEqual({ ...firstSubmit, declaredCompletedAt: '2026-10-30T09:16:00' });
+      expect(corrected.retakeTimeChoice).toBe(choice);
+      expect(corrected.retakePreviousSeconds).toBe(3600);
+      await waitFor(() => expect(dialog).not.toBeInTheDocument());
+      cleanup();
+      localStorage.clear();
+    }
   });
 });
 

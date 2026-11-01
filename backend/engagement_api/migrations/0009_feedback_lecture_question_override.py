@@ -22,7 +22,7 @@ def install(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
-    dependencies = [('engagement_api', '0009_lecture_tutor_snapshot')]
+    dependencies = [('engagement_api', '0008_feedbackdeliveryquestion_feedbackreviewdelivery')]
     operations = [
         migrations.CreateModel(
             name='FeedbackDeliveryQuestionOverride',
