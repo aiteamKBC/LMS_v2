@@ -1,10 +1,17 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import type { ReactNode } from 'react';
 import type { CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
+import { fetchModuleHoursTarget, saveModuleHoursTarget } from '@/api/moduleHours';
+import type { ModuleComponent } from '../moduleAuthoringData';
+
+vi.mock('@/api/moduleHours', async original => ({
+  ...(await original<typeof import('@/api/moduleHours')>()),
+  fetchModuleHoursTarget: vi.fn(), saveModuleHoursTarget: vi.fn(),
+}));
 
 /**
  * The `?module=` deep link, which is how the Group and Module workspaces hand a
@@ -54,8 +61,8 @@ vi.mock('@/pages/curriculum/week-builder/weekTemplateData', () => ({
 }));
 
 vi.mock('@/pages/curriculum/shared/components/weekAuthoringLazy', () => ({
-  ComponentEditor: () => null,
-  WeekComponentRail: () => null,
+  ComponentEditor: ({ component, onChange, moduleHoursSummary }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; moduleHoursSummary?: ReactNode }) => <section role="region" aria-label="Component editor">{moduleHoursSummary}<label>Component hours<input type="number" value={component.expectedOtjh} onChange={event => onChange({ expectedOtjh: Number(event.target.value) })} /></label></section>,
+  WeekComponentRail: ({ components, onSelectId }: { components: ModuleComponent[]; onSelectId: (id: string) => void }) => <>{components.map(component => <button key={component.id} onClick={() => onSelectId(component.id)}>Edit component {component.title}</button>)}</>,
   WeekOverviewPanel: () => null,
 }));
 
@@ -168,6 +175,8 @@ describe('Module Builder deep links', { timeout: 15000 }, () => {
     clearAllCachedResources();
     createNewModule.mockClear();
     loadModuleStructure.mockClear();
+    vi.mocked(fetchModuleHoursTarget).mockReset().mockImplementation(async moduleId => ({ moduleId, targetMinutes: 8520, revision: 1, canMatch: false }));
+    vi.mocked(saveModuleHoursTarget).mockClear();
   });
 
   afterEach(() => {
@@ -181,6 +190,33 @@ describe('Module Builder deep links', { timeout: 15000 }, () => {
     // payload's revision protects the subsequent structure save.
     await waitFor(() => expect(loadModuleStructure).toHaveBeenCalledWith('MOD-20260818112738930447', { revalidate: true }));
     expect(createNewModule).not.toHaveBeenCalled();
+  });
+
+  it('shows fixed hours beside module totals before selecting a component and only warns when exceeded', async () => {
+    const { createEmptyWeek, createEmptyComponent } = await import('../moduleAuthoringData');
+    const week = createEmptyWeek('MOD-20260818112738930447', 1);
+    week.components = [{ ...createEmptyComponent(week.id, 'reading', 1), title: 'Hours component', expectedOtjh: 142 }];
+    loadModuleStructure.mockResolvedValueOnce({ weekStructure: [week] } as never);
+    await renderAt('?module=MOD-20260818112738930447');
+
+    const totals = await screen.findByRole('group', { name: 'Module totals' });
+    const fixed = await within(totals).findByRole('button', { name: /Component hours: 142 h.*Fixed hours target: 142 h.*Target matched/ });
+    expect(fixed).toHaveTextContent('Fixed hours142 h');
+    expect(within(totals).getByText('Components').parentElement).toHaveTextContent('1');
+    expect(within(totals).getByText('OTJH').parentElement).toHaveTextContent('142.0');
+    expect(screen.queryByRole('region', { name: 'Component editor' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit component Hours component' }));
+    const editor = screen.getByRole('region', { name: 'Component editor' });
+    expect(within(editor).queryByText('Fixed hours')).not.toBeInTheDocument();
+    fireEvent.change(within(editor).getByRole('spinbutton', { name: 'Component hours' }), { target: { value: '150' } });
+
+    expect(fixed).toHaveClass('text-red-800');
+    expect(fixed).toHaveTextContent('142 h');
+    expect(fixed).toHaveAttribute('title', expect.stringContaining('8 h over target'));
+    expect(within(totals).getByText('OTJH').parentElement).toHaveTextContent('150.0');
+    expect(screen.getByRole('button', { name: 'Save module changes' })).toBeEnabled();
+    expect(saveModuleHoursTarget).not.toHaveBeenCalled();
   });
 
   it('opens an assignment module without downloading the unused quiz catalogue', async () => {
