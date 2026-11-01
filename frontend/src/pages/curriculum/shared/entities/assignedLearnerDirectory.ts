@@ -20,6 +20,7 @@ export function createCountStore() {
     refresh(target: LearnerTarget) {
       publish(keyFor(target), { count: null });
     },
+    refreshAll() { listeners.forEach((_set, key) => publish(key, { count: null })); },
     dispose() { listeners.clear(); },
   };
 }

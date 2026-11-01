@@ -461,6 +461,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   const calendarSyncAttempts = useRef<Map<string, number>>(new Map());
   const calendarSyncStatuses = useRef<Map<string, string>>(new Map());
   const [calendarSyncing, setCalendarSyncing] = useState<Set<string>>(() => new Set());
+  const [calendarCheckRevisions, setCalendarCheckRevisions] = useState<Record<string, number>>({});
   const [resultsModule, setResultsModule] = useState('');
   const [preview, setPreview] = useState<{ liveSessionId: string; artifact: TeamsMeetingArtifact; title: string } | null>(null);
   /**
@@ -501,6 +502,8 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   createDirty.current = createDrawer.dirty;
   // The same form for an existing calendar, and what it held when opened.
   const updateDrawer = useDrawerState<TeamsCalendarForm>(emptyTeamsCalendarForm());
+  const peopleFormsRef = useRef({ create: createDrawer.form, update: updateDrawer.form });
+  peopleFormsRef.current = { create: createDrawer.form, update: updateDrawer.form };
   const updateBaseline = useRef<TeamsCalendarForm | null>(null);
   // The calendar the invitation fields were filled from.
   const invitationsFor = useRef('');
@@ -1093,6 +1096,11 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       return undefined;
     } finally {
       calendarSyncInFlight.current.delete(liveSessionId);
+      // A check can save verification without changing any session. Refresh
+      // only this calendar's report, including a newly recorded failed check.
+      if (calendarSyncEligibility.current.get(liveSessionId)?.allowed) {
+        setCalendarCheckRevisions(current => ({ ...current, [liveSessionId]: (current[liveSessionId] || 0) + 1 }));
+      }
       setCalendarSyncing(current => {
         const next = new Set(current);
         next.delete(liveSessionId);
@@ -1193,8 +1201,8 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   /**
    * The people and settings alone, every date left where Teams holds it.
    *
-   * "Save without notifying" (the default) sends nothing to anybody, not even
-   * the people it adds. "Save and invite added people" (`invite`) is the same
+   * "Save without notifying" (the default) sends no LMS email and requests
+   * Microsoft's silent preference. "Save and invite added people" (`invite`) is the same
    * save, after which the people it added -- and only they -- are sent the
    * Teams invitation and their LMS schedule. Neither tells anyone already
    * invited, and neither ever moves a date.
@@ -1512,6 +1520,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   const prefillInvitees = async (
     row: MeetingRow,
     patch: (value: { attendees: string; presenters: string }) => void,
+    target: 'create' | 'update' = 'create',
   ) => {
     const requestId = ++inviteesRequestId.current;
     setInvitedPrefilling(true);
@@ -1519,19 +1528,29 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     try {
       const result = await fetchModuleMeetingInvitees(row.catalogueId);
       if (inviteesRequestId.current !== requestId) return;
+      const current = peopleFormsRef.current[target];
+      const mergePeople = (saved: string, assigned: string[]) => {
+        const seen = new Set<string>();
+        return emailList([saved, ...assigned].join('\n')).filter(email => {
+          const key = email.toLowerCase();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }).join('\n');
+      };
       patch({
-        attendees: result.attendees.join('\n'),
-        presenters: result.presenters.join('\n'),
+        attendees: mergePeople(current.attendees, result.attendees),
+        presenters: mergePeople(current.presenters, result.presenters),
       });
       // A prefill that found nobody used to look exactly like one that failed:
       // the fields stayed as they were and the button said nothing either way.
       setPrefillNotice(result.attendees.length || result.presenters.length
         ? {
           tone: 'ok',
-          text: `Filled in ${result.attendees.length} learner${result.attendees.length === 1 ? '' : 's'} who ${result.attendees.length === 1 ? 'has' : 'have'} this module on their training plan`
+          text: `Found ${result.attendees.length} learner${result.attendees.length === 1 ? '' : 's'} who ${result.attendees.length === 1 ? 'has' : 'have'} this module on their training plan. Existing entries were kept`
             + (result.presenters.length
               ? " and the module's tutor as presenter."
-              : '. This module has no tutor assigned, so Presenters was cleared.'),
+              : '. This module has no tutor assigned. Existing entries were kept.'),
         }
         : {
           tone: 'error',
@@ -1672,9 +1691,9 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
    * meeting runs. The dates sent back are the ones Teams already holds, so no
    * session moves; only the fields the author changed are sent.
    *
-   * Without `invite` it only saves. Nobody is emailed -- not by Microsoft, not
-   * by the LMS, not even the people it adds -- so it skips the send review and
-   * never opens the email result. With `invite` the people it adds, and only
+   * Without `invite` it saves without LMS email and requests Microsoft's silent
+   * preference; this cannot certify mailbox delivery. It skips the send review.
+   * With `invite` the people it adds, and only
    * they, are forwarded the Teams invitation and sent their LMS schedule.
    *
    * Either way the server refuses, before writing anything, when Teams no
@@ -1720,9 +1739,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
         title: warning ? 'Saved with a warning' : 'Saved without notifying',
         text: warning
           ? warning.message
-          : `Invitations and meeting settings are saved for ${row.name}. Nobody was emailed${added
-            ? `, including the ${added} ${added === 1 ? 'person' : 'people'} you added`
-            : ''}. The join link and session dates are unchanged.`,
+          : `Invitations and meeting settings are saved for ${row.name}${added ? `, including ${added} added ${added === 1 ? 'person' : 'people'}` : ''}. No LMS email was sent. Microsoft may send a calendar update. The join link and session dates are unchanged.`,
         timer: warning ? undefined : 3200,
       });
     } catch (err) {
@@ -2071,7 +2088,10 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       seededInvitationsRef.current = '';
       return;
     }
-    if (originalId) return;
+    // Saved fields remain visible while the original is unavailable, but the
+    // dialog keeps them read-only. Only a verified original read can enable
+    // saving; an attendee-copy report never becomes the editable baseline.
+    if (originalId && originalRead.id === originalId && originalRead.data?.status === 'editable') return;
     const loaded = detailSeries?.id === summary.liveSessionId;
     const key = `${summary.liveSessionId}:${loaded}:${summary.updatedAt || ''}:${loaded ? JSON.stringify(detailSeries) : ''}`;
     if (seededInvitationsRef.current === key) return;
@@ -2081,7 +2101,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     // seedInvitations is re-created every render; the key is what keeps this
     // from running twice for the same calendar state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, detailSeries, originalId]);
+  }, [selected, detailSeries, originalId, originalRead.id, originalRead.data?.status]);
 
   // True while the discard dialog is up. Escape reaches both this dialog and
   // SweetAlert's own handler in the same event, so without the flag dismissing
@@ -2178,7 +2198,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     teamsLoading, teamsLoaded, teamsError, graphConfigured, graphStatus, checkGraphConfiguration, timeZoneLabel,
     selectedId, setSelectedId, calendarActionTarget, setCalendarActionTarget,
     busy, notice, setNotice, detail, detailLoading, detailError, loadDetail, detailOccurrenceFor,
-    artifactSyncing, autoSyncEnabled, setAutoSyncEnabled, calendarSyncing, resultsModule, setResultsModule,
+    artifactSyncing, autoSyncEnabled, setAutoSyncEnabled, calendarSyncing, calendarCheckRevisions, resultsModule, setResultsModule,
     preview, setPreview, transcriptPreview, setTranscriptPreview, pendingComponents, now,
     settingsDrawer, createDrawer, createDraft, createDraftSaving, saveCreateDraft, leftoverCancelling, cancelLeftover, updateDrawer, drawerTarget, invitedPrefilling, prefillNotice,
     loadTeamsState, holidayLabelFor, rows, selected, selectedForDisplay, stats,

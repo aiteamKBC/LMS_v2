@@ -1,5 +1,6 @@
 import { finishTeamsCreation, finishTeamsUpdate } from '../creationResult';
 import { syncTeamsCalendarState } from '../calendarState';
+import * as calendarHealth from '../calendarHealth';
 import { calendarAction } from '../calendarActions';
 import { compareTeamsAttendees } from '../attendeeComparison';
 import { loadModuleStructure, loadTeamsMeetingArtifacts, loadTeamsMeetingConfiguration, type ModuleCatalogueItem, type ModuleComponent } from '../../module-builder/moduleAuthoringData';
@@ -8,7 +9,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import { readImportedMeetingEditor } from '@/lib/curriculumApi';
+import { fetchImportedMeetingParticipants, readImportedMeetingEditor, fetchOrganizationCalendarConnection } from '@/lib/curriculumApi';
 import type {
   CurriculumCohort,
   CurriculumGroup,
@@ -198,6 +199,7 @@ const fetchModuleSessionPlan = vi.fn(async (moduleId: string) => ({
 vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
   readImportedMeetingEditor: vi.fn(async () => ({ status: 'blocked', message: 'Original calendar requires connection.' })),
+  fetchOrganizationCalendarConnection: vi.fn(),
   fetchImportedMeetingParticipants: vi.fn(async () => ({
     checkedAt: '2026-10-19T14:00:00Z',
     calendar: { status: 'unavailable', message: 'Not available' },
@@ -212,7 +214,7 @@ const updateTeamsMeetingSchedule = vi.fn(async () => ({
   meeting: {} as never,
   warnings: [],
 }));
-const fetchModuleMeetingInvitees = vi.fn(async (_moduleId: string) => ({
+const fetchModuleMeetingInvitees = vi.fn(async (_moduleId: string): Promise<{ attendees: string[]; presenters: string[] }> => ({
   attendees: [],
   presenters: ['mahmoudfouda015@gmail.com'],
 }));
@@ -292,6 +294,7 @@ describe('Teams Meetings page', () => {
   beforeEach(() => {
     vi.mocked(readImportedMeetingEditor).mockReset();
     vi.mocked(readImportedMeetingEditor).mockResolvedValue({ status: 'blocked', message: 'Original calendar requires connection.', connectionRequired: true, connectionKind: 'group' });
+    vi.mocked(fetchOrganizationCalendarConnection).mockResolvedValue({ applicable: true, available: true, connected: false, state: 'disconnected', canManageOrganization: false, calendarKind: 'group', message: 'An administrator connects the organization calendar.' });
     vi.mocked(loadModuleStructure).mockReset();
     vi.mocked(loadModuleStructure).mockImplementation(async catalogueId => savedModule(catalogueId));
     vi.mocked(syncTeamsCalendarState).mockReset();
@@ -372,6 +375,36 @@ describe('Teams Meetings page', () => {
       expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
       expect(finishTeamsCreation).not.toHaveBeenCalled();
     } finally { clock.mockRestore(); }
+  });
+
+  it('refreshes the selected health report after an unchanged sync without reloading every calendar', async () => {
+    window.localStorage.setItem('curriculumTeamsAutoSync', 'off');
+    const response: calendarHealth.CalendarHealth = {
+      liveSessionId: 'LIVE-1', module: { moduleCatalogueId: 'MOD-1', title: 'Data Foundations', programme: '', cohort: '', group: '' },
+      mainMeeting: { eventId: 'E-1', onlineMeetingId: 'M-1', joinRef: 'synthetic' },
+      summary: { status: 'verification_pending', neverVerified: true, lastVerifiedAt: '', verificationStale: false,
+        lastVerificationFailure: null, auditLogAvailable: true,
+        counts: { plannedSessions: 2, mainSeries: 2, additionalMeetings: 0, standaloneReplacements: 0,
+          missingOccurrences: 0, linkConflicts: 0, lifecycleIssues: 0, auditIssues: 0, notInPlan: 0 } },
+      sessions: { items: [], page: 1, pageSize: 25, pages: 1, total: 0, filter: 'all' }, warnings: [], readOnly: true,
+    };
+    const read = vi.spyOn(calendarHealth, 'fetchCalendarHealth').mockResolvedValueOnce(response)
+      .mockResolvedValue({ ...response, summary: { ...response.summary, status: 'healthy', neverVerified: false, lastVerifiedAt: '2026-10-31T12:00:00Z' } });
+    try {
+      await renderPage();
+      await screen.findByText('Data Foundations');
+      await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+      const dialog = within(await screen.findByRole('dialog'));
+      expect(await dialog.findByTestId('calendar-health-status')).toHaveTextContent('Verification pending');
+      const summaryReads = fetchCurriculumTeamsMeetingSummaries.mock.calls.length;
+      vi.mocked(syncTeamsCalendarState).mockResolvedValueOnce({ changed: false, seriesStatus: 'active', cancelledSessions: [], errors: [], leftovers: [] });
+      await userEvent.click(dialog.getByRole('button', { name: 'Sync calendar status' }));
+      await waitFor(() => expect(dialog.getByTestId('calendar-health-status')).toHaveTextContent('Healthy'));
+      expect(read.mock.calls).toEqual([['LIVE-1', 'all', 1], ['LIVE-1', 'all', 1]]);
+      expect(fetchCurriculumTeamsMeetingSummaries).toHaveBeenCalledTimes(summaryReads);
+      expect(createTeamsMeeting).not.toHaveBeenCalled();
+      expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+    } finally { read.mockRestore(); }
   });
 
   it('honours auto-sync off, and a manual check records eligible Microsoft cancellations locally', async () => {
@@ -886,6 +919,7 @@ describe('Teams Meetings page', () => {
   });
 
   it('uses the original standard form and actions for a linked calendar, with visible access failure', async () => {
+    vi.mocked(fetchOrganizationCalendarConnection).mockResolvedValue({ applicable: true, available: true, connected: false, state: 'disconnected', canManageOrganization: true, calendarKind: 'group', message: 'An administrator connects the organization calendar.' });
     fetchCurriculumTeamsMeetingSummaries.mockResolvedValue(summaries.map(summary => summary.moduleCatalogueId === 'MOD-1'
       ? { ...summary, meetingType: 'linked-external', calendarManagement: 'external' as const } : summary));
     await renderPage();
@@ -903,7 +937,7 @@ describe('Teams Meetings page', () => {
     await userEvent.click(update);
     expect(dialog.getByRole('status', { name: 'Teams calendar action' })).toHaveFocus();
     expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
-    expect(dialog.getByRole('button', { name: 'Connect Microsoft calendar' })).toBeEnabled();
+    expect(dialog.getByRole('button', { name: 'Connect organization calendar' })).toBeEnabled();
     expect(dialog.queryByText('Series linked from Teams')).not.toBeInTheDocument();
     expect(dialog.queryByRole('region', { name: 'Edit original Teams meeting' })).not.toBeInTheDocument();
     expect(dialog.queryByRole('button', { name: 'Review Teams calendar update' })).not.toBeInTheDocument();
@@ -941,6 +975,53 @@ describe('Teams Meetings page', () => {
     expect(input.scheduledOccurrences?.map(item => item.startDateTimeUtc)).toEqual(summaries[0].occurrenceDates?.map(value => new Date(value).toISOString()));
     expect(createTeamsMeeting).not.toHaveBeenCalled();
     if (!invite) expect(finishTeamsUpdate).not.toHaveBeenCalled();
+  });
+
+  it.each(['blocked', 'failed'] as const)('shows saved people and a read-only Microsoft copy when the original is %s', async state => {
+    fetchCurriculumTeamsMeetingSummaries.mockResolvedValue(summaries.map(summary => summary.moduleCatalogueId === 'MOD-1'
+      ? { ...summary, meetingType: 'linked-external', calendarManagement: 'external' as const } : summary));
+    if (state === 'failed') vi.mocked(readImportedMeetingEditor).mockRejectedValueOnce(new Error('Original calendar check failed.'));
+    vi.mocked(fetchImportedMeetingParticipants).mockResolvedValueOnce({
+      checkedAt: '2026-10-31T10:00:00Z',
+      calendar: { status: 'partial', source: 'attendee_calendar', message: 'Only visible invitations are confirmed.',
+        attendees: [{ email: 'copy.learner@example.invalid', name: 'Synthetic learner' }], hideAttendees: true },
+      roles: { status: 'unavailable', message: 'Roles are not confirmed.' },
+    });
+    await renderPage();
+    await screen.findByText('Data Foundations');
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(await dialog.findByText('copy.learner@example.invalid')).toBeVisible();
+    expect(dialog.getByText('Calendar invitees (1 visible)')).toBeVisible();
+    expect(dialog.getByText(/The original invitation list is not verified/)).toBeVisible();
+    expect(dialog.getByRole('button', { name: 'Remove learner@example.com' })).toBeDisabled();
+    expect(dialog.getByRole('combobox', { name: 'Attendees' })).toBeDisabled();
+    expect(dialog.queryByRole('button', { name: 'Remove copy.learner@example.invalid' })).not.toBeInTheDocument();
+    expect(dialog.getByRole('button', { name: 'Save without notifying' })).toBeDisabled();
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+    expect(createTeamsMeeting).not.toHaveBeenCalled();
+  });
+
+  it('prefill merges assigned learners with saved and newly typed invitees without duplicates', async () => {
+    let resolve!: (value: { attendees: string[]; presenters: string[] }) => void;
+    fetchModuleMeetingInvitees.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    await renderPage();
+    await screen.findByText('Data Foundations');
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    await dialog.findByRole('button', { name: 'Remove learner@example.com' });
+    await userEvent.click(dialog.getByRole('button', { name: 'Prefill from the learners who have this module on their plan' }));
+    const attendees = dialog.getByRole('combobox', { name: 'Attendees' });
+    fireEvent.change(attendees, { target: { value: 'manual@example.invalid' } });
+    fireEvent.keyDown(attendees, { key: 'Enter' });
+    await act(async () => resolve({ attendees: ['LEARNER@example.com', 'assigned@example.invalid'], presenters: [] }));
+    expect(await dialog.findByRole('button', { name: 'Remove assigned@example.invalid' })).toBeVisible();
+    expect(dialog.getByRole('button', { name: 'Remove manual@example.invalid' })).toBeVisible();
+    expect(dialog.getByRole('button', { name: 'Remove apprentice@example.com' })).toBeVisible();
+    expect(dialog.getAllByRole('button', { name: 'Remove learner@example.com' })).toHaveLength(1);
+    expect(dialog.queryByRole('button', { name: 'Remove LEARNER@example.com' })).not.toBeInTheDocument();
+    expect(dialog.getByLabelText('Attendees selected count')).toHaveTextContent('4');
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
   });
 
   it('uses raw imported series metadata from an older server before offering calendar edits', async () => {

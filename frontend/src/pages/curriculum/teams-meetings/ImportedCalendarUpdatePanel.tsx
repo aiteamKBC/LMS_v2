@@ -5,6 +5,7 @@ import {
   connectImportedCalendar,
   confirmImportedCalendarUpdate,
   fetchImportedCalendarConnection,
+  fetchOrganizationCalendarConnection,
   previewImportedCalendarUpdate,
   type ImportedCalendarPreview,
   type ImportedCalendarUpdateResult,
@@ -22,13 +23,14 @@ function sessionTime(value: string, timeZone?: string) {
   }
 }
 
-export function ImportedCalendarUpdatePanel({ liveSessionId, disabled, onUpdated, editorConnectionKind, onEditorConnected, connectionOnly = false }: {
+export function ImportedCalendarUpdatePanel({ liveSessionId, disabled, onUpdated, editorConnectionKind, onEditorConnected, connectionOnly = false, organizationManaged = false }: {
   liveSessionId: string;
   disabled: boolean;
   onUpdated: () => Promise<void>;
   editorConnectionKind?: 'user' | 'group' | null;
   onEditorConnected?: () => void;
   connectionOnly?: boolean;
+  organizationManaged?: boolean;
 }) {
   const [preview, setPreview] = useState<ImportedCalendarPreview | null>(null);
   const [result, setResult] = useState<ImportedCalendarUpdateResult | null>(null);
@@ -118,6 +120,7 @@ export function ImportedCalendarUpdatePanel({ liveSessionId, disabled, onUpdated
     if (!popup) { setFailure('Allow the Microsoft sign-in popup, then try connecting again.'); return; }
     inFlight.current = true;
     setBusy('connect'); setFailure('');
+    const requestedKind = editorConnectionKind || result?.connectionKind || preview?.connectionKind || 'user';
     let timer: ReturnType<typeof setInterval> | undefined;
     let complete = false;
     const cleanup = () => {
@@ -131,10 +134,17 @@ export function ImportedCalendarUpdatePanel({ liveSessionId, disabled, onUpdated
       complete = true;
       cleanup();
       try {
-        const connection = await fetchImportedCalendarConnection(liveSessionId);
+        // An older cached connection cannot turn a failed reconnection into
+        // success. The callback's explicit failure must stay visible.
+        if (message) { if (active.current) setFailure(message); return; }
+        const connection = await (organizationManaged ? fetchOrganizationCalendarConnection(liveSessionId) : fetchImportedCalendarConnection(liveSessionId));
         if (!active.current) return;
         if (!connection.connected) {
           setFailure(message || connection.message || 'Microsoft calendar access was not connected. Sign in with an account authorised to edit this original calendar.');
+          return;
+        }
+        if (connection.calendarKind !== requestedKind || (organizationManaged && !connection.organizationManaged)) {
+          setFailure(`This connection cannot manage the original ${requestedKind} calendar. Connect again before editing it.`);
           return;
         }
         if (editorConnectionKind && !uncertain) {
@@ -144,8 +154,8 @@ export function ImportedCalendarUpdatePanel({ liveSessionId, disabled, onUpdated
         inFlight.current = false;
         if (uncertain) await check();
         else await review();
-      } catch {
-        if (active.current) setFailure('The calendar connection could not be verified. Retry connecting before updating the series.');
+      } catch (error) {
+        if (active.current) setFailure(error instanceof Error ? error.message : 'The calendar connection could not be verified. Retry connecting before updating the series.');
       } finally {
         inFlight.current = false;
         if (active.current) setBusy(null);
@@ -158,7 +168,9 @@ export function ImportedCalendarUpdatePanel({ liveSessionId, disabled, onUpdated
     };
     disconnectPopup.current = cleanup;
     try {
-      const connection = await connectImportedCalendar(liveSessionId, editorConnectionKind || result?.connectionKind || preview?.connectionKind || 'user');
+      const connection = await (organizationManaged
+        ? connectImportedCalendar(liveSessionId, requestedKind, true)
+        : connectImportedCalendar(liveSessionId, requestedKind));
       if (!active.current) { popup.close(); return; }
       const authorization = new URL(connection.authorizationUrl);
       if (authorization.protocol !== 'https:' || authorization.hostname !== 'login.microsoftonline.com') throw new Error('Unsupported Microsoft sign-in address.');
@@ -182,10 +194,12 @@ export function ImportedCalendarUpdatePanel({ liveSessionId, disabled, onUpdated
   const ready = preview?.status === 'ready' && Boolean(preview.previewToken) && !uncertain;
   const importingOnly = preview?.calendarChangeRequired === false;
   if (connectionOnly) return <section aria-label="Microsoft calendar connection" className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs">
-    <p>Connect a Microsoft account allowed to manage this original calendar. Connecting sends no invitations and keeps the existing meeting link.</p>
+    <p>{organizationManaged
+      ? 'An LMS administrator connects an authorised Microsoft account for the organisation. Access renews automatically for authorised staff; the original organiser and meeting link stay the same.'
+      : 'Connect a Microsoft account allowed to manage this original calendar. Connecting sends no invitations and keeps the existing meeting link.'}</p>
     {failure && <p role="alert">{failure}</p>}
     <button type="button" onClick={() => void connect()} disabled={disabled || Boolean(busy)} className="rounded-lg border border-primary-200 bg-white px-3 py-2 font-bold text-primary-700 disabled:opacity-50">
-      {busy === 'connect' ? 'Complete Microsoft sign-in…' : 'Connect Microsoft calendar'}
+      {busy === 'connect' ? 'Complete Microsoft sign-in…' : organizationManaged ? 'Connect organization calendar' : 'Connect Microsoft calendar'}
     </button>
   </section>;
   return (

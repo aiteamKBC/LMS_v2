@@ -245,9 +245,10 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                 try:
                     event = verify_calendar(microsoft_graph_request, owner, event_id, targets, previous.get('joinUrl') or '', day_payload['repeat'] != 'none')
                     dates_already_verified = True
-                    patch = {'subject': body['subject']} if event.get('subject') != body['subject'] else {}
+                    patch = {'subject': body['subject']} if not people_only and event.get('subject') != body['subject'] else {}
                 except CalendarMismatch:
-                    pass
+                    if people_only:
+                        raise RuntimeError('The calendar changed during the invitation save. Refresh it before retrying.')
                 if 'recurrence' in patch:
                     # Rewriting this day's recurrence regenerates it from the
                     # pattern. A future session of this day that is no longer
@@ -283,7 +284,8 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                     {**combined, 'scheduledOccurrences': [], 'repeat': 'none'}, event, [], graph_settings,
                     organizer, stored_attendees, presenters, co_organizers=co_organizers, persist_occurrences=False,
                 )
-            v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id], {'calendar_series': v.json_db_value(manifest)})
+            if not people_only:
+                v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id], {'calendar_series': v.json_db_value(manifest)})
             if first_event is None:
                 first_event = event
             fresh_meeting = (not previous.get('onlineMeetingId') or not previous.get('joinUrl')
@@ -366,7 +368,8 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                     verified = False
                     warnings.append({'code': 'teams_weekday_duration_mismatch', 'message': f"{day} session {number} has a different end time on Teams. Update the calendar to retry."})
             entry['verified'] = verified
-            v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id], {'calendar_series': v.json_db_value(manifest)})
+            if not people_only:
+                v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id], {'calendar_series': v.json_db_value(manifest)})
             checked = verify_calendar(microsoft_graph_request, owner, event_id, targets,
                                       previous.get('joinUrl') or join_url, day_payload['repeat'] != 'none')
             # Did this day's sessions really move? Against both what Microsoft
@@ -442,7 +445,11 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                 comment=f"You have been added to {v.teams_calendar_subject(combined, series)}.",
             ))
 
-        for values in pending_rows:
+        # People/options saves must not renumber, supersede or reattach a
+        # session. Their request numbers are only verification inputs.
+        if people_only:
+            manifest = existing
+        for values in ([] if people_only else pending_rows):
             prior = (v.authoring_fetch_all(v.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s and session_number = %s',
                                            [live_id, values['session_number']]) or [{}])[0]
             v.authoring_upsert(v.LIVE_SESSION_OCCURRENCES_TABLE, ['live_session_id', 'session_number'], {
@@ -463,7 +470,7 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                                                    requested_settings)]
                                   if still_pending else [])
         days = {day for day, _ in groups}
-        for old in list(manifest):
+        for old in ([] if people_only else list(manifest)):
             if old['day'] not in days:
                 # A weekday the plan no longer uses keeps its Teams series. It
                 # is not deleted -- that is a cancellation Exchange emails to
@@ -474,19 +481,20 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                 leftover_slots.append({'eventId': old.get('eventId') or '', 'day': old['day'], 'kind': 'series',
                                        'reason': 'weekday_no_longer_planned'})
                 v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id], {'calendar_series': v.json_db_value(manifest)})
-        for row in v.authoring_fetch_all(v.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_id]):
+        for row in ([] if people_only else v.authoring_fetch_all(v.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_id])):
             # Not in the plan any more, but nobody pressed Cancel and its Teams
             # slot is still there: "not in plan", never 'cancelled'.
             if row['session_number'] not in requested_numbers and str(row.get('status') or '') not in ('cancelled', 'canceled'):
                 v.update_authoring_rows(v.LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [row['id']], {'status': 'superseded'})
         main = next(item for item in manifest if item['day'] == groups[0][0])
         v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id], {
+            **({} if people_only else {
             'calendar_series': v.json_db_value(manifest), 'graph_event_id': main['eventId'],
             'join_url': main['joinUrl'], 'online_meeting_id': main.get('onlineMeetingId') or '',
             'meeting_options_url': main.get('meetingOptionsUrl') or '',
             'start_datetime': v.parse_graph_datetime(combined.get('startDateTimeUtc')),
             'duration_minutes': combined.get('durationMinutes') or 60, 'repeat_pattern': 'weekly',
-            'repeat_occurrences': len(requested_numbers), 'module_title': v.teams_calendar_subject(combined, series),
+            'repeat_occurrences': len(requested_numbers), 'module_title': v.teams_calendar_subject(combined, series)}),
             'attendees': v.json_db_value(stored_attendees), 'presenters': v.json_db_value(presenters), 'co_organizers': v.json_db_value(co_organizers),
             # A refused settings change is not saved as if Microsoft had taken it.
             **({'recording': stored_options['recording'], 'lobby_bypass': stored_options['lobby_bypass'],
@@ -500,18 +508,23 @@ def save_weekday_calendar(payload, graph_settings, series=None):
         # The meeting ID and passcode under the main join link; a read, skipped
         # once captured for this link.
         from .teams_dial_in import remember_teams_dial_in
-        remember_teams_dial_in({'id': live_id, 'join_url': main['joinUrl'], 'online_meeting_id': main.get('onlineMeetingId'),
-                                'organizer_email': organizer, 'dial_in_join_url': series.get('dial_in_join_url'),
-                                'join_meeting_code': series.get('join_meeting_code')})
+        if not people_only:
+            remember_teams_dial_in({'id': live_id, 'join_url': main['joinUrl'], 'online_meeting_id': main.get('onlineMeetingId'),
+                                    'organizer_email': organizer, 'dial_in_join_url': series.get('dial_in_join_url'),
+                                    'join_meeting_code': series.get('join_meeting_code')})
         module_id = combined.get('moduleCatalogueId')
-        if module_id and v.authoring_module_exists(module_id):
+        if module_id and not people_only and v.authoring_module_exists(module_id):
             saved = v.authoring_fetch_all(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id])[0]
             occurrences = v.authoring_fetch_all(v.LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status not in ('cancelled', 'superseded')", [live_id], 'session_number')
             # Creating or updating a calendar only attaches it to live-session
             # components the author already placed. New components belong to
             # the explicit Restore/Re-attach action, never to Send itself.
+            unresolved_components = []
             v.attach_teams_meeting_to_module_weeks(module_id, saved, v.live_session_row_to_component_settings(saved), occurrences,
-                                                   create_missing=False)
+                                                   create_missing=False, unresolved_components=unresolved_components)
+            if unresolved_components:
+                warnings.append({'code': 'teams_component_binding_missing',
+                                 'message': f'{len(unresolved_components)} existing session link(s) were preserved because their calendar occurrence could not be matched. Review Calendar health before changing those sessions.'})
     except DroppedSessions as exc:
         return v.json_error(str(exc), status=409, code='teams_update_would_drop_sessions', liveSessionId=live_id,
                             calendarSeries=manifest)

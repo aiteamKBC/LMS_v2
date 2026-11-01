@@ -1,6 +1,6 @@
 """Read-only status totals, sharing the curriculum roster's placement rules."""
 import json
-from collections import Counter
+from collections import Counter, defaultdict
 
 from django.db import DatabaseError
 
@@ -71,10 +71,65 @@ def learner_facts(module_ids):
     return rows
 
 
+def placement_lineages(scope, identifiers):
+    """Resolve canonical list IDs in one narrow read, without catalogue content.
+
+    Legacy aliases retain the roster resolver. Normal list rows already carry
+    the stored ID and need neither lesson/KSB summaries nor one query per row.
+    """
+    from . import views
+    if scope == 'programme':
+        return {identifier: views.scope_placement_lineage(scope, identifier) for identifier in identifiers}
+    table, id_column = {
+        'module': (views.AUTHORING_MODULES_TABLE, 'module_catalogue_id'),
+        'cohort': (views.COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id'),
+        'group': (views.GROUPS_TABLE, 'group_id'),
+    }[scope]
+    columns = [id_column, 'programme_id', 'programme_name', 'cohort_id', 'cohort_name', 'group_id', 'group_name']
+    if scope == 'module':
+        columns.append('learner_roster_mode')
+    available = views.column_names(table)
+    columns = tuple(dict.fromkeys(column for column in columns if column in available))
+    if id_column not in columns:
+        raise DatabaseError('Curriculum placement is unavailable.')
+    rows = views.authoring_fetch_all(
+        table, f'{id_column} in ({", ".join(["%s"] * len(identifiers))})', identifiers,
+        columns=columns, ensure_tables=False,
+    )
+    by_id = {views.clean_str(row.get(id_column)): row for row in rows}
+    result = {}
+    for identifier in identifiers:
+        row = by_id.get(identifier)
+        if row is None:
+            result[identifier] = views.scope_placement_lineage(scope, identifier)
+            continue
+        lineage = {'found': True, 'programmeId': views.clean_str(row.get('programme_id')),
+                   'programmeName': views.clean_str(row.get('programme_name'))}
+        if scope in {'cohort', 'group', 'module'}:
+            lineage.update(cohortId=views.clean_str(row.get('cohort_id')), cohortName=views.clean_str(row.get('cohort_name')))
+        if scope in {'group', 'module'}:
+            lineage.update(groupId=views.clean_str(row.get('group_id')), groupName=views.clean_str(row.get('group_name')))
+        if scope == 'module':
+            lineage.update(moduleCatalogueId=identifier,
+                           learnerRosterMode=views.clean_str(row.get('learner_roster_mode') or 'inherited').lower())
+        result[identifier] = lineage
+    return result
+
+
 def counts_for_lineages(lineages, facts, programme_candidates):
     """The same ID-first placement narrowing and explicit-module overrides as rosters."""
     from . import views
-    result = {}
+    result, placements, totals = {}, {}, {}
+    facts = list(facts)
+    direct = defaultdict(set)
+    explicit, ambiguous = set(), set()
+    for index, fact in enumerate(facts):
+        if fact.get('explicit'):
+            explicit.add(index)
+        if fact.get('ambiguous'):
+            ambiguous.add(index)
+        for module_id in fact.get('module_ids') or []:
+            direct[module_id].add(index)
     for identifier, lineage in lineages.items():
         if not lineage.get('found'):
             result[identifier] = None
@@ -82,44 +137,50 @@ def counts_for_lineages(lineages, facts, programme_candidates):
         programme_id = views.scope_programme_identifier(lineage)
         candidates = {views.normalise(value) for value in programme_candidates.get(programme_id, []) if views.normalise(value)}
         module_id = str(lineage.get('moduleCatalogueId') or '')
-        counts = Counter()
-        seen = set()
-        for fact in facts:
-            learner_id = str(fact['id'])
-            if learner_id in seen:
-                continue
-            linked_programme = str(fact.get('programme_id') or '').strip()
-            placed = bool(programme_id and candidates and (
-                linked_programme == programme_id if linked_programme else views.normalise(fact.get('programme')) in candidates
-            ))
-            row = {'cohortId': fact.get('cohort_id'), 'cohort': fact.get('cohort'),
-                   'groupId': fact.get('group_id'), 'group': fact.get('group_name')}
-            for id_key, name_key, lineage_id, lineage_name in (
-                ('cohortId', 'cohort', 'cohortId', 'cohortName'),
-                ('groupId', 'group', 'groupId', 'groupName'),
-            ):
-                placed = placed and bool(views.narrow_learners_to_placement(
-                    [row], id_key, lineage.get(lineage_id) or '', name_key, lineage.get(lineage_name) or ''))
-            member = placed
-            if module_id:
-                if str(lineage.get('learnerRosterMode') or '').strip().lower() == 'manual':
-                    placed = False
-                # The roster's JSON containment query cannot select legacy
-                # string plans outside placement; it parses them only for
-                # learners already in the inherited roster.
-                direct = module_id in (fact.get('module_ids') or []) and (placed or not fact.get('ambiguous'))
-                member = direct or (placed and not fact.get('explicit'))
-            if member:
-                seen.add(learner_id)
-                counts[status_key(fact.get('status'))] += 1
-        result[identifier] = {'total': sum(counts.values()), 'statuses': dict(sorted(counts.items()))}
+        placement_key = (programme_id, frozenset(candidates), *(lineage.get(key) or '' for key in (
+            'cohortId', 'cohortName', 'groupId', 'groupName')))
+        if placement_key not in placements:
+            placed = set()
+            for index, fact in enumerate(facts):
+                linked_programme = str(fact.get('programme_id') or '').strip()
+                if not (programme_id and candidates and (
+                    linked_programme == programme_id if linked_programme else views.normalise(fact.get('programme')) in candidates
+                )):
+                    continue
+                row = {'cohortId': fact.get('cohort_id'), 'cohort': fact.get('cohort'),
+                       'groupId': fact.get('group_id'), 'group': fact.get('group_name')}
+                if all(views.narrow_learners_to_placement(
+                    [row], id_key, lineage.get(id_key) or '', name_key, lineage.get(lineage_name) or '')
+                    for id_key, name_key, lineage_name in (
+                        ('cohortId', 'cohort', 'cohortName'), ('groupId', 'group', 'groupName'))):
+                    placed.add(index)
+            placements[placement_key] = placed
+        placed = placements[placement_key]
+        members = placed
+        if module_id:
+            if str(lineage.get('learnerRosterMode') or '').strip().lower() == 'manual':
+                placed = set()
+            # String plans can contribute direct memberships only inside the
+            # inherited placement, just as the authoritative roster permits.
+            members = (placed - explicit) | (direct[module_id] - ambiguous) | (direct[module_id] & placed)
+        membership_key = frozenset(members)
+        if membership_key not in totals:
+            counts, seen = Counter(), set()
+            for index in sorted(members):
+                fact = facts[index]
+                learner_id = str(fact['id'])
+                if learner_id not in seen:
+                    seen.add(learner_id)
+                    counts[status_key(fact.get('status'))] += 1
+            totals[membership_key] = {'total': sum(counts.values()), 'statuses': dict(sorted(counts.items()))}
+        result[identifier] = totals[membership_key]
     return result
 
 
 def status_counts(scope, identifiers):
     from . import views
     with views.curriculum_read_scope(targeted_child_reads=True):
-        lineages = {identifier: views.scope_placement_lineage(scope, identifier) for identifier in identifiers}
+        lineages = placement_lineages(scope, identifiers)
         programme_ids = {views.scope_programme_identifier(lineage) for lineage in lineages.values() if lineage.get('found')}
         candidates = {identifier: views.programme_identity_candidates(identifier) for identifier in programme_ids if identifier}
         module_ids = {str(lineage.get('moduleCatalogueId')) for lineage in lineages.values() if lineage.get('moduleCatalogueId')}

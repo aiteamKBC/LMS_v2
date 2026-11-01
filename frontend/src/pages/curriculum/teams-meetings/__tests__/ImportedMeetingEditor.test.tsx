@@ -51,6 +51,21 @@ function openWithSharedUpdate(disabled = false) {
 }
 
 describe('editing a verified imported meeting', () => {
+  it.each([true, false])('rejects an already selected attendee with rolesEditable=%s', async rolesEditable => {
+    vi.mocked(readImportedMeetingEditor).mockResolvedValue({ ...original(), rolesEditable });
+    open(); await edit();
+    const attendeeInput = screen.getByRole('combobox', { name: 'Attendees' });
+    const count = screen.getByLabelText('Attendees selected count');
+    expect(count.compareDocumentPosition(attendeeInput) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.change(attendeeInput, { target: { value: 'OLD@example.invalid' } });
+    fireEvent.keyDown(attendeeInput, { key: 'Enter' });
+    expect(screen.getByText(/OLD@example.invalid already exists/)).toHaveAttribute('role', 'status');
+    expect(count).toHaveTextContent('1 selected');
+    expect(screen.getAllByRole('button', { name: 'Remove old@example.invalid' })).toHaveLength(1);
+    expect(previewImportedMeetingEdit).not.toHaveBeenCalled();
+    expect(confirmImportedMeetingEdit).not.toHaveBeenCalled();
+  });
+
   it('counts selected attendees when the original calendar does not allow role edits', async () => {
     vi.mocked(readImportedMeetingEditor).mockResolvedValue({ ...original(), rolesEditable: false });
     open(); await edit();

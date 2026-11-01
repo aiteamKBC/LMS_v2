@@ -6,7 +6,7 @@ import { fetchAssignedLearners, fetchLearnerStatusCounts } from '@/api/assignedL
 import { LearnerDirectoryProvider } from '../AssignedLearners';
 import { LearnerStatusCounts } from '../LearnerStatusCounts';
 
-vi.mock('@/api/assignedLearners', () => ({ fetchAssignedLearners: vi.fn(), fetchLearnerStatusCounts: vi.fn() }));
+vi.mock('@/api/assignedLearners', () => ({ fetchAssignedLearners: vi.fn(), fetchLearnerStatusCounts: vi.fn(), fetchAssignedLearnerProgress: vi.fn().mockResolvedValue({}) }));
 vi.mock('@/hooks/useRefreshOnReturn', () => ({ useLiveRefresh: vi.fn() }));
 
 const target = { scope: 'group' as const, id: 'G1', name: 'Group A' };
