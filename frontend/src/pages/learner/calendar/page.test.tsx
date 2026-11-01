@@ -7,6 +7,7 @@ import { LearnerCalendarContent } from './page';
 import { bookLearnerCalendarSession, cancelLearnerCalendarSession, fetchLearnerCalendarEvents, fetchCalendarConnections, fetchPersonalCalendarAvailability, fetchReviewSlots, rescheduleLearnerCalendarSession, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { fetchReviewHistory } from '@/api/reviewHistory';
 import { fetchMeetingAttendance } from '@/api/meetingAttendance';
+import { fetchLearnerEventReviewInstance, fetchLearnerMeetingArtifacts } from '@/api/learnerCalendar';
 import { meetingCalendarHref } from '../reviews/meetingBooking';
 import * as ics from '@/utils/ics-generator';
 
@@ -129,6 +130,20 @@ describe('calendar exports', () => {
 });
 
 describe('calendar event previews', () => {
+  it.each(['mcr', 'progress-review'])('shows a confirmed unlinked %s booking without changing or loading its Review', async source => {
+    setup([event({ source, title: 'Confirmed legacy booking', bookingOnly: true, reviewSource: 'unlinked-booking' })]);
+    fireEvent.click((await screen.findAllByRole('button', { name: /Confirmed legacy booking/ }))[0]);
+    const dialog = screen.getByRole('dialog', { name: 'Confirmed legacy booking' });
+    expect(within(dialog).getByText(/Confirmed booking only/)).toBeVisible();
+    expect(within(dialog).getByRole('link', { name: 'Join Meeting' })).toHaveAttribute('href', event().meetingLink);
+    expect(within(dialog).queryByRole('button', { name: /Reschedule|Schedule|Cancel/i })).not.toBeInTheDocument();
+    expect(fetchLearnerEventReviewInstance).not.toHaveBeenCalled();
+    expect(fetchLearnerMeetingArtifacts).not.toHaveBeenCalled();
+    expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+    expect(rescheduleLearnerCalendarSession).not.toHaveBeenCalled();
+    expect(cancelLearnerCalendarSession).not.toHaveBeenCalled();
+  });
+
   it.each(['mcr', 'progress-review'] as const)('books and then reschedules an imported %s without connecting a personal calendar', async source => {
     const imported = event({
       id: 'imported-review:source-only', eventKey: 'imported-review:source-only',

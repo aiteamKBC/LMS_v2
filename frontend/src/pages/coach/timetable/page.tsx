@@ -7,6 +7,7 @@ import Swal from 'sweetalert2';
 import 'sweetalert2/dist/sweetalert2.min.css';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { CalendarEventDialog } from '@/components/feature/CalendarEventDialog';
+import { BookingOnlyNotice } from '@/components/feature/BookingOnlyNotice';
 import { CalendarFilterScrollRow } from '@/components/feature/CalendarFilterScrollRow';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -77,6 +78,7 @@ function isReviewDetailEvent(event: TimetableEvent) {
 }
 
 function eventDetailsPath(event: TimetableEvent) {
+  if (event.bookingOnly) return null;
   const key = event.eventKey || event.id;
   if (!key) return null;
   if (event.source === 'mcr' || event.source === 'catch-up' || event.source === 'student-support') {
@@ -91,6 +93,7 @@ function eventDetailsPath(event: TimetableEvent) {
    â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 interface TimetableEvent {
   id: string;
+  bookingOnly?: boolean;
   eventKey?: string;
   title: string;
   type: 'coaching' | 'live-session' | 'review' | 'employer-meeting' | 'welfare' | 'admin' | 'personal';
@@ -765,6 +768,7 @@ function scheduleLearnerOptionLabel(event: TimetableEvent) {
 }
 
 function isSelectableScheduleEvent(event: TimetableEvent) {
+  if (event.bookingOnly) return false;
   if (event.reviewSource === 'aptem') return canRescheduleReconciledReview(event);
   if (!isSchedulableSource(event.source)) return false;
   if (event.source === 'catch-up') {
@@ -774,6 +778,7 @@ function isSelectableScheduleEvent(event: TimetableEvent) {
 }
 
 function canEditScheduleEvent(event: TimetableEvent | null | undefined): event is TimetableEvent {
+  if (event?.bookingOnly) return false;
   if (event && isImportedPersonalSupportPlan(event)) return ['not-scheduled', 'scheduled'].includes(event.status);
   if (event?.reviewSource === 'aptem') return canRescheduleReconciledReview(event);
   if (!event || !isSchedulableSource(event.source)) return false;
@@ -1965,6 +1970,10 @@ export default function CoachTimetablePage() {
       );
       return;
     }
+    if (selectedEvent.bookingOnly) {
+      if (navigate) window.open(url, '_blank', 'noopener,noreferrer');
+      return;
+    }
     joinMeeting(selectedEvent, navigate);
   }, [selectedEvent, joinMeeting]);
 
@@ -2711,6 +2720,7 @@ export default function CoachTimetablePage() {
                   {selectedEventMeetingUrl && <a href={selectedEventMeetingUrl} onClick={() => handleJoinSelectedMeeting(false)} onAuxClick={e => { if (e.button === 1) handleJoinSelectedMeeting(false); }} target="_blank" rel="noreferrer" className="meeting-join-action inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold"><AppIcon className="ri-video-chat-line" />Join meeting</a>}
                 </>}
               >
+                  {selectedEvent.bookingOnly && <BookingOnlyNotice />}
                   <div className="mb-4 overflow-hidden rounded-2xl border border-background-200 bg-white">
                     <div className="grid grid-cols-2 gap-2">
                         <EventDetailTile icon="ri-calendar-line" label="Date" value={formatEventDateLabel(selectedEvent)} />
@@ -2833,7 +2843,7 @@ export default function CoachTimetablePage() {
                       )}
                     </div>
                   )}
-                  {(selectedEvent.reviewTemplateId || selectedEvent.reviewSource === 'aptem') && (
+                  {!selectedEvent.bookingOnly && (selectedEvent.reviewTemplateId || selectedEvent.reviewSource === 'aptem') && (
                     <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-secondary-200 bg-secondary-50 p-4 sm:flex-row sm:items-center">
                       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-secondary-100 text-secondary-700">
                         <AppIcon className="ri-survey-line"></AppIcon>
@@ -2961,7 +2971,7 @@ export default function CoachTimetablePage() {
                       </div>
                     </div>
                   )}
-                  {selectedEvent.status === 'awaiting-signature' && selectedEvent.source === 'progress-review' && (
+                  {!selectedEvent.bookingOnly && selectedEvent.status === 'awaiting-signature' && selectedEvent.source === 'progress-review' && (
                     <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-violet-200 bg-violet-50 p-4 sm:flex-row sm:items-center">
                       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-violet-700">
                         <AppIcon className="ri-pen-nib-line"></AppIcon>

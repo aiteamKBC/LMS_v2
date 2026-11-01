@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { CalendarEventDialog } from '@/components/feature/CalendarEventDialog';
+import { BookingOnlyNotice } from '@/components/feature/BookingOnlyNotice';
 import { EmptyState } from '@/components/ui/EmptyState';
 import type { DirectoryCoach } from '@/api/coachDirectory';
 import {
@@ -156,6 +157,7 @@ export function AllCoachesCalendar({
           badges={<span className="rounded-full bg-primary-50 px-2.5 py-1 text-primary-700">{statusLabel(selectedEvent.event.status)}</span>}
           actions={<button type="button" onClick={() => onOpenCoach(selectedEvent.coach, selectedEvent.event)} className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700"><AppIcon className="ri-calendar-line" />Open coach timetable</button>}
         >
+          {selectedEvent.event.bookingOnly && <BookingOnlyNotice />}
           <dl className="grid gap-4 text-sm sm:grid-cols-2">
             <div><dt className="text-xs text-foreground-500">Date</dt><dd className="mt-1 font-semibold">{parseLocalDate(eventDisplayDate(selectedEvent.event))?.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</dd></div>
             <div><dt className="text-xs text-foreground-500">Time</dt><dd className="mt-1 font-semibold">{eventTime(selectedEvent.event)}</dd></div>

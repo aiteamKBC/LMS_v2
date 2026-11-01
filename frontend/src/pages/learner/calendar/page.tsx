@@ -28,6 +28,7 @@ import {
   type PersonalCalendarProvider, type CalendarBusySlot, type BookingCalendarRules,
 } from '@/api/learnerCalendar';
 import { CalendarEventDialog } from '@/components/feature/CalendarEventDialog';
+import { BookingOnlyNotice } from '@/components/feature/BookingOnlyNotice';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
 import { CalendarColorPreferencesDrawer } from '@/pages/coach/timetable/components/CalendarColorPreferencesDrawer';
 import {
@@ -46,7 +47,7 @@ import { bookingInstant, firstAvailableBookingDate, mcmBookingDateRestrictionMes
 import CoachSessionTypePicker, { COACH_APPROVAL_SESSION_TYPES } from './CoachSessionTypePicker';
 import { BUSINESS_TIME_ZONE } from '@/lib/timeZones';
 
-type CalendarEvent = SharedCalendarEvent & Pick<ICSEvent, 'timeZone' | 'startsAt' | 'endsAt'> & { needsInitialReviewBooking?: boolean; isTimeEstimated?: boolean };
+type CalendarEvent = SharedCalendarEvent & Pick<ICSEvent, 'timeZone' | 'startsAt' | 'endsAt'> & { needsInitialReviewBooking?: boolean; isTimeEstimated?: boolean; bookingOnly?: boolean };
 
 function hasCalendarExportTime(event: CalendarEvent): boolean {
   return !event.timeToBeConfirmed && (!event.isTimeEstimated || Boolean(event.startsAt && event.endsAt));
@@ -258,7 +259,8 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
       && ev.bookingStatus === 'scheduled' && ['not-scheduled', 'scheduled'].includes(ev.status) ? 'scheduled' : ev.status,
     meetingOutcome: ev.meetingOutcome ?? null,
     watchedRecording: Boolean(ev.watchedRecording),
-    bookingSessionType: BOOKABLE_COACH_SESSION_TYPES.has(ev.source as BookableSessionType)
+    bookingOnly: ev.bookingOnly,
+    bookingSessionType: !ev.bookingOnly && BOOKABLE_COACH_SESSION_TYPES.has(ev.source as BookableSessionType)
       ? ev.source as CalendarEvent['bookingSessionType']
       : undefined,
     timeToBeConfirmed: !scheduledTime,
@@ -556,6 +558,7 @@ function learnerEventStatusColor(event: CalendarEvent, colors: CalendarColorPref
 }
 
 function shouldShowMeetingArtifacts(event: CalendarEvent): boolean {
+  if (event.bookingOnly) return false;
   return Boolean(
     event.eventKey
     && event.meetingLink
@@ -623,7 +626,7 @@ function LearnerCalendarBody() {
   const [cancelError, setCancelError] = useState('');
   const [showEventDetails, setShowEventDetails] = useState<CalendarEvent | null>(null);
   const selectedReview = useLearnerReviewInstance(myLearner.kind, myLearner.id,
-    showEventDetails?.reviewTemplateId && showEventDetails.source !== 'live-session'
+    !showEventDetails?.bookingOnly && showEventDetails?.reviewTemplateId && showEventDetails.source !== 'live-session'
       ? showEventDetails.eventKey || showEventDetails.id
       : '');
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -1756,6 +1759,7 @@ function LearnerCalendarBody() {
           </>}
         >
           {addToCalendarToast && <p role="status" className="mb-4 rounded-xl border border-primary-200 bg-primary-50 px-3 py-2.5 text-sm text-primary-800">{addToCalendarToast}</p>}
+          {showEventDetails.bookingOnly && <BookingOnlyNotice />}
           {cancelError && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">{cancelError}</p>}
           {showEventDetails.source === 'catch-up' && showEventDetails.bookingStatus === 'scheduled' && showEventDetails.changeClosed && <p role="status" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800">This catch-up starts in less than 12 hours, so it can no longer be changed or cancelled here. Please contact your coach.</p>}
           <dl className="mb-5 grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">

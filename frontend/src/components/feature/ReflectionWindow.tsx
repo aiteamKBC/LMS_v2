@@ -271,13 +271,17 @@ function ReflectionWindowForm({
   );
   const wordCount = reflection.trim().split(/\s+/).filter(Boolean).length;
   const learningReady = wordCount >= 100;
+  const missingKsbInputs = ksbCodes.flatMap(code => {
+    const missing = [
+      !ksbExplanations[code]?.trim() && 'explanation',
+      confidenceBefore[code] == null && 'confidence before',
+      confidenceAfter[code] == null && 'confidence after',
+    ].filter(Boolean);
+    return missing.length ? [`${code}: ${missing.join(', ')}`] : [];
+  });
   const ksbReady = ksbCodes.length === 0
     ? !selectionRequired
-    : ksbCodes.every(code =>
-      Boolean(ksbExplanations[code]?.trim())
-      && confidenceBefore[code] !== undefined
-      && confidenceAfter[code] !== undefined
-    );
+    : missingKsbInputs.length === 0;
   const applicationReady = Boolean(applicationType && applicationText.trim());
   const allEvidenceFileNames = [
     ...storedEvidenceFileNames,
@@ -983,7 +987,7 @@ function ReflectionWindowForm({
             <div className="mt-4 space-y-3">
               {mappedKsbs.map(item => {
                 const hasExplanation = Boolean(ksbExplanations[item.code]?.trim());
-                const hasRatings = confidenceBefore[item.code] !== undefined && confidenceAfter[item.code] !== undefined;
+                const hasRatings = confidenceBefore[item.code] != null && confidenceAfter[item.code] != null;
                 const requirementsComplete = hasExplanation && hasRatings;
 
                 return (
@@ -1023,11 +1027,13 @@ function ReflectionWindowForm({
                   <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <ConfidenceRange
                       label="Confidence before"
+                      code={item.code}
                       value={confidenceBefore[item.code]}
                       onChange={value => setConfidenceBefore(previous => ({ ...previous, [item.code]: value }))}
                     />
                     <ConfidenceRange
                       label="Confidence after"
+                      code={item.code}
                       value={confidenceAfter[item.code]}
                       onChange={value => setConfidenceAfter(previous => ({ ...previous, [item.code]: value }))}
                     />
@@ -1286,6 +1292,13 @@ function ReflectionWindowForm({
                     <AppIcon className={item.complete ? 'ri-checkbox-circle-line' : 'ri-alert-line'} /> {item.label}
                   </p>
                 ))}
+                {!ksbReady && <div className="rounded-lg bg-amber-50 p-3 text-xs text-amber-900">
+                  <p className="font-semibold">KSB information still needed</p>
+                  {missingKsbInputs.length > 0 ? <ul className="mt-1 list-disc pl-4">
+                    {missingKsbInputs.map(message => <li key={message}>{message}</li>)}
+                  </ul> : <p>Select at least one relevant KSB.</p>}
+                  <button type="button" onClick={() => setTab('ksbs')} className="mt-2 font-semibold underline">Complete KSBs</button>
+                </div>}
               </div>
             </div>
           </section>
@@ -1361,19 +1374,25 @@ function ReflectionWindowForm({
 
 function ConfidenceRange({
   label,
+  code,
   value,
   onChange,
 }: {
   label: string;
+  code: string;
   value?: number;
   onChange: (value: number) => void;
 }) {
+  const inputId = useId();
   return (
-    <label>
-      <span className="mb-1 flex items-center justify-between text-xs text-foreground-600">
-        {label} <strong>{value ?? 1}/5</strong>
-      </span>
+    <div>
+      <label htmlFor={inputId} className="mb-1 flex items-center justify-between text-xs text-foreground-600">
+        {label} <strong>{value == null ? 'Not rated' : `${value}/5`}</strong>
+      </label>
       <input
+        id={inputId}
+        aria-label={`${code}: ${label}`}
+        aria-valuetext={value == null ? 'Not rated' : `${value} out of 5`}
         type="range"
         min="1"
         max="5"
@@ -1381,7 +1400,11 @@ function ConfidenceRange({
         onChange={event => onChange(Number(event.target.value))}
         className="w-full accent-primary-700"
       />
-    </label>
+      {value == null && <p className="mt-1 text-xs text-amber-800">
+        Choose a rating, or <button type="button" aria-label={`${code}: set ${label.toLowerCase()} to 1 out of 5`}
+          onClick={() => onChange(1)} className="font-semibold underline">confirm 1/5</button>.
+      </p>}
+    </div>
   );
 }
 

@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
-import { KsbChips, WeeklyLearningPlan as CanonicalWeeklyLearningPlan } from '../WeeklyLearningPlan';
+import { ActivityKsbs, KsbChips, WeeklyLearningPlan as CanonicalWeeklyLearningPlan } from '../WeeklyLearningPlan';
 
 const learnerDetail = vi.hoisted(() => ({ real: {
   components: [] as { componentId: string; moduleId: string; weekId: string; component: string; type: string }[],
@@ -243,6 +243,48 @@ describe('weekly live session attendance', () => {
 });
 
 describe('activity KSB mapping', () => {
+  it('shows existing learner activity links without treating them as authored or approved', () => {
+    render(<ActivityKsbs mapped={[]} recorded={['K7', 'S8']} />);
+    expect(within(screen.getByRole('group', { name: 'Curriculum KSBs' })).getByText('No KSB mapped')).toBeVisible();
+    const recorded = within(screen.getByRole('group', { name: 'Recorded KSBs' }));
+    expect(recorded.getByText('K7')).toBeVisible();
+    expect(recorded.getByText('S8')).toBeVisible();
+    expect(screen.queryByText(/Accepted/)).not.toBeInTheDocument();
+  });
+
+  it('does not repeat recorded codes that already appear in curriculum or reflection', () => {
+    render(<ActivityKsbs mapped={['K1']} reflections={[{ status: 'draft', codes: ['S2'] }]} recorded={['K1', 'S2', 'B3']} />);
+    const recorded = within(screen.getByRole('group', { name: 'Recorded KSBs' }));
+    expect(recorded.getByText('B3')).toBeVisible();
+    expect(recorded.queryByText('K1')).not.toBeInTheDocument();
+    expect(recorded.queryByText('S2')).not.toBeInTheDocument();
+  });
+
+  it('keeps an activity with no saved mapping empty', () => {
+    render(<ActivityKsbs mapped={[]} reflections={[]} recorded={[]} />);
+    expect(screen.getByText('No KSB mapped')).toBeVisible();
+    expect(screen.queryByRole('group', { name: 'Recorded KSBs' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Your reflection/)).not.toBeInTheDocument();
+  });
+
+  it('shows saved reflection choices even without authored mapping and preserves review status', () => {
+    render(<ActivityKsbs mapped={[]} reflections={[{ status: 'submitted_for_tutor_review', codes: ['K1', 'S2', 'B1'] }]} />);
+    expect(within(screen.getByRole('group', { name: 'Curriculum KSBs' })).getByText('No KSB mapped')).toBeVisible();
+    const reflection = within(screen.getByRole('group', { name: 'Your reflection KSBs: Awaiting tutor review' }));
+    expect(reflection.getByText('K1')).toBeVisible();
+    expect(reflection.getByText('S2')).toBeVisible();
+    expect(reflection.getByRole('button', { name: 'Show 1 more KSBs' })).toBeVisible();
+    expect(screen.queryByText(/Accepted/)).not.toBeInTheDocument();
+  });
+
+  it('keeps curriculum, draft, and accepted reflection codes separate', () => {
+    render(<ActivityKsbs mapped={['K1']} reflections={[
+      { status: 'draft', codes: ['S2'] }, { status: 'accepted', codes: ['B1'] },
+    ]} />);
+    expect(within(screen.getByRole('group', { name: 'Curriculum KSBs' })).queryByText('S2')).not.toBeInTheDocument();
+    expect(within(screen.getByRole('group', { name: 'Your reflection KSBs: Draft' })).getByText('S2')).toBeVisible();
+    expect(within(screen.getByRole('group', { name: 'Your reflection KSBs: Accepted' })).getByText('B1')).toBeVisible();
+  });
   it('shows only two codes in the table and reveals the remaining codes in a dialog', () => {
     const showModal = vi.fn(function (this: HTMLDialogElement) {
       this.setAttribute('open', '');

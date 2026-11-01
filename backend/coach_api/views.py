@@ -10631,6 +10631,7 @@ def collect_generated_timetable(
     *,
     include_live_sessions: bool = True,
     include_scheduler_queues: bool = True,
+    include_unlinked_bookings: bool = False,
 ) -> dict:
     active_rows = fetch_owner_active_learner_profiles(owner_email)
     review_rows = fetch_caseload_timetable_profiles(owner_email)
@@ -10685,8 +10686,9 @@ def collect_generated_timetable(
     aptem_events = [event for event in generated_events if event.get("reviewSource") == "aptem"]
     aptem_record_map, aptem_overlay_map = load_imported_links(aptem_events)
     generated_keys.update(record.event_key for record in aptem_record_map.values() if record)
+    saved_records = fetch_standalone_event_records(owner_email)
     persisted_standalone_records = standalone_review_records(
-        fetch_standalone_event_records(owner_email), review_rows, aptem_profile_ids, linked_keys=generated_keys)
+        saved_records, review_rows, aptem_profile_ids, linked_keys=generated_keys)
     curriculum_events = [event for event in generated_events if event.get("reviewSource") == "curriculum"]
     legacy_keys = [
         build_timetable_event_key(
@@ -10751,6 +10753,13 @@ def collect_generated_timetable(
                                          aptem_overlay_map.get(event["eventKey"])) for event in aptem_events)
     events.extend(persisted_standalone_events)
     events.extend(live_session_events)
+
+    if include_unlinked_bookings:
+        from .calendar_booking_only import unlinked_review_bookings, booking_only_projection
+        for record, profile in unlinked_review_bookings(
+                saved_records, review_rows, aptem_profile_ids, events=events, linked_keys=generated_keys):
+            events.append(booking_only_projection(build_catchup_calendar_event(
+                record, owner_name=owner_name, learner=profile), record))
 
     if start_date or end_date:
         filtered_events = []
@@ -13069,6 +13078,7 @@ def coach_timetable(request):
             end_date=end_date,
             include_live_sessions=include_live_sessions,
             include_scheduler_queues=include_scheduler_queues,
+            include_unlinked_bookings=True,
         )
         # Elapsed meetings show Ended, or Completed when the learner attended.
         from .meeting_outcomes import annotate_meeting_outcomes
@@ -13303,13 +13313,13 @@ def coach_performance_metrics_by_coach(
 @require_access(ACCESS_SUPER_ADMIN)
 @require_GET
 def coach_directory_calendar(request):
-    """Return one week's calendar events for every coach in one snapshot read.
+    """Read the overview preview, filling bookings outside its stored window.
 
     The overview used to call the full timetable endpoint once per coach. Each
     call rebuilds live sessions and review schedules from Curriculum, so the
     page waited for the slowest of twenty-plus expensive requests. Dashboard
-    snapshots already hold the same read-only meeting projection; filter their
-    JSON in PostgreSQL and return only the requested week.
+    snapshots hold a bounded preview; filter their JSON in PostgreSQL, then
+    use the normal timetable read only for coaches with missing bookings.
     """
     validator = ObjectValidator(request.GET)
     start_date = validator.iso_date("start")
@@ -13375,6 +13385,8 @@ def coach_directory_calendar(request):
         with connections[database].cursor() as cursor:
             cursor.execute(sql, [sorted(coach_emails), start_date, end_date])
             rows = cursor.fetchall()
+        from .directory_calendar import read_missing_bookings
+        current_bookings = read_missing_bookings(coach_emails, rows, start_date, end_date)
     except DatabaseError:
         logger.exception("coach_directory_calendar_failed")
         return coach_error(
@@ -13406,6 +13418,17 @@ def coach_directory_calendar(request):
         ).values_list("owner_email_key", flat=True)
         if clean_text(value)
     }
+    for email, events in current_bookings.items():
+        # The fallback concerns individual coaching bookings. Keep the existing
+        # curriculum-session projection and replace coaching rows, never append
+        # a second copy of a reconciled/imported Review.
+        live_events = [event for event in events_by_email[email] if event.get('source') == 'live-session']
+        events_by_email[email] = sorted([*live_events, *events], key=lambda event: (
+            event.get('scheduledDate') or event.get('date') or event.get('targetDate') or '',
+            event.get('scheduledTime') or '', event.get('eventKey') or '',
+        ))
+        refreshed_by_email[email] = timezone.now()
+        snapshot_emails.add(email)
     return JsonResponse({
         "calendars": [
             {
@@ -14497,10 +14520,14 @@ MARKING_QUEUE_COLUMNS = """
 
 def serialize_marking_submission(row, *, now=None):
     from learner_api.assignment_attempts import submission_attempts
+    from learner_api.reflection_ksbs import review_summary
     now = now or timezone.now()
     submitted_at = row["submitted_at"]
     elapsed_days = max((now - submitted_at).days, 0) if submitted_at else 0
     status = "pending" if row["status"] == "submitted_for_tutor_review" else row["status"]
+    ksb_review = review_summary(parse_json_value(row.get('full_submission'), {}))
+    if ksb_review and ksb_review['status'] == 'pending':
+        status = 'ksb_review'
     learner_name = row["learner_name"] or f"Learner {row['learner_id']}"
     initials = "".join(part[:1].upper() for part in learner_name.split()[:2]) or "L"
     return {
@@ -14519,6 +14546,7 @@ def serialize_marking_submission(row, *, now=None):
         "status": status,
         "learningReflection": row["learning_reflection"],
         "ksbCodes": parse_json_value(row["ksb_codes"], []),
+        **({'ksbReview': ksb_review} if ksb_review else {}),
         "ksbWeights": parse_json_value(row["ksb_weights"], {}),
         "ksbExplanations": parse_json_value(row["ksb_explanations"], {}),
         "confidenceBefore": parse_json_value(row["confidence_before"], {}),
@@ -14577,6 +14605,7 @@ def empty_marking_queue_response(owner_email, *, page=1, page_size=25):
 @attributed_write_view
 def coach_marking_queue(request, submission_id=None):
     """List and review complete reflections, scoped and paged in PostgreSQL."""
+    from learner_api.reflection_ksbs import PENDING_KSB_REVIEW_SQL, KsbReviewError
     owner_email = authenticated_coach_email(request)
     requested_owner = normalize_email(owner_email)
     # learning_reflection_submissions.learner_id is populated from
@@ -14620,12 +14649,22 @@ def coach_marking_queue(request, submission_id=None):
                 )
             if not value:
                 return JsonResponse({"detail": "Submission not found."}, status=404)
-            return JsonResponse({"item": serialize_marking_submission(dict(zip(columns, value)))})
+            from .ksb_review import detail_context
+            try:
+                item = detail_context(serialize_marking_submission(dict(zip(columns, value))))
+            except KsbReviewError as exc:
+                return JsonResponse({'detail': str(exc)}, status=exc.status)
+            except DatabaseError:
+                return JsonResponse({'detail': 'The programme KSB list could not be loaded. Please retry.'}, status=503)
+            return JsonResponse({"item": item})
 
         if request.method not in {"PATCH", "POST"}:
             return JsonResponse({"detail": "Method not allowed."}, status=405)
         try:
             payload = parse_json_body(request)
+            if payload.get('action') == 'review_ksbs':
+                from .ksb_review import save_review
+                return save_review(request, submission_id, allowed_learner_ids, payload)
             validator = ObjectValidator(payload)
             decision = validator.text(
                 "decision",
@@ -14666,6 +14705,7 @@ def coach_marking_queue(request, submission_id=None):
                     update "Learner"."learning_reflection_submissions"
                     set status = %s, coach_feedback = %s, reviewed_by = %s, reviewed_at = %s
                     where id = %s and learner_id = any(%s)
+                      and not (""" + PENDING_KSB_REVIEW_SQL + """)
                       and """ + MARKING_QUEUE_EXCLUDE_DRAFTS_SQL + """
                     returning """ + SUBMISSION_AUDIT_SQL + """
                     """,
@@ -14781,7 +14821,10 @@ def coach_marking_queue(request, submission_id=None):
     item_params = list(base_params)
     if status_filter and status_filter != "all":
         statuses = status_groups.get(status_filter, [status_filter])
-        item_clauses.append("status = any(%s)")
+        if status_filter == 'pending':
+            item_clauses.append(f"(status = any(%s) OR ({PENDING_KSB_REVIEW_SQL}))")
+        else:
+            item_clauses.append(f"(status = any(%s) AND NOT ({PENDING_KSB_REVIEW_SQL}))")
         item_params.append(statuses)
     overdue_before = timezone.now() - timedelta(days=MARKING_OVERDUE_DAYS)
     if status_filter == "overdue":
@@ -14797,14 +14840,14 @@ def coach_marking_queue(request, submission_id=None):
                 f"""
                 select count(*) as total_items,
                        count(distinct (learner_kind, learner_id)) as active_learners,
-                       count(*) filter (where status in ('submitted_for_tutor_review', 'escalated')) as pending_items,
-                       count(*) filter (where status in ('accepted', 'partial')) as accepted_items,
+                       count(*) filter (where status in ('submitted_for_tutor_review', 'escalated') OR ({PENDING_KSB_REVIEW_SQL})) as pending_items,
+                       count(*) filter (where status in ('accepted', 'partial') AND NOT ({PENDING_KSB_REVIEW_SQL})) as accepted_items,
                        count(*) filter (where status in ('referred', 'rejected')) as referred_items,
                        count(*) filter (
                            where status = 'submitted_for_tutor_review' and submitted_at <= %s
                        ) as overdue_items,
                        min(submitted_at) filter (
-                           where status in ('submitted_for_tutor_review', 'escalated')
+                           where status in ('submitted_for_tutor_review', 'escalated') OR ({PENDING_KSB_REVIEW_SQL})
                        ) as oldest_submission
                   from "Learner".learning_reflection_submissions
                  where {base_where}
@@ -14838,7 +14881,7 @@ def coach_marking_queue(request, submission_id=None):
                 select {MARKING_QUEUE_COLUMNS}
                   from "Learner".learning_reflection_submissions
                  where {item_where}
-                 order by case when status = 'submitted_for_tutor_review' then 0 else 1 end,
+                 order by case when status = 'submitted_for_tutor_review' OR ({PENDING_KSB_REVIEW_SQL}) then 0 else 1 end,
                           submitted_at asc, id asc
                  limit %s offset %s
                 """,
