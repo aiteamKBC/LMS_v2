@@ -34,16 +34,25 @@ class WorkingRuleFailureTests(SimpleTestCase):
     def test_weekday_inside_hours_is_a_working_instant(self):
         self.assertIsNone(self.failure(datetime(2026, 1, 15, 12, 0, tzinfo=UTC)))
 
-    def test_boundaries_follow_07_00_to_19_00(self):
-        self.assertIsNotNone(self.failure(datetime(2026, 1, 15, 6, 59, tzinfo=UK)))
-        self.assertIsNone(self.failure(datetime(2026, 1, 15, 7, 0, tzinfo=UK)))
-        self.assertIsNone(self.failure(datetime(2026, 1, 15, 18, 59, tzinfo=UK)))
-        self.assertIsNotNone(self.failure(datetime(2026, 1, 15, 19, 0, tzinfo=UK)))
+    def test_boundaries_follow_08_00_to_17_00(self):
+        self.assertIsNotNone(self.failure(datetime(2026, 1, 15, 7, 59, 59, tzinfo=UK)))
+        self.assertIsNone(self.failure(datetime(2026, 1, 15, 8, 0, tzinfo=UK)))
+        self.assertIsNone(self.failure(datetime(2026, 1, 15, 16, 59, 59, tzinfo=UK)))
+        self.assertIsNotNone(self.failure(datetime(2026, 1, 15, 17, 0, tzinfo=UK)))
+
+    def test_previously_allowed_early_and_evening_hours_are_now_outside(self):
+        for hour in (7, 17, 18):
+            with self.subTest(hour=hour):
+                found = self.failure(datetime(2026, 10, 30, hour, 30, tzinfo=UK))
+                self.assertEqual(found['reason'], 'outside_working_hours')
+                self.assertIn('Allowed working hours are Monday to Friday, from 08:00 to before 17:00 UK time.', found['message'])
 
     def test_british_summer_time_is_applied_not_assumed(self):
-        # 06:00 UTC in July is 07:00 BST -- inside hours.
-        self.assertIsNone(self.failure(datetime(2026, 7, 15, 6, 0, tzinfo=UTC)))
-        self.assertIsNotNone(self.failure(datetime(2026, 7, 15, 5, 59, tzinfo=UTC)))
+        # 07:00 UTC in July is 08:00 BST -- inside hours.
+        self.assertIsNone(self.failure(datetime(2026, 7, 15, 7, 0, tzinfo=UTC)))
+        self.assertIsNotNone(self.failure(datetime(2026, 7, 15, 6, 59, tzinfo=UTC)))
+        self.assertIsNone(self.failure(datetime(2026, 7, 15, 15, 59, tzinfo=UTC)))
+        self.assertIsNotNone(self.failure(datetime(2026, 7, 15, 16, 0, tzinfo=UTC)))
 
     def test_a_learner_in_another_time_zone_is_judged_in_uk_terms(self):
         # 23:00 in Sydney on the 16th is 13:00 UK on the 16th: a valid instant.

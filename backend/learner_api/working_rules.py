@@ -35,10 +35,10 @@ from django.utils.dateparse import parse_datetime
 
 UK = ZoneInfo("Europe/London")
 
-# The official working window. Monday-Friday, 07:00-19:00 UK time; 19:00 itself
+# The official working window. Monday-Friday, 08:00-17:00 UK time; 17:00 itself
 # is already outside. GMT/BST is handled by the zone, not by arithmetic.
-WORKING_DAY_START = time(7, 0)
-WORKING_DAY_END = time(19, 0)
+WORKING_DAY_START = time(8, 0)
+WORKING_DAY_END = time(17, 0)
 WORKING_WEEKDAYS = frozenset({0, 1, 2, 3, 4})
 
 REASON_WEEKEND = "weekend"
@@ -212,7 +212,10 @@ def working_rule_failure(instant, *, component_id=None, quiz_id=None, holiday_de
         return {
             "reason": REASON_OUTSIDE_HOURS,
             "holidayName": "",
-            "message": "Outside official working hours (Monday to Friday, 07:00-19:00 UK time).",
+            "message": (
+                "This completion time is outside official working hours. "
+                "Allowed working hours are Monday to Friday, from 08:00 to before 17:00 UK time."
+            ),
         }
 
     return None

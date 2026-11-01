@@ -17,10 +17,10 @@ describe('learner component access window', () => {
     expect(componentAccessWindow(new Date('2026-07-15T23:00:00Z'), holidays).outsideReason).toBe('outside-hours');
   });
   it('stays open while identifying weekday UK out-of-hours access', () => {
-    expect(componentAccessWindow(new Date('2026-01-15T06:59:00Z'))).toMatchObject({ open: true, outsideWorkingHours: true, outsideReason: 'outside-hours' });
-    expect(componentAccessWindow(new Date('2026-01-15T07:00:00Z'))).toMatchObject({ open: true, outsideWorkingHours: false, outsideReason: null });
-    expect(componentAccessWindow(new Date('2026-01-15T18:59:00Z'))).toMatchObject({ open: true, outsideWorkingHours: false, outsideReason: null });
-    expect(componentAccessWindow(new Date('2026-01-15T19:00:00Z'))).toMatchObject({ open: true, outsideWorkingHours: true, outsideReason: 'outside-hours' });
+    expect(componentAccessWindow(new Date('2026-01-15T07:59:00Z'))).toMatchObject({ open: true, outsideWorkingHours: true, outsideReason: 'outside-hours' });
+    expect(componentAccessWindow(new Date('2026-01-15T08:00:00Z'))).toMatchObject({ open: true, outsideWorkingHours: false, outsideReason: null });
+    expect(componentAccessWindow(new Date('2026-01-15T16:59:00Z'))).toMatchObject({ open: true, outsideWorkingHours: false, outsideReason: null });
+    expect(componentAccessWindow(new Date('2026-01-15T17:00:00Z'))).toMatchObject({ open: true, outsideWorkingHours: true, outsideReason: 'outside-hours' });
   });
 
   it('stays open but identifies Saturday and Sunday as out of hours', () => {
@@ -36,9 +36,10 @@ describe('learner component access window', () => {
   });
 
   it('uses BST automatically for the summer boundary', () => {
-    expect(componentAccessWindow(new Date('2026-07-15T05:59:00Z')).outsideWorkingHours).toBe(true);
-    expect(componentAccessWindow(new Date('2026-07-15T06:00:00Z')).outsideWorkingHours).toBe(false);
-    expect(componentAccessWindow(new Date('2026-07-15T18:00:00Z')).outsideWorkingHours).toBe(true);
+    expect(componentAccessWindow(new Date('2026-07-15T06:59:00Z')).outsideWorkingHours).toBe(true);
+    expect(componentAccessWindow(new Date('2026-07-15T07:00:00Z')).outsideWorkingHours).toBe(false);
+    expect(componentAccessWindow(new Date('2026-07-15T15:59:00Z')).outsideWorkingHours).toBe(false);
+    expect(componentAccessWindow(new Date('2026-07-15T16:00:00Z')).outsideWorkingHours).toBe(true);
   });
 
   it('rejects only an invalid timestamp', () => {
