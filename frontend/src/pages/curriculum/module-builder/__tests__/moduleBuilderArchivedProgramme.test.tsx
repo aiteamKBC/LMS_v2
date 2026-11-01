@@ -69,6 +69,8 @@ const programmes = [
   { id: 'program-dead', sourceId: 'PROG-DEAD', name: 'Dead Programme', status: 'archived', isArchived: true },
 ] as CurriculumProgramme[];
 
+vi.mock('@/api/moduleCatalogueActivity', () => ({ fetchModuleCatalogueActivity: vi.fn(async () => Object.fromEntries(modules.map(module => [module.moduleCatalogueId!, { source: 'new_lms', startDate: '2000-01-01', lastLiveDate: '2099-12-31' }]))) }));
+
 const modules = [
   {
     id: 'MOD-ARCHIVED-PARENT',

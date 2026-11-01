@@ -90,6 +90,8 @@ const programmes = [
   { id: 'program-mm', sourceId: 'PROG-MM', name: 'Marketing Manager' },
 ] as CurriculumProgramme[];
 
+vi.mock('@/api/moduleCatalogueActivity', () => ({ fetchModuleCatalogueActivity: vi.fn(async () => Object.fromEntries(modules.map(module => [module.moduleCatalogueId!, { source: 'new_lms', startDate: '2000-01-01', lastLiveDate: '2099-12-31' }]))) }));
+
 const modules = [
   {
     id: 'MOD-AUTOSAVE-1',

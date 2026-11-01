@@ -1,5 +1,7 @@
 import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
 import { ModuleLearnerCount } from './ModuleLearnerCount';
+import { catalogueModuleActive, useCatalogueActivity } from './useCatalogueActivity';
+import type { ModuleCatalogueActivity } from '@/api/moduleCatalogueActivity';
 import { ModuleHoursStrip } from '../shared/components/ModuleHours';
 import { Context as LearnerDirectoryContext, useRefreshAssignedLearners } from '../shared/entities/assignedLearnerDirectory';
 import { sessionDeliveryDate } from '@/lib/deliveryWeek';
@@ -705,6 +707,7 @@ function ModuleBuilderContent() {
   // Kept in the address with the filters (as `q`), so Back from a learner's
   // progress page returns to the catalogue exactly as it was left.
   const [search, setSearch] = useState(() => searchParams.get('q') || '');
+  const [allModules, setAllModules] = useState(() => searchParams.get('catalogue') === 'all');
   const [programmeFilter, setProgrammeFilter] = useState<string>(() => requestedCreateScopeRef.current.programmeName || 'All');
   // The delivery filters the Modules page used to carry. They read the module's
   // own deliveries rather than a second fetch of cohorts and groups, so the
@@ -928,6 +931,8 @@ function ModuleBuilderContent() {
   // What it no longer does is send Cache-Control: no-cache on the *mount* read,
   // which forced a rebuild from Neon and cost these two ~9s and ~14s.
   const { modules, loading, error, reload } = useCurriculumModules({ compact: true, revalidate: true });
+  const catalogueActivityKey = modules.map(module => [module.moduleCatalogueId || module.id, module.lastUpdated, module.startDate, module.endDate, module.sourceType].join(':')).join('|');
+  const catalogueActivity = useCatalogueActivity(catalogueActivityKey);
   const { programmes: curriculumProgrammes } = useCurriculumProgrammes({ revalidate: true, visibility: 'all' });
   const programmeDesignUrl = useMemo(() => {
     const requested = (searchParams.get('programme') || searchParams.get('programmeId') || '').trim();
@@ -1539,9 +1544,10 @@ function ModuleBuilderContent() {
       ['group', groupFilter],
       ['tutor', tutorFilter],
       ['q', search],
+      ['catalogue', allModules ? 'all' : ''],
     ] as const).forEach(([key, value]) => { if (value) next.set(key, value); else next.delete(key); });
     if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
-  }, [cohortFilter, groupFilter, programmeFilter, search, searchParams, setSearchParams, tutorFilter]);
+  }, [allModules, cohortFilter, groupFilter, programmeFilter, search, searchParams, setSearchParams, tutorFilter]);
 
   const changeFilter = useCallback((apply: () => void) => {
     filtersTouchedRef.current = true;
@@ -1560,6 +1566,7 @@ function ModuleBuilderContent() {
   const deliveryFiltersActive = Boolean(cohortFilter || groupFilter || tutorFilter);
 
   const filtered = catalogueModules.filter(module => {
+    if (!allModules && !catalogueModuleActive(catalogueActivity.data?.[module.catalogueId], catalogueActivity.today)) return false;
     const text = `${module.title} ${module.catalogueId} ${module.programmeName} ${moduleIdentityText(module)} ${moduleDeliverySearchText(module)}`.toLowerCase();
     if (search && !text.includes(search.toLowerCase())) return false;
     if (programmeFilter !== 'All' && !moduleBelongsToProgrammeFilter(module, programmeFilter, curriculumProgrammes)) return false;
@@ -4075,6 +4082,7 @@ function ModuleBuilderContent() {
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-[13px] font-bold text-foreground-950">Module catalogue</p>
                 <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{filtered.length} shown</span>
+                {!allModules && <span className="text-[10px] font-semibold text-foreground-500">Active modules</span>}
               </div>
               <p className="mt-1 text-[11px] text-foreground-500">Scoped modules can share titles while keeping their own programme, delivery and KSB mapping.</p>
             </div>
@@ -4136,8 +4144,18 @@ function ModuleBuilderContent() {
               />
               <button
                 type="button"
-                disabled={!search && programmeFilter === 'All' && !deliveryFiltersActive}
+                aria-pressed={allModules}
+                onClick={() => changeFilter(() => setAllModules(value => !value))}
+                className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold transition-smooth ${allModules ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}
+              >
+                <AppIcon className="ri-stack-line text-sm" />
+                All modules
+              </button>
+              <button
+                type="button"
+                disabled={!allModules && !search && programmeFilter === 'All' && !deliveryFiltersActive}
                 onClick={() => changeFilter(() => {
+                  setAllModules(false);
                   setSearch('');
                   setProgrammeFilter('All');
                   setCohortFilter('');
@@ -4151,6 +4169,10 @@ function ModuleBuilderContent() {
               </button>
             </div>
           </div>
+          {catalogueActivity.error && <div role="status" className="flex flex-wrap items-center gap-2 px-4 py-2 text-[12px] text-amber-800">
+            <span>{catalogueActivity.error}</span>
+            <button type="button" onClick={catalogueActivity.reload} className="font-semibold underline">Retry activity check</button>
+          </div>}
           <div className="module-catalogue-scroll max-h-[calc(100vh-270px)] min-h-[480px] overflow-auto bg-background-100/35 p-3">
             {/* The skeleton stands in for a catalogue that has never been read.
                 Once rows are on screen a re-read keeps them there: somebody
@@ -4158,7 +4180,7 @@ function ModuleBuilderContent() {
                 through their own work, and replacing what they are reading with
                 grey bars loses their scroll position and their place for no
                 reason. The subtitle already says a read is in flight. */}
-            {loading && !modules.length ? (
+            {(loading && !modules.length) || (!allModules && !catalogueActivity.data && !catalogueActivity.error) ? (
               <ModuleListSkeleton />
             ) : filtered.length > 0 ? (
               <div className="space-y-3">
@@ -4166,6 +4188,7 @@ function ModuleBuilderContent() {
                   <ModuleCatalogueCard
                     key={module.catalogueId}
                     module={module}
+                    source={catalogueActivity.data?.[module.catalogueId]?.source || (module.sourceModule?.sourceType === 'mba-legacy' ? 'old_lms' : ['module_authoring', 'authoring', 'training_plan'].includes(module.sourceModule?.sourceType || '') ? 'new_lms' : 'unknown')}
                     teamsSummary={teamsByModule.get(normaliseDeepLinkValue(module.catalogueId))}
                     onKsbMap={() => { void openKsbMap(module); }}
                     ksbMapLoading={ksbMapLoadingId === (module.catalogueId || moduleStructureIdentifier(module) || module.title)}
@@ -4186,12 +4209,13 @@ function ModuleBuilderContent() {
                   <AppIcon className="ri-search-eye-line text-2xl"></AppIcon>
                 </span>
                 <div>
-                  <p className="text-[13px] font-semibold text-foreground-700">No modules match the current filters.</p>
-                  <p className="mt-1 text-[12px] text-foreground-400">Try changing the search, or the programme, cohort, group or tutor filter.</p>
+                  <p className="text-[13px] font-semibold text-foreground-700">{allModules ? 'No modules match the current filters.' : 'No active modules match the current filters.'}</p>
+                  <p className="mt-1 text-[12px] text-foreground-400">{allModules ? 'Try changing the search, or the programme, cohort, group or tutor filter.' : 'Choose All modules to see other modules, or adjust the current filters.'}</p>
                 </div>
                 <button
                   type="button"
                   onClick={() => changeFilter(() => {
+                    setAllModules(false);
                     setSearch('');
                     setProgrammeFilter('All');
                     setCohortFilter('');
@@ -8375,6 +8399,7 @@ function ReadOnlyMetricChip({ label, value, suffix, tone }: {
 
 function ModuleCatalogueCard({
   module,
+  source,
   teamsSummary,
   onKsbMap,
   ksbMapLoading,
@@ -8385,6 +8410,7 @@ function ModuleCatalogueCard({
   onDelete,
 }: {
   module: ModuleBuilderListItem;
+  source: ModuleCatalogueActivity['source'];
   teamsSummary?: CurriculumTeamsMeetingSummary;
   onKsbMap: () => void;
   ksbMapLoading: boolean;
@@ -8420,6 +8446,9 @@ function ModuleCatalogueCard({
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <h3 className="truncate text-[15px] font-heading font-bold text-foreground-950">{module.title}</h3>
+                <span className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[9px] font-bold ring-1 ${source === 'old_lms' ? 'bg-amber-50 text-amber-800 ring-amber-200' : source === 'new_lms' ? 'bg-primary-50 text-primary-700 ring-primary-100' : 'bg-background-100 text-foreground-500 ring-background-200'}`}>
+                  {source === 'old_lms' ? 'Old LMS' : source === 'new_lms' ? 'New LMS' : 'Source not set'}
+                </span>
                 {!hasContent && (
                   <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700 ring-1 ring-amber-100">
                     <AppIcon className="ri-error-warning-line text-[10px]"></AppIcon>

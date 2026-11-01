@@ -45,9 +45,11 @@ from .attendance_corrections import session_attendance_correction
 from .learner_activity_status import activity_status
 from .home_summary import curriculum_home_summary
 from .module_hours import module_target
+from .catalogue_activity import catalogue_activity
 
 
 urlpatterns = [
+    path('curriculum/modules/catalogue-activity/', catalogue_activity, name='module-catalogue-activity'),
     path('curriculum/modules/<str:module_id>/hours-target/', module_target, name='module-hours-target'),
     path('curriculum/learner-directory/counts/', learner_directory.counts),
     path('curriculum/learner-directory/learners/', learner_directory.learners),
