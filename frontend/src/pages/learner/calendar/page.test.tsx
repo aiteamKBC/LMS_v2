@@ -546,6 +546,17 @@ describe('calendar event previews', () => {
     expect(rescheduleLearnerCalendarSession).not.toHaveBeenCalled();
   });
 
+  it('searches a review by its type even when the appointment title is different', async () => {
+    setup([event({ id: 'typed-review', source: 'review', title: 'Where next?',
+      reviewTypeId: 'CAREER', reviewTypeName: 'Career Review' }), event()]);
+    const filters = screen.getByRole('group', { name: 'Calendar source filters' });
+    await within(filters).findByTitle('Career Review (1)');
+    fireEvent.change(screen.getByPlaceholderText('Search events, session types or coach...'), { target: { value: 'Career Review' } });
+    expect(within(filters).getByTitle('Career Review (1)')).toBeVisible();
+    expect(within(filters).getByTitle('Catch-up (0)')).toBeVisible();
+    expect(screen.getAllByRole('button', { name: /Where next/ }).length).toBeGreaterThan(0);
+  });
+
   it('shows a written, colour-coded status on month cards', async () => {
     setup();
     const statusBadges = await screen.findAllByLabelText('Scheduled status');

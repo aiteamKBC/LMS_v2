@@ -30,10 +30,25 @@
  *  `CalendarEvent` and the coach `TimetableEvent` satisfy it structurally. */
 export interface ReviewTypeClassifiedEvent {
   source?: string;
+  importedReviewType?: string | null;
+  importedReview?: { type?: string | null } | null;
   reviewTypeId?: string | null;
   reviewTypeCode?: string | null;
   reviewTypeName?: string | null;
   reviewTypeIsSystem?: boolean;
+}
+
+/** Aptem has a type name, while Curriculum has a stable type ID. Adapt both
+ *  calendar payloads to the same filter identity without changing the event,
+ *  its routing source, or its booking/form association. */
+export function reviewClassification(event: ReviewTypeClassifiedEvent): ReviewTypeClassifiedEvent {
+  const importedType = (event.importedReviewType || event.importedReview?.type)?.trim();
+  if (event.reviewTypeId || !importedType) return event;
+  return {
+    ...event,
+    reviewTypeId: `aptem-type:${encodeURIComponent(importedType)}`,
+    reviewTypeName: importedType,
+  };
 }
 
 /** A review bucket is addressed by its Review Type id. The prefix keeps review
@@ -79,7 +94,7 @@ export function reviewTypeDot(identity: string): string {
 export function isReviewEvent(event: ReviewTypeClassifiedEvent): boolean {
   // The type metadata is proof on its own; the legacy sources cover a review
   // whose template has no type yet.
-  return Boolean(event.reviewTypeId) || REVIEW_EVENT_SOURCES.has(event.source || '');
+  return Boolean(reviewClassification(event).reviewTypeId) || REVIEW_EVENT_SOURCES.has(event.source || '');
 }
 
 export function reviewFilterKey(reviewTypeId?: string | null): ReviewFilterKey {
@@ -101,7 +116,8 @@ export function isReviewFilterKey(value: string): value is ReviewFilterKey {
  */
 export function reviewTypeBuckets(events: ReviewTypeClassifiedEvent[]): ReviewTypeBucket[] {
   const buckets = new Map<ReviewFilterKey, { name: string; isSystem: boolean; id: string }>();
-  events.forEach((event) => {
+  events.forEach((rawEvent) => {
+    const event = reviewClassification(rawEvent);
     if (!isReviewEvent(event)) return;
     const key = reviewFilterKey(event.reviewTypeId);
     if (buckets.has(key)) return;
@@ -136,5 +152,6 @@ export function reviewTypeBuckets(events: ReviewTypeClassifiedEvent[]): ReviewTy
  * template stays put.
  */
 export function reviewBucketFor(event: ReviewTypeClassifiedEvent): ReviewFilterKey | null {
-  return isReviewEvent(event) ? reviewFilterKey(event.reviewTypeId) : null;
+  const classification = reviewClassification(event);
+  return isReviewEvent(classification) ? reviewFilterKey(classification.reviewTypeId) : null;
 }

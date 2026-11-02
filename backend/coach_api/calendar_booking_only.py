@@ -32,23 +32,30 @@ def booking_only_candidates(records, profiles, aptem_profile_ids, *, events=(), 
         for profile in profiles:
             if profile.id not in aptem_profile_ids:
                 continue
-            expected = getattr(profile, 'enrolment_id', None) if enrolment_booking else profile.id
+            # Some older learner-book operations saved the profile ID after
+            # creating a Native instance. Its exact persisted association is
+            # stronger evidence than the key prefix's legacy ID convention.
+            instance = instances.get(record.review_instance_id) or {}
+            native_matches = (
+                instance.get('learner_id') == profile.id
+                and instance.get('calendar_event_id') == record.pk
+                and instance.get('review_template_id') == record.review_template_id
+                and instance.get('occurrence_number') == getattr(record, 'occurrence_number', None)
+                and instance.get('learner_kind') in ('', profile.learner_type)
+            )
+            use_enrolment_id = enrolment_booking and not native_matches
+            expected = getattr(profile, 'enrolment_id', None) if use_enrolment_id else profile.id
             if expected is None or str(record.learner_id) != str(expected):
                 continue
             if enrolment_booking and len(parts) >= 4 and parts[2] in {'commercial', 'apprenticeship'}:
-                if parts[2] != profile.learner_type or parts[3] != str(expected):
+                if parts[2] != profile.learner_type or (use_enrolment_id and parts[3] != str(expected)):
                     continue
             # Do not use a colliding numeric ID to expose another learner's booking.
             email = (record.learner_email or '').strip().casefold()
             if email and email != (profile.email or '').strip().casefold():
                 # An old email is safe only when the saved Native instance
                 # independently confirms this exact profile AND booking.
-                instance = instances.get(record.review_instance_id) or {}
-                if (enrolment_booking or instance.get('learner_id') != profile.id
-                        or instance.get('calendar_event_id') != record.pk
-                        or instance.get('review_template_id') != record.review_template_id
-                        or instance.get('occurrence_number') != getattr(record, 'occurrence_number', None)
-                        or instance.get('learner_kind') not in ('', profile.learner_type)):
+                if not native_matches:
                     continue
             matches.append(profile)
         if len(matches) == 1:
@@ -60,19 +67,19 @@ def booking_only_candidates(records, profiles, aptem_profile_ids, *, events=(), 
 def unlinked_review_bookings(records, profiles, aptem_profile_ids, *, events=(), linked_keys=()):
     records, profiles = list(records), list(profiles)
     owners = {profile.id: profile for profile in profiles if profile.id in aptem_profile_ids}
-    stale_email_instances = sorted({record.review_instance_id for record in records
+    proof_instance_ids = sorted({record.review_instance_id for record in records
         if record.learner_id in owners and record.review_instance_id and record.review_template_id
-        and not (record.idempotency_key or '').startswith('learner-book:')
-        and (record.learner_email or '').strip().casefold()
-        != (owners[record.learner_id].email or '').strip().casefold()})
+        and ((record.idempotency_key or '').startswith('learner-book:')
+             or (record.learner_email or '').strip().casefold()
+             != (owners[record.learner_id].email or '').strip().casefold())})
     instances = []
-    if stale_email_instances:
+    if proof_instance_ids:
         from curriculum_api import views as curriculum_views
-        placeholders = ', '.join(['%s'] * len(stale_email_instances))
+        placeholders = ', '.join(['%s'] * len(proof_instance_ids))
         instances = curriculum_views.fetch_all(
             'SELECT id, learner_id, learner_kind, calendar_event_id, review_template_id, occurrence_number '
             f'FROM {curriculum_views.authoring_table_name("review_instances")} WHERE id IN ({placeholders})',
-            stale_email_instances,
+            proof_instance_ids,
         )
     candidates = booking_only_candidates(records, profiles, aptem_profile_ids,
         events=events, linked_keys=linked_keys, native_instances=instances)

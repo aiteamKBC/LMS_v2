@@ -15,7 +15,7 @@ import {
   isSourceFilterValue,
   type CoachFilterableEvent,
 } from '../sourceFilters';
-import { reviewTypeBuckets as sharedBuckets } from '@/lib/reviewTypeFilters';
+import { reviewBucketFor, reviewTypeBuckets as sharedBuckets } from '@/lib/reviewTypeFilters';
 
 interface TestEvent extends CoachFilterableEvent {
   title: string;
@@ -62,6 +62,39 @@ const support = (): TestEvent => ({ title: 'Support', source: 'student-support',
 const other = (): TestEvent => ({ title: 'Other session', source: 'other', type: 'coaching' });
 
 describe('bucketing one coach event', () => {
+  it.each(['Monthly Coaching Meeting', 'Progress Review', 'Progress Review (+ Skills Radar)', 'Personal Support Plan'])(
+    'uses the same Aptem %s bucket on coach and learner calendars', importedReviewType => {
+      const coach = { source: 'progress-review', importedReviewType };
+      const learner = { source: 'progress-review', importedReview: { type: importedReviewType } };
+      const key = `review:aptem-type:${encodeURIComponent(importedReviewType)}` as const;
+      expect(reviewBucketFor(coach)).toBe(key);
+      expect(reviewBucketFor(learner)).toBe(key);
+      expect(eventMatchesSourceFilter(coach, key)).toBe(true);
+      expect(eventMatchesSourceFilter(coach, 'review:')).toBe(false);
+      expect(sharedBuckets([coach])).toEqual(sharedBuckets([learner]));
+      expect(coach).toEqual({ source: 'progress-review', importedReviewType });
+    },
+  );
+
+  it('preserves an authoritative Curriculum classification over imported metadata', () => {
+    const native = { ...careerReview(), importedReviewType: 'Monthly Coaching Meeting' };
+    expect(reviewBucketFor(native)).toBe('review:REVT-CAREER');
+    expect(buildCoachSourceChips([native]).some(chip => chip.label === 'Monthly Coaching Meeting')).toBe(false);
+  });
+
+  it('counts imported types separately from unclassified reviews in the visible range', () => {
+    const imported = (importedReviewType: string) => ({ source: 'progress-review', importedReviewType });
+    const monthly = imported('Monthly Coaching Meeting');
+    const support = imported('Personal Support Plan');
+    const progress = imported('Progress Review');
+    const loaded = [monthly, support, progress, unclassifiedReview()];
+    const options = buildCoachSourceOptions(loaded, [monthly, support]);
+    expect(options.find(chip => chip.label === 'Monthly Coaching Meeting')?.count).toBe(1);
+    expect(options.find(chip => chip.label === 'Personal Support Plan')?.count).toBe(1);
+    expect(options.find(chip => chip.label === 'Progress Review')?.count).toBe(0);
+    expect(options.find(chip => chip.label === 'Review')?.count).toBe(0);
+  });
+
   it('puts an MCM event under Monthly Coaching Meeting', () => {
     expect(eventMatchesSourceFilter(mcm(), 'review:REVT-MCM')).toBe(true);
   });

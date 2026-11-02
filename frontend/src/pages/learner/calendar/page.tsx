@@ -765,6 +765,7 @@ function LearnerCalendarBody() {
     if (!term) return visibleRangeEvents;
     return visibleRangeEvents.filter((event) => [
       event.title,
+      learnerSourceMeta(event).label,
       event.description,
       event.club,
       event.host,

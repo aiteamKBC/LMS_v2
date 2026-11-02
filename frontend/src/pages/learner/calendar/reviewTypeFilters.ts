@@ -16,11 +16,11 @@ import {
   isReviewEvent,
   isReviewFilterKey,
   reviewFilterKey,
+  reviewClassification,
   reviewTypeBuckets as sharedReviewTypeBuckets,
   reviewTypeDot,
   UNCLASSIFIED_REVIEW_LABEL,
   type ReviewFilterKey,
-  type ReviewTypeClassifiedEvent,
 } from '@/lib/reviewTypeFilters';
 
 export { REVIEW_FILTER_PREFIX } from '@/lib/reviewTypeFilters';
@@ -54,19 +54,6 @@ export const LEARNER_NON_REVIEW_SOURCE_META: Record<
   personal: { label: 'Personal Events', short: 'Personal', dot: 'bg-sky-500' },
   busy: { label: 'Busy Time', short: 'Busy', dot: 'bg-slate-500' },
 };
-
-/** Aptem supplies a review type name rather than a Curriculum type ID. Give
- *  that type a filter-only identity; never change the stored event, booking
- *  source or form IDs. Native types continue to use their authoritative ID. */
-function reviewClassification(event: CalendarEvent): ReviewTypeClassifiedEvent {
-  const importedType = event.importedReview?.type.trim();
-  if (event.reviewTypeId || !importedType) return event;
-  return {
-    ...event,
-    reviewTypeId: `aptem-type:${encodeURIComponent(importedType)}`,
-    reviewTypeName: importedType,
-  };
-}
 
 /** Label/colour for whichever bucket an event falls in -- the fixed record for
  *  a non-review source, the Review Type's own name and colour for a review.

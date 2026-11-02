@@ -825,6 +825,8 @@ function matchesSearchTerm(event: TimetableEvent, searchTerm: string) {
 
   const searchableText = [
     event.title,
+    event.reviewTypeName,
+    event.importedReviewType,
     event.learner,
     event.email,
     event.learnerId,
@@ -1373,6 +1375,9 @@ export default function CoachTimetablePage() {
     () => buildCoachSourceOptions(calendarEvents, searchedVisibleRangeEvents),
     [calendarEvents, searchedVisibleRangeEvents],
   );
+  useEffect(() => {
+    if (!sourceFilterOptions.some(option => option.value === filterSource)) setFilterSource('all');
+  }, [sourceFilterOptions, filterSource]);
 
   const activeMeetingTypeKeys = useMemo<MeetingTypeKey[]>(() => (
     Array.from(new Set(calendarEvents.map(event => getMeetingTypeKey(event))))
@@ -2311,6 +2316,8 @@ export default function CoachTimetablePage() {
                       key={`menu-${option.value}`}
                       type="button"
                       onClick={() => setFilterSource(option.value)}
+                      aria-pressed={isActive}
+                      title={`${option.longLabel} (${option.count})`}
                       className={`calendar-filter-pill inline-flex items-center gap-2 rounded-xl border text-[11px] font-semibold transition focus:outline-none focus:ring-2 focus:ring-[#4F2D7F]/20 ${isActive ? 'border-[#C9B9DD] bg-[#F7F3FB] text-[#4F2D7F] shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:border-[#D8CCE8] hover:bg-slate-50'}`}
                     >
                       <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: isActive ? '#4F2D7F' : sourceColor.accent }} />

@@ -33,6 +33,27 @@ def event(record):
 class BookingOnlyCandidateTests(SimpleTestCase):
     @patch('coach_api.reconciliation_links.active_links')
     @patch('curriculum_api.views.fetch_all')
+    def test_legacy_key_with_profile_id_requires_exact_native_proof(self, fetch, links):
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind):
+                row = booking(idempotency_key=f'learner-book:mcm:{kind}:107:2026-10:41')
+                owner = profile(learner_type=kind)
+                proof = dict(id='instance', learner_id=7, learner_kind=kind, calendar_event_id=31,
+                             review_template_id='template', occurrence_number=1)
+                fetch.return_value = [proof]
+                links.return_value.values_list.return_value = []
+                self.assertEqual(unlinked_review_bookings([row], [owner], {7}), [(row, owner)])
+                self.assertEqual(fetch.call_args.args[1], ['instance'])
+                self.assertEqual(booking_only_candidates([row], [owner], {7}), [])
+                for mismatch in [dict(calendar_event_id=32), dict(learner_id=8),
+                                 dict(review_template_id='other'), dict(occurrence_number=2),
+                                 dict(learner_kind='other')]:
+                    with self.subTest(mismatch=mismatch):
+                        self.assertEqual(booking_only_candidates([row], [owner], {7},
+                            native_instances=[{**proof, **mismatch}]), [])
+
+    @patch('coach_api.reconciliation_links.active_links')
+    @patch('curriculum_api.views.fetch_all')
     def test_old_email_requires_exact_saved_instance_and_calendar_identity(self, fetch, links):
         row = booking(learner_email='old@example.invalid')
         proof = dict(id='instance', learner_id=7, learner_kind='', calendar_event_id=31,
