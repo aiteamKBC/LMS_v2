@@ -135,7 +135,7 @@ describe('the correction dialog', () => {
 
     // The inclusive upper boundary remains available.
     fireEvent.change(screen.getByLabelText('Completion date'), { target: { value: '2026-09-29' } });
-    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '19' } });
+    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '17' } });
     expect(finalSubmit).toBeEnabled();
     expect(screen.getByText(/You can still submit it/i)).toBeInTheDocument();
 
@@ -176,12 +176,12 @@ describe('the correction dialog', () => {
     await screen.findByRole('dialog', { name: /review your completion date and time/i });
 
     fireEvent.change(screen.getByLabelText('Completion date'), { target: { value: '2026-09-27' } });
-    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '19' } });
+    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '17' } });
     fireEvent.click(screen.getByRole('button', { name: /Final Submit/ }));
 
     await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledTimes(2));
     expect(vi.mocked(submitComponentProgress).mock.calls[1][3]).toMatchObject({
-      declaredCompletedAt: '2026-09-27T19:00:00',
+      declaredCompletedAt: '2026-09-27T17:00:00',
     });
     await waitFor(() => expect(
       screen.queryByRole('dialog', { name: /review your completion date and time/i }),
@@ -308,13 +308,23 @@ describe('the browser copy of the rules', () => {
 
   it('accepts a weekday inside hours', () => {
     expect(workingRuleFailure('2026-09-29', '14:30', holidays)).toBeNull();
-    expect(workingRuleFailure('2026-09-29', '07:00', holidays)).toBeNull();
-    expect(workingRuleFailure('2026-09-29', '18:59', holidays)).toBeNull();
+    expect(workingRuleFailure('2026-09-29', '08:00', holidays)).toBeNull();
+    expect(workingRuleFailure('2026-09-29', '16:59', holidays)).toBeNull();
   });
 
   it('refuses the hour boundaries the server refuses', () => {
-    expect(workingRuleFailure('2026-09-29', '06:59', holidays)?.reason).toBe('outside_working_hours');
+    expect(workingRuleFailure('2026-09-29', '07:59', holidays)?.reason).toBe('outside_working_hours');
+    expect(workingRuleFailure('2026-09-29', '17:00', holidays)?.reason).toBe('outside_working_hours');
+    expect(workingRuleFailure('2026-09-29', '07:00', holidays)?.reason).toBe('outside_working_hours');
+    expect(workingRuleFailure('2026-09-29', '18:59', holidays)?.reason).toBe('outside_working_hours');
     expect(workingRuleFailure('2026-09-29', '19:00', holidays)?.reason).toBe('outside_working_hours');
+  });
+
+  it('describes the allowed hours separately from the outside-hours warning', () => {
+    expect(workingRuleFailure('2026-10-30', '17:00', holidays)?.message)
+      .toBe('Allowed working hours are Monday to Friday, from 08:00 to before 17:00 UK time.');
+    expect(workingRuleFailure('2026-10-30', '08:00', holidays)).toBeNull();
+    expect(workingRuleFailure('2026-10-30', '16:59', holidays)).toBeNull();
   });
 
   it('refuses both weekend days', () => {

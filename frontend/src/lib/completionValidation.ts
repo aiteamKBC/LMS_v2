@@ -19,9 +19,9 @@ export interface WorkingRuleFailure {
   message: string;
 }
 
-/** Mirrors backend working_rules: Monday-Friday, 07:00 up to (not including) 19:00. */
-export const WORKING_DAY_START_HOUR = 7;
-export const WORKING_DAY_END_HOUR = 19;
+/** Mirrors backend working_rules: Monday-Friday, 08:00 up to (not including) 17:00. */
+export const WORKING_DAY_START_HOUR = 8;
+export const WORKING_DAY_END_HOUR = 17;
 
 /** A completion the server refused, with the reason it gave. */
 export class CompletionValidationError extends Error {
@@ -92,7 +92,7 @@ export function workingRuleFailure(
     return {
       reason: 'outside_working_hours',
       holidayName: '',
-      message: 'Outside official working hours (Monday to Friday, 07:00-19:00 UK time).',
+      message: 'Allowed working hours are Monday to Friday, from 08:00 to before 17:00 UK time.',
     };
   }
 

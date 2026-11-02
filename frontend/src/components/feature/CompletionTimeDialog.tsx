@@ -7,6 +7,8 @@ import {
   reasonHeadline,
   ukDateKey,
   workingRuleFailure,
+  WORKING_DAY_START_HOUR,
+  WORKING_DAY_END_HOUR,
   type WorkingRuleReason,
 } from '@/lib/completionValidation';
 
@@ -18,8 +20,9 @@ import {
 // percentage, no history entry. The learner picks the date and time the work
 // was actually done at, and Final Submit sends that instant to be written.
 //
-// Clock choices are limited to 07:00 through 19:00 inclusive. Weekend and
-// holiday warnings remain advisory; the server also rejects future instants.
+// Clock choices are limited to 08:00 through 17:00 inclusive. The closing
+// instant, weekend and holiday warnings remain advisory; the server also
+// rejects future instants.
 // ============================================================================
 
 interface CompletionTimeDialogProps {
@@ -66,7 +69,9 @@ export function CompletionTimeDialog({
     () => (day && time ? workingRuleFailure(day, time, holidays) : null),
     [day, time, holidays],
   );
-  const complete = Boolean(day && /^\d{2}:\d{2}$/.test(time) && time >= '07:00' && time <= '19:00');
+  const complete = Boolean(day && /^\d{2}:\d{2}$/.test(time)
+    && time >= `${String(WORKING_DAY_START_HOUR).padStart(2, '0')}:00`
+    && time <= `${WORKING_DAY_END_HOUR}:00`);
   const canSubmit = complete && !submitting;
 
   useEffect(() => {
@@ -180,13 +185,13 @@ export function CompletionTimeDialog({
                   value={hour}
                   onChange={event => {
                     setHour(event.target.value);
-                    if (event.target.value === '19') setMinute('00');
+                    if (event.target.value === String(WORKING_DAY_END_HOUR)) setMinute('00');
                     setTouched(true);
                   }}
                   className="w-full rounded-xl border border-foreground-300 px-3 py-2.5 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500"
                 >
                   <option value="">Hour</option>
-                  {Array.from({ length: 13 }, (_, index) => index + 7).map(value => (
+                  {Array.from({ length: WORKING_DAY_END_HOUR - WORKING_DAY_START_HOUR + 1 }, (_, index) => index + WORKING_DAY_START_HOUR).map(value => (
                     <option key={value} value={String(value).padStart(2, '0')}>
                       {value % 12 || 12} {value < 12 ? 'AM' : 'PM'}
                     </option>
@@ -199,7 +204,7 @@ export function CompletionTimeDialog({
                   className="w-full rounded-xl border border-foreground-300 px-3 py-2.5 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500"
                 >
                   <option value="">Minute</option>
-                  {Array.from({ length: hour === '19' ? 1 : 60 }, (_, index) => String(index).padStart(2, '0')).map(value => (
+                  {Array.from({ length: hour === String(WORKING_DAY_END_HOUR) ? 1 : 60 }, (_, index) => String(index).padStart(2, '0')).map(value => (
                     <option key={value} value={value}>{value}</option>
                   ))}
                 </select>
@@ -208,8 +213,8 @@ export function CompletionTimeDialog({
           </div>
 
           <p className="text-xs leading-5 text-foreground-500">
-            Official working hours are Monday to Friday, 07:00-19:00 UK time, excluding
-            bank holidays.
+            Official working hours are Monday to Friday, from 08:00 to before 17:00 UK
+            time, excluding bank holidays.
           </p>
 
           {serverError ? (

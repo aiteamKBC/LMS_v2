@@ -3,7 +3,7 @@ import { readLearnerJson } from '@/api/learnerRead';
 import { componentAccessWindow, type ComponentAccessWindow, type WorkingHoursHoliday } from '@/lib/componentAccessWindow';
 
 /**
- * The working-rules calendar, re-checked at least once a minute so 07:00/19:00
+ * The working-rules calendar, re-checked at least once a minute so 08:00/17:00
  * takes effect without a refresh.
  *
  * `componentId` (or `quizId`, for a quiz, which reaches its cohort through its

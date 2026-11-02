@@ -159,14 +159,16 @@ class TimeTrackingSessionTests(SimpleTestCase):
         self.assertTrue(component_access_is_open(datetime(2026, 7, 19, 10, 0, tzinfo=ZoneInfo("UTC"))))
 
     def test_outside_working_hours_uses_uk_weekdays_and_gmt_boundaries(self):
-        self.assertTrue(outside_uk_working_hours(datetime(2026, 1, 15, 6, 59, tzinfo=ZoneInfo("UTC"))))
-        self.assertFalse(outside_uk_working_hours(datetime(2026, 1, 15, 7, 0, tzinfo=ZoneInfo("UTC"))))
-        self.assertFalse(outside_uk_working_hours(datetime(2026, 1, 15, 18, 59, tzinfo=ZoneInfo("UTC"))))
-        self.assertTrue(outside_uk_working_hours(datetime(2026, 1, 15, 19, 0, tzinfo=ZoneInfo("UTC"))))
+        self.assertTrue(outside_uk_working_hours(datetime(2026, 1, 15, 7, 59, tzinfo=ZoneInfo("UTC"))))
+        self.assertFalse(outside_uk_working_hours(datetime(2026, 1, 15, 8, 0, tzinfo=ZoneInfo("UTC"))))
+        self.assertFalse(outside_uk_working_hours(datetime(2026, 1, 15, 16, 59, tzinfo=ZoneInfo("UTC"))))
+        self.assertTrue(outside_uk_working_hours(datetime(2026, 1, 15, 17, 0, tzinfo=ZoneInfo("UTC"))))
 
     def test_outside_working_hours_applies_bst_and_weekends(self):
-        self.assertTrue(outside_uk_working_hours(datetime(2026, 7, 15, 5, 59, tzinfo=ZoneInfo("UTC"))))
-        self.assertFalse(outside_uk_working_hours(datetime(2026, 7, 15, 6, 0, tzinfo=ZoneInfo("UTC"))))
+        self.assertTrue(outside_uk_working_hours(datetime(2026, 7, 15, 6, 59, tzinfo=ZoneInfo("UTC"))))
+        self.assertFalse(outside_uk_working_hours(datetime(2026, 7, 15, 7, 0, tzinfo=ZoneInfo("UTC"))))
+        self.assertFalse(outside_uk_working_hours(datetime(2026, 7, 15, 15, 59, tzinfo=ZoneInfo("UTC"))))
+        self.assertTrue(outside_uk_working_hours(datetime(2026, 7, 15, 16, 0, tzinfo=ZoneInfo("UTC"))))
         self.assertTrue(outside_uk_working_hours(datetime(2026, 7, 18, 12, 0, tzinfo=ZoneInfo("UTC"))))
 
     def test_weekday_holiday_requires_declaration_during_working_hours(self):
