@@ -9,6 +9,7 @@ from . import lms_introduction
 
 from . import admin_evidence, advanced_admin, advanced_admin_assignment_uploads, access_requests, microsoft_sso, platform_admin, saved_signature, views
 from old_otjh.entry import entry_status
+from curriculum_api.module_hours import own_access as module_hours_own_access, account_access as module_hours_account_access
 
 
 def restricted_path(route, view, *, name):
@@ -17,6 +18,8 @@ def restricted_path(route, view, *, name):
 
 
 urlpatterns = [
+    restricted_path('module-hours/access/', module_hours_own_access, name='module-hours-own-access'),
+    restricted_path('admin/accounts/<int:account_id>/module-hours-access/', module_hours_account_access, name='module-hours-account-access'),
     restricted_path('advanced-admin/learners/<int:profile_id>/assignment-uploads/', advanced_admin_assignment_uploads.assignments, name='advanced-admin-assignment-uploads'),
     restricted_path('advanced-admin/learners/<int:profile_id>/assignment-uploads/<uuid:record_id>/open/', advanced_admin_assignment_uploads.assignment_document, name='advanced-admin-assignment-upload-document'),
     restricted_path('advanced-admin/learners/', advanced_admin.learners, name='advanced-admin-learners'),

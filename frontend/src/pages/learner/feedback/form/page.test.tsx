@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { feedbackApi, type FeedbackForm } from '@/api/feedback';
@@ -10,8 +10,12 @@ vi.mock('@/api/feedback', async importOriginal => {
   const actual = await importOriginal<typeof import('@/api/feedback')>();
   return { ...actual, feedbackApi: { ...actual.feedbackApi, myForm: vi.fn(), saveResponse: vi.fn(), myDelivery: vi.fn(), saveDeliveryResponse: vi.fn(), myReviewDelivery: vi.fn(), saveReviewDeliveryResponse: vi.fn() } };
 });
-vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: { role: 'learner', subjectType: 'learner', subjectId: 61, learnerType: 'apprenticeship', displayName: 'Learner' } }, isInitialized: true }) }));
-vi.mock('@/hooks/useMyLearner', () => ({ useResolvedLearner: () => ({ kind: 'apprenticeship', id: '61' }) }));
+const session = vi.hoisted(() => ({
+  account: { role: 'learner', subjectType: 'learner', subjectId: 61, learnerType: 'apprenticeship', displayName: 'Learner' },
+  resolved: { kind: 'apprenticeship', id: '61' },
+}));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: session.account }, isInitialized: true }) }));
+vi.mock('@/hooks/useMyLearner', () => ({ useResolvedLearner: () => session.resolved }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock('@/mocks/navigation', () => ({ roleNavMap: { learner: { label: 'Learner', items: [], workspaceLabel: 'Workspace' } } }));
 vi.mock('sweetalert2', () => ({ default: { fire: vi.fn() } }));
@@ -28,9 +32,13 @@ const form: FeedbackForm = {
   response: { id: null, status: 'not_started', answers: {}, submittedAt: null }, delivery: null,
 };
 
+function FeedbackLocation() { const location = useLocation(); return <output>{location.pathname}{location.search}</output>; }
+
 describe('learner feedback automatic save', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Object.assign(session.account, { role: 'learner', subjectType: 'learner', subjectId: 61 });
+    Object.assign(session.resolved, { kind: 'apprenticeship', id: '61' });
     vi.mocked(feedbackApi.myForm).mockResolvedValue({ form });
     vi.mocked(feedbackApi.saveResponse).mockResolvedValue({ response: { id: 9, status: 'in_progress', submittedAt: null, updatedAt: '2026-09-27T10:00:00Z' } });
     vi.mocked(feedbackApi.myReviewDelivery).mockResolvedValue({ form: {
@@ -57,6 +65,37 @@ describe('learner feedback automatic save', () => {
 
     expect(await screen.findByText(/October coaching · Completed/)).toBeInTheDocument();
     expect(feedbackApi.myReviewDelivery).toHaveBeenCalledWith(71, undefined);
+  });
+
+  it.each([
+    ['staff', 'apprenticeship', 'post_mcm_review', 'mcm'],
+    ['admin', 'commercial', 'post_progress_review', 'progress-review'],
+    ['admin', 'apprenticeship', 'post_progress_review', 'progress-review'],
+    ['staff', 'commercial', 'post_mcm_review', 'mcm'],
+  ] as const)('keeps %s preview read-only for a %s learner and preserves review context', async (role, kind, formType, category) => {
+    Object.assign(session.account, { role, subjectType: 'staff', subjectId: 8 });
+    Object.assign(session.resolved, { kind, id: '125' });
+    vi.mocked(feedbackApi.myReviewDelivery).mockResolvedValue({ form: {
+      ...form, formType, title: 'Review feedback',
+      reviewDelivery: { id: 71, reviewType: 'Review', reviewName: 'Synthetic review', completedAt: '2026-11-01T12:00:00Z' },
+    } });
+    const query = `?learnerId=125&kind=${kind}&category=${category}`;
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={[`/learner/feedback/review/71${query}`]}><Routes>
+      <Route path="/learner/feedback/review/:reviewDeliveryId" element={<LearnerFeedbackFormPage />} />
+      <Route path="/learner/feedback" element={<FeedbackLocation />} />
+    </Routes></MemoryRouter>);
+
+    const answer = await screen.findByRole('textbox', { name: 'Your feedback' });
+    expect(feedbackApi.myReviewDelivery).toHaveBeenCalledWith(71, '125');
+    expect(screen.getByText(/responses cannot be changed or submitted/)).toBeVisible();
+    expect(answer).toBeDisabled();
+    await user.type(answer, 'Cannot change this preview');
+    expect(screen.queryByRole('button', { name: /Submit/ })).not.toBeInTheDocument();
+    expect(feedbackApi.saveReviewDeliveryResponse).not.toHaveBeenCalled();
+    expect(feedbackApi.saveResponse).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: /Back to Feedback/ }));
+    expect(screen.getByText(`/learner/feedback${query}`)).toBeVisible();
   });
 
   it('removes the Save button and saves an answer automatically', async () => {

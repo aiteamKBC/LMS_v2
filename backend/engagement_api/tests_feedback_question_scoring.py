@@ -283,7 +283,7 @@ class QuestionMetricTests(SimpleTestCase):
 
 
 class QuestionCoverageTests(SimpleTestCase):
-    def report(self, questions, *, deliveries=(), recipients=(), pins=(), started=(), assignments=(), reviews=(), campaigns=(), events=(), rsvp=(), delivery_ids=None, completed=(), all_completed=None, **period):
+    def report(self, questions, *, deliveries=(), recipients=(), pins=(), overrides=(), started=(), assignments=(), reviews=(), campaigns=(), events=(), rsvp=(), delivery_ids=None, completed=(), all_completed=None, **period):
         patches = [
             mock.patch.object(reporting, 'completed_report_responses', side_effect=[completed, all_completed] if all_completed is not None else None, return_value=completed),
             mock.patch.object(reporting.FeedbackQuestion.objects, 'select_related', return_value=queryset(questions)),
@@ -296,6 +296,7 @@ class QuestionCoverageTests(SimpleTestCase):
             mock.patch.object(reporting.FeedbackDelivery.objects, 'filter', return_value=queryset(deliveries)),
             mock.patch.object(reporting.FeedbackDeliveryRecipient.objects, 'filter', return_value=queryset(recipients)),
             mock.patch.object(reporting.FeedbackDeliveryQuestion.objects, 'filter', return_value=queryset(pins)),
+            mock.patch.object(reporting.FeedbackDeliveryQuestionOverride.objects, 'filter', return_value=queryset(overrides)),
             mock.patch.object(reporting.FeedbackResponse.objects, 'filter', return_value=queryset(started)),
         ]
         for patch in patches:
@@ -344,6 +345,34 @@ class QuestionCoverageTests(SimpleTestCase):
         self.assertEqual((rows[0]['assignedCount'], rows[0]['answerRate']), (2, 50))
         self.assertEqual((rows[1]['assignedCount'], rows[1]['answerRate']), (1, 0))
         self.assertNotIn('_score', rows[0])
+
+    def test_corrected_lecture_counts_old_response_and_new_recipient_separately(self):
+        first, second = question(), question(2)
+        first.submitted_answers = [answer(5, learner='1')]
+        changed_at = datetime(2026, 10, 28, tzinfo=timezone.utc)
+        result = self.report(
+            [first, second], delivery_ids=[30],
+            deliveries=[{'id': 30, 'form_id': 4, 'question_set_pinned': True}],
+            recipients=[(30, '1'), (30, '2')], pins=[(30, 1)],
+            overrides=[(30, '2', 1, 2, changed_at)],
+        )
+        self.assertEqual(
+            [(row['questionId'], row['assignedCount'], row['answeredCount'])
+             for row in result['questionMetrics']],
+            [(1, 1, 1), (2, 1, 0)],
+        )
+
+    def test_correction_does_not_change_a_response_started_before_it(self):
+        first, second = question(), question(2)
+        changed_at = datetime(2026, 10, 28, tzinfo=timezone.utc)
+        result = self.report(
+            [first, second], delivery_ids=[30],
+            deliveries=[{'id': 30, 'form_id': 4, 'question_set_pinned': True}],
+            recipients=[(30, '1')], pins=[(30, 1)],
+            overrides=[(30, '1', 1, 2, changed_at)],
+            started=[(30, '1', datetime(2026, 10, 27, tzinfo=timezone.utc))],
+        )
+        self.assertEqual([row['questionId'] for row in result['questionMetrics']], [1])
 
     def test_legacy_uninitialized_bank_is_reported_unknown_without_pinning_or_writes(self):
         with mock.patch.object(feedback, 'ensure_delivery_questions') as ensure, mock.patch.object(feedback, 'sync_module_feedback') as sync:

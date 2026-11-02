@@ -512,7 +512,7 @@ class FeedbackForm(models.Model):
         ('post_event', 'Post-event'), ('event_rsvp', 'Event RSVP'),
         ('post_mcm_review', 'MCM Feedback'),
         ('post_progress_review', 'Progress Review Feedback'),
-        ('mid_module', 'Mid-module Feedback'),
+        ('mid_module', 'Well being'),
         ('end_module', 'End-module Feedback'),
     ]
     DELIVERY_SCOPE_CHOICES = [('manual', 'Manual'), ('all_modules', 'All modules'), ('module', 'One module')]
@@ -615,6 +615,7 @@ class FeedbackDelivery(models.Model):
     module_catalogue_id = models.CharField(max_length=255)
     module_name = models.CharField(max_length=500, blank=True, default='')
     session_title = models.CharField(max_length=500, blank=True, default='')
+    tutor_name = models.CharField(max_length=255, blank=True, default='')
     starts_at = models.DateTimeField(null=True, blank=True)
     ends_at = models.DateTimeField(null=True, blank=True)
     available_at = models.DateTimeField()
@@ -660,6 +661,26 @@ class FeedbackDeliveryRecipient(models.Model):
     class Meta:
         managed = False
         db_table = 'Feedback"."feedback_delivery_recipients'
+
+
+class FeedbackDeliveryQuestionOverride(models.Model):
+    """One recipient's corrected question, without rewriting a started response."""
+
+    recipient = models.ForeignKey(
+        FeedbackDeliveryRecipient, on_delete=models.PROTECT, related_name='question_overrides',
+        db_column='recipient_id',
+    )
+    original_question = models.ForeignKey(
+        FeedbackQuestion, on_delete=models.PROTECT, related_name='+', db_column='original_question_id',
+    )
+    replacement_question = models.ForeignKey(
+        FeedbackQuestion, on_delete=models.PROTECT, related_name='+', db_column='replacement_question_id',
+    )
+    effective_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_delivery_question_overrides'
 
 
 class FeedbackReviewDelivery(models.Model):

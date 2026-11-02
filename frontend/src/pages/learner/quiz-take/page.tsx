@@ -412,6 +412,7 @@ export default function QuizTakePage() {
     completionInFlightRef.current = true;
     setSubmitting(true);
     setSubmitError(null);
+    if (options.declaredCompletedAt) setCorrectionError('');
     // Remembered so a correction re-posts the SAME submission. The answers and
     // the frozen timer go back unchanged, so the server grades the attempt to
     // exactly the score it would have given the refused click -- the learner
@@ -459,7 +460,9 @@ export default function QuizTakePage() {
         return;
       }
       if (timingSessionExpired(e)) setExpiredTiming(true);
-      setSubmitError(e instanceof Error ? e.message : 'Could not submit quiz');
+      const message = e instanceof Error ? e.message : 'Could not submit quiz';
+      if (options.declaredCompletedAt) setCorrectionError(message);
+      else setSubmitError(message);
     } finally {
       completionInFlightRef.current = false;
       setSubmitting(false);

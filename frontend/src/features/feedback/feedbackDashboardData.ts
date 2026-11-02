@@ -1,7 +1,7 @@
 import type { FeedbackClassificationReport, FeedbackQuestionMetric } from '@/api/feedback';
 
 export const FEEDBACK_TYPE_LABELS = {
-  post_lecture: 'Live Sessions Feedback', mid_module: 'Mid-module Feedback', end_module: 'End-module Feedback',
+  post_lecture: 'Live Sessions Feedback', mid_module: 'Well being', end_module: 'End-module Feedback',
   post_mcm_review: 'MCM Feedback', post_progress_review: 'Progress Review Feedback', post_event: 'Event Feedback',
   event_rsvp: 'Event RSVP', general: 'General Feedback',
 } as const;
