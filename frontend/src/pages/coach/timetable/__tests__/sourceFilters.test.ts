@@ -15,7 +15,7 @@ import {
   isSourceFilterValue,
   type CoachFilterableEvent,
 } from '../sourceFilters';
-import { reviewBucketFor, reviewTypeBuckets as sharedBuckets } from '@/lib/reviewTypeFilters';
+import { buildReviewTypeLookup, reviewBucketFor, reviewTypeBuckets as sharedBuckets } from '@/lib/reviewTypeFilters';
 
 interface TestEvent extends CoachFilterableEvent {
   title: string;
@@ -62,11 +62,37 @@ const support = (): TestEvent => ({ title: 'Support', source: 'student-support',
 const other = (): TestEvent => ({ title: 'Other session', source: 'other', type: 'coaching' });
 
 describe('bucketing one coach event', () => {
-  it.each(['Monthly Coaching Meeting', 'Progress Review', 'Progress Review (+ Skills Radar)', 'Personal Support Plan'])(
-    'uses the same Aptem %s bucket on coach and learner calendars', importedReviewType => {
+  it('uses all loaded types when counting or filtering a narrower date/search range', () => {
+    const native = supportPlan();
+    const imported = { source: 'progress-review', importedReviewType: 'Personal Support Plan' };
+    const loaded = [native, imported, gatewayReview()];
+    const options = buildCoachSourceOptions(loaded, [imported]);
+    expect(options.filter(option => option.label === 'Personal Support Plan')).toHaveLength(1);
+    expect(options.find(option => option.value === 'review:REVT-PSP')?.count).toBe(1);
+    expect(filterBySource([imported], 'review:REVT-PSP', buildReviewTypeLookup(loaded))).toEqual([imported]);
+  });
+
+  it.each(['first-session', 'lms-introduction', 'gateway', 'eligibility-review'] as const)('offers an exact filter for %s appointments', source => {
+    const appointment = { source, type: 'coaching' };
+    expect(buildCoachSourceOptions([appointment, other()], [appointment]).find(option => option.value === source)?.count).toBe(1);
+    expect(filterBySource([appointment, other()], source)).toEqual([appointment]);
+    expect(eventMatchesSourceFilter(appointment, 'other')).toBe(false);
+  });
+
+  it('keeps other sources accessible without mixing live sessions, support or reviews', () => {
+    const unknown = { source: 'workspace', type: 'admin' };
+    expect(filterBySource([unknown, liveSession(), support(), careerReview()], 'other')).toEqual([unknown]);
+  });
+  it.each([
+    ['Monthly Coaching Meeting', 'REVT-MCM'],
+    ['Progress Review', 'REVT-PROGRESS_REVIEW'],
+    ['Progress Review (+ Skills Radar)', `aptem-type:${encodeURIComponent('Progress Review (+ Skills Radar)')}`],
+    ['Personal Support Plan', `aptem-type:${encodeURIComponent('Personal Support Plan')}`],
+  ])(
+    'uses the same %s bucket on coach and learner calendars', (importedReviewType, typeId) => {
       const coach = { source: 'progress-review', importedReviewType };
       const learner = { source: 'progress-review', importedReview: { type: importedReviewType } };
-      const key = `review:aptem-type:${encodeURIComponent(importedReviewType)}` as const;
+      const key = `review:${typeId}` as const;
       expect(reviewBucketFor(coach)).toBe(key);
       expect(reviewBucketFor(learner)).toBe(key);
       expect(eventMatchesSourceFilter(coach, key)).toBe(true);

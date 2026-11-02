@@ -11592,7 +11592,8 @@ def coach_timetable_schedule_event(request):
         learner_map = build_learner_profile_map(learner_rows)
         learner = learner_map.get(catchup_record.learner_id)
         if learner and coach_learner_personal_calendar_conflicts(
-            learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes
+            learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes,
+            exclude_record=catchup_record,
         ):
             return JsonResponse({"detail": "This learner is busy at that time. Choose another time."}, status=409)
         catchup_record.owner_name = owner_name or catchup_record.owner_name

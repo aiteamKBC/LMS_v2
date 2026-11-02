@@ -33,6 +33,7 @@ import {
   NON_REVIEW_SOURCE_FILTER_LABELS,
   type SourceFilter,
 } from './sourceFilters';
+import { buildReviewTypeLookup } from '@/lib/reviewTypeFilters';
 import {
   bookCoachCalendarEvent,
   navigateMeetingWindow,
@@ -583,7 +584,7 @@ function formatDateInputValue(year: number, month: number, day: number) {
 
 /* â”€â”€â”€ Donut Ring â”€â”€â”€ */
 type ViewMode = 'month' | 'week' | 'day';
-type StatusFilter = 'all' | 'overdue' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'in-progress' | 'awaiting-signature' | 'completed' | 'cancelled';
+type StatusFilter = 'all' | 'overdue' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'in-progress' | 'awaiting-signature' | 'ended' | 'completed' | 'cancelled';
 // Source filters (fixed non-review chips + dynamic Review Type buckets) live
 // in ./sourceFilters, which shares its Review bucketing with the learner
 // calendar via @/lib/reviewTypeFilters.
@@ -591,19 +592,33 @@ type StatusFilter = 'all' | 'overdue' | 'due-soon' | 'needs-schedule' | 'schedul
 // Unchanged: these are SCHEDULING buckets, not filters. The schedule modal,
 // its copy and its icons are keyed on the routing `source`.
 type SchedulableSource = 'mcr' | 'progress-review' | 'review' | 'catch-up' | 'student-support' | 'lms-introduction';
-const STATUS_FILTER_ORDER: StatusFilter[] = ['all', 'overdue', 'due-soon', 'needs-schedule', 'scheduled', 'in-progress', 'awaiting-signature', 'completed'];
+const STATUS_FILTER_ORDER: StatusFilter[] = ['all', 'overdue', 'due-soon', 'needs-schedule', 'scheduled', 'in-progress', 'awaiting-signature', 'ended', 'completed', 'cancelled'];
 
 const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
   all: 'All',
-  overdue: 'Missed',
+  overdue: 'Overdue',
   'due-soon': 'Due Soon',
   'needs-schedule': 'Not Scheduled',
   scheduled: 'Scheduled',
   'in-progress': 'In Progress',
   'awaiting-signature': 'Awaiting Signature',
+  ended: 'Ended',
   completed: 'Completed',
   cancelled: 'Cancelled',
 };
+
+/** Filter on the same display outcome as the card, without changing the
+ * stored status used by booking actions, signatures or summary metrics. */
+function eventStatusFilter(event: TimetableEvent): StatusFilter {
+  if (event.meetingOutcome === 'completed') return 'completed';
+  if (event.meetingOutcome === 'ended') return 'ended';
+  if (event.status === 'cancelled') return 'cancelled';
+  const key = meetingStatusKey(event);
+  if (key === 'missed-overdue') return 'overdue';
+  if (key === 'pending-due-soon') return 'due-soon';
+  if (key === 'not-scheduled') return 'needs-schedule';
+  return key;
+}
 
 const SCHEDULABLE_SOURCE_ORDER: SchedulableSource[] = ['mcr', 'progress-review', 'review', 'catch-up', 'student-support', 'lms-introduction'];
 const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; icon: string; accent: string; surface: string }> = {
@@ -864,6 +879,7 @@ export default function CoachTimetablePage() {
   const [viewYear, setViewYear] = useState(now.getFullYear());
   const [viewMonth, setViewMonth] = useState(now.getMonth());
   const [selectedDay, setSelectedDay] = useState(now.getDate());
+  const [expandedMonthDays, setExpandedMonthDays] = useState<Set<string>>(() => new Set());
   const [selectedEvent, setSelectedEvent] = useState<TimetableEvent | null>(null);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [filterStatus, setFilterStatus] = useState<StatusFilter>('all');
@@ -1371,6 +1387,7 @@ export default function CoachTimetablePage() {
   // Chips come from every loaded event so a Review Type's chip stays put
   // (reading 0) as the coach pages between months -- the same way the fixed
   // chips have always behaved. Counts are over the searched visible range.
+  const reviewTypeLookup = useMemo(() => buildReviewTypeLookup(calendarEvents), [calendarEvents]);
   const sourceFilterOptions = useMemo(
     () => buildCoachSourceOptions(calendarEvents, searchedVisibleRangeEvents),
     [calendarEvents, searchedVisibleRangeEvents],
@@ -1385,7 +1402,7 @@ export default function CoachTimetablePage() {
 
   const sourceFilterColor = useCallback((source: SourceFilter) => {
     if (source === 'all') return { accent: '#4F2D7F', background: '#F1ECF8' };
-    const matchingEvent = calendarEvents.find(event => eventMatchesSourceFilter(event, source));
+    const matchingEvent = calendarEvents.find(event => eventMatchesSourceFilter(event, source, reviewTypeLookup));
     const key = matchingEvent ? getMeetingTypeKey(matchingEvent) : source === 'live-session'
       ? 'live-session'
       : source === 'catch-up'
@@ -1394,12 +1411,12 @@ export default function CoachTimetablePage() {
           ? 'support'
           : 'other';
     return calendarColors.meetingTypes[key];
-  }, [calendarColors.meetingTypes, calendarEvents]);
+  }, [calendarColors.meetingTypes, calendarEvents, reviewTypeLookup]);
 
   const statusFilterColor = useCallback((status: StatusFilter) => {
     const key = status === 'all'
       ? 'all'
-      : status === 'overdue'
+      : status === 'overdue' || status === 'ended'
         ? 'missed-overdue'
       : status === 'due-soon'
         ? 'pending-due-soon'
@@ -1419,20 +1436,12 @@ export default function CoachTimetablePage() {
 
   const sourceFilteredVisibleRangeEvents = useMemo(() => {
     if (filterSource === 'all') return searchedVisibleRangeEvents;
-    return searchedVisibleRangeEvents.filter(event => eventMatchesSourceFilter(event, filterSource));
-  }, [filterSource, searchedVisibleRangeEvents]);
+    return searchedVisibleRangeEvents.filter(event => eventMatchesSourceFilter(event, filterSource, reviewTypeLookup));
+  }, [filterSource, searchedVisibleRangeEvents, reviewTypeLookup]);
 
-  const filteredEvents = useMemo(() => sourceFilteredVisibleRangeEvents.filter(e => {
-    if (filterStatus === 'overdue' && !isOverdueMetricEvent(e)) return false;
-    if (filterStatus === 'due-soon' && !isDueSoonMetricEvent(e)) return false;
-    if (filterStatus === 'needs-schedule' && !needsSchedulingMetricEvent(e)) return false;
-    if (filterStatus === 'scheduled' && !isScheduledMetricEvent(e)) return false;
-    if (filterStatus === 'in-progress' && e.status !== 'in-progress') return false;
-    if (filterStatus === 'awaiting-signature' && e.status !== 'awaiting-signature') return false;
-    if (filterStatus === 'completed' && !isCompletedMetricEvent(e)) return false;
-    if (filterStatus === 'cancelled' && e.status !== 'cancelled') return false;
-    return true;
-  }), [filterStatus, sourceFilteredVisibleRangeEvents]);
+  const filteredEvents = useMemo(() => sourceFilteredVisibleRangeEvents.filter(event => (
+    filterStatus === 'all' || eventStatusFilter(event) === filterStatus
+  )), [filterStatus, sourceFilteredVisibleRangeEvents]);
 
   const selectedDayEvents = useMemo(
     () => filteredEvents.filter(ev => ev.dayOfMonth === selectedDay && ev.month === viewMonth && ev.year === viewYear),
@@ -1459,17 +1468,11 @@ export default function CoachTimetablePage() {
         return a.startHour - b.startHour;
       });
   }, [events, todayStartTime]);
-  const statusFilterCounts: Record<StatusFilter, number> = {
-    all: sourceFilteredVisibleRangeEvents.length,
-    overdue: sourceFilteredVisibleRangeEvents.filter(event => isOverdueMetricEvent(event)).length,
-    'due-soon': sourceFilteredVisibleRangeEvents.filter(event => isDueSoonMetricEvent(event)).length,
-    'needs-schedule': sourceFilteredVisibleRangeEvents.filter(needsSchedulingMetricEvent).length,
-    scheduled: sourceFilteredVisibleRangeEvents.filter(isScheduledMetricEvent).length,
-    'in-progress': sourceFilteredVisibleRangeEvents.filter(event => event.status === 'in-progress').length,
-    'awaiting-signature': sourceFilteredVisibleRangeEvents.filter(event => event.status === 'awaiting-signature').length,
-    completed: sourceFilteredVisibleRangeEvents.filter(isCompletedMetricEvent).length,
-    cancelled: sourceFilteredVisibleRangeEvents.filter(event => event.status === 'cancelled').length,
-  };
+  const statusFilterCounts = Object.fromEntries(STATUS_FILTER_ORDER.map(status => [status, 0])) as Record<StatusFilter, number>;
+  sourceFilteredVisibleRangeEvents.forEach(event => {
+    statusFilterCounts.all += 1;
+    statusFilterCounts[eventStatusFilter(event)] += 1;
+  });
   const selectedDayLabel = `${DAYS_OF_WEEK[new Date(viewYear, viewMonth, selectedDay).getDay() === 0 ? 6 : new Date(viewYear, viewMonth, selectedDay).getDay() - 1]}, ${selectedDay} ${MONTH_NAMES[viewMonth]}`;
   const activeSourceLabel = sourceFilterOptions.find(option => option.value === filterSource)?.longLabel
     ?? NON_REVIEW_SOURCE_FILTER_LABELS.all;
@@ -2335,7 +2338,7 @@ export default function CoachTimetablePage() {
                 <p className="mt-0.5 text-[11px] text-slate-500">Track meeting status at a glance.</p>
               </div>
               <CalendarFilterScrollRow ariaLabel="Status filters">
-                {STATUS_FILTER_ORDER.filter(status => status !== 'overdue').map(status => {
+                {STATUS_FILTER_ORDER.map(status => {
                   const isActive = filterStatus === status;
                   const statusColor = statusFilterColor(status);
                   return (
@@ -2388,6 +2391,9 @@ export default function CoachTimetablePage() {
                       );
                     }
                     const eventsForDay = filteredEvents.filter(e => e.dayOfMonth === day && e.month === viewMonth && e.year === viewYear);
+                    const dayKey = formatDateInputValue(viewYear, viewMonth, day);
+                    const isExpanded = expandedMonthDays.has(dayKey);
+                    const dayEventsId = `coach-day-events-${dayKey}`;
                     const isSel = day === selectedDay;
                     const isTdy = isToday(day, viewMonth, viewYear);
                     const dateValue = new Date(viewYear, viewMonth, day).getTime();
@@ -2424,8 +2430,8 @@ export default function CoachTimetablePage() {
                             </span>
                           )}
                         </div>
-                        <div className="flex w-full flex-1 flex-col gap-1.5 overflow-hidden">
-                          {eventsForDay.slice(0, 3).map(ev => {
+                        <div id={dayEventsId} className="flex w-full flex-1 flex-col gap-1.5 overflow-hidden">
+                          {(isExpanded ? eventsForDay : eventsForDay.slice(0, 3)).map(ev => {
                             const meetingType = calendarColors.meetingTypes[getMeetingTypeKey(ev)];
                             const eventStatusKey = meetingStatusKey(ev);
                             const eventStatus = calendarColors.statuses[eventStatusKey];
@@ -2454,9 +2460,25 @@ export default function CoachTimetablePage() {
                             );
                           })}
                           {eventsForDay.length > 3 && (
-                            <span className="rounded-md bg-background-100 px-2 py-1 text-[12px] font-semibold text-foreground-500">
-                              +{eventsForDay.length - 3} more
-                            </span>
+                            <button
+                              type="button"
+                              aria-expanded={isExpanded}
+                              aria-controls={dayEventsId}
+                              aria-label={`${isExpanded ? 'Show fewer' : `Show all ${eventsForDay.length}`} events for ${day} ${MONTH_NAMES[viewMonth]} ${viewYear}`}
+                              onClick={event => {
+                                event.stopPropagation();
+                                handleDayClick(day);
+                                setExpandedMonthDays(previous => {
+                                  const next = new Set(previous);
+                                  if (next.has(dayKey)) next.delete(dayKey);
+                                  else next.add(dayKey);
+                                  return next;
+                                });
+                              }}
+                              className="rounded-md bg-background-100 px-2 py-1 text-left text-[12px] font-semibold text-foreground-500 transition-colors hover:bg-primary-100 hover:text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                            >
+                              {isExpanded ? 'Show less' : `+${eventsForDay.length - 3} more`}
+                            </button>
                           )}
                         </div>
                         {!hasEvents && (
