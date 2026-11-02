@@ -138,6 +138,7 @@ class BookingOnlyCalendarIntegrationTests(SimpleTestCase):
             'coach_api.review_sources.load_imported_links': ({}, {}),
             'coach_api.views.curriculum_review_instances.reconcile_review_event_keys': {},
             'coach_api.views.review_type_fields_by_template': {},
+            'coach_api.views.review_titles_by_template': {},
             'coach_api.views.build_catchup_calendar_event': event(row),
             'coach_api.views.build_timetable_summary': {},
         }

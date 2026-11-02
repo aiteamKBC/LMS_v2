@@ -525,6 +525,19 @@ def review_type_fields_by_template(template_ids) -> dict:
         return {}
 
 
+def review_titles_by_template(template_ids) -> dict[str, str]:
+    """Read live template names once for a calendar list, including retired templates."""
+    wanted = sorted({clean_text(value) for value in template_ids if clean_text(value)})
+    if not wanted:
+        return {}
+    return {
+        row['id']: clean_text(row.get('name'))
+        for row in curriculum_reviews.get_review_template_rows(
+            f"id in ({', '.join(['%s'] * len(wanted))})", wanted, include_deleted=True,
+        )
+    }
+
+
 def resolve_curriculum_programme_id(programme_name: str | None) -> str | None:
     """A learner's `programme` display name -> curriculum.programmes.programme_id.
 
@@ -2074,11 +2087,22 @@ def fetch_caseload_timetable_profiles(owner_email: str) -> list[LearnerProfile]:
             "lifecycle_status", "coach_name", "coach_email", "start_date", "end_date",
             "gateway_review_date", "learner_type", "enrolment_id", "aptem_id",
         )
-        .prefetch_related("plan_modules__weeks__components")
         .order_by("full_name", "id")
     )
     rows = [row for row in queryset if clean_text(row.username)]
-    attach_caseload_source_rows(rows)
+    # Calendar projection needs identity, schedule and PR contacts, not full
+    # training plans, evidence or dashboard contract metrics. Keep the source
+    # request-local so review generation can reuse the same identity snapshot.
+    commercial_rows, enrolment_rows = fetch_source_schedule_rows(rows, fields=(
+        "id", "learner_type", "aptem_id", "start_date", "end_date",
+        "learner_start_date", "learner_end_date", "apprenticeship_end_date",
+        "practical_period_end_date", "employer_id", "line_manager",
+        "employer", "organization", "contacts",
+    ))
+    for row in rows:
+        row._caseload_source = resolve_caseload_source_row(
+            row, commercial_rows=commercial_rows, enrolment_rows=enrolment_rows,
+        )
     return rows
 
 
@@ -2269,6 +2293,7 @@ def fetch_owner_active_learner_profiles(owner_email: str) -> list[LearnerProfile
             "otjh_status",
             "programme_status",
             "lifecycle_status",
+            "learner_type",
             "enrolment_id",
             "aptem_id",
         )
@@ -6106,6 +6131,7 @@ def build_catchup_calendar_event(
     owner_name: str | None = None,
     learner: LearnerProfile | None = None,
     review_type_fields: dict | None = None,
+    review_titles: dict[str, str] | None = None,
 ) -> dict:
     """``review_type_fields`` is review_type_fields_by_template()'s batch,
     passed by callers shaping a whole list. A single-event caller can omit it
@@ -6133,7 +6159,10 @@ def build_catchup_calendar_event(
         "review": "Review",
     }.get(event_type, event_type.replace("-", " ").title())
     if is_curriculum_review:
-        event_title = resolve_review_display_title(event_type, review_template_id)
+        event_title = (
+            (review_titles.get(review_template_id) or resolve_review_display_title(event_type, None))
+            if review_titles is not None else resolve_review_display_title(event_type, review_template_id)
+        )
     target_date = record.target_date or record.scheduled_date or date.today()
     display_date = record.scheduled_date or target_date
     duration_minutes = record.duration_minutes or TIMETABLE_DEFAULT_DURATION_MINUTES
@@ -9925,6 +9954,10 @@ def collect_live_session_events(
     # load" timeout coaches were hitting (~23s vs ~0.5s narrowed).
     for component in active_component_rows(authoring_fetch_all(
         AUTHORING_COMPONENTS_TABLE,
+        # Fetch a superset of the live-session types only. The exact normalized
+        # check below still excludes aliases/retired types, without transferring
+        # every quiz, assignment and content component to render a calendar.
+        "type ilike %s", ["%live_session%"],
         ensure_tables=False,
         columns=[
             "id", "type", "module_catalogue_id", "week_id", "live_sessions_link",
@@ -10661,12 +10694,22 @@ def collect_generated_timetable(
         except Exception as exc:
             logger.warning("Could not collect live session events for %s: %s", owner_email, exc)
 
+    source_schedule_rows = None
+    if all(hasattr(row, "_caseload_source") for row in review_rows):
+        commercial_rows, enrolment_rows = {}, {}
+        for row in review_rows:
+            source = row._caseload_source
+            if source is not None:
+                target = commercial_rows if clean_text(getattr(source, "learner_type", None)).casefold() == "commercial" else enrolment_rows
+                target[row.id] = source
+        source_schedule_rows = commercial_rows, enrolment_rows
     resolved_reviews = resolve_coach_review_events(
         owner_email,
         owner_name,
         review_rows,
         start_date=start_date,
         end_date=end_date,
+        source_schedule_rows=source_schedule_rows,
     )
     generated_events: list[dict] = resolved_reviews["events"]
     resolved_counts = resolved_reviews["sourceCounts"]
@@ -10756,10 +10799,15 @@ def collect_generated_timetable(
 
     if include_unlinked_bookings:
         from .calendar_booking_only import unlinked_review_bookings, booking_only_projection
-        for record, profile in unlinked_review_bookings(
-                saved_records, review_rows, aptem_profile_ids, events=events, linked_keys=generated_keys):
+        unlinked_bookings = unlinked_review_bookings(
+            saved_records, review_rows, aptem_profile_ids, events=events, linked_keys=generated_keys)
+        template_ids = {record.review_template_id for record, _profile in unlinked_bookings}
+        booking_review_types = review_type_fields_by_template(template_ids)
+        booking_review_titles = review_titles_by_template(template_ids)
+        for record, profile in unlinked_bookings:
             events.append(booking_only_projection(build_catchup_calendar_event(
-                record, owner_name=owner_name, learner=profile), record))
+                record, owner_name=owner_name, learner=profile,
+                review_type_fields=booking_review_types, review_titles=booking_review_titles), record))
 
     if start_date or end_date:
         filtered_events = []
