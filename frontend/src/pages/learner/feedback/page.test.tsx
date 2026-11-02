@@ -49,7 +49,7 @@ describe('learner feedback categories', () => {
     },
   );
 
-  it('exposes only Live Sessions in production while keeping all other categories closed', async () => {
+  it('can limit feedback to Live Sessions when other feedback types are explicitly disabled', async () => {
     flags.fullFeedbackEnabled = false;
     vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [
       lecture,
@@ -67,6 +67,34 @@ describe('learner feedback categories', () => {
     expect(screen.queryByText('Event feedback')).not.toBeInTheDocument();
     expect(screen.queryByText('Module midpoint')).not.toBeInTheDocument();
     expect(screen.queryByText('Module end')).not.toBeInTheDocument();
+  });
+
+  it.each(['commercial', 'apprenticeship'])('shows every released feedback category and opens an assigned MCM for a %s learner', async learnerType => {
+    state.account.learnerType = learnerType;
+    vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [
+      lecture,
+      { ...lecture, id: 5, formType: 'mid_module', title: 'Midpoint feedback' },
+      { ...lecture, id: 6, formType: 'end_module', title: 'End-module feedback' },
+      { ...lecture, id: 7, deliveryId: null, reviewDeliveryId: 71, formType: 'post_mcm_review', title: 'MCM feedback', sessionTitle: 'Synthetic coaching review' },
+      { ...lecture, id: 8, deliveryId: null, reviewDeliveryId: 72, formType: 'post_progress_review', title: 'Progress feedback' },
+      { ...lecture, id: 9, deliveryId: null, eventRecipientId: 40, formType: 'post_event', title: 'Event feedback' },
+      { ...lecture, id: 10, deliveryId: null, formType: 'general', title: 'General feedback' },
+    ] });
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={['/learner/feedback']}><LearnerFeedbackPage /><Location /></MemoryRouter>);
+    const requests = await screen.findByRole('region', { name: 'All feedback requests' });
+    expect(await within(requests).findByText('MCM feedback')).toBeVisible();
+    for (const title of ['Midpoint feedback', 'End-module feedback', 'Progress feedback', 'Event feedback', 'General feedback']) {
+      expect(within(requests).getByText(title)).toBeVisible();
+    }
+    await user.click(screen.getByRole('button', { name: /All feedback types/ }));
+    for (const category of ['Well being', 'End-module Feedback', 'Live Sessions Feedback', 'MCM Feedback', 'Progress Review Feedback', 'Event Feedback', 'General Feedback']) {
+      expect(screen.getByRole('option', { name: new RegExp(category, 'i') })).toBeVisible();
+    }
+    await user.click(screen.getByRole('option', { name: /MCM Feedback/ }));
+    await user.click(within(requests).getByRole('button', { name: /Start Synthetic coaching review/ }));
+    expect(screen.getByText('/learner/feedback/review/71?category=mcm')).toBeVisible();
+    expect(feedbackApi.myForms).toHaveBeenCalledWith(undefined);
   });
 
   it('shows a unified request list with type, search, status filters and summary', async () => {
