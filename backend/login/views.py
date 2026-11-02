@@ -41,6 +41,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from . import email_azure, identity, microsoft_sso
+from .errors import DATABASE_ERRORS, database_unavailable
 from .invitations import (
     TokenError,
     accept_invitation,
@@ -90,12 +91,8 @@ def _error(message, status=400, **extra):
 def _database_unavailable(operation, exc):
     # Database exception messages and tracebacks can contain SQL, addresses and
     # credentials. Keep only the operation, exception class and SQLSTATE here.
-    sqlstate = getattr(exc.__cause__, "sqlstate", None)
-    if not isinstance(sqlstate, str) or len(sqlstate) != 5 or not sqlstate.isalnum():
-        sqlstate = "unknown"
-    logger.error("Authentication database failure: operation=%s type=%s sqlstate=%s",
-                 operation, type(exc).__name__, sqlstate)
-    return _error(DATABASE_UNAVAILABLE_ERROR, 502)
+    return database_unavailable(operation, exc, message=DATABASE_UNAVAILABLE_ERROR,
+                                logger=logger, area="Authentication")
 
 
 def _authentication_database_errors(view):
@@ -399,8 +396,10 @@ def forgot_password(request):
             return uniform
 
         request_password_link(email, ip=ip, user_agent=ua)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DATABASE_ERRORS as exc:
+        # The same body for every address: nothing about the account, and no
+        # claim that an email was sent.
+        return _database_unavailable("forgot_password", exc)
 
     return uniform
 
@@ -415,8 +414,8 @@ def reset_info(request):
         return JsonResponse(peek_reset(token))
     except TokenError as exc:
         return _error(str(exc), 400, code="invalid_token")
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DATABASE_ERRORS as exc:
+        return _database_unavailable("reset_info", exc)
 
 
 @csrf_exempt
@@ -446,8 +445,8 @@ def reset_password(request):
         return _error(str(exc), 400, code="invalid_token")
     except PasswordPolicyError as exc:
         return _error(str(exc), 400, code="weak_password")
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DATABASE_ERRORS as exc:
+        return _database_unavailable("reset_password", exc)
 
     # Deliberately does not sign the person in. Making them use the password
     # they just chose confirms they know it, and keeps a stolen reset link one
@@ -469,8 +468,8 @@ def invitation_info(request):
         return JsonResponse(peek_invitation(token))
     except TokenError as exc:
         return _error(str(exc), 400, code="invalid_token")
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DATABASE_ERRORS as exc:
+        return _database_unavailable("invitation_info", exc)
 
 
 @csrf_exempt
@@ -500,8 +499,8 @@ def accept_invitation_view(request):
         return _error(str(exc), 400, code="invalid_token")
     except PasswordPolicyError as exc:
         return _error(str(exc), 400, code="weak_password")
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DATABASE_ERRORS as exc:
+        return _database_unavailable("accept_invitation", exc)
 
     return JsonResponse({
         "ok": True,
@@ -598,8 +597,8 @@ def invitation_link_view(request):
             subject_type, subject_id, inviter=request.login_account,
             ip=client_ip(request), user_agent=user_agent(request),
         )
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DATABASE_ERRORS as exc:
+        return _database_unavailable("invitation_link", exc)
     if outcome["forbidden"]:
         return _error(outcome["error"], 403, code="forbidden")
     if not outcome["link"]:

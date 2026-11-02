@@ -9,6 +9,7 @@ export type LiveLearnerReadResult<T> = {
   data: T | null;
   error: string;
   loading: boolean;
+  isFetching: boolean;
   refresh: () => void;
 };
 
@@ -25,10 +26,12 @@ export function useLiveLearnerRead<T>(
   const [revision, setRevision] = useState(0);
   const consumedRevision = useRef({ key, revision: 0 });
   const [state, setState] = useState<{ key: string; data: T | undefined; error: string } | null>(null);
+  const [fetching, setFetching] = useState<{ key: string; token: object } | null>(null);
   const refresh = useCallback(() => setRevision(value => value + 1), []);
 
   useEffect(() => {
     if (!enabled || !active || !kind || !id) return;
+    const token = {};
     let disposed = false;
     let sequence = 0;
     let pending = false;
@@ -40,6 +43,7 @@ export function useLiveLearnerRead<T>(
       controller?.abort();
       controller = new AbortController();
       pending = true;
+      setFetching({ key, token });
       void read(kind, id, controller.signal, fresh).then(
         data => {
           if (!disposed && requestSequence === sequence) setState({ key, data, error: '' });
@@ -51,7 +55,12 @@ export function useLiveLearnerRead<T>(
             error: reason instanceof Error ? reason.message : 'Could not refresh learner data. Please try again.',
           }));
         },
-      ).finally(() => { if (requestSequence === sequence) pending = false; });
+      ).finally(() => {
+        if (!disposed && requestSequence === sequence) {
+          pending = false;
+          setFetching(current => current?.token === token ? null : current);
+        }
+      });
     };
     const unsubscribe = subscribeLearnerReadInvalidation(() => {
       // A pre-save request may finish last. Replace its caller and ignore it.
@@ -63,6 +72,7 @@ export function useLiveLearnerRead<T>(
 
     return () => {
       disposed = true;
+      setFetching(current => current?.token === token ? null : current);
       controller?.abort();
       unsubscribe();
     };
@@ -76,6 +86,7 @@ export function useLiveLearnerRead<T>(
     data: data ?? null,
     error: current?.error || '',
     loading: enabled && !!kind && !!id && data === undefined && !current?.error,
+    isFetching: enabled && active && !!kind && !!id && fetching?.key === key,
     refresh,
   };
 }

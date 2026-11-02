@@ -26,6 +26,7 @@ from django.http import JsonResponse
 from .projection_performance import measure_projection
 from django.utils import timezone
 
+from login.errors import DATABASE_ERRORS, database_unavailable
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
 from curriculum_api.session_component_identity import occurrence_fallbacks as _live_session_occurrence_fallbacks
@@ -1242,8 +1243,12 @@ def persist_live_otjh_snapshot(learner_profile, snapshot):
     if learner_profile is None:
         return []
 
+    # planned_hours is the owner-managed official programme total, never a
+    # cache of this snapshot: the derived figure (components plus reviews) is
+    # returned to the caller in snapshot["plannedHours"] but is not stored, so a
+    # page load cannot overwrite the official value, zero-fill a NULL or replace
+    # a real zero.
     calculated = {
-        "planned_hours": snapshot["planned_hours"],
         "completed_hours": snapshot["completed_hours"],
         "target_hours": snapshot["target_hours"],
         "progress_hours": snapshot["progress_hours"],
@@ -2432,6 +2437,17 @@ def _authored_setting(source, component_id, setting_key, response_key):
     return {"componentId": row[0], response_key: _s(row[1]) or None} if row else None
 
 
+LEARNER_DETAIL_UNAVAILABLE = "Could not load learner details. Please try again."
+LEARNER_SUMMARY_UNAVAILABLE = "Could not load learner summary. Please try again."
+
+
+def _learner_database_unavailable(operation, exc, kind, pk, message):
+    # The exception text can name tables, columns and values; it is never
+    # returned or logged. The route's kind and id are enough to find the learner.
+    return database_unavailable(operation, exc, message=message, logger=logger, area="Learner",
+                                context={"kind": kind, "learner_id": pk})
+
+
 @learner_self_or_staff(kwarg="pk")
 def learner_detail(request, kind, pk):
     if request.method != "GET":
@@ -2447,8 +2463,9 @@ def learner_detail(request, kind, pk):
         source = model.all_learners.get(pk=pk)
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DATABASE_ERRORS as exc:
+        return _learner_database_unavailable(
+            "learner_detail.source", exc, kind, pk, LEARNER_DETAIL_UNAVAILABLE)
 
     try:
         if request.GET.get("content") == "reading":
@@ -2490,8 +2507,9 @@ def learner_detail(request, kind, pk):
                 return JsonResponse(build_learner_detail(source, pk, **options))
     except ServiceError as exc:
         return _error(str(exc), exc.status)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DATABASE_ERRORS as exc:
+        return _learner_database_unavailable(
+            "learner_detail.build", exc, kind, pk, LEARNER_DETAIL_UNAVAILABLE)
 
 
 def _first_session_unlocked(source, status):
@@ -2535,8 +2553,9 @@ def learner_summary(request, kind, pk):
         resolved_status = programme_status(source) or DEFAULT_PROGRAMME_STATUS
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
-    except DatabaseError:
-        return _error("Could not load learner summary. Please try again.", 502)
+    except DATABASE_ERRORS as exc:
+        return _learner_database_unavailable(
+            "learner_summary.source", exc, kind, pk, LEARNER_SUMMARY_UNAVAILABLE)
 
     try:
         from .apprenticeship_agreement import _group_dates
@@ -2579,5 +2598,6 @@ def learner_summary(request, kind, pk):
             "learningAccess": learning_access(source),
             "studentActivityAvailable": student_activity_available(getattr(source, "aptem_id", None)),
         })
-    except DatabaseError:
-        return _error("Could not load learner summary. Please try again.", 502)
+    except DATABASE_ERRORS as exc:
+        return _learner_database_unavailable(
+            "learner_summary.payload", exc, kind, pk, LEARNER_SUMMARY_UNAVAILABLE)

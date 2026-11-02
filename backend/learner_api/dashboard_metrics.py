@@ -509,13 +509,17 @@ def learner_metrics(request, kind, pk):
                     ).get(source.pk)
                     if payload is None:
                         raise ValueError('Learner identity is unavailable.')
+                    target_input = payload['otjh']
                     if payload['otjh'].get('planned') is None:
-                        # No SSOT programme plan yet: the target follows the
-                        # learning-plan total, as the home progress card does.
+                        # Temporary compatibility debt (owner decision U1): the
+                        # Coach case file still reads the learning-plan total as
+                        # otjh.planned. It is display-only and never paces the
+                        # target, which uses the official total alone.
+                        target_input = {**payload['otjh'], 'planned': None}
                         plan_source = model.all_learners.only(*TRAINING_PLAN_SOURCE_FIELDS).get(pk=source.pk)
                         payload['otjh']['planned'] = plan_planned_hours(
                             plan_source, canonical_learning.profile(source.pk))
-                    payload['otjh']['targetToDate'] = coach_otjh_target_to_date(source, payload['otjh'])
+                    payload['otjh']['targetToDate'] = coach_otjh_target_to_date(source, target_input)
                 else:
                     payload = read_metrics(source, kind)
     except model.DoesNotExist:

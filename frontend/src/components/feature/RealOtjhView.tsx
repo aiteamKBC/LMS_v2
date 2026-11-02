@@ -1,3 +1,4 @@
+import { hoursText, hoursAvailability, type OfficialHoursPresentation } from '@/pages/learner/progress/officialHoursPresentation';
 import { useMemo } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -238,6 +239,7 @@ export function OtjhBody({
   audience = 'learner',
   activityData = null,
   subjectCount,
+  officialHours,
   metrics,
   monthlyPlan,
   dashboardHours,
@@ -251,6 +253,7 @@ export function OtjhBody({
   activityData?: StudentActivityResponse | null;
   /** Historical and current subjects from the unified learning summary. */
   subjectCount?: number | null;
+  officialHours?: OfficialHoursPresentation;
   metrics?: LearnerMetrics | null;
   /** Monthly targets and recorded hours used by the dashboard OTJH chart. */
   monthlyPlan?: TrainingPlanDashboard | null;
@@ -264,7 +267,7 @@ export function OtjhBody({
   const isObserver = audience === 'observer';
   const who = isObserver ? (real?.name?.split(' ')[0] || 'This learner') : 'You';
   const usesCombinedSubjects = activityData?.recorded_otjh_total != null;
-  const usesAuditTotals = !!metrics || activityData?.audit_lms_actual != null || activityData?.audit_tp_planned != null;
+  const usesAuditTotals = !!officialHours || !!metrics || activityData?.audit_lms_actual != null || activityData?.audit_tp_planned != null;
   const usesAuditSummary = usesAuditTotals || usesCombinedSubjects;
   const recordedSubjectCount = subjectCount ?? activityData?.module_count ?? 0;
   const usesDashboardHours = dashboardHours !== undefined;
@@ -275,10 +278,10 @@ export function OtjhBody({
   const chartEndMonth = (monthlyPlan?.programmeEndDate
     ?? real?.programmeEndDate
     ?? real?.learnerEndDate)?.slice(0, 7);
-  const completed = usesDashboardHours ? dashboardHours.actual ?? 0 : metrics !== undefined ? metrics?.otjh.actual ?? 0 : activityData?.audit_lms_actual
+  const completed = usesDashboardHours ? dashboardHours.actual ?? 0 : metrics !== undefined ? metrics?.otjh?.actual ?? 0 : activityData?.audit_lms_actual
     ?? activityData?.recorded_otjh_total
     ?? parseHours(real?.completedHours);
-  const planned = usesDashboardHours ? dashboardHours.planned ?? 0 : metrics !== undefined ? metrics?.otjh.planned ?? 0 : activityData?.audit_tp_planned
+  const planned = usesDashboardHours ? dashboardHours.planned ?? 0 : metrics !== undefined ? metrics?.otjh?.planned ?? 0 : activityData?.audit_tp_planned
     ?? activityData?.planned_total
     ?? parseHours(real?.plannedHours ?? real?.totalExpectedOtjh);
   // Keep the employer and learner OTJH views on the coach dashboard contract:
@@ -303,9 +306,9 @@ export function OtjhBody({
   const rag = RAG(status);
   const plannedPercent = planned > 0 ? Math.round((completed / planned) * 100) : 0;
   const plannedMappedCount = activityData?.planned_mapped_count || 0;
-  const completedDisplay = (usesDashboardHours && dashboardHours.actual == null) || (metrics !== undefined && metrics?.otjh.actual == null)
+  const completedDisplay = officialHours ? hoursText(officialHours, 'actual', value => `${value.toFixed(2)} h`) : (usesDashboardHours && dashboardHours.actual == null) || (metrics !== undefined && metrics?.otjh?.actual == null)
     ? '—' : usesAuditTotals ? `${completed.toFixed(2)} h` : formatHoursMinutes(completed);
-  const plannedDisplay = (usesDashboardHours && dashboardHours.planned == null) || (metrics !== undefined && metrics?.otjh.planned == null)
+  const plannedDisplay = officialHours ? hoursText(officialHours, 'planned', value => `${value.toFixed(2)} h`) : (usesDashboardHours && dashboardHours.planned == null) || (metrics !== undefined && metrics?.otjh?.planned == null)
     ? '—' : usesAuditTotals ? `${planned.toFixed(2)} h` : formatHoursMinutes(planned);
   const targetPercent = target > 0 ? Math.min(100, Math.round((completed / target) * 100)) : 0;
   const planWeek = trainingPlanWeekPosition(real);
@@ -505,7 +508,7 @@ export function OtjhBody({
           {usesAuditSummary
             ? <StatCard icon="ri-stack-line" iconTint="bg-gradient-to-br from-[#ddd6fe] via-[#a78bfa] to-[#6d28d9] text-white shadow-sm shadow-violet-500/25" label="Recorded scope" value={`${recordedSubjectCount} subjects`} sub="historical and current learning" />
             : <StatCard icon="ri-focus-3-line" iconTint="bg-gradient-to-br from-[#ddd6fe] via-[#a78bfa] to-[#6d28d9] text-white shadow-sm shadow-violet-500/25" label={usesDashboardHours ? 'Target to date' : 'Current target'} value={formatHoursMinutes(target)} sub={usesDashboardHours ? 'as of today' : targetWeekLabel} />}
-          <StatCard icon="ri-calendar-todo-line" iconTint="bg-gradient-to-br from-[#e5e7eb] via-[#9ca3af] to-[#4b5563] text-white shadow-sm shadow-foreground-400/25" label={usesAuditTotals ? 'TP Planned' : usesCombinedSubjects ? 'Partial mapped plan' : 'Programme plan'} value={plannedDisplay} sub={metrics !== undefined ? metrics?.otjh.planned == null ? 'planned training hours are not available' : 'planned hours from the current training plan' : usesAuditTotals ? 'same programme plan shown in Audit' : usesCombinedSubjects ? `${plannedMappedCount.toLocaleString()} ${plannedMappedCount === 1 ? 'activity carries' : 'activities carry'} planned time` : 'total planned hours'} />
+          <StatCard icon="ri-calendar-todo-line" iconTint="bg-gradient-to-br from-[#e5e7eb] via-[#9ca3af] to-[#4b5563] text-white shadow-sm shadow-foreground-400/25" label={officialHours ? 'Official Planned Hours' : usesAuditTotals ? 'TP Planned' : usesCombinedSubjects ? 'Partial mapped plan' : 'Programme plan'} value={plannedDisplay} sub={officialHours ? hoursAvailability(officialHours) : metrics !== undefined ? metrics?.otjh?.planned == null ? 'planned training hours are not available' : 'planned hours from the current training plan' : usesAuditTotals ? 'same programme plan shown in Audit' : usesCombinedSubjects ? `${plannedMappedCount.toLocaleString()} ${plannedMappedCount === 1 ? 'activity carries' : 'activities carry'} planned time` : 'total planned hours'} />
         </div>
 
         {monthlyPlan && showOtjChart && <div className="learner-dashboard">

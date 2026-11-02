@@ -187,6 +187,7 @@ def read_overview(source, kind, owner, profile, request):
     from .module_progress import aggregate_module_progress
     from .dashboard_metrics import coach_otjh_target_to_date
     from .dashboard_tabs import learning_projection, monthly_hours
+    from .official_hours import normalise_official_planned_hours
 
     records = canonical.entries_for(owner, training_summary=True)
     targets = canonical.targets_for(owner)
@@ -263,17 +264,21 @@ def read_overview(source, kind, owner, profile, request):
     metrics = canonical.metrics_bulk([source.pk], learner_workspace=True).get(source.pk)
     if metrics is None:
         raise LookupError('Learner identity is unavailable.')
-    if metrics['otjh'].get('planned') is None:
-        # The plan's module ids were resolved above; do not re-read them.
-        metrics['otjh']['planned'] = schedule.plan_planned_hours(source, owner, ids=ids)
+    # Target-to-Date paces the official programme total only. When it is
+    # unset or invalid the target is unavailable; no Training Plan total
+    # replaces it. This reader is also the Employer learner Overview.
     metrics['otjh']['targetToDate'] = coach_otjh_target_to_date(source, metrics['otjh'], owner=owner)
+    # The same in-memory official value that paced the target, under the
+    # official rule (no read): 0 stays 0; unset or invalid is null. It is the
+    # programme total, never hours.planned (the Training Plan aggregate).
+    metrics['otjh']['officialPlannedHours'] = normalise_official_planned_hours(metrics['otjh'].get('planned'))[0]
     attendance = attendance_to_date(source, profile, now=attendance_now, register=register)
     payload_months = [*(m for m in targets if m <= today[:7]), *(r['month'] for r in actual_rows), *(review_day(r)[:7] for r in reviews)]
     end = max([day(owner.get('end_date')),
                *(m + '-28' for m in payload_months if MONTH.fullmatch(m))], default='')[:7]
     return {'metrics': {key: {field: metrics[key].get(field) for field in fields} for key, fields in {
                 'ksb': ('completed', 'total', 'percent'),
-                'otjh': ('actual', 'targetToDate')}.items()},
+                'otjh': ('actual', 'targetToDate', 'officialPlannedHours')}.items()},
             'attendance': attendance, 'reviews': reviews_to_date(reviews, today),
             'modules': chart_modules, 'programme': [{key: r[key] for key in ('id', 'title', 'percent')} for r in programme],
             'hours': {'months': hour_rows(records, targets, weekly, signed, today[:7], log_summary=log_summary,

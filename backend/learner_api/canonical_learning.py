@@ -950,8 +950,12 @@ def source_subjects(learner_id, summarize, *, owner=None, records=None, overview
     result['module_count'] = max(len(subjects), len(canonical_modules))
     result['unresolved_source_routes'] = sum(len(values) != 1 for values in links.values())
     from learner_api import journal_sources
-    if journal_sources.enabled():
-        result['audit_tp_planned'] = programme_planned_hours(learner_id, owner=owner)
+    journal = journal_sources.enabled()
+    if journal:
+        # The official programme total and nothing else: review time is
+        # reported on its own below, never added to it.
+        from .official_hours import official_planned_hours
+        result['audit_tp_planned'] = official_planned_hours(owner)
     else:
         monthly_targets = targets_for(owner)
         result['audit_tp_planned'] = sum(monthly_targets.values()) if monthly_targets else None
@@ -959,7 +963,7 @@ def source_subjects(learner_id, summarize, *, owner=None, records=None, overview
     review_planned = planned_hours_bulk([owner]).get(owner['enrolment_id'], 0)
     if review_planned:
         result['review_planned_otjh'] = review_planned
-        if result.get('audit_tp_planned') is not None:
+        if not journal and result.get('audit_tp_planned') is not None:
             result['audit_tp_planned'] += review_planned
     return result
 

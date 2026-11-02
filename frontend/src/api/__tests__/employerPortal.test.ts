@@ -88,3 +88,18 @@ describe('employer portal responses', () => {
     expect(fetch).toHaveBeenLastCalledWith('/learner_api/employer-portal/9/', expect.objectContaining({ credentials: 'include' }));
   });
 });
+
+
+describe('official target payload validation', () => {
+  it.each([undefined, -1, '143.61', {}])('rejects malformed or absent target %s', async target => {
+    const payload = dashboardOverviewFixture();
+    Object.assign(payload.metrics.otjh, { targetToDate: target });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(payload))));
+    await expect(fetchEmployerLearningOverview('9', 'commercial', '265')).rejects.toThrow('Could not load learner progress');
+  });
+  it('preserves zero target and missing actual as explicit null', async () => {
+    const payload = dashboardOverviewFixture(); payload.metrics.otjh = { actual: null, targetToDate: 0 };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(payload))));
+    await expect(fetchEmployerLearningOverview('9', 'apprenticeship', '265')).resolves.toEqual(payload);
+  });
+});

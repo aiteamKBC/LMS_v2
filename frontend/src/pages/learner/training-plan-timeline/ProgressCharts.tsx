@@ -2,7 +2,7 @@ import { useEffect, useId, useState, type CSSProperties, type ReactNode } from '
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { percent, type TimelineModule } from './model';
 import { moduleMeasures, moduleProgress, type ModuleMeasure } from './progress';
-import { OtjHoursChart } from './OtjHoursChart';
+import { OtjHoursChart, type OfficialTarget, type OfficialProgramme } from './OtjHoursChart';
 import styles from './ProgressCharts.module.css';
 import type { MonthlyHours } from './monthlyHours';
 
@@ -24,6 +24,8 @@ type Props = {
   showOtjChart?: boolean;
   wholeProgrammeRings?: boolean;
   targetAsOfToday?: number | null;
+  officialTarget?: OfficialTarget;
+  officialProgramme?: OfficialProgramme;
   moduleStatus?: ReactNode;
   programmeRows?: { id: string; title: string; start?: string; value: number | null; available?: number; measureCount?: number }[];
 };
@@ -75,7 +77,7 @@ function ProgressMeasureRings({ measures, label }: { measures: ModuleMeasure[]; 
 
 
 export function ProgressCharts({ modules = [], selected, data, onModuleSelect, programmeStartMonth, programmeEndMonth, programmeSnapshot,
-  showOtjChart = true, wholeProgrammeRings = false, targetAsOfToday, programmeRows, moduleStatus,
+  showOtjChart = true, wholeProgrammeRings = false, targetAsOfToday, officialTarget, officialProgramme, programmeRows, moduleStatus,
   displayModules, selectedDisplayId, onDisplaySelect, hourPoints, plannedHours }: Props) {
   const chartId = useId();
   const [programmePage, setProgrammePage] = useState(0);
@@ -190,6 +192,6 @@ export function ProgressCharts({ modules = [], selected, data, onModuleSelect, p
       </nav>}
       <p className={styles.note}>Module progress is based on activities. Attendance, hours and KSBs are shown independently.</p>
     </section>
-    {showOtjChart && <OtjHoursChart data={data} points={hourPoints} plannedHours={plannedHours} programmeStartMonth={programmeStartMonth} programmeEndMonth={programmeEndMonth} targetAsOfToday={targetAsOfToday} />}
+    {showOtjChart && <OtjHoursChart officialProgramme={officialProgramme} officialTarget={officialTarget} data={data} points={hourPoints} plannedHours={plannedHours} programmeStartMonth={programmeStartMonth} programmeEndMonth={programmeEndMonth} targetAsOfToday={targetAsOfToday} />}
   </div>;
 }

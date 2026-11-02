@@ -25,7 +25,7 @@ export function EmployerLearningOverview({ employerId, kind, learnerId }: Identi
     staleTime: 30_000,
   });
   const payload = query.data;
-  const { target, percent } = dashboardOtjhProgress(payload?.metrics.otjh.actual, payload?.metrics.otjh.targetToDate);
+  const { target, percent } = dashboardOtjhProgress(payload?.metrics.otjh.actual, query.isFetching || query.error ? null : payload?.metrics.otjh.targetToDate, true);
   const base = `/employers/${employerId}/learner/${kind}/${learnerId}`;
   return <div className={`${overviewStyles.overview} ${layout.embeddedLearnerTheme} learner-dashboard employer-learner-dashboard`}><div className={overviewStyles.dashboardTabContent}>
     {query.error && <p role="alert">{query.error.message} <button onClick={() => void query.refetch()}>Retry overview</button></p>}
@@ -43,7 +43,9 @@ export function EmployerLearningOverview({ employerId, kind, learnerId }: Identi
           summary={payload.metrics.ksb.total == null ? '—' : `${payload.metrics.ksb.completed} / ${payload.metrics.ksb.total}`}
           percent={payload.metrics.ksb.percent} accent="purple" />
       </div>
-      <OverviewCharts payload={payload} programmeStartDate={payload.programmeStartDate} programmeEndDate={payload.programmeEndDate} targetAsOfToday={target} />
+      <OverviewCharts payload={payload} programmeStartDate={payload.programmeStartDate} programmeEndDate={payload.programmeEndDate} targetAsOfToday={target}
+        officialRequest={query.error ? 'error' : query.isFetching ? 'loading' : 'ready'}
+        officialTarget={{ value: payload.metrics.otjh.targetToDate, request: query.error ? 'error' : query.isFetching ? 'loading' : 'ready' }} />
     </>}
   </div></div>;
 }
