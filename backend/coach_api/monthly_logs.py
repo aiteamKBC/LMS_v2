@@ -6,7 +6,7 @@ from django.middleware.csrf import get_token
 from django.utils import timezone
 
 from learner_api import canonical_learning as canonical
-from learner_api.canonical_hours import pending_hour_records
+from learner_api.canonical_hours import pending_hour_records, STORED_REPORTING_MONTH_SQL
 from learner_api import monthly_logs as logs
 from old_otjh.repository import query
 from old_otjh.service import ServiceError, coach_actor, normalize
@@ -41,19 +41,23 @@ def project_year(learner, year):
     # Stored allocations remain authoritative. Supplement empty direct saves
     # with the same read projection as the learner and Case File totals.
     # Group all months once: the two summary cards remain programme-wide.
-    activities = query('''SELECT reporting_month AS month,count(*) AS activities,
+    activities = query(f'''SELECT reporting_month AS month,count(*) AS activities,
         coalesce(sum(greatest(coalesce(actual_seconds,0),0))
           FILTER (WHERE accepted IS TRUE),0) / 3600.0 AS accepted_hours,
         jsonb_agg(jsonb_build_object('id',id,'title',component_title,
             'actual_hours',greatest(coalesce(actual_seconds,0),0) / 3600.0,
             'actual_hours_recorded',actual_seconds IS NOT NULL) ORDER BY id)
           FILTER (WHERE nullif(reporting_month,'') IS NULL) AS unallocated_activities
-        FROM "Learner".learner_progress_entries
-        WHERE learner_id=%s AND deleted_at IS NULL GROUP BY reporting_month''', [owner['id']])
+        FROM (SELECT id,component_title,actual_seconds,accepted,
+            {STORED_REPORTING_MONTH_SQL} AS reporting_month
+            FROM "Learner".learner_progress_entries
+            WHERE learner_id=%s AND deleted_at IS NULL) p
+        GROUP BY reporting_month''', [owner['id']])
     by_month = {row['month']: dict(row) for row in activities}
     unallocated = {str(item['id']): item for row in activities
                    for item in row.get('unallocated_activities') or []}
-    for record in pending_hour_records([owner])[owner['id']]:
+    for record in (allocation for pending in pending_hour_records([owner])[owner['id']]
+                   for allocation in canonical.allocations(pending)):
         month = record.get('reporting_month')
         if month:
             unallocated.pop(str(record.get('id')), None)

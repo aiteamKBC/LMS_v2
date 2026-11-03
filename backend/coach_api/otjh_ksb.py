@@ -6,7 +6,7 @@ import re
 from django.db import connections
 from django.utils import timezone
 from learner_api import canonical_learning as canonical
-from learner_api.canonical_hours import pending_hour_records
+from learner_api.canonical_hours import pending_hour_records, STORED_REPORTING_MONTH_SQL
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 log = logging.getLogger(__name__)
@@ -15,10 +15,10 @@ log = logging.getLogger(__name__)
 def read_hour_totals(owner):
     # Aggregate stored history, then include the same unsynchronised direct
     # saves that the learner's Dashboard and Monthly Logs project on reads.
-    totals = canonical.query('''SELECT reporting_month AS month,
+    totals = canonical.query(f'''SELECT reporting_month AS month,
         SUM(CASE WHEN accepted IS TRUE THEN seconds ELSE 0 END)/3600.0 AS completed,
         SUM(CASE WHEN accepted IS NOT TRUE THEN seconds ELSE 0 END)/3600.0 AS submitted
-        FROM (SELECT reporting_month,accepted,
+        FROM (SELECT {STORED_REPORTING_MONTH_SQL} AS reporting_month,accepted,
             CASE WHEN actual_seconds::text IN ('NaN','Infinity','-Infinity')
                  THEN 0 ELSE GREATEST(COALESCE(actual_seconds,0),0) END AS seconds
             FROM "Learner".learner_progress_entries
@@ -26,7 +26,8 @@ def read_hour_totals(owner):
         GROUP BY reporting_month''', [owner['id']])
     months = {row['month']: {**row, 'completed': float(row['completed'] or 0),
                             'submitted': float(row['submitted'] or 0)} for row in totals}
-    for record in pending_hour_records([owner])[owner['id']]:
+    for record in (allocation for pending in pending_hour_records([owner])[owner['id']]
+                   for allocation in canonical.allocations(pending)):
         month = record.get('reporting_month')
         row = months.setdefault(month, {'month': month, 'completed': 0, 'submitted': 0})
         field = 'completed' if record.get('accepted') is True else 'submitted'

@@ -243,7 +243,7 @@ class ReviewConsumerTests(SimpleTestCase):
         self.assertEqual(resolve.call_args.kwargs["assigned_modules"], resolved_plan)
         self.assertEqual(append.call_args.kwargs["assigned_modules"], resolved_plan)
 
-    def test_review_records_current_formula_and_stored_actual_source(self):
+    def test_review_records_current_formula_and_canonical_actual_source(self):
         detail = plan([component("C1", "W1", 5)], weeks=("W1",))
         resolved = {
             "status": TARGET_STATUS_RESOLVED,
@@ -263,6 +263,7 @@ class ReviewConsumerTests(SimpleTestCase):
         profile = SimpleNamespace(training_plan_progress=[], completed_hours=0)
         calculated_at = datetime(2026, 9, 19, 10, 0, tzinfo=ZoneInfo("Europe/London"))
         with patch.object(review_progress_snapshot, "build_otjh_detail", return_value=detail), \
+             patch.object(review_progress_snapshot, "profile_actual_hours", return_value=0), \
              patch.object(review_progress_snapshot, "review_planned_target_hours", return_value=(0, 0)), \
              patch.object(
                  review_progress_snapshot, "calculate_training_plan_targets", return_value=resolved,
@@ -273,9 +274,9 @@ class ReviewConsumerTests(SimpleTestCase):
                 calculated_at=calculated_at,
             )
         self.assertEqual(calculator.call_args.kwargs["as_of"], calculated_at.astimezone(timezone.utc))
-        self.assertEqual(snapshot["schemaVersion"], 4)
-        self.assertEqual(snapshot["formulaVersion"], "stored_completed_hours_and_component_ksb_v4")
-        self.assertEqual(snapshot["actualHoursSource"], "learner.completed_hours")
+        self.assertEqual(snapshot["schemaVersion"], 5)
+        self.assertEqual(snapshot["formulaVersion"], "canonical_accepted_hours_and_component_ksb_v5")
+        self.assertEqual(snapshot["actualHoursSource"], "canonical.accepted_hours")
         self.assertEqual(snapshot["calculatedAt"], "2026-09-19T09:00:00Z")
 
     def test_unversioned_historical_snapshot_is_legacy_without_mutation(self):

@@ -63,6 +63,7 @@ import {
   MODULE_SORT_OPTIONS,
 } from '../shared/entities/model';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '../shared/componentUploadPolicy';
+import { CurriculumVideoUpload } from '../shared/CurriculumVideoUpload';
 // Creating a module and moving it between programmes, cohorts and groups is one
 // dedicated form, shared with the Group and Module workspaces. It replaced the
 // six-step structure wizard this page used to open for both jobs.
@@ -6192,6 +6193,8 @@ function TypeSpecificFields({
 
     return (
       <EditorBlock title="Video component">
+        <CurriculumVideoUpload targetId={module.catalogueId} componentId={component.id} title={component.title}
+          source={getString('videoUrl') || getString('embedCode')} />
         {(getString('legacySourceType') === 'Shortcode' || getString('sourceType') === 'Shortcode' || getBool('legacyUnsupportedSource')) && (
           <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
             This component uses a legacy Shortcode source. Shortcode playback is not supported in the new Module Builder, so the original value is preserved until you choose a supported source.

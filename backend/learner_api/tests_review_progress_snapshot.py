@@ -71,10 +71,14 @@ class ProgressSnapshotCalculationTests(SimpleTestCase):
         )
         schedule_patcher.start()
         self.addCleanup(schedule_patcher.stop)
-        # Activity progress drives component/KSB completion only. Actual OTJ
-        # comes from this already-persisted learner value.
+        # The legacy cache and current accepted ledger intentionally disagree.
+        self.actual_hours = 250.5
+        self.hours_reader = self.enterContext(patch(
+            'learner_api.canonical_learning.otjh_summary_bulk',
+            side_effect=lambda ids: {201: {'profile_id': 101, 'actual': self.actual_hours}},
+        ))
         self.profile = SimpleNamespace(
-            completed_hours=Decimal('250.50'),
+            id=101, enrolment_id=201, completed_hours=Decimal('12.70'),
             training_plan_progress=[
                 {'componentId': 'cW1', 'kind': 'component', 'verifiedSeconds': 5 * 3600},
             ],
@@ -122,7 +126,7 @@ class ProgressSnapshotCalculationTests(SimpleTestCase):
         self.assertEqual(snapshot['targetCalculation']['reviewPlannedOtjHours'], 12.0)
         self.assertEqual(snapshot['targetCalculation']['reviewTargetOtjHours'], 3.0)
         # Review actuals are deliberately not projected here: the owning OTJ
-        # system has already folded everything into completed_hours.
+        # system has already folded accepted entries into the canonical total.
         self.assertEqual(snapshot['offTheJobHours']['actual'], 250.5)
 
     def test_learner_metadata_start_does_not_replace_plan_week_dates(self):
@@ -161,48 +165,42 @@ class ProgressSnapshotCalculationTests(SimpleTestCase):
 
     # ----------------------------------------------------- actual figures
 
-    def test_actual_hours_come_from_the_stored_learner_field(self):
+    def test_actual_hours_come_from_accepted_ledger_not_the_stale_profile_cache(self):
         snapshot = self.snapshot()
         self.assertEqual(snapshot['offTheJobHours']['actual'], 250.5)
         self.assertEqual(snapshot['offTheJobHours']['actualPercent'], 626.25)
-        self.assertEqual(snapshot['actualHoursSource'], 'learner.completed_hours')
+        self.assertEqual(snapshot['actualHoursSource'], 'canonical.accepted_hours')
+        self.hours_reader.assert_called_once_with([201])
         self.assertEqual(snapshot['programmeProgress']['actual'], 1)
         self.assertEqual(snapshot['programmeProgress']['planned'], 4)
         self.assertEqual(snapshot['programmeProgress']['actualPercent'], 25.0)
 
-    def test_zero_stored_completed_hours_is_valid(self):
-        self.profile.completed_hours = Decimal('0.00')
+    def test_zero_accepted_completed_hours_is_valid(self):
+        self.actual_hours = 0
         snapshot = self.snapshot()
         self.assertEqual(snapshot['offTheJobHours']['actual'], 0.0)
         self.assertEqual(snapshot['offTheJobHours']['actualPercent'], 0.0)
 
-    def test_missing_or_invalid_stored_completed_hours_is_unavailable_not_zero(self):
+    def test_missing_or_invalid_current_hours_is_unavailable_not_stale_or_zero(self):
         for value in (None, '', 'not-a-number', 'NaN', Decimal('-1')):
             with self.subTest(value=value):
-                self.profile.completed_hours = value
+                self.actual_hours = value
                 with self.assertRaises(review_progress_snapshot.UnavailableCompletedHours):
                     self.snapshot()
 
-    def test_calculation_does_not_invoke_the_activity_aggregation_resolver(self):
-        with patch.object(
-            review_progress_snapshot,
-            'resolve_learner_completed_otj',
-            create=True,
-            side_effect=AssertionError('Progress Review must not aggregate completed OTJ'),
-        ) as resolver:
-            snapshot = self.snapshot()
-        resolver.assert_not_called()
-        self.assertEqual(snapshot['offTheJobHours']['actual'], 250.5)
-        self.assertNotIn('completedCalculation', snapshot)
+    def test_another_profiles_hours_are_never_used(self):
+        self.profile.id = 102
+        with self.assertRaises(review_progress_snapshot.UnavailableCompletedHours):
+            self.snapshot()
 
     def test_calculation_does_not_mutate_stored_completed_hours(self):
         original = self.profile.completed_hours
         self.snapshot()
         self.assertEqual(self.profile.completed_hours, original)
 
-    def test_each_editable_recalculation_reads_the_current_stored_value(self):
+    def test_each_editable_recalculation_reads_current_hours_without_changing_earlier_snapshot(self):
         first = self.snapshot()
-        self.profile.completed_hours = Decimal('300.25')
+        self.actual_hours = 300.25
         second = self.snapshot()
         self.assertEqual(first['offTheJobHours']['actual'], 250.5)
         self.assertEqual(second['offTheJobHours']['actual'], 300.25)
@@ -265,10 +263,10 @@ class ProgressSnapshotCalculationTests(SimpleTestCase):
 
     def test_the_method_is_recorded_so_the_calculation_can_be_reproduced(self):
         self.assertEqual(self.snapshot()['calculationMethod'], CALCULATION_METHOD_PLANNED_HOURS)
-        self.assertEqual(self.snapshot()['schemaVersion'], 4)
+        self.assertEqual(self.snapshot()['schemaVersion'], 5)
         self.assertEqual(
             self.snapshot()['formulaVersion'],
-            'stored_completed_hours_and_component_ksb_v4',
+            'canonical_accepted_hours_and_component_ksb_v5',
         )
 
     def test_an_unknown_method_is_refused_rather_than_silently_defaulted(self):
