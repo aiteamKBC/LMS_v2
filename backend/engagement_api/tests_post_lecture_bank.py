@@ -88,7 +88,9 @@ class PostLectureCreationBoundaryTests(SimpleTestCase):
 
     def test_staff_response_uses_saved_lecture_tutor_only_for_live_sessions(self):
         form = SimpleNamespace(title='Live Sessions Feedback', form_type='post_lecture', anonymous_responses=False)
-        delivery = SimpleNamespace(session_title='Synthetic module - Session 2', tutor_name='Original Tutor')
+        delivery = SimpleNamespace(
+            session_title='Synthetic module - Session 2', tutor_name='Original Tutor', starts_at=self.created_at,
+        )
         response = SimpleNamespace(
             id=1, form_id=4, form=form, learner_id='7', learner_name='Synthetic Learner',
             programme='Synthetic Programme', delivery_id=11, delivery=delivery,
@@ -98,6 +100,7 @@ class PostLectureCreationBoundaryTests(SimpleTestCase):
         result = feedback._response_dict(response)
         self.assertEqual((result['formType'], result['sessionTitle'], result['tutorName']),
                          ('post_lecture', 'Synthetic module - Session 2', 'Original Tutor'))
+        self.assertEqual(result['sessionStartsAt'], '2026-10-27T11:00:00+00:00')
         delivery.tutor_name = ''
         self.assertEqual(feedback._response_dict(response)['tutorName'], '')
         form.form_type = 'mid_module'

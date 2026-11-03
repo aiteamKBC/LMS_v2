@@ -1,5 +1,5 @@
 export type FeedbackFormStatus = 'draft' | 'published' | 'closed';
-export type FeedbackFormType = 'general' | 'post_lecture' | 'post_event' | 'event_rsvp' | 'post_mcm_review' | 'post_progress_review' | 'mid_module' | 'end_module';
+export type FeedbackFormType = 'general' | 'post_lecture' | 'post_event' | 'event_rsvp' | 'post_mcm_review' | 'post_progress_review' | 'post_progress_review_employer' | 'mid_module' | 'end_module';
 export type FeedbackDeliveryScope = 'manual' | 'all_modules' | 'module';
 export type FeedbackQuestionType = 'short_text' | 'long_text' | 'yes_no' | 'single_choice' | 'multiple_choice' | 'dropdown' | 'rating' | 'likert' | 'number' | 'date' | 'name' | 'email' | 'photo_upload';
 export interface FeedbackNameAnswer { firstName: string; lastName: string }
@@ -138,7 +138,7 @@ export interface LearnerFeedbackListItem {
 
 export interface FeedbackResponse {
   id: number; formId: number; formTitle: string; learnerId: string | null;
-  formType: FeedbackFormType; deliveryId: number | null; sessionTitle: string; tutorName: string;
+  formType: FeedbackFormType; deliveryId: number | null; sessionTitle: string; sessionStartsAt: string | null; tutorName: string;
   learnerName: string; programme: string; status: 'in_progress' | 'completed';
   startedAt: string; updatedAt: string; submittedAt: string | null;
   sections?: FeedbackSection[];
@@ -214,7 +214,8 @@ export interface FeedbackRecipient {
   sourceLabel: string; sourceTitle: string; sourceSubtitle: string; sourceStartsAt: string | null;
   sessionTitle: string; sessionStartsAt: string | null; moduleName: string;
   assignedAt: string | null; dueDate: string | null;
-  responseStatus: LearnerFeedbackStatus; formVersion: number; recipientType?: 'learner' | 'guest';
+  responseStatus: LearnerFeedbackStatus | 'pending_link'; formVersion: number; recipientType?: 'learner' | 'guest' | 'employer';
+  relatedLearnerName?: string; pendingReason?: string;
 }
 export interface FeedbackAssignmentSource {
   key: string; type: 'manual' | 'lecture' | 'event' | string; label: string;
@@ -273,6 +274,20 @@ async function request<T>(path: string, init?: globalThis.RequestInit, timeoutMs
 }
 
 export const feedbackApi = {
+  employerForms: (employerId: string) => request<{ forms: EmployerFeedbackListItem[] }>(`/employers/${encodeURIComponent(employerId)}/`),
+  employerForm: (employerId: string, deliveryId: string) => request<{ form: FeedbackForm & { relatedLearnerName: string } }>(`/employers/${encodeURIComponent(employerId)}/${encodeURIComponent(deliveryId)}/`),
+  saveEmployerResponse: (employerId: string, deliveryId: string, answers: Record<string, FeedbackAnswerValue>, submit = false) => request<{ response: { id: number; status: string } }>(`/employers/${encodeURIComponent(employerId)}/${encodeURIComponent(deliveryId)}/response/`, { method: 'POST', body: JSON.stringify({ answers, submit }) }),
+  uploadEmployerPhoto: async (employerId: string, deliveryId: string, questionId: number, file: File): Promise<FeedbackPhotoAnswer> => {
+    const data = new FormData();
+    data.append('photo', file);
+    const response = await fetch(`${BASE}/employers/${encodeURIComponent(employerId)}/${encodeURIComponent(deliveryId)}/questions/${questionId}/photo/`, {
+      method: 'POST', credentials: 'include', body: data,
+      headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': await csrfToken() },
+    });
+    const body = await response.json() as { answer?: FeedbackPhotoAnswer; error?: string };
+    if (!response.ok || !body.answer) throw new Error(body.error || 'Photo upload failed.');
+    return body.answer;
+  },
   curriculumOptions: () => request<FeedbackCurriculumOptions>('/curriculum-options/', undefined, 15000),
   listForms: () => request<{ forms: FeedbackForm[]; summary: { totalForms: number; publishedForms: number; draftForms: number; totalResponses: number } }>('/forms/'),
   getForm: (id: number) => request<{ form: FeedbackForm }>(`/forms/${id}/`),
@@ -347,3 +362,8 @@ export const feedbackApi = {
 };
 
 export const feedbackUploadUrl = (uploadId: string) => `${BASE}/uploads/${encodeURIComponent(uploadId)}/`;
+
+export interface EmployerFeedbackListItem {
+  id: number; title: string; learnerName: string; reviewName: string;
+  completedAt: string; assignedAt: string; status: LearnerFeedbackStatus;
+}

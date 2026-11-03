@@ -50,6 +50,8 @@ it.each([
   ['/employers/7/learners', 'My learners', '/employers/7/learners'],
   ['/employers/7/reviews', 'Progress reviews', '/employers/7/reviews'],
   ['/employers/7/documents', 'Documents', '/employers/7/documents'],
+  ['/employers/7/feedback', 'Feedback', '/employers/7/feedback'],
+  ['/employers/7/feedback/501', 'Feedback', '/employers/7/feedback'],
   ...['commercial', 'apprenticeship'].flatMap(kind => [
     [`/employers/7/learner/${kind}/101?tab=reviews`, 'Progress reviews', '/employers/7/reviews'],
     [`/employers/7/learner/${kind}/101/?reviewId=example&tab=reviews`, 'Progress reviews', '/employers/7/reviews'],

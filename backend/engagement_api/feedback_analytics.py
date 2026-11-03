@@ -12,7 +12,7 @@ from learner_api.models import EnrolmentUser
 from .models import (
     EventRsvpRecipient, FeedbackAnswer, FeedbackAssignment, FeedbackDelivery,
     FeedbackDeliveryQuestion, FeedbackDeliveryQuestionOverride, FeedbackDeliveryRecipient, FeedbackEventCampaign,
-    FeedbackEventRecipient, FeedbackForm, FeedbackQuestion, FeedbackResponse, FeedbackReviewDelivery,
+    FeedbackEventRecipient, FeedbackForm, FeedbackQuestion, FeedbackResponse, FeedbackReviewDelivery, FeedbackEmployerReviewDelivery,
 )
 from .feedback_scoring import overall_metrics, question_metrics, response_key
 from .feedback_insights import answer_in_period, report_insights
@@ -139,6 +139,11 @@ def question_analytics(family_ids=None, *, delivery_ids=None, submitted_from=Non
     reviews = FeedbackReviewDelivery.objects.filter(form_id__in=manual_form_ids).values_list('form_id', 'id') if delivery_ids is None else []
     for form_id, identifier in reviews:
         base[form_id].add(('review', identifier))
+    employer_forms = {q.section.form_id for q in questions
+                      if q.section.form_id in manual_form_ids and getattr(q.section.form, 'form_type', None) == 'post_progress_review_employer'}
+    if delivery_ids is None and employer_forms:
+        for form_id, identifier in FeedbackEmployerReviewDelivery.objects.filter(form_id__in=employer_forms).values_list('form_id', 'id'):
+            base[form_id].add(('employer_review', identifier))
     campaigns = list(FeedbackEventCampaign.objects.filter(form_id__in=manual_form_ids).exclude(status='cancelled').values_list('form_id', 'event_id')) if delivery_ids is None else []
     event_forms = defaultdict(set)
     for form_id, event_id in campaigns:
