@@ -35,7 +35,7 @@ describe('learner feedback categories', () => {
     Object.assign(state.resolved, { kind: 'apprenticeship', id: '61' });
   });
 
-  it.each([['mid_module', 'mid-module', 'Well being'], ['end_module', 'end-module', 'End-module Feedback']] as const)(
+  it.each([['mid_module', 'mid-module', 'Wellbeing'], ['end_module', 'end-module', 'End-module Feedback']] as const)(
     'opens %s through its owned delivery and preserves its category', async (formType, category, title) => {
       flags.fullFeedbackEnabled = true;
       vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [{ ...lecture, formType, title, sessionTitle: title }] });
@@ -61,7 +61,7 @@ describe('learner feedback categories', () => {
     render(<MemoryRouter initialEntries={['/learner/feedback?category=event']}><LearnerFeedbackPage /><Location /></MemoryRouter>);
     await user.click(await screen.findByRole('button', { name: /All feedback types/ }));
     expect(screen.getByRole('option', { name: /Live Sessions Feedback/ })).toBeVisible();
-    expect(screen.queryByRole('option', { name: /Well being/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /Wellbeing/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('option', { name: /End-module Feedback/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('option', { name: /Event Feedback/ })).not.toBeInTheDocument();
     expect(screen.queryByText('Event feedback')).not.toBeInTheDocument();
@@ -88,7 +88,7 @@ describe('learner feedback categories', () => {
       expect(within(requests).getByText(title)).toBeVisible();
     }
     await user.click(screen.getByRole('button', { name: /All feedback types/ }));
-    for (const category of ['Well being', 'End-module Feedback', 'Live Sessions Feedback', 'MCM Feedback', 'Progress Review Feedback', 'Event Feedback', 'General Feedback']) {
+    for (const category of ['Wellbeing', 'End-module Feedback', 'Live Sessions Feedback', 'MCM Feedback', 'Progress Review Feedback', 'Event Feedback', 'General Feedback']) {
       expect(screen.getByRole('option', { name: new RegExp(category, 'i') })).toBeVisible();
     }
     await user.click(screen.getByRole('option', { name: /MCM Feedback/ }));

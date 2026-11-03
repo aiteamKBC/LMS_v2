@@ -15,7 +15,7 @@ from learner_api.models import EnrolmentUser
 
 from .models import FeedbackDelivery, FeedbackDeliveryRecipient, FeedbackForm, FeedbackResponse
 
-MODULE_FORM_TYPES = {'mid_module': 'Well being', 'end_module': 'End-module Feedback'}
+MODULE_FORM_TYPES = {'mid_module': 'Wellbeing', 'end_module': 'End-module Feedback'}
 BUSINESS_TZ = ZoneInfo('Europe/London')
 
 
