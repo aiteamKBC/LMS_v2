@@ -35,6 +35,7 @@ export type CoachCalendarStatus =
 
 export interface CoachCalendarEvent {
   id: string;
+  bookingOnly?: boolean;
   eventKey?: string;
   title: string;
   type: 'coaching' | 'review' | string;

@@ -7,8 +7,8 @@
  * Personal Support Plan -- arrived as the single generic "Review" chip and
  * became indistinguishable. Buckets are derived from the `reviewType*`
  * metadata each review event carries instead, so a new Review Type needs no
- * frontend change at all and the two system types go through exactly the same
- * path as the custom ones (there is no `code === 'mcm'` anywhere below).
+ * frontend change at all. Imported system types are first adapted to their
+ * Curriculum identities, then follow the same bucketing path as custom types.
  *
  * Four concepts, kept strictly apart:
  *
@@ -30,10 +30,69 @@
  *  `CalendarEvent` and the coach `TimetableEvent` satisfy it structurally. */
 export interface ReviewTypeClassifiedEvent {
   source?: string;
+  importedReviewType?: string | null;
+  importedReview?: { type?: string | null } | null;
   reviewTypeId?: string | null;
   reviewTypeCode?: string | null;
   reviewTypeName?: string | null;
   reviewTypeIsSystem?: boolean;
+}
+
+/** Exact Aptem type names corresponding to the fixed system identities in
+ * backend/curriculum_api/review_types.py. This adapts classification only;
+ * it does not associate an imported review with a native form or booking.
+ * Other imported types retain their own identities, including Skills Radar.
+ */
+export type ReviewTypeLookup = ReadonlyMap<string, ReviewTypeClassifiedEvent>;
+
+const normalizedTypeName = (name: string) => name.trim().replace(/\s+/g, ' ').toLowerCase();
+
+const IMPORTED_SYSTEM_REVIEW_TYPES = new Map<string, ReviewTypeClassifiedEvent>([
+  ['monthly coaching meeting', {
+    reviewTypeId: 'REVT-MCM', reviewTypeCode: 'mcm',
+    reviewTypeName: 'Monthly Coaching Meeting', reviewTypeIsSystem: true,
+  }],
+  ['progress review', {
+    reviewTypeId: 'REVT-PROGRESS_REVIEW', reviewTypeCode: 'progress_review',
+    reviewTypeName: 'Progress Review', reviewTypeIsSystem: true,
+  }],
+]);
+
+/** Resolve any imported type against unambiguous Curriculum type metadata in
+ * the full loaded calendar, not just the selected day or search results.
+ * Explicit type IDs always win; two distinct native IDs are never merged.
+ */
+export function buildReviewTypeLookup(events: ReviewTypeClassifiedEvent[]): ReviewTypeLookup {
+  const candidates = new Map<string, ReviewTypeClassifiedEvent | null>();
+  events.forEach(event => {
+    if (!event.reviewTypeId || event.reviewTypeId.startsWith('aptem-type:') || !event.reviewTypeName?.trim()) return;
+    const name = normalizedTypeName(event.reviewTypeName);
+    const systemType = IMPORTED_SYSTEM_REVIEW_TYPES.get(name);
+    if (systemType && systemType.reviewTypeId !== event.reviewTypeId) return;
+    const previous = candidates.get(name);
+    candidates.set(name, previous === null || (previous && previous.reviewTypeId !== event.reviewTypeId) ? null : {
+      reviewTypeId: event.reviewTypeId, reviewTypeCode: event.reviewTypeCode,
+      reviewTypeName: event.reviewTypeName, reviewTypeIsSystem: event.reviewTypeIsSystem,
+    });
+  });
+  const lookup = new Map(IMPORTED_SYSTEM_REVIEW_TYPES);
+  candidates.forEach((type, name) => { if (type) lookup.set(name, type); });
+  return lookup;
+}
+
+/** Aptem has a type name, while Curriculum has a stable type ID. Adapt both
+ *  calendar payloads to the same filter identity without changing the event,
+ *  its routing source, or its booking/form association. */
+export function reviewClassification(event: ReviewTypeClassifiedEvent, lookup: ReviewTypeLookup = IMPORTED_SYSTEM_REVIEW_TYPES): ReviewTypeClassifiedEvent {
+  const importedType = (event.importedReviewType || event.importedReview?.type)?.trim();
+  if (event.reviewTypeId || !importedType) return event;
+  const knownType = lookup.get(normalizedTypeName(importedType));
+  if (knownType) return { ...event, ...knownType };
+  return {
+    ...event,
+    reviewTypeId: `aptem-type:${encodeURIComponent(importedType)}`,
+    reviewTypeName: importedType,
+  };
 }
 
 /** A review bucket is addressed by its Review Type id. The prefix keeps review
@@ -79,7 +138,7 @@ export function reviewTypeDot(identity: string): string {
 export function isReviewEvent(event: ReviewTypeClassifiedEvent): boolean {
   // The type metadata is proof on its own; the legacy sources cover a review
   // whose template has no type yet.
-  return Boolean(event.reviewTypeId) || REVIEW_EVENT_SOURCES.has(event.source || '');
+  return Boolean(reviewClassification(event).reviewTypeId) || REVIEW_EVENT_SOURCES.has(event.source || '');
 }
 
 export function reviewFilterKey(reviewTypeId?: string | null): ReviewFilterKey {
@@ -99,16 +158,22 @@ export function isReviewFilterKey(value: string): value is ReviewFilterKey {
  * curriculum.review_types' own `order by is_system desc, name asc`, using the
  * `reviewTypeIsSystem` flag the API sends rather than matching type codes.
  */
-export function reviewTypeBuckets(events: ReviewTypeClassifiedEvent[]): ReviewTypeBucket[] {
-  const buckets = new Map<ReviewFilterKey, { name: string; isSystem: boolean; id: string }>();
-  events.forEach((event) => {
+export function reviewTypeBuckets(events: ReviewTypeClassifiedEvent[], lookup = buildReviewTypeLookup(events)): ReviewTypeBucket[] {
+  const buckets = new Map<ReviewFilterKey, { name: string; isSystem: boolean; id: string; hasNativeType: boolean }>();
+  events.forEach((rawEvent) => {
+    const event = reviewClassification(rawEvent, lookup);
     if (!isReviewEvent(event)) return;
     const key = reviewFilterKey(event.reviewTypeId);
-    if (buckets.has(key)) return;
+    const existing = buckets.get(key);
+    const hasNativeType = Boolean(rawEvent.reviewTypeId);
+    // A native type may have been renamed. Prefer its current metadata over
+    // the imported alias, independently of the order events arrived in.
+    if (existing && (existing.hasNativeType || !hasNativeType)) return;
     buckets.set(key, {
       id: event.reviewTypeId || '',
       name: event.reviewTypeName || UNCLASSIFIED_REVIEW_LABEL,
       isSystem: Boolean(event.reviewTypeIsSystem),
+      hasNativeType,
     });
   });
 
@@ -135,6 +200,7 @@ export function reviewTypeBuckets(events: ReviewTypeClassifiedEvent[]): ReviewTy
  * by `source` -- so two templates sharing a type share a bucket and a renamed
  * template stays put.
  */
-export function reviewBucketFor(event: ReviewTypeClassifiedEvent): ReviewFilterKey | null {
-  return isReviewEvent(event) ? reviewFilterKey(event.reviewTypeId) : null;
+export function reviewBucketFor(event: ReviewTypeClassifiedEvent, lookup?: ReviewTypeLookup): ReviewFilterKey | null {
+  const classification = reviewClassification(event, lookup);
+  return isReviewEvent(classification) ? reviewFilterKey(classification.reviewTypeId) : null;
 }

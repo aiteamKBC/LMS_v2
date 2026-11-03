@@ -4,7 +4,7 @@ import type { TimeTrackingSession } from '@/api/timeTracking';
 
 type Answers = Record<string, string[]>;
 type Draft = { key: string; attemptId: string; timing: TimeTrackingSession; elapsedSeconds: number;
-  answers: Answers; confirmed: boolean };
+  answers: Answers; confirmed: boolean; manualSeconds?: number | null };
 
 function restore(key: string): Draft | null {
   try {
@@ -16,7 +16,7 @@ function restore(key: string): Draft | null {
 }
 
 /** One draft per learner/course/type/activity. Never count hidden or paused time. */
-export function useLegacyStudySession(key: string, enabled: boolean, suspended: boolean, element?: RefObject<HTMLElement | null>) {
+export function useLegacyStudySession(key: string, enabled: boolean, suspended: boolean, element?: RefObject<HTMLElement | null>, playbackOnly = false) {
   const [draft, setDraft] = useState<Draft | null>(() => restore(key));
   const [paused, setPaused] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -36,7 +36,7 @@ export function useLegacyStudySession(key: string, enabled: boolean, suspended: 
   }, [key]);
   useEffect(() => { if (current) persist(current); }, [current, persist]);
   const running = !!current && enabled && !suspended && !paused
-    && (current.timing.countingMode !== 'active_playback' || playing);
+    && (!(playbackOnly || current.timing.countingMode === 'active_playback') || playing);
   useEffect(() => {
     let last = performance.now();
     const visibility = () => { visibleRef.current = document.visibilityState === 'visible'; last = performance.now(); };
@@ -76,5 +76,7 @@ export function useLegacyStudySession(key: string, enabled: boolean, suspended: 
   const setAnswers = (update: (previous: Answers) => Answers) => setDraft(value => value?.key === key
     ? { ...value, answers: update(value.answers) } : value);
   const setConfirmed = (confirmed: boolean) => setDraft(value => value?.key === key ? { ...value, confirmed } : value);
-  return { draft: current, begin, clear, setAnswers, setConfirmed, paused, setPaused, setPlaying, running, storageError };
+  const setManualSeconds = (manualSeconds: number | null) => setDraft(value => value?.key === key
+    ? { ...value, manualSeconds } : value);
+  return { draft: current, begin, clear, setAnswers, setConfirmed, setManualSeconds, paused, setPaused, setPlaying, running, storageError };
 }

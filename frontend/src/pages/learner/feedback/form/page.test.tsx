@@ -8,7 +8,7 @@ import LearnerFeedbackFormPage from './page';
 
 vi.mock('@/api/feedback', async importOriginal => {
   const actual = await importOriginal<typeof import('@/api/feedback')>();
-  return { ...actual, feedbackApi: { ...actual.feedbackApi, myForm: vi.fn(), saveResponse: vi.fn(), myDelivery: vi.fn(), saveDeliveryResponse: vi.fn(), myReviewDelivery: vi.fn(), saveReviewDeliveryResponse: vi.fn() } };
+  return { ...actual, feedbackApi: { ...actual.feedbackApi, myForm: vi.fn(), saveResponse: vi.fn(), myDelivery: vi.fn(), saveDeliveryResponse: vi.fn(), myReviewDelivery: vi.fn(), saveReviewDeliveryResponse: vi.fn(), myEventForm: vi.fn(), saveEventResponse: vi.fn() } };
 });
 const session = vi.hoisted(() => ({
   account: { role: 'learner', subjectType: 'learner', subjectId: 61, learnerType: 'apprenticeship', displayName: 'Learner' },
@@ -66,6 +66,32 @@ describe('learner feedback automatic save', () => {
     expect(await screen.findByText(/October coaching · Completed/)).toBeInTheDocument();
     expect(feedbackApi.myReviewDelivery).toHaveBeenCalledWith(71, undefined);
   });
+
+  it.each(['post_mcm_review', 'post_progress_review', 'general', 'post_event'] as const)(
+    'submits an assigned %s through its matching learner endpoint', async formType => {
+      const loaded = { ...form, formType, title: 'Assigned feedback' };
+      const response = { response: { id: 11, status: 'completed' as const, submittedAt: '2026-11-02T10:00:00Z', updatedAt: '2026-11-02T10:00:00Z' } };
+      vi.mocked(feedbackApi.myReviewDelivery).mockResolvedValue({ form: loaded });
+      vi.mocked(feedbackApi.myForm).mockResolvedValue({ form: loaded });
+      vi.mocked(feedbackApi.myEventForm).mockResolvedValue({ form: loaded });
+      vi.mocked(feedbackApi.saveReviewDeliveryResponse).mockResolvedValue(response);
+      vi.mocked(feedbackApi.saveResponse).mockResolvedValue(response);
+      vi.mocked(feedbackApi.saveEventResponse).mockResolvedValue(response);
+      const isReview = formType === 'post_mcm_review' || formType === 'post_progress_review';
+      const path = isReview ? '/learner/feedback/review/71' : `/learner/feedback/4${formType === 'post_event' ? '?eventRecipientId=40' : ''}`;
+      const user = userEvent.setup();
+      render(<MemoryRouter initialEntries={[path]}><Routes>
+        <Route path="/learner/feedback/review/:reviewDeliveryId" element={<LearnerFeedbackFormPage />} />
+        <Route path="/learner/feedback/:formId" element={<LearnerFeedbackFormPage />} />
+      </Routes></MemoryRouter>);
+      await user.type(await screen.findByRole('textbox', { name: 'Your feedback' }), 'Helpful feedback');
+      await user.click(screen.getByRole('button', { name: /Submit/ }));
+      if (isReview) expect(feedbackApi.saveReviewDeliveryResponse).toHaveBeenLastCalledWith(71, { '10': 'Helpful feedback' }, true);
+      else if (formType === 'post_event') expect(feedbackApi.saveEventResponse).toHaveBeenLastCalledWith(40, 4, { '10': 'Helpful feedback' }, true);
+      else expect(feedbackApi.saveResponse).toHaveBeenLastCalledWith(4, { '10': 'Helpful feedback' }, true);
+      expect(await screen.findByText('Thank you for your feedback')).toBeVisible();
+    },
+  );
 
   it.each([
     ['staff', 'apprenticeship', 'post_mcm_review', 'mcm'],

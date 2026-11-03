@@ -360,6 +360,7 @@ def current_months(learner, signs=(), *, include_open=False, include_future=Fals
 
 def summary_data(learner, *, include_open=False, include_future=False, ensure_month=None):
     canonical_owner = learner.get('_canonical_profile')
+    unallocated = []
     if canonical_owner is not None:
         retained = {'months': []}
         records = canonical.entries_for(canonical_owner)
@@ -375,6 +376,9 @@ def summary_data(learner, *, include_open=False, include_future=False, ensure_mo
             )
         for item in canonical.rows_for(canonical_owner, records):
             month = item.get('reporting_month')
+            if not month:
+                unallocated.append({key: item.get(key) for key in
+                    ('id', 'title', 'actual_hours', 'actual_hours_recorded')})
             if month and allowed_month(month):
                 grouped[month].append(item)
         for month in {*targets, *(sign['report_month'] for sign in signs)}:
@@ -415,6 +419,7 @@ def summary_data(learner, *, include_open=False, include_future=False, ensure_mo
             'months': months, 'total_months': len(months),
             'completed_months': sum(m['status'] == 'complete' for m in months),
             'training_plan_totals': training_plan_totals,
+            'unallocated_activities': unallocated,
             'read_only': learner['_view_as']}
 
 

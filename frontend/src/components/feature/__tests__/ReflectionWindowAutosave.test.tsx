@@ -28,6 +28,24 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); localStorage.clear(); });
 
+it.each(['commercial', 'apprenticeship'] as const)('restores %s KSB choices without inventing a missing confidence rating', async learnerKind => {
+  mocks.load.mockResolvedValue({ status: 'draft', ksbCodes: ['K1'], ksbExplanations: { K1: 'Applied the learning.' },
+    confidenceBefore: {}, confidenceAfter: { K1: 3 }, learningReflection: 'Saved reflection', actualTimeHours: '0.5' });
+  render(<ReflectionWindow {...props} learnerKind={learnerKind}
+    learnerKsbs={[{ code: 'K1', type: 'K', number: '1', description: 'Programme knowledge' }]} />);
+  await settle();
+  fireEvent.click(screen.getByRole('button', { name: 'KSBs' }));
+  expect(screen.getByRole('checkbox', { name: /K1/ })).toBeChecked();
+  expect(screen.getByRole('slider', { name: 'K1: Confidence before' })).toHaveAttribute('aria-valuetext', 'Not rated');
+  await tick();
+  expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({ confidenceBefore: {}, confidenceAfter: { K1: 3 } }));
+  fireEvent.click(screen.getByRole('button', { name: 'K1: set confidence before to 1 out of 5' }));
+  await tick();
+  expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({ ksbCodes: ['K1'],
+    ksbExplanations: { K1: 'Applied the learning.' }, confidenceBefore: { K1: 1 }, confidenceAfter: { K1: 3 },
+    learningReflection: 'Saved reflection' }));
+});
+
 it.each(['commercial', 'apprenticeship'] as const)('automatically saves the latest %s draft without completing the activity', async learnerKind => {
   render(<ReflectionWindow {...props} learnerKind={learnerKind} />);
   await settle();

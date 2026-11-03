@@ -31,9 +31,22 @@ class FeedbackVisibilityTests(SimpleTestCase):
     @override_settings(DEBUG=False)
     def test_production_release_defaults_to_enabled(self):
         self.assertTrue(settings.LEARNER_FEEDBACK_ENABLED)
-        self.assertFalse(settings.LEARNER_NON_LECTURE_FEEDBACK_ENABLED)
+        self.assertTrue(settings.LEARNER_NON_LECTURE_FEEDBACK_ENABLED)
         with _patched(_account(role='learner', subject_type='learner')):
             self.assertIsNone(feedback._learner_feedback_disabled_response(RequestFactory().get('/')))
+            self.assertFalse(feedback._learner_feedback_lecture_only(RequestFactory().get('/')))
+
+    @override_settings(DEBUG=False)
+    def test_default_production_release_allows_every_feedback_type_for_both_learner_types(self):
+        for learner_type in ('commercial', 'apprenticeship'):
+            account = _account(role='learner', subject_type='learner')
+            account.learner_type = learner_type
+            with self.subTest(learner_type=learner_type), _patched(account):
+                for form_type in feedback.FORM_TYPES:
+                    self.assertIsNone(feedback._learner_feedback_disabled_response(
+                        RequestFactory().get('/'),
+                        form=SimpleNamespace(form_type=form_type), delivery=object(),
+                    ))
 
     @override_settings(DEBUG=False, LEARNER_FEEDBACK_ENABLED=True, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=False)
     def test_production_queue_returns_assigned_forms_for_the_signed_in_learner(self):

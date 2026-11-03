@@ -4,7 +4,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { duration, hours, monthLabel, monthStatus } from '@/features/old-otjh/report';
-import type { LogMonth, LogPerspective, LogSummary } from './api';
+import type { LogMonth, LogPerspective, LogSummary, UnallocatedActivity } from './api';
 import styles from './monthlyLogs.module.css';
 import type { CoachLogYear } from '@/features/coach/monthly-logs/api/monthlyLogsApi';
 
@@ -12,6 +12,19 @@ export function MonthList({ summary, base, perspective, onMonthSelect }: { summa
   return perspective === 'coach'
     ? <CoachMonthList summary={summary} base={base} />
     : <LearnerMonthList summary={summary} base={base} perspective={perspective} onMonthSelect={onMonthSelect} />;
+}
+
+function UnallocatedActivities({ rows = [] }: { rows?: UnallocatedActivity[] }) {
+  if (!rows.length) return null;
+  return <details className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+    <summary className="cursor-pointer font-semibold">Activities awaiting month review ({rows.length})</summary>
+    <p className="my-3">These activities have no confirmed reporting month and are excluded from monthly totals.</p>
+    <div className="overflow-x-auto"><table className="w-full text-left" aria-label="Activities awaiting month review">
+      <thead><tr><th scope="col" className="p-2">Activity</th><th scope="col" className="p-2">Month</th><th scope="col" className="p-2">Actual hours</th></tr></thead>
+      <tbody>{rows.map(row => <tr key={row.id}><td className="p-2">{row.title || 'Learning activity'}</td><td className="p-2">Unavailable</td>
+        <td className="p-2">{row.actual_hours_recorded === false ? 'Unavailable' : duration(row.actual_hours)}</td></tr>)}</tbody>
+    </table></div>
+  </details>;
 }
 
 function LearnerMonthList({ summary, base, perspective, onMonthSelect }: { summary: LogSummary; base: string; perspective: LogPerspective; onMonthSelect?: (month: string) => void }) {
@@ -60,6 +73,7 @@ function LearnerMonthList({ summary, base, perspective, onMonthSelect }: { summa
       <div><p>Training Plan</p><strong>{planTotals.planned_hours == null ? 'Unavailable' : `${hours(planTotals.planned_hours)} h`}</strong><span>Planned</span></div>
     </section>}
     {targetWarnings.map(warning => <p key={warning} role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{warning}</p>)}
+    <UnallocatedActivities rows={summary.unallocated_activities} />
     {!recordedTotal ? <EmptyState title="No monthly logs yet" description="Your recorded activities will appear here as you complete them." /> : <>
       <div className={styles.toolbar}>
         <div className={styles.filters} role="group" aria-label="Filter monthly logs">
@@ -138,6 +152,7 @@ export function CoachMonthList({ summary, projection, base, year: controlledYear
     </section>
 
     {warnings.map(warning => <p key={warning} role="status" className={styles.coachWarning}>{warning}</p>)}
+    <UnallocatedActivities rows={projection?.unallocatedActivities ?? summary?.unallocated_activities} />
 
     <section className={styles.coachMonthsCard} aria-label="Learner monthly log reports">
       <div className={styles.coachMonthsToolbar}>

@@ -47,7 +47,7 @@ describe('post-lecture feedback delivery scope', () => {
     expect(JSON.stringify(update.mock.calls[0][1])).not.toContain('answer');
   });
 
-  it.each(['Well being', 'End-module Feedback'])('configures %s using module dates and assignment', async label => {
+  it.each(['Wellbeing', 'End-module Feedback'])('configures %s using module dates and assignment', async label => {
     const user = userEvent.setup();
     const curriculum = vi.spyOn(feedbackApi, 'curriculumOptions').mockResolvedValue({
       programmes: [{ id: 'P1', name: 'Data' }], cohorts: [], groups: [],

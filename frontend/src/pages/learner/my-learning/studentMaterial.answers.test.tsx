@@ -39,7 +39,7 @@ describe('previous quiz answers in the main quiz', () => {
     const onProgress = vi.fn();
     render(<StudentMaterial kind={kind} learnerId="123" groupId={50} activityId={60} catalogueQuiz onProgress={onProgress} />);
     vi.mocked(subjectRequest).mockResolvedValueOnce({ attempt_id: 'new', definition: {}, timing: { trackingToken: 'synthetic-token', startedAt: new Date().toISOString(), countingMode: 'active_quiz' } });
-    fireEvent.click(await screen.findByRole('button', { name: 'Start quiz' }));
+    expect(screen.queryByRole('button', { name: 'Start quiz' })).not.toBeInTheDocument();
     await screen.findByRole('button', { name: 'Submit answers' });
     fireEvent.click(screen.getByRole('checkbox', { name: 'First answer' }));
     vi.mocked(subjectRequest).mockResolvedValueOnce(saved).mockResolvedValueOnce({ ...data, completed: true, can_attempt: false });

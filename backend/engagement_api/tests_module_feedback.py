@@ -1,6 +1,7 @@
 """Module checkpoint timing, assignment and ownership without live services."""
 import json
-from contextlib import nullcontext
+import sqlite3
+from contextlib import closing, nullcontext
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest import mock
@@ -39,6 +40,37 @@ class ModuleFeedbackDateTests(SimpleTestCase):
     def test_one_day_module_opens_both_phases_on_its_date(self):
         self.assertEqual(modules.module_feedback_date('2026-10-21', '2026-10-21', 'mid_module'),
                          modules.module_feedback_date('2026-10-21', '2026-10-21', 'end_module'))
+
+
+class ModuleFeedbackSourceTests(SimpleTestCase):
+    def test_active_modules_uses_dated_live_scopes_without_a_module_status_column(self):
+        with closing(sqlite3.connect(':memory:')) as db:
+            db.executescript('''
+                ATTACH DATABASE ':memory:' AS curriculum;
+                CREATE TABLE curriculum.programmes
+                    (programme_id text, name text, deleted_at text, is_archived integer, status text);
+                CREATE TABLE curriculum.cohorts
+                    (cohort_id text, programme_id text, cohort_name text, deleted_at text, status text);
+                CREATE TABLE curriculum.groups
+                    (group_id text, cohort_id text, group_name text, deleted_at text, is_programme_deleted integer);
+                CREATE TABLE curriculum.modules
+                    (module_catalogue_id text, title text, start_date text, end_date text,
+                     group_id text, deleted_at text, is_programme_deleted integer);
+                INSERT INTO curriculum.programmes VALUES ('P', 'Programme', NULL, 0, 'active');
+                INSERT INTO curriculum.programmes VALUES ('P2', 'Archived', NULL, 1, 'active');
+                INSERT INTO curriculum.cohorts VALUES ('C', 'P', 'Cohort', NULL, 'active');
+                INSERT INTO curriculum.cohorts VALUES ('C2', 'P2', 'Cohort 2', NULL, 'active');
+                INSERT INTO curriculum.groups VALUES ('G', 'C', 'Group', NULL, 0);
+                INSERT INTO curriculum.groups VALUES ('G2', 'C2', 'Group 2', NULL, 0);
+                INSERT INTO curriculum.modules VALUES ('valid', 'Valid', '2026-10-01', '2026-10-31', 'G', NULL, 0);
+                INSERT INTO curriculum.modules VALUES ('undated', 'Undated', '2026-10-01', NULL, 'G', NULL, 0);
+                INSERT INTO curriculum.modules VALUES ('reversed', 'Reversed', '2026-10-31', '2026-10-01', 'G', NULL, 0);
+                INSERT INTO curriculum.modules VALUES ('archived-parent', 'Archived', '2026-10-01', '2026-10-31', 'G2', NULL, 0);
+                INSERT INTO curriculum.modules VALUES ('deleted', 'Deleted', '2026-10-01', '2026-10-31', 'G', '2026-10-10', 0);
+            ''')
+            with mock.patch.object(modules, 'connection', SimpleNamespace(cursor=lambda: closing(db.cursor()))):
+                rows = modules.active_modules()
+        self.assertEqual([row['module_catalogue_id'] for row in rows], ['valid'])
 
 
 class ModuleMembershipTests(SimpleTestCase):

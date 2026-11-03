@@ -617,7 +617,8 @@ def _assignment_imported_mcm_month(profile_id, review_id):
     return (review["plannedDate"] or "")[:7] or None, None
 
 
-def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=None, dates_only=False, header_only=False):
+def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=None, dates_only=False, header_only=False,
+                                include_unlinked_bookings=False):
     """One source for the calendar and Training Plan coaching dates/statuses.
 
     ``only_sources`` is for a caller that keeps only those event sources. It
@@ -706,6 +707,10 @@ def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=Non
             for record in records
             if record.event_type not in {"mcr", "progress-review", "review"} and may_match(record)
         ]
+        if include_unlinked_bookings and mirror is not None:
+            from coach_api.calendar_booking_only import unlinked_review_bookings, booking_only_projection
+            for record, _profile in unlinked_review_bookings(records, [mirror], {mirror.id}, events=imported):
+                other.append(booking_only_projection(_serialize_event(record), record))
         return [*imported, *other]
     options = {'compact': True} if header_only else {}
     return _curriculum_cycle_events(learner, mirror, records, month=month, **options)
@@ -1651,7 +1656,7 @@ def learner_calendar(request, kind, pk):
         })
 
     try:
-        events = coaching_events_for_learner(learner, mirror)
+        events = coaching_events_for_learner(learner, mirror, include_unlinked_bookings=True)
         events.extend(alternative_recovery_events_for_learner(pk))
 
         # Live curriculum sessions belong to the learner's explicit module
