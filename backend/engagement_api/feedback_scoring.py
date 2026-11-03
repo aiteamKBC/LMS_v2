@@ -121,7 +121,7 @@ def score_classification(score):
 def response_key(response):
     if response.delivery_id is not None:
         return ('delivery', response.delivery_id, str(response.learner_id))
-    for field, source in [('event_recipient_id', 'event'), ('rsvp_recipient_id', 'rsvp'), ('review_delivery_id', 'review')]:
+    for field, source in [('event_recipient_id', 'event'), ('rsvp_recipient_id', 'rsvp'), ('review_delivery_id', 'review'), ('employer_review_delivery_id', 'employer_review')]:
         identifier = getattr(response, field, None)
         if identifier is not None:
             return (source, identifier)

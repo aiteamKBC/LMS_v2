@@ -1,5 +1,9 @@
 # Imported Review feedback
 
+Employer Progress Review feedback is documented in
+[EMPLOYER_REVIEW_FEEDBACK.md](EMPLOYER_REVIEW_FEEDBACK.md). It adds migration
+`0010_employer_review_feedback`; the learner-only schema notes below predate it.
+
 `feedback._sync_review_feedback_deliveries` delegates to `review_feedback`.
 The previous implementation read only `"Learner".reviews`, required exact
 `Completed` status and matched only two exact type labels.
@@ -65,7 +69,7 @@ For an import pipeline or recovery run, after verifying the target environment:
 The command prints counts only (`created`, `existing`, `incomplete`,
 `historical`, `undated`, `future`, `unlinked`, `identityConflicts`). It requires
 explicit learner IDs and never sends notifications, invitations or mail.
-No new SQL migration is required; the existing reviewed Feedback Review schema
+For learner-only review feedback no new SQL migration is required; the existing reviewed Feedback Review schema
 and its unique source_review_id constraint must already be installed. Do not
 rerun older form-type constraint migrations over newer schema releases.
 

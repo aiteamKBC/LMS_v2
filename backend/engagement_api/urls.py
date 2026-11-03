@@ -1,4 +1,5 @@
 from django.urls import path
+from . import employer_feedback
 
 from . import event_checkin, event_emails, event_feedback_views, event_rsvp_views, feedback, shared_reward_views, views, learning_policy_views
 
@@ -6,6 +7,10 @@ urlpatterns = [
     # Reusable feedback-form engine. Staff management and learner-owned routes
     # are separate so each view can enforce the narrowest role/ownership rule.
     path('feedback/csrf/', feedback.csrf_token, name='feedback-csrf'),
+    path('feedback/employers/<int:employer_id>/', employer_feedback.forms, name='feedback-employer-forms'),
+    path('feedback/employers/<int:employer_id>/<int:delivery_id>/', employer_feedback.form_detail, name='feedback-employer-form'),
+    path('feedback/employers/<int:employer_id>/<int:delivery_id>/response/', employer_feedback.response_save, name='feedback-employer-response'),
+    path('feedback/employers/<int:employer_id>/<int:delivery_id>/questions/<int:question_id>/photo/', employer_feedback.photo_upload, name='feedback-employer-photo'),
     path('feedback/curriculum-options/', feedback.curriculum_scope_options, name='feedback-curriculum-options'),
     path('feedback/forms/', feedback.forms_collection, name='feedback-forms'),
     path('feedback/forms/<int:pk>/', feedback.form_detail, name='feedback-form-detail'),
