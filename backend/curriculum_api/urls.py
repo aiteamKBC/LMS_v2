@@ -1,4 +1,5 @@
 from django.urls import path
+from .video_imports import component_video, tracked_save
 from coach_api import migrated_template_views
 
 from system_audit import activity as system_activity
@@ -175,13 +176,13 @@ urlpatterns = [
     path('curriculum/quality/versions/<str:entity_type>/<path:entity_id>/', quality.curriculum_quality_record_history, name='curriculum-quality-record-history'),
     path('curriculum/standards/', views.curriculum_standards, name='curriculum-standards'),
     path('curriculum/standards/<str:identifier>/', views.curriculum_standard_detail, name='curriculum-standard-detail'),
-    path('curriculum/modules/', views.curriculum_module_collection, name='curriculum-modules'),
+    path('curriculum/modules/', tracked_save(views.curriculum_module_collection, 'module'), name='curriculum-modules'),
     path('curriculum/modules/resolve-structures/', views.curriculum_module_structure_resolve, name='curriculum-module-structure-resolve'),
     # Before the '<str:identifier>' route below, or 'archived' is read as a module id.
     path('curriculum/modules/archived/', views.curriculum_archived_modules, name='curriculum-modules-archived'),
     path('curriculum/modules/<str:module_catalogue_id>/archived-structure/', views.curriculum_archived_module_structure, name='curriculum-module-archived-structure'),
     path('curriculum/modules/<str:identifier>/restore/', views.curriculum_module_restore, name='curriculum-module-restore'),
-    path('curriculum/modules/<str:module_catalogue_id>/structure/', views.curriculum_module_structure, name='curriculum-module-structure'),
+    path('curriculum/modules/<str:module_catalogue_id>/structure/', tracked_save(views.curriculum_module_structure, 'module'), name='curriculum-module-structure'),
     # What changed since the copy an open Module Builder holds (read-only POST).
     path('curriculum/modules/<str:module_catalogue_id>/changes/', curriculum_module_changes, name='curriculum-module-changes'),
     path('curriculum/modules/<str:module_catalogue_id>/settings/', views.curriculum_module_settings, name='curriculum-module-settings'),
@@ -202,22 +203,23 @@ urlpatterns = [
     # that delivers it, and what they achieved against this module's components.
     path('curriculum/modules/<str:module_catalogue_id>/learner-roster/', views.curriculum_module_learner_roster, name='curriculum-module-learner-roster'),
     path('curriculum/modules/<str:module_catalogue_id>/learner-ksb-impact/', views.curriculum_module_learner_ksb_impact, name='curriculum-module-learner-ksb-impact'),
-    path('curriculum/modules/<str:module_catalogue_id>/components/<str:component_id>/', views.curriculum_module_component_detail, name='curriculum-module-component-detail'),
+    path('curriculum/modules/<str:module_catalogue_id>/components/<str:component_id>/', tracked_save(views.curriculum_module_component_detail, 'module'), name='curriculum-module-component-detail'),
     path('curriculum/modules/<str:module_catalogue_id>/weeks/<str:week_id>/', views.curriculum_module_week_detail, name='curriculum-module-week-detail'),
     path('curriculum/modules/<str:identifier>/', views.curriculum_module_detail, name='curriculum-module-detail'),
-    path('curriculum/module-catalogue/', views.curriculum_module_collection, name='curriculum-module-catalogue'),
+    path('curriculum/module-catalogue/', tracked_save(views.curriculum_module_collection, 'module'), name='curriculum-module-catalogue'),
     path('curriculum/module-catalogue/<str:identifier>/', views.curriculum_module_detail, name='curriculum-module-catalogue-detail'),
-    path('curriculum/week-templates/', views.curriculum_week_template_collection, name='curriculum-week-templates'),
-    path('curriculum/week-templates/<str:identifier>/', views.curriculum_week_template_detail, name='curriculum-week-template-detail'),
+    path('curriculum/week-templates/', tracked_save(views.curriculum_week_template_collection, 'template'), name='curriculum-week-templates'),
+    path('curriculum/week-templates/<str:identifier>/', tracked_save(views.curriculum_week_template_detail, 'template'), name='curriculum-week-template-detail'),
+    path('curriculum/videos/<str:kind>/<str:target_id>/<str:component_id>/', component_video, name='curriculum-component-video'),
     path('curriculum/week-components/<str:component_id>/upload/', views.curriculum_week_component_upload, name='curriculum-week-component-upload'),
     # Must precede curriculum/components/<component_id>/, or "library" would be
     # captured as a component id.
     path('curriculum/components/library/', views.curriculum_component_library, name='curriculum-component-library'),
     path('curriculum/components/summary/', views.curriculum_component_summary, name='curriculum-component-summary'),
-    path('curriculum/components/', views.curriculum_component_collection, name='curriculum-components'),
+    path('curriculum/components/', tracked_save(views.curriculum_component_collection, 'component'), name='curriculum-components'),
     path('curriculum/components/<str:component_id>/upload/', views.curriculum_component_upload, name='curriculum-component-upload'),
     path('curriculum/components/<str:component_id>/ksb-mappings/', views.curriculum_component_ksb_mappings, name='curriculum-component-ksb-mappings'),
-    path('curriculum/components/<str:component_id>/', views.curriculum_component_detail, name='curriculum-component-detail'),
+    path('curriculum/components/<str:component_id>/', tracked_save(views.curriculum_component_detail, 'component'), name='curriculum-component-detail'),
     path('curriculum/teams-meetings/', teams_staff_required(teams_meeting_collection), name='curriculum-teams-meeting'),
     path('curriculum/teams-meetings/create-status/', teams_create_status, name='curriculum-teams-create-status'),
     path('curriculum/teams-meetings/create-draft/', teams_staff_required(teams_create_draft), name='curriculum-teams-create-draft'),
