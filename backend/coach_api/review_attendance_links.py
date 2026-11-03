@@ -192,8 +192,10 @@ def scoped_snapshot(record, overlay=None):
         if not meeting_scoped and (overlay.meeting_intelligence or {}).get('actualSession'):
             bound = bound_session(record, overlay=overlay)
             if not bound:
-                raise LinkConflict('The historical meeting association could not be confirmed.')
-            session = bound.context
+                from .review_rescheduling import archived_claim
+                if not archived_claim(record, overlay.meeting_intelligence['actualSession']):
+                    raise LinkConflict('The historical meeting association could not be confirmed.')
+            session = bound.context if bound else None
         snapshot = scope_snapshot(record, snapshot, session=session, meeting_scoped=meeting_scoped)
     if snapshot.get('partial') or snapshot.get('selectionError') or not (snapshot.get('storage') or {}).get('stored'):
         raise LinkConflict('Saved meeting evidence is unavailable or ambiguous. Reload the Review.')

@@ -54,6 +54,9 @@ def link_for(record, attendance, **overrides):
 
 
 class AttendanceLinkProjectionTests(SimpleTestCase):
+    def setUp(self):
+        self.enterContext(patch('coach_api.review_rescheduling.previous_bookings', return_value=[]))
+
     def test_links_without_changing_raw_report_and_counts_person_once(self):
         record, attendance = booking(), snapshot()['attendance']
         original = deepcopy(attendance)

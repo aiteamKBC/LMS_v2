@@ -39,6 +39,19 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('Aptem booking from a coach list', () => {
+  it('reschedules an in-progress review only when the server permits it', async () => {
+    const current = scheduledImportedBooking();
+    current.localStatus = 'in-progress';
+    current.instance.status = 'in-progress';
+    current.booking = { ...current.booking!, status: 'in-progress', canReschedule: true };
+    fetchForm.mockResolvedValue(current);
+    reschedule.mockResolvedValue(current);
+    mount({ event: { ...event, status: 'in-progress' } });
+    await selectTime();
+    fireEvent.click(screen.getByRole('button', { name: 'Save new time' }));
+    await waitFor(() => expect(reschedule).toHaveBeenCalledOnce());
+    expect(book).not.toHaveBeenCalled();
+  });
   it.each(['Monthly Coaching Meeting', 'Progress Review', 'Progress Review (+ Skills Radar)', 'Personal Support Plan'])('defaults a new %s to an editable hour and sends the chosen duration', async type => {
     const current = type === 'Personal Support Plan' ? personalSupportBooking() : importedBookingDefinition();
     current.booking = { ...current.booking!, durationMinutes: 90 };

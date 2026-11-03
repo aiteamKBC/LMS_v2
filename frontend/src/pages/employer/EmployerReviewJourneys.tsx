@@ -16,13 +16,15 @@ type Props = {
   onClearFilters: () => void;
 };
 
-const timelineStatuses: TimelineStatus[] = ['planned', 'scheduled', 'in-progress', 'awaiting-signature', 'attended', 'missed'];
+const timelineStatuses: TimelineStatus[] = ['planned', 'scheduled', 'in-progress', 'awaiting-attendance', 'awaiting-signature', 'attended', 'missed'];
 const timelineStatusLabels: Record<TimelineStatus, string> = {
   planned: 'Planned', scheduled: 'Scheduled', 'in-progress': 'In progress',
+  'awaiting-attendance': 'Awaiting attendance',
   'awaiting-signature': 'Awaiting signatures', attended: 'Attended', missed: 'Missed',
 };
 const timelineStatusIcons = {
   planned: Circle, scheduled: CalendarDays, 'in-progress': Clock3,
+  'awaiting-attendance': Clock3,
   'awaiting-signature': Signature, attended: Check, missed: X,
 };
 

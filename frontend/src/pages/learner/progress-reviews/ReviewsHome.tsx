@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { StatusBadge } from '@/components/ui/StatusBadge';
 import { ArrowLeft, ArrowRight, CalendarDays, ChevronDown, FileText, List, Video } from 'lucide-react';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import type { MeetingAttendance } from '@/api/meetingAttendance';
@@ -101,6 +102,8 @@ export default function ReviewsHome(props: ReviewsHomeProps) {
   }
 
   function status(state: ReviewPresentation) {
+    if (state.label === 'Meeting missed') return <StatusBadge tone="critical" label={state.label} size="sm" />;
+    if (state.label === 'Awaiting attendance report') return <StatusBadge tone="caution" label={state.label} size="sm" />;
     return <span className={styles.badge} data-tone={state.needsAttention ? 'attention' : state.status === 'completed' ? 'success' : 'neutral'}>{state.label}</span>;
   }
   function action(state: ReviewPresentation, secondary = false) {
