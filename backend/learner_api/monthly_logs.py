@@ -442,6 +442,12 @@ def detail_data(learner, month, *, include_open=False, include_future=False, dem
     report_profile = old_repo.report_profile(learner) if learner.get('aptem_id') and not consolidated else {
         'start_date': profile.get('start_date'), 'planned_end_date': profile.get('end_date'),
         'first_evidence_date': None if consolidated else sources.first_evidence_date(learner['id'])}
+    if consolidated:
+        # The journal header uses the same recorded learner date as the
+        # workspace, without changing programme dates used for calculations.
+        rows_for_date = old_repo.query('''SELECT "Learner_start_date" AS learner_start_date
+            FROM enrolment."Created_users" WHERE id = %s''', [learner['id']])
+        report_profile['start_date'] = (str(rows_for_date[0].get('learner_start_date') or '').strip() or None) if rows_for_date else None
     target = canonical.targets(learner['id']).get(month, 0 if journal_sources.enabled() else None) if consolidated else sources.monthly_target(learner, month)
     report = {**month_state(month, rows, signs, target, learner_id=learner['id']), 'rows': rows,
               'profile': report_profile}

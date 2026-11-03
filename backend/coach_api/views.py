@@ -15144,6 +15144,7 @@ def _review_instance_calendar_record(instance_row):
     return CoachCalendarEvent.objects.filter(
         pk=calendar_event_id,
         review_instance_id=instance_row.get("id"),
+        learner_id=instance_row.get("learner_id"),
         owner_email__iexact=instance_row.get("coach_email") or "",
     ).first()
 
@@ -15226,6 +15227,15 @@ def _coach_review_instance_definition(instance_row):
         "full_name", "email", "programme", "programme_id",
     ).first()
     definition.update(_review_learner_identity(learner))
+    record = _review_instance_calendar_record(instance_row)
+    if record and record.event_key and (record.meeting_link or record.graph_web_link):
+        definition["calendarMeeting"] = {
+            "eventKey": record.event_key,
+            "source": record.event_type,
+            "status": record.status,
+            "meetingLink": record.meeting_link or "",
+            "graphWebLink": record.graph_web_link or "",
+        }
     source = _review_instance_meeting_summary_source(instance_row, definition)
     if source is not None:
         definition["meetingSummarySource"] = source

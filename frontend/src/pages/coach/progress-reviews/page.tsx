@@ -65,7 +65,7 @@ import ProgressReviewPptxModal from './components/ProgressReviewPptxModal';
 import { slidesTargetFromEvent } from './components/slidesTarget';
 import { MeetingActionsMenu } from '../monthly-coaching/components/MeetingActionsMenu';
 import styles from '../monthly-coaching/monthlyCoaching.module.css';
-import { bulkGenerateProgressReviews, fetchLatestRun } from '@/api/progressReviews';
+import { fetchLatestRun } from '@/api/progressReviews';
 import { openReviewInstanceForEvent } from '@/api/reviewInstances';
 import {
   buildKsbProgress,
@@ -221,7 +221,6 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
   const [completionEvent, setCompletionEvent] = useState<CoachCalendarEvent | null>(null);
   const [pptxModalReview, setPptxModalReview] = useState<CoachCalendarEvent | null>(null);
   const [generatedReviewKeys, setGeneratedReviewKeys] = useState<Set<string>>(new Set());
-  const [bulkGenerating, setBulkGenerating] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(searchParams);
@@ -528,26 +527,6 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
     });
   };
 
-  const handleBulkGenerateSlides = async () => {
-    const count = events.filter((event) => !isImportedReviewEvent(event) && reviewHasLearnerReference(event) && eventDisplayDate(event)).length;
-    if (!count) return;
-    if (!window.confirm(`Generate Progress Review PPTX decks for ${count} review(s) with a learner and review date? This may take a while.`)) return;
-    setBulkGenerating(true);
-    try {
-      const data = await bulkGenerateProgressReviews({});
-      const failed = data.results.filter((row) => row.generationStatus === 'failed').length;
-      if (failed) {
-        setActionError(`Bulk generation finished with ${failed} of ${data.results.length} failure(s).`);
-      } else {
-        setActionNotice(`Bulk generation complete — ${data.results.length} draft(s) generated. Open each review to review and save its slides.`);
-      }
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Unable to run bulk generation.');
-    } finally {
-      setBulkGenerating(false);
-    }
-  };
-
   const handleCompleteReview = async (responses: ProgressReviewResponses) => {
     if (!completionEvent) return;
     setBusyEventId(eventIdentity(completionEvent));
@@ -603,7 +582,6 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
             <button type="button" onClick={showAllMonths} aria-pressed={allMonths} className={styles.control}>All months<AppIcon className="ri-arrow-down-s-line" /></button>
             {!selectedMonthIsCurrent ? <button type="button" onClick={() => changeMonth(startOfMonth())} className={styles.control}>Today</button> : null}
             <SearchInput className={styles.search} value={searchTerm} suggestions={learnerSuggestions} onChange={handleSearchChange} placeholder="Search learners..." ariaLabel={`Search ${reviewLabel} by learner`} />
-            {!otherReviews && <button type="button" onClick={handleBulkGenerateSlides} disabled={bulkGenerating} className={styles.control}><AppIcon className={bulkGenerating ? 'ri-loader-4-line animate-spin' : 'ri-stack-line'} />{bulkGenerating ? 'Generating slides...' : 'Bulk generate slides'}</button>}
             <button type="button" onClick={openSchedulePicker} disabled={schedulableReviews.length === 0} className={cn(styles.control, styles.primary)}><AppIcon className="ri-add-line text-xl" />Schedule review</button>
           </div>
           <PageTabs className={styles.tabs} items={tabItems} value={tab} onChange={(next) => changeTab(next as ReviewTab)} label={`Filter ${reviewLabel} by status`} />

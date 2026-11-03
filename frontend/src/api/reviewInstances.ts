@@ -221,6 +221,8 @@ export interface ReviewInstanceFormDefinition {
     meetingLink: string | null;
     syncState: string | null;
   };
+  /** Exact server-authorized Native Review calendar association. */
+  calendarMeeting?: { eventKey: string; source: string; status: string; meetingLink: string; graphWebLink: string };
   fieldWarnings?: { fieldKey: string; aptemType: number }[];
   pdf?: { available: boolean; reason: string; source?: string; originalAvailable?: boolean } | null;
   /** Progress Review only, and null until a coach calculates it. */

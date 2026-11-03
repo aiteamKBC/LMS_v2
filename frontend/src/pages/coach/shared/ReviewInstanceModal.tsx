@@ -45,6 +45,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { useImportedMeetingJoin } from './useImportedMeetingJoin';
 import { MigratedMeetingIntelligence } from './MigratedMeetingIntelligence';
+import { CoachMeetingArtifactsPanel } from './CoachMeetingArtifactsPanel';
 import { MigratedSummaryActions } from './MigratedSummaryActions';
 import type { CoachMeetingArtifactsResponse } from './calendarEvents';
 import { adoptExistingMigratedMeeting, canInitializeMigratedReview } from './importedReviewBooking';
@@ -299,6 +300,15 @@ function ReviewInstanceContent({
     answersRef.current = merged;
     setAnswers(merged);
     setDefinition(current => current ? { ...current, answerVersion: result.answerVersion, summaryBinding: result.summaryBinding } : current);
+  }, [onStatusChanged]);
+  const onNativeMeetingStatusChange = useCallback((status: string) => {
+    if (status !== 'in-progress') return;
+    setDefinition(current => current ? {
+      ...current,
+      instance: current.instance.status === 'scheduled' ? { ...current.instance, status } : current.instance,
+      calendarMeeting: current.calendarMeeting ? { ...current.calendarMeeting, status } : undefined,
+    } : current);
+    onStatusChanged?.(status);
   }, [onStatusChanged]);
   const onMigratedSummaryComplete = useCallback((result: CoachMeetingArtifactsResponse) => {
     if (!reviewActive.current) return;
@@ -1089,6 +1099,17 @@ function ReviewInstanceContent({
                 checkBlocked={hasUnsavedMigratedAnswers || busy || templateSyncConflict}
                 onCheckComplete={onMigratedCheckComplete}
                 onCheckingChange={setCheckingSession}
+              />
+            ) : null}
+            {!definition.migratedForm && definition.source !== 'aptem' && definition.calendarMeeting ? (
+              <CoachMeetingArtifactsPanel
+                event={{ id: definition.instance.id, ...definition.calendarMeeting }}
+                canCheck={!isViewingAsCoach}
+                showCheckAction
+                canEditSummary={!isViewingAsCoach}
+                onEventStatusChange={onNativeMeetingStatusChange}
+                attendanceLinkKey={!isViewingAsCoach && ['mcr', 'progress-review'].includes(definition.calendarMeeting.source)
+                  ? definition.calendarMeeting.eventKey : undefined}
               />
             ) : null}
             {definition.migratedForm && definition.booking?.canAttach && !formReadOnly ? (
