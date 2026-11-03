@@ -48,12 +48,28 @@ class FeedbackDefinitionTests(SimpleTestCase):
         self.assertEqual(sum(q['text']=='Assessment for learning and feedback' for q in teaching),1)
         self.assertEqual(default_definition('FORM_TARGET_SETTING')['sections'][1]['criteria'][0]['text'],'Target Setting')
 
-    def test_na_availability_and_required_file_fields_are_enforced_on_the_server(self):
+    def test_every_rating_accepts_na_without_evidence_in_all_quality_forms(self):
+        kinds = ['', 'MCM', 'PR', *[row['reviewType'] for row in defaults()]]
+        from .quality_feedback_catalog import new_definition
+        definitions = [default_definition(kind) for kind in kinds]
+        definitions.append(clean_definition(new_definition('FORM_CUSTOM_TEST', 'Custom observation')))
+        for definition in definitions:
+            with self.subTest(form=definition['id']):
+                original = deepcopy(definition)
+                value = answers(definition)
+                for answer in value['criteria'].values():
+                    answer.update(rating='na', evidence='')
+                for status in ('draft', 'completed'):
+                    self.assertEqual(clean_answers(value, status, definition)['criteria'], value['criteria'])
+                self.assertEqual(definition, original)
+
+    def test_na_does_not_bypass_other_ratings_or_required_file_fields(self):
         definition=default_definition('FORM_MONTHLY_COACHING');value=answers(definition)
-        value['criteria']['criterion-1']['rating']='na'
-        with self.assertRaises(InvalidReview):clean_answers(value,'completed',definition)
-        value=answers(definition);value['criteria']['criterion-12']={'rating':'na','evidence':''}
+        value['criteria']['criterion-1']={'rating':'na','evidence':''}
         clean_answers(value,'completed',definition)
+        for answer in ({'rating':'','evidence':''}, {'rating':'green','evidence':''}, {'rating':'invalid','evidence':''}):
+            invalid=deepcopy(value);invalid['criteria']['criterion-2']=answer
+            with self.assertRaises(InvalidReview):clean_answers(invalid,'completed',definition)
         definition['sections'][1]['criteria'].append({'id':'evidence-file','text':'Attach supporting evidence','type':'file','required':True})
         definition=clean_definition(definition)
         with self.assertRaises(InvalidReview):clean_answers(value,'completed',definition)
@@ -82,6 +98,27 @@ class FeedbackStorageTests(SimpleTestCase):
     def prepare_files(self):
         sql=(Path(__file__).parent/'sql'/'coaching_quality_v3.sql').read_text()
         self.db.executescript(sql.replace('lms_quality.',''))
+
+    def test_na_round_trips_with_existing_definition_and_pdf_without_rewriting_history(self):
+        definition=default_definition('FORM_MONTHLY_COACHING')
+        self.assertIs(definition['sections'][1]['criteria'][0]['allowNa'], False)
+        original={**snapshot(), 'definition':definition, 'reviewType':'FORM_MONTHLY_COACHING',
+            'form':answers(definition), 'reviewer':{'id':'staff:1','name':'Synthetic Reviewer'}}
+        first=store.save_review(original,expected=0,request_id=str(uuid4()),actor='staff:1')
+        updated=deepcopy(original)
+        updated['form']['criteria']['criterion-1']['rating']='na'
+        updated['form']['criteria']['criterion-2']={'rating':'na','evidence':''}
+        updated['form']=clean_answers(updated['form'],'completed',definition)
+        updated['status']='completed'
+        saved=store.save_review(updated,expected=1,request_id=str(uuid4()),actor='staff:1')
+        self.assertEqual(store.read_review(review_id=saved['id'])['form'],updated['form'])
+        self.assertEqual(store.read_revision(saved['id'],1),first)
+        self.assertEqual(saved['definition'],definition)
+        pdf=PdfReader(BytesIO(_render(saved,{})))
+        text=' '.join(' '.join(page.extract_text() for page in pdf.pages).split())
+        self.assertIn('N/A: 2',text)
+        self.assertIn('Observed evidence at 12:30.',text)
+        self.assertIn('Not applicable - no additional evidence recorded.',text)
 
     def test_catalog_has_fourteen_lightweight_cards_and_custom_drafts_require_publication(self):
         catalog=store.form_catalog()

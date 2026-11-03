@@ -81,6 +81,8 @@ def clean_definition(value):
                 raise InvalidReview('Only choice questions can have options.')
             extra = {}
             if 'allowNa' in item:
+                # Retain legacy metadata without rewriting saved form versions.
+                # All rating questions now accept N/A, regardless of this flag.
                 if type(item['allowNa']) is not bool:
                     raise InvalidReview('Choose whether N/A is allowed for this criterion.')
                 extra['allowNa'] = item['allowNa']
@@ -165,8 +167,6 @@ def clean_answers(value, status, definition):
             if not isinstance(answer,dict) or set(answer)-{'rating','evidence'} or answer.get('rating','') not in ('',*RATINGS):
                 raise InvalidReview('Choose a valid quality rating.')
             rating=answer.get('rating',''); evidence=_text(answer.get('evidence',''),6000)
-            if rating=='na' and item.get('allowNa') is False:
-                raise InvalidReview('N/A is not allowed for this criterion.')
             if required and not rating or status=='completed' and rating not in ('','na') and not evidence:
                 raise InvalidReview('Complete each required rating and explain its evidence.')
             cleaned_ratings[key]={'rating':rating,'evidence':evidence}
