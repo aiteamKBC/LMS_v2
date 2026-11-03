@@ -93,7 +93,7 @@ function FormsTable({ forms, search, status, onSearch, onStatus, onEdit, onPrevi
   return <div className="overflow-hidden rounded-xl border border-foreground-200/60 bg-background-50">
     <div className="flex flex-wrap gap-3 border-b border-background-200 p-4"><input value={search} onChange={e => onSearch(e.target.value)} placeholder="Search forms…" className="min-w-56 flex-1 rounded-lg border border-foreground-200 px-3 py-2 text-xs" /><select value={status} onChange={e => onStatus(e.target.value)} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs"><option value="all">All statuses</option><option value="draft">Draft</option><option value="published">Published</option><option value="closed">Closed</option></select></div>
     <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs"><thead className="bg-background-100 text-foreground-500"><tr>{['Form Name', 'Status', 'Assigned', 'Responses', 'Created', 'Last Updated', 'Actions'].map(x => <th key={x} className="px-4 py-3 font-semibold">{x}</th>)}</tr></thead><tbody className="divide-y divide-background-200">{forms.map(form => {
-      const versioned = ['post_lecture', 'post_mcm_review', 'post_progress_review', 'mid_module', 'end_module'].includes(form.formType);
+      const versioned = ['post_lecture', 'post_mcm_review', 'post_progress_review', 'post_progress_review_employer', 'mid_module', 'end_module'].includes(form.formType);
       return <tr key={form.id}><td className="px-4 py-3 font-semibold text-foreground-900"><span>{form.title}</span>{versioned && <span className="ml-2 rounded-full bg-primary-50 px-2 py-0.5 text-[10px] text-primary-700">v{form.version}</span>}</td><td className="px-4 py-3"><Status status={form.status} /></td><td className="px-4 py-3"><button type="button" disabled={!form.assignedCount} onClick={() => onViewRecipients(form)} className="font-semibold text-primary-600 underline-offset-2 hover:underline disabled:text-foreground-400 disabled:no-underline">{form.assignedCount}</button></td><td className="px-4 py-3">{form.responseCount} / {form.assignedCount || '—'}</td><td className="px-4 py-3 text-foreground-500">{formatDate(form.createdAt)}</td><td className="px-4 py-3 text-foreground-500">{formatDate(form.updatedAt)}</td><td className="px-4 py-3"><div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-semibold"><button onClick={() => onEdit(form)} className="text-primary-600">Edit</button><button onClick={() => onPreview(form)} className="text-primary-600">Preview</button>{versioned && <button onClick={() => onViewVersions(form)} className="text-primary-600">Versions</button>}<button onClick={() => void onAction(form, 'duplicate')} className="text-primary-600">Duplicate</button>{form.formType === 'general' && <button disabled={form.status !== 'published'} onClick={() => onAssign(form)} className="text-primary-600 disabled:text-foreground-300">Assign</button>}{form.status === 'draft' && <button onClick={() => void onAction(form, 'publish')} className="text-emerald-600">Publish</button>}{form.status === 'published' && <><button onClick={() => void onAction(form, 'draft')} className="text-amber-600">Unpublish</button><button onClick={() => void onAction(form, 'close')} className="text-amber-700">Close</button></>}<button onClick={onResponses} className="text-primary-600">Responses</button><button onClick={() => void onAction(form, 'delete')} className="text-red-600">Delete</button></div></td></tr>;
     })}{!forms.length && <tr><td colSpan={7} className="p-10 text-center text-foreground-400">No feedback forms match these filters.</td></tr>}</tbody></table></div>
   </div>;
@@ -114,6 +114,7 @@ const ANALYTICS_FORM_TYPES: ThemedSelectOption<AnalyticsFormType>[] = [
   { value: 'end_module', label: 'End-module Feedback' },
   { value: 'post_mcm_review', label: 'MCM Feedback' },
   { value: 'post_progress_review', label: 'Progress Review Feedback' },
+  { value: 'post_progress_review_employer', label: 'Progress Review – Employer Feedback' },
   { value: 'post_event', label: 'Event Feedback' },
   { value: 'event_rsvp', label: 'Event RSVP' },
   { value: 'general', label: 'General Feedback' },
@@ -272,10 +273,12 @@ function RecipientsDialog({ form, onClose }: { form: FeedbackForm; onClose: () =
   }, [form.id, page, search, sourceKey]);
   const pages = Math.max(Math.ceil(total / pageSize), 1);
   const isEvent = form.formType === 'post_event';
-  const isReview = form.formType === 'post_mcm_review' || form.formType === 'post_progress_review';
+  const isEmployer = form.formType === 'post_progress_review_employer';
+  const isReview = isEmployer || form.formType === 'post_mcm_review' || form.formType === 'post_progress_review';
   const contextHeading = isEvent ? 'Event' : form.formType === 'post_lecture' ? 'Lecture' : isReview ? 'Review' : ['mid_module', 'end_module'].includes(form.formType) ? 'Module' : 'Assignment';
-  const recipientHeading = isEvent ? 'Attendee' : 'Learner';
-  return <Modal title={`${isEvent ? 'Assigned attendees' : 'Assigned learners'} — ${form.title}`} onClose={onClose}>
+  const recipientHeading = isEmployer ? 'Employer / Learner' : isEvent ? 'Attendee' : 'Learner';
+  return <Modal title={`${isEmployer ? 'Assigned employers' : isEvent ? 'Assigned attendees' : 'Assigned learners'} — ${form.title}`} onClose={onClose}>
+    {isEmployer && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">Each employer answers separately from the learner. Pending link means the employer profile or account needs to be linked before the request appears in their portal. The related learner is shown with each review.</p>}
     {sources.length > 0 && sources.some(source => source.type !== 'manual') && <div className="mb-3 rounded-xl border border-primary-100 bg-primary-50/40 p-3"><label htmlFor="feedback-source-filter" className="mb-1.5 block text-xs font-semibold text-foreground-700">{contextHeading}</label><select id="feedback-source-filter" aria-label={`Filter by ${contextHeading.toLowerCase()}`} value={sourceKey} onChange={event => { setSourceKey(event.target.value); setPage(1); }} className="w-full rounded-lg border border-foreground-200 bg-white px-3 py-2.5 text-xs text-foreground-800"><option value="">All {contextHeading.toLowerCase()}s ({sources.reduce((count, source) => count + source.assignedCount, 0)} assignments)</option>{sources.map(source => <option key={source.key} value={source.key}>{sourceOptionLabel(source)}</option>)}</select></div>}
     <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-foreground-500">{total} assignment{total === 1 ? '' : 's'}{sourceKey ? ` for this ${contextHeading.toLowerCase()}` : ''}. Each recipient keeps the source that assigned this form.</p><input aria-label="Search assigned learners" value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder={`Search name, email, programme or ${contextHeading.toLowerCase()}…`} className="min-w-64 rounded-lg border px-3 py-2 text-xs" /></div>
     {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
@@ -287,7 +290,7 @@ function RecipientsDialog({ form, onClose }: { form: FeedbackForm; onClose: () =
 function ResponseDialog({ response, onClose }: { response: FeedbackResponse; onClose: () => void }) {
   return <Modal title="Feedback response" onClose={onClose}>
     <div className="mb-4 grid grid-cols-3 gap-3 rounded-lg bg-background-100 p-3 text-xs">
-      <div><span className="text-foreground-400">Learner</span><p className="font-semibold">{response.learnerName}</p></div>
+      <div><span className="text-foreground-400">{response.formType === 'post_progress_review_employer' ? 'Employer' : 'Learner'}</span><p className="font-semibold">{response.learnerName}</p></div>
       <div><span className="text-foreground-400">Form</span><p className="font-semibold">{response.formTitle}</p></div>
       <div><span className="text-foreground-400">Submitted</span><p className="font-semibold">{formatDate(response.submittedAt)}</p></div>
     </div>
