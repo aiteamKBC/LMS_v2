@@ -21,6 +21,16 @@ def attempt(ident, seconds, mode=None, passed=True, learner=1, quiz='Q1'):
 
 
 class RetakeTimingTests(unittest.TestCase):
+    def test_quiz_reading_keeps_its_own_time_when_the_quiz_time_is_corrected(self):
+        records = [attempt(1, 1800), attempt(2, 600, 'correct')]
+        readings = [{**attempt(ident, seconds), 'kind': 'quiz_reading',
+                     'component_type': 'reading', 'component_link_source': 'direct'}
+                    for ident, seconds in ((3, 300), (4, 120))]
+        projected = self.current['project_current']([*records, *readings], {})
+        self.assertEqual(sorted(row['actual_seconds'] for row in projected), [120, 300, 600])
+        self.assertEqual({row['id'] for row in projected if row['kind'] == 'quiz_reading'}, {3, 4})
+        self.assertTrue(all(not row.get('retake_timing_applied') for row in projected if row['kind'] == 'quiz_reading'))
+
     def setUp(self):
         self.current = adapter()
         self.reporting = reporting_adapter(Mock(return_value=[]))

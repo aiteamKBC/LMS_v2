@@ -139,6 +139,42 @@ beforeEach(() => {
 afterEach(() => { cleanup(); clearAllCachedResources(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('Dashboard Weekly Learning compact read', () => {
+  it.each(['commercial', 'apprenticeship'] as const)('shows saved activity KSBs only in their own %s activity row', async kind => {
+    const wire = weeklyContractFixture({ ...compact(full), schedule });
+    const reading = wire.selectedWeek!.activities.find(activity => activity.id === 'READING')!;
+    reading.recordedKsbCodes = ['K7', 'S8'];
+    const data = weeklyResourceFixture(wire, '125');
+    reads.weekly = data;
+    primeWeeklyLearningWeek(kind, '125', data);
+    render(<MemoryRouter><DashboardWeeklyLearningPlan kind={kind} learnerId="125" /></MemoryRouter>);
+    const row = (await screen.findByText('Read chapter')).closest('tr')!;
+    const saved = within(row).getByRole('group', { name: 'Recorded KSBs' });
+    expect(within(saved).getByText('K7')).toBeVisible();
+    expect(within(saved).getByText('S8')).toBeVisible();
+    const otherRow = within(screen.getByText('Watch the intro').closest('tr')!);
+    expect(otherRow.queryByRole('group', { name: 'Recorded KSBs' })).not.toBeInTheDocument();
+    expect(otherRow.getByText('No KSB mapped')).toBeVisible();
+    expect(reading.ksbCodes).toEqual([]);
+    expect(screen.getByRole('columnheader', { name: 'KSB mapping' })).toBeVisible();
+  });
+
+  it('carries saved reflection KSBs from the weekly response to the correct activity row', async () => {
+    const wire = weeklyContractFixture({ ...compact(full), schedule });
+    const selected = wire.selectedWeek!;
+    const reading = selected.activities.find(activity => activity.id === 'READING')!;
+    reading.reflectionKsbs = [{ status: 'submitted_for_tutor_review', codes: ['S7', 'B2'] }];
+    const data = weeklyResourceFixture(wire, '125');
+    reads.weekly = data;
+    primeWeeklyLearningWeek('commercial', '125', data);
+    render(<MemoryRouter><DashboardWeeklyLearningPlan kind="commercial" learnerId="125" /></MemoryRouter>);
+    const row = (await screen.findByText('Read chapter')).closest('tr')!;
+    const saved = within(row).getByRole('group', { name: 'Your reflection KSBs: Awaiting tutor review' });
+    expect(within(saved).getByText('S7')).toBeVisible();
+    expect(within(saved).getByText('B2')).toBeVisible();
+    expect(within(row).getByText('No KSB mapped')).toBeVisible();
+    expect(within(screen.getByText('Watch the intro').closest('tr')!).queryByText('S7')).not.toBeInTheDocument();
+    expect(reading.ksbCodes).toEqual([]);
+  });
   it('pauses the weekly clock while a visited panel is hidden', () => {
     reads.weekly = null;
     const interval = vi.spyOn(window, 'setInterval');

@@ -277,6 +277,8 @@ def _submit_reflection(request):
         except (TypeError, ValueError, OverflowError):
             return _error("assignmentElapsedSeconds must be a non-negative number.")
     full_submission = dict(payload)
+    # KSB review requests and corrections are staff-owned audit metadata.
+    full_submission.pop('ksbReview', None)
     full_submission.pop('coachCreation', None)
     full_submission.pop("selectAssignmentTopic", None)
     lineage = _reflection_lineage(learner_id, activity_id)
@@ -332,6 +334,12 @@ def _submit_reflection(request):
                         "This reflection has been accepted by the coach and can no longer be changed.",
                         409,
                     )
+                if not is_assignment_form and submission_mode == 'submit' and _list(payload.get('ksbCodes')):
+                    from .reflection_ksbs import programme_catalogue, checked_codes, KsbReviewError
+                    try:
+                        checked_codes(payload['ksbCodes'], programme_catalogue(learner_kind, learner_id))
+                    except KsbReviewError as exc:
+                        return _error(str(exc), exc.status)
                 if (
                     existing
                     and existing[0] == "submitted_for_tutor_review"

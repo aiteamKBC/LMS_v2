@@ -7,6 +7,7 @@ import { LearnerCalendarContent } from './page';
 import { bookLearnerCalendarSession, cancelLearnerCalendarSession, fetchLearnerCalendarEvents, fetchCalendarConnections, fetchPersonalCalendarAvailability, fetchReviewSlots, rescheduleLearnerCalendarSession, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { fetchReviewHistory } from '@/api/reviewHistory';
 import { fetchMeetingAttendance } from '@/api/meetingAttendance';
+import { fetchLearnerEventReviewInstance, fetchLearnerMeetingArtifacts } from '@/api/learnerCalendar';
 import { meetingCalendarHref } from '../reviews/meetingBooking';
 import * as ics from '@/utils/ics-generator';
 
@@ -129,6 +130,20 @@ describe('calendar exports', () => {
 });
 
 describe('calendar event previews', () => {
+  it.each(['mcr', 'progress-review'])('shows a confirmed unlinked %s booking without changing or loading its Review', async source => {
+    setup([event({ source, title: 'Confirmed legacy booking', bookingOnly: true, reviewSource: 'unlinked-booking' })]);
+    fireEvent.click((await screen.findAllByRole('button', { name: /Confirmed legacy booking/ }))[0]);
+    const dialog = screen.getByRole('dialog', { name: 'Confirmed legacy booking' });
+    expect(within(dialog).getByText(/Confirmed booking only/)).toBeVisible();
+    expect(within(dialog).getByRole('link', { name: 'Join Meeting' })).toHaveAttribute('href', event().meetingLink);
+    expect(within(dialog).queryByRole('button', { name: /Reschedule|Schedule|Cancel/i })).not.toBeInTheDocument();
+    expect(fetchLearnerEventReviewInstance).not.toHaveBeenCalled();
+    expect(fetchLearnerMeetingArtifacts).not.toHaveBeenCalled();
+    expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+    expect(rescheduleLearnerCalendarSession).not.toHaveBeenCalled();
+    expect(cancelLearnerCalendarSession).not.toHaveBeenCalled();
+  });
+
   it.each(['mcr', 'progress-review'] as const)('books and then reschedules an imported %s without connecting a personal calendar', async source => {
     const imported = event({
       id: 'imported-review:source-only', eventKey: 'imported-review:source-only',
@@ -529,6 +544,58 @@ describe('calendar event previews', () => {
     expect(screen.getByRole('button', { name: /Skills conversation/ })).toBeVisible();
     expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
     expect(rescheduleLearnerCalendarSession).not.toHaveBeenCalled();
+  });
+
+  it('searches a review by its type even when the appointment title is different', async () => {
+    setup([event({ id: 'typed-review', source: 'review', title: 'Where next?',
+      reviewTypeId: 'CAREER', reviewTypeName: 'Career Review' }), event()]);
+    const filters = screen.getByRole('group', { name: 'Calendar source filters' });
+    await within(filters).findByTitle('Career Review (1)');
+    fireEvent.change(screen.getByPlaceholderText('Search events, session types or coach...'), { target: { value: 'Career Review' } });
+    expect(within(filters).getByTitle('Career Review (1)')).toBeVisible();
+    expect(within(filters).getByTitle('Catch-up (0)')).toBeVisible();
+    expect(screen.getAllByRole('button', { name: /Where next/ }).length).toBeGreaterThan(0);
+  });
+
+  it('combines custom native and imported review filters across months', async () => {
+    setup([
+      event({ id: 'native-psp', source: 'review', title: 'Native support appointment',
+        reviewTypeId: 'PSP', reviewTypeName: 'Personal Support Plan', date: '2026-10-06',
+        scheduledDate: '2026-10-06', targetDate: '2026-10-06' }),
+      aptemPlan('Personal Support Plan', { id: 'imported-psp', title: 'Imported support appointment',
+        importedReview: { id: '71', aptemReviewId: 'sample-71', name: 'Support', type: 'Personal Support Plan',
+          reviewerName: 'Sample coach', plannedDate: isoDate, plannedTime: null, completedDate: null,
+          status: 'not-scheduled', extractionStatus: 'complete', detailsAvailable: false, sections: [] } }),
+      event({ id: 'unrelated', title: 'Other appointment' }),
+    ]);
+    const filters = within(screen.getByRole('group', { name: 'Calendar source filters' }));
+    fireEvent.click(await filters.findByTitle('Personal Support Plan (1)'));
+    expect(filters.getAllByRole('button', { name: /Personal Support Plan/ })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /Imported support appointment/ }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: /Other appointment/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
+    expect(filters.getByTitle('Personal Support Plan (1)')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: /Native support appointment/ })).toBeVisible();
+  });
+
+  it('filters displayed meeting outcomes and signatures without counting them as scheduled', async () => {
+    setup([
+      event({ id: 'ended', title: 'Elapsed meeting', status: 'in-progress', meetingOutcome: 'ended' }),
+      event({ id: 'attended', title: 'Attended meeting', status: 'scheduled', meetingOutcome: 'completed' }),
+      event({ id: 'signature', title: 'Signature meeting', status: 'awaiting-signature' }),
+      event({ id: 'future', title: 'Scheduled meeting' }),
+    ]);
+    const filters = within(screen.getByRole('group', { name: 'Calendar status filters' }));
+    await filters.findByTitle('All (4)');
+    for (const [label, title] of [['Ended', 'Elapsed meeting'], ['Completed', 'Attended meeting'],
+      ['Awaiting Signature', 'Signature meeting'], ['Scheduled', 'Scheduled meeting']]) {
+      fireEvent.click(filters.getByTitle(`${label} (1)`));
+      expect(screen.getAllByRole('button', { name: new RegExp(title) }).length).toBeGreaterThan(0);
+      for (const other of ['Elapsed meeting', 'Attended meeting', 'Signature meeting', 'Scheduled meeting'].filter(value => value !== title)) {
+        expect(screen.queryByRole('button', { name: new RegExp(other) })).not.toBeInTheDocument();
+      }
+    }
+    expect(filters.getByTitle('In Progress (0)')).toBeVisible();
   });
 
   it('shows a written, colour-coded status on month cards', async () => {
