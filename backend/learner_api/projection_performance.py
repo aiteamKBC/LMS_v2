@@ -120,6 +120,9 @@ LOCAL_STAGES = frozenset({
     'subject_metadata', 'replacement_settings', 'activity_dates', 'historical_facts',
     'historical_placements', 'card_aggregation', 'module_hours', 'covers',
     'programme_hours', 'upcoming', 'serialize', 'replacement_reconcile', 'other',
+    # Home summary (local trace only).
+    'identity', 'canonical_hours', 'progress_entries', 'plan_resolution', 'week_summary',
+    'programme_dates', 'submissions', 'attendance_register', 'module_progress',
 })
 
 
@@ -136,6 +139,8 @@ LOCAL_OPERATIONS = frozenset({
     'identity_rules', 'identity_matching', 'attendance_recovery', 'attendance_catchups',
     'attendance_confirmations', 'attendance_recorded', 'attendance_corrections',
     'shared_series', 'credit_projection', 'assignment_placement', 'assignment_query', 'other',
+    # Whether module progress reused the caller's lecture register (Home P1).
+    'module_credits_register_reused', 'module_credits_register_built',
 })
 
 
@@ -177,8 +182,9 @@ class LocalProjectionPerformance(ProjectionPerformance):
     decoding). Unattributed wall time may include acquisition, fetch, direct
     psycopg calls, cache I/O or scheduling; it is never labelled Python time.
     """
-    def __init__(self, request_id):
+    def __init__(self, request_id, label=None):
         self.request_id = str(UUID(str(request_id)))
+        self.label = label
         self.rows = {}
         self.frames = []
         self.operation_rows = {}
@@ -264,6 +270,7 @@ class LocalProjectionPerformance(ProjectionPerformance):
                 'postgresql_server_execution_ms':'UNMEASURED',
             })
         log.info('projection_stage %s', {'request_id':self.request_id,
+            **({'projection':self.label} if self.label else {}),
             'elapsed_ms':round((perf_counter()-self.started)*1000,3),
             'serialization_ms':round(self.rows['serialize']['elapsed']*1000,3) if 'serialize' in self.rows else 'UNMEASURED',
             'stages':stages,
@@ -283,19 +290,38 @@ def local_catalogue_trace(view):
     def wrapped(request,*args,**kwargs):
         if kwargs.get('subject_id') is not None or kwargs.get('resource') is not None or not _local_trace_allowed(request):
             return view(request,*args,**kwargs)
-        try:
-            request_id = str(UUID(str(getattr(request,'request_id',''))))
-        except (ValueError,TypeError,AttributeError):
-            request_id = str(uuid4())
-        measurement = LocalProjectionPerformance(request_id)
-        token = _local_projection.set(measurement)
-        try:
-            with ExitStack() as stack:
-                for connection in connections.all():
-                    stack.enter_context(connection.execute_wrapper(measurement.wrapper(connection.alias)))
-                with measurement.stage('dispatch'):
-                    return view(request,*args,**kwargs)
-        finally:
-            _local_projection.reset(token)
-            measurement.emit()
+        return _run_local_trace(view, request, args, kwargs)
+    return wrapped
+
+
+def _run_local_trace(view, request, args, kwargs, label=None):
+    try:
+        request_id = str(UUID(str(getattr(request,'request_id',''))))
+    except (ValueError,TypeError,AttributeError):
+        request_id = str(uuid4())
+    measurement = LocalProjectionPerformance(request_id, label)
+    token = _local_projection.set(measurement)
+    try:
+        with ExitStack() as stack:
+            for connection in connections.all():
+                stack.enter_context(connection.execute_wrapper(measurement.wrapper(connection.alias)))
+            with measurement.stage('dispatch'):
+                return view(request,*args,**kwargs)
+    finally:
+        _local_projection.reset(token)
+        measurement.emit()
+
+
+def local_home_summary_trace(view):
+    """Temporary local phase timing for overview-week?section=home-summary.
+
+    Same gate as the catalogue trace: LMS_MY_LEARNING_TRACE=1, DEBUG, runserver,
+    loopback. Disabled, it calls the view unchanged. Emits one
+    ``projection_stage`` line (no learner data) after the response is built.
+    """
+    @wraps(view)
+    def wrapped(request,*args,**kwargs):
+        if request.GET.get('section') != 'home-summary' or not _local_trace_allowed(request):
+            return view(request,*args,**kwargs)
+        return _run_local_trace(view, request, args, kwargs, label='overview-week:home-summary')
     return wrapped

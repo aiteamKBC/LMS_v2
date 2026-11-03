@@ -2284,6 +2284,27 @@ def _activity_module_components(components, component_id):
             not c.get('moduleId') and c.get('module') == selected.get('module'))]
 
 
+def _linked_profile_ids(pk):
+    """Ids of the profiles already linked to this enrolment (at most two read)."""
+    return tuple(LearnerProfile.objects.filter(enrolment_id=pk).values_list("pk", flat=True)[:2])
+
+
+def _official_planned_hours(learner_profile, linked_profile_ids, pk):
+    """Learner.learners.planned_hours, only for a profile verified by enrolment_id.
+
+    Verified means exactly one profile was linked to this enrolment before the
+    request resolved it, and it is the resolved one. A profile reached by email
+    or by an equal numeric id, or linked during this request, gives None; no
+    other hours source is ever substituted.
+    """
+    if (learner_profile is None or len(linked_profile_ids) != 1
+            or str(linked_profile_ids[0]) != str(getattr(learner_profile, "pk", None))
+            or str(getattr(learner_profile, "enrolment_id", None)) != str(pk)):
+        return None
+    from .official_hours import normalise_official_planned_hours
+    return normalise_official_planned_hours(getattr(learner_profile, "planned_hours", None))[0]
+
+
 def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_view=False,
                          activity_component_id=None):
     """The learner's full workspace payload for one already-loaded source row.
@@ -2303,6 +2324,9 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     if not read_only:
         hydrate_source_training_plan(source)
     assigned_modules = effective_training_plan(source)
+    # Read before resolution: the resolver may link an email-matched profile
+    # during this request, which must not count as a verified link.
+    linked_profile_ids = _linked_profile_ids(pk)
     learner_profile = _active_profile_for_source(source, pk, **({'heal': False} if activity_component_id else {}))
 
     if learner_profile and not learner_profile.ksbs and not read_only:
@@ -2315,6 +2339,7 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
             logger.warning("Could not refresh learner KSB snapshot for %s: %s", pk, exc)
 
     detail = to_learner_detail(source, learner_profile)
+    detail["officialPlannedHours"] = _official_planned_hours(learner_profile, linked_profile_ids, pk)
     # Created_users.Attendance_type is the staff-owned delivery classification.
     # The live-session results view uses it to avoid presenting a Teams absence
     # workflow to learners whose programme is delivered through recordings.

@@ -84,6 +84,47 @@ afterEach(() => {
 });
 
 describe('learner identity lifecycle', () => {
+  it.each(['admin', 'staff'] as const)('restores only the same %s account preview after a document remount', async role => {
+    apiMe.mockResolvedValue({ ...ADMIN, role });
+    const first = await renderAuth();
+    rememberLearner('commercial', '502');
+    first.unmount();
+    const restored = await renderAuth();
+    expect(restored.result.current.auth.account).toMatchObject({ id: 1, role, subjectType: 'staff', subjectId: 13 });
+    expect(getRememberedLearner()).toEqual({ kind: 'commercial', id: '502' });
+    expect(apiMe).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops the selection on staff account switch and never substitutes the staff subject id', async () => {
+    apiMe.mockResolvedValue(ADMIN);
+    const { result } = await renderAuth();
+    rememberLearner('apprenticeship', '502');
+    apiLogin.mockResolvedValue({ ...ADMIN, id: 9, subjectId: 502 });
+    await act(async () => { await result.current.login('other@example.test', 'pw'); });
+    expect(getRememberedLearner()).toBeNull();
+    expect(localStorage.getItem('my_learner')).toBeNull();
+    rememberLearner('commercial', '601');
+    expect(getRememberedLearner()?.id).toBe('601');
+  });
+
+  it('does not restore unowned legacy selection on staff hydration', async () => {
+    localStorage.setItem('my_learner', JSON.stringify({ kind: 'commercial', id: '502' }));
+    apiMe.mockResolvedValue(ADMIN);
+    await renderAuth();
+    expect(getRememberedLearner()).toBeNull();
+  });
+
+  it('keeps learner login authoritative after a staff preview and removes the preview on logout', async () => {
+    apiMe.mockResolvedValue(ADMIN);
+    const { result } = await renderAuth();
+    rememberLearner('commercial', '502');
+    apiLogin.mockResolvedValue({ ...LEARNER, subjectType: 'learner', subjectId: 601, learnerType: 'apprenticeship' });
+    await act(async () => { await result.current.login('learner@example.test', 'pw'); });
+    expect(getRememberedLearner()).toEqual({ kind: 'apprenticeship', id: '601' });
+    act(() => result.current.logout());
+    expect(localStorage.getItem('my_learner')).toBeNull();
+  });
+
   it('keeps personal mode across session restoration and clears it on sign-out', async () => {
     rememberPersonalLearning('pl.1.study.MOD-A', '/curriculum/module-builder?module=MOD-A');
     apiMe.mockResolvedValue(ADMIN);

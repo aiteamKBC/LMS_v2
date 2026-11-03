@@ -118,8 +118,34 @@ def aggregate_module_progress(activity, detail, current, progress, titles=None):
             for row in sorted(subjects.values(), key=lambda row: (row['title'].casefold(), row['id']))]
 
 
-def canonical_module_progress(source, profile, *, read_projection=None):
-    """The single final calculation called by both HTTP consumers."""
+def _reusable_register(source, components, register, register_module_ids):
+    """The caller's lecture register when it provably serves these components.
+
+    Reuse only a register built for this enrolment whose module scope covers
+    every live component credited below. Otherwise return None, and
+    read_live_credits builds its own register exactly as before.
+    """
+    if register is None or register_module_ids is None:
+        return None
+    from .live_session_progress import _live
+    scope = {str(value).strip() for value in register_module_ids if str(value or '').strip()}
+    needed = {str(c['moduleId']).strip() for c in components
+              if _live(c) and c.get('componentId') and c.get('moduleId')}
+    if not needed <= scope:
+        return None
+    enrolment_id = str(getattr(source, 'pk', None))
+    if any('learner_id' in row and str(row['learner_id']) != enrolment_id for row in register):
+        return None
+    return register
+
+
+def canonical_module_progress(source, profile, *, read_projection=None, register=None, register_module_ids=None):
+    """The single final calculation called by both HTTP consumers.
+
+    ``register`` is an already-built ``lecture_register`` for this ``source``,
+    and ``register_module_ids`` the module scope it was built for. Both are
+    optional; a register that does not cover the live components is ignored.
+    """
     from . import canonical_learning
     from . import journal_sources
     from .student_activity_access import student_activity_available
@@ -146,7 +172,13 @@ def canonical_module_progress(source, profile, *, read_projection=None):
     if read_projection is None:
         detail, current, progress, titles = read_native_progress(source, profile)
     from .live_session_progress import read_live_credits
-    credits = read_live_credits(source, components=detail['components'])
+    reusable = _reusable_register(source, detail['components'], register, register_module_ids)
+    from .projection_performance import projection_operation
+    # Local trace only: records whether the caller's register was reused (P1).
+    with projection_operation('module_credits_register_reused' if reusable is not None
+                              else 'module_credits_register_built'):
+        credits = read_live_credits(source, components=detail['components'],
+                                    **({'register': reusable} if reusable is not None else {}))
     progress = [*progress, *({'kind': 'component', 'passed': None,
                             'component_ref': row['componentId'], 'submitted_at': row['submittedAt']}
                            for row in credits)]

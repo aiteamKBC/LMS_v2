@@ -23,7 +23,7 @@ export default function LearnerProfilePage() {
   const { auth } = useAuth();
   const navigate = useNavigate();
   const myLearner = useMyLearner();
-  const { real: learner, loading, loadError: error, refresh } = useLearnerDetailParam(myLearner.kind, myLearner.id);
+  const { real: learner, loading, loadError: error, refresh, isFetching } = useLearnerDetailParam(myLearner.kind, myLearner.id);
   const [attendance, setAttendance] = useState<LearnerAttendance | null>(null);
   const [attendanceLoading, setAttendanceLoading] = useState(true);
   const [attendanceError, setAttendanceError] = useState(false);
@@ -139,7 +139,8 @@ export default function LearnerProfilePage() {
               <DetailGroup title="Plan totals">
                 <DetailRow label="Assigned modules" value={String(learner.modules.length)} />
                 <DetailRow label="Assigned components" value={String(learner.components.length)} />
-                <DetailRow label="Planned OTJ hours" value={formatHoursMinutes(plannedHours)} />
+                <DetailRow label="Official Planned Hours" value={isFetching ? 'Loading…' : typeof learner.officialPlannedHours === 'number' && Number.isFinite(learner.officialPlannedHours) && learner.officialPlannedHours >= 0 ? `${learner.officialPlannedHours}h` : 'Unavailable'} />
+                <DetailRow label="Component + Review Planned Hours" value={formatHoursMinutes(plannedHours)} />
                 <DetailRow label="Completed OTJ hours" value={formatHoursMinutes(completedHours)} />
               </DetailGroup>
             </ProfileSection>

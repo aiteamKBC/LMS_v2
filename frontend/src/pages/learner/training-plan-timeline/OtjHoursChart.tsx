@@ -13,40 +13,6 @@ function ratio(value: number | null, target: number | null) {
   return value == null || target == null || target <= 0 ? null : Math.round(value / target * 100);
 }
 
-function officialNumber(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
-}
-
-function OfficialProgrammeSummary({ snapshot }: { snapshot: OfficialProgramme }) {
-  const ready = snapshot.request === 'ready';
-  const actual = ready ? officialNumber(snapshot.actual) : null;
-  const planned = ready ? officialNumber(snapshot.planned) : null;
-  const target = ready ? officialNumber(snapshot.target) : null;
-  const completion = ratio(actual, planned);
-  const marker = ratio(target, planned);
-  const variance = actual == null || target == null ? null : actual - target;
-  const unavailable = snapshot.request === 'loading' ? 'Loading' : snapshot.request === 'error'
-    ? 'Unavailable (could not refresh)' : 'Unavailable';
-  const plannedText = !ready ? unavailable : snapshot.planned === undefined
-    ? 'Unavailable (not returned)' : planned == null ? 'Unavailable' : `${hourNumber.format(planned)}h`;
-  return <section aria-label="Official Programme Completion" aria-busy={snapshot.request === 'loading'} aria-live="polite">
-    <h3>Official Programme Completion</h3>
-    <p>Official Planned Hours: {plannedText}</p>
-    <div className={styles.overall}>
-      <div><strong>{completion == null ? unavailable : `${Math.min(100, completion)}%`}</strong>
-        <span>Canonical Actual Hours: {actual == null ? unavailable : `${hourNumber.format(actual)}h`}</span></div>
-      <div className={styles.overallTrack} role="progressbar" aria-label="Official programme completion"
-        aria-valuemin={0} aria-valuemax={100} aria-valuenow={completion == null ? undefined : Math.min(100, completion)}
-        aria-valuetext={completion == null ? unavailable : `${Math.min(100, completion)}%`}>
-        <i className={styles.completedOverall} style={{ width: `${completion == null ? 0 : Math.min(100, completion)}%` }} />
-        {marker != null && <b aria-hidden="true" style={{ left: `${Math.min(100, marker)}%` }} />}
-      </div>
-    </div>
-    <p>Official Target Marker: {marker == null ? unavailable : `${Math.min(100, marker)}%`}</p>
-    <p>Official Variance: {variance == null ? unavailable : `${signed(variance)}h`}</p>
-  </section>;
-}
-
 function reportingMonth() {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' }).slice(0, 7);
 }
@@ -83,7 +49,7 @@ function MonthTooltip({ row, id }: { row: MonthlyHours; id: string }) {
   </div>;
 }
 
-export function OtjHoursChart({ data, points, plannedHours, programmeStartMonth, programmeEndMonth, targetAsOfToday, officialTarget, officialProgramme }: {
+export function OtjHoursChart({ data, points, plannedHours, programmeStartMonth, programmeEndMonth, targetAsOfToday, officialTarget }: {
   data?: MonthlyHoursSource;
   points?: MonthlyHours[];
   plannedHours?: number | null;
@@ -148,7 +114,6 @@ export function OtjHoursChart({ data, points, plannedHours, programmeStartMonth,
 
   return <section className={`${styles.card} ${styles.monthlyCard}`} aria-label="Off-the-job hours by month">
     <header><div><p className={styles.eyebrow}>Whole programme</p><h2>Off-The-Job Hours</h2><p className={styles.subtitle}>Target, submitted and completed hours for every month</p></div></header>
-    {officialProgramme && <OfficialProgrammeSummary snapshot={officialProgramme} />}
     <div className={styles.monthlyLegend} aria-label="Chart legend">
       <span><i className={styles.targetKey} />Target</span>
       <span><i className={styles.submittedKey} />Submitted</span>

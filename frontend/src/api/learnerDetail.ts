@@ -183,6 +183,8 @@ export interface ComponentMarking {
 }
 
 export interface LearnerDetail {
+  /** Official programme hours; older cached responses may omit this field. */
+  officialPlannedHours?: number | null;
   id: string;
   /** Pilot feature flag; Aptem identity itself remains server-side. */
   studentActivityAvailable?: boolean;

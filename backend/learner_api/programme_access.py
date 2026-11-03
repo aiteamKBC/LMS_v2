@@ -108,7 +108,8 @@ def requires_started_programme(path, method='GET'):
 def _start_refusal(account, *, submitting=False):
     """403 while this learner's cohort has not started; None once it has."""
     try:
-        source = EnrolmentUser.all_learners.only('programme', 'cohort', 'start_date').get(pk=account.subject_id)
+        # programme/cohort are placement properties (not columns); load their id columns.
+        source = EnrolmentUser.all_learners.only('programme_id', 'cohort_id', 'start_date').get(pk=account.subject_id)
         access = learning_access(source)
     except EnrolmentUser.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)

@@ -54,7 +54,7 @@ export default function StudentHome() {
     const kind = account.learnerType === 'commercial' || account.learnerType === 'apprenticeship' ? account.learnerType : undefined;
     return <LearnerHome key={account.id} kind={kind} id={String(account.subjectId)} />;
   }
-  if (account?.role === 'staff' || account?.role === 'admin') return <StaffStudentHome />;
+  if (account?.role === 'staff' || account?.role === 'admin') return <StaffStudentHome key={JSON.stringify([account.id, account.role, account.access, account.subjectType, account.subjectId])} />;
   return <Navigate to="/" replace />;
 }
 

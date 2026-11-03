@@ -124,7 +124,8 @@ class HomeSummarySectionTests(SimpleTestCase):
         # The home card receives the same merged activities, attendance scope and SSOT metrics.
         args, kwargs = home.call_args
         self.assertEqual(len(list(args[2])), 2)
-        self.assertEqual(kwargs, {'attendance_module_ids': ['MOD-1', 'MOD-2'], 'canonical_metrics': metrics})
+        self.assertEqual(kwargs, {'attendance_module_ids': ['MOD-1', 'MOD-2'], 'canonical_metrics': metrics,
+                                  'reuse_attendance_register': True})
 
 
 def session_row(occurrence_id, start, status='scheduled'):

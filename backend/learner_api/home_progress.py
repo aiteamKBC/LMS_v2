@@ -18,6 +18,7 @@ from .training_plan_dashboard import rows
 from .otjh_totals import completed_otjh
 from . import canonical_learning
 from .current_learning import actual_time_seconds
+from .projection_performance import projection_stage
 
 log = logging.getLogger(__name__)
 ACCEPTED = {'accepted', 'partial'}
@@ -167,10 +168,11 @@ def summarise_home(activities, native, progress, submissions, assigned, start, e
 
 def read_home_progress(
     source, kind, activities, native, progress, assigned, end, *,
-    attendance_module_ids=None, canonical_metrics=None,
+    attendance_module_ids=None, canonical_metrics=None, reuse_attendance_register=False,
 ):
-    start, _, _ = _group_dates(source)
-    with connections['enrolment'].cursor() as cur:
+    with projection_stage('programme_dates'):
+        start, _, _ = _group_dates(source)
+    with projection_stage('submissions'), connections['enrolment'].cursor() as cur:
         cur.execute('''SELECT activity_type, activity_id, component_ref, status, actual_time_hours,
             full_submission->>'submissionOrigin' = 'imported_legacy' AS imported
             FROM "Learner".learning_reflection_submissions
@@ -181,17 +183,20 @@ def read_home_progress(
     owner = getattr(source, '_canonical_profile', None)
     try:
         # A verified SSOT owner is the enrolment's single learner profile.
-        lectures = lecture_register(source, module_ids=attendance_module_ids,
-                                    **({'learner_profile_id': owner['id']} if owner else {}))
+        with projection_stage('attendance_register'):
+            lectures = lecture_register(source, module_ids=attendance_module_ids,
+                                        **({'learner_profile_id': owner['id']} if owner else {}))
     except (DatabaseError, psycopg.Error):
         log.warning('Home attendance unavailable for enrolment %s', source.pk, exc_info=True)
         lectures = None
-    home = summarise_home(
-        activities, native, progress, submissions, assigned, start, end, lectures, historical_hours,
-    )
+    with projection_stage('card_aggregation'):
+        home = summarise_home(
+            activities, native, progress, submissions, assigned, start, end, lectures, historical_hours,
+        )
     # Actual and Planned are one programme-wide SSOT pair. Missing consolidated
     # identity fails closed instead of switching to another data source.
-    metrics = canonical_metrics if canonical_metrics is not None else canonical_learning.metrics(source.pk)
+    with projection_stage('canonical_hours'):
+        metrics = canonical_metrics if canonical_metrics is not None else canonical_learning.metrics(source.pk)
     result = apply_canonical_home_metrics(home, metrics)
     # The activity denominator is the complete assigned catalogue, exactly as
     # in My Learning, not the number of saved progress entries. Reuse its final
@@ -201,7 +206,12 @@ def read_home_progress(
         from .module_progress import canonical_module_progress
         owner = owner or canonical_learning.require_profile(source.pk)
         profile = LearnerProfile(id=owner['id'], enrolment_id=source.pk)
-        modules = canonical_module_progress(source, profile)
+        # Home summary already built this learner's register in this request;
+        # module progress reuses it only where its module scope covers.
+        reuse = ({'register': lectures, 'register_module_ids': attendance_module_ids}
+                 if reuse_attendance_register and lectures is not None and attendance_module_ids is not None else {})
+        with projection_stage('module_progress'):
+            modules = canonical_module_progress(source, profile, **reuse)
         result['activities'] = {'completed': sum(module['completed'] for module in modules),
                                 'total': sum(module['total'] for module in modules)}
         result['modules'] = counts(modules, lambda module: module['total'] > 0
@@ -210,11 +220,13 @@ def read_home_progress(
     # scoped to this learner; reuse it rather than fetching attendance twice.
     # Top up only time absent from accepted records, preserving staff overrides.
     from .live_session_progress import read_live_credits, supplement_module_hours
-    credits = read_live_credits(source, module_ids=[module for module, _ in assigned],
-                               register=lectures) if lectures is not None else []
+    with projection_stage('live_credits'):
+        credits = read_live_credits(source, module_ids=[module for module, _ in assigned],
+                                   register=lectures) if lectures is not None else []
     if credits and result['otjh']['actual'] is not None:
         owner = owner or canonical_learning.require_profile(source.pk)
-        records = canonical_learning.entries_for(owner, lineage_only=True)
+        with projection_stage('canonical_hours'):
+            records = canonical_learning.entries_for(owner, lineage_only=True)
         extra = supplement_module_hours(
             {credit['moduleId']: {'hours': {'actual': 0}} for credit in credits}, records, credits)
         actual = round(result['otjh']['actual'] + sum(item['hours']['actual'] for item in extra.values()), 4)

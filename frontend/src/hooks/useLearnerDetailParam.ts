@@ -1,5 +1,6 @@
 import { useCaseFileSession } from '@/features/coach/case-file/hooks/CaseFileSession';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { AuthContext } from './useAuth.helpers';
 import { fetchLearnerDetail, peekLearnerDetail, type LearnerDetail, type LearnerKind } from '@/api/learnerDetail';
 import { subscribeLearnerReadInvalidation } from '@/api/learnerRead';
 
@@ -21,14 +22,18 @@ export function useLearnerDetailParam(
   enabled = true,
 ) {
   const session = useCaseFileSession();
+  const account = useContext(AuthContext)?.auth.account;
+  const accountKey = JSON.stringify([account?.id, account?.role, account?.access, account?.subjectType, account?.subjectId, account?.learnerType]);
   const isRealMode = kind === 'commercial' || kind === 'apprenticeship';
   const identity = isRealMode && id && enabled ? `${kind}:${id}` : null;
   const [state, setState] = useState<{
     identity: string; real: LearnerDetail | null; loading: boolean; loadError: string | null;
+    accountKey: string; session: typeof session; request: object; isFetching: boolean;
   } | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const request = useMemo(() => ({ identity, accountKey, session, refreshTick }), [identity, accountKey, session, refreshTick]);
   const hasLoadError = useRef(false);
-  hasLoadError.current = !!(identity && state?.identity === identity && state.loadError);
+  hasLoadError.current = !!(identity && state?.identity === identity && state.accountKey === accountKey && state.session === session && state.loadError);
 
   const refresh = useCallback(() => {
     // A read must not invalidate every learner resource and restart the route
@@ -72,20 +77,25 @@ export function useLearnerDetailParam(
     let cancelled = false;
     const cached = session ? undefined : peekLearnerDetail(kind as LearnerKind, id, true);
     setState((previous) => {
-      const real = previous?.identity === identity ? previous.real : cached ?? null;
-      return { identity, real, loading: !real, loadError: null };
+      const sameAccount = !previous || previous.accountKey === accountKey;
+      const real = previous?.identity === identity && sameAccount && previous.session === session
+        ? previous.real : sameAccount ? cached ?? null : null;
+      return { identity, accountKey, session, request, real, loading: !real, loadError: null, isFetching: true };
     });
     (session ? session.detail(refreshTick > 0) : fetchLearnerDetail(kind as LearnerKind, id, { revalidate: refreshTick > 0 }))
-      .then((data) => { if (!cancelled) setState({ identity, real: data, loading: false, loadError: null }); })
+      .then((data) => { if (!cancelled) setState({ identity, accountKey, session, request, real: data, loading: false, loadError: null, isFetching: false }); })
       .catch((error) => {
-        if (!cancelled) setState((previous) => ({ identity, real: previous?.identity === identity ? previous.real : null, loading: false, loadError: error instanceof Error ? error.message : 'Could not load learner' }));
+        if (!cancelled) setState((previous) => ({ identity, accountKey, session, request, real: previous?.identity === identity && previous.accountKey === accountKey && previous.session === session ? previous.real : null, loading: false, loadError: error instanceof Error ? error.message : 'Could not load learner', isFetching: false }));
       });
     return () => { cancelled = true; };
-  }, [isRealMode, kind, id, identity, refreshTick, session]);
+  }, [isRealMode, kind, id, identity, refreshTick, session, accountKey, request]);
 
   // Staff can move directly between View pages. Hide the previous learner in
   // the first render of the new URL, before the next request effect runs.
-  const current = identity && state?.identity === identity ? state : null;
-  const cached = !session && !current && identity && id ? peekLearnerDetail(kind as LearnerKind, id, true) : undefined;
-  return { isRealMode, real: current?.real ?? cached ?? null, loading: current?.loading ?? (!!identity && !cached), loadError: current?.loadError ?? null, refresh };
+  const current = identity && state?.identity === identity && state.accountKey === accountKey && state.session === session ? state : null;
+  const cached = !session && !current && identity && id && (!state || state.accountKey === accountKey) ? peekLearnerDetail(kind as LearnerKind, id, true) : undefined;
+  // Cover the render before the request effect runs, including cached mounts
+  // and manual refreshes. Only the current effect may settle fetching state.
+  const isFetching = !!identity && (!current || current.request !== request || current.isFetching);
+  return { isRealMode, real: current?.real ?? cached ?? null, loading: current?.loading ?? (!!identity && !cached), loadError: current?.loadError ?? null, refresh, isFetching };
 }

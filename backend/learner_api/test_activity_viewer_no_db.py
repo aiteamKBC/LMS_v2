@@ -51,6 +51,7 @@ class ActivityViewerProjectionTests(SimpleTestCase):
             snapshot = mock(prefix + '_live_otjh_snapshot')
             mock(prefix + 'effective_training_plan', return_value=[])
             profile_read = mock(prefix + '_active_profile_for_source', return_value=SimpleNamespace(ksbs=['K1']))
+            mock(prefix + '_linked_profile_ids', return_value=())
             mock(prefix + 'to_learner_detail', return_value=detail)
             mock(prefix + 'access_gate', return_value={})
             mock(prefix + 'learning_access', return_value={})

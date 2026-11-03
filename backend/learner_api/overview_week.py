@@ -59,7 +59,7 @@ from .student_activity_data import read_curriculum_schedules, apply_curriculum_s
 from .subject_dates import activity_schedule, as_date
 from .subject_content import clean_text
 from .training_plan_dashboard import number, rows
-from .projection_performance import measure_projection
+from .projection_performance import local_home_summary_trace, measure_projection, projection_stage
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 log = logging.getLogger(__name__)
@@ -475,17 +475,20 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None, home_sum
     if home_summary:
         # One verified SSOT identity serves the metrics, progress and
         # attendance reads below instead of each re-reading "Learner".learners.
-        owner = canonical_learning.require_profile(source.pk)
+        with projection_stage('identity'):
+            owner = canonical_learning.require_profile(source.pk)
         source._canonical_profile = owner
-        early_metrics = canonical_learning.metrics(source.pk, owner=owner)
+        with projection_stage('canonical_hours'):
+            early_metrics = canonical_learning.metrics(source.pk, owner=owner)
         if owned_profile is None:
             # require_profile matched exactly one row for this enrolment, so it
             # is the profile _direct_progress_records would otherwise look up.
             owned_profile = LearnerProfile(id=owner['id'], enrolment_id=source.pk)
-    progress = (_direct_progress_records(source.pk, profile=owned_profile) if owned_profile is not None
-                else _direct_progress_records(source.pk))
+    with projection_stage('progress_entries'):
+        progress = (_direct_progress_records(source.pk, profile=owned_profile) if owned_profile is not None
+                    else _direct_progress_records(source.pk))
     attendance_module_ids = None
-    with connections['enrolment'].cursor() as cur:
+    with projection_stage('plan_resolution'), connections['enrolment'].cursor() as cur:
         cur.execute(HOME_SUBJECTS_SQL if home_kind else CURRENT_SUBJECTS_SQL, [source.pk])
         subject_rows = cur.fetchall()
         if home_kind:
@@ -516,14 +519,17 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None, home_sum
             row.update(dates.get(str(row['id'])) or activity_schedule(row['title'], section_title=row['section_title']))
     # merged_activities copies its rows and nothing below mutates them, so one
     # merge serves the week, plan, monthly and home summaries alike.
-    plan_activities = list(merged_activities(historical, native, progress, attempts, links))
+    with projection_stage('plan_resolution'):
+        plan_activities = list(merged_activities(historical, native, progress, attempts, links))
     if home_summary:
         from .home_progress import read_home_progress
-        week = summarise_week(historical, native, progress, attempts, links, start, end,
-                              activities=plan_activities)
+        with projection_stage('week_summary'):
+            week = summarise_week(historical, native, progress, attempts, links, start, end,
+                                  activities=plan_activities)
         progress_card = read_home_progress(
             source, home_kind, plan_activities, native, progress, assigned, end,
-            attendance_module_ids=attendance_module_ids, canonical_metrics=early_metrics)
+            attendance_module_ids=attendance_module_ids, canonical_metrics=early_metrics,
+            reuse_attendance_register=True)
         # Week dates are always UK calendar dates; the card reads no time-zone label.
         progress_card['period'] = {key: progress_card['period'][key] for key in ('start', 'end')}
         return {'weekStart': start.isoformat(), 'weekEnd': end.isoformat(),
@@ -573,6 +579,7 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None, home_sum
 @require_GET
 @learner_self_or_staff(kwarg='pk')
 @journal_sources.learner_journal_view
+@local_home_summary_trace
 def overview_week(request, kind, pk):
     model = SOURCE_MODELS.get(kind)
     if model is None:
@@ -599,12 +606,17 @@ def overview_week(request, kind, pk):
                 from .case_file_sources import source_for_case_file
                 source = source_for_case_file(request, kind, pk)
                 if source is None:
-                    source = model.all_learners.only(*fields).get(pk=pk)
+                    with projection_stage('source'):
+                        source = model.all_learners.only(*fields).get(pk=pk)
                 with measurement.stage(section or 'overview'):
                     if home:
                         payload = read_week(source, home_kind=kind)
                     elif home_summary:
-                        payload = read_week(source, home_kind=kind, home_summary=True)
+                        # One read-only aggregate: reuse identical canonical SELECTs
+                        # (owner, ledger) within this request only.
+                        from old_otjh.repository import request_read_scope
+                        with request_read_scope():
+                            payload = read_week(source, home_kind=kind, home_summary=True)
                     else:
                         payload = read_week(source, dashboard_kind=kind if section == 'dashboard' else None)
                 if home and getattr(settings, 'LEARNER_HOME_SHARED_READ_MODEL_ENABLED', False):
@@ -620,7 +632,8 @@ def overview_week(request, kind, pk):
     except DatabaseError:
         log.warning('Weekly overview unavailable for %s', pk, exc_info=True)
         return JsonResponse({'error': 'Could not load this week. Please try again.'}, status=503)
-    response = JsonResponse(payload)
+    with projection_stage('serialize'):
+        response = JsonResponse(payload)
     response['Cache-Control'] = 'private, no-store'
     if read_model_status:
         response['X-LMS-Cache'] = read_model_status

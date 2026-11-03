@@ -731,8 +731,10 @@ def _effective_current_subjects(cursor, learner_id):
     counted them.  Reuse the plan's effective-assignment rule so both screens
     agree without writing anything during a learner read.
     """
+    # programme/group are placement properties (not columns); load the id
+    # columns that placement_ids reads instead.
     learner = EnrolmentUser.all_learners.only(
-        'programme', 'group', 'learning_plan', 'training_plan',
+        'programme_id', 'group_id', 'learning_plan', 'training_plan',
     ).get(pk=learner_id)
     module_ids = _effective_plan_ids(learner, {})
     if not module_ids:

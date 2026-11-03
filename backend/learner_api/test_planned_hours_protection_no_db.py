@@ -149,6 +149,7 @@ class SummaryPageLoadTests(SimpleTestCase):
             others = [mock(name) for name in ("advance_learner", "hydrate_source_training_plan")]
             mock("effective_training_plan", return_value=[])
             mock("_active_profile_for_source", return_value=profile)
+            mock("_linked_profile_ids", return_value=())
             mock("to_learner_detail", side_effect=lambda *args: {
                 "id": "7", "modules": ["Module"], "week": [], "components": [], "componentProgress": []})
             mock("access_gate", return_value={})

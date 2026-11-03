@@ -65,7 +65,7 @@ function SelectionAddress() {
 beforeEach(() => {
   sessionStorage.clear();
   vi.mocked(useResolvedLearner).mockReturnValue({ kind: 'commercial', id: '125' });
-  vi.mocked(useLearnerDetailParam).mockReturnValue({ real, loading: false, loadError: null, isRealMode: true, refresh: vi.fn() });
+  vi.mocked(useLearnerDetailParam).mockReturnValue({ real, loading: false, loadError: null, isRealMode: true, isFetching: false, refresh: vi.fn() });
   mockRequests();
 });
 afterEach(() => { cleanup(); clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
@@ -102,7 +102,7 @@ it.each(['commercial', 'apprenticeship'] as const)('lists uploaded extra activit
 });
 
 it('keeps the Extra activities tab selected across months with only pending uploads', async () => {
-  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: { ...real, components: [] }, loading: false, loadError: null, isRealMode: true, refresh: vi.fn() });
+  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: { ...real, components: [] }, loading: false, loadError: null, isRealMode: true, isFetching: false, refresh: vi.fn() });
   mockRequests({ extras: [uploadedExtra, { ...uploadedExtra, activityId: 'extra:later', title: 'Later workshop', month: '2026-11' }] });
   mount('?month=2026-09&view=extras&assignment=extra%3Apending');
   expect(await screen.findByRole('region', { name: 'Extra activity details' })).toBeVisible();
@@ -142,7 +142,7 @@ function mockOverdueAssignments() {
     component('A6', { component: 'Accepted assignment' }),
     component('A7', { component: 'No due date' }),
     component('A8', { component: 'Due today' }),
-  ] }, loading: false, loadError: null, isRealMode: true, refresh: vi.fn() });
+  ] }, loading: false, loadError: null, isRealMode: true, isFetching: false, refresh: vi.fn() });
   mockRequests({ statuses: { A5: 'rejected', A6: 'accepted', A7: 'draft', A8: 'todo' }, dates: {
     covers: {}, activity_dates: {
       ...metadata.activity_dates,
@@ -269,7 +269,7 @@ it('keeps undated work available through the month chooser', async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-09-15T12:00:00Z'));
   vi.mocked(useLearnerDetailParam).mockReturnValue({ real: { ...real, components: [component('A4', { component: 'Undated assignment' })] },
-    loading: false, loadError: null, isRealMode: true, refresh: vi.fn() });
+    loading: false, loadError: null, isRealMode: true, isFetching: false, refresh: vi.fn() });
   mount('');
   const monthSelect = await screen.findByRole('combobox', { name: 'Choose month' });
   expect(monthSelect).toHaveValue('2026-09');
@@ -367,7 +367,7 @@ it('makes file-only briefs available to view, download and start, resetting prev
     component('A1', { assignmentBrief: null, resourceUrl: firstUrl, downloadAllowed: false }),
     component('A2', { week: 'Digital analytics', resourceUrl: secondUrl, fileName: 'Analytics worksheet.pdf' }),
   ] };
-  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: attachedReal, loading: false, loadError: null, isRealMode: true, refresh: vi.fn() });
+  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: attachedReal, loading: false, loadError: null, isRealMode: true, isFetching: false, refresh: vi.fn() });
   mockRequests({ statuses: { A1: 'todo' } });
   mount();
   expect(await screen.findByText('Read the attached file for the assignment instructions, then start your submission.')).toBeVisible();
@@ -412,7 +412,7 @@ it('keeps unknown saved work openable if statuses fail, including a removed brie
 it('renders and sanitises authored HTML without losing the question or KSBs', async () => {
   const htmlReal = { ...real, components: [component('A1', { assignmentBriefHtml: '<p onclick="alert(1)">Describe <strong>your evidence</strong>.</p><script>alert(1)</script>',
     ksbMappings: [{ code: 'K1', description: 'Data analysis', classification: 'main', weight: 1 }] })] };
-  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: htmlReal, loading: false, loadError: null, isRealMode: true, refresh: vi.fn() });
+  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: htmlReal, loading: false, loadError: null, isRealMode: true, isFetching: false, refresh: vi.fn() });
   const { container } = mount();
   expect(await screen.findByText('your evidence')).toHaveProperty('tagName', 'STRONG');
   expect(container.querySelector('[onclick],script')).toBeNull();
@@ -449,7 +449,7 @@ it('uses the authored end-of-week due date and the UK calendar day for overdue w
 it('shows the actual marking result and reviewer directly below the question', async () => {
   const markedReal = { ...real, componentMarkingStatus: { A1: { status: 'accepted', feedback: 'Clear analysis with relevant workplace evidence.',
     reviewedBy: 'Sam Taylor', reviewedAt: '2026-09-13T12:00:00Z' } } };
-  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: markedReal, loading: false, loadError: null, isRealMode: true, refresh: vi.fn() });
+  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: markedReal, loading: false, loadError: null, isRealMode: true, isFetching: false, refresh: vi.fn() });
   mockRequests({ statuses: { A1: 'accepted' } });
   mount('?month=2026-09&assignment=A1');
   const result = await screen.findByRole('region', { name: 'Assignment marking result' });
@@ -467,7 +467,7 @@ it('expands long feedback, collapses it and resets the expanded state on assignm
     A1: { status: 'referred', feedback: 'Add measurable outcomes.\nProvide supporting evidence.\nExplain the benefit to your employer.', reviewedBy: 'Sam Taylor', reviewedAt: null },
     A2: { status: 'accepted', feedback: 'Good evaluation.\nStrong evidence.\nClear application to your role.', reviewedBy: 'Jo Smith', reviewedAt: null },
   } };
-  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: markedReal, loading: false, loadError: null, isRealMode: true, refresh: vi.fn() });
+  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: markedReal, loading: false, loadError: null, isRealMode: true, isFetching: false, refresh: vi.fn() });
   mockRequests({ statuses: { A1: 'referred', A2: 'accepted' } });
   mount();
   const expand = await screen.findByRole('button', { name: 'View full feedback' });
@@ -577,7 +577,7 @@ const planContract = { ...contract, months: { ...contract.months, '2026-09': { .
   { date: '2026-09-30', title: 'LMS Activity', method: 'LMS Activity', hours: 4 },
 ] } } };
 const mockPlan = (components: LearnerComponentEntry[]) => vi.mocked(useLearnerDetailParam).mockReturnValue({
-  real: { ...real, components }, loading: false, loadError: null, isRealMode: true, refresh: vi.fn() });
+  real: { ...real, components }, loading: false, loadError: null, isRealMode: true, isFetching: false, refresh: vi.fn() });
 
 it('reads the assignment a Training Plan month names from its coach-led assignment rows only', () => {
   expect(trainingPlanAssignments(planContract.months['2026-09'])).toEqual(['Data, Insight and Analytics']);
