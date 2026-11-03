@@ -58,7 +58,7 @@ beforeEach(() => {
   vi.mocked(getCoachLogYear).mockImplementation(async (id, year) => {
     const data = await getLogSummary(id, new AbortController().signal, 'coach');
     return { learner: { id: Number(id), name: data.learner!.name, programme: data.learner!.programme, initials: 'EL' },
-      year, years: [year], summary: { coachSignatures: { completed: data.months.filter(item => !item.is_open && item.coach_signature).length, total: data.months.filter(item => !item.is_open).length },
+      year, years: [year], unallocatedActivities: data.unallocated_activities, summary: { coachSignatures: { completed: data.months.filter(item => !item.is_open && item.coach_signature).length, total: data.months.filter(item => !item.is_open).length },
         acceptedOtjhHours: data.training_plan_totals!.accepted_hours, trainingPlanHours: data.training_plan_totals!.planned_hours },
       months: data.months.map(item => ({ month: item.month, activities: item.row_count, acceptedOtjhHours: Number(item.actual_hours),
         targetHours: item.training_plan_target == null ? null : Number(item.training_plan_target), isOpen: !!item.is_open, learnerSigned: !!item.student_signature, coachSigned: !!item.coach_signature })) };
@@ -76,6 +76,40 @@ beforeEach(() => {
     url: 'https://example.org/reading', html: null, quiz: null }] });
 });
 afterEach(cleanup);
+
+it.each(['learner', 'coach'] as const)('keeps undated activities visible for %s review without inventing a month', async role => {
+  Object.assign(account, { role, access: role });
+  vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [], unallocated_activities: [
+    { id: 901, title: 'Undated untimed activity', actual_hours: 0, actual_hours_recorded: false },
+    { id: 902, title: 'Undated recorded zero', actual_hours: 0, actual_hours_recorded: true },
+  ] });
+  page(role === 'learner' ? '/learner/monthly-logs' : '/coach/monthly-logs/7');
+  fireEvent.click(await screen.findByText('Activities awaiting month review (2)'));
+  const table = screen.getByRole('table', { name: 'Activities awaiting month review' });
+  const missing = within(table).getByText('Undated untimed activity').closest('tr')!;
+  expect(within(missing).getAllByText('Unavailable')).toHaveLength(2);
+  const zero = within(table).getByText('Undated recorded zero').closest('tr')!;
+  expect(within(zero).getAllByText('Unavailable')).toHaveLength(1);
+  expect(within(zero).getByText('0h 00m')).toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: /Review month/ })).not.toBeInTheDocument();
+});
+
+it.each(['learner', 'coach'] as const)('shows unavailable duration separately from recorded zero for %s', async role => {
+  Object.assign(account, { role, access: role });
+  const detail = { ...current, rows: [
+    { ...current.rows[0], id: 901, title: 'Untimed activity', actual_hours: 0, actual_hours_recorded: false },
+    { ...current.rows[0], id: 902, title: 'Recorded zero activity', actual_hours: 0, actual_hours_recorded: true },
+  ] };
+  vi.mocked(getLogMonth).mockResolvedValue(detail);
+  page(role === 'learner' ? '/learner/monthly-logs/2026-09' : '/coach/monthly-logs/7/2026-09');
+  const missing = (await screen.findByText('Untimed activity')).closest('tr')!;
+  expect(within(missing).getByText('Unavailable')).toBeInTheDocument();
+  expect(within(missing).getByText('Duration not recorded — review required')).toBeInTheDocument();
+  expect(screen.getByText('Some activities have no recorded duration. Their hours are unavailable and are excluded from totals.')).toBeInTheDocument();
+  const zero = screen.getByText('Recorded zero activity').closest('tr')!;
+  expect(within(zero).queryByText('Unavailable')).not.toBeInTheDocument();
+  expect(within(zero).getByText('0h 00m')).toBeInTheDocument();
+});
 
 it.each(['learner', 'coach'] as const)('lets the %s correct the same manual row and immediately shows the recalculated hours', async role => {
   Object.assign(account, { role, access: role });

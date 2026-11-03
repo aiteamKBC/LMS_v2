@@ -9,7 +9,7 @@ import type { PlanModule, PlanSession } from './trainingPlanDashboard';
 import { readLearnerJson, peekLearnerJson } from './learnerRead';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 
-export type MyLearningCard = Pick<Subject, 'id' | 'title' | 'source' | 'moduleId' | 'previousLearningFor' | 'importedCourseRef' | 'replacementCourseRef'> & SubjectCardSummary & {
+export type MyLearningCard = Pick<Subject, 'id' | 'title' | 'source' | 'moduleId' | 'previousLearningFor' | 'importedCourseRef' | 'replacementCourseRef' | 'legacyProgressReference'> & SubjectCardSummary & {
   cover?: string | null; planModule?: Omit<PlanModule, 'id' | 'title' | 'description' | 'coach_name'> | null; actualHours?: number | null;
   transferredProgress?: number; transferPending?: boolean; demoProgress?: boolean;
 };

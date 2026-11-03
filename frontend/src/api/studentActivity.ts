@@ -2,6 +2,8 @@ import { readLearnerJson, peekLearnerJson, invalidateLearnerReads } from './lear
 import type { LearnerKind } from './learnerDetail';
 import { invalidateWeeklyProgress } from './weeklyLearning';
 
+export type LegacyProgressReference = { percent: number; capturedAt: string };
+
 export interface StudentActivityItem {
   activity_id: string;
   source_activity_id: number;
@@ -108,7 +110,7 @@ export interface StudentActivityResponse {
   verification_status?: 'verified' | 'unavailable';
   activity_sources?: Record<string, { module_id: string; group_id: number; activity_id: number }>;
   activity_source_issues?: Record<string, 'missing_source_component_id' | 'missing_group_id_activity_id' | 'ambiguous_lineage'>;
-  subjects?: { id: number; name: string; module_id?: string | null; catalogue_count?: number; accepted_hours?: number }[];
+  subjects?: { id: number; name: string; module_id?: string | null; catalogue_count?: number; accepted_hours?: number; legacyProgressReference?: LegacyProgressReference }[];
   covers?: Record<string, string>;
 }
 
@@ -125,7 +127,8 @@ export interface SubjectAttemptResult {
   score_percent: number | null;
   passed: boolean | null;
   completed: boolean;
-  study_time?: { startedAt: string; submittedAt: string; verifiedSeconds: number; declaredCompletedAt?: string | null };
+  study_time?: { startedAt: string; submittedAt: string; verifiedSeconds: number; declaredCompletedAt?: string | null;
+    selectedSeconds?: number; timeEntrySource?: 'timer' | 'input' };
 }
 
 export interface SubjectMaterial {

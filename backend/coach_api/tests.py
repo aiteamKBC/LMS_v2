@@ -2615,6 +2615,7 @@ class CoachTimetableWindowTests(SimpleTestCase):
         build_learner_profile_map.assert_called_once_with([])
         resolve_coach_review_events.assert_called_once_with(
             "coach@example.com", "Med Maher", [], start_date=None, end_date=None,
+            source_schedule_rows=({}, {}),
         )
         fetch_standalone_event_records.assert_called_once_with("coach@example.com")
         fetch_calendar_event_records.assert_not_called()

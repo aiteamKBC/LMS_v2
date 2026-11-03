@@ -15,6 +15,7 @@ subscribeLearnerReadInvalidation(() => calendarResource.invalidate());
 
 export interface LearnerCalendarEvent {
   id: string;
+  bookingOnly?: boolean;
   /** Server-derived once the booked time has passed: learner attended (completed) or not (ended). */
   meetingOutcome?: 'ended' | 'completed' | null;
   /** Live session the learner missed but then watched in full as a recording. */
@@ -69,7 +70,7 @@ export interface LearnerCalendarEvent {
   syncState?: 'pending' | 'syncing' | 'synced' | 'failed' | 'reconciliation' | 'cancelled';
   syncWarning?: string;
   reviewId?: string;
-  reviewSource?: 'aptem' | 'curriculum';
+  reviewSource?: 'aptem' | 'curriculum' | 'unlinked-booking';
   aptemReviewId?: string;
   importedReviewType?: string;
   sourceStatus?: string;
