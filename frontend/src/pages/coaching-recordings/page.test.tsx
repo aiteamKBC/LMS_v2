@@ -7,6 +7,12 @@ import CoachingRecordingsPage from './page';
 import { filterMeetings, hasPlayableRecording, meetingDate, meetingPhase } from './model';
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div> }));
+vi.mock('./recordingPlayback', async () => {
+  const { coachingRecordingUrl } = await vi.importActual<typeof import('@/api/coachingRecordings')>('@/api/coachingRecordings');
+  return { prepareRecordingPlayback: vi.fn(async (input: { eventKey: string; recordingId: string; reference?: string }) => ({
+    url: coachingRecordingUrl(input.eventKey, input.recordingId, true, input.reference), reference: input.reference,
+  })) };
+});
 vi.mock('@/api/coachingRecordings', async () => ({
   ...await vi.importActual<typeof import('@/api/coachingRecordings')>('@/api/coachingRecordings'),
   loadCoachingCalendar: vi.fn(), loadCoachingSession: vi.fn(), loadSavedCoachingEvidence: vi.fn(), loadCoachLearners: vi.fn(),
@@ -531,7 +537,7 @@ describe('Coaching recordings calendar', () => {
     expect(screen.getByRole('table')).toHaveTextContent('attended');
     expect(screen.getByRole('link', { name: 'Download recording 1' })).toHaveAttribute('href', expect.stringContaining('recordingId=file%2Fone%2B'));
     fireEvent.click(screen.getByRole('button', { name: 'Play recording 1' }));
-    const player = screen.getByLabelText('Coaching recording player');
+    const player = await screen.findByLabelText('Coaching recording player');
     expect(player).toHaveAttribute('src', expect.stringContaining('preview=1'));
     fireEvent.error(player);
     expect(screen.getByRole('alert')).toHaveTextContent('could not be played');
@@ -556,7 +562,7 @@ describe('Coaching recordings calendar', () => {
     expect(params.get('eventKey')).toBe('coach-calendar:verified');
     expect(params.get('reference')).toBe('signed-calendar-reference');
     fireEvent.click(screen.getByRole('button', { name: 'Play recording 1' }));
-    expect(screen.getByLabelText('Coaching recording player')).toHaveAttribute('src', expect.stringContaining('reference=signed-calendar-reference'));
+    expect(await screen.findByLabelText('Coaching recording player')).toHaveAttribute('src', expect.stringContaining('reference=signed-calendar-reference'));
     fireEvent.click(screen.getByRole('button', { name: 'Close meeting details' }));
     fireEvent.click(screen.getByRole('button', { name: 'Upcoming' }));
     expect(screen.getByRole('heading', { name: 'Progress Review' })).toBeInTheDocument();
@@ -614,7 +620,7 @@ describe('Coaching recordings calendar', () => {
     mount();
     fireEvent.click(await screen.findByRole('button', { name: /^View .+ on \d{4}-\d{2}-\d{2}$/ }));
     fireEvent.click(await screen.findByRole('button', { name: 'Play recording 1' }));
-    const player = screen.getByLabelText('Coaching recording player');
+    const player = await screen.findByLabelText('Coaching recording player');
     const renewed = { ...data, meetings: [{ ...data.meetings[0], recordingsReference: 'renewed-reference' }, data.meetings[1]] };
     await act(async () => publish(renewed));
     expect(screen.getByLabelText('Coaching recording player')).toBe(player);
@@ -908,7 +914,7 @@ describe('Coaching recordings calendar', () => {
     fireEvent.keyDown(document, { key: 'Tab' });
     expect(screen.getByRole('button', { name: 'Close meeting details' })).toHaveFocus();
     fireEvent.click(within(drawer).getByRole('button', { name: 'Play recording 1' }));
-    expect(within(drawer).getByLabelText('Coaching recording player')).toBeInTheDocument();
+    expect(await within(drawer).findByLabelText('Coaching recording player')).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Coaching meetings' })).queryByLabelText('Coaching recording player')).not.toBeInTheDocument();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
