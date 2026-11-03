@@ -55,7 +55,7 @@ describe('Feedback forms and original evidence', () => {
     expect(screen.queryByRole('radio', { name: 'Green' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('radio', { name: 'SAFEGUARDING Feedback Form' }));
     await screen.findByRole('radio', { name: 'Green' });
-    expect(screen.queryByRole('radio', { name: 'N/A' })).not.toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'N/A' })).not.toBeChecked();
     const files = [new File(['spreadsheet'], 'evidence.xlsx'), new File(['video'], 'evidence.mp4')];
     fireEvent.change(screen.getByLabelText('Attach evidence files: evidence'), { target: { files } });
     await screen.findByText('evidence.mp4');
@@ -66,6 +66,25 @@ describe('Feedback forms and original evidence', () => {
     expect(vi.mocked(saveQualityReview).mock.calls[1][0].form.attachments?.evidence).toEqual(['evidence.xlsx','evidence.mp4']);
     expect(vi.mocked(saveQualityReview).mock.calls[1][0].reviewType).toBe('FORM_SAFEGUARDING');
     expect(qualityContext).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(cards)('completes $reviewType with N/A even when its saved template disallows it', async card => {
+    render(<MemoryRouter><QualityReviewDialog initialLearnerId="1" onClose={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('radio', { name: card.title }));
+    const na = await screen.findByRole('radio', { name: 'N/A' });
+    expect(na).not.toBeChecked();
+    fireEvent.click(na);
+    expect(na).toBeChecked();
+    expect(screen.getByText('1 of 1 criteria rated')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Complete review' }));
+    await screen.findByText('Completed · Version 1 saved');
+    expect(saveQualityReview).toHaveBeenCalledOnce();
+    expect(vi.mocked(saveQualityReview).mock.calls[0][0]).toMatchObject({
+      learnerId: '1', reviewType: card.reviewType, status: 'completed',
+      form: { criteria: { 'criterion-1': { rating: 'na', evidence: '' } } },
+    });
+    expect(screen.getByRole('radio', { name: 'N/A' })).toBeChecked();
+    expect(screen.getByRole('button', { name: 'Preview PDF' })).toBeEnabled();
   });
 
   it('keeps entered observations when an evidence upload fails or exceeds its bound', async () => {
