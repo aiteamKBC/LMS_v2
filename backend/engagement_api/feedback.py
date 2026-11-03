@@ -815,6 +815,7 @@ def _response_dict(response, *, include_answers=False):
         'programme': '' if anonymous else response.programme,
         'deliveryId': response.delivery_id,
         'sessionTitle': response.delivery.session_title if response.delivery_id else '',
+        'sessionStartsAt': _iso(response.delivery.starts_at) if response.delivery_id else None,
         'tutorName': (response.delivery.tutor_name if response.delivery_id and response.form.form_type == 'post_lecture' else ''),
         'status': response.status, 'startedAt': _iso(response.started_at),
         'updatedAt': _iso(response.updated_at), 'submittedAt': _iso(response.submitted_at),

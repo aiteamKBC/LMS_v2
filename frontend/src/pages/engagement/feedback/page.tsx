@@ -102,7 +102,7 @@ function FormsTable({ forms, search, status, onSearch, onStatus, onEdit, onPrevi
 function ResponsesTable({ responses, forms, onOpen }: { responses: FeedbackResponse[]; forms: FeedbackForm[]; onOpen: (r: FeedbackResponse) => void }) {
   const [formId, setFormId] = useState('all'); const [status, setStatus] = useState('all'); const [learner, setLearner] = useState('');
   const filtered = responses.filter(r => (formId === 'all' || r.formId === Number(formId)) && (status === 'all' || r.status === status) && r.learnerName.toLowerCase().includes(learner.toLowerCase()));
-  return <div className="overflow-hidden rounded-xl border border-foreground-200/60 bg-background-50"><div className="flex flex-wrap gap-3 border-b p-4"><select value={formId} onChange={e => setFormId(e.target.value)} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All forms</option>{forms.map(f => <option key={f.id} value={f.id}>{f.title}</option>)}</select><select value={status} onChange={e => setStatus(e.target.value)} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All statuses</option><option value="in_progress">In progress</option><option value="completed">Completed</option></select><input value={learner} onChange={e => setLearner(e.target.value)} placeholder="Search learner…" className="rounded-lg border px-3 py-2 text-xs" /></div><div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="bg-background-100 text-foreground-500"><tr>{['Form', 'Lecture', 'Tutor', 'Learner', 'Programme', 'Status', 'Started', 'Submitted'].map(x => <th key={x} className="px-4 py-3">{x}</th>)}</tr></thead><tbody className="divide-y">{filtered.map(r => <tr key={r.id} onClick={() => onOpen(r)} className="cursor-pointer hover:bg-primary-50/40"><td className="px-4 py-3 font-semibold">{r.formTitle}</td><td className="px-4 py-3">{r.formType === 'post_lecture' ? (r.sessionTitle || 'Lecture') : '-'}</td><td className="px-4 py-3">{r.formType === 'post_lecture' ? (r.tutorName || 'Not recorded') : '-'}</td><td className="px-4 py-3">{r.learnerName}</td><td className="px-4 py-3">{r.programme || '—'}</td><td className="px-4 py-3"><Status status={r.status} /></td><td className="px-4 py-3">{formatDate(r.startedAt)}</td><td className="px-4 py-3">{formatDate(r.submittedAt)}</td></tr>)}{!filtered.length && <tr><td colSpan={8} className="p-10 text-center text-foreground-400">No responses found.</td></tr>}</tbody></table></div></div>;
+  return <div className="overflow-hidden rounded-xl border border-foreground-200/60 bg-background-50"><div className="flex flex-wrap gap-3 border-b p-4"><select value={formId} onChange={e => setFormId(e.target.value)} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All forms</option>{forms.map(f => <option key={f.id} value={f.id}>{f.title}</option>)}</select><select value={status} onChange={e => setStatus(e.target.value)} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All statuses</option><option value="in_progress">In progress</option><option value="completed">Completed</option></select><input value={learner} onChange={e => setLearner(e.target.value)} placeholder="Search learner…" className="rounded-lg border px-3 py-2 text-xs" /></div><div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="bg-background-100 text-foreground-500"><tr>{['Form', 'Lecture', 'Lecture date', 'Tutor', 'Learner', 'Programme', 'Status', 'Started', 'Submitted'].map(x => <th key={x} className="px-4 py-3">{x}</th>)}</tr></thead><tbody className="divide-y">{filtered.map(r => <tr key={r.id} onClick={() => onOpen(r)} className="cursor-pointer hover:bg-primary-50/40"><td className="px-4 py-3 font-semibold">{r.formTitle}</td><td className="px-4 py-3">{r.formType === 'post_lecture' ? (r.sessionTitle || 'Lecture') : '-'}</td><td className="px-4 py-3">{r.formType === 'post_lecture' ? formatDate(r.sessionStartsAt) : '-'}</td><td className="px-4 py-3">{r.formType === 'post_lecture' ? (r.tutorName || 'Not recorded') : '-'}</td><td className="px-4 py-3">{r.learnerName}</td><td className="px-4 py-3">{r.programme || '—'}</td><td className="px-4 py-3"><Status status={r.status} /></td><td className="px-4 py-3">{formatDate(r.startedAt)}</td><td className="px-4 py-3">{formatDate(r.submittedAt)}</td></tr>)}{!filtered.length && <tr><td colSpan={9} className="p-10 text-center text-foreground-400">No responses found.</td></tr>}</tbody></table></div></div>;
 }
 
 type AnalyticsFormType = 'all' | FeedbackFormType;
@@ -288,20 +288,37 @@ function RecipientsDialog({ form, onClose }: { form: FeedbackForm; onClose: () =
 }
 
 function ResponseDialog({ response, onClose }: { response: FeedbackResponse; onClose: () => void }) {
-  return <Modal title="Feedback response" onClose={onClose}>
+  const [downloading, setDownloading] = useState(false);
+  const download = async () => {
+    setDownloading(true);
+    try {
+      const { downloadFeedbackResponsePdf } = await import('@/features/feedback/feedbackResponsePdf');
+      await downloadFeedbackResponsePdf(response);
+    } catch {
+      await Swal.fire('Download failed', 'The feedback response PDF could not be prepared. Please try again.', 'error');
+    } finally {
+      setDownloading(false);
+    }
+  };
+  return <Modal title="Feedback response" onClose={onClose} hideClose>
     <div className="mb-4 grid grid-cols-3 gap-3 rounded-lg bg-background-100 p-3 text-xs">
       <div><span className="text-foreground-400">{response.formType === 'post_progress_review_employer' ? 'Employer' : 'Learner'}</span><p className="font-semibold">{response.learnerName}</p></div>
       <div><span className="text-foreground-400">Form</span><p className="font-semibold">{response.formTitle}</p></div>
       <div><span className="text-foreground-400">Submitted</span><p className="font-semibold">{formatDate(response.submittedAt)}</p></div>
     </div>
-    {response.formType === 'post_lecture' && <div className="mb-4 grid gap-3 rounded-lg bg-background-100 p-3 text-xs sm:grid-cols-2">
+    {response.formType === 'post_lecture' && <div className="mb-4 grid gap-3 rounded-lg bg-background-100 p-3 text-xs sm:grid-cols-3">
       <div><span className="text-foreground-400">Lecture</span><p className="font-semibold">{response.sessionTitle || 'Lecture'}</p></div>
+      <div><span className="text-foreground-400">Lecture date</span><p className="font-semibold">{formatDate(response.sessionStartsAt)}</p></div>
       <div><span className="text-foreground-400">Tutor</span><p className="font-semibold">{response.tutorName || 'Not recorded'}</p></div>
     </div>}
     <FormRenderer sections={response.sections || []} answers={Object.fromEntries((response.sections || []).flatMap(s => s.questions.map(q => [String(q.id), q.answer ?? null])))} readOnly />
+    <div className="sticky bottom-0 mt-5 flex justify-end gap-3 border-t border-foreground-100 bg-white pt-4">
+      <button type="button" disabled={downloading} onClick={() => void download()} className={`${button} inline-flex items-center gap-1.5 bg-primary-600 text-white shadow-sm hover:bg-primary-700 disabled:opacity-50`}><i className="ri-download-2-line" aria-hidden="true" />{downloading ? 'Preparing PDF...' : 'Export PDF'}</button>
+      <button type="button" onClick={onClose} className={`${button} border border-foreground-200 bg-white text-foreground-700 hover:bg-background-100`}>Back</button>
+    </div>
   </Modal>;
 }
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) { return <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true"><div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"><div className="mb-4 flex items-center justify-between"><h2 className="font-heading text-lg font-bold">{title}</h2><button onClick={onClose} aria-label="Close" className="text-xl text-foreground-400">×</button></div>{children}</div></div>; }
+function Modal({ title, onClose, hideClose = false, children }: { title: string; onClose: () => void; hideClose?: boolean; children: React.ReactNode }) { return <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true"><div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"><div className="mb-4 flex items-center justify-between gap-3"><h2 className="font-heading text-lg font-bold">{title}</h2>{!hideClose && <button onClick={onClose} aria-label="Close" className="text-xl text-foreground-400">×</button>}</div>{children}</div></div>; }
 function Status({ status }: { status: string }) { const styles = status === 'published' || status === 'completed' ? 'bg-emerald-100 text-emerald-700' : status === 'draft' || status === 'in_progress' ? 'bg-amber-100 text-amber-700' : 'bg-background-200 text-foreground-600'; return <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${styles}`}>{status.replace('_', ' ').replace(/\b\w/g, x => x.toUpperCase())}</span>; }
 function formatDate(value: string | null) { return value ? new Date(value).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'; }
 function formatDateTime(value: string) { return new Date(value).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
