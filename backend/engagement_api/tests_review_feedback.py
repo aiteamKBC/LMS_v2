@@ -299,6 +299,15 @@ class CompletionHookTests(SimpleTestCase):
             signals.imported_review_saved(None, overlay(), 'default')
         commit.assert_not_called()
 
+    @override_settings(DEBUG=False)
+    def test_production_release_schedules_completed_mcm_and_progress_reviews(self):
+        for family in ('MCM', 'PR', 'PR_SKILLS_RADAR'):
+            with self.subTest(family=family), mock.patch.object(signals.transaction, 'on_commit') as commit:
+                signals.imported_review_saved(None, overlay(template_snapshot={
+                    'templateSource': {'family': family},
+                }), 'default', update_fields={'status', 'completed_at'})
+                commit.assert_called_once()
+
     def test_other_managed_review_families_do_not_schedule_feedback(self):
         with mock.patch.object(signals.transaction, 'on_commit') as commit:
             signals.imported_review_saved(None, overlay(template_snapshot={
