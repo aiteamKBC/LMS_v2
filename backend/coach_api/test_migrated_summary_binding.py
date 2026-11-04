@@ -15,7 +15,7 @@ from pypdf import PdfReader
 
 from . import migrated_completion_views as lifecycle, migrated_intelligence_views as intelligence, views
 from .migrated_completion import build_pdf, ensure_document
-from .migrated_reviews import meeting_summary_field, render_sections
+from .migrated_reviews import meeting_summary_field, render_sections, validate_answers
 from .migrated_session_scope import validate_attendance_response
 from .migrated_summary_binding import answer_version, binding_state, populate_answer, preserve_original
 from .migrated_templates import serialize_template, snapshot_for, validate_managed_definition
@@ -31,6 +31,27 @@ DEFINITION = {"sections": [{"key": "meeting", "title": "Meeting discussion", "or
 
 
 class MigratedBindingValidationTests(SimpleTestCase):
+    def test_only_mcm_summary_accepts_unlimited_text_on_save_and_submission(self):
+        text = 'Discussion and agreed actions.\n' * 1000
+        for family in ('MCM', 'PR', 'PR_SKILLS_RADAR', 'PSP', None):
+            for kind in (1, 13):
+                definition = deepcopy(DEFINITION)
+                definition['templateSource'] = {'family': family}
+                definition['sections'][0]['fields'][0]['aptemType'] = kind
+                for completing in (False, True):
+                    with self.subTest(family=family, kind=kind, completing=completing):
+                        answers = {'recap': text, 'other': 'Preserve this answer'}
+                        if family == 'MCM':
+                            self.assertEqual(validate_answers(definition, answers, completing=completing), answers)
+                        else:
+                            with self.assertRaisesRegex(ValueError, '4000'):
+                                validate_answers(definition, answers, completing=completing)
+                with self.subTest(family=family, kind=kind):
+                    with self.assertRaises(ValueError):
+                        validate_answers(definition, {'recap': ['Not text']})
+                    with self.assertRaisesRegex(ValueError, '4000'):
+                        validate_answers(definition, {'other': text})
+
     def test_only_two_text_types_accept_binding(self):
         for kind in (1, 13, 2, 4, 5, 6, 11, 99):
             with self.subTest(kind=kind):
@@ -274,15 +295,43 @@ class MigratedBindingFlowTests(TestCase):
         self.assertEqual(self.overlay.answers["recap"], "")
         self.assertEqual(binding_state(self.overlay)["state"], "COACH_CLEARED")
 
-    def test_overflow_retains_full_original_and_returns_manual_shortening_text(self):
-        text = "X" * 4001
+    def test_long_mcm_summary_populates_and_saves_without_truncation(self):
+        text = '\n'.join(['Discussion and actions.'] * 1000)
         response, _ = self.check(summary={"overview": text})
         binding = json.loads(response.content)["summaryBinding"]
-        self.assertEqual(binding["status"], "summary-too-long")
+        self.assertEqual(binding["status"], "populated")
         self.assertEqual(binding["suggestionText"], text)
-        self.assertNotIn("recap", self.overlay.answers)
+        self.assertFalse(binding['summaryTooLong'])
+        self.assertEqual(self.overlay.answers, {'recap': text, 'other': 'Keep this answer'})
         self.assertEqual(self.overlay.meeting_intelligence["aiSummaryOriginal"]["overview"], text)
-        self.assertEqual(self.save({**self.overlay.answers, "recap": "Shortened manually"}).status_code, 200)
+        edited = text + '\nCoach addition.\n'
+        self.assertEqual(self.save({**self.overlay.answers, 'recap': edited}).status_code, 200)
+        self.assertEqual(self.overlay.answers, {'recap': edited, 'other': 'Keep this answer'})
+        self.assertEqual(binding_state(self.overlay)['state'], 'COACH_EDITED')
+        self.overlay.status = 'completed'
+        self.overlay.completed_at = timezone.now()
+        signatures = [SimpleNamespace(role=role, signer_name='Synthetic signer',
+            signed_at=timezone.now(), signature=PNG) for role in ('advisor', 'participant')]
+        with patch.object(type(self.overlay), 'migrated_signatures') as relation:
+            relation.all.return_value = signatures
+            content = build_pdf(self.overlay, learner_name='Synthetic',
+                learner_email='learner@example.invalid', programme='Synthetic programme',
+                scheduled_date='2026-11-04', coach_name='Coach')
+        pdf_text = '\n'.join(page.extract_text() for page in PdfReader(BytesIO(content)).pages)
+        self.assertEqual(pdf_text.count('Discussion and actions.'), 1000)
+        self.assertIn('Coach addition.', pdf_text)
+
+    def test_progress_review_summary_still_returns_manual_shortening_text(self):
+        self.overlay.template_snapshot['templateSource']['family'] = 'PR'
+        self.overlay.save(update_fields=['template_snapshot'])
+        text = 'X' * 4001
+        response, _ = self.check(summary={'overview': text})
+        binding = json.loads(response.content)['summaryBinding']
+        self.assertEqual(binding['status'], 'summary-too-long')
+        self.assertEqual(binding['suggestionText'], text)
+        self.assertTrue(binding['summaryTooLong'])
+        self.assertNotIn('recap', self.overlay.answers)
+        self.assertEqual(self.overlay.meeting_intelligence['aiSummaryOriginal']['overview'], text)
 
     def test_exact_limit_populates(self):
         self.check(summary={"overview": "X" * 4000})

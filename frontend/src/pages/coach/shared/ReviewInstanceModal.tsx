@@ -520,6 +520,8 @@ function ReviewInstanceContent({
     [definition],
   );
   const meetingSummaryFieldId = meetingSummaryField?.id;
+  const meetingSummaryMaxLength = meetingSummaryField?.configuration?.migrated === true
+    && !['mcm', 'aptem_mcm'].includes(definition?.template.reviewTypeCode || '') ? 4000 : undefined;
   const isMigratedTemplatePreview = definition?.source === 'aptem' && Boolean(definition.previewOnly);
   const migratedSummaryBinding = useMemo(() => {
     if (definition?.migratedForm) return definition.summaryBinding;
@@ -915,7 +917,7 @@ function ReviewInstanceContent({
       <ModalShell busy={busy} onClose={closeExpandedSummary}>
         <ExpandedMeetingSummaryEditor
           reviewLabel={headingLabel}
-          maxLength={meetingSummaryField.configuration?.migrated === true ? 4000 : undefined}
+          maxLength={meetingSummaryMaxLength}
           value={answers[expandedSummaryFieldId]}
           onChange={(value) => handleAnswerChange(expandedSummaryFieldId, value)}
           readOnly={formReadOnly || (checkingSession && !generatingMigratedSummary)}
@@ -1475,7 +1477,7 @@ function ReviewInstanceContent({
                 <MeetingSummaryInlineEditor
                   fieldId={field.id}
                   label={definition.source === 'aptem' ? field.title : 'Meeting Summary'}
-                  maxLength={field.configuration?.migrated === true ? 4000 : undefined}
+                  maxLength={meetingSummaryMaxLength}
                   value={context.value}
                   onChange={(value) => context.onChange(value)}
                   readOnly={context.readOnly}
