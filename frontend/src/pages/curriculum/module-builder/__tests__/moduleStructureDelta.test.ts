@@ -112,6 +112,19 @@ describe('saveModuleStructure', () => {
     expect(body.weekStructure).toHaveLength(2);
   });
 
+  it('requests storage for the selected video even when its authored values are unchanged', async () => {
+    const base = storedModule();
+    const fetchMock = stubFetch(base);
+    await saveModuleStructure('MOD-TEST', base, {
+      base, expectedRevision: 'REV-1', source: 'manual', importVideoComponentIds: ['COMP-10'],
+    });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.importVideoComponentIds).toEqual(['COMP-10']);
+    expect(body.structureDelta.components).toEqual({});
+    expect(body.expectedRevision).toBe('REV-1');
+    expect(base).not.toHaveProperty('importVideoComponentIds');
+  });
+
   it('sends ownership as separate request metadata without changing authored values', async () => {
     const base = storedModule(), current = clone(base);
     current.weekStructure[0].components[0].title = 'Owner edit';
