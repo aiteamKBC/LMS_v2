@@ -20,8 +20,8 @@ from . import canonical_learning, mobile
 from .models import EnrolmentUser, LearnerProfile
 
 PAGE_SIZE = 100
-PROFILE_FIELDS = ("id", "enrolment_id", "full_name", "learner_type", "programme",
-                  "cohort", "cohort_id", "lifecycle_status", "coach_email")
+PROFILE_FIELDS = ("id", "enrolment_id", "full_name", "learner_type", "programme_id",
+                  "cohort_id", "lifecycle_status", "coach_email")
 QUIZ_RESULT_FIELDS = frozenset({
     "quizId", "componentId", "componentTitle", "moduleId", "moduleTitle", "attempt",
     "grade", "achievedScore", "totalScore", "passed", "startedAt", "submittedAt",

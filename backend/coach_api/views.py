@@ -2007,10 +2007,13 @@ def fetch_all_learner_profiles(programme: str | None = None, cohort: str | None 
         prefetches.append("activity_events")
 
     queryset = LearnerProfile.objects.exclude(enrolment_id__isnull=True).prefetch_related(*prefetches)
+    # Programme/cohort names are properties of the profile's own placement ids,
+    # so match the name in curriculum and filter those id columns.
+    from .caseload_placement import placement_ids_named
     if programme:
-        queryset = queryset.filter(programme__iexact=programme)
+        queryset = queryset.filter(programme_id__in=placement_ids_named("programme_id", programme, queryset.db))
     if cohort:
-        queryset = queryset.filter(cohort__iexact=cohort)
+        queryset = queryset.filter(cohort_id__in=placement_ids_named("cohort_id", cohort, queryset.db))
     queryset = queryset.order_by("full_name", "id")
 
     return [row for row in queryset if clean_text(row.username)]
@@ -2033,12 +2036,10 @@ def fetch_caseload_dashboard_profiles(owner_email: str) -> list[LearnerProfile]:
             "id",
             "full_name",
             "email",
-            "programme",
+            # programme/cohort/group_name are properties resolved from these ids.
             "programme_id",
             "programme_status",
-            "cohort",
             "cohort_id",
-            "group_name",
             "group_id",
             "lifecycle_status",
             "completed_hours",
@@ -2082,8 +2083,8 @@ def fetch_caseload_timetable_profiles(owner_email: str) -> list[LearnerProfile]:
         LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
         .filter(coach_email_key=requested_owner)
         .only(
-            "id", "full_name", "email", "programme", "programme_id",
-            "programme_status", "cohort", "cohort_id", "group_name", "group_id",
+            "id", "full_name", "email", "programme_id",
+            "programme_status", "cohort_id", "group_id",
             "lifecycle_status", "coach_name", "coach_email", "start_date", "end_date",
             "gateway_review_date", "learner_type", "enrolment_id", "aptem_id",
         )
@@ -2179,7 +2180,7 @@ def fetch_case_file_shell(owner_email: str, learner_id: int):
         .filter(id=learner_id, coach_email_key=requested_owner)
         .only(
             "id", "full_name", "email", "enrolment_id", "aptem_id", "learner_type",
-            "programme", "programme_status", "cohort", "group_name", "lifecycle_status",
+            "programme_id", "programme_status", "cohort_id", "group_id", "lifecycle_status",
             "coach_name", "coach_email", "coach_rag", "start_date", "end_date",
             "gateway_review_date",
         )
@@ -2192,8 +2193,8 @@ def fetch_case_file_shell(owner_email: str, learner_id: int):
         source = (
             EnrolmentUser.all_learners.filter(pk=profile.enrolment_id)
             .only(
-                "id", "aptem_id", "learner_type", "username", "email", "programme",
-                "programme_status", "cohort", "group", "employer", "coach_name",
+                "id", "aptem_id", "learner_type", "username", "email", "programme_id",
+                "programme_status", "cohort_id", "group_id", "employer", "coach_name",
                 "coach_email", "start_date", "learner_start_date", "learner_end_date", "end_date",
                 "apprenticeship_end_date", "practical_period_end_date",
             )
@@ -2235,12 +2236,9 @@ def fetch_attendance_caseload_rows(owner_email: str, *, learner_id: str | None =
             "id",
             "full_name",
             "email",
-            "programme",
             "programme_id",
             "programme_status",
-            "cohort",
             "cohort_id",
-            "group_name",
             "group_id",
             "completed_hours",
             "target_hours",
@@ -2278,9 +2276,9 @@ def fetch_owner_active_learner_profiles(owner_email: str) -> list[LearnerProfile
             "id",
             "full_name",
             "email",
-            "programme",
-            "cohort",
-            "group_name",
+            "programme_id",
+            "cohort_id",
+            "group_id",
             "coach_name",
             "coach_email",
             "start_date",
@@ -12606,7 +12604,7 @@ def dashboard_imported_completed_review_dates(profile_ids, *, owner_email, owner
         coach_email_key=Lower(Trim("coach_email")),
     ).filter(coach_email_key=normalize_email(owner_email), pk__in=profile_ids).only(
         "id", "aptem_id", "enrolment_id", "full_name", "email", "learner_type",
-        "programme", "cohort", "group_name",
+        "programme_id", "cohort_id", "group_id",
     ))
     aptem_by_profile, _conflicts = resolve_effective_aptem_ids(profiles)
     if not aptem_by_profile:
@@ -13880,16 +13878,22 @@ def coach_caseload(request):
                 coach_email_key=requested_owner,
             ).exclude(full_name__regex=r"^\s*$")
             option_queryset = queryset
+            # Programme/cohort/group names are LearnerProfile properties, not
+            # columns: read them once from the profiles' own placement ids and
+            # expose them as annotations for search, filters and sorting.
+            from .caseload_placement import annotate_placement_labels, filter_options as placement_filter_options, placement_names
+            placement = placement_names(option_queryset)
+            queryset = annotate_placement_labels(queryset, placement)
             if search:
-                queryset = queryset.filter(Q(full_name__icontains=search) | Q(email__icontains=search) | Q(programme__icontains=search) | Q(cohort__icontains=search) | Q(group_name__icontains=search))
+                queryset = queryset.filter(Q(full_name__icontains=search) | Q(email__icontains=search) | Q(programme_label__icontains=search) | Q(cohort_label__icontains=search) | Q(group_label__icontains=search))
             if status and status.casefold() != "all":
                 queryset = queryset.filter(programme_status__iexact=status)
             if cohort and cohort.casefold() != "all":
-                queryset = queryset.filter(Q(cohort_id=cohort) | Q(cohort__iexact=cohort))
+                queryset = queryset.filter(Q(cohort_id=cohort) | Q(cohort_label__iexact=cohort))
             if group and group.casefold() != "all":
-                queryset = queryset.filter(Q(group_id=group) | Q(group_name__iexact=group))
+                queryset = queryset.filter(Q(group_id=group) | Q(group_label__iexact=group))
             total = queryset.count()
-            sort_fields = {"name": "full_name", "programme": "programme", "cohort": "cohort", "group": "group_name", "status": "programme_status"}
+            sort_fields = {"name": "full_name", "programme": "programme_label", "cohort": "cohort_label", "group": "group_label", "status": "programme_status"}
             primary_sort = sort_fields[sort_key]
             if direction == "desc":
                 primary_sort = f"-{primary_sort}"
@@ -13942,8 +13946,8 @@ def coach_caseload(request):
             total_pages = (total + page_size - 1) // page_size if total else 0
             pagination = {"page": page, "pageSize": page_size, "total": total, "totalPages": total_pages, "hasNext": page < total_pages, "hasPrevious": page > 1}
             filter_options = {
-                "cohort": [{"value": key or label, "label": label} for key, label in option_queryset.exclude(cohort="").values_list("cohort_id", "cohort").distinct().order_by("cohort") if label],
-                "group": [{"value": key or label, "label": label} for key, label in option_queryset.exclude(group_name="").values_list("group_id", "group_name").distinct().order_by("group_name") if label],
+                "cohort": placement_filter_options(placement, "cohort_id"),
+                "group": placement_filter_options(placement, "group_id"),
                 "programStatus": [{"value": value, "label": value} for value in option_queryset.exclude(programme_status="").values_list("programme_status", flat=True).distinct().order_by("programme_status") if value],
                 "employer": [],
             }
@@ -15315,7 +15319,7 @@ def _review_learner_identity(learner):
 def _coach_review_instance_definition(instance_row):
     definition = curriculum_review_instances.review_instance_form_definition(instance_row)
     learner = LearnerProfile.objects.filter(pk=instance_row.get("learner_id")).only(
-        "full_name", "email", "programme", "programme_id",
+        "full_name", "email", "programme_id",
     ).first()
     definition.update(_review_learner_identity(learner))
     source = _review_instance_meeting_summary_source(instance_row, definition)

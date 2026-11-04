@@ -59,10 +59,14 @@ RESOURCES = {
     'enrolment-documents': {'rows'},
 }
 
+# Programme, cohort and group names are model properties resolved from these
+# placement ids (learner_api.models._learner_placement_names), not columns, so
+# a projection loads the ids. Reading .programme/.cohort/.group_name/.group is
+# unchanged.
 PROFILE_FIELDS = ('id', 'enrolment_id', 'learner_type', 'full_name', 'email', 'aptem_id',
-                  'programme', 'programme_status', 'group_name')
-PROFILE_SOURCE_FIELDS = ('id', 'aptem_id', 'learner_type', 'username', 'email', 'programme',
-                         'programme_status', 'group', 'employer', 'learner_start_date', 'learner_end_date')
+                  'programme_id', 'programme_status', 'group_id')
+PROFILE_SOURCE_FIELDS = ('id', 'aptem_id', 'learner_type', 'username', 'email', 'programme_id',
+                         'programme_status', 'group_id', 'employer', 'learner_start_date', 'learner_end_date')
 
 
 class CaseFileContext:
@@ -72,7 +76,7 @@ class CaseFileContext:
         self.learner_id = learner_id
         self.profile_only = profile_only
         fields = PROFILE_FIELDS if profile_only else (
-            *PROFILE_FIELDS, 'programme_id', 'cohort', 'cohort_id', 'group_id', 'lifecycle_status',
+            *PROFILE_FIELDS, 'cohort_id', 'lifecycle_status',
             'coach_name', 'coach_email', 'coach_rag', 'start_date', 'end_date', 'gateway_review_date')
         self.profile = (LearnerProfile.objects
                         .annotate(coach_email_key=Lower(Trim('coach_email')))
@@ -88,8 +92,8 @@ class CaseFileContext:
     def source(self):
         if not self._source_loaded:
             if self.profile and self.profile.enrolment_id:
-                fields = set(PROFILE_SOURCE_FIELDS) if self.profile_only else {'id', 'aptem_id', 'learner_type', 'username', 'email', 'programme',
-                                      'programme_status', 'cohort', 'group', 'employer', 'coach_name', 'coach_email',
+                fields = set(PROFILE_SOURCE_FIELDS) if self.profile_only else {'id', 'aptem_id', 'learner_type', 'username', 'email', 'programme_id',
+                                      'programme_status', 'cohort_id', 'group_id', 'employer', 'coach_name', 'coach_email',
                                       'start_date', 'learner_start_date', 'learner_end_date', 'end_date',
                                       'apprenticeship_end_date', 'practical_period_end_date'}
                 narrow_learning = '/learning-plan' in self.request.path and not self.request.GET.get('resource')
@@ -97,7 +101,7 @@ class CaseFileContext:
                     from learner_api.training_plan_dashboard import TRAINING_PLAN_SOURCE_FIELDS
                     fields.update(TRAINING_PLAN_SOURCE_FIELDS)
                 if not self.profile_only and self.request.path.rstrip('/').split('/')[-1] == 'weekly-learning':
-                    fields = {'id', 'aptem_id', 'learner_type', 'username', 'email', 'programme', 'cohort', 'group'}
+                    fields = {'id', 'aptem_id', 'learner_type', 'username', 'email', 'programme_id', 'cohort_id', 'group_id'}
                 if not self.profile_only and self.request.path.rstrip('/').split('/')[-1] == 'overview':
                     fields = {'id', 'aptem_id', 'learner_type', 'email', 'username', *SOURCE_WINDOW_FIELDS}
                 query = EnrolmentUser.all_learners.filter(pk=self.profile.enrolment_id).only(*sorted(fields))

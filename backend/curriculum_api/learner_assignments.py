@@ -184,7 +184,7 @@ def _handle(request, scope, identifier):
             return JsonResponse({'error': f'Active {scope} not found.'}, status=404)
         if request.method == 'GET':
             learners = EnrolmentUser.all_learners.only(
-                'id', 'username', 'email', 'programme', 'cohort', 'group',
+                'id', 'username', 'email', 'programme_id', 'cohort_id', 'group_id',
                 'employer', 'organization', 'programme_status', 'learner_type',
             ).order_by('username', 'id')
             return JsonResponse(_payload(target, learners))
@@ -325,7 +325,7 @@ def bulk_assigned_learner_counts(module_ids):
         return {}
     counts = {module_id: 0 for module_id in wanted}
     cache = {}
-    learners = EnrolmentUser.all_learners.only('id', 'programme', 'group', 'learning_plan', 'training_plan')
+    learners = EnrolmentUser.all_learners.only('id', 'programme_id', 'group_id', 'learning_plan', 'training_plan')
     for learner in learners:
         for module_id in set(plans._effective_plan_ids(learner, cache)):
             if module_id in wanted:

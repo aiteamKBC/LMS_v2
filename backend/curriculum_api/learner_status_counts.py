@@ -30,8 +30,21 @@ def learner_facts(module_ids):
     if views.connection.vendor != 'postgresql' or not views.learner_schema_table_exists('learners'):
         raise DatabaseError('Learner counts are unavailable.')
     columns = views.learner_schema_columns('learners')
-    if not {'id', 'programme', 'cohort', 'group_name', 'lifecycle_status'} <= columns:
+    if not {'id', 'lifecycle_status'} <= columns:
         raise DatabaseError('Learner count columns are unavailable.')
+    # "Learner".learners no longer stores placement names. Read them as
+    # LearnerProfile.programme/.cohort/.group_name do: through the profile's own
+    # placement ids and the curriculum tables. A missing id reads as no name.
+    name_selects, name_joins = [], []
+    for alias, id_column, table, name, label in (
+            ('placement_programme', 'programme_id', 'curriculum.programmes', 'name', 'programme'),
+            ('placement_cohort', 'cohort_id', 'curriculum.cohorts', 'cohort_name', 'cohort'),
+            ('placement_group', 'group_id', 'curriculum.groups', 'group_name', 'group_name')):
+        if id_column in columns:
+            name_selects.append(f'{alias}.{name} AS {label}')
+            name_joins.append(f'LEFT JOIN {table} {alias} ON {alias}.{id_column} = p.{id_column}')
+        else:
+            name_selects.append(f'NULL AS {label}')
     identity = ', '.join(f"coalesce(p.{column}, '') AS {column}" if column in columns
                          else f"'' AS {column}" for column in ('programme_id', 'cohort_id', 'group_id'))
     plan_select = 'false AS explicit, ARRAY[]::text[] AS module_ids, false AS ambiguous'
@@ -54,10 +67,10 @@ def learner_facts(module_ids):
     programme_status = "nullif(btrim(p.programme_status), '')," if 'programme_status' in columns else ''
     with views.connection.cursor() as cursor:
         cursor.execute(f"""
-            SELECT p.id, p.programme, p.cohort, p.group_name, {identity},
+            SELECT p.id, {', '.join(name_selects)}, {identity},
                    coalesce(nullif(btrim(p.lifecycle_status), ''), {programme_status} 'unknown') AS status,
                    {plan_select}
-            FROM "Learner"."learners" p {plan_join}
+            FROM "Learner"."learners" p {' '.join(name_joins)} {plan_join}
         """, params)
         names = [column[0] for column in cursor.description]
         rows = [dict(zip(names, row)) for row in cursor.fetchall()]

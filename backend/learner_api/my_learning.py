@@ -24,7 +24,10 @@ from .learning_plan import effective_training_plan, request_preset_cache
 from .progress_rules import progress_counts_as_achieved
 from .projection_performance import projection_stage, local_catalogue_trace
 
-SOURCE_FIELDS = ('id', 'aptem_id', 'email', 'programme', 'cohort', 'group',
+# Created_users stores placement ids only. The programme/cohort/group names are
+# EnrolmentUser properties resolved from the pk (_learner_placement_names), so
+# they cannot be listed in .only(); load the concrete ids that placement_ids reads.
+SOURCE_FIELDS = ('id', 'aptem_id', 'email', 'programme_id', 'cohort_id', 'group_id',
                  'learning_plan', 'training_plan', 'modules', 'weeks', 'components', 'learner_type', 'username')
 UK = ZoneInfo('Europe/London')
 

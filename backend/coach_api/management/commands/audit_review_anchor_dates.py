@@ -77,7 +77,7 @@ class Command(BaseCommand):
         profiles = list(
             LearnerProfile.objects.filter(lifecycle_status="active")
             .only(
-                "id", "full_name", "email", "programme", "cohort",
+                "id", "full_name", "email", "programme_id", "cohort_id",
                 "coach_email", "start_date", "lifecycle_status",
             )
             .order_by("id")

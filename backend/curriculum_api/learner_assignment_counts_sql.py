@@ -60,7 +60,26 @@ logger = logging.getLogger(__name__)
 #: The relation the production query reads. Parameterised only so the tests can
 #: substitute a literal VALUES list and exercise the jsonb expressions below
 #: against a real Postgres without needing the table.
-LEARNER_RELATION = 'enrolment."Created_users" u'
+#:
+#: Created_users no longer stores programme/group names. Expose them under the
+#: same column names, resolved the way EnrolmentUser.programme/.group are
+#: (_learner_placement_names): through the profile linked by enrolment_id and
+#: its curriculum placement ids. One row per enrolment; no profile or placement
+#: leaves the name NULL, exactly as the ORM fallback path reads it.
+LEARNER_RELATION = '''(
+    SELECT cu.id, placement.programme AS "Programme", placement.group_name AS "Group",
+           cu."Training_plan", cu."Learning_plan"
+    FROM enrolment."Created_users" cu
+    LEFT JOIN LATERAL (
+        SELECT p.name AS programme, g.group_name
+        FROM "Learner".learners l
+        LEFT JOIN curriculum.programmes p ON p.programme_id = l.programme_id
+        LEFT JOIN curriculum.groups g ON g.group_id = l.group_id
+        WHERE l.enrolment_id = cu.id
+        ORDER BY l.id
+        LIMIT 1
+    ) placement ON TRUE
+) u'''
 
 #: One row per learner: enough to apply `_effective_plan_ids` without ever
 #: shipping a plan. `%s` is the caller's module ids as a text[].
@@ -270,7 +289,7 @@ def bulk_assigned_learner_counts_sql(module_ids):
         # whole costs nothing, and it keeps the answer exactly the original's.
         logger.info('assignment counts: %d learner(s) fell back to Python plan parsing', len(ambiguous))
         learners = EnrolmentUser.all_learners.only(
-            'id', 'programme', 'group', 'learning_plan', 'training_plan',
+            'id', 'programme_id', 'group_id', 'learning_plan', 'training_plan',
         ).filter(pk__in=ambiguous)
         for learner in learners:
             for module_id in set(plans._effective_plan_ids(learner, cache)):

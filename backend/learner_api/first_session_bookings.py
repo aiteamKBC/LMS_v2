@@ -97,7 +97,7 @@ def resolve_learners(records):
         for p in LearnerProfile.objects.filter(id__in=ids).only("id", "email", "enrolment_id")
     }
     enrolment_ids = ids | {p.enrolment_id for p in profiles.values() if p.enrolment_id}
-    fields = ("id", "username", "email", "programme", "case_owner", "learner_type")
+    fields = ("id", "username", "email", "programme_id", "case_owner", "learner_type")
     by_id = {u.id: u for u in EnrolmentUser.all_learners.filter(id__in=enrolment_ids).only(*fields)}
     by_email = {}
     if emails:

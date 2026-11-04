@@ -29,7 +29,7 @@ from .attendance_assignments import assigned_module_ids as effective_assigned_mo
 
 log = logging.getLogger(__name__)
 ATTENDANCE_SOURCE_FIELDS = ('id', 'username', 'email', 'aptem_id', 'employer_id', 'learner_type',
-                            'programme', 'group', 'training_plan', 'learning_plan')
+                            'programme_id', 'cohort_id', 'group_id', 'training_plan', 'learning_plan')
 
 # The effective plan includes group inheritance and respects explicit/empty
 # selections, exactly as My Learning. A stale normalized mirror is not a
