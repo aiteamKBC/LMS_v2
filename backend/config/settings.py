@@ -436,6 +436,9 @@ MIDDLEWARE = [
     # Django's own AuthenticationMiddleware so both identities are available and
     # neither shadows the other while the admin still uses django.contrib.auth.
     'login.middleware.LoginSessionMiddleware',
+    # A successful write to a learner's /learner_api/.../<kind>/<pk>/ paths
+    # invalidates their cached dashboard/My Learning reads (learner_api/response_cache.py).
+    'learner_api.response_cache.LearnerReadCacheMiddleware',
     # Rejects anonymous callers on the API prefixes before any view runs. Must
     # sit after LoginSessionMiddleware so the session is already resolved, and
     # before anything that would act on the request. Answers only "is there a
@@ -716,6 +719,12 @@ _enrolment_database_url = (
 )
 if _enrolment_database_url and not USE_SQLITE_FOR_TESTS:
     DATABASES['enrolment'] = database_from_url(_enrolment_database_url)
+    # Learner pages run most of their queries here (e.g. 44 of the dashboard
+    # overview's ~58), so keep it as warm as ``default`` instead of min_size 1:
+    # a surge otherwise queues behind one-at-a-time connects to Neon.
+    _enrolment_pool = DATABASES['enrolment'].get('OPTIONS', {}).get('pool')
+    if isinstance(_enrolment_pool, dict):
+        _enrolment_pool['min_size'] = DB_POOL_DEFAULT_MIN_SIZE
     # `default` and `enrolment` are usually the same Neon database. Django treats
     # a second alias with the same NAME as a mirror and leaves it pointing at the
     # original during tests — which would aim the unmanaged-table DDL in
