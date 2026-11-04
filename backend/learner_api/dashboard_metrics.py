@@ -5,6 +5,7 @@ from collections import defaultdict
 from types import SimpleNamespace
 
 import psycopg
+from .response_cache import cached_learner_read
 from . import journal_sources
 from django.db import DatabaseError, connections
 from curriculum_api.week_visibility import visible_child_sql
@@ -493,6 +494,7 @@ def read_metrics(source, kind, preloaded=None):
 @require_GET
 @learner_self_or_staff(kwarg='pk')
 @journal_sources.learner_journal_view
+@cached_learner_read('metrics')
 def learner_metrics(request, kind, pk):
     model = SOURCE_MODELS.get(kind)
     if model is None:

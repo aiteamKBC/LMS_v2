@@ -17,6 +17,7 @@ from django.views.decorators.http import require_GET
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
 
+from .response_cache import cached_learner_read
 from . import canonical_learning as canonical
 from .journal_sources import learner_journal_view, enabled as journal_enabled
 from .learner_detail import SOURCE_MODELS
@@ -781,6 +782,7 @@ def read_module(source, kind, owner, subject_id):
 @local_catalogue_trace
 @learner_self_or_staff(kwarg='pk')
 @learner_journal_view
+@cached_learner_read('my-learning')
 def my_learning(request,kind,pk,subject_id=None,resource=None):
     model=SOURCE_MODELS.get(kind)
     if model is None:

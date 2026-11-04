@@ -9,6 +9,7 @@ from django.views.decorators.http import require_GET
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
 
+from .response_cache import cached_learner_read
 from . import canonical_learning as canonical
 from .journal_sources import learner_journal_view
 from .projection_performance import measure_projection
@@ -131,6 +132,7 @@ def read_tab(source, kind, tab, request, *, canonical_contract=False):
 @require_GET
 @learner_self_or_staff(kwarg='pk')
 @learner_journal_view
+@cached_learner_read('dashboard-tab')
 def dashboard_tab(request, kind, pk, tab, canonical_contract=False):
     from .learner_detail import SOURCE_MODELS
     model = SOURCE_MODELS.get(kind)
