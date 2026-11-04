@@ -82,7 +82,10 @@ and [SKIP LOCKED for concurrent queue consumers](https://www.postgresql.org/docs
   audio and video when needed. Bunny receives the completed file immediately.
   Playlists and active/upcoming livestreams are refused. Sign-in, unavailable,
   rate-limit and extraction failures remain visible; they never create an empty
-  Bunny video or claim success. No browser cookies or account credentials are used.
+  Bunny video or claim success. Downloads are anonymous by default. An
+  administrator can opt in to a YouTube-only session export through
+  `YOUTUBE_COOKIES_FILE`; see the VPS session setup below. Browser profiles and
+  account passwords are never read by the application.
 - YouTube temporary media are removed after upload, including when downloading
   or uploading fails. The downloader has a 20-minute timeout, the same 300 MB
   limit, bounded retries and no database/Bunny/Microsoft credentials in its
@@ -133,6 +136,93 @@ worker preserves pending events. Each import retains its
 original source; no playback URL restoration is needed because imports do not
 rewrite component sources. Keep the LMS MP4 files as well: their saved URLs are
 used for learner playback independently of Bunny availability.
+
+## Optional YouTube session on the VPS
+
+Use this when a metadata check on the VPS returns `Sign in to confirm you're not
+a bot`. The public link being playable in a browser does not prove that the VPS
+can download it. Session cookies can help with verification, but acceptance is
+controlled by YouTube and is not guaranteed. Cookies expire and may need manual
+renewal. Using an account with a downloader also carries a restriction risk; use
+a dedicated account, not an important personal or organization account. See the
+[yt-dlp YouTube export instructions](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies)
+and [cookie support](https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp).
+
+The session-file support described here must first be reviewed, merged and
+deployed through the existing process. No server configuration or media upload
+was performed while implementing it.
+
+1. On your own computer, open a private browser window, sign in to the dedicated
+   YouTube account, and complete any verification yourself. In the same tab open
+   `https://www.youtube.com/robots.txt`, export **only youtube.com cookies** in
+   Netscape format with an exporter referenced in the upstream instructions,
+   and close the private window. Name the file `youtube.cookies.txt`. Do not
+   export all browser sites, paste the contents into chat, or put it in Git.
+2. The inspected VPS curriculum service runs as root. For that configuration,
+   create a private directory in the **VPS terminal**:
+
+   ```bash
+   install -d -m 700 /root/.config/lms
+   ```
+
+   In **Windows PowerShell on your computer**, replace `VPS_HOST` with your
+   server address and copy the file (assuming it is in Downloads):
+
+   ```powershell
+   scp "$env:USERPROFILE\Downloads\youtube.cookies.txt" root@VPS_HOST:/root/.config/lms/youtube.cookies.txt
+   ```
+
+   In the **VPS terminal**, restrict the file:
+
+   ```bash
+   chmod 600 /root/.config/lms/youtube.cookies.txt
+   ```
+
+   For a service running under a different account, use a private directory owned
+   and readable by that account. Never use a web-served directory or an application
+   checkout. A relative path, missing/invalid file, unrelated cookie domain,
+   fully expired export or group/world-accessible POSIX file is rejected before
+   the downloader starts. Configuration errors do not silently fall back to an
+   anonymous attempt.
+3. After deployment, run this **single line** in the VPS terminal to check the
+   previously reported public link. Replace the URL when checking another video:
+
+   ```bash
+   YOUTUBE_COOKIES_FILE=/root/.config/lms/youtube.cookies.txt /var/www/LMS_v2/backend/venv/bin/python -m curriculum_api.youtube_download --check "https://www.youtube.com/watch?v=Ey2FlBW7uKI"
+   ```
+
+   This standalone check does not load `.env` or Django, connect to an application
+   database, queue an import, download media, or contact Bunny. It uses the same
+   validated session copy and sanitized subprocess environment as the importer,
+   with a 60-second timeout. It prints only success or a safe diagnostic. Success
+   proves metadata access, not completion of a media download or Bunny transfer.
+   If YouTube still requests verification, the session/server access remains
+   unresolved; do not report the video as stored or keep retrying rapidly.
+4. Once the session is accepted, configure **backend/.env on the VPS** with the
+   path only (not cookie contents):
+
+   ```dotenv
+   YOUTUBE_COOKIES_FILE=/root/.config/lms/youtube.cookies.txt
+   ```
+
+   Restart `lms-curriculum.service` and any separately supervised video worker
+   after the reviewed release is deployed. A failed import is retried by saving
+   that video again. That retry performs a real download/upload; the metadata
+   check above does not. Do not start an unsupervised duplicate worker.
+
+The downloader reads a fresh export on each attempt, creates a private per-job
+copy, and removes that copy with the temporary media on success or failure.
+yt-dlp may update its copy without modifying the original or another job's
+session. Cookie contents and the original file path are not passed in subprocess
+arguments or environment, API responses or error messages. Only the temporary
+copy path is passed to the child. Database, Bunny and Microsoft credentials remain
+excluded. Source URLs, component settings and learner progress are unchanged.
+
+To renew the session, replace the private file using the same path and permissions;
+the next attempt reads the replacement. To return to anonymous downloading,
+remove `YOUTUBE_COOKIES_FILE` and restart the affected services. This adds no
+migration, dependency, PO-token service or proxy. Existing failed imports are not
+automatically replayed by the configuration change.
 
 ## Scoped existing-module import
 
@@ -513,3 +603,42 @@ Validation uses synthetic data and mocked requests:
   database, environment, service or remote-media operation was performed.
 
 These changes remain local. No commit, push, PR update or deployment was performed.
+
+## Optional YouTube session follow-up on 2026-11-04
+
+The user's VPS metadata-only probe reached YouTube but returned `Sign in to
+confirm you're not a bot`. Node reported version 22.23.2. This confirms a
+verification challenge for that request; it does not prove a permanent IP block
+or that a PO Token is missing.
+
+`youtube_download.py` now supports the opt-in private file `YOUTUBE_COOKIES_FILE`.
+It validates a bounded Netscape export containing only YouTube domains, checks
+POSIX file permissions, and gives each child a separate temporary copy. The
+original stays untouched when yt-dlp updates its jar. Existing temporary cleanup,
+subprocess isolation, upload limits and failure handling remain active. Bot
+verification, sign-in and rate-limiting failures now have distinct safe messages.
+The standalone `--check` command uses the same session/subprocess boundary to
+inspect metadata without downloading media or touching LMS/Bunny state.
+
+Final verification from `backend`:
+
+- `.\.venv\Scripts\python.exe -m unittest curriculum_api.test_youtube_download -v`:
+  PASS, 20 tests. Synthetic cookies, real local cookie-jar parsing, mocked
+  downloader/subprocess calls and blocked external socket connections. Includes
+  independent job copies, validation/permissions, no secrets in child environment
+  or public errors, cleanup, anonymous compatibility, failed authenticated
+  attempts and metadata-only success/failure/timeout behavior.
+- `.\.venv\Scripts\python.exe -m curriculum_api.run_video_import_tests`:
+  PASS, 123 tests on fresh in-memory SQLite with external network blocked. The
+  earlier run before adding the standalone check passed 118 tests.
+- `git diff --check`: PASS.
+- Frontend, PostgreSQL and Teams suites: NOT REQUIRED for this follow-up. No
+  frontend, schema, listed Teams file or API/function consumed by a listed Teams
+  file was changed. Earlier release-wide limitations remain recorded above.
+- Live YouTube/Bunny/Teams and production UI: NOT RUN by the agent. A real
+  accepted session export and a VPS check remain necessary; automated tests
+  cannot establish YouTube acceptance or successful media transfer.
+
+Only the downloader, its regression tests and this document changed in this
+follow-up. No environment files, credentials, dependencies, databases or services
+were changed. No commit, push, PR update, deployment or live upload was performed.

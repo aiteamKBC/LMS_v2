@@ -75,12 +75,14 @@ describe('bound migrated review answers', () => {
     vi.mocked(api.fetchReviewInstanceForm).mockResolvedValue(saved);
     mount();
     const inline = await screen.findByRole('textbox', { name: 'Discussion record' });
-    expect(inline).toHaveAttribute('maxlength', '4000');
+    if (reviewTypeCode === 'aptem_mcm') expect(inline).not.toHaveAttribute('maxlength');
+    else expect(inline).toHaveAttribute('maxlength', '4000');
     fireEvent.change(inline, { target: { value: 'Existing summary\nCoach addition' } });
     fireEvent.click(screen.getByRole('button', { name: 'Expand editor' }));
     const expanded = screen.getByRole('textbox', { name: 'Expanded Meeting Summary' });
     expect(expanded).toHaveFocus();
-    expect(expanded).toHaveAttribute('maxlength', '4000');
+    if (reviewTypeCode === 'aptem_mcm') expect(expanded).not.toHaveAttribute('maxlength');
+    else expect(expanded).toHaveAttribute('maxlength', '4000');
     expect(expanded).toHaveValue('Existing summary\nCoach addition');
     fireEvent.change(expanded, { target: { value: 'Existing summary\nCoach addition\nFinal action' } });
     fireEvent.keyDown(expanded, { key: 'Escape' });
@@ -92,6 +94,33 @@ describe('bound migrated review answers', () => {
       { recap: 'Existing summary\nCoach addition\nFinal action', other: 'Existing other answer' },
       { answerVersion: 'v1', editedFields: ['recap'] }));
     expect(await screen.findByText('Draft saved.')).toBeVisible();
+  });
+
+  it('saves a full MCM summary longer than 4,000 characters from either editor', async () => {
+    const user = userEvent.setup();
+    const summary = 'Meeting discussion and next steps.\n'.repeat(200);
+    const saved = definition();
+    saved.sections[0].fields[0].answer = summary + 'Final action.';
+    vi.mocked(api.saveReviewInstanceAnswers).mockResolvedValue(saved);
+    mount();
+    const inline = await screen.findByRole('textbox', { name: 'Discussion record' });
+    await user.click(inline);
+    await user.paste(summary);
+    expect(inline).toHaveValue(summary);
+    expect(screen.getByDisplayValue('Existing other answer')).toHaveAttribute('maxlength', '4000');
+    fireEvent.click(screen.getByRole('button', { name: 'Expand editor' }));
+    const expanded = screen.getByRole('textbox', { name: 'Expanded Meeting Summary' });
+    expect(expanded).toHaveValue(summary);
+    await user.clear(expanded);
+    await user.paste(summary + 'Final action.');
+    fireEvent.keyDown(expanded, { key: 'Escape' });
+    expect(screen.getByRole('textbox', { name: 'Discussion record' })).toHaveValue(summary + 'Final action.');
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(api.saveReviewInstanceAnswers).toHaveBeenCalledWith(id,
+      { recap: summary + 'Final action.', other: 'Existing other answer' },
+      { answerVersion: 'v1', editedFields: ['recap'] }));
+    expect(await screen.findByText('Draft saved.')).toBeVisible();
+    expect(screen.getByRole('textbox', { name: 'Discussion record' })).toHaveValue(summary + 'Final action.');
   });
 
   it.each(['awaiting-signature', 'completed'])('keeps expanded Aptem summaries read-only in %s', async status => {

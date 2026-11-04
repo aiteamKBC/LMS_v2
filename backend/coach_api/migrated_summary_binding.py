@@ -3,7 +3,7 @@ from copy import deepcopy
 
 from django.utils import timezone
 
-from .migrated_reviews import TEXT_ANSWER_LIMIT, meeting_summary_field
+from .migrated_reviews import meeting_summary_field, text_answer_limit
 
 
 class AnswerConflict(ValueError):
@@ -63,13 +63,14 @@ def populate_answer(overlay, state, summary_text):
     if result.get("status") in {"invalid-binding", "no-binding"}:
         return result
     key = result["fieldKey"]
+    limit = text_answer_limit(overlay.template_snapshot, meeting_summary_field(overlay.template_snapshot))
     if overlay.status not in {"scheduled", "in-progress"}:
         result["status"] = "read-only"
     elif result["state"] != "NEVER_POPULATED" or key in (overlay.answers or {}):
         result["status"] = "answer-preserved"
     elif not summary_text:
         result["status"] = "summary-unavailable"
-    elif len(summary_text) > TEXT_ANSWER_LIMIT:
+    elif limit is not None and len(summary_text) > limit:
         result["status"] = "summary-too-long"
     else:
         overlay.answers = {**(overlay.answers or {}), key: summary_text}

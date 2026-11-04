@@ -27,7 +27,7 @@ it.each([
     disabled: false, payload: vi.fn(), checks: [], checking: false, onCheck: vi.fn(), onSave: vi.fn(),
   };
   render(<MonthlyAssignmentSteps {...props} />);
-  expect(fetchLearnerDetail).toHaveBeenCalledWith(kind, '1');
+  expect(fetchLearnerDetail).toHaveBeenCalledWith(kind, '1', { revalidate: true });
   expect(fetch).not.toHaveBeenCalled();
   const at = '2026-09-12T10:00:00Z';
   await act(async () => resolveDetail({

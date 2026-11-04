@@ -94,7 +94,8 @@ def merge_snapshot(previous, answers, template, family):
             continue
         standalone = {**field, "ifTrue": [], "ifFalse": []}
         try:
-            validate_answers({"sections": [{"key": "validation", "fields": [standalone]}]}, {key: answers[key]})
+            validate_answers({"templateSource": latest['templateSource'],
+                              "sections": [{"key": "validation", "fields": [standalone]}]}, {key: answers[key]})
         except ValueError:
             conflicts.append(key)
     if conflicts:
