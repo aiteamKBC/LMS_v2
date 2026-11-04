@@ -173,7 +173,7 @@ class CompletedDeliveryMatchingTests(SimpleTestCase):
         )
         other_module = SimpleNamespace(
             module_catalogue_id='M2', title='Business copy', group_id='G2',
-            programme_id='P1', cohort_id='C1', group_name='Group 2', cohort_name='Cohort',
+            programme_id='P1', cohort_id='C1', _group_display_name='Group 2', _cohort_display_name='Cohort',
             is_programme_deleted=False,
         )
         first = SimpleNamespace(id='S1', module_catalogue_id='M1', module_title='Business', status='active')
@@ -186,6 +186,7 @@ class CompletedDeliveryMatchingTests(SimpleTestCase):
         candidates = MagicMock()
         candidates.filter.return_value.order_by.return_value = [target, wrong_number, cancelled]
         modules = MagicMock()
+        modules.only.return_value.annotate.return_value = modules
         modules.filter.return_value.order_by.return_value = [original_module]
         modules.filter.return_value.exclude.return_value = [original_module, other_module]
         sessions = MagicMock()
@@ -200,6 +201,6 @@ class CompletedDeliveryMatchingTests(SimpleTestCase):
         self.assertEqual(result['O1'][0]['moduleCatalogueId'], 'M2')
         candidates.filter.assert_called_once_with(scheduled_end__lte=now)
         self.assertIn(
-            {'programme_id': 'P1', 'cohort_id': 'C1', 'deleted_at__isnull': True, 'is_programme_deleted': False},
+            {'programme_id': 'P1', 'cohort_id': 'C1'},
             [call.kwargs for call in modules.filter.call_args_list],
         )

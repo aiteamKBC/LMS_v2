@@ -37,12 +37,13 @@ from .aptem_status import programme_status
 from .constants import DEFAULT_PROGRAMME_STATUS
 from .learner_progression import access_gate, advance_learner
 from .learning_plan import effective_training_plan
-from .programme_access import learning_access
+from .programme_access import cohort_programme_filter, learning_access
 from .mappers import _s, get_training_plan, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
 from .retained_quiz_progress import retain_quiz_progress
 from .student_activity_access import student_activity_available
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+from .module_placement_sql import current_module_sql
 
 logger = logging.getLogger(__name__)
 
@@ -668,10 +669,13 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
             elif module_order:
                 cur.execute(
                     """
-                    SELECT m.module_catalogue_id, m.title, COALESCE(m.programme_id, ''), COALESCE(m.programme_name, '')
+                    SELECT m.module_catalogue_id, m.title, COALESCE(m.programme_id, ''),
+                           COALESCE((SELECT CASE WHEN count(*) = 1 THEN min(p.name) END
+                                       FROM curriculum.programmes p
+                                      WHERE p.programme_id = m.programme_id
+                                        AND btrim(coalesce(m.programme_id, '')) <> ''), '')
                     FROM curriculum.modules m
                     WHERE m.module_catalogue_id = ANY(%s)
-                      AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')
                     """,
                     [module_order],
                 )
@@ -1440,7 +1444,7 @@ def _component_files(settings, resource_url, file_name):
     return [{"fileName": file_name, "url": resource_url, "size": 0, "contentType": None}] if resource_url else []
 
 
-def _cohort_schedule(cohort_name, programme_name, cohort_id=""):
+def _cohort_schedule(cohort_name, programme_name, cohort_id="", programme_id=""):
     """The dates the learner's cohort runs to, or an empty dict.
 
     Gateway is not something a learner reaches by finishing their modules early:
@@ -1450,9 +1454,14 @@ def _cohort_schedule(cohort_name, programme_name, cohort_id=""):
     than declaring someone Gateway-ready a year ahead of their cohort.
 
     The cohort is found by ``cohort_id`` when the learner's placement holds one,
-    so renaming the cohort does not take its dates off the learner page.
+    so renaming the cohort does not take its dates off the learner page. Without
+    one it is found by name within the learner's programme (by programme id, or
+    the programme's label resolved through curriculum.programmes); a name that
+    matches more than one cohort shows no dates rather than guessing. The
+    canonical cohorts schema has no deletion marker, so every row is live.
     """
     cohort_name, cohort_id = _s(cohort_name), _s(cohort_id)
+    programme_name, programme_id = _s(programme_name), _s(programme_id)
     if not cohort_name and not cohort_id:
         return {}
     columns = """
@@ -1463,19 +1472,16 @@ def _cohort_schedule(cohort_name, programme_name, cohort_id=""):
     try:
         with connections["default"].cursor() as cur:
             if cohort_id:
-                cur.execute(columns + " WHERE cohort_id = %s AND deleted_at IS NULL", [cohort_id])
+                cur.execute(columns + " WHERE cohort_id = %s", [cohort_id])
+                row = cur.fetchone()
             else:
-                cur.execute(
-                    columns + """
-                    WHERE cohort_name = %s
-                      AND (%s = '' OR programme_name = %s)
-                      AND deleted_at IS NULL
-                    ORDER BY updated_at DESC NULLS LAST
-                    LIMIT 1
-                    """,
-                    [cohort_name, _s(programme_name), _s(programme_name)],
-                )
-            row = cur.fetchone()
+                where, params = " WHERE cohort_name = %s", [cohort_name]
+                if programme_id or programme_name:
+                    in_programme, programme_params = cohort_programme_filter(programme_id, programme_name)
+                    where, params = f"{where} AND {in_programme}", [*params, *programme_params]
+                cur.execute(columns + where + " ORDER BY cohort_id LIMIT 2", params)
+                rows = cur.fetchall()
+                row = rows[0] if len(rows) == 1 else None
     except DatabaseError as exc:
         logger.warning("Could not read cohort schedule for %r: %s", cohort_name, exc)
         return {}
@@ -1505,11 +1511,12 @@ def _apply_cohort_schedule(detail, source):
     from .placement_links import placement_ids
 
     try:
-        cohort_id = placement_ids(source)["cohort_id"]
+        ids = placement_ids(source)
     except DatabaseError as exc:
         logger.warning("Could not read the placement ids for the cohort schedule: %s", exc)
-        cohort_id = ""
-    detail.update(_cohort_schedule(getattr(source, "cohort", ""), getattr(source, "programme", ""), cohort_id))
+        ids = {"cohort_id": "", "programme_id": ""}
+    detail.update(_cohort_schedule(getattr(source, "cohort", ""), getattr(source, "programme", ""),
+                                   ids.get("cohort_id", ""), programme_id=ids.get("programme_id", "")))
 
 
 from .point_structure import POINT_SETTINGS_SQL, point_projection
@@ -1566,13 +1573,13 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 master_weeks = [row for row in resolved_metadata['weeks'] if row[1] in master_module_title]
             else:
                 cur.execute(
+                    # Only the learner's own assigned module ids are asked for.
+                    # The canonical curriculum.modules table has no deletion
+                    # marker and status is not a visibility rule, so every
+                    # assigned module row resolves; a module with no row stays
+                    # out of the live tree, as before.
                     "SELECT m.module_catalogue_id, m.title FROM curriculum.modules m "
-                    "WHERE m.module_catalogue_id = ANY(%s) "
-                    # An assignment is a learner-owned snapshot. Keep content that
-                    # was cascade-hidden with its parent programme available to an
-                    # already-assigned learner; a row deleted on its own remains
-                    # excluded. ``deleted_via_parent`` distinguishes the two cases.
-                    "AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')",
+                    "WHERE m.module_catalogue_id = ANY(%s)",
                     [module_ids],
                 )
                 master_module_title = {mid: title for mid, title in cur.fetchall()}
@@ -2450,7 +2457,7 @@ def _authored_setting(source, component_id, setting_key, response_key):
             JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=m.module_catalogue_id
             WHERE c.id=%s AND c.module_catalogue_id=ANY(%s)
               AND ''' + visible_child_sql('c') + '''
-              AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')
+              AND ''' + current_module_sql('m') + '''
               AND ''' + visible_week_sql('w'), [component_id, module_ids])
         row = cursor.fetchone()
     return {"componentId": row[0], response_key: _s(row[1]) or None} if row else None

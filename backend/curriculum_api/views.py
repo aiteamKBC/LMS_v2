@@ -15809,21 +15809,90 @@ def authoring_fetch_all(table, where_sql='', params=None, order_sql='', *, ensur
         return rows_as_dicts(cursor)
 
 
+# Tables whose copied programme_name column the canonical schema removed; the
+# name now comes from programme_id -> curriculum.programmes.name.
+PROGRAMME_NAME_DERIVED_TABLES = frozenset({'groups', 'cohorts', 'modules'})
+
+
+def derived_programme_name_sql(table):
+    """``<expr> AS programme_name`` when ``table`` no longer stores the name, else ''.
+
+    Keeps every ``row['programme_name']`` reader and every bare
+    ``order by programme_name`` working: Postgres resolves a bare ORDER BY name
+    to this output column. Correlated on the table's own reference, so callers'
+    where/order clauses are unchanged. A blank, unknown or duplicated programme
+    id gives '' (the old column's default) rather than an arbitrary name. A
+    database that still has the physical column keeps reading it.
+    """
+    if table not in PROGRAMME_NAME_DERIVED_TABLES or has_column(table, 'programme_name')             or not has_column(table, 'programme_id'):
+        return ''
+    row = authoring_table_name(table)
+    return (f"COALESCE((SELECT CASE WHEN count(*) = 1 THEN min(programme_name_source.name) END "
+            f"FROM curriculum.programmes programme_name_source "
+            f"WHERE programme_name_source.programme_id = {row}.programme_id "
+            f"AND btrim(coalesce({row}.programme_id, '')) <> ''), '') AS programme_name")
+
+
+# The other copied placement names the canonical schema removed, beside
+# programme_name above: curriculum.groups lost cohort_name, and
+# curriculum.modules lost cohort_name and group_name. {table: ((output name,
+# source table, id column, source name column), ...)}.
+PLACEMENT_NAME_DERIVED_COLUMNS = {
+    'groups': (('cohort_name', 'cohorts', 'cohort_id', 'cohort_name'),),
+    'modules': (('cohort_name', 'cohorts', 'cohort_id', 'cohort_name'),
+                ('group_name', 'groups', 'group_id', 'group_name')),
+}
+
+
+def derived_placement_names_sql(table):
+    """``{output: '<expr> AS output'}`` for every placement name ``table`` no longer stores.
+
+    ``programme_name`` comes from derived_programme_name_sql(); cohort and
+    group names are read the same way through their ids. Each is a scalar
+    subquery correlated on the table's own reference, so no outer row is ever
+    duplicated, and a blank, unknown or duplicated id gives '' (the removed
+    column's default). A schema that still has the physical column (the SQLite
+    test runner) reads it unchanged. Writers are unaffected: authoring_upsert()
+    and update_authoring_rows() write only physical columns, so a derived key
+    in a payload is dropped.
+    """
+    derived = {}
+    programme = derived_programme_name_sql(table)
+    if programme:
+        derived['programme_name'] = programme
+    row = authoring_table_name(table)
+    for output, source, key, source_column in PLACEMENT_NAME_DERIVED_COLUMNS.get(table, ()):
+        if has_column(table, output) or not has_column(table, key):
+            continue
+        derived[output] = (
+            f"COALESCE((SELECT CASE WHEN count(*) = 1 THEN min(placement_source.{source_column}) END "
+            f"FROM curriculum.{source} placement_source "
+            f"WHERE placement_source.{key} = {row}.{key} "
+            f"AND btrim(coalesce({row}.{key}, '')) <> ''), '') AS {output}")
+    return derived
+
+
 def authoring_select_sql(table, where_sql='', order_sql='', *, ensure_tables=True, columns=None, exclude_columns=None):
     """The statement authoring_fetch_all() runs; shared so a prefetch sends the same SQL."""
     if ensure_tables:
         ensure_module_authoring_tables()
+    derived = derived_placement_names_sql(table)
     if columns:
         wanted = [column for column in columns if has_column(table, column)]
         select_list = ', '.join(quote_ident(column) for column in wanted) if wanted else '*'
+        extra = [sql for output, sql in derived.items() if output in columns]
     elif exclude_columns:
         # Everything but the named columns. Safer than an allow-list for a
         # caller that reads most of the row: a column added later is included
         # automatically instead of silently arriving as None.
         wanted = sorted(column_names(table) - {column for column in exclude_columns})
         select_list = ', '.join(quote_ident(column) for column in wanted) if wanted else '*'
+        extra = [sql for output, sql in derived.items() if output not in exclude_columns]
     else:
         select_list = '*'
+        extra = list(derived.values())
+    if extra:
+        select_list = ', '.join([select_list, *extra])
     query = f'select {select_list} from {authoring_table_name(table)}'
     if where_sql:
         query += f' where {where_sql}'

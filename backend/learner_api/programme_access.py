@@ -25,43 +25,65 @@ def _month_cohort_key(value):
     return None
 
 
+def cohort_programme_filter(programme_id, programme):
+    """``(sql, params)`` limiting curriculum.cohorts to one learner's programme.
+
+    ``programme_id`` is the canonical programme reference. A record carrying
+    only the programme's label is resolved to its id through
+    curriculum.programmes; the cohorts table no longer holds programme names.
+    """
+    if programme_id:
+        return 'programme_id = %s', [programme_id]
+    return 'programme_id IN (SELECT programme_id FROM curriculum.programmes WHERE name = %s)', [programme]
+
+
 def learning_access(source):
+    """Whether the learner's cohort has started, in UK business time.
+
+    The canonical curriculum.cohorts schema has no deletion marker, so every
+    cohort row is live; ``status`` (planned/active/inactive) is not an access
+    rule. A cohort is found by its id; without one, by programme id and cohort
+    name, and a name that matches more than one cohort is never guessed.
+    Database errors propagate, so a failed check can never open learning.
+    """
     programme = str(getattr(source, 'programme', '') or '').strip()
     cohort = str(getattr(source, 'cohort', '') or '').strip()
     # The enrolment and active profile have different primary keys; the profile
     # is reached through enrolment_id, never by names. A renamed cohort keeps its
     # id, so the enrolment's old label must not decide which cohort this is.
-    cohort_id = placement_ids(source)['cohort_id']
+    ids = placement_ids(source)
+    cohort_id = ids.get('cohort_id', '')
     if cohort_id or (programme and cohort):
         # A copied individual date must not open teaching before the cohort.
         with connections['default'].cursor() as cursor:
             if cohort_id:
-                cursor.execute(
-                    '''SELECT start_date FROM curriculum.cohorts
-                       WHERE cohort_id = %s AND deleted_at IS NULL''', [cohort_id],
-                )
+                cursor.execute('SELECT start_date FROM curriculum.cohorts WHERE cohort_id = %s', [cohort_id])
+                row = cursor.fetchone()
             else:
+                in_programme, params = cohort_programme_filter(ids.get('programme_id', ''), programme)
                 cursor.execute(
-                    '''SELECT start_date FROM curriculum.cohorts
-                       WHERE programme_name = %s AND cohort_name = %s AND deleted_at IS NULL
-                       ORDER BY updated_at DESC NULLS LAST LIMIT 1''',
-                    [programme, cohort],
+                    f'''SELECT start_date FROM curriculum.cohorts
+                       WHERE {in_programme} AND cohort_name = %s
+                       ORDER BY cohort_id LIMIT 2''',
+                    [*params, cohort],
                 )
-            row = cursor.fetchone()
-            # Imported enrolments use full month names while authoring may use
-            # abbreviations. Resolve only a unique active cohort in this exact
-            # programme; a missing date or ambiguous alias must remain blocked.
-            key = _month_cohort_key(cohort)
-            if not cohort_id and row is None and key is not None:
-                cursor.execute(
-                    '''SELECT cohort_name, start_date FROM curriculum.cohorts
-                       WHERE programme_name = %s AND deleted_at IS NULL''',
-                    [programme],
-                )
-                matches = [candidate for candidate in cursor.fetchall()
-                           if _month_cohort_key(candidate[0]) == key]
-                if len(matches) == 1:
-                    row = (matches[0][1],)
+                rows = cursor.fetchall()
+                row = rows[0] if len(rows) == 1 else None
+                # Imported enrolments use full month names while authoring may use
+                # abbreviations. Resolve only a unique cohort in this exact
+                # programme; a missing date or ambiguous alias must remain blocked.
+                # Two cohorts with the learner's exact name are ambiguous too:
+                # blocked, not resolved through an alias.
+                key = _month_cohort_key(cohort)
+                if not rows and key is not None:
+                    cursor.execute(
+                        f'SELECT cohort_name, start_date FROM curriculum.cohorts WHERE {in_programme}',
+                        params,
+                    )
+                    matches = [candidate for candidate in cursor.fetchall()
+                               if _month_cohort_key(candidate[0]) == key]
+                    if len(matches) == 1:
+                        row = (matches[0][1],)
         start = _to_date(row[0]) if row else None
     else:
         start = _to_date(getattr(source, 'start_date', None))

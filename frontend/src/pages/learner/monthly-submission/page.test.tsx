@@ -7,14 +7,15 @@ import type { ExtraActivity } from '@/api/extraActivities';
 import type { SubmissionAttempt } from '@/api/assignmentAttempts';
 import type { CoverMetadata } from '../my-learning/SubjectWorkspace';
 import { clearAllCachedResources } from '@/api/cachedRequest';
-import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
+import { useMonthlySubmission } from './useMonthlySubmission';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import MonthlySubmissionPage from './page';
 import { assignmentToday, defaultAssignmentMonth, groupMonthlyAssignments, isOverdueAssignment, trainingPlanAssignments } from './model';
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock('@/hooks/useMyLearner', () => ({ useResolvedLearner: vi.fn() }));
-vi.mock('@/hooks/useLearnerDetailParam', () => ({ useLearnerDetailParam: vi.fn() }));
+// The list read is driven per test; the selected-assignment read runs for real against fetch.
+vi.mock('./useMonthlySubmission', async importOriginal => ({ ...await importOriginal<typeof import('./useMonthlySubmission')>(), useMonthlySubmission: vi.fn() }));
 vi.mock('../video-watch/page', () => ({ InlineAttachmentPreview: ({ url }: { url: string }) => <div data-testid="attachment-preview" data-url={url}>Document preview</div> }));
 
 const component = (id: string, extra: Partial<LearnerComponentEntry> = {}): LearnerComponentEntry => ({
@@ -35,11 +36,26 @@ const contract = { months: { '2026-09': { label: 'Month 4 — Martech', topics: 
 
 function mockRequests(options: { failed?: 'dates' | 'statuses' | 'contract' | 'history' | 'extras'; statuses?: Record<string, string>; counts?: Record<string, number>; attempts?: Record<string, SubmissionAttempt[]>; extras?: ExtraActivity[]; dates?: CoverMetadata; contract?: unknown } = {}) {
   const fetcher = vi.fn(async (url: string) => {
+    const detail = url.match(/\/monthly-submission\/[^/]+\/[^/]+\/assignments\/([^/]+)\//);
+    if (detail) {
+      // Serve the brief of the row the page is showing, as the detail endpoint does.
+      const id = decodeURIComponent(detail[1]);
+      const shown = vi.mocked(useMonthlySubmission).mock.results.at(-1)?.value?.real;
+      const row = shown?.components.find(item => item.componentId === id);
+      const fields = ['assignmentTopics', 'assignmentBrief', 'assignmentBriefHtml', 'description', 'resourceUrl',
+        'fileName', 'downloadAllowed', 'files', 'ksbMappings'] as const;
+      return { ok: Boolean(row), json: async () => row
+        ? { componentId: id, ...Object.fromEntries(fields.filter(key => row[key] != null).map(key => [key, row[key]])) }
+        : { error: "Activity not found in this learner's plan." } };
+    }
     if (url.includes('/reflection/extra-activities/')) return { ok: options.failed !== 'extras', json: async () => ({ activities: options.extras || [] }) };
     const activityId = new URL(url, 'http://localhost').searchParams.get('activityId');
     if (url.includes('/reflection/submissions/') && activityId) return { ok: options.failed !== 'history', json: async () => ({ submission: { submissionAttempts: options.attempts?.[activityId] || [] } }) };
-    const source = url.includes('/subject-covers/') ? 'dates' : url.includes('/training-plan-dashboard/') ? 'contract' : 'statuses';
-    const data = source === 'dates' ? options.dates || metadata : source === 'contract' ? options.contract || contract : { statuses: [
+    // The learner page reads its scoped dates endpoint; subject-covers stays for other screens.
+    const source = /\/monthly-submission\/[^/]+\/[^/]+\/dates\//.test(url) ? 'dates' : url.includes('/subject-covers/') ? 'covers'
+      : url.includes('/training-plan-dashboard/') ? 'contract' : 'statuses';
+    const data = source === 'dates' ? { activity_dates: (options.dates || metadata).activity_dates }
+      : source === 'covers' ? options.dates || metadata : source === 'contract' ? options.contract || contract : { statuses: [
       { activityType: 'assignment', activityId: 'A1', status: options.statuses?.A1 || 'draft', submissionCount: options.counts?.A1 },
       { activityType: 'assignment', activityId: 'A2', status: options.statuses?.A2 || 'submitted_for_tutor_review', submissionCount: options.counts?.A2 },
       ...Object.entries(options.statuses || {}).filter(([id]) => id !== 'A1' && id !== 'A2')
@@ -65,7 +81,7 @@ function SelectionAddress() {
 beforeEach(() => {
   sessionStorage.clear();
   vi.mocked(useResolvedLearner).mockReturnValue({ kind: 'commercial', id: '125' });
-  vi.mocked(useLearnerDetailParam).mockReturnValue({ real, loading: false, loadError: null, isRealMode: true, isFetching: false, refresh: vi.fn() });
+  vi.mocked(useMonthlySubmission).mockReturnValue({ real, loading: false, loadError: null, includesDetails: false, refresh: vi.fn() });
   mockRequests();
 });
 afterEach(() => { cleanup(); clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
@@ -102,7 +118,7 @@ it.each(['commercial', 'apprenticeship'] as const)('lists uploaded extra activit
 });
 
 it('keeps the Extra activities tab selected across months with only pending uploads', async () => {
-  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: { ...real, components: [] }, loading: false, loadError: null, isRealMode: true, isFetching: false, refresh: vi.fn() });
+  vi.mocked(useMonthlySubmission).mockReturnValue({ real: { ...real, components: [] }, loading: false, loadError: null, includesDetails: false, refresh: vi.fn() });
   mockRequests({ extras: [uploadedExtra, { ...uploadedExtra, activityId: 'extra:later', title: 'Later workshop', month: '2026-11' }] });
   mount('?month=2026-09&view=extras&assignment=extra%3Apending');
   expect(await screen.findByRole('region', { name: 'Extra activity details' })).toBeVisible();
@@ -136,13 +152,13 @@ it('keeps a failed Extra activities read visible and retries it without claiming
 function mockOverdueAssignments() {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-09-27T12:00:00Z'));
-  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: { ...real, components: [
+  vi.mocked(useMonthlySubmission).mockReturnValue({ real: { ...real, components: [
     ...real.components,
     component('A5', { component: 'Older assignment', week: 'Earlier work', assignmentBrief: 'Work from August.' }),
     component('A6', { component: 'Accepted assignment' }),
     component('A7', { component: 'No due date' }),
     component('A8', { component: 'Due today' }),
-  ] }, loading: false, loadError: null, isRealMode: true, isFetching: false, refresh: vi.fn() });
+  ] }, loading: false, loadError: null, includesDetails: false, refresh: vi.fn() });
   mockRequests({ statuses: { A5: 'rejected', A6: 'accepted', A7: 'draft', A8: 'todo' }, dates: {
     covers: {}, activity_dates: {
       ...metadata.activity_dates,
@@ -268,8 +284,8 @@ it('keeps undated work available through the month chooser', async () => {
   // This scenario's default month is September; it must not depend on today's date.
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-09-15T12:00:00Z'));
-  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: { ...real, components: [component('A4', { component: 'Undated assignment' })] },
-    loading: false, loadError: null, isRealMode: true, isFetching: false, refresh: vi.fn() });
+  vi.mocked(useMonthlySubmission).mockReturnValue({ real: { ...real, components: [component('A4', { component: 'Undated assignment' })] },
+    loading: false, loadError: null, includesDetails: false, refresh: vi.fn() });
   mount('');
   const monthSelect = await screen.findByRole('combobox', { name: 'Choose month' });
   expect(monthSelect).toHaveValue('2026-09');
@@ -322,7 +338,8 @@ it('groups distinct assignments by plan month, deduplicates IDs and switches the
   expect(monthSelect).toHaveValue('2026-09');
   expect(within(monthSelect).getAllByRole('option')[0]).toHaveTextContent('September 2026 — Month 4 — Martech');
   expect(screen.getByRole('region', { name: 'Selected submission month' })).toHaveTextContent('2 assignments · 1 submitted');
-  expect(screen.getByText('Explain how data informs your marketing decisions.')).toBeVisible();
+  // The brief is read for the selected assignment after the list renders.
+  expect(await screen.findByText('Explain how data informs your marketing decisions.')).toBeVisible();
   expect(screen.getByRole('link', { name: 'Continue assignment' })).toHaveAttribute('href', '/learner/monthly-submission/commercial/125/A1?month=2026-09');
   const info = screen.getByRole('complementary', { name: 'Assignment information' });
   expect(within(info).getByText('7 hours')).toBeVisible();
@@ -367,7 +384,7 @@ it('makes file-only briefs available to view, download and start, resetting prev
     component('A1', { assignmentBrief: null, resourceUrl: firstUrl, downloadAllowed: false }),
     component('A2', { week: 'Digital analytics', resourceUrl: secondUrl, fileName: 'Analytics worksheet.pdf' }),
   ] };
-  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: attachedReal, loading: false, loadError: null, isRealMode: true, isFetching: false, refresh: vi.fn() });
+  vi.mocked(useMonthlySubmission).mockReturnValue({ real: attachedReal, loading: false, loadError: null, includesDetails: false, refresh: vi.fn() });
   mockRequests({ statuses: { A1: 'todo' } });
   mount();
   expect(await screen.findByText('Read the attached file for the assignment instructions, then start your submission.')).toBeVisible();
@@ -384,7 +401,7 @@ it('makes file-only briefs available to view, download and start, resetting prev
   expect(screen.queryByTestId('attachment-preview')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'View file' }));
   fireEvent.click(screen.getByRole('button', { name: /Digital analytics/ }));
-  expect(screen.getByText('Explain how data informs your marketing decisions.')).toBeVisible();
+  expect(await screen.findByText('Explain how data informs your marketing decisions.')).toBeVisible();
   expect(screen.getByText('Analytics worksheet.pdf')).toBeVisible();
   expect(screen.queryByTestId('attachment-preview')).toBeNull();
   expect(screen.getByRole('button', { name: 'View file' })).toHaveAttribute('aria-expanded', 'false');
@@ -412,7 +429,7 @@ it('keeps unknown saved work openable if statuses fail, including a removed brie
 it('renders and sanitises authored HTML without losing the question or KSBs', async () => {
   const htmlReal = { ...real, components: [component('A1', { assignmentBriefHtml: '<p onclick="alert(1)">Describe <strong>your evidence</strong>.</p><script>alert(1)</script>',
     ksbMappings: [{ code: 'K1', description: 'Data analysis', classification: 'main', weight: 1 }] })] };
-  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: htmlReal, loading: false, loadError: null, isRealMode: true, isFetching: false, refresh: vi.fn() });
+  vi.mocked(useMonthlySubmission).mockReturnValue({ real: htmlReal, loading: false, loadError: null, includesDetails: false, refresh: vi.fn() });
   const { container } = mount();
   expect(await screen.findByText('your evidence')).toHaveProperty('tagName', 'STRONG');
   expect(container.querySelector('[onclick],script')).toBeNull();
@@ -449,7 +466,7 @@ it('uses the authored end-of-week due date and the UK calendar day for overdue w
 it('shows the actual marking result and reviewer directly below the question', async () => {
   const markedReal = { ...real, componentMarkingStatus: { A1: { status: 'accepted', feedback: 'Clear analysis with relevant workplace evidence.',
     reviewedBy: 'Sam Taylor', reviewedAt: '2026-09-13T12:00:00Z' } } };
-  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: markedReal, loading: false, loadError: null, isRealMode: true, isFetching: false, refresh: vi.fn() });
+  vi.mocked(useMonthlySubmission).mockReturnValue({ real: markedReal, loading: false, loadError: null, includesDetails: false, refresh: vi.fn() });
   mockRequests({ statuses: { A1: 'accepted' } });
   mount('?month=2026-09&assignment=A1');
   const result = await screen.findByRole('region', { name: 'Assignment marking result' });
@@ -457,7 +474,7 @@ it('shows the actual marking result and reviewer directly below the question', a
   expect(within(result).getByText('Clear analysis with relevant workplace evidence.')).toBeVisible();
   expect(within(result).getByText('Reviewed by Sam Taylor')).toBeVisible();
   expect(within(result).getByText('13 September 2026')).toBeVisible();
-  expect(screen.getByText('Explain how data informs your marketing decisions.').nextElementSibling).toBe(result);
+  expect((await screen.findByText('Explain how data informs your marketing decisions.')).nextElementSibling).toBe(result);
   expect(within(result).queryByRole('button', { name: 'View full feedback' })).toBeNull();
 });
 
@@ -467,7 +484,7 @@ it('expands long feedback, collapses it and resets the expanded state on assignm
     A1: { status: 'referred', feedback: 'Add measurable outcomes.\nProvide supporting evidence.\nExplain the benefit to your employer.', reviewedBy: 'Sam Taylor', reviewedAt: null },
     A2: { status: 'accepted', feedback: 'Good evaluation.\nStrong evidence.\nClear application to your role.', reviewedBy: 'Jo Smith', reviewedAt: null },
   } };
-  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: markedReal, loading: false, loadError: null, isRealMode: true, isFetching: false, refresh: vi.fn() });
+  vi.mocked(useMonthlySubmission).mockReturnValue({ real: markedReal, loading: false, loadError: null, includesDetails: false, refresh: vi.fn() });
   mockRequests({ statuses: { A1: 'referred', A2: 'accepted' } });
   mount();
   const expand = await screen.findByRole('button', { name: 'View full feedback' });
@@ -501,7 +518,7 @@ it('distinguishes an unmarked draft from an assignment awaiting review', async (
 it('places the selected brief before the month assignment choices', async () => {
   mount();
   const choices = await screen.findByRole('group', { name: 'Filter submissions' });
-  const brief = screen.getByText('Explain how data informs your marketing decisions.');
+  const brief = await screen.findByText('Explain how data informs your marketing decisions.');
   expect(brief.compareDocumentPosition(choices) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(screen.queryByText('Assignments this month')).not.toBeInTheDocument();
 });
@@ -576,8 +593,8 @@ const planContract = { ...contract, months: { ...contract.months, '2026-09': { .
   { date: '2026-09-23', title: 'September - Assignment', method: 'Assignment', hours: 2 },
   { date: '2026-09-30', title: 'LMS Activity', method: 'LMS Activity', hours: 4 },
 ] } } };
-const mockPlan = (components: LearnerComponentEntry[]) => vi.mocked(useLearnerDetailParam).mockReturnValue({
-  real: { ...real, components }, loading: false, loadError: null, isRealMode: true, isFetching: false, refresh: vi.fn() });
+const mockPlan = (components: LearnerComponentEntry[]) => vi.mocked(useMonthlySubmission).mockReturnValue({
+  real: { ...real, components }, loading: false, loadError: null, includesDetails: false, refresh: vi.fn() });
 
 it('reads the assignment a Training Plan month names from its coach-led assignment rows only', () => {
   expect(trainingPlanAssignments(planContract.months['2026-09'])).toEqual(['Data, Insight and Analytics']);
@@ -665,4 +682,25 @@ it('shows a single topic as the assignment itself, with its instructions and the
     .toHaveAttribute('href', 'https://old.example.test/guide.pdf');
   expect(screen.queryByRole('region', { name: 'Assignment options' })).toBeNull();
   expect(screen.queryByText(/Assignment in your training plan/)).toBeNull();
+});
+
+it('reads scoped assignment dates instead of subject-covers or learner detail', async () => {
+  const fetcher = mockRequests();
+  mount();
+  expect(await screen.findByRole('combobox', { name: 'Choose month' })).toHaveValue('2026-09');
+  const urls = fetcher.mock.calls.map(([url]) => String(url));
+  expect(urls).toContain('/learner_api/monthly-submission/commercial/125/dates/');
+  expect(urls.some(url => url.includes('/subject-covers/'))).toBe(false);
+  expect(urls.some(url => url.includes('/learner-detail/'))).toBe(false);
+});
+
+it('keeps the existing dates error and retry when the scoped dates read fails', async () => {
+  const fetcher = mockRequests({ failed: 'dates' });
+  mount('?month=');
+  const alert = await screen.findByText('Assignment dates could not be loaded.');
+  expect(alert).toBeVisible();
+  mockRequests();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry plan details' }));
+  await waitFor(() => expect(screen.queryByText('Assignment dates could not be loaded.')).toBeNull());
+  expect(fetcher.mock.calls.some(([url]) => String(url).includes('/subject-covers/'))).toBe(false);
 });

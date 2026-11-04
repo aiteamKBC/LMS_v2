@@ -15,6 +15,7 @@ from old_otjh.service import ServiceError
 from . import canonical_learning as canonical, training_plan_dashboard as schedule
 from .dashboard_monthly import day, display_subjects, review_day
 from .progress_rules import progress_counts_as_achieved
+from .module_placement_sql import group_coach_name_sql, module_placement_names_sql, module_tutor_name_sql
 
 
 def percentage(done, total):
@@ -130,12 +131,13 @@ def learning_facts(source, owner, profile, records, ids, *, selected=False, subj
 def module_rows(cur, ids, *, rich_id=None, identity_metadata=None):
     """One metadata read; transfer descriptions for the focused module only."""
     extra_columns = ',m.cover_image_url' if identity_metadata is not None else ''
-    module_visibility = " AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent,'')<>'')" if identity_metadata is not None else ''
+    # curriculum.modules has no deletion marker in the canonical schema.
+    module_visibility = ''
     cur.execute(f'''SELECT m.module_catalogue_id AS id,m.title{extra_columns},
         CASE WHEN m.module_catalogue_id=%s THEN m.description ELSE '' END AS description,
-        m.start_date,m.end_date,m.tutor_name,
-        coalesce(nullif(btrim(g.coach_name),''),m.coach_name) AS coach_name,
-        m.programme_name,m.cohort_name,m.group_name,m.total_otjh,m.weeks_number,m.sessions_number,m.cohort_id,
+        m.start_date,m.end_date,{module_tutor_name_sql('m')} AS tutor_name,
+        {group_coach_name_sql('g')} AS coach_name,
+        {module_placement_names_sql('m')},m.total_otjh,m.weeks_number,m.sessions_number,m.cohort_id,
         coalesce(nullif(m.session_week_day,''),g.session_week_day) AS session_week_day,
         coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,
         coalesce(nullif(m.session_end_time,''),g.session_end_time) AS session_end_time

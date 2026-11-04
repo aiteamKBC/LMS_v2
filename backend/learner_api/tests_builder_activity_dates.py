@@ -34,7 +34,10 @@ class BuilderActivityDatesTests(SimpleTestCase):
         # c.COALESCE is a schema-qualified function, so PostgreSQL raises
         # InvalidSchemaName and both My Learning and the overview return 503.
         self.assertNotRegex(query, r'(?i)\bc\s*\.\s*coalesce\s*\(')
-        self.assertIn("COALESCE(c.deleted_via_parent, '')", query)
+        # The shared rule qualifies the column by the caller's alias; the
+        # canonical schema has no module deletion marker to consult.
+        self.assertIn('(c.deleted_at IS NULL)', query)
+        self.assertNotIn('deleted_via_parent', query)
 
     def test_all_345_components_follow_the_full_future_plan(self):
         weeks = [(f'W{i}', f'Week {i + 1}') for i in range(23)]

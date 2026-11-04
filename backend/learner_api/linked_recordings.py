@@ -23,6 +23,8 @@ session always stays listed -- it is the learner's only way to it.
 """
 import os
 
+from .module_placement_sql import current_module_sql
+
 LINK_KEY = 'linkedLiveSessionComponentId'
 LINK_MODULE_KEY = 'linkedLiveSessionModuleId'
 MODULE_KEY = '_moduleId'
@@ -46,7 +48,7 @@ REMOTE_SESSIONS_SQL = '''SELECT c.module_catalogue_id, c.id,
     LEFT JOIN curriculum.live_session_occurrences o ON o.id=c.settings_json->>'teamsOccurrenceId'
     WHERE c.id=ANY(%s) AND lower(replace(coalesce(c.type,''),'-','_'))='live_session'
       AND c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted,false)
-      AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)'''
+      AND ''' + current_module_sql('m')
 
 
 def merge_enabled():

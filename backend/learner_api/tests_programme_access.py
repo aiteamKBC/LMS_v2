@@ -17,7 +17,14 @@ class ProgrammeAccessTests(SimpleTestCase):
         self.source = SimpleNamespace(programme='Marketing', cohort='October 2026', start_date='2025-01-01')
         self.account = SimpleNamespace(role='learner', subject_id=499)
         self.cursor = MagicMock()
+        # By cohort id: one row through fetchone. By name: the exact-name query
+        # and the month-alias query both read fetchall, answered by which ran.
         self.cursor.fetchone.return_value = (date(2026, 10, 1),)
+        self.exact_rows = [(date(2026, 10, 1),)]
+        self.alias_rows = []
+        self.cursor.fetchall.side_effect = lambda: (
+            self.alias_rows if self.cursor.execute.call_args.args[0].startswith('SELECT cohort_name')
+            else self.exact_rows)
         connection = MagicMock()
         connection.cursor.return_value.__enter__.return_value = self.cursor
         self.connections = patch('learner_api.programme_access.connections', {'default': connection})
@@ -83,43 +90,46 @@ class ProgrammeAccessTests(SimpleTestCase):
         self.assertFalse(learning_access(self.source)['blocked'])
 
     def test_missing_cohort_date_does_not_fall_back_to_an_earlier_individual_date(self):
-        self.cursor.fetchone.return_value = (None,)
+        self.exact_rows = [(None,)]
         self.assertEqual(learning_access(self.source), {'blocked': True, 'startDate': ''})
 
     def test_imported_full_month_resolves_unique_active_abbreviation(self):
-        self.cursor.fetchone.return_value = None
-        self.cursor.fetchall.return_value = [('Oct 2026', date(2026, 9, 15))]
+        self.exact_rows = []
+        self.alias_rows = [('Oct 2026', date(2026, 9, 15))]
         self.now.return_value = datetime(2026, 10, 16, tzinfo=timezone.utc)
         self.assertEqual(learning_access(self.source), {'blocked': False, 'startDate': '2026-09-15'})
         self.assertEqual(self.cursor.execute.call_args.args[1], ['Marketing'])
-        self.assertIn('deleted_at IS NULL', self.cursor.execute.call_args.args[0])
+        # The canonical cohorts schema has no deletion marker or programme names.
+        self.assertNotIn('deleted_at', self.cursor.execute.call_args.args[0])
+        self.assertNotIn('programme_name', self.cursor.execute.call_args.args[0])
 
     def test_alias_preserves_future_start_gate(self):
-        self.cursor.fetchone.return_value = None
-        self.cursor.fetchall.return_value = [('Oct 2026', date(2026, 10, 1))]
+        self.exact_rows = []
+        self.alias_rows = [('Oct 2026', date(2026, 10, 1))]
         self.assertEqual(learning_access(self.source), {'blocked': True, 'startDate': '2026-10-01'})
 
     def test_ambiguous_alias_is_blocked_even_with_matching_dates(self):
-        self.cursor.fetchone.return_value = None
-        self.cursor.fetchall.return_value = [('Oct 2026', date(2026, 9, 1))] * 2
+        self.exact_rows = []
+        self.alias_rows = [('Oct 2026', date(2026, 9, 1))] * 2
         self.assertEqual(learning_access(self.source), {'blocked': True, 'startDate': ''})
 
     def test_alias_missing_date_or_different_year_stays_blocked(self):
-        self.cursor.fetchone.return_value = None
+        self.exact_rows = []
         for rows in [[('Oct 2026', None)], [('Oct 2025', date(2025, 10, 1))], []]:
             with self.subTest(rows=rows):
-                self.cursor.fetchall.return_value = rows
+                self.alias_rows = rows
                 self.assertEqual(learning_access(self.source), {'blocked': True, 'startDate': ''})
 
     def test_named_cohort_is_not_fuzzy_matched(self):
         self.source.cohort = 'October intake 2026'
-        self.cursor.fetchone.return_value = None
+        self.exact_rows = []
         self.assertEqual(learning_access(self.source), {'blocked': True, 'startDate': ''})
-        self.cursor.fetchall.assert_not_called()
+        # Only the exact-name query ran; a named cohort never reaches the alias read.
+        self.assertEqual(self.cursor.execute.call_count, 1)
 
     def test_resolved_alias_opens_quiz_video_podcast_and_submission_gate(self):
-        self.cursor.fetchone.return_value = None
-        self.cursor.fetchall.return_value = [('Oct 2026', date(2026, 9, 15))]
+        self.exact_rows = []
+        self.alias_rows = [('Oct 2026', date(2026, 9, 15))]
         self.now.return_value = datetime(2026, 10, 16, tzinfo=timezone.utc)
         with patch('learner_api.programme_access.EnrolmentUser.all_learners') as manager:
             manager.only.return_value.get.return_value = self.source

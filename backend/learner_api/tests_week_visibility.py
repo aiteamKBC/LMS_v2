@@ -57,19 +57,20 @@ class VisibleWeekSqlTests(SimpleTestCase):
 
     def test_every_week_column_is_qualified_by_the_callers_alias(self):
         sql = visible_week_sql('w')
-        # An unqualified column inside the EXISTS would bind to the module row.
         for column in ('deleted_at', 'deleted_via_parent', 'module_catalogue_id'):
             for match in re.finditer(rf'(?<![\w.]){column}\b', sql):
                 self.fail(f'unqualified {column} at {match.start()}: {sql}')
-        self.assertTrue(sql.startswith('(w.deleted_at IS NULL OR EXISTS ('))
+        self.assertEqual(sql, '(w.deleted_at IS NULL)')
 
-    def test_archived_history_needs_the_modules_own_stamp_and_moment(self):
+    def test_a_stamped_row_is_hidden_whatever_its_module(self):
+        # The canonical curriculum.modules table has no deletion marker, so the
+        # former "archived with its module" exception is gone: any row with a
+        # deletion stamp stays hidden, including the stale children of a module
+        # that was later restored. Nothing reads the module row any more.
         sql = visible_week_sql('weeks')
-        self.assertIn('archived_module.deleted_at IS NOT NULL', sql)
-        self.assertIn(
-            'weeks.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent)', sql)
-        self.assertIn("weeks.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' "
-                      "AND archived_module.deleted_at + interval '5 minutes'", sql)
+        self.assertEqual(sql, '(weeks.deleted_at IS NULL)')
+        for removed in ('curriculum.modules', 'archived_module', 'deleted_via_parent', "interval '5 minutes'", ' OR '):
+            self.assertNotIn(removed, sql)
 
 
 class WeekReaderPathTests(SimpleTestCase):

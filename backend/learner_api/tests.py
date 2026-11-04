@@ -1049,7 +1049,10 @@ class LearnerReflectionQuestionTests(SimpleTestCase):
 
 
 class LearnerSoftDeletedCurriculumVisibilityTests(SimpleTestCase):
-    def test_live_resolution_keeps_parent_deleted_rows_eligible_but_excludes_missing_rows(self):
+    def test_live_resolution_hides_stamped_rows_and_excludes_missing_rows(self):
+        # The canonical curriculum.modules table has no deletion marker: every
+        # assigned module row resolves, an assigned module with no row stays out
+        # of the live tree, and weeks/components with deleted_at are hidden.
         cursor = ScriptedCursor([[], [], []])
         weeks = [{
             "module": "Deleted module", "week": "Deleted week",
@@ -1065,9 +1068,13 @@ class LearnerSoftDeletedCurriculumVisibilityTests(SimpleTestCase):
 
         self.assertEqual(resolved, ([], [], []))
         module_query, week_query, component_query = [" ".join(query.lower().split()) for query in cursor.queries[:3]]
-        self.assertIn("m.deleted_at is null or m.deleted_via_parent is not null", module_query)
-        self.assertIn("deleted_at is null or deleted_via_parent is not null", week_query)
-        self.assertIn("deleted_at is null or deleted_via_parent is not null", component_query)
+        self.assertNotIn("deleted_at", module_query)
+        self.assertNotIn("deleted_via_parent", module_query)
+        self.assertIn("(weeks.deleted_at is null)", week_query)
+        self.assertIn("(components.deleted_at is null)", component_query)
+        for query in (week_query, component_query):
+            self.assertNotIn("deleted_via_parent", query)
+            self.assertNotIn("archived_module", query)
 
 
 class LearnerWeekQuizVisibilityTests(SimpleTestCase):

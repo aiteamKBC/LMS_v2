@@ -1,4 +1,5 @@
 """Execute production projections with synthetic facts; no Django startup or DB."""
+from learner_api.module_placement_sql import module_placement_names_sql
 import ast
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -31,6 +32,7 @@ class MyLearningScheduleTests(unittest.TestCase):
                 holiday_note_enabled=False, holiday_note='')]]),
             plan_module=Mock(return_value=module), clean_text=str, as_list=lambda v: v,
             is_educational_live_session_week=lambda title: True,
+            module_placement_names_sql=module_placement_names_sql,
             visible_child_sql=lambda alias: f'{alias}.deleted_at IS NULL',
             visible_week_sql=lambda alias: f'{alias}.deleted_at IS NULL',
             attach_curriculum_slots=Mock(), plan_sessions=Mock(return_value=[{'id': 'S1'}]),

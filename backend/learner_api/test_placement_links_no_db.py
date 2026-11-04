@@ -107,10 +107,11 @@ class CohortDatesByIdTests(SimpleTestCase):
 
     def test_learner_page_passes_the_placement_cohort_id(self):
         detail = {}
-        with patch('learner_api.placement_links.placement_ids', return_value={'cohort_id': 'COH-1'}), \
+        with patch('learner_api.placement_links.placement_ids',
+                   return_value={'cohort_id': 'COH-1', 'programme_id': 'PROG-1', 'group_id': ''}), \
                 patch('learner_api.learner_detail._cohort_schedule', return_value={}) as schedule:
             _apply_cohort_schedule(detail, SimpleNamespace(cohort='Old name', programme='P'))
-        schedule.assert_called_once_with('Old name', 'P', 'COH-1')
+        schedule.assert_called_once_with('Old name', 'P', 'COH-1', programme_id='PROG-1')
 
 
 class MirrorKeepsTheWindowTests(SimpleTestCase):
@@ -168,7 +169,7 @@ class LearningPlanByIdTests(SimpleTestCase):
         sql, params = rows.call_args.args
         self.assertEqual(params, ['GRP-1'])
         self.assertIn('group_id = %s', sql)
-        self.assertNotIn('group_name', sql)
+        self.assertNotIn('WHERE group_name', sql)
 
     def test_learner_lookups_carry_the_placement_ids(self):
         learner = SimpleNamespace(programme='Old programme', group='Old group',

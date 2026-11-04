@@ -220,7 +220,7 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
             FROM curriculum.components c LEFT JOIN curriculum.quiz_component_links l ON l.component_id=c.id
             JOIN curriculum.modules cm ON cm.module_catalogue_id=c.module_catalogue_id
             WHERE c.module_catalogue_id=ANY(%s) AND {visible_child_sql('c')}
-            AND (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent,'') <> '') AND coalesce(btrim(cm.title),'') <> ''
+            AND coalesce(btrim(cm.title),'') <> ''
             {detail_filter}
             ORDER BY c.week_id,c.display_order,c.id''', detail_params)
         components = [row for row in rows(cur) if row['has_content'] or row['is_quiz']]

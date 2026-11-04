@@ -25,6 +25,7 @@ from .student_activity import _direct_progress_records
 from .student_activity_access import student_activity_available
 from .training_plan_dashboard import rows as dict_rows
 from .replaced_teams_attendance import REPLACED_ATTENDANCE_LATERAL_SQL
+from .module_placement_sql import module_tutor_name_sql
 from .attendance_assignments import assigned_module_ids as effective_assigned_module_ids
 
 log = logging.getLogger(__name__)
@@ -34,10 +35,13 @@ ATTENDANCE_SOURCE_FIELDS = ('id', 'username', 'email', 'aptem_id', 'employer_id'
 # The effective plan includes group inheritance and respects explicit/empty
 # selections, exactly as My Learning. A stale normalized mirror is not a
 # second assignment authority. Historical attendance is read separately.
+# The canonical curriculum.modules table has no deletion marker (deleted_at,
+# deleted_via_parent and is_programme_deleted were removed) and module status
+# is not an attendance rule, so every assigned module row is read; planned and
+# inactive modules keep their attendance history.
 ATTENDANCE_SUBJECTS_SQL = '''
     SELECT DISTINCT cm.module_catalogue_id,cm.title
     FROM curriculum.modules cm WHERE cm.module_catalogue_id=ANY(%s)
-      AND (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent, '') <> '')
 '''
 
 
@@ -134,7 +138,7 @@ NATIVE_OCCURRENCES_SQL = f'''SELECT o.id AS session_id,o.id AS occurrence_id,
             COALESCE(NULLIF(o.join_url,''),s.join_url) AS join_url,
             CASE WHEN replaced_attendance.occurrence_id IS NOT NULL
                  THEN replaced_attendance.attendance_report_id ELSE o.attendance_report_id END AS attendance_report_id,
-            coalesce(nullif(m.tutor_name,''),s.organizer_email) AS tutor_name,
+            coalesce(nullif({module_tutor_name_sql('m')},''),s.organizer_email) AS tutor_name,
             CASE WHEN coalesce(CASE WHEN replaced_attendance.occurrence_id IS NOT NULL
                                     THEN replaced_attendance.attendance_report_id ELSE o.attendance_report_id END,'')=''
                  THEN false
@@ -147,7 +151,6 @@ NATIVE_OCCURRENCES_SQL = f'''SELECT o.id AS session_id,o.id AS occurrence_id,
             JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
             {REPLACED_ATTENDANCE_LATERAL_SQL}
             WHERE s.module_catalogue_id=ANY(%s)
-              AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
               AND (lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
                    AND lower(btrim(o.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
                    OR lower(btrim(o.status)) IN ('cancelled','canceled'))
@@ -302,7 +305,6 @@ def read_cancelled_native_occurrences(source, *, module_ids=None):
             JOIN curriculum.live_sessions s ON s.id=o.live_session_id
             JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
             WHERE s.module_catalogue_id=ANY(%s)
-              AND m.deleted_at IS NULL
               AND (lower(btrim(coalesce(s.status,''))) IN
                        ('cancelled','canceled','deleted','failed','superseded')
                    OR lower(btrim(coalesce(o.status,''))) IN

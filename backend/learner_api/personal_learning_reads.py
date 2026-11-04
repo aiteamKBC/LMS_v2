@@ -6,6 +6,7 @@ from django.db import connections
 from django.http import JsonResponse
 from django.utils import timezone
 from curriculum_api.week_visibility import visible_week_sql
+from .module_placement_sql import current_module_sql
 
 
 def learning_schedule(context):
@@ -18,7 +19,7 @@ def learning_schedule(context):
             coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,
             coalesce(nullif(m.session_end_time,''),g.session_end_time) AS session_end_time
             FROM curriculum.modules m LEFT JOIN curriculum.groups g ON g.group_id=m.group_id
-            WHERE m.module_catalogue_id=%s AND m.deleted_at IS NULL''', [mid])
+            WHERE m.module_catalogue_id=%s AND ''' + current_module_sql('m'), [mid])
         found = rows(cursor)
         if not found:
             raise LookupError('Course not found.')

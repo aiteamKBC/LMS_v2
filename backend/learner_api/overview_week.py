@@ -19,6 +19,7 @@ from old_otjh.service import ServiceError
 from .learner_detail import SOURCE_MODELS
 from .models import LearnerProfile
 from . import canonical_learning
+from .module_placement_sql import current_module_sql
 from .student_activity import CURRENT_SUBJECTS_SQL, _direct_progress_records, _direct_progress_otjh
 
 
@@ -26,7 +27,11 @@ from .student_activity import CURRENT_SUBJECTS_SQL, _direct_progress_records, _d
 # JSON plan as authoritative, while Attendance intentionally also includes the
 # normalised mirror. Returning both scopes from one query avoids reading the
 # same learner plan twice without changing either rule.
-HOME_SUBJECTS_SQL = '''
+# curriculum.modules has no deletion marker in the canonical schema. Every
+# assigned module row is returned, so Attendance keeps an inactive module's
+# history; Option A (hide inactive modules from current lists) is applied only
+# to the third column, which marks the CURRENT subjects.
+HOME_SUBJECTS_SQL = f'''
     WITH source AS (
         SELECT id, CASE WHEN jsonb_typeof("Training_plan"::jsonb)='array'
             THEN "Training_plan"::jsonb ELSE "Learning_plan"::jsonb END AS plan
@@ -43,9 +48,9 @@ HOME_SUBJECTS_SQL = '''
         JOIN "Learner".learners l ON l.enrolment_id=source.id
         JOIN "Learner".learner_training_plan_modules m ON m.learner_id=l.id
     )
-    SELECT cm.module_catalogue_id,cm.title,bool_or(assigned.current_plan)
+    SELECT cm.module_catalogue_id,cm.title,
+           bool_or(assigned.current_plan) AND bool_or({current_module_sql('cm')})
     FROM assigned JOIN curriculum.modules cm ON cm.module_catalogue_id=assigned.module_id
-    WHERE (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent, '') <> '')
     GROUP BY cm.module_catalogue_id,cm.title
 '''
 

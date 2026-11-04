@@ -15,6 +15,7 @@ from login.permissions import learner_self_or_staff
 from old_otjh.coach_booking import booking_url
 from old_otjh.service import ServiceError
 from .learner_detail import SOURCE_MODELS
+from .module_placement_sql import group_coach_name_sql, module_placement_names_sql, module_tutor_name_sql
 from .models import LearnerProfile, StaffUser
 from .learning_plan import _aptem_subject_modules, _effective_plan_ids, request_preset_cache
 from .coach_assignment import current_coach, source_coach
@@ -630,9 +631,10 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
             # module's cohort holidays -- including the ones a delivery team
             # unticked. It is not published to the learner.
             description_column = 'm.description' if rich_modules else "''::text AS description"
-            cur.execute(f'''SELECT m.module_catalogue_id AS id,m.title,{description_column},m.start_date,m.end_date,m.tutor_name,
-                coalesce(nullif(btrim(g.coach_name),''),m.coach_name) AS coach_name,
-                m.programme_name,m.cohort_name,m.group_name,m.total_otjh,m.weeks_number,m.sessions_number,
+            cur.execute(f'''SELECT m.module_catalogue_id AS id,m.title,{description_column},m.start_date,m.end_date,
+                {module_tutor_name_sql('m')} AS tutor_name,
+                {group_coach_name_sql('g')} AS coach_name,
+                {module_placement_names_sql('m')},m.total_otjh,m.weeks_number,m.sessions_number,
                 m.cohort_id,
                 coalesce(nullif(m.session_week_day,''),g.session_week_day) AS session_week_day,
                 coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,

@@ -22,7 +22,6 @@ REGISTER_SQL = """
       ON s.id=r.live_session_id AND s.module_catalogue_id=r.module_catalogue_id
     JOIN curriculum.modules m ON m.module_catalogue_id=r.module_catalogue_id
     WHERE r.learner_profile_id=ANY(%s)
-      AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
       AND lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
       AND lower(btrim(o.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
 """

@@ -18,6 +18,7 @@ from django.db.models import Max
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from curriculum_api.programme_name_sql import programme_name_sql
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 from .identity import learner_profile_for_source
@@ -439,11 +440,17 @@ def _component_learning_context(component_id):
                         m.module_catalogue_id,
                         m.title,
                         m.programme_id,
-                        coalesce(p.name, m.programme_name),
+                        p.name,
                         m.cohort_id,
-                        m.cohort_name,
+                        (select case when count(*) = 1 then min(cohort_label.cohort_name) end
+                           from curriculum.cohorts cohort_label
+                          where cohort_label.cohort_id = m.cohort_id
+                            and btrim(coalesce(m.cohort_id, '')) <> ''),
                         m.group_id,
-                        m.group_name
+                        (select case when count(*) = 1 then min(group_label.group_name) end
+                           from curriculum.groups group_label
+                          where group_label.group_id = m.group_id
+                            and btrim(coalesce(m.group_id, '')) <> '')
                     from curriculum.components c
                     left join curriculum.weeks w on w.id = c.week_id
                     left join curriculum.modules m on m.module_catalogue_id = c.module_catalogue_id
@@ -936,7 +943,7 @@ def refresh_saved_session_dates(plan):
         return plan
     with connections['default'].cursor() as cursor:
         cursor.execute('''SELECT to_jsonb(m) FROM curriculum.modules m
-            WHERE module_catalogue_id = ANY(%s) AND deleted_at IS NULL
+            WHERE module_catalogue_id = ANY(%s)
               AND COALESCE(to_jsonb(m)->'session_overrides', '{}'::jsonb) <> '{}'::jsonb''', [ids])
         modules = {str(row[0]['module_catalogue_id']): row[0] for row in cursor.fetchall()}
     if not modules:
@@ -1391,7 +1398,7 @@ def cohort_delivery_window(programme, cohort, cohort_id=""):
                     # curriculum_api migration 0004; same columns.
                     'SELECT start_date, end_date, apprenticeship_end_date '
                     'FROM curriculum."cohorts" '
-                    "WHERE lower(btrim(programme_name)) = lower(%s) "
+                    "WHERE lower(btrim(" + programme_name_sql('curriculum."cohorts"') + ")) = lower(%s) "
                     "AND lower(btrim(cohort_name)) = lower(%s) "
                     "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
                     [programme, cohort],
@@ -1666,7 +1673,7 @@ def _resolve_linkable_cohort_id(cohort="", programme_id="", programme=""):
                 " WHERE lower(btrim(coalesce(c.cohort_name, ''))) = lower(btrim(%s)) "
                 "   AND coalesce(btrim(c.cohort_id), '') <> '' "
                 "   AND ( (%s <> '' AND c.programme_id = %s) "
-                "      OR (%s =  '' AND lower(btrim(coalesce(c.programme_name, ''))) "
+                "      OR (%s =  '' AND lower(btrim(" + programme_name_sql('c') + ")) "
                 "                    = lower(btrim(%s))) ) "
                 + _LIVE_ROW_SQL.format(alias="c"),
                 [cohort, programme_id, programme_id, programme_id, programme],
@@ -1698,7 +1705,7 @@ def _resolve_linkable_group_id(group="", cohort_id="", programme_id="", programm
     else:
         scope_sql = (
             "   AND ( (%s <> '' AND g.programme_id = %s) "
-            "      OR (%s =  '' AND lower(btrim(coalesce(g.programme_name, ''))) "
+            "      OR (%s =  '' AND lower(btrim(" + programme_name_sql('g') + ")) "
             "                    = lower(btrim(%s))) ) "
         )
         scope_params = [programme_id, programme_id, programme_id, programme]
@@ -1787,8 +1794,8 @@ def _fetch_ksb_items_from_plan_mappings(programme_id="", programme="", training_
                 "  AND ("
                 "        (%s = '' AND %s = '') "
                 "     OR module.programme_id = %s "
-                "     OR module.programme_name = %s "
-                "     OR %s LIKE module.programme_name || ' %%'"
+                "     OR " + programme_name_sql('module') + " = %s "
+                "     OR %s LIKE " + programme_name_sql('module') + " || ' %%'"
                 "  ) "
                 "ORDER BY upper(mapping.ksb_code), "
                 "         CASE mapping.classification "
@@ -1851,8 +1858,8 @@ def _resolve_ksb_profile_source_id(programme_id="", programme="", training_plan=
                 "  AND ("
                 "        (%s = '' AND %s = '') "
                 "     OR module.programme_id = %s "
-                "     OR module.programme_name = %s "
-                "     OR %s LIKE module.programme_name || ' %%'"
+                "     OR " + programme_name_sql('module') + " = %s "
+                "     OR %s LIKE " + programme_name_sql('module') + " || ' %%'"
                 "  ) "
                 "ORDER BY module.updated_at DESC NULLS LAST LIMIT 1",
                 [module_ids, programme_id, programme, programme_id, programme, programme],

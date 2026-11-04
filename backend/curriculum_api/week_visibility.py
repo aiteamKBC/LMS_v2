@@ -1,22 +1,16 @@
 """Which deleted curriculum rows a learner-facing read may still show.
 
-A running module shows only its live weeks, components and KSB mappings. An
-archived module keeps showing the rows that were archived WITH it -- the
-learner's history of a module that was withdrawn under them -- and nothing
-else.
+A module shows only its live weeks, components and KSB mappings: rows whose
+``deleted_at`` is NULL. A row with a deletion stamp is never shown.
 
-"Archived with it" is two facts, not one. The row was stamped by the same
-cascade as its module (a module delete stamps its children with the module's
-own id; a programme delete stamps module and children alike with the programme
-id), and it was stamped in the same moment. ``deleted_via_parent`` alone is not
-enough: a module that is deleted and later brought back by a save keeps the
-children of that earlier deletion stamped with its id, and a module rebuilt
-after that carries two sets of weeks per number. Read on the parent stamp alone,
-the stale set outranks the live one and the learner sees a previous version of
-the course.
+The canonical curriculum.modules table has no deletion marker, so the former
+rule that kept a withdrawn module's children visible as the learner's history
+(rows "archived with" a module stamped in the same moment) can no longer apply
+and has been removed. Whether a withdrawn module should keep showing history is
+a business rule still to be defined; until then, deleted rows stay hidden.
 
-The five-minute window is the one ``recordings_library`` already uses for the
-same question: one archive writes all of its rows inside a single transaction.
+``ARCHIVE_EVENT_WINDOW`` (the five minutes inside which one archive writes all
+of its rows) is kept for compatibility; no visibility predicate uses it now.
 """
 
 ARCHIVE_EVENT_WINDOW = "interval '5 minutes'"
@@ -25,24 +19,21 @@ ARCHIVE_EVENT_WINDOW = "interval '5 minutes'"
 def visible_child_sql(alias):
     """SQL predicate: this module child row may be shown.
 
-    For any ``curriculum`` table whose rows carry ``module_catalogue_id``,
-    ``deleted_at`` and ``deleted_via_parent`` -- weeks, components, KSB
-    mappings. ``alias`` is the name the row has in the calling query -- its
-    alias, or the bare table name for an unaliased ``FROM curriculum.<table>``.
-    It is required: an unqualified column inside the subquery would bind to the
-    module row.
+    For any ``curriculum`` table whose rows carry ``deleted_at`` -- weeks,
+    components, KSB mappings. ``alias`` is the name the row has in the calling
+    query -- its alias, or the bare table name for an unaliased
+    ``FROM curriculum.<table>``.
+
+    Only rows without a deletion stamp are shown. The canonical
+    curriculum.modules table has no deletion marker (``deleted_at`` and
+    ``deleted_via_parent`` were removed), so there is no archived module whose
+    stamped children could be shown as its history: the former exception for
+    rows "archived with their module" can never apply and is gone. A row with
+    ``deleted_at`` set is always hidden, including children stamped by an
+    earlier module or programme archive and the stale children of a module
+    that was later restored.
     """
-    w = alias
-    return (
-        f"({w}.deleted_at IS NULL OR EXISTS ("
-        f"SELECT 1 FROM curriculum.modules archived_module "
-        f"WHERE archived_module.module_catalogue_id={w}.module_catalogue_id "
-        f"AND archived_module.deleted_at IS NOT NULL "
-        f"AND COALESCE({w}.deleted_via_parent, '') <> '' "
-        f"AND {w}.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) "
-        f"AND {w}.deleted_at BETWEEN archived_module.deleted_at - {ARCHIVE_EVENT_WINDOW} "
-        f"AND archived_module.deleted_at + {ARCHIVE_EVENT_WINDOW}))"
-    )
+    return f"({alias}.deleted_at IS NULL)"
 
 
 def visible_week_sql(alias):

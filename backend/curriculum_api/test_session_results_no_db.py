@@ -383,6 +383,7 @@ class RegisterTests(unittest.TestCase):
             return self
         def exclude(self, *_args, **kwargs): return self
         def only(self, *_args): return self
+        def annotate(self, **_kwargs): return self
         def order_by(self, *_args): return self
         def values(self, *fields):
             # ORM subqueries now project module/series keys before roster reads.
@@ -421,6 +422,7 @@ class RegisterTests(unittest.TestCase):
             'projection_call': lambda name, function, *args, **kwargs: function(*args, **kwargs),
             'projection_operation': lambda name: nullcontext(),
             'datetime_timezone': timezone, 'parse_datetime': instant, 'Q': self.Q,
+            'RawSQL': lambda sql, params: (sql, params),
             '_attendance_alias_rows': lambda *_args: [],
             'identity_rules': lambda *_args: [], 'apply_reviewed_identities': apply_reviewed_identities,
             '_attendance_identity_link_rows': lambda *_args: [], 'attendance_name_key': attendance_name_key,
@@ -437,7 +439,7 @@ class RegisterTests(unittest.TestCase):
              'LiveSessionAttendanceAlias': types.SimpleNamespace(objects=self.Query([])),
              'LiveSessionAttendance': types.SimpleNamespace(objects=self.Query([types.SimpleNamespace(id=f'ROW-{i}', occurrence_id='O1', graph_record_id=str(i),
                 display_name=display_name, email=email, role='attendee', raw_data={}, intervals=intervals, total_attendance_seconds=0) for i, (email, intervals) in enumerate(records)])),
-            'ModuleAuthoringModule': types.SimpleNamespace(objects=self.Query([types.SimpleNamespace(module_catalogue_id='M', group_id='G', group_name='Group')]))}
+            'ModuleAuthoringModule': types.SimpleNamespace(objects=self.Query([types.SimpleNamespace(module_catalogue_id='M', group_id='G', _group_display_name='Group')]))}
         functions(ROOT.parent / 'learner_api/teams_attendance.py', {'_email', '_canonical_attendance_email', '_assigned_learner_emails_by_module',
             '_module_expected_emails', '_unique_exact_name_email', '_local_datetime', '_graph_datetime', '_attendance_interval_bounds',
             'fetch_verified_teams_attendance_rows'}, ns)

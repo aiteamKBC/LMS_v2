@@ -9,6 +9,7 @@ import styles from './monthlySubmission.module.css';
 import { AssignmentSubmissions, type AssignmentSubmissionHistory } from './AssignmentSubmissions';
 import { AssignmentAttachment } from './AssignmentAttachment';
 import { formatSubmissionHours } from './submissionHours';
+import { useMonthlyAssignmentDetail } from './useMonthlySubmission';
 
 /** Authored text: rich text is sanitised, plain text keeps its line breaks. */
 function BriefText({ value }: { value: string }) {
@@ -22,9 +23,14 @@ function ResourceLinks({ links }: { links: AssignmentResourceLink[] }) {
   </li>)}</ul>;
 }
 
-export function AssignmentDetailsCard({ assignment, group, kind, learnerId }: {
+export function AssignmentDetailsCard({ assignment: row, group, kind, learnerId, loadDetails = false }: {
   assignment: MonthlyAssignmentRow; group: AssignmentMonth; kind: LearnerKind; learnerId: string;
+  /** List rows omit the brief, topics, files and KSBs; read them for this assignment. */
+  loadDetails?: boolean;
 }) {
+  const details = useMonthlyAssignmentDetail(kind, learnerId, row.id, loadDetails);
+  const assignment: MonthlyAssignmentRow = details.data ? { ...row, ...details.data, componentId: row.componentId } : row;
+  const briefPending = loadDetails && !details.data;
   const [history, setHistory] = useState<AssignmentSubmissionHistory | null>(null);
   const selectedHistory = history?.kind === kind && history.learnerId === learnerId && history.activityId === assignment.id ? history : null;
   const latestAttempt = selectedHistory?.attempts[selectedHistory.attempts.length - 1];
@@ -65,7 +71,10 @@ export function AssignmentDetailsCard({ assignment, group, kind, learnerId }: {
         </p>}
         <p className={styles.eyebrow}>Assignment question</p>
         <h3>{assignment.title}</h3>
-        {questionHtml ? <div className={styles.question} dangerouslySetInnerHTML={{ __html: questionHtml }} />
+        {briefPending ? details.error ? <div role="alert" className={styles.error}><p>{details.error}</p>
+          <button type="button" onClick={details.retry}>Retry assignment brief</button></div>
+          : <p className={styles.question} role="status">Loading the assignment brief…</p>
+        : questionHtml ? <div className={styles.question} dangerouslySetInnerHTML={{ __html: questionHtml }} />
           : <p className={styles.question}>{rawQuestion || (attachmentUrl
             ? 'Read the attached file for the assignment instructions, then start your submission.'
             : 'Your tutor has not added the assignment question yet. Use the support button if you need help getting started.')}</p>}

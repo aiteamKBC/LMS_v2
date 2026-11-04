@@ -1383,7 +1383,15 @@ def otjh_summary_bulk(learner_ids):
     if not enrolment_ids:
         return {}
     candidates = {}
-    for owner in query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.programme,
+    # "Learner".learners no longer stores the programme name. Derive it from the
+    # canonical programme id: a scalar subquery keeps exactly one row per profile
+    # (the identity check below rejects any other count), and a blank, unknown or
+    # duplicated programme id yields NULL rather than an arbitrary name.
+    for owner in query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,
+        (SELECT CASE WHEN count(*) = 1 THEN min(p.name) END
+           FROM curriculum.programmes p
+          WHERE p.programme_id = l.programme_id
+            AND btrim(coalesce(l.programme_id, '')) <> '') AS programme,
         l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
         EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active

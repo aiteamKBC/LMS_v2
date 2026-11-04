@@ -1,4 +1,7 @@
 """Read-only identity and persistent Dashboard cards, independent of tab reads."""
+import logging
+import os
+import traceback
 from datetime import datetime, timezone
 from urllib.parse import quote
 
@@ -14,6 +17,7 @@ from .learner_detail import (SOURCE_MODELS, _first_session_unlocked, _iso_date,
                              DEFAULT_PROGRAMME_STATUS, programme_status, access_gate,
                              learning_access, student_activity_available, _s)
 from .models import LearnerProfile
+from .module_placement_sql import group_coach_name_sql, module_placement_names_sql
 from .learning_plan import _effective_plan_ids
 from .overview_week import upcoming_assignment_deadlines
 from .projection_performance import measure_projection
@@ -122,7 +126,6 @@ def lecture_href(cur, sessions, kind, pk, now):
         WHERE c.module_catalogue_id=%s
           AND lower(regexp_replace(btrim(coalesce(c.type,'')), '[[:space:]-]+', '_', 'g'))='live_session'
           AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
-          AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')
           AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')
         ORDER BY w.display_order,w.week_number,w.id,c.display_order,c.id''', [session['moduleId']])
     candidates = cur.fetchall()
@@ -224,13 +227,15 @@ def dashboard_modules(source, owner, *, include_coach=True, include_week_counts=
                  set(canonical_learning.curriculum_module_ids_for(owner)))
     if not ids:
         return ids, []
-    coach_column = ",coalesce(nullif(btrim(g.coach_name),''),m.coach_name) AS coach_name" if include_coach else ''
+    # The coach name is read through groups.coach_id (curriculum.groups no longer
+    # stores coach_name, and curriculum.modules has no coach column).
+    coach_column = f",{group_coach_name_sql('g')} AS coach_name" if include_coach else ''
     coach_join = ' LEFT JOIN curriculum.groups g ON g.group_id=m.group_id' if include_coach else ''
     week_count = '''EXISTS (SELECT 1 FROM curriculum.weeks w WHERE w.module_catalogue_id=m.module_catalogue_id
              AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent,'')<>''))''' if include_week_counts else '0'
     with connections['enrolment'].cursor() as cur:
         cur.execute(f'''SELECT m.module_catalogue_id AS id,m.title,m.start_date,m.end_date,
-            m.programme_name,m.cohort_name,m.group_name,m.sessions_number,
+            {module_placement_names_sql('m')},m.sessions_number,
             {week_count} AS week_count{coach_column}
             FROM curriculum.modules m{coach_join}
             WHERE m.module_catalogue_id=ANY(%s) ORDER BY m.title''', [ids])
@@ -418,6 +423,32 @@ def compact_header(payload):
     }
 
 
+log = logging.getLogger(__name__)
+_BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _log_header_database_failure(exc, *, kind, pk, minimal, presentation):
+    """Server-side diagnosis of a header DatabaseError; never sent to the learner.
+
+    Logs the exception class, SQLSTATE and the innermost project frame. The
+    database's primary message is included only for SQLSTATE class 42 (schema
+    and syntax errors such as an undefined column), which names schema objects
+    and never row values; every other message is withheld.
+    """
+    from login.errors import safe_sqlstate
+    sqlstate = safe_sqlstate(exc)
+    cause = exc.__cause__ or exc
+    primary = getattr(getattr(cause, 'diag', None), 'message_primary', None)
+    schema_message = str(primary)[:300] if primary and sqlstate.startswith('42') else 'withheld'
+    frame = next((f for f in reversed(traceback.extract_tb(exc.__traceback__))
+                  if f.filename.startswith(_BACKEND_ROOT) and os.sep + '.venv' + os.sep not in f.filename), None)
+    location = f'{os.path.relpath(frame.filename, _BACKEND_ROOT)}:{frame.lineno} in {frame.name}' if frame else 'unknown'
+    log.error('Dashboard header database failure: variant=%s kind=%s learner_id=%s type=%s sqlstate=%s '
+              'schema_message=%r location=%s',
+              'minimal' if minimal else 'presentation' if presentation else 'full',
+              kind, pk, type(exc).__name__, sqlstate, schema_message, location)
+
+
 @require_GET
 @learner_self_or_staff(kwarg='pk')
 @journal_sources.learner_journal_view
@@ -443,7 +474,8 @@ def dashboard_header(request, kind, pk, presentation=False, minimal=False):
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     except ServiceError as error:
         return JsonResponse({'error': str(error)}, status=error.status)
-    except DatabaseError:
+    except DatabaseError as exc:
+        _log_header_database_failure(exc, kind=kind, pk=pk, minimal=minimal, presentation=presentation)
         return JsonResponse({'error': 'Could not load your Dashboard header. Please try again.'}, status=503)
     response = JsonResponse(payload)
     response['Cache-Control'] = 'private, no-store'

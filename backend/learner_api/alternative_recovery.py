@@ -11,6 +11,7 @@ import re
 from datetime import timezone as datetime_timezone
 
 from django.db.models import Q
+from django.db.models.expressions import RawSQL
 from django.utils import timezone
 
 from coach_api.models import CoachAbsenceReport
@@ -127,8 +128,21 @@ def _future_instant(value, now=None) -> bool:
 
 
 def _usable_module(module) -> bool:
-    return (module is not None and not module.is_programme_deleted
-            and all((module.programme_id, module.cohort_id, module.group_id)))
+    return module is not None and all((module.programme_id, module.cohort_id, module.group_id))
+
+
+def _recovery_modules(database):
+    """Read delivery identity and labels through the canonical placement FKs."""
+    return ModuleAuthoringModule.objects.using(database).only(
+        'module_catalogue_id', 'title', 'programme_id', 'cohort_id', 'group_id',
+    ).annotate(
+        _group_display_name=RawSQL(
+            '(SELECT g.group_name FROM curriculum.groups g WHERE g.group_id=modules.group_id)', [],
+        ),
+        _cohort_display_name=RawSQL(
+            '(SELECT c.cohort_name FROM curriculum.cohorts c WHERE c.cohort_id=modules.cohort_id)', [],
+        ),
+    )
 
 
 def eligible_alternative_occurrences(
@@ -188,9 +202,8 @@ def _alternatives_by_occurrence(original_occurrence_ids, *, at=None, database="e
         if _active(session.status)
     }
     first_module = {}
-    for module in (ModuleAuthoringModule.objects.using(database)
-                   .filter(module_catalogue_id__in={session.module_catalogue_id for session in sessions.values()},
-                           deleted_at__isnull=True)
+    for module in (_recovery_modules(database)
+                   .filter(module_catalogue_id__in={session.module_catalogue_id for session in sessions.values()})
                    .order_by("pk")):
         first_module.setdefault(str(module.module_catalogue_id), module)
 
@@ -208,8 +221,8 @@ def _alternatives_by_occurrence(original_occurrence_ids, *, at=None, database="e
     cohort_rows = {}
     for cohort in {(module.programme_id, module.cohort_id) for _o, _s, module in contexts.values()}:
         modules = list(
-            ModuleAuthoringModule.objects.using(database)
-            .filter(programme_id=cohort[0], cohort_id=cohort[1], deleted_at__isnull=True, is_programme_deleted=False)
+            _recovery_modules(database)
+            .filter(programme_id=cohort[0], cohort_id=cohort[1])
             .exclude(Q(group_id__isnull=True) | Q(group_id=""))
         )
         modules_by_id = {str(module.module_catalogue_id): module for module in modules}
@@ -253,9 +266,9 @@ def _alternatives_by_occurrence(original_occurrence_ids, *, at=None, database="e
                 "startTime": start.strftime("%H:%M"),
                 "endTime": end.strftime("%H:%M") if end else "",
                 "groupId": str(module.group_id),
-                "group": module.group_name or "",
+                "group": module._group_display_name or "",
                 "cohortId": str(module.cohort_id),
-                "cohort": module.cohort_name or "",
+                "cohort": module._cohort_display_name or "",
                 "module": session.module_title or module.title or "",
             })
     return result
@@ -295,9 +308,8 @@ def alternative_target_details(
     session = LiveSession.objects.using(database).filter(pk=occurrence.live_session_id).first()
     if session is None:
         return None
-    module = ModuleAuthoringModule.objects.using(database).filter(
+    module = _recovery_modules(database).filter(
         module_catalogue_id=session.module_catalogue_id,
-        deleted_at__isnull=True,
     ).first()
     if module is None:
         return None
@@ -309,9 +321,9 @@ def alternative_target_details(
         "startTime": start.strftime("%H:%M"),
         "endTime": end.strftime("%H:%M") if end else "",
         "groupId": str(module.group_id or ""),
-        "group": module.group_name or "",
+        "group": module._group_display_name or "",
         "cohortId": str(module.cohort_id or ""),
-        "cohort": module.cohort_name or "",
+        "cohort": module._cohort_display_name or "",
         "status": occurrence.status,
     }
     if include_join_url and _active(occurrence.status) and _future_instant(occurrence.scheduled_end):

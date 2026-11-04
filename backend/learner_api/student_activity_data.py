@@ -97,8 +97,9 @@ CURRICULUM_SCHEDULE_SQL = '''
     CROSS JOIN LATERAL jsonb_array_elements(
         CASE WHEN jsonb_typeof(section->'materials')='array' THEN section->'materials' ELSE '[]'::jsonb END
     ) material
+    -- Historical lineage (Option A): an inactive module keeps its schedule
+    -- mapping. curriculum.modules has no deletion marker in the canonical schema.
     LEFT JOIN curriculum.modules m ON m.source_type='mba-legacy' AND m.source_id=e.course_id::text
-        AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
     LEFT JOIN curriculum.components c ON c.id=material->>'component_id'
         AND c.module_catalogue_id=m.module_catalogue_id
         AND c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted,false)

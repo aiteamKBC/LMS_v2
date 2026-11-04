@@ -39,6 +39,10 @@ from django.db import DatabaseError, connection
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from curriculum_api.programme_name_sql import programme_name_sql
+
+from .module_placement_sql import module_placement_names_sql
+
 from audit_api.last_audit_ledger_views import _connection as _audit_connection
 from login.permissions import learner_self_or_staff, staff_only
 
@@ -124,12 +128,14 @@ def _module_payload(row):
     }
 
 
-#: Modules of a deleted programme, and soft-deleted modules, are not offerable.
-_LIVE_MODULE_SQL = """
-    SELECT module_catalogue_id, title, group_name, programme_id, programme_name,
+#: The canonical curriculum.modules table has no deletion marker (deleted_at
+#: and is_programme_deleted were removed) and stores placement names only by
+#: id, so every module row is offerable and names are read through the ids.
+_LIVE_MODULE_SQL = f"""
+    SELECT module_catalogue_id, title, programme_id, {module_placement_names_sql('modules')},
            total_otjh, start_date, end_date, learner_roster_mode
     FROM curriculum.modules
-    WHERE deleted_at IS NULL AND NOT is_programme_deleted
+    WHERE TRUE
 """
 
 
@@ -144,7 +150,7 @@ def _programme_modules(programme, programme_id=""):
     if programme_id:
         where, params = "AND programme_id = %s", [programme_id]
     elif programme:
-        where, params = "AND (programme_name = %s OR programme_id = %s)", [programme, programme]
+        where, params = f"AND ({programme_name_sql('modules')} = %s OR programme_id = %s)", [programme, programme]
     else:
         return []
     return [
@@ -257,14 +263,22 @@ def _programmes(modules):
 #: The relation the preset lookup reads. Parameterised only so its tiebreak can
 #: be tested against a literal VALUES list -- the ordering below is the whole
 #: point of the query, and it is not observable from a mocked call.
-GROUP_PRESET_SOURCE = 'curriculum.groups'
+# Reconstruct the preset from the normalized relations. The group no longer
+# stores module_ids or a copied programme_name. Keep the projection shape so
+# single and bulk lookups use the same existing duplicate-name tiebreak.
+GROUP_PRESET_SOURCE = """(
+    SELECT g.group_id, g.group_name, g.programme_id,
+           p.name AS programme_name, g.created_at, g.updated_at,
+           COALESCE((SELECT jsonb_agg(m.module_catalogue_id ORDER BY m.module_catalogue_id)
+                     FROM curriculum.modules m WHERE m.group_id = g.group_id), '[]'::jsonb) AS module_ids
+    FROM curriculum.groups g
+    LEFT JOIN curriculum.programmes p ON p.programme_id = g.programme_id
+)"""
 
 GROUP_PRESET_SQL = """
 SELECT module_ids
-FROM {source}
+FROM {source} AS preset
 WHERE group_name = %s AND (programme_name = %s OR programme_id = %s)
-  AND deleted_at IS NULL
-  AND COALESCE(is_programme_deleted, FALSE) = FALSE
 ORDER BY
     -- jsonb_array_length() errors on a scalar, and this column is not
     -- guaranteed to hold an array -- the parsing in _group_module_ids allows
@@ -293,8 +307,6 @@ FROM unnest(%s::text[], %s::text[]) AS p(programme, grp)
 JOIN {source} g
   ON g.group_name = p.grp
  AND (g.programme_name = p.programme OR g.programme_id = p.programme)
- AND g.deleted_at IS NULL
- AND COALESCE(g.is_programme_deleted, FALSE) = FALSE
 ORDER BY
     p.programme, p.grp,
     jsonb_array_length(
@@ -310,7 +322,7 @@ ORDER BY
 def _group_preset_rows(programme, group, source=None):
     """The one group row the preset comes from, or nothing."""
     return _rows(
-        GROUP_PRESET_SQL.format(source=source or GROUP_PRESET_SOURCE),
+        GROUP_PRESET_SQL.format(source=f'(SELECT * FROM {source})' if source else GROUP_PRESET_SOURCE),
         [group, programme, programme],
     )
 
@@ -328,8 +340,8 @@ def _module_ids_from_column(ids):
 def _manual_roster_module_ids(module_ids):
     """Return module ids that stay attached to a group but never inherit learners.
 
-    ``groups.module_ids`` is also the curriculum tree's structural list, so a
-    manual-roster duplicate must remain in it.  Learner plan resolution filters
+    A manual-roster duplicate remains structurally linked through group_id.
+    Learner plan resolution filters
     the ids here instead of deleting the module from its parent.  The lookup is
     deliberately best-effort for older test/install schemas; an unavailable
     column means the pre-feature inherited behaviour, never a blank plan.
@@ -366,7 +378,7 @@ def group_module_ids_bulk(pairs, source=None):
     found = {}
     if askable:
         rows = _rows(
-            GROUP_PRESET_BULK_SQL.format(source=source or GROUP_PRESET_SOURCE),
+            GROUP_PRESET_BULK_SQL.format(source=f'(SELECT * FROM {source})' if source else GROUP_PRESET_SOURCE),
             [[pair[0] for pair in askable], [pair[1] for pair in askable]],
         )
         found = {
@@ -385,10 +397,8 @@ def group_module_ids_bulk(pairs, source=None):
 
 GROUP_PRESET_BY_ID_SQL = """
 SELECT module_ids
-FROM {source}
+FROM {source} AS preset
 WHERE group_id = %s
-  AND deleted_at IS NULL
-  AND COALESCE(is_programme_deleted, FALSE) = FALSE
 """
 
 
@@ -426,7 +436,8 @@ def _group_module_ids(programme, group, source=None, group_id=""):
     """
     group_id = _s(group_id)
     if group_id:
-        rows = _rows(GROUP_PRESET_BY_ID_SQL.format(source=source or GROUP_PRESET_SOURCE), [group_id])
+        rows = _rows(GROUP_PRESET_BY_ID_SQL.format(
+            source=f'(SELECT * FROM {source})' if source else GROUP_PRESET_SOURCE), [group_id])
     elif group:
         rows = _group_preset_rows(programme, group, source)
     else:

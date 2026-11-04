@@ -1,4 +1,4 @@
-import type { LearnerDetail } from '@/api/learnerDetail';
+import type { ComponentMarking, LearnerComponentEntry } from '@/api/learnerDetail';
 import type { PlanMonth, TrainingPlanContract } from '@/api/trainingPlanDashboard';
 import type { CoverMetadata } from '../my-learning/SubjectWorkspace';
 import { completedComponentIds, componentTypeMeta, hasComponentContent, isMonthlyAssignment } from '@/utils/learnerJourney';
@@ -29,7 +29,17 @@ export function monthName(month: string) {
   }) : 'Not scheduled';
 }
 
-export function groupMonthlyAssignments(real: LearnerDetail, metadata: CoverMetadata | null,
+type ProgressRow = { componentId: string; kind?: string; passed?: boolean | null };
+
+/** What grouping reads. Learner detail and the Monthly Submission read both fit. */
+export interface AssignmentSource {
+  components: LearnerComponentEntry[];
+  componentMarkingStatus?: Record<string, ComponentMarking>;
+  videoProgress?: ProgressRow[];
+  componentProgress?: ProgressRow[];
+}
+
+export function groupMonthlyAssignments(real: AssignmentSource, metadata: CoverMetadata | null,
   contract: TrainingPlanContract | null, statuses: Record<string, string> | null, submissionCounts: Record<string, number> = {}) {
   const completed = completedComponentIds(real);
   const seen = new Set<string>();

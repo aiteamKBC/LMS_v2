@@ -25,19 +25,17 @@ from learner_api import learning_plan as plans
 LIVE = os.environ.get('LEARNER_GROUP_PRESET_LIVE_CHECK', '').strip().lower() in {'1', 'true', 'yes', 'on'}
 
 COLUMNS = ('group_id', 'group_name', 'programme_name', 'programme_id', 'module_ids',
-           'deleted_at', 'is_programme_deleted', 'created_at', 'updated_at')
+           'created_at', 'updated_at')
 
 
 def group(group_id, modules=(), *, name='G1', programme_name='Business',
-          programme_id='PROG-1', deleted=False, programme_deleted=False,
+          programme_id='PROG-1',
           created='2026-01-01', updated='2026-01-01'):
     return {
         'group_id': group_id, 'group_name': name,
         'programme_name': programme_name, 'programme_id': programme_id,
         # Not coerced: one case deliberately stores something that is not a list.
         'module_ids': list(modules) if isinstance(modules, (list, tuple)) else modules,
-        'deleted_at': '2026-06-01' if deleted else None,
-        'is_programme_deleted': programme_deleted,
         'created_at': created, 'updated_at': updated,
     }
 
@@ -54,13 +52,13 @@ def _literal(value, cast):
 
 CASTS = {
     'group_id': 'varchar', 'group_name': 'varchar', 'programme_name': 'varchar',
-    'programme_id': 'varchar', 'module_ids': 'jsonb', 'deleted_at': 'timestamptz',
-    'is_programme_deleted': 'boolean', 'created_at': 'timestamp', 'updated_at': 'timestamp',
+    'programme_id': 'varchar', 'module_ids': 'jsonb',
+    'created_at': 'timestamp', 'updated_at': 'timestamp',
 }
 
 
 def _values_source(rows):
-    """A stand-in for curriculum.groups built from literals."""
+    """A stand-in for the FK-derived preset projection, built from literals."""
     body = ',\n'.join(
         '(%s)' % ', '.join(_literal(row[column], CASTS[column]) for column in COLUMNS)
         for row in rows
@@ -102,15 +100,16 @@ class GroupPresetChoiceTests(SimpleTestCase):
         self.assertEqual(self.preset(rows), ['MOD-1'])
         self.assertEqual(self.preset(list(reversed(rows))), ['MOD-1'])
 
-    def test_a_deleted_group_lends_nobody_its_curriculum(self):
-        self.assertEqual(self.preset([group('A', ['MOD-1'], deleted=True)]), [])
+    def test_a_removed_group_lends_nobody_its_curriculum(self):
+        # Deleted groups no longer have a soft-delete column: they are absent
+        # from the canonical preset relation.
+        self.assertEqual(self.preset([group('B', ['MOD-2'], name='Other')]), [])
 
-    def test_a_group_deleted_with_its_programme_is_excluded_too(self):
-        self.assertEqual(self.preset([group('A', ['MOD-1'], programme_deleted=True)]), [])
+    def test_a_missing_programme_name_does_not_match_another_programme(self):
+        self.assertEqual(self.preset([group('A', ['MOD-1'], programme_name=None)]), [])
 
-    def test_a_deleted_group_never_outranks_a_live_one(self):
+    def test_a_removed_group_never_outranks_a_remaining_one(self):
         rows = [
-            group('A', ['MOD-1', 'MOD-2', 'MOD-3'], deleted=True),
             group('B', ['MOD-9']),
         ]
         self.assertEqual(self.preset(rows), ['MOD-9'])
