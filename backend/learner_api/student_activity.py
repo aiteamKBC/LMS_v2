@@ -5,6 +5,7 @@ import re
 import time
 from uuid import UUID
 
+from .response_cache import cached_learner_read
 from .journal_sources import learner_journal_view
 from django.db import DatabaseError, connections
 from django.http import JsonResponse, HttpResponseRedirect
@@ -220,6 +221,7 @@ def _activity_source_issues(enrolment_id, group_ids):
 @require_GET
 @learner_self_or_staff(kwarg="pk")
 @learner_journal_view
+@cached_learner_read('student-activity')
 def student_activity(request, kind, pk):
     """Return LMS activities for the requested learner, never for a client id.
 

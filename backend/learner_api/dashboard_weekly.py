@@ -11,6 +11,7 @@ from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
 
 from coach_api.weekly_learning import assignment_projection, read_weekly_learning
+from .response_cache import cached_learner_read
 from . import canonical_learning, journal_sources
 from .identity import learner_profile_for_source
 from .learner_detail import SOURCE_MODELS
@@ -128,6 +129,7 @@ def read_dashboard_weekly(source, pk, *, week_id=None, module_id=None):
 @learner_self_or_staff(kwarg='pk')
 @require_GET
 @journal_sources.learner_journal_view
+@cached_learner_read('dashboard-weekly')
 def dashboard_weekly(request, kind, pk, week_id=None):
     model = SOURCE_MODELS.get(kind)
     if model is None:

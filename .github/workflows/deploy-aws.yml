@@ -1,0 +1,242 @@
+# ------------------------------------------------------------
+# CI/CD to AWS (London): every push to main is tested and deployed to
+# https://lms-aws.kentbusinesscollege.net
+#
+#   1. backend  - build the Docker image, run the no-database tests inside it
+#   2. frontend - npm ci + vite build (frontend/out)
+#   3. deploy   - push the image to ECR, roll every ECS API service onto it
+#                 and wait until healthy, then upload the frontend to S3 and
+#                 clear the CloudFront cache. If the services don't become
+#                 healthy, the previous image is put back automatically.
+#
+# AWS access: OpenID Connect into the role made by LMS_infrastructure
+# (github_actions.tf); no AWS keys are stored in GitHub. The role only
+# trusts runs on main of this repo. Settings are repo *variables*
+# (Settings > Secrets and variables > Actions > Variables), printed by
+# `terraform output github_actions_variables`.
+#
+# Not done here: database migrations. AWS shares the production databases
+# with the VPS, which applies them.
+#
+# Roll back: Actions > "Deploy to AWS" > Run workflow, and give an older
+# commit of main in "ref".
+# ------------------------------------------------------------
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit of main to deploy (empty = latest main)"
+        required: false
+        default: ""
+
+# One deploy at a time; a newer push waits instead of cancelling a rollout
+concurrency:
+  group: deploy-aws
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+  ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+  IMAGE_TAG: ${{ vars.IMAGE_TAG }} # the tag the ECS task definitions run (Terraform var.image_tag)
+
+jobs:
+  backend:
+    name: Backend image + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          platforms: linux/amd64
+          provenance: false
+          load: true
+          tags: lms-backend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Django checks and no-database tests
+        run: |
+          docker run --rm -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false \
+            --entrypoint python lms-backend:ci manage.py check
+          docker run --rm --entrypoint python lms-backend:ci -m unittest -v \
+            config.test_health_no_db \
+            config.test_load_metric_no_db \
+            learner_api.test_response_cache_no_db
+
+      - name: Container answers /health/
+        run: |
+          docker run -d --name smoke -e PORT=8000 -e WEB_CONCURRENCY=1 \
+            -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false -p 8000:8000 lms-backend:ci
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8000/health/ && exit 0
+            sleep 2
+          done
+          docker logs smoke
+          exit 1
+
+      - name: Save image for the deploy job
+        run: docker save lms-backend:ci | gzip > image.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-image
+          path: image.tar.gz
+          retention-days: 1
+
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-out
+          path: frontend/out
+          retention-days: 1
+
+  deploy:
+    name: Deploy to AWS
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    environment:
+      name: aws-staging
+      url: ${{ vars.SITE_URL }}
+    permissions:
+      contents: read
+      id-token: write # lets the job sign in to AWS with OpenID Connect
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: backend-image
+
+      - name: Push image (:<commit> and :${{ vars.IMAGE_TAG }}), keeping the old one as :previous
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          COMMIT: ${{ inputs.ref || github.sha }}
+        run: |
+          set -euo pipefail
+          REPO="$REGISTRY/$ECR_REPOSITORY"
+          gunzip -c image.tar.gz | docker load
+
+          # Remember what is running now, for the automatic rollback
+          OLD=$(aws ecr batch-get-image --repository-name "$ECR_REPOSITORY" \
+                  --image-ids imageTag="$IMAGE_TAG" --query 'images[0].imageManifest' --output text 2>/dev/null || true)
+          if [ -n "$OLD" ] && [ "$OLD" != "None" ]; then
+            aws ecr put-image --repository-name "$ECR_REPOSITORY" --image-tag previous \
+              --image-manifest "$OLD" >/dev/null 2>&1 || true   # fails harmlessly if already equal
+          fi
+
+          docker tag lms-backend:ci "$REPO:$COMMIT"
+          docker tag lms-backend:ci "$REPO:$IMAGE_TAG"
+          docker push -q "$REPO:$COMMIT"
+          docker push -q "$REPO:$IMAGE_TAG"
+
+      - name: Roll the API services onto the new image
+        run: |
+          set -euo pipefail
+          SERVICES=$(aws ecs list-services --cluster "$ECS_CLUSTER" --query 'serviceArns[]' --output text | tr '\t' '\n' | sed 's#.*/##' | sort)
+          echo "$SERVICES" > services.txt
+          for s in $SERVICES; do
+            aws ecs update-service --cluster "$ECS_CLUSTER" --service "$s" \
+              --force-new-deployment --query 'service.serviceName' --output text
+          done
+
+      - name: Wait until every service is healthy
+        id: wait
+        run: |
+          set -euo pipefail
+          # The waiter polls every 15 s, 40 times (10 min) per call; allow 2 calls
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services $(cat services.txt) \
+            || aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services $(cat services.txt)
+          aws ecs describe-services --cluster "$ECS_CLUSTER" --services $(cat services.txt) \
+            --query 'services[].[serviceName,runningCount,deployments[0].rolloutState]' --output table
+          FAILED=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services $(cat services.txt) \
+            --query "services[?deployments[0].rolloutState=='FAILED'].serviceName" --output text)
+          if [ -n "$FAILED" ]; then
+            echo "::error::Rollout failed for: $FAILED"
+            exit 1
+          fi
+
+      - name: Put the previous image back (rollout failed)
+        if: failure() && steps.wait.conclusion == 'failure'
+        run: |
+          set -euo pipefail
+          PREV=$(aws ecr batch-get-image --repository-name "$ECR_REPOSITORY" \
+                   --image-ids imageTag=previous --query 'images[0].imageManifest' --output text)
+          aws ecr put-image --repository-name "$ECR_REPOSITORY" --image-tag "$IMAGE_TAG" \
+            --image-manifest "$PREV" >/dev/null
+          for s in $(cat services.txt); do
+            aws ecs update-service --cluster "$ECS_CLUSTER" --service "$s" \
+              --force-new-deployment --query 'service.serviceName' --output text
+          done
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services $(cat services.txt)
+          echo "::warning::Rolled back to the previous image; the frontend was not changed."
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-out
+          path: out
+
+      - name: Upload the frontend and clear the CloudFront cache
+        env:
+          BUCKET: ${{ vars.FRONTEND_BUCKET }}
+          DISTRIBUTION: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          set -euo pipefail
+          # 1. Hashed bundles first (cached for a year), so the new index.html
+          #    never points at files that aren't uploaded yet
+          aws s3 sync out "s3://$BUCKET" --only-show-errors \
+            --exclude "*.html" --cache-control "public,max-age=31536000,immutable"
+          # 2. Pages last, never cached by browsers. Old bundles are kept (not
+          #    --delete), so a page opened before the deploy keeps working.
+          aws s3 sync out "s3://$BUCKET" --only-show-errors \
+            --exclude "*" --include "*.html" --cache-control "no-cache"
+          ID=$(aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION" \
+                 --paths '/*' --query Invalidation.Id --output text)
+          aws cloudfront wait invalidation-completed --distribution-id "$DISTRIBUTION" --id "$ID"
+
+      - name: Smoke test the live site
+        env:
+          SITE_URL: ${{ vars.SITE_URL }}
+        run: |
+          set -euo pipefail
+          curl -sf -o /dev/null -w "site %{http_code} %{time_total}s\n" "$SITE_URL/"
+          curl -s -o /dev/null -w "login_api %{http_code} %{time_total}s\n" "$SITE_URL/login_api/" || true
