@@ -10,16 +10,16 @@ second input and its hours are not separately added.
 
 ``calculatedFrom`` and legacy ``weeksElapsed`` remain as explanatory metadata
 for compatible readers, but they do not drive the versioned target formula.
-Actual OTJ is read directly from the resolved learner profile's persisted
-``completed_hours`` value. Progress Review is only a consumer of that value;
-it does not recalculate or persist learner hours.
+Actual OTJ uses the same accepted-hour projection as the current learner and
+coach screens. Calculation never writes back to the learner's historical cache.
 Snapshots are persisted by ``curriculum_api.review_instances`` and are never
 recalculated on read, completion, or PDF rendering.
 """
 from __future__ import annotations
 
 from datetime import date, datetime, timezone as datetime_timezone
-from decimal import Decimal, InvalidOperation
+
+from .canonical_hours import profile_actual_hours
 
 from .ksb_progress import calculate_ksb_progress
 from .learner_detail import build_otjh_detail
@@ -32,9 +32,9 @@ from .training_plan_targets import (
 #: Existing strategy selector retained for backward compatibility. Formula
 #: evolution is recorded independently in ``formulaVersion``.
 CALCULATION_METHOD_PLANNED_HOURS = 'planned_hours'
-SNAPSHOT_SCHEMA_VERSION = 4
-TARGET_FORMULA_VERSION = 'stored_completed_hours_and_component_ksb_v4'
-ACTUAL_HOURS_SOURCE = 'learner.completed_hours'
+SNAPSHOT_SCHEMA_VERSION = 5
+TARGET_FORMULA_VERSION = 'canonical_accepted_hours_and_component_ksb_v5'
+ACTUAL_HOURS_SOURCE = 'canonical.accepted_hours'
 
 DIRECTION_ABOVE = 'above'
 DIRECTION_BELOW = 'below'
@@ -108,26 +108,16 @@ class UnresolvedTrainingPlanTarget(ValueError):
 
 
 class UnavailableCompletedHours(ValueError):
-    """The resolved learner has no usable persisted completed-hours value."""
+    """The resolved learner has no usable current accepted-hours projection."""
 
 
-def _stored_completed_hours(learner_profile):
-    raw_value = getattr(learner_profile, 'completed_hours', None)
-    if raw_value is None or (isinstance(raw_value, str) and not raw_value.strip()):
+def _current_completed_hours(learner_profile):
+    value = profile_actual_hours(learner_profile)
+    if value is None:
         raise UnavailableCompletedHours(
-            'This learner has no stored completed OTJ hours, so progress cannot be calculated.'
+            'Verified completed OTJ hours are unavailable for this learner, so progress cannot be calculated.'
         )
-    try:
-        value = Decimal(str(raw_value).strip())
-    except (InvalidOperation, TypeError, ValueError):
-        raise UnavailableCompletedHours(
-            'This learner\'s stored completed OTJ hours are invalid, so progress cannot be calculated.'
-        ) from None
-    if not value.is_finite() or value < 0:
-        raise UnavailableCompletedHours(
-            'This learner\'s stored completed OTJ hours are invalid, so progress cannot be calculated.'
-        )
-    return round(float(value), 2)
+    return round(value, 2)
 
 
 def _planned_hours_strategy(source, learner_profile, *, learner_start_date, calculated_at):
@@ -153,7 +143,7 @@ def _planned_hours_strategy(source, learner_profile, *, learner_start_date, calc
 
     planned_hours = targets['totalPlannedOtjHours']
     expected_hours = targets['targetOtjHours']
-    actual_hours = _stored_completed_hours(learner_profile)
+    actual_hours = _current_completed_hours(learner_profile)
 
     planned_components = targets['totalComponents']
     completed_components = targets['completedComponents']

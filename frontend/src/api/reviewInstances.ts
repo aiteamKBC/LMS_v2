@@ -104,7 +104,7 @@ export interface ReviewProgressSnapshot {
   schemaVersion?: number;
   formulaVersion?: string;
   /** Source captured for newly calculated snapshots; absent on historical snapshots. */
-  actualHoursSource?: 'learner.completed_hours';
+  actualHoursSource?: 'learner.completed_hours' | 'canonical.accepted_hours';
   calculatedFrom: string;
   calculatedAt: string;
   calculatedBy: string;

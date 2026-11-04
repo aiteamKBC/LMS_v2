@@ -2,6 +2,42 @@
 from .current_learning import merge_submissions, project_current
 
 
+# Stored counterpart of canonical_learning.allocations(). October-onward
+# completions use business time; imported allocations before October stay put.
+STORED_REPORTING_MONTH_SQL = """CASE
+    WHEN submitted_at IS NULL
+      OR to_char(submitted_at AT TIME ZONE 'Europe/London','YYYY-MM') < '2026-10'
+      OR (nullif(reporting_month,'') IS NOT NULL AND reporting_month < '2026-10')
+    THEN reporting_month
+    ELSE to_char(coalesce(declared_completed_at,submitted_at)
+                 AT TIME ZONE 'Europe/London','YYYY-MM') END"""
+
+
+def profile_actual_hours(profile, *, summaries=None):
+    """Current accepted hours for this exact profile, never its legacy cache.
+
+    Keep missing/ambiguous identities unavailable, including when a caller
+    supplies a caseload batch. This reads the same facts as the coach dashboard.
+    """
+    from math import isfinite
+    from . import canonical_learning as canonical
+
+    enrolment_id = getattr(profile, 'enrolment_id', None)
+    if enrolment_id is None:
+        return None
+    enrolment_id = int(enrolment_id)
+    if summaries is None:
+        summaries = canonical.otjh_summary_bulk([enrolment_id])
+    facts = summaries.get(enrolment_id)
+    if not facts or str(facts.get('profile_id')) != str(getattr(profile, 'id', None)):
+        return None
+    try:
+        actual = float(facts['actual'])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return actual if isfinite(actual) and actual >= 0 else None
+
+
 def extra_activity_hour_records(owners):
     """Read standalone extras once, excluding work already in the ledger.
 

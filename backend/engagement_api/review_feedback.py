@@ -22,7 +22,7 @@ from coach_api.review_sources import (
 )
 from learner_api.models import EnrolmentUser, LearnerProfile
 
-from .models import FeedbackForm, FeedbackReviewDelivery
+from .models import FeedbackForm, FeedbackReviewDelivery, FeedbackEmployerReviewDelivery
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,8 @@ REVIEW_FORM_TYPES = {
     'post_mcm_review': 'Monthly Coaching Meeting',
     'post_progress_review': 'Progress Review',
 }
+EMPLOYER_REVIEW_FORM_TYPE = 'post_progress_review_employer'
+ALL_REVIEW_FORM_TYPES = {*REVIEW_FORM_TYPES, EMPLOYER_REVIEW_FORM_TYPE}
 FORM_TYPE_BY_FAMILY = {
     'MCM': 'post_mcm_review',
     'PR': 'post_progress_review',
@@ -117,6 +119,14 @@ def _source_rows(profile_id, source_review_id=None):
 
 
 def sync_review_feedback(learner_id, *, source_review_id=None):
+    """Assign independently to the learner and employer; expose pending counts."""
+    result = _sync_review_feedback(learner_id, source_review_id=source_review_id)
+    employer_result = _sync_review_feedback(learner_id, source_review_id=source_review_id, employer=True)
+    result.update({f'employer{key[0].upper()}{key[1:]}': value for key, value in employer_result.items()})
+    return result
+
+
+def _sync_review_feedback(learner_id, *, source_review_id=None, employer=False):
     """Reconcile persisted completions for an *enrolment* learner identity.
 
     published_at remains the existing launch boundary. Missing dates are
@@ -127,12 +137,17 @@ def sync_review_feedback(learner_id, *, source_review_id=None):
 
     result = {key: 0 for key in ('created', 'existing', 'incomplete', 'historical',
                                 'undated', 'future', 'unlinked', 'identityConflicts')}
+    if employer:
+        result['pending'] = 0
     templates = {}
+    delivery_model = FeedbackEmployerReviewDelivery if employer else FeedbackReviewDelivery
+    allowed_types = {EMPLOYER_REVIEW_FORM_TYPE} if employer else REVIEW_FORM_TYPES
     for form in FeedbackForm.objects.filter(
-        form_type__in=REVIEW_FORM_TYPES, status='published', is_current=True,
+        form_type__in=allowed_types, status='published', is_current=True,
         published_at__isnull=False,
     ).order_by('-published_at', '-id'):
-        templates.setdefault(form.form_type, form)
+        if form.form_type in allowed_types:
+            templates.setdefault(form.form_type, form)
     if not templates:
         return result
 
@@ -157,12 +172,17 @@ def sync_review_feedback(learner_id, *, source_review_id=None):
     ))
     legacy_keys = Counter(str(row.get('aptem_review_id') or '') for row in rows)
     linked_ids = set()
-    existing = {item.source_review_id: item for item in FeedbackReviewDelivery.objects.filter(
+    existing = {item.source_review_id: item for item in delivery_model.objects.filter(
         source_review_id__in=review_ids,
     )}
     now = timezone.now()
     for row in rows:
-        form = templates.get(FORM_TYPE_BY_FAMILY.get(review_family(row['review_type'])))
+        family = review_family(row['review_type'])
+        if employer:
+            form_type = EMPLOYER_REVIEW_FORM_TYPE if family in {'PR', 'PR_SKILLS_RADAR'} else None
+        else:
+            form_type = FORM_TYPE_BY_FAMILY.get(family)
+        form = templates.get(form_type)
         if form is None:
             continue
         data = _json_value(row.get('review_data'), dict, {})
@@ -191,6 +211,10 @@ def sync_review_feedback(learner_id, *, source_review_id=None):
             linked_ids.add(overlay.pk)
         delivery = existing.get(row['id'])
         if delivery is not None:
+            if employer and str(delivery.learner_id) == str(learner.pk):
+                from .employer_feedback import resolve_pending_delivery
+                resolve_pending_delivery(delivery, learner)
+                result['pending'] += int(delivery.employer_id is None)
             result['existing' if str(delivery.learner_id) == str(learner.pk)
                    else 'identityConflicts'] += 1
             continue
@@ -209,7 +233,7 @@ def sync_review_feedback(learner_id, *, source_review_id=None):
             continue
         # The UNIQUE source_review_id constraint makes recognition a durable
         # transition exactly once, including concurrent LMS/Aptem detections.
-        delivery, created = FeedbackReviewDelivery.objects.get_or_create(
+        delivery, created = delivery_model.objects.get_or_create(
             source_review_id=row['id'], defaults={
                 'form': form, 'aptem_review_id': aptem_id,
                 'learner_id': str(learner.pk), 'learner_name': row.get('learner_name') or '',
@@ -220,6 +244,10 @@ def sync_review_feedback(learner_id, *, source_review_id=None):
         if str(delivery.learner_id) != str(learner.pk):
             result['identityConflicts'] += 1
         else:
+            if employer:
+                from .employer_feedback import resolve_pending_delivery
+                resolve_pending_delivery(delivery, learner)
+                result['pending'] += int(delivery.employer_id is None)
             result['created' if created else 'existing'] += 1
     if source_review_id is None:
         result['unlinked'] = sum(item.source_review_id is None and item.pk not in linked_ids

@@ -9,15 +9,23 @@ vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({
 }) }));
 vi.mock('../lazyRoute', () => ({ lazyRoute: () => () => <h1>Assigned feedback page</h1> }));
 
-beforeEach(() => { session.role = 'learner'; });
+beforeEach(() => {
+  session.role = 'learner';
+  vi.doUnmock('@/lib/featureFlags');
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.doUnmock('@/lib/featureFlags');
   vi.resetModules();
 });
 
-async function learnerFeedbackRoutes(enabled: boolean) {
-  vi.stubEnv('DEV', enabled);
+async function learnerFeedbackRoutes(enabled?: boolean) {
+  if (enabled !== undefined) vi.doMock('@/lib/featureFlags', () => ({
+    CHAT_ENABLED: false,
+    LEARNER_FEEDBACK_ENABLED: enabled,
+    LEARNER_POST_LECTURE_FEEDBACK_ENABLED: true,
+  }));
   const { default: routes } = await import('../config');
   const protectedLayout = routes.find(route => 'children' in route && !('path' in route && route.path));
   const feedbackPaths = new Set([
@@ -38,7 +46,19 @@ function openFeedbackRoute(route: RouteObject, query = '') {
 }
 
 describe('learner feedback routes', () => {
-  it('releases the queue and owned delivery routes while keeping other feedback routes closed in production', async () => {
+  it('opens every assigned feedback route for learners with the production release configuration', async () => {
+    vi.stubEnv('DEV', false);
+    const routes = await learnerFeedbackRoutes();
+    expect(routes).toHaveLength(4);
+    for (const route of routes) {
+      const view = openFeedbackRoute(route);
+      expect(screen.getByRole('heading', { name: 'Assigned feedback page' })).toBeVisible();
+      expect(screen.queryByRole('heading', { name: 'Learner home' })).not.toBeInTheDocument();
+      view.unmount();
+    }
+  });
+
+  it('can limit the release to the queue and lecture deliveries when other feedback is explicitly disabled', async () => {
     const routes = await learnerFeedbackRoutes(false);
     expect(routes).toHaveLength(4);
     for (const route of routes) {
@@ -86,6 +106,7 @@ describe('learner feedback routes', () => {
   });
 
   it('renders learner feedback pages during local development', async () => {
+    vi.stubEnv('DEV', true);
     const routes = await learnerFeedbackRoutes(true);
     expect(routes).toHaveLength(4);
     for (const route of routes) {

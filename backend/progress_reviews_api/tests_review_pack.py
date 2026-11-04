@@ -253,6 +253,10 @@ def _mock_profile(active=True):
 class BuildReviewPackTests(SimpleTestCase):
     def setUp(self):
         self.period = build_review_period(date(2026, 3, 26), review_number=1)
+        # Pack previews now consume current accepted metrics, never the stale
+        # profile cache; keep this pipeline test independent of database setup.
+        self.enterContext(patch('learner_api.dashboard_metrics.read_metrics',
+                                return_value={'otjh': {'actual': 130, 'planned': 400}}))
 
     @patch("progress_reviews_api.review_pack._build_evidence_sections", return_value=([], [], []))
     @patch("progress_reviews_api.review_pack._build_attendance_section")
@@ -286,7 +290,7 @@ class BuildReviewPackTests(SimpleTestCase):
         self.assertEqual(pack["learner"]["full_name"], "Jordan Example")
         self.assertEqual(pack["review"]["review_id"], "run-1")
         self.assertEqual(pack["review"]["generated_by"], "coach@kbc.example")
-        self.assertEqual(pack["otj"]["completed_otj_hours"], 120.0)
+        self.assertEqual(pack["otj"]["completed_otj_hours"], 130.0)
 
     @patch("progress_reviews_api.review_pack._build_evidence_sections", return_value=([], [], []))
     @patch("progress_reviews_api.review_pack._build_attendance_section")

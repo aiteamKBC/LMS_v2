@@ -13,6 +13,7 @@ export function employerPortalNav(employerId: string): SidebarNavItem[] {
     { id: 'employer-portal-home', label: 'Home', icon: 'ri-home-line', href: `/employers/${employerId}` },
     { id: 'employer-portal-learners', label: 'My learners', icon: 'ri-group-line', href: `/employers/${employerId}/learners` },
     { id: 'employer-portal-reviews', label: 'Progress reviews', icon: 'ri-calendar-check-line', href: `/employers/${employerId}/reviews` },
+    { id: 'employer-portal-feedback', label: 'Feedback', icon: 'ri-chat-1-line', href: `/employers/${employerId}/feedback` },
     { id: 'employer-portal-documents', label: 'Documents', icon: 'ri-draft-line', href: `/employers/${employerId}/documents` },
   ];
 }
@@ -36,6 +37,7 @@ export function useEmployerPortalChrome(employerId: string, employerName?: strin
   // fixed while selecting the section represented by the current tab.
   const section = path.startsWith(`${root}/learner/`)
     ? learnerTab === 'reviews' || learnerTab === 'documents' ? learnerTab : 'learners'
+    : path === `${root}/feedback` || path.startsWith(`${root}/feedback/`) ? 'feedback'
     : path === `${root}/reviews` ? 'reviews'
     : path === `${root}/documents` ? 'documents'
     : path === `${root}/learners` ? 'learners' : 'home';

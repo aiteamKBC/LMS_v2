@@ -87,6 +87,7 @@ import {
 } from '@/pages/curriculum/shared/entities/liveSessionRecordingLink';
 import { showFullTextWhenTruncated } from '@/pages/curriculum/shared/entities/truncationTitle';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '@/pages/curriculum/shared/componentUploadPolicy';
+import { CurriculumVideoUpload } from '@/pages/curriculum/shared/CurriculumVideoUpload';
 // Both panels are heavy and only mount when their modal opens — GuidedQuizUpload
 // alone pulls in xlsx (~420 kB). Splitting them keeps that weight off the initial
 // load of this page and of module-builder, which imports from this module.
@@ -926,7 +927,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
         {/* Inspector — the wide working canvas */}
         <div>
           {selected ? (
-            <ComponentEditor key={selected.id} component={selected} onChange={patch => patchComponent(selected.id, patch)} onBack={() => setSelectedId(null)} groupOptions={groupOptions} rulePoints={pointsByType[selected.type]} weekScope={weekScope} recordingLinks={templateRecordingLinks} />
+            <ComponentEditor key={selected.id} component={selected} onChange={patch => patchComponent(selected.id, patch)} onBack={() => setSelectedId(null)} groupOptions={groupOptions} rulePoints={pointsByType[selected.type]} weekScope={weekScope} recordingLinks={templateRecordingLinks} videoTemplateId={template.id} />
           ) : (
             <WeekOverviewPanel
               components={template.components}
@@ -1990,6 +1991,7 @@ export interface ComponentBodyProps {
   // Injected file uploader so the same bodies work in both the week builder
   // (posts to week-components/) and the module builder (module-scoped upload).
   uploadResource?: WeekComponentUploader;
+  videoTemplateId?: string;
   // The module this component is authored in (module builder only). A live
   // session saved without its own Teams series reads its recording from the
   // module's saved sessions, the same list Sessions & Recordings shows.
@@ -2000,7 +2002,7 @@ export interface ComponentBodyProps {
   recordingLinks?: RecordingLinkContext;
 }
 
-export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string; recordingLinks?: RecordingLinkContext }) {
+export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string; recordingLinks?: RecordingLinkContext; videoTemplateId?: string }) {
   const editorRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const editor = editorRef.current;
@@ -2016,7 +2018,7 @@ export function ComponentEditor({ component, onChange, onBack, groupOptions, rul
       ? manualLiveSessionLinkSettings(component.settings, String(value))
       : { ...component.settings, [key]: value },
   });
-  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks };
+  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId };
 
   return (
     <div ref={editorRef} tabIndex={-1} role="region" aria-label="Component editor" className="scroll-mt-6 rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
@@ -2482,7 +2484,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
 // details for a source-type-driven video field, matching the Module
 // Builder's video authoring fields (source type, URL/embed, duration,
 // required progress, component content).
-function VideoBody({ component, onChange, setSetting, rulePoints }: ComponentBodyProps) {
+function VideoBody({ component, onChange, setSetting, rulePoints, moduleId, videoTemplateId }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   const sourceType = normaliseVideoSourceType(s('sourceType') || s('provider'));
   const updateSourceType = (value: string) => onChange({
@@ -2492,6 +2494,8 @@ function VideoBody({ component, onChange, setSetting, rulePoints }: ComponentBod
   return (
     <>
       <Section title="Video details">
+        <CurriculumVideoUpload targetKind={moduleId ? 'module' : 'template'} targetId={moduleId || videoTemplateId} componentId={component.id} title={component.title}
+          source={s('videoUrl') || s('embedCode')} />
         <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
         <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this video is about…" className={`${inputClass} resize-none`} /></Field>
 

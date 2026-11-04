@@ -18,7 +18,7 @@ async function chooseGeneralFeedback(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe('post-lecture feedback delivery scope', () => {
-  it.each(['post_lecture', 'general', 'post_event', 'event_rsvp', 'post_mcm_review', 'post_progress_review', 'mid_module', 'end_module'] as const)('offers staff scoring examples for %s without including them in saved form data or learner preview', async formType => {
+  it.each(['post_lecture', 'general', 'post_event', 'event_rsvp', 'post_mcm_review', 'post_progress_review', 'post_progress_review_employer', 'mid_module', 'end_module'] as const)('offers staff scoring examples for %s without including them in saved form data or learner preview', async formType => {
     const user = userEvent.setup();
     const form: FeedbackForm = {
       id: 7, title: 'Synthetic feedback', formType, deliveryScope: ['post_lecture', 'mid_module', 'end_module'].includes(formType) ? 'all_modules' : 'manual',
@@ -47,7 +47,7 @@ describe('post-lecture feedback delivery scope', () => {
     expect(JSON.stringify(update.mock.calls[0][1])).not.toContain('answer');
   });
 
-  it.each(['Well being', 'End-module Feedback'])('configures %s using module dates and assignment', async label => {
+  it.each(['Wellbeing', 'End-module Feedback'])('configures %s using module dates and assignment', async label => {
     const user = userEvent.setup();
     const curriculum = vi.spyOn(feedbackApi, 'curriculumOptions').mockResolvedValue({
       programmes: [{ id: 'P1', name: 'Data' }], cohorts: [], groups: [],
