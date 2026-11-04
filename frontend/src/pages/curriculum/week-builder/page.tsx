@@ -88,6 +88,7 @@ import {
 import { showFullTextWhenTruncated } from '@/pages/curriculum/shared/entities/truncationTitle';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '@/pages/curriculum/shared/componentUploadPolicy';
 import { CurriculumVideoUpload } from '@/pages/curriculum/shared/CurriculumVideoUpload';
+import { PendingVideoFilesContext, usePendingVideoFiles, withUploadedVideo } from '@/pages/curriculum/shared/pendingVideoFiles';
 // Both panels are heavy and only mount when their modal opens — GuidedQuizUpload
 // alone pulls in xlsx (~420 kB). Splitting them keeps that weight off the initial
 // load of this page and of module-builder, which imports from this module.
@@ -494,6 +495,7 @@ function CreateTemplateModal({ onClose, onCreated }: { onClose: () => void; onCr
 // page and a URL parameter to ask it.
 export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: { initial: WeekTemplate; isNew: boolean; onClose: (changed: boolean, returnToPrevious?: boolean) => void; returnToPrevious?: boolean }) {
   const [template, setTemplate] = useState<WeekTemplate>(initial);
+  const videoFiles = usePendingVideoFiles(initial.id);
   const [persistedId, setPersistedId] = useState(isNew ? '' : initial.id);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -626,7 +628,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
     } catch { /* snapshot stays as-is if it somehow isn't valid JSON */ }
   }, [pointsByType]);
 
-  const dirty = JSON.stringify(template) !== savedSnapshot.current;
+  const dirty = JSON.stringify(template) !== savedSnapshot.current || videoFiles.hasPending;
 
   /**
    * Somebody else's save landing on the template this editor is holding.
@@ -735,9 +737,16 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
       let result: WeekTemplate | null = null;
       for (let rebases = 0; ; rebases += 1) {
         try {
-          const input = toWeekTemplateInput(working);
+          const selectedVideo = working.components.find(component => component.id === selectedId && component.type === 'video');
+          const videoImport = selectedVideo ? { importVideoComponentIds: [selectedVideo.id] } : {};
+          const input = { ...toWeekTemplateInput(working), ...videoImport };
           result = persistedId
-            ? await updateWeekTemplate(persistedId, working.revision ? { ...input, expectedRevision: working.revision } : input)
+            ? await updateWeekTemplate(persistedId, {
+              // An unchanged Save may retry the selected video. It must not
+              // replace every template component just to request that copy.
+              ...(dirty ? input : videoImport),
+              ...(working.revision ? { expectedRevision: working.revision } : {}),
+            })
             : await createWeekTemplate(input);
           break;
         } catch (err) {
@@ -759,6 +768,14 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
       savedSnapshot.current = JSON.stringify(result);
       setSelectedId(prev => (prev && result.components.some(c => c.id === prev) ? prev : null));
       savedChanges.current = true;
+      await videoFiles.uploadSaved('template', result.id, result.components, (id, settings, originalSource) => {
+        const apply = (value: WeekTemplate): WeekTemplate => ({ ...value,
+          components: value.components.map(component => withUploadedVideo(component, id, settings, originalSource)),
+        });
+        result = apply(result!);
+        savedSnapshot.current = JSON.stringify(apply(JSON.parse(savedSnapshot.current) as WeekTemplate));
+        setTemplate(current => apply(current));
+      });
       showCurriculumAlert({ title: 'Week template saved', icon: 'success', timer: 1400 });
     } catch (err) {
       showCurriculumAlert({ title: 'Save failed', text: err instanceof Error ? err.message : undefined, icon: 'error' });
@@ -768,6 +785,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
   };
 
   const discard = () => {
+    videoFiles.clear();
     const restored = JSON.parse(savedSnapshot.current) as WeekTemplate;
     setTemplate(restored);
     setSelectedId(prev => (prev && restored.components.some(c => c.id === prev) ? prev : restored.components[0]?.id ?? null));
@@ -834,6 +852,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
   }
 
   return (
+    <PendingVideoFilesContext.Provider value={videoFiles}>
     <div className="px-5 lg:px-8 py-6 space-y-6">
       {/* The receipt for a merge that has already happened: their components
           are in the rail by the time this renders, and the ones the reader had
@@ -884,7 +903,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
                   if (file) void importKsbSheet(file);
                 }}
               />
-              <button onClick={save} disabled={saving || !dirty} className="primary-action inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-5 py-2 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth disabled:opacity-30">
+              <button onClick={save} disabled={saving || (!dirty && selected?.type !== 'video')} className="primary-action inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-5 py-2 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth disabled:opacity-30">
                 {saving ? <><AppIcon className="ri-loader-4-line animate-spin"></AppIcon>Saving</> : <><AppIcon className="ri-save-3-line"></AppIcon>{persistedId ? 'Save' : 'Create'}</>}
               </button>
             </div>
@@ -956,6 +975,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
 
       <style>{`@keyframes wbRise{from{opacity:0;transform:translate(-50%,14px)}to{opacity:1;transform:translate(-50%,0)}}.wb-savebar{transform:translate(-50%,0);animation:wbRise .2s ease-out}@media (prefers-reduced-motion:reduce){.wb-savebar{animation:none}}`}</style>
     </div>
+    </PendingVideoFilesContext.Provider>
   );
 }
 

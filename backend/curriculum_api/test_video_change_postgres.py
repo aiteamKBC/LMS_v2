@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 
 from django.db import connection, connections, transaction
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.http import JsonResponse
 from django.test import RequestFactory, override_settings
 
 from . import video_imports as imports
@@ -182,6 +183,52 @@ class VideoChangePostgresTests(VideoPostgresFixture, unittest.TestCase):
         self.assertFalse(CurriculumVideoChange.objects.exists())
         self.insert()
         self.assertEqual(CurriculumVideoChange.objects.count(), 1)
+
+
+class VideoSavePostgresTests(VideoPostgresFixture, unittest.TestCase):
+    def request(self):
+        return RequestFactory().patch('/', json.dumps({
+            'importVideoComponentIds': ['NEW', 'OTHER-MODULE'],
+        }), content_type='application/json')
+
+    def test_save_queues_selected_video_after_commit_and_reuses_trigger_import(self):
+        self.insert()
+        capture_pending()
+        asset = CurriculumVideoImport.objects.get()
+        asset.status, asset.error = 'failed', 'Temporary failure'
+        asset.save(update_fields=['status', 'error'])
+        with patch('login.sessions.authenticate_request', return_value=SimpleNamespace(role='staff')), \
+                patch.object(imports, 'wake_worker') as wake:
+            with transaction.atomic():
+                response = imports.tracked_save(lambda *_args, **_kwargs: JsonResponse({'saved': True}), 'module')(
+                    self.request(), module_catalogue_id='MOD1')
+                self.assertEqual(response.status_code, 200)
+                wake.assert_not_called()
+            wake.assert_called_once_with()
+        asset.refresh_from_db()
+        self.assertEqual((asset.status, asset.error), ('queued', ''))
+        self.assertEqual(list(CurriculumVideoImport.objects.values_list('component_id', flat=True)), ['NEW'])
+        self.assertEqual(sql("SELECT settings_json->>'videoUrl' FROM curriculum.components WHERE id='NEW'")[0][0], SOURCE)
+        self.assertFalse(CurriculumVideoChange.objects.exists())
+
+    def test_queue_failure_rolls_back_saved_source_and_trigger_event(self):
+        self.insert()
+        CurriculumVideoChange.objects.all().delete()
+
+        def save_view(*_args, **_kwargs):
+            sql("UPDATE curriculum.components SET settings_json=jsonb_set(settings_json, '{videoUrl}', %s::jsonb) WHERE id='NEW'",
+                [json.dumps('https://example.com/replacement.mp4')])
+            return JsonResponse({'saved': True})
+
+        with patch('login.sessions.authenticate_request', return_value=SimpleNamespace(role='staff')), \
+                patch.object(imports, 'enqueue_saved_video', side_effect=RuntimeError('Queue unavailable')), \
+                patch.object(imports, 'wake_worker') as wake:
+            with self.assertRaisesRegex(RuntimeError, 'Queue unavailable'):
+                imports.tracked_save(save_view, 'module')(self.request(), module_catalogue_id='MOD1')
+            wake.assert_not_called()
+        self.assertEqual(sql("SELECT settings_json->>'videoUrl' FROM curriculum.components WHERE id='NEW'")[0][0], SOURCE)
+        self.assertFalse(CurriculumVideoChange.objects.exists())
+        self.assertFalse(CurriculumVideoImport.objects.exists())
 
 
 class VideoUploadPostgresTests(VideoPostgresFixture, unittest.TestCase):

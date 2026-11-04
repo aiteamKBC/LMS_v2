@@ -3,6 +3,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import { coachFetch } from '@/lib/coachFetch';
 import { CurriculumVideoUpload } from './CurriculumVideoUpload';
+import { PendingVideoFilesContext, usePendingVideoFiles } from './pendingVideoFiles';
 import { parseVideoUrl, VideoPlayer } from '@/components/feature/VideoPlayer';
 
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn() }));
@@ -17,6 +18,8 @@ it('reports a stored Bunny copy without changing the authoring source', async ()
   render(<CurriculumVideoUpload targetId="M1" componentId="C1" title="Lesson" source={source} />);
   await screen.findByText('Stored on Bunny');
   expect(screen.getByText(/the LMS keeps the original link/)).toBeInTheDocument();
+  expect(screen.getByText(/Save starts copying this video to Bunny automatically/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Import saved video link/i })).not.toBeInTheDocument();
   expect(vi.mocked(coachFetch).mock.calls.every(([, options]) => !options?.method || options.method === 'GET')).toBe(true);
 });
 
@@ -40,6 +43,26 @@ it('shows failed import details while keeping the previous video', async () => {
   vi.mocked(coachFetch).mockResolvedValue(reply({ import: { ...ready, status: 'failed', error: 'Source needs permission.', bunnyUrl: undefined } }));
   render(<CurriculumVideoUpload targetId="M1" componentId="C1" title="Lesson" source={source} />);
   expect(await screen.findByRole('alert')).toHaveTextContent('Source needs permission.');
+  expect(screen.getByText('Save this video again to retry the Bunny copy.')).toBeInTheDocument();
+});
+
+it('allows choosing an MP4 before the component is saved, without uploading yet', async () => {
+  vi.mocked(coachFetch).mockResolvedValue(reply({ enabled: true, saved: false, import: null }));
+  function Editor() {
+    const files = usePendingVideoFiles('M1');
+    return <PendingVideoFilesContext.Provider value={files}>
+      <CurriculumVideoUpload targetId="M1" componentId="NEW" title="Lesson" source={source} />
+    </PendingVideoFilesContext.Provider>;
+  }
+  render(<Editor />);
+  await waitFor(() => expect(coachFetch).toHaveBeenCalledOnce());
+  const picker = screen.getByLabelText('Upload MP4 to LMS and Bunny');
+  expect(picker).toBeEnabled();
+  fireEvent.change(picker, { target: { files: [new File(['video'], 'new-lesson.mp4')] } });
+  expect(screen.getByText(/new-lesson.mp4.*Selected. Save to upload/)).toBeInTheDocument();
+  expect(vi.mocked(coachFetch).mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false);
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(screen.getByText('Choose an MP4, then Save to upload it to the LMS and Bunny.')).toBeInTheDocument();
 });
 
 const savedSettings = {

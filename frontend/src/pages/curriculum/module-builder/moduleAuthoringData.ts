@@ -2917,6 +2917,8 @@ export async function saveModuleStructure(
   options: {
     expectedRevision?: string;
     source?: 'auto-save' | 'manual';
+    /** Explicit Save also requests Bunny storage for the open video. */
+    importVideoComponentIds?: string[];
     /**
      * The copy last agreed with the server at `expectedRevision`. With both,
      * only what changed since is sent and written -- see moduleStructureDelta.
@@ -2962,7 +2964,9 @@ export async function saveModuleStructure(
       weeksNumber: recalculated.weekStructure.length || recalculated.weeks,
       ...(options.expectedRevision ? { expectedRevision: options.expectedRevision } : {}),
     };
-  const serialized = JSON.stringify({ ...body, ...(options.collaboration ? { collaboration: options.collaboration } : {}) });
+  const serialized = JSON.stringify({ ...body,
+    ...(options.importVideoComponentIds?.length ? { importVideoComponentIds: options.importVideoComponentIds } : {}),
+    ...(options.collaboration ? { collaboration: options.collaboration } : {}) });
   const sizeBytes = new Blob([serialized]).size;
   const componentCount = recalculated.weekStructure.reduce((total, week) => total + week.components.length, 0);
   // Refused here rather than sent: the server would only answer with an HTML

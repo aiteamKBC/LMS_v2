@@ -185,6 +185,65 @@ class VideoImportTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(CurriculumVideoImport.objects.count(), 0)
 
+    def save_video_request(self, *, kind='module', status=200, ids=None):
+        request = RequestFactory().patch('/save/', json.dumps({
+            'importVideoComponentIds': ids if ids is not None else ['COMP1'],
+        }), content_type='application/json')
+        sibling = {**self.component, 'id': 'OLD'}
+        result = JsonResponse({'saved': status == 200}, status=status)
+        with patch.object(imports, 'enabled', return_value=True), \
+             patch.object(imports, 'target', return_value=('components', [self.component, sibling], SCOPE)), \
+             patch('login.sessions.authenticate_request', return_value=SimpleNamespace(role='staff')):
+            response = imports.tracked_save(lambda *a, **k: result, kind)(request, **(
+                {'identifier': 'W1'} if kind == 'template' else {'module_catalogue_id': 'MOD1'}))
+        self.assertIs(response, result)
+        return response
+
+    def test_save_queues_the_selected_unchanged_video_only_and_wakes_after_commit(self):
+        with patch.object(imports, 'wake_worker') as wake, self.captureOnCommitCallbacks(execute=True):
+            self.save_video_request(ids=['COMP1', 'COMP-IN-OTHER-MODULE'])
+            self.assertEqual(list(CurriculumVideoImport.objects.values_list('component_id', flat=True)), ['COMP1'])
+            wake.assert_not_called()
+        wake.assert_called_once()
+
+    def test_save_retries_failed_copy_and_reuses_ready_copy(self):
+        asset = self.asset()
+        asset.status, asset.error = 'failed', 'Download failed'
+        asset.save()
+        self.save_video_request()
+        asset.refresh_from_db()
+        self.assertEqual((asset.status, asset.error), ('queued', ''))
+        asset.status, asset.video_id = 'ready', VIDEO_ID
+        asset.save()
+        self.save_video_request()
+        asset.refresh_from_db()
+        self.assertEqual((asset.status, asset.video_id), ('ready', VIDEO_ID))
+        self.assertEqual(CurriculumVideoImport.objects.count(), 1)
+
+    def test_template_save_queues_its_selected_video(self):
+        self.save_video_request(kind='template')
+        asset = CurriculumVideoImport.objects.get()
+        self.assertEqual((asset.target_kind, asset.target_id, asset.component_id), ('template', 'W1', 'COMP1'))
+
+    def test_failed_save_never_requests_an_import(self):
+        with patch.object(imports, 'wake_worker') as wake, self.captureOnCommitCallbacks(execute=True):
+            self.save_video_request(status=409)
+        wake.assert_not_called()
+        self.assertFalse(CurriculumVideoImport.objects.exists())
+
+    def test_missing_or_out_of_scope_selection_does_not_backfill_old_sources(self):
+        self.save_video_request(ids=['COMP-IN-OTHER-MODULE'])
+        self.assertFalse(CurriculumVideoImport.objects.exists())
+
+    def test_save_does_not_interrupt_an_active_transfer(self):
+        asset = self.asset()
+        asset.status = 'uploading'
+        asset.lease_until = timezone.now() + timedelta(minutes=10)
+        asset.save()
+        self.save_video_request()
+        refreshed = CurriculumVideoImport.objects.get(pk=asset.pk)
+        self.assertEqual((refreshed.status, refreshed.lease_until), (asset.status, asset.lease_until))
+
     def test_changed_video_is_queued_but_failed_save_is_not(self):
         request = RequestFactory().patch('/module/', '{}', content_type='application/json')
         def save(*args, **kwargs):
@@ -281,6 +340,16 @@ class VideoImportAccessTests(TestCase):
                  patch.object(imports, 'enabled', return_value=True), patch.object(imports, 'target', return_value=('components', [{'id': 'COMP1'}], SCOPE)):
                 response = imports.component_video(self.request(), 'module', 'MOD1', 'COMP1')
             self.assertEqual(response.status_code, 200)
+
+    def test_unsaved_video_status_is_informational_but_import_is_refused(self):
+        with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='staff')), \
+             patch.object(imports, 'enabled', return_value=True), \
+             patch.object(imports, 'target', return_value=('components', [], SCOPE)):
+            response = imports.component_video(self.request(), 'module', 'MOD1', 'NEW')
+            self.assertEqual(response.status_code, 200)
+            self.assertFalse(json.loads(response.content)['saved'])
+            response = imports.component_video(self.request('post'), 'module', 'MOD1', 'NEW')
+            self.assertEqual(response.status_code, 400)
 
     def test_post_requires_csrf(self):
         request = RequestFactory().post('/video/')
