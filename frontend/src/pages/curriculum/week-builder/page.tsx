@@ -2494,8 +2494,9 @@ function VideoBody({ component, onChange, setSetting, rulePoints, moduleId, vide
   return (
     <>
       <Section title="Video details">
-        <CurriculumVideoUpload targetKind={moduleId ? 'module' : 'template'} targetId={moduleId || videoTemplateId} componentId={component.id} title={component.title}
-          source={s('videoUrl') || s('embedCode')} />
+        <CurriculumVideoUpload key={`${moduleId || videoTemplateId}:${component.id}`} targetKind={moduleId ? 'module' : 'template'} targetId={moduleId || videoTemplateId} componentId={component.id} title={component.title}
+          source={s('videoUrl') || s('embedCode')}
+          onUploaded={settings => onChange({ settings: { ...component.settings, ...settings } })} />
         <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
         <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this video is about…" className={`${inputClass} resize-none`} /></Field>
 

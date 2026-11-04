@@ -36,8 +36,16 @@ def main():
             'curriculum_api.test_bunny_stream', 'curriculum_api.test_video_imports',
             'curriculum_api.test_youtube_download',
             'curriculum_api.test_video_changes',
+            'curriculum_api.tests_upload_storage.LocalBackendTests',
+            'curriculum_api.tests_upload_storage.AzureBackendTests',
+            'curriculum_api.tests_upload_storage.RangeServingTests',
         ])
-        result = unittest.TextTestRunner(verbosity=1).run(suite)
+        from django.test.utils import setup_test_environment, teardown_test_environment
+        setup_test_environment()
+        try:
+            result = unittest.TextTestRunner(verbosity=1).run(suite)
+        finally:
+            teardown_test_environment()
     return 0 if result.wasSuccessful() else 1
 
 

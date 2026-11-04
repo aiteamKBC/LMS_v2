@@ -6193,8 +6193,9 @@ function TypeSpecificFields({
 
     return (
       <EditorBlock title="Video component">
-        <CurriculumVideoUpload targetId={module.catalogueId} componentId={component.id} title={component.title}
-          source={getString('videoUrl') || getString('embedCode')} />
+        <CurriculumVideoUpload key={`${module.catalogueId}:${component.id}`} targetId={module.catalogueId} componentId={component.id} title={component.title}
+          source={getString('videoUrl') || getString('embedCode')}
+          onUploaded={settings => onChange({ settings: { ...component.settings, ...settings } })} />
         {(getString('legacySourceType') === 'Shortcode' || getString('sourceType') === 'Shortcode' || getBool('legacyUnsupportedSource')) && (
           <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
             This component uses a legacy Shortcode source. Shortcode playback is not supported in the new Module Builder, so the original value is preserved until you choose a supported source.

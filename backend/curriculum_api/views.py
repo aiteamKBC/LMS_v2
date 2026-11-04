@@ -17242,7 +17242,9 @@ def validate_component_authoring_payload(component, path):
             errors.append({'path': f'{path}.settings.videoUrl', 'message': 'Enter a valid YouTube URL.'})
         if video_url and source_type == 'Vimeo' and not host_matches(video_url, {'vimeo.com'}):
             errors.append({'path': f'{path}.settings.videoUrl', 'message': 'Enter a valid Vimeo URL.'})
-        if video_url and source_type in {'External Link', 'HTML (MP4)'} and not http_url(video_url):
+        from .video_uploads import stored_video_path
+        saved_mp4 = source_type == 'HTML (MP4)' and bool(stored_video_path(video_url))
+        if video_url and source_type in {'External Link', 'HTML (MP4)'} and not (http_url(video_url) or saved_mp4):
             errors.append({'path': f'{path}.settings.videoUrl', 'message': 'Enter a valid URL.'})
         if status != 'Draft' and source_type == 'Embed' and not clean_str(settings.get('embedCode')):
             errors.append({'path': f'{path}.settings.embedCode', 'message': 'Embed content is required before QA or approval.'})

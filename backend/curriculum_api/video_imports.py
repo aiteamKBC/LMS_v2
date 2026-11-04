@@ -27,6 +27,7 @@ from login.permissions import require_role
 from .bunny_stream import BunnyStream, VideoImportError, is_bunny_url, playback_url
 from .models import CurriculumVideoImport
 from .video_sources import download_url, download_video, source_url, validate_video
+from .video_uploads import save_mp4, stored_video, stored_video_path
 
 logger = logging.getLogger(__name__)
 _worker_lock = threading.Lock()
@@ -145,7 +146,8 @@ def process(import_id, file_obj=None):
         asset.status, asset.error = 'uploading', ''
         asset.save(update_fields=['lease_until', 'status', 'error', 'updated_at'])
     try:
-        if asset.source_url:
+        local_source = stored_video_path(asset.source_url)
+        if asset.source_url and not local_source:
             download_url(asset.source_url)
         client = BunnyStream(asset.library_id)
         if not asset.collection_id:
@@ -161,7 +163,9 @@ def process(import_id, file_obj=None):
         if video is None or video.get('status') in (0, 6):
             if file_obj is None and not asset.source_url:
                 raise VideoImportError('Choose the MP4 again to retry this upload.')
-            with (nullcontext(file_obj) if file_obj is not None else download_video(asset.source_url)) as stream:
+            source_stream = (nullcontext(file_obj) if file_obj is not None else
+                             stored_video(asset.source_url) if local_source else download_video(asset.source_url))
+            with source_stream as stream:
                 validate_video(stream)
                 if not asset.video_id:
                     # Verify/download the source before creating a remote object.
@@ -320,22 +324,25 @@ def component_video(request, kind, target_id, component_id):
             if key in request.POST and request.POST[key] != scope.get(key, ''):
                 raise VideoImportError('The programme, cohort or group no longer matches this module. Refresh before retrying.')
         uploaded = request.FILES.get('file')
+        saved_settings = None
         if uploaded:
             if not str(uploaded.name).lower().endswith('.mp4'):
                 raise VideoImportError('Choose an MP4 video file.')
             validate_video(uploaded)
-            digest = hashlib.sha256()
-            for chunk in uploaded.chunks():
-                digest.update(chunk)
-            uploaded.seek(0)
-            asset = enqueue(kind, target_id, component, scope, file_hash=digest.hexdigest(), title=request.POST.get('title', '')[:500])
-            asset = process(asset.id, uploaded)
+            asset, saved_settings = save_mp4(kind, target_id, component, scope, uploaded,
+                                             title=request.POST.get('title', '')[:500])
+            # The durable LMS file lets the supervised worker retry after a web
+            # timeout or restart. Do not hold the upload request for Bunny IO.
+            transaction.on_commit(wake_worker)
         else:
             asset = enqueue(kind, target_id, component, scope)
             if asset and asset.status == 'failed':
                 asset.status, asset.error = 'queued', ''
                 asset.save(update_fields=['status', 'error', 'updated_at'])
             transaction.on_commit(wake_worker)
-        return JsonResponse({'enabled': True, 'import': public_asset(asset) if asset else None}, status=202)
+        result = {'enabled': True, 'import': public_asset(asset) if asset else None}
+        if saved_settings is not None:
+            result['savedSettings'] = saved_settings
+        return JsonResponse(result, status=202)
     except VideoImportError as exc:
         return JsonResponse({'error': str(exc)}, status=400)

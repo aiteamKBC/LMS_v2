@@ -22,12 +22,19 @@ Editing unrelated fields does not backfill old videos.
 An explicit import button and module-scoped command handle existing sources.
 Unassigned templates need a programme before a collection can be selected.
 
-The agreed scope is storage only. Completion records the Bunny library,
-collection, video ID and status in the import journal. It never replaces the
-component's `videoUrl`, embed, provider or other settings. Existing learner
-playback and progress continue to use their current source. A source changed
-during upload is marked superseded, while the stored copy remains on Bunny.
-Teams meeting/recording synchronization is not part of this importer.
+Linked videos keep their original LMS playback source while a copy is stored on
+Bunny. At the user's follow-up request, MP4 device uploads also save a playable
+LMS source: the existing curriculum file store retains the MP4 (Azure when
+configured, otherwise MEDIA_ROOT), and the component receives its stable LMS
+`videoUrl`, `HTML (MP4)` source type and upload metadata. The editor receives the
+same fields, so a later save does not erase the uploaded source. Other component
+settings and learner progress are preserved.
+
+Bunny completion only records the library, collection, video ID and status in
+the import journal; it never replaces the saved source with a Bunny player URL.
+A source changed during transfer is marked superseded, while the stored copy
+remains on Bunny. Teams meeting/recording synchronization is not part of this
+importer.
 
 ## Automatic detection independent of the uploader
 
@@ -50,8 +57,10 @@ Teams meeting/recording synchronization is not part of this importer.
   Bunny credentials. Its execution privilege is revoked from PUBLIC.
 - Installation does not scan or backfill old videos. Events start at migration
   installation, remain queued while the worker is disabled, and are drained
-  after activation. An MP4 supplied through the video upload endpoint continues
-  to use its existing file-upload path. A file copied onto disk without a saved
+  after activation. An MP4 supplied through the video upload endpoint saves its
+  LMS source and queue entry in one transaction after storing the bytes. The
+  worker can read that stored file after a request timeout or worker restart.
+  A file copied onto disk without a saved
   Curriculum video source is not an observable Curriculum upload.
 
 PostgreSQL documents [trigger transactions](https://www.postgresql.org/docs/current/trigger-definition.html)
@@ -59,7 +68,9 @@ and [SKIP LOCKED for concurrent queue consumers](https://www.postgresql.org/docs
 
 ## Supported sources and limits
 
-- MP4 device uploads, up to the existing 300 MB curriculum upload limit.
+- MP4 device uploads, up to the existing 300 MB curriculum upload limit. The
+  retained LMS playback file is separate from the Bunny copy; it is not deleted
+  when Bunny finishes. Bunny transfer/encoding runs after the upload response.
 - Public video file URLs and downloadable public Google Drive files, including
   the large-file confirmation page. Public SharePoint download links can work;
   sign-in pages and restricted shares return a visible error.
@@ -117,7 +128,8 @@ Turn `BUNNY_STREAM_ENABLED=false` and stop the video worker to stop new imports.
 Keep both queue tables, triggers and uploaded files on rollback; stopping the
 worker preserves pending events. Each import retains its
 original source; no playback URL restoration is needed because imports do not
-rewrite component sources.
+rewrite component sources. Keep the LMS MP4 files as well: their saved URLs are
+used for learner playback independently of Bunny availability.
 
 ## Scoped existing-module import
 
@@ -153,6 +165,10 @@ returns status and the saved scope. `POST` imports the saved source, or accepts
 multipart `file`, `title`, `programme_id`, `cohort_id`, `group_id`. The submitted
 scope is checked against server records. Both endpoints require an LMS admin or
 staff session; writes also require CSRF. Save new components before uploading.
+An MP4 response includes `savedSettings`, a narrow patch for the editor's current
+component. Status polling never applies settings to an open draft. Concurrent
+source/scope changes during file storage are rejected; unrelated settings are
+preserved. A failed Bunny copy does not remove the playable LMS file.
 
 Run the isolated backend regression suite from `backend`:
 
@@ -260,18 +276,99 @@ are needed to validate this change.
   its existing dependency pins, including certifi; only the three YouTube/FFmpeg
   packages above were added to requirements.
 
-The production database was read only for MSP discovery. No application schema,
-component source, learner data or production source files were changed. Imports
-remain disabled locally. Merge/review, both migrations, worker supervision, request
-timeouts suitable for MP4 uploads and the outstanding database
-checks remain deployment prerequisites. Secrets and runtime manifests are ignored
-and must not be committed.
+During the initial MSP pilot, the application database was read only and its
+schema was unchanged. The later migration application is recorded below.
+Component sources, learner data and production source files were not changed.
+Secrets and runtime manifests are ignored and must not be committed.
 
 The live pilot uploads and title updates do not enable automatic imports on the
-running LMS. Read-only verification found the import table absent from the
-configured application database. After deployment and activation, new/changed
+running LMS. Before the migration follow-up below, read-only verification found
+the import table absent from the configured application database. After deployment and activation, new/changed
 Curriculum video sources enter the import queue (including direct writes captured
 by the new database triggers), and the new video file control
 uploads MP4 to Bunny. Other LMS attachments and existing videos are outside the
 automatic upload scope. Queued/failed/ready states must remain visible; saving a
 link does not itself prove that Bunny received its media.
+
+## Migration application on 2026-11-03
+
+At the user's explicit request, migrations `0077_curriculum_video_import` and
+`0078_curriculum_video_changes` were applied to the LMS database configured in
+`backend/.env`. The direct and pooled endpoints were verified to identify the
+same database. Migration files matched merged main `01a809bb` (PR #563), and
+Django's migration plan contained only these two forward migrations; 0076 was
+already applied.
+
+A custom-format schema archive of `public` and `curriculum`, including their
+existing privileges, was created and validated with `pg_restore --list` before
+the change. The archive, migration history and rollback notes remain in the
+ignored local `.qa-tmp/bunny-migration-20261103T180845Z/` directory. No learner
+rows were exported.
+
+Django's migration executor applied both migrations and their recorder entries
+in one transaction, using a migration-only configuration with no application
+startup workers. Read-only checks after commit verified both migration records,
+both new queue tables and enabled `bunny_video_source_changed` triggers on
+`curriculum.components` and `curriculum.week_template_components`. Both queues
+were empty immediately after application; no historical video backfill ran.
+
+This was a database-only operation, not a verified server deployment. It did not
+change environment files or start a video worker. Production service activation,
+worker supervision, request timeouts suitable for MP4 uploads, the outstanding
+release checks and a new-video production smoke check remain to be verified.
+Teams checks were not required for this migration application; no Teams source
+file was edited and no live Microsoft operation was performed.
+
+## MP4 playback follow-up on 2026-11-04
+
+The device upload previously sent bytes to Bunny without saving a playable LMS
+source or updating the editor. New uploads now retain a file in the existing
+curriculum store, atomically save its source and import job, and return the source
+settings to Module Builder/Week Builder. The worker reads the retained file and
+copies it to Bunny independently. The normal authoring validator now accepts
+these generated MP4 paths, so subsequent saves and QA/approval keep working.
+No new migration, dependency or environment setting is required for this fix.
+
+An LMS storage failure preserves the previous source. A Bunny failure preserves
+the new playable file and remains visible in import status. Source/scope conflicts
+do not overwrite a newer saved video; unrelated content/progress settings survive.
+Repeat uploads of the same file reuse the saved path and import identity. The
+editor ignores late upload settings when the author has chosen another source.
+
+Read-only production inspection confirmed the reported MP4 was ready on Bunny
+but had not supplied an LMS source. Its component now has a YouTube link added
+afterwards; the user explicitly chose to keep that link. No production rows,
+Bunny files, credentials or environment files were changed in this follow-up.
+The later YouTube copy failed because the server reported missing downloader
+dependencies; installing the existing requirements remains a separate server step.
+
+Final checks on the changed code:
+
+- `python -m curriculum_api.run_video_import_tests` using the backend virtualenv:
+  PASS, 104 tests on in-memory SQLite, including existing local/Azure storage and
+  range-serving regressions; all external network access blocked.
+- `python -m curriculum_api.run_video_postgres_tests --connection-file ../.qa-tmp/bunny-postgres-test.json --data-directory $bunnyTestConfig.data_directory`
+  using the backend virtualenv: PASS, 123 tests on a verified fresh empty local
+  PostgreSQL database with synthetic tables. Includes MP4 bytes/range responses,
+  module/template source persistence, queue deduplication, retry after Bunny
+  failure, rollback, concurrent source/scope edits and authoring validation.
+  Bunny/Azure calls were mocked; no live upload was used as a regression test.
+- The four-file frontend feature command above: PASS, 30 tests.
+- `npm --prefix frontend run type-check`: PASS.
+- `npm --prefix frontend run lint`: PASS.
+- Teams baseline: PASS, 146 tests via `npm --prefix frontend run test:teams`.
+  Required because the narrow video validation fix edits `curriculum_api/views.py`.
+- Isolated expanded backend checks: PASS, 47 tests via
+  `.\backend\.venv\Scripts\python.exe .qa-tmp/run-bunny-tests.py --teams`.
+  Live Teams: NOT RUN. The broader PostgreSQL meeting/calendar integration gate
+  listed above remains BLOCKED by the missing full synthetic Teams schema/fixtures;
+  the local video database is not a substitute for those cases.
+
+The first new PostgreSQL test attempt exposed a fixture assertion treating raw
+JSON as an already-decoded dict; the assertion was corrected without changing
+application semantics. The added HTTP storage cases initially lacked Django's
+test-host setup. Both isolated runners now use Django's normal test-environment
+setup/teardown; application host restrictions and test assertions are unchanged.
+
+This fix still requires review, merge, deployment and a new MP4 production smoke
+check. It has not been deployed or tested through the production learner UI.
