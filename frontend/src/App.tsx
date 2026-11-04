@@ -7,10 +7,12 @@ import { ToastProvider } from '@/hooks/useToast';
 import { ToastContainer } from '@/components/feature/ToastContainer';
 import { AppRoutes } from '@/router';
 import { ThemeProvider } from '@/hooks/useTheme';
+import { AnnouncementBanner } from '@/components/feature/AnnouncementBanner';
 
 export default function App() {
   return (
     <ThemeProvider>
+      <AnnouncementBanner />
       <BrowserRouter basename={__BASE_PATH__}>
         <ToastProvider>
           <AiSettingsProvider>
