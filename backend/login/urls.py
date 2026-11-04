@@ -7,7 +7,7 @@ from . import support_sso
 from . import coach_directory
 from . import lms_introduction
 
-from . import admin_evidence, advanced_admin, advanced_admin_assignment_uploads, access_requests, microsoft_sso, platform_admin, saved_signature, views
+from . import admin_evidence, advanced_admin, announcements, advanced_admin_assignment_uploads, access_requests, microsoft_sso, platform_admin, saved_signature, views
 from old_otjh.entry import entry_status
 from curriculum_api.module_hours import own_access as module_hours_own_access, account_access as module_hours_account_access
 
@@ -105,6 +105,9 @@ urlpatterns = [
     # --- a signed-in account with no access grant asking for one ---
     path("request-access/", access_requests.request_access, name="login-request-access"),
 
+    # --- site-wide announcement banners (public read, see announcements.py) ---
+    path("announcements/", announcements.active, name="announcements-active"),
+
     # --- super admin console (admin role only, see platform_admin.py) ---
     path("admin/overview/", platform_admin.overview, name="admin-overview"),
     # ?metric=<key> — the records behind one platform-report figure.
@@ -121,6 +124,8 @@ urlpatterns = [
         name="admin-email-acknowledge",
     ),
     path("admin/system/", platform_admin.system, name="admin-system"),
+    path("admin/announcements/", announcements.admin_list, name="admin-announcements"),
+    path("admin/announcements/<int:pk>/", announcements.admin_detail, name="admin-announcement-detail"),
     path("admin/documents/", platform_admin.documents, name="admin-documents"),
     path("admin/curriculum/", platform_admin.curriculum, name="admin-curriculum"),
     path(
