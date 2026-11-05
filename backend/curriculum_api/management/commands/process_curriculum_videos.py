@@ -1,4 +1,8 @@
-"""Drain/recover the durable video queue; does not call Microsoft or send mail."""
+"""Drain/recover Bunny imports, including Microsoft live-session recordings.
+
+This worker reads recording content from Microsoft; it never creates meetings
+or sends mail.
+"""
 import time
 
 from django.core.management.base import BaseCommand, CommandError

@@ -47,3 +47,61 @@ One baseline expectation was intentionally updated: opening the Teams page now c
 - `learner_api/session_recovery.py`, Teams attendance/register integrations, authorized Join and artifact routes, and the existing coach completion/absence actions.
 - Frontend `components/feature/SessionResults.tsx`, `module-workspace/ModuleSessions.tsx`, `module-builder/LearnerPreview.tsx`, `learnerPreviewData.ts`, and the existing curriculum/learner screens.
 - Owner-run `sql/session_results_archive.sql`, `sql/session_attendance_reporting.sql`; existing `sql/attendance_absence_recovery.sql` is a prerequisite when not already installed.
+
+## 5 November 2026 — Microsoft to Bunny recording cutover
+
+Scope: recordings of lectures scheduled from 00:00 Europe/London on 5 November,
+including the four explicitly requested recordings. The current branch is
+`feature/learner-active-modules`. Existing Azure references and older recordings
+are retained. Transcript/attendance storage, meeting creation, invitations,
+attendance rules and learner authorization are preserved. No schema migration
+is required. Local configuration changes are private and are not committed.
+
+Final local checks (backend module commands run from `backend/`):
+
+| Check | Result |
+| --- | --- |
+| `npm --prefix frontend run test:teams` | PASS — 147 tests, 9 files. Required because shared recording APIs/player are consumed by Teams screens. |
+| Frontend feature command below | PASS — 113 tests, 5 files. |
+| `npm --prefix frontend run type-check` | PASS. |
+| `npm --prefix frontend run lint` | PASS. |
+| `npm --prefix frontend run build -- --outDir <temporary directory>` | PASS — 4435 modules; existing library eval/chunk/plugin warnings. |
+| `python -B -m curriculum_api.test_session_results_no_db` | PASS — 148 tests. |
+| `python -B -m curriculum_api.test_recordings_library_no_db` | PASS — 35 tests. |
+| `python -B -m curriculum_api.test_session_recording_review_no_db` | PASS — 9 tests. |
+| Existing in-memory video runner restricted to `curriculum_api.test_session_bunny` | PASS — 21 tests; journal migrations applied only to new SQLite `:memory:`, external sockets blocked. |
+| `python -B -m curriculum_api.run_video_import_tests` | 155 run: 154 passed, 1 intermittent existing failure in `test_newer_file_choice_does_not_report_previous_copy_as_current`. Two rapid requests can receive equal timestamps on Windows. Its test file and the `_matches_current_source` function are unchanged from HEAD. Earlier full runs passed 148 before the final recording/fetch tests were added. No assertion was removed, skipped or weakened. |
+| Expanded safe backend subset below | PASS — 61 tests, SQLite aliases verified as `:memory:` before Django setup; external sockets blocked after setup. |
+| `git diff --check` | PASS, with Git's LF/CRLF normalization notices. |
+
+Frontend feature command:
+
+```powershell
+npm --prefix frontend run test -- src/components/feature/BunnyRecordingVideo.test.tsx src/components/feature/SessionRecordingPlayer.test.tsx src/components/feature/SessionResults.test.tsx src/pages/curriculum/shared/entities/__tests__/liveSessionArtifacts.test.tsx src/pages/curriculum/recordings/__tests__/recordingsPage.test.tsx --maxWorkers=2
+```
+
+The expanded backend subset uses `config.settings_coaching_recordings_test`,
+replaces both database aliases with fresh SQLite `:memory:` before setup, and
+runs these suites under an outbound `socket.socket.connect` block:
+
+- `curriculum_api.tests.TeamsMultiDayRecurrenceTests`, `TeamsAttendanceRosterTests`;
+- `coach_api.tests_errors`;
+- `learner_api.tests.TeamsAttendanceEligibilityTests`, `TeamsAttendanceSyncTests`;
+- `curriculum_api.test_recording_views_no_db`, `test_session_recordings_audit`, `test_session_cloud_archive_no_db`;
+- `coach_api.tests.CoachTimetableWindowTests`, `CoachTimetableBookingConflictTests`, `CoachMeetingArtifactTests`.
+
+The error-handling case logs its deliberately blocked database attempt; the
+suite still passes without connecting to an application database.
+
+Expanded PostgreSQL integration suites remain **BLOCKED / NOT RUN**:
+`CurriculumTeamsMeetingTests`, `TeamsCalendarSyncVerdictTests`, coach calendar
+race/security persistence suites. No verified disposable PostgreSQL target or
+local PostgreSQL runtime was available; the configured application Neon database
+was not used by a mutating test runner. This change is not fully accepted for
+deployment while mandatory integration checks and review are outstanding.
+
+Live meeting creation/invitations: **NOT RUN**. Browser learner playback:
+**NOT RUN**; the connected computer-use runtime had no accessible browser.
+The public main branch contains the prior curriculum Bunny integration, but
+does not yet contain this live-session handler. No release of this change has
+been performed.

@@ -601,21 +601,24 @@ def live_session_blob_columns_ready(database: str) -> bool:
 
 
 def pending_live_session_recordings(database: str, limit: int = 50) -> list[dict]:
-    """Live-session recordings Graph has exposed that are not archived yet."""
+    """Historical Azure work only; new lectures are handled by the Bunny worker."""
+    from curriculum_api.session_bunny_policy import CUTOVER
     if not live_session_blob_columns_ready(database):
         return []
     with connections[database].cursor() as cursor:
         cursor.execute(
             f"""
-            select occurrence_id, graph_artifact_id
-            from {LIVE_SESSION_ARTIFACTS_RELATION}
-            where artifact_type = 'recording'
-              and coalesce(blob_name, '') = ''
-              and coalesce(blob_upload_error, '') = ''
-            order by created_datetime desc nulls last
+            select a.occurrence_id, a.graph_artifact_id
+            from {LIVE_SESSION_ARTIFACTS_RELATION} a
+            join curriculum.live_session_occurrences o on o.id=a.occurrence_id
+            where a.artifact_type = 'recording'
+              and o.scheduled_start < %s
+              and coalesce(a.blob_name, '') = ''
+              and coalesce(a.blob_upload_error, '') = ''
+            order by a.created_datetime desc nulls last
             limit %s
             """,
-            [limit],
+            [CUTOVER.replace(tzinfo=None), limit],
         )
         return [{"occurrence_id": row[0], "graph_artifact_id": row[1]} for row in cursor.fetchall()]
 

@@ -34,6 +34,7 @@ def main():
                 state = migration.apply(state, editor)
         suite = unittest.defaultTestLoader.loadTestsFromNames([
             'curriculum_api.test_bunny_stream', 'curriculum_api.test_video_imports',
+            'curriculum_api.test_session_bunny',
             'curriculum_api.test_youtube_download',
             'curriculum_api.test_video_changes',
             'curriculum_api.tests_upload_storage.LocalBackendTests',

@@ -135,3 +135,116 @@ See [SESSION_RESULTS_VALIDATION.md](SESSION_RESULTS_VALIDATION.md) for exact loc
 An owner-authorized, isolated integration check still needs to confirm: schema and register writes; an actual test meeting with >180 seconds, <=180 seconds and a non-attendee; Join-to-occurrence matching; the private MP4 playing and seeking; TXT/CSV exports; a repeat sync without duplicate artifacts; one learner denied another learner's file; approved excuse remaining 0; and coach-confirmed catch-up changing it to 1 without deleting the original absence evidence.
 
 Microsoft API references used for the importer: [recording content](https://learn.microsoft.com/en-us/graph/api/callrecording-get?view=graph-rest-1.0), [attendance records](https://learn.microsoft.com/en-us/graph/api/attendancerecord-list?view=graph-rest-1.0). These are separate from live permission validation.
+
+
+## Live-session recordings on Bunny
+
+Lecture recordings whose scheduled start is on or after **5 November 2026,
+00:00 Europe/London** use Microsoft Graph/SharePoint as their only import
+source and Bunny Stream as their video destination. Earlier recordings retain
+their existing playback source. No historical Azure file is deleted.
+
+The existing scheduled session worker discovers recordings and reconciles the
+authored occurrence/component identities. `session_archive.archive_series`
+queues eligible recordings in the existing `CurriculumVideoImport` journal.
+The existing Bunny video worker resolves a short-lived SharePoint download URL
+and uses Bunny's `POST /videos/fetch`, so Bunny downloads the recording directly.
+It reuses the existing OneDrive matcher, which verifies size and first/last
+64 KiB against the exact Teams recording. Microsoft application tokens are never
+sent to Bunny, and the temporary SharePoint URL is never persisted or logged.
+Both workers reuse the same lease and remote video identity. Aliases of the same content/call in
+one occurrence share an import; another occurrence/group gets a separate one.
+
+A durable fetch-attempt marker prevents a second POST after an uncertain
+response; later passes recover the created video by its LMS title marker.
+An unconfirmed request stays visible and requires review after ten minutes.
+When no unique SharePoint URL is available, or Bunny confirms a failed fetch,
+the bounded disk-backed Microsoft-to-Bunny upload remains available. Neither
+path reads or writes Azure videos. Encoding is polled until Bunny reports
+completion; an accepted fetch is not reported as a playable recording.
+
+The programme's existing Bunny collection is used. Titles include module,
+cohort, group, session number and lecture date; metadata retains programme,
+cohort, group, module, occurrence, component/week and source recording IDs.
+The integration never guesses a week from its position in a list.
+
+The learner/staff content routes retain authorization and hidden-recording
+checks. A ready recording returns a signed Bunny iframe to the shared player.
+Player.js messages are accepted only from that iframe's window and exact
+origin. Viewing-time reporting and transcript seeking remain in the LMS;
+video bytes are served by Bunny. An unavailable Bunny player does not silently
+switch to Azure. Normal transcript and attendance storage are unchanged.
+
+### Configuration
+
+Use the backend and worker environments, including the AWS runtime secrets:
+
+```dotenv
+BUNNY_STREAM_ENABLED=true
+BUNNY_STREAM_LIBRARY_ID=798153
+BUNNY_STREAM_API_KEY=<existing library upload API key>
+BUNNY_STREAM_TOKEN_KEY=<existing Security / Token authentication key>
+MICROSOFT_GRAPH_TENANT_ID=<recording application's tenant>
+MICROSOFT_GRAPH_CLIENT_ID=<recording application's client ID>
+MICROSOFT_GRAPH_CLIENT_SECRET=<recording application's secret>
+```
+
+The Bunny Security token key is distinct from its upload API key. Copy the
+existing key from the library's **Security > Token authentication key** card;
+do not generate an unrelated value, expose it to the browser, or commit it.
+Without this key the protected player returns a visible setup error.
+
+Keep the library's existing token authentication and permitted-domain settings.
+Do not disable protection to make an embed work. The Microsoft recording app
+must have recording/file read permissions and the required organizer access
+policy. Explicit `MICROSOFT_GRAPH_*` credentials prevent a later calendar OAuth
+configuration from silently selecting another application. Bare login/calendar
+credentials stay unchanged.
+
+### Scoped recovery and release
+
+The normal flow discovers future recordings automatically. For an explicitly
+authorized recovery, inspect selected IDs before running the transfer:
+
+```powershell
+python manage.py import_live_session_recordings --artifact-id <artifact-id>
+python manage.py import_live_session_recordings --artifact-id <artifact-id> --apply
+```
+
+Repeat `--artifact-id` for a batch of at most 25. The command reads only the
+requested active module recordings inside the cutover. It never reads Azure,
+creates Teams meetings or sends invitations. The existing
+`process_curriculum_videos --watch` command continues encoding checks and
+restart recovery. This command now also handles `live_session` import jobs.
+
+No schema migration is required: the existing import journal and artifact JSON
+metadata hold Bunny identities. An atomic projection creates a Bunny archive
+reference when necessary. Existing Azure references are preserved for rollback,
+so scoped uploads do not break old deployed readers before the new player is
+released. Deploy reviewed backend and frontend together from merged main under
+AGENTS.md, with the same environment values in the relevant AWS containers.
+Local `.env` edits do not update AWS automatically.
+
+Before retiring Azure video storage, verify Bunny encoding, authorized learner
+playback, watch-time reporting, transcript seeking and the recordings library.
+Existing transcripts/attendance and other application files can still depend
+on Azure; this change does not authorize deleting those stores.
+
+### Cutover validation, 5 November 2026
+
+The frontend Teams baseline passes 147 tests; recording/player/shared-consumer
+suites pass 113 tests. Type checking, lint and the production frontend build
+pass. Focused Bunny transport, live-session and historical Azure-selection
+tests pass 47 cases in isolated SQLite with outbound sockets blocked. The
+session-results, recordings-library and ready-review runners pass 148, 35 and
+9 cases respectively; the expanded safe Teams backend subset passes 61.
+
+The full video runner executes 155 tests with one intermittent existing file
+ordering failure: two immediate requests receive the same Windows timestamp.
+Both that test file and `_matches_current_source` are unchanged from HEAD;
+an instrumented repeat confirmed identical timestamps. No assertions or test
+gates were weakened. Expanded PostgreSQL meeting/calendar/security persistence
+checks remain **BLOCKED / NOT RUN**, pending a verified disposable PostgreSQL
+target. Do not treat the local change as accepted for deployment while these
+checks and review are outstanding. No live meetings or invitations were changed;
+browser-based learner playback has not been verified.
