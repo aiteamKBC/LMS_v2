@@ -225,6 +225,11 @@ released. Deploy reviewed backend and frontend together from merged main under
 AGENTS.md, with the same environment values in the relevant AWS containers.
 Local `.env` edits do not update AWS automatically.
 
+Retained Azure references protect those existing recordings during rollback.
+Recordings created only in Bunny require a Bunny-capable backend and player;
+an older Azure-only release cannot play them. Keep the backend/frontend release
+paired and account for these records before rolling back the first Bunny release.
+
 Before retiring Azure video storage, verify Bunny encoding, authorized learner
 playback, watch-time reporting, transcript seeking and the recordings library.
 Existing transcripts/attendance and other application files can still depend
@@ -232,7 +237,7 @@ on Azure; this change does not authorize deleting those stores.
 
 ### Cutover validation, 5 November 2026
 
-The frontend Teams baseline passes 149 tests; recording/player/shared-consumer
+The frontend Teams baseline passes 147 tests; recording/player/shared-consumer
 suites pass 113 tests. Type checking, lint and the production frontend build
 pass. Focused Bunny transport, live-session and historical Azure-selection
 tests pass 49 cases in isolated SQLite with outbound sockets blocked. The
@@ -250,3 +255,11 @@ checks remain **BLOCKED / NOT RUN**, pending a verified disposable PostgreSQL
 target. Do not treat the local change as accepted for deployment while these
 checks and review are outstanding. No live meetings or invitations were changed;
 browser-based learner playback has not been verified.
+
+The authorized four-recording live cutover batch has completed: all four Bunny
+videos are fully encoded, have verified collection/component/week metadata,
+and passed iframe/HLS HTTP 200 plus MP4 HTTP 206 checks. Existing Azure archive
+references were compared with their pre-change backup and preserved. The four
+empty failed placeholders created during this task were removed; original
+Microsoft/Azure files were not deleted. This data verification does not mean
+the new application player has been deployed or browser-accepted.

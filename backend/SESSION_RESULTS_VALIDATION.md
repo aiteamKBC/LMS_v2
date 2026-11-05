@@ -61,7 +61,7 @@ Final local checks (backend module commands run from `backend/`):
 
 | Check | Result |
 | --- | --- |
-| `npm --prefix frontend run test:teams` | PASS — 149 tests, 9 files. Required because shared recording APIs/player are consumed by Teams screens. |
+| `npm --prefix frontend run test:teams` | PASS — 147 tests, 9 files. Required because shared recording APIs/player are consumed by Teams screens. |
 | Frontend feature command below | PASS — 113 tests, 5 files. |
 | `npm --prefix frontend run type-check` | PASS. |
 | `npm --prefix frontend run lint` | PASS. |
@@ -106,3 +106,19 @@ Live meeting creation/invitations: **NOT RUN**. Browser learner playback:
 The public main branch contains the prior curriculum Bunny integration, but
 does not yet contain this live-session handler. No release of this change has
 been performed.
+
+Authorized live execution completed for the four selected recordings in four
+module deliveries: all four were fetched directly from verified SharePoint
+sources and reached Bunny encoding status 4. Read-only checks confirmed the
+programme collection and module/occurrence/component/week metadata for each.
+Every signed iframe returned HTTP 200; every HLS playlist returned HTTP 200 with
+a decoded M3U header; every staff MP4 request returned HTTP 206 with an MP4
+header. These are provider HTTP checks, not a learner browser acceptance test.
+
+All four original Azure archive references and pre-existing artifact metadata
+were compared with the private pre-change backup and retained. Only the four
+empty, failed upload placeholders created during this task were removed after
+the complete Bunny copies passed verification. No original Azure/SharePoint
+file was deleted. The scoped journal and ready pointers are saved in the
+configured application database; no schema changes were applied. The reviewed
+application release and AWS runtime configuration remain outstanding.
