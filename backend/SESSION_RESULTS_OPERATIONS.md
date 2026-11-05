@@ -246,15 +246,25 @@ session-results, recordings-library and ready-review runners pass 148, 35 and
 Bunny reference during Graph refresh and re-issued recording IDs. The expanded
 safe Teams backend subset passes 61.
 
-The full video runner executes 157 tests with one intermittent existing file
-ordering failure: two immediate requests receive the same Windows timestamp.
-Both that test file and `_matches_current_source` are unchanged from HEAD;
-an instrumented repeat confirmed identical timestamps. No assertions or test
-gates were weakened. Expanded PostgreSQL meeting/calendar/security persistence
-checks remain **BLOCKED / NOT RUN**, pending a verified disposable PostgreSQL
-target. Do not treat the local change as accepted for deployment while these
-checks and review are outstanding. No live meetings or invitations were changed;
-browser-based learner playback has not been verified.
+The full video runner now passes all 157 tests. The file-choice regression uses
+an explicitly later fixture timestamp, so its premise does not depend on two
+rapid Windows clock readings. Its assertion and production ordering logic are
+unchanged; no checks were skipped or weakened.
+
+The previously blocked PostgreSQL checks now pass 71 cases with zero failures,
+errors or skips: curriculum meeting persistence, calendar sync verdicts, coach
+booking races and HTTP authorization/ownership. They ran on a verified temporary
+PostgreSQL 18.6 instance, using a schema-only application snapshot plus migration
+bookkeeping. No learner/application rows or foreign servers were copied, both
+Django aliases were confined to the local test database, and external sockets
+were blocked. The runner dropped its test database and the temporary server was
+stopped afterwards. No production database writes, live meetings or invitations
+were used for these checks. Browser-based learner playback remains unverified.
+
+**Owner hold:** keep the change on the existing branch and the PR in draft. Do
+not merge or deploy until the owner confirms the required AWS environment
+settings have been configured. Review and the normal merged-main release checks
+still apply.
 
 The authorized four-recording live cutover batch has completed: all four Bunny
 videos are fully encoded, have verified collection/component/week metadata,

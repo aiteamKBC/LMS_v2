@@ -70,9 +70,10 @@ Final local checks (backend module commands run from `backend/`):
 | `python -B -m curriculum_api.test_recordings_library_no_db` | PASS — 35 tests. |
 | `python -B -m curriculum_api.test_session_recording_review_no_db` | PASS — 9 tests. |
 | `python -B curriculum_api/test_session_media_no_db.py` with backend and curriculum_api on PYTHONPATH | PASS — 11 tests, including preserving trusted Bunny metadata across Graph refresh/re-issued IDs and rejecting an injected reference. |
-| Existing in-memory video runner restricted to `curriculum_api.test_session_bunny` | PASS — 21 tests; journal migrations applied only to new SQLite `:memory:`, external sockets blocked. |
-| `python -B -m curriculum_api.run_video_import_tests` | 157 run: 156 passed, 1 intermittent existing failure in `test_newer_file_choice_does_not_report_previous_copy_as_current`. Two rapid requests can receive equal timestamps on Windows. Its test file and the `_matches_current_source` function are unchanged from HEAD. Earlier full runs passed 148 before the final recording/fetch tests were added. No assertion was removed, skipped or weakened. |
+| Focused Bunny/live-session/source-selection suites | PASS — 49 tests; journal migrations applied only to new SQLite `:memory:`, external sockets blocked. |
+| `python -B -m curriculum_api.run_video_import_tests` | PASS — 157 tests. The newer-file fixture now has an explicitly later request timestamp; its assertion and production ordering logic are unchanged. |
 | Expanded safe backend subset below | PASS — 61 tests, SQLite aliases verified as `:memory:` before Django setup; external sockets blocked after setup. |
+| `python -u -B .qa-tmp/live-bunny-qa-20261105/run_pg_checks.py` from the repository root | PASS — 71 PostgreSQL integration cases, zero failures/errors/skips. Task-local harness and private database state are excluded from Git. |
 | `git diff --check` | PASS, with Git's LF/CRLF normalization notices. |
 
 Frontend feature command:
@@ -94,12 +95,35 @@ runs these suites under an outbound `socket.socket.connect` block:
 The error-handling case logs its deliberately blocked database attempt; the
 suite still passes without connecting to an application database.
 
-Expanded PostgreSQL integration suites remain **BLOCKED / NOT RUN**:
-`CurriculumTeamsMeetingTests`, `TeamsCalendarSyncVerdictTests`, coach calendar
-race/security persistence suites. No verified disposable PostgreSQL target or
-local PostgreSQL runtime was available; the configured application Neon database
-was not used by a mutating test runner. This change is not fully accepted for
-deployment while mandatory integration checks and review are outstanding.
+The previously blocked PostgreSQL integration suites now **PASS**:
+
+- `curriculum_api.tests.CurriculumTeamsMeetingTests` — 21 cases;
+- `curriculum_api.tests.TeamsCalendarSyncVerdictTests` — 10 cases;
+- `coach_api.tests_calendar_race.CoachCalendarRaceTests` — 16 cases;
+- `coach_api.tests_security.CoachAuthorizationSecurityTests` — 24 cases.
+
+The task-local harness ran the established `login.test_runner.EnrolmentTestRunner`
+against PostgreSQL 18.6. A read-only preflight verified the exact temporary
+cluster data directory, role, port and database before any writes. The template
+held a schema-only snapshot of 15 application namespaces and migration
+bookkeeping; no learner/application rows, foreign tables, foreign servers,
+replication subscriptions or external-call routines were copied. Hosted-only
+and unrelated extensions were excluded; required `citext`/`pgcrypto` remained.
+Both Django aliases used the new local test database, the full migration graph
+ran, and outbound Python sockets were limited to that exact PostgreSQL endpoint.
+Real Graph, mail and storage calls were blocked. The 71 cases completed in
+43.807 seconds with no failures, errors or skips. The runner dropped its test
+database, and the temporary server was stopped afterwards. The application
+database was used only for read-only schema/migration metadata export, never
+as the target of a test runner.
+
+The follow-up changed only the file-choice test fixture and this validation
+documentation. No Teams implementation file changed, so the previously passing
+147-case frontend Teams baseline was not rerun unnecessarily.
+
+**Owner hold:** no merge or deployment until the owner confirms the required AWS
+runtime environment settings have been configured. The PR remains a draft on
+`feature/learner-active-modules`; normal review and release checks still apply.
 
 Live meeting creation/invitations: **NOT RUN**. Browser learner playback:
 **NOT RUN**; the connected computer-use runtime had no accessible browser.
