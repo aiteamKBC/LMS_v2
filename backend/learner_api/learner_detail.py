@@ -2364,8 +2364,14 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
 
     # Carry earned completion into an explicitly verified replacement without
     # manufacturing attempts or changing the persisted hours/attendance above.
-    from .replacement_learning import annotate_replacement_learning
+    from .replacement_learning import annotate_replacement_learning, approved_retained_components
     detail['components'] = annotate_replacement_learning(detail['components'], pk)
+    # Explicitly retained (unmatched) old components have no destination
+    # component to attach to; add them the same way My Learning does.
+    from . import progress_transfer_store
+    current_module_ids = {c.get('moduleId') for c in detail['components'] if c.get('moduleId')}
+    detail['retiredQuizComponents'] = [*detail.get('retiredQuizComponents', []),
+        *approved_retained_components(progress_transfer_store.read_state(pk)['items'], current_module_ids)]
 
     from .live_session_progress import read_live_credits, supplement_component_progress
     detail['componentProgress'] = supplement_component_progress(

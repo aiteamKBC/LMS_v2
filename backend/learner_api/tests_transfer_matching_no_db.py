@@ -50,7 +50,7 @@ class TransferMatchingReviewTests(SimpleTestCase):
         self.assertNotEqual(review['reviewToken'], before_review['reviewToken'])
         mapping = {'moduleId': 'M1', 'sourceActivityRef': 'material:8', 'targetComponentId': 'MANUAL'}
         decisions = {'reviewToken': review['reviewToken'], 'mappings': [mapping]}
-        self.assertEqual(validate_decisions(review, decisions)[('M1', 'material:8')][0]['componentId'], 'MANUAL')
+        self.assertEqual(validate_decisions(review, decisions)[0][('M1', 'material:8')][0]['componentId'], 'MANUAL')
         for choices in [[], [{**mapping, 'targetComponentId': 'ALTERNATIVE'}], [mapping, mapping],
                         [{**mapping, 'moduleId': 'M2'}], [{**mapping, 'allowDifferentType': True}]]:
             with self.subTest(choices=choices), self.assertRaises(ServiceError):
@@ -132,9 +132,10 @@ class TransferMatchingReviewTests(SimpleTestCase):
                                                  [{**snapshot, 'status': 'pending'}]), data[3]['components'])
         with self.assertRaises(ServiceError):
             validate_decisions(review, {'reviewToken': review['reviewToken'], 'mappings': []})
-        chosen = validate_decisions(review, {'reviewToken': review['reviewToken'], 'mappings': [
+        chosen, retained = validate_decisions(review, {'reviewToken': review['reviewToken'], 'mappings': [
             {'moduleId': 'M1', 'sourceActivityRef': 'material:8', 'targetComponentId': 'MANUAL'}]})
         self.assertIn(('M1', 'material:8'), chosen)
+        self.assertEqual(retained, {})
         self.assertEqual((snapshot, data), before)
 
     def test_saved_proposals_reject_stale_foreign_unfinished_wrong_type_and_duplicate_matches(self):
@@ -293,7 +294,7 @@ class TransferMatchingReviewTests(SimpleTestCase):
         review = build_review('R1', [item(completedSourceActivities=['material:7', 'material:8'])], context())
         mapping = {'moduleId': 'M1', 'sourceActivityRef': 'material:8', 'targetComponentId': 'MANUAL'}
         good = {'reviewToken': review['reviewToken'], 'mappings': [mapping]}
-        self.assertEqual(validate_decisions(review, good)[('M1', 'material:8')][0]['plannedHours'], 1.5)
+        self.assertEqual(validate_decisions(review, good)[0][('M1', 'material:8')][0]['plannedHours'], 1.5)
         bad = [None, {}, {**good, 'reviewToken': 'stale'}, {**good, 'mappings': []},
                {**good, 'mappings': [mapping, mapping]}]
         for field, value in [('moduleId', 'M2'), ('sourceActivityRef', 'material:9'),
@@ -316,8 +317,9 @@ class TransferMatchingReviewTests(SimpleTestCase):
         review = build_review('R1', [item(completedSourceActivities=['material:7', 'material:8'])], data)
         rows = [{'moduleId': 'M1', 'sourceActivityRef': 'material:8', 'targetComponentId': ident}
                 for ident in ['MANUAL', 'EXTRA']]
-        result = validate_decisions(review, {'reviewToken': review['reviewToken'], 'mappings': rows})
+        result, retained = validate_decisions(review, {'reviewToken': review['reviewToken'], 'mappings': rows})
         self.assertEqual([target['componentId'] for target in result[('M1', 'material:8')]], ['MANUAL', 'EXTRA'])
+        self.assertEqual(retained, {})
         for invalid in ['MANUAL', 'AUTO', 'FOREIGN', 'RETIRED', 'QUIZ']:
             with self.subTest(invalid=invalid), self.assertRaises(ServiceError):
                 validate_decisions(review, {'reviewToken': review['reviewToken'],
@@ -330,7 +332,7 @@ class TransferMatchingReviewTests(SimpleTestCase):
         rows = [{'moduleId': 'M1', 'sourceActivityRef': 'quiz:20', 'targetComponentId': ident}
                 for ident in ['QUIZ', 'QUIZ2']]
         choices = {'reviewToken': review['reviewToken'], 'mappings': rows}
-        self.assertEqual(len(validate_decisions(review, choices)[('M1', 'quiz:20')]), 2)
+        self.assertEqual(len(validate_decisions(review, choices)[0][('M1', 'quiz:20')]), 2)
         for change in [{'targetComponentId': 'MANUAL'}, {'moduleId': 'M2'}, {'sourceActivityRef': 'quiz:99'}]:
             with self.subTest(change=change), self.assertRaises(ServiceError):
                 validate_decisions(review, {**choices, 'mappings': [rows[0], {**rows[1], **change}]})

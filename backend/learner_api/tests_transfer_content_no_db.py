@@ -30,7 +30,7 @@ class TransferContentTests(TestCase):
         result = build_review('R1', items, corrected)
         self.assertEqual(result['modules'][0]['sources'][0]['type'], 'reading')
         decisions = {'reviewToken': result['reviewToken'], 'mappings': [{'moduleId': 'M1', 'sourceActivityRef': 'material:8', 'targetComponentId': 'MANUAL'}]}
-        self.assertIn(('M1', 'material:8'), validate_decisions(result, decisions))
+        self.assertIn(('M1', 'material:8'), validate_decisions(result, decisions)[0])
         from old_otjh.service import ServiceError
         decisions['mappings'][0]['targetComponentId'] = 'QUIZ'
         with self.assertRaises(ServiceError):
