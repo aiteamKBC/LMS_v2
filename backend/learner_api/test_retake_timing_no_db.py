@@ -8,7 +8,7 @@ from unittest.mock import Mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from learner_api.test_current_learning_no_db import adapter
 from learner_api.test_canonical_learning_no_db import adapter as reporting_adapter
-from learner_api.retake_timing import choice
+from learner_api.retake_timing import ActivityTimeConflict, choice, validate_activity_time
 
 
 def attempt(ident, seconds, mode=None, passed=True, learner=1, quiz='Q1'):
@@ -21,6 +21,59 @@ def attempt(ident, seconds, mode=None, passed=True, learner=1, quiz='Q1'):
 
 
 class RetakeTimingTests(unittest.TestCase):
+    def validate(self, history, *, previous=0, mode='retry', passed=True):
+        record = {'kind': 'quiz', 'quizId': 7, 'passed': passed, 'verifiedSeconds': 120,
+                  'retakeTimeChoice': mode, 'retakePreviousSeconds': previous,
+                  'retakeTimeReason': 'Correcting a synthetic duration.'}
+        original = copy.deepcopy(history)
+        try:
+            validate_activity_time(record, history,
+                                   seconds_for=lambda row: self.current['_progress_record_minutes'](row) * 60)
+        finally:
+            self.assertEqual(history, original)
+        return record
+
+    def test_failed_quiz_then_reading_can_retry_without_counting_reading_as_quiz_time(self):
+        history = [
+            {'kind': 'quiz', 'quizId': '7', 'passed': False, 'verifiedSeconds': 60},
+            {'kind': 'quiz_reading', 'quizId': 7, 'passed': None, 'verifiedSeconds': 300},
+            {'kind': 'quiz', 'quizId': 8, 'passed': True, 'verifiedSeconds': 900},
+        ]
+        for mode in ('correct', 'add', 'retry'):
+            with self.subTest(mode=mode):
+                self.assertEqual(self.validate(history, mode=mode)['countedSeconds'], 120)
+
+    def test_quiz_decisions_use_only_successful_quiz_history_and_keep_legacy_quiz_rows(self):
+        for legacy in (False, True):
+            old = {'quizId': '7', 'passed': True, 'verifiedSeconds': 600}
+            if not legacy:
+                old['kind'] = 'quiz'
+            history = [old, {'kind': 'quiz_reading', 'quizId': 7, 'verifiedSeconds': 900},
+                       {'kind': 'quiz', 'quizId': 7, 'passed': False, 'verifiedSeconds': 1200}]
+            for mode, total in (('correct', 120), ('add', 720), ('retry', 600)):
+                with self.subTest(legacy=legacy, mode=mode):
+                    self.assertEqual(self.validate(history, previous=600, mode=mode)['countedSeconds'], total)
+                    self.assertEqual(self.validate(history, previous=600, mode=mode, passed=False)['countedSeconds'], 600)
+
+    def test_real_time_conflict_returns_server_total_without_changing_history(self):
+        history = [{'kind': 'quiz', 'quizId': 7, 'passed': True, 'verifiedSeconds': 600}]
+        with self.assertRaises(ActivityTimeConflict) as failure:
+            self.validate(history, previous=300)
+        self.assertEqual(failure.exception.previous_seconds, 600)
+        self.assertEqual(self.validate(history, previous=600, mode='add')['countedSeconds'], 720)
+
+    def test_component_time_guard_still_excludes_quizzes_and_other_components(self):
+        history = [{'kind': 'video', 'componentId': 'C1', 'verifiedSeconds': 600},
+                   {'kind': 'quiz', 'componentId': 'C1', 'verifiedSeconds': 900},
+                   {'kind': 'component', 'componentId': 'C2', 'verifiedSeconds': 1200}]
+        record = {'kind': 'component', 'componentId': 'C1', 'verifiedSeconds': 120,
+                  'retakeTimeChoice': 'add', 'retakePreviousSeconds': 600}
+        validate_activity_time(record, history, seconds_for=lambda row: row['verifiedSeconds'])
+        self.assertEqual(record['countedSeconds'], 720)
+        record['retakePreviousSeconds'] = 300
+        with self.assertRaises(ActivityTimeConflict):
+            validate_activity_time(record, history, seconds_for=lambda row: row['verifiedSeconds'])
+
     def test_quiz_reading_keeps_its_own_time_when_the_quiz_time_is_corrected(self):
         records = [attempt(1, 1800), attempt(2, 600, 'correct')]
         readings = [{**attempt(ident, seconds), 'kind': 'quiz_reading',

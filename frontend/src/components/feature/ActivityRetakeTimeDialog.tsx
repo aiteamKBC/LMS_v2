@@ -3,8 +3,9 @@ import { createPortal } from 'react-dom';
 import { formatClock } from './ReflectionWindow.helpers';
 import type { ActivityTimeChoice } from '@/lib/activityTimeDecision';
 
-export function ActivityRetakeTimeDialog({ previousSeconds, onChoose, onClose }: {
+export function ActivityRetakeTimeDialog({ previousSeconds, onChoose, onClose, notice, confirmLabel = 'Continue' }: {
   previousSeconds: number; onChoose: (choice: ActivityTimeChoice, reason: string) => void; onClose: () => void;
+  notice?: string; confirmLabel?: string;
 }) {
   const title = useId(), panel = useRef<HTMLDivElement>(null);
   const [choice, setChoice] = useState<ActivityTimeChoice | null>(null), [reason, setReason] = useState('');
@@ -25,6 +26,7 @@ export function ActivityRetakeTimeDialog({ previousSeconds, onChoose, onClose }:
         }
       }}>
       <h2 id={title} className="text-lg font-bold">How should this time count?</h2>
+      {notice && <p role="status" className="text-sm text-amber-800">{notice}</p>}
       <p className="text-sm">Previously recorded time: <strong>{formatClock(previousSeconds)}</strong>. The activity total cannot exceed 8 hours.</p>
       <fieldset className="space-y-3"><legend className="sr-only">Choose how to record time</legend>
         {([
@@ -38,7 +40,7 @@ export function ActivityRetakeTimeDialog({ previousSeconds, onChoose, onClose }:
       </fieldset>
       {choice === 'correct' && <label className="block text-sm font-semibold">Reason for time correction<textarea maxLength={500} value={reason} onChange={event => setReason(event.target.value)} className="mt-1 w-full rounded-lg border p-2" /></label>}
       <div className="flex justify-end gap-3"><button type="button" className="rounded-lg border px-4 py-2" onClick={onClose}>Cancel</button>
-        <button type="button" className="rounded-lg bg-primary-600 px-4 py-2 font-semibold text-white disabled:opacity-50" disabled={!choice || (choice === 'correct' && reason.trim().length < 3)} onClick={() => choice && onChoose(choice, reason.trim())}>Continue</button></div>
+        <button type="button" className="rounded-lg bg-primary-600 px-4 py-2 font-semibold text-white disabled:opacity-50" disabled={!choice || (choice === 'correct' && reason.trim().length < 3)} onClick={() => choice && onChoose(choice, reason.trim())}>{confirmLabel}</button></div>
     </div>
   </div>, document.body);
 }
