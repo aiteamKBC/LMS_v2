@@ -38,6 +38,36 @@ def profile_actual_hours(profile, *, summaries=None):
     return actual if isfinite(actual) and actual >= 0 else None
 
 
+def full_hour_projection_ids(owners):
+    """Find owners whose accepted hours cannot be summed from stored rows alone.
+
+    Local legacy timers live in attempt snapshots. Retakes may replace stored
+    credit, and transfers freeze historical facts. All three must use the same
+    read-only reconciliation as the learner page, including month allocation.
+    """
+    from . import canonical_learning as canonical
+
+    owners = list(owners)
+    if not owners:
+        return set()
+    result = {int(owner['id']) for owner in owners if owner.get('progress_transfer_active')}
+    profile_ids = [int(owner['id']) for owner in owners]
+    result.update(int(item['learner_id']) for item in canonical.query('''
+        SELECT DISTINCT learner_id FROM "Learner".learner_progress_entries
+        WHERE learner_id=ANY(%s) AND deleted_at IS NULL
+          AND source_payload->>'retakeTimeChoice' IN ('keep','new','correct','add','retry')''', [profile_ids]))
+    relation = canonical.query('SELECT to_regclass(%s) AS name', ['"Learner".subject_activity_attempts'])
+    if relation and relation[0].get('name'):
+        enrolment_ids = [int(owner['enrolment_id']) for owner in owners]
+        timed_enrolments = {int(item['enrolment_id']) for item in canonical.query('''
+            SELECT DISTINCT enrolment_id FROM "Learner".subject_activity_attempts
+            WHERE enrolment_id=ANY(%s) AND submitted_at IS NOT NULL AND completed IS TRUE
+              AND jsonb_typeof(definition->'studyTime')='object' ''', [enrolment_ids])}
+        result.update(int(owner['id']) for owner in owners
+                      if int(owner['enrolment_id']) in timed_enrolments)
+    return result
+
+
 def extra_activity_hour_records(owners):
     """Read standalone extras once, excluding work already in the ledger.
 

@@ -1,27 +1,38 @@
 # ------------------------------------------------------------
-# CI/CD to AWS (London): every push to main is tested and deployed to
-# https://lms-aws.kentbusinesscollege.net
+# CI/CD for https://lms.kentbusinesscollege.org (AWS London)
 #
-#   1. backend  - build the Docker image, run the no-database tests inside it
-#   2. frontend - npm ci + vite build (frontend/out)
-#   3. deploy   - push the image to ECR, roll every ECS API service onto it
-#                 and wait until healthy, then upload the frontend to S3 and
-#                 clear the CloudFront cache. If the services don't become
-#                 healthy, the previous image is put back automatically.
+# Runs only when main is updated (a merged PR) or by hand (Run workflow):
+# every check below, then - after approval in the "aws-staging" environment -
+# the deploy. Pull requests do not run it.
+#
+#   backend        Docker image, Django checks, no-database tests (each
+#                  module in its own process: they stub parts of Django),
+#                  /health/ smoke test, image vulnerability scan (Trivy)
+#   backend-db     Django tests against a throwaway Neon branch holding the
+#                  production *schema only* (no data); deleted afterwards.
+#                  Report-only until the suite is green (needs NEON_API_KEY)
+#   frontend       lint, type-check, build (blocking); unit tests (report)
+#   security       leaked-secret scan of the new commits (gitleaks),
+#                  dependency audits (npm audit, pip-audit)
+#   deploy         push image -> roll ECS services (new tasks start before
+#                  old ones stop) -> wait healthy -> upload frontend ->
+#                  smoke test -> watch errors/latency for 10 min -> mark the
+#                  image "last-good". Any failure puts back the exact
+#                  last-good image and the previous frontend page.
+#
+# Security gates (Trivy, npm audit) only warn until the repo variable
+# SECURITY_GATE is set to "block" - main already has known findings that
+# must be fixed first.
 #
 # AWS access: OpenID Connect into the role made by LMS_infrastructure
-# (github_actions.tf); no AWS keys are stored in GitHub. The role only
-# trusts runs on main of this repo. Settings are repo *variables*
-# (Settings > Secrets and variables > Actions > Variables), printed by
-# `terraform output github_actions_variables`.
-#
-# Not done here: database migrations. AWS shares the production databases
-# with the VPS, which applies them.
-#
-# Roll back: Actions > "Deploy to AWS" > Run workflow, and give an older
-# commit of main in "ref".
+# (github_actions.tf); no AWS keys in GitHub. Settings are repo variables
+# printed by `terraform output github_actions_variables`.
+# Not done here: database migrations (the production database is shared
+# and migrations are applied deliberately).
+# Manual rollback: Actions > this workflow > Run workflow > "ref" = an older
+# commit of main.
 # ------------------------------------------------------------
-name: Deploy to AWS
+name: CI/CD
 
 on:
   push:
@@ -33,28 +44,27 @@ on:
         required: false
         default: ""
 
-# One deploy at a time; a newer push waits instead of cancelling a rollout
+# Runs queue one after another; a newer push never cancels a deploy
 concurrency:
-  group: deploy-aws
+  group: ci-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION }}
-  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
-  ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
-  IMAGE_TAG: ${{ vars.IMAGE_TAG }} # the tag the ECS task definitions run (Terraform var.image_tag)
+  CHECKOUT_REF: ${{ inputs.ref || github.sha }}
+  GATE: ${{ vars.SECURITY_GATE || 'warn' }}
 
 jobs:
+  # ---------------------------------------------------------------- backend
   backend:
-    name: Backend image + tests
+    name: Backend - image, tests, scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.sha }}
+          ref: ${{ env.CHECKOUT_REF }}
 
       - uses: docker/setup-buildx-action@v3
 
@@ -69,25 +79,50 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Django checks and no-database tests
+      - name: Django system checks
         run: |
           docker run --rm -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false \
             --entrypoint python lms-backend:ci manage.py check
-          docker run --rm --entrypoint python lms-backend:ci -m unittest -v \
-            config.test_health_no_db \
-            config.test_load_metric_no_db \
-            learner_api.test_response_cache_no_db
+
+      - name: No-database tests (one process per module)
+        run: |
+          docker run --rm -u 0 -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false \
+            -v "$PWD/.github/ci:/ci:ro" --entrypoint sh lms-backend:ci /ci/no_db_tests.sh
+
+      - name: Other fast tests (not named *_no_db)
+        run: |
+          docker run --rm -u 0 -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false \
+            --entrypoint python lms-backend:ci manage.py test --noinput \
+            curriculum_api.test_youtube_download
 
       - name: Container answers /health/
         run: |
           docker run -d --name smoke -e PORT=8000 -e WEB_CONCURRENCY=1 \
             -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false -p 8000:8000 lms-backend:ci
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             curl -sf http://127.0.0.1:8000/health/ && exit 0
             sleep 2
           done
           docker logs smoke
           exit 1
+
+      - name: Image vulnerability scan (fixable CRITICAL)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: lms-backend:ci
+          scanners: vuln
+          severity: CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: ${{ env.GATE == 'block' && '1' || '0' }}
+
+      - name: Python dependency audit (report)
+        continue-on-error: true
+        run: |
+          docker run --rm -u 0 --entrypoint sh lms-backend:ci -c \
+            "pip install -q pip-audit >/dev/null 2>&1 && pip-audit --progress-spinner off" \
+            | tee pip-audit.txt
+          { echo '### Python dependency audit'; echo '```'; cat pip-audit.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Save image for the deploy job
         run: docker save lms-backend:ci | gzip > image.tar.gz
@@ -98,13 +133,70 @@ jobs:
           path: image.tar.gz
           retention-days: 1
 
-  frontend:
-    name: Frontend build
+  # ------------------------------------------- backend tests with a database
+  backend-db:
+    name: Backend - database tests (Neon schema branch)
     runs-on: ubuntu-latest
+    # Report-only until the suite passes; then remove continue-on-error and
+    # add this job to deploy.needs
+    continue-on-error: true
+    env:
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+      NEON_PARENT_BRANCH_ID: ${{ vars.NEON_PARENT_BRANCH_ID }}
+    steps:
+      - name: Skip when Neon is not configured
+        if: env.NEON_API_KEY == '' || env.NEON_PROJECT_ID == ''
+        run: echo "::notice::NEON_API_KEY / NEON_PROJECT_ID not set - database tests skipped"
+
+      - uses: actions/checkout@v4
+        if: env.NEON_API_KEY != '' && env.NEON_PROJECT_ID != ''
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+
+      - name: Create a schema-only Neon branch (no data)
+        if: env.NEON_API_KEY != '' && env.NEON_PROJECT_ID != ''
+        id: neon
+        run: bash .github/ci/neon_branch.sh create
+
+      - name: Run Django tests on the branch
+        if: steps.neon.outcome == 'success'
+        env:
+          BRANCH_URL: ${{ steps.neon.outputs.url }}
+          BRANCH_ID: ${{ steps.neon.outputs.id }}
+        run: |
+          set -o pipefail
+          cd backend
+          python3 -m pip install -q -r requirements.txt
+          # DATABASE_URL is only compared (by host) to prove the branch is not
+          # production; settings never connect to it in branch mode
+          export DATABASE_URL="postgresql://ci@${{ vars.NEON_PRODUCTION_HOST || 'production.invalid' }}/neondb"
+          export security_Database_url="$BRANCH_URL" SECURITY_TEST_BRANCH_ID="$BRANCH_ID"
+          export USE_SECURITY_TEST_BRANCH=true DJANGO_SECRET_KEY=ci DJANGO_DEBUG=false DB_POOL=false
+          python3 manage.py test --keepdb --noinput --pattern="tests*.py" \
+            --testrunner=login.test_runner.EnrolmentTestRunner 2>&1 | tee ../db-tests.txt
+      - name: Summary
+        if: always() && steps.neon.outcome == 'success'
+        run: |
+          { echo '### Database tests'; echo '```'; tail -5 db-tests.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Delete the Neon branch
+        if: always() && steps.neon.outputs.id != ''
+        env:
+          BRANCH_ID: ${{ steps.neon.outputs.id }}
+        run: bash .github/ci/neon_branch.sh delete "$BRANCH_ID"
+
+  # --------------------------------------------------------------- frontend
+  frontend:
+    name: Frontend - lint, types, tests, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.sha }}
+          ref: ${{ env.CHECKOUT_REF }}
 
       - uses: actions/setup-node@v4
         with:
@@ -112,11 +204,24 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Build
-        working-directory: frontend
+      - run: npm ci --no-audit --no-fund
+      - name: Lint
+        run: npm run lint
+      - name: Type check
+        run: npm run type-check
+
+      - name: Unit tests (report until the 36 failing files on main are fixed)
+        continue-on-error: true
         run: |
-          npm ci --no-audit --no-fund
-          npm run build
+          set -o pipefail
+          npx vitest run --reporter=dot 2>&1 | tee vitest.txt
+      - name: Test summary
+        if: always()
+        run: |
+          { echo '### Frontend unit tests'; echo '```'; grep -E "Test Files|Tests  " vitest.txt || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build
+        run: npm run build
 
       - uses: actions/upload-artifact@v4
         with:
@@ -124,17 +229,75 @@ jobs:
           path: frontend/out
           retention-days: 1
 
+  # --------------------------------------------------------------- security
+  security:
+    name: Security - secrets and dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+          fetch-depth: 0
+
+      - name: Leaked-secret scan of the new commits (gitleaks)
+        env:
+          BASE: ${{ github.event.before }}
+          HEAD: ${{ github.sha }}
+        run: |
+          # Only the commits this push adds; history is not rescanned
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$BASE" 2>/dev/null; then
+            RANGE="$HEAD~1..$HEAD"
+          else
+            RANGE="$BASE..$HEAD"
+          fi
+          echo "Scanning $RANGE"
+          docker run --rm -v "$PWD:/repo" -w /repo zricethezav/gitleaks:v8.21.2 \
+            git --redact --no-banner --log-opts="$RANGE" .
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: npm audit (CRITICAL)
+        working-directory: frontend
+        run: |
+          npm audit --omit=dev --audit-level=critical && exit 0
+          if [ "$GATE" = "block" ]; then exit 1; fi
+          echo "::warning::npm audit found critical vulnerabilities (SECURITY_GATE=warn)"
+
+  # ------------------------------------------------------------------ deploy
   deploy:
     name: Deploy to AWS
-    needs: [backend, frontend]
+    needs: [backend, frontend, security]
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    # Required reviewers on this environment = the approval gate
     environment:
       name: aws-staging
       url: ${{ vars.SITE_URL }}
+    concurrency:
+      group: deploy-aws
+      cancel-in-progress: false
     permissions:
       contents: read
-      id-token: write # lets the job sign in to AWS with OpenID Connect
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      IMAGE_TAG: ${{ vars.IMAGE_TAG }}
+      BUCKET: ${{ vars.FRONTEND_BUCKET }}
+      DISTRIBUTION: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
+      SITE_URL: ${{ vars.SITE_URL }}
+      ALB_METRIC_ID: ${{ vars.ALB_METRIC_ID }}
+      COMMIT: ${{ inputs.ref || github.sha }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+          sparse-checkout: .github/ci
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
@@ -147,96 +310,38 @@ jobs:
         with:
           name: backend-image
 
-      - name: Push image (:<commit> and :${{ vars.IMAGE_TAG }}), keeping the old one as :previous
+      - name: Push image and remember the exact last-good one
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
-          COMMIT: ${{ inputs.ref || github.sha }}
-        run: |
-          set -euo pipefail
-          REPO="$REGISTRY/$ECR_REPOSITORY"
-          gunzip -c image.tar.gz | docker load
-
-          # Remember what is running now, for the automatic rollback
-          OLD=$(aws ecr batch-get-image --repository-name "$ECR_REPOSITORY" \
-                  --image-ids imageTag="$IMAGE_TAG" --query 'images[0].imageManifest' --output text 2>/dev/null || true)
-          if [ -n "$OLD" ] && [ "$OLD" != "None" ]; then
-            aws ecr put-image --repository-name "$ECR_REPOSITORY" --image-tag previous \
-              --image-manifest "$OLD" >/dev/null 2>&1 || true   # fails harmlessly if already equal
-          fi
-
-          docker tag lms-backend:ci "$REPO:$COMMIT"
-          docker tag lms-backend:ci "$REPO:$IMAGE_TAG"
-          docker push -q "$REPO:$COMMIT"
-          docker push -q "$REPO:$IMAGE_TAG"
+        run: bash .github/ci/deploy.sh push
 
       - name: Roll the API services onto the new image
-        run: |
-          set -euo pipefail
-          SERVICES=$(aws ecs list-services --cluster "$ECS_CLUSTER" --query 'serviceArns[]' --output text | tr '\t' '\n' | sed 's#.*/##' | sort)
-          echo "$SERVICES" > services.txt
-          for s in $SERVICES; do
-            aws ecs update-service --cluster "$ECS_CLUSTER" --service "$s" \
-              --force-new-deployment --query 'service.serviceName' --output text
-          done
+        run: bash .github/ci/deploy.sh roll
 
       - name: Wait until every service is healthy
         id: wait
-        run: |
-          set -euo pipefail
-          # The waiter polls every 15 s, 40 times (10 min) per call; allow 2 calls
-          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services $(cat services.txt) \
-            || aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services $(cat services.txt)
-          aws ecs describe-services --cluster "$ECS_CLUSTER" --services $(cat services.txt) \
-            --query 'services[].[serviceName,runningCount,deployments[0].rolloutState]' --output table
-          FAILED=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services $(cat services.txt) \
-            --query "services[?deployments[0].rolloutState=='FAILED'].serviceName" --output text)
-          if [ -n "$FAILED" ]; then
-            echo "::error::Rollout failed for: $FAILED"
-            exit 1
-          fi
-
-      - name: Put the previous image back (rollout failed)
-        if: failure() && steps.wait.conclusion == 'failure'
-        run: |
-          set -euo pipefail
-          PREV=$(aws ecr batch-get-image --repository-name "$ECR_REPOSITORY" \
-                   --image-ids imageTag=previous --query 'images[0].imageManifest' --output text)
-          aws ecr put-image --repository-name "$ECR_REPOSITORY" --image-tag "$IMAGE_TAG" \
-            --image-manifest "$PREV" >/dev/null
-          for s in $(cat services.txt); do
-            aws ecs update-service --cluster "$ECS_CLUSTER" --service "$s" \
-              --force-new-deployment --query 'service.serviceName' --output text
-          done
-          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services $(cat services.txt)
-          echo "::warning::Rolled back to the previous image; the frontend was not changed."
+        run: bash .github/ci/deploy.sh wait
 
       - uses: actions/download-artifact@v4
         with:
           name: frontend-out
           path: out
 
-      - name: Upload the frontend and clear the CloudFront cache
-        env:
-          BUCKET: ${{ vars.FRONTEND_BUCKET }}
-          DISTRIBUTION: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
-        run: |
-          set -euo pipefail
-          # 1. Hashed bundles first (cached for a year), so the new index.html
-          #    never points at files that aren't uploaded yet
-          aws s3 sync out "s3://$BUCKET" --only-show-errors \
-            --exclude "*.html" --cache-control "public,max-age=31536000,immutable"
-          # 2. Pages last, never cached by browsers. Old bundles are kept (not
-          #    --delete), so a page opened before the deploy keeps working.
-          aws s3 sync out "s3://$BUCKET" --only-show-errors \
-            --exclude "*" --include "*.html" --cache-control "no-cache"
-          ID=$(aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION" \
-                 --paths '/*' --query Invalidation.Id --output text)
-          aws cloudfront wait invalidation-completed --distribution-id "$DISTRIBUTION" --id "$ID"
+      - name: Upload the frontend (previous page kept for rollback)
+        id: frontend
+        run: bash .github/ci/deploy.sh frontend
 
       - name: Smoke test the live site
-        env:
-          SITE_URL: ${{ vars.SITE_URL }}
-        run: |
-          set -euo pipefail
-          curl -sf -o /dev/null -w "site %{http_code} %{time_total}s\n" "$SITE_URL/"
-          curl -s -o /dev/null -w "login_api %{http_code} %{time_total}s\n" "$SITE_URL/login_api/" || true
+        run: bash .github/ci/deploy.sh smoke
+
+      - name: Watch errors and response time for 10 minutes
+        run: bash .github/ci/deploy.sh watch
+
+      - name: Mark this image as last-good
+        run: bash .github/ci/deploy.sh mark-good
+
+      # Runs on any failure; it only undoes what was already changed
+      # (image pushed -> last-good image back; page uploaded -> previous page)
+      - name: Roll back to the last-good image and previous page
+        if: failure()
+        run: bash .github/ci/deploy.sh rollback

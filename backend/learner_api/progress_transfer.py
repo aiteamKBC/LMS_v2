@@ -263,15 +263,17 @@ def approve_request(request_id, account, decisions=None):
             item['componentMatches'] = []
             for source_component in module['sources']:
                 ref = source_component['sourceActivityRef']
-                target = manual.get((item['moduleId'], ref))
-                if target:
-                    matches[target['componentId']] = manual_completion(item, ref, target)
-                else:
-                    target = next(t for t in module['targets'] if t['componentId'] == source_component['automaticTargetId'])
-                item['componentMatches'].append({'sourceActivityRef': ref, 'sourceTitle': source_component['title'],
-                    'targetComponentId': target['componentId'], 'targetTitle': target['title'],
-                    'manual': not bool(source_component['automaticTargetId']),
-                    **({'plannedHours': target['plannedHours']} if not source_component['automaticTargetId'] else {})})
+                targets = [(target, True) for target in manual.get((item['moduleId'], ref), [])]
+                if source_component['automaticTargetId']:
+                    automatic = next(t for t in module['targets'] if t['componentId'] == source_component['automaticTargetId'])
+                    targets.insert(0, (automatic, False))
+                for target, is_manual in targets:
+                    if is_manual:
+                        matches[target['componentId']] = manual_completion(item, ref, target)
+                    item['componentMatches'].append({'sourceActivityRef': ref, 'sourceTitle': source_component['title'],
+                        'targetComponentId': target['componentId'], 'targetTitle': target['title'],
+                        'manual': is_manual,
+                        **({'plannedHours': target['plannedHours']} if is_manual else {})})
             item['matchedComponents'] = matches
             item['componentCounts'] = component_counts(module, matches)
             counts = item['componentCounts']
