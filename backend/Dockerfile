@@ -40,7 +40,15 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 COPY . .
 
 # Run as an unprivileged user
-RUN useradd --create-home --uid 10001 appuser
+# and give it the folders the app writes to on local disk: media/ (quiz
+# packages, SCORM extraction, other uploads) and private_media/ (signature
+# images when Azure isn't configured). Without this, uploads failed with
+# "PermissionError: Permission denied: '/app/media'".
+# Fargate disk is per task and temporary: files that must be kept and shared
+# between tasks belong in Azure/S3.
+RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /app/media /app/private_media \
+    && chown -R appuser:appuser /app/media /app/private_media
 USER appuser
 
 # Each API runs as its own ECS service on its own port, as on the VPS
