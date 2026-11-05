@@ -278,7 +278,7 @@ class ReviewConsumerTests(SimpleTestCase):
             )
         self.assertEqual(calculator.call_args.kwargs["as_of"], calculated_at.astimezone(timezone.utc))
         self.assertEqual(snapshot["schemaVersion"], 5)
-        self.assertEqual(snapshot["formulaVersion"], "canonical_dashboard_metrics_and_scheduled_catalogue_v6")
+        self.assertEqual(snapshot["formulaVersion"], "canonical_dashboard_overview_activities_v7")
         self.assertEqual(snapshot["actualHoursSource"], "canonical_learning.dashboard")
         self.assertEqual(snapshot["calculatedAt"], "2026-09-19T09:00:00Z")
 

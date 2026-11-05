@@ -28,7 +28,7 @@ class ReviewLiveInputsTests(SimpleTestCase):
                                 'historicalComponents': 140, 'retainedComponents': 0}),
         ]:
             attribute = {'identity': 'require_profile', 'metrics': 'metrics_bulk',
-                         'modules': 'canonical_module_facts'}[name]
+                         'modules': 'dashboard_activity_facts'}[name]
             patcher = patch.object(target, attribute, return_value=value)
             setattr(self, name + '_read', patcher.start())
             self.addCleanup(patcher.stop)

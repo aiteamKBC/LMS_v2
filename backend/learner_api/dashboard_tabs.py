@@ -49,7 +49,7 @@ def monthly_hours(owner, records, targets, *, signed_months=(), current_month=No
                 'planned_hours': totals['planned']}}
 
 
-def learning_projection(source, owner, records, *, compact_content=False, monthly_assignments=False):
+def learning_projection(source, owner, records, *, compact_content=False, monthly_assignments=False, progress=None):
     from .weekly_learning import build_learning_content_summary
     from .student_activity_access import student_activity_available
     from .student_activity_data import summarize_activities
@@ -57,6 +57,8 @@ def learning_projection(source, owner, records, *, compact_content=False, monthl
     from .student_activity import builder_subject_links
 
     options = {'compact_content': True} if compact_content else {}
+    if progress is not None:
+        options['progress'] = progress
     weekly = build_learning_content_summary(source, source.pk, learning_summary=True, **options)
     detail = {key: weekly.get(key, []) for key in (
         'modules', 'components', 'retiredQuizComponents', 'quizAttempts', 'videoProgress', 'componentProgress')}
