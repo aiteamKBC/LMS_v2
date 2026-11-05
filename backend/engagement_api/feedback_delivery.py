@@ -17,6 +17,7 @@ from .feedback_delivery_guard import audit, is_creation_guard_rejection, rejecte
 
 _random = SystemRandom()
 logger = logging.getLogger(__name__)
+QR_SCHEDULE_SOURCE = 'qr_schedule'
 
 
 @dataclass(frozen=True)
@@ -208,7 +209,7 @@ def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=Fa
                 ensure_delivery_questions(delivery)
             deliveries.append(delivery.id)
             revoked_count += FeedbackDeliveryRecipient.objects.filter(
-                delivery=delivery, revoked_at__isnull=True,
+                delivery=delivery, revoked_at__isnull=True, public_claimed_at__isnull=True,
             ).exclude(learner_id__in=learners).update(revoked_at=timezone.now())
             for learner_id, learner in learners.items():
                 attendee = attendees_by_id[learner_id]

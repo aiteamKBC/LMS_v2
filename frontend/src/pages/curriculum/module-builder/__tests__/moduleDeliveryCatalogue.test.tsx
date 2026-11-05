@@ -8,6 +8,7 @@ import { fetchCurriculumDeliveryScope, fetchCurriculumOverview } from '@/lib/cur
 import { fetchAssignedLearners } from '@/api/assignedLearners';
 import { fetchModuleCatalogueActivity } from '@/api/moduleCatalogueActivity';
 import { clearAllCachedResources } from '@/api/cachedRequest';
+import Swal from 'sweetalert2';
 vi.mock('@/api/moduleCatalogueActivity', () => ({ fetchModuleCatalogueActivity: vi.fn() }));
 vi.mock('@/api/assignedLearners', () => ({
   fetchLearnerStatusCounts: vi.fn(async (_scope: string, ids: string[]) => Object.fromEntries(ids.map(id => {
@@ -207,6 +208,27 @@ async function renderCatalogue(search = '', expectedTitle = 'Data Foundations') 
   return result;
 }
 
+async function assertFreshDuplicateDialog() {
+  const fire = vi.spyOn(Swal, 'fire')
+    .mockResolvedValueOnce({ isConfirmed: true, value: { programme: programmes[0], cohort: cohorts[0], group: groups[0] } } as never)
+    .mockResolvedValueOnce({ isConfirmed: false } as never);
+  await renderCatalogue('?all=1');
+  await userEvent.click(cardFor('Data Foundations').getByRole('button', { name: 'Duplicate module' }));
+  await waitFor(() => expect(fire).toHaveBeenCalledTimes(2));
+  const options = fire.mock.calls[1][0] as unknown as { title: string; html: string; preConfirm: () => unknown };
+  expect(options.title).toBe('New module start date');
+  expect(options.html).toContain('without learners, meeting participants or Teams meeting links');
+  expect(options.html).not.toContain('duplicate-teams-shared');
+  const popup = document.createElement('div'); popup.innerHTML = options.html;
+  vi.spyOn(Swal, 'getPopup').mockReturnValue(popup);
+  const validation = vi.spyOn(Swal, 'showValidationMessage').mockImplementation(() => {});
+  expect(options.preConfirm()).toBe(false);
+  expect(validation).toHaveBeenCalledWith('Choose the Start Date for the new module.');
+  popup.querySelector<HTMLInputElement>('#duplicate-start-date')!.value = '2026-11-20';
+  expect(options.preConfirm()).toEqual({ startDate: '2026-11-20' });
+  expect(vi.mocked(fetch).mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
+}
+
 /** Opens the app's SelectMenu combobox and picks the option with this label. */
 async function chooseOption(user: ReturnType<typeof userEvent.setup>, comboboxLabel: string, optionLabel: string) {
   await user.click(screen.getByLabelText(comboboxLabel));
@@ -290,6 +312,11 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     window.history.replaceState({}, '', '/');
+  });
+
+  describe('standalone module duplicate', () => {
+    afterEach(() => vi.restoreAllMocks());
+    it('requires a new start date and offers no original meeting links', assertFreshDuplicateDialog);
   });
 
   it('loads filter scope without the complete overview on catalogue mount', async () => {
