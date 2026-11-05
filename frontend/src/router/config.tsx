@@ -50,6 +50,7 @@ const EmployerPortalPage = lazyRoute(() => import("../pages/employer/EmployerPor
 const EmployerFeedbackPage = lazyRoute(() => import("../pages/employer/EmployerFeedbackPage"));
 const EmployerLearnerPage = lazyRoute(() => import("../pages/employer/EmployerLearnerPage"));
 const EventFeedbackPage = lazyRoute(() => import("../pages/event-feedback/page"));
+const PublicLectureFeedbackPage = lazyRoute(() => import("../pages/lecture-feedback/page"));
 const EventRsvpPage = lazyRoute(() => import("../pages/event-rsvp/page"));
 const EventCheckInPage = lazyRoute(() => import("../pages/event-check-in/page"));
 const EmployerDocumentsPage = lazyRoute(() => import("../pages/employer/EmployerDocumentsPage"));
@@ -336,6 +337,10 @@ const routes: RouteObject[] = [
   {
     path: "/event-feedback",
     element: <EventFeedbackPage />,
+  },
+  {
+    path: "/lecture-feedback",
+    element: <PublicLectureFeedbackPage />,
   },
   {
     path: "/event-rsvp",
@@ -1890,6 +1895,7 @@ const PUBLIC_PATHS = new Set([
   "/",
   "/login",
   "/event-feedback",
+  "/lecture-feedback",
   "/event-rsvp",
   "/event-check-in",
   "/access-required",

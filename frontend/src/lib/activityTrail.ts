@@ -60,6 +60,7 @@ const EXCLUDED_PREFIXES = [
   '/event-check-in',
   '/event-feedback',
   '/event-rsvp',
+  '/lecture-feedback',
   // Public booking pages must not call the authenticated audit endpoint.
   '/coach-booking/',
   // Neither must the public apprenticeship application.
