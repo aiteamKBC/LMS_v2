@@ -3,7 +3,7 @@ import type { TransferMapping, TransferReview } from '@/api/progressTransfer';
 /** Preview approval counts, preserving the LMS's retained passed quizzes. */
 export function previewComponentCounts(module: TransferReview['modules'][number], mappings: TransferMapping[]) {
   const targets = new Set(module.targets.map(target => target.componentId));
-  const sources = new Set(module.sources.filter(source => !source.automaticTargetId).map(source => source.sourceActivityRef));
+  const sources = new Set(module.sources.map(source => source.sourceActivityRef));
   const matched = new Set([
     ...module.sources.flatMap(source => source.automaticTargetId ? [source.automaticTargetId] : []),
     ...mappings.filter(mapping => mapping.moduleId === module.moduleId && sources.has(mapping.sourceActivityRef))

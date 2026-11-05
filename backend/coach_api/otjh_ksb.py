@@ -6,13 +6,22 @@ import re
 from django.db import connections
 from django.utils import timezone
 from learner_api import canonical_learning as canonical
-from learner_api.canonical_hours import pending_hour_records, STORED_REPORTING_MONTH_SQL
+from learner_api.canonical_hours import full_hour_projection_ids, pending_hour_records, STORED_REPORTING_MONTH_SQL
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 log = logging.getLogger(__name__)
 
 
 def read_hour_totals(owner):
+    if int(owner['id']) in full_hour_projection_ids([owner]):
+        months = {}
+        for entry in canonical.entries_for(owner, lineage_only=True):
+            for record in canonical.allocations(entry):
+                month = record.get('reporting_month')
+                row = months.setdefault(month, {'month': month, 'completed': 0.0, 'submitted': 0.0})
+                field = 'completed' if record.get('accepted') is True else 'submitted'
+                row[field] += canonical.recorded_seconds(record) / 3600
+        return list(months.values())
     # Aggregate stored history, then include the same unsynchronised direct
     # saves that the learner's Dashboard and Monthly Logs project on reads.
     totals = canonical.query(f'''SELECT reporting_month AS month,
