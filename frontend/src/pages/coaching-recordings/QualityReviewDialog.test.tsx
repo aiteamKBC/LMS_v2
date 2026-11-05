@@ -115,6 +115,38 @@ describe('Quality review form', () => {
     await screen.findByText('Completed · Version 1 saved');
     expect(screen.getByRole('button', { name: 'Preview PDF' })).toBeEnabled();
   });
+  it.each([
+    ['draft', 'Next review'], ['completed', 'Ongoing'], ['completed', ''], ['completed', '2026-11-10'],
+  ] as const)('saves and reopens a %s action with By when "%s"', async (status, dueDate) => {
+    const onSaved = vi.fn();
+    const view = render(<QualityReviewDialog initialLearnerId="1" onClose={vi.fn()} onSaved={onSaved} />);
+    await choose();
+    fireEvent.click(screen.getByRole('radio', { name: 'Green' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Evidence observed and impact on the learner' }), { target: { value: 'Observed evidence to preserve.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'SMART action plan' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add action' }));
+    const action = { action: 'Follow up progress', outcome: 'Improve learner confidence', supportedBy: 'Coach', dueDate };
+    fireEvent.change(screen.getByRole('textbox', { name: 'Target / action (SMART)' }), { target: { value: action.action } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Planned outcome and learner impact' }), { target: { value: action.outcome } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Supported by' }), { target: { value: action.supportedBy } });
+    const deadline = screen.getByRole('textbox', { name: 'By when' });
+    expect(deadline).not.toBeRequired();
+    fireEvent.change(deadline, { target: { value: dueDate } });
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: status === 'draft' ? 'Save draft' : 'Complete review' }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+    const saved = onSaved.mock.calls[0][0] as QualityReview;
+    expect(vi.mocked(saveQualityReview).mock.calls[0][0]).toMatchObject({ status, form: { actions: [action], criteria: { 'progress-1': { rating: 'green', evidence: 'Observed evidence to preserve.' } } } });
+    view.unmount();
+    vi.mocked(qualityReview).mockResolvedValue({ review: saved, template: context().template });
+    render(<QualityReviewDialog reviewId={saved.id} onClose={vi.fn()} />);
+    await screen.findByRole('radio', { name: 'Green' });
+    fireEvent.click(screen.getByRole('button', { name: 'SMART action plan' }));
+    expect(screen.getByRole('textbox', { name: 'By when' })).toHaveValue(dueDate);
+    expect(screen.getByRole('textbox', { name: 'Target / action (SMART)' })).toHaveValue(action.action);
+    expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
+    if (status === 'completed') expect(screen.getByRole('button', { name: 'Preview PDF' })).toBeEnabled();
+  });
   it('switches to the other published form only after accepting unsaved-answer loss', async () => {
     vi.mocked(qualityContext).mockImplementation(async (_event, _reference, _learner, _signal, kind) => {
       const value = context(); value.snapshot.reviewType = kind || 'MCM'; value.template.reviewType = kind || 'MCM';
