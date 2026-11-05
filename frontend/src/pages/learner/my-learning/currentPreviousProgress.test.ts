@@ -47,3 +47,19 @@ describe('current plan and previous learning progress', () => {
       previousLearning: { activityCount: 0 } });
   });
 });
+
+it('moves only approved retained originals into the new module, preserving their content identity and completion', () => {
+  const metadata = { covers: {}, current_subjects: [{ id: 'M1', title: 'Shared module' }],
+    approved_transfers: { 'current:M1': 'legacy:1' },
+    retained_activity_modules: { 'catalogue:1:material:1': 'current:M1' } };
+  const summary = buildUnifiedLearningSummary(history, current, metadata);
+  const module = summary.subjects.find(subject => subject.id === 'current:M1')!;
+  expect(module.activities).toHaveLength(3);
+  expect(module.activities.find(entry => entry.id === 'catalogue:1:material:1'))
+    .toMatchObject({ completed: true, title: 'Previous lesson', legacy: { group_id: 1, source_activity_id: 1 } });
+  expect(summary.subjects.some(subject => subject.id === 'legacy:1')).toBe(false);
+  expect([summary.activityCount, summary.completedActivityCount, summary.percent]).toEqual([3, 1, 33.33]);
+  const other = buildUnifiedLearningSummary(history, current);
+  expect(other.subjects.find(subject => subject.id === 'current:M1')?.activities).toHaveLength(2);
+  expect(history.activities).toHaveLength(1);
+});

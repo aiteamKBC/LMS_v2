@@ -6,7 +6,7 @@ import { fetchLearnerCertificateTemplate, type CertificateTemplateSummary } from
 import { SubjectCard, StudentActivityPanel, SubjectCardsSkeleton } from './SubjectWorkspace';
 import { LearningCatalogue, type UpcomingLearningLink } from './LearningCatalogue';
 import type { Subject, UnifiedLearningSummary } from './learningSummary';
-import { recommendedLearningSubject } from './subjectLearning';
+import { learningModulePeriod, recommendedLearningSubject } from './subjectLearning';
 import { formatHoursMinutes } from '@/utils/learnerJourney';
 import styles from './SubjectWorkspace.module.css';
 import { TransferProgress } from './TransferProgress';
@@ -127,6 +127,7 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
     {upcomingLoading && <p role="status">Loading upcoming learning…</p>}
     <p className="text-sm text-foreground-500">{catalogue.learner.name}</p>
     <LearningCatalogue summary={summary} search={search} onSearch={setSearch} current={current}
+      modulePeriod={subject => { const card = catalogue?.modules.find(item => item.id === subject.id); return learningModulePeriod(subject, card?.planModule?.start_date, card?.planModule?.end_date); }}
       transferAction={canRequestTransfer && kind && id ? <TransferProgress kind={kind} learnerId={id} onRequested={refresh} /> : undefined}
       total={summary.activityCount} done={summary.completedActivityCount} percent={summary.percent}
       kind={kind} learnerId={id} activityMatches={activitySearch.ids}

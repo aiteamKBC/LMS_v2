@@ -123,7 +123,7 @@ class ModuleContextScopeTests(SimpleTestCase):
 
 
 class TransferredModuleOpenTests(SimpleTestCase):
-    def open_module(self, kind, status, *, new_completion=False, http=False, overlap=False, duplicate=False):
+    def open_module(self, kind, status, *, new_completion=False, http=False, overlap=False, duplicate=False, retained=False):
         from . import (weekly_learning, dashboard_training, training_plan_dashboard, live_session_progress,
                        teams_attendance, builder_activity_dates, subject_store)
         source = SimpleNamespace(pk=7, id=7, email='learner@example.test', programme='Programme',
@@ -136,6 +136,9 @@ class TransferredModuleOpenTests(SimpleTestCase):
             'sourceActivityId': 7, 'catalogueKind': 'material', 'completed': True}
         transfers = saved(status, [item(
             matchedComponents={'C0': snapshot}, baselineCompletedIds=[], baselinePercent=0)])
+        if retained:
+            transfers['items'][0].update(completedSourceActivities=['material:7', 'material:8'], retainedSources=[
+                {'sourceActivityRef': 'material:8', 'title': 'Original reading', 'week': 'Week 2', 'type': 'reading'}])
         content = native(components, id='7', week=[])
         if new_completion:
             content['componentProgress'] = [{'componentId': 'C1', 'kind': 'component'}]
@@ -151,7 +154,7 @@ class TransferredModuleOpenTests(SimpleTestCase):
             stack.enter_context(patch.object(weekly_learning, 'build_learning_content_summary',
                 side_effect=lambda *a, **kw: deepcopy(content) if kw['assigned_modules'] else native([], id='7', week=[])))
             historical = stack.enter_context(patch.object(canonical, 'source_subjects',
-                return_value={'activities': [], 'subjects': [{'id': 50, 'name': 'Old'}]}))
+                return_value={'activities': ([{'activity_id': 'catalogue:50:material:8', 'group_id': 50, 'source_activity_id': 8, 'hours_mapped': True, 'planned_hours_mapped': True, 'activity': 'Original reading', 'completed': False, 'category': 'reading', 'actual': 0, 'planned': 0}] if retained else []), 'subjects': [{'id': 50, 'name': 'Old'}]}))
             stack.enter_context(patch.object(dashboard_training, 'module_rows', return_value={'M1': {'id': 'M1', 'title': 'One'}}))
             stack.enter_context(patch.object(training_plan_dashboard, 'plan_sessions', return_value=[]))
             stack.enter_context(patch.object(live_session_progress, 'read_live_credits', return_value=[]))
@@ -221,3 +224,13 @@ class TransferredModuleOpenTests(SimpleTestCase):
                     self.assertNotIn('previousLearning', result['detail']['components'][1])
                     self.assertEqual(result['detail']['quizAttempts'], [])
                     self.assertEqual(result['metadata']['module_credits']['current:M1']['progress'], expected)
+
+    def test_retained_original_is_in_new_module_for_each_learner_kind(self):
+        for kind in ('commercial', 'apprenticeship'):
+            result, historical = self.open_module(kind, 'approved', retained=True, http=True)
+            self.assertEqual(result['subjectId'], 'current:M1')
+            self.assertEqual(result['metadata']['retained_activity_modules'], {'catalogue:50:material:8': 'current:M1'})
+            self.assertTrue(result['activity']['activities'][0]['completed'])
+            self.assertEqual(result['metadata']['module_credits']['current:M1']['progress'], 18.18)
+            self.assertEqual(result['metadata']['module_credits']['current:M1']['actualHours'], 2)
+            self.assertEqual(historical.call_args.kwargs['course_ids'], ['50'])

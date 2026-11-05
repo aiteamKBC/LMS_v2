@@ -4,7 +4,7 @@ import type { LearnerKind } from './learnerDetail';
 
 export type ComponentMatch = { sourceActivityRef: string; sourceTitle: string; targetComponentId: string; targetTitle: string; manual: boolean; plannedHours?: number | null };
 export type TransferComponentCounts = { total: number; matched: number; completed: number; remaining: number };
-export type TransferModule = { courseRef: string; moduleId: string; oldTitle: string; newTitle: string; percent: number; hours: number; mergedPercent?: number; demoProgress?: boolean; componentMatches?: ComponentMatch[]; componentCounts?: TransferComponentCounts };
+export type TransferModule = { courseRef: string; moduleId: string; oldTitle: string; newTitle: string; percent: number; hours: number; mergedPercent?: number; demoProgress?: boolean; retainedSources?: { sourceActivityRef: string; title: string; week: string; type: string }[]; componentMatches?: ComponentMatch[]; componentCounts?: TransferComponentCounts };
 export type ProgressTransferRequest = {
   requestId: string; status: 'pending' | 'approved'; requestedAt: string; approvedAt: string | null; modules: TransferModule[];
 };

@@ -7,7 +7,7 @@ import type { StudentActivityResponse, SubjectMaterial } from '@/api/studentActi
 import * as api from '@/api/studentActivity';
 import { StudentActivityPanel, type Subject, type SubjectEntry } from './SubjectWorkspace';
 import { subjectsFrom } from './learningSummary';
-import { certificateEligible, currentLearningSubject, currentLearningWeek, continuingLearningWeek, learningDeadlines, learningPlanSelection, learningToday, learningHref, nextLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectWeeks, subjectOpeningActivity } from './subjectLearning';
+import { certificateEligible, currentLearningSubject, currentLearningWeek, continuingLearningWeek, learningDeadlines, learningModulePeriod, learningPlanSelection, learningToday, learningHref, nextLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectWeeks, subjectOpeningActivity } from './subjectLearning';
 
 const entry = (id: string, date: string, completed = false): SubjectEntry => ({ id, title: `Activity ${id}`, category: 'reading', completed, position: 0,
   schedule: { date, month: date?.slice(0, 7) || 'undated', week_start: date, week_end: date } });
@@ -520,6 +520,15 @@ describe('map and My Learning navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'List' }));
     expect(screen.getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: /Open subject/ })).toBeVisible();
+  });
+
+  it('classifies modules by inclusive plan dates and keeps previous history separate', () => {
+    const subject = (source: 'current' | 'legacy', previousLearningFor?: string) => ({ source, previousLearningFor });
+    expect(learningModulePeriod(subject('current'), '2026-11-01', '2026-11-04', '2026-11-04')).toBe('current');
+    expect(learningModulePeriod(subject('current'), '2026-11-05', '2026-11-20', '2026-11-04')).toBe('upcoming');
+    expect(learningModulePeriod(subject('current'), '2026-10-01', '2026-11-03', '2026-11-04')).toBe('previous');
+    expect(learningModulePeriod(subject('legacy'), null, null, '2026-11-04')).toBe('previous');
+    expect(learningModulePeriod(subject('current'), null, null, '2026-11-04')).toBe('undated');
   });
 
   it('uses the displayed activity total despite different programme metrics and opens deadline components', async () => {

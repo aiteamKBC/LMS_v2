@@ -8,6 +8,8 @@ from old_otjh.service import ServiceError
 
 from .replacement_learning import project_replacement_learning
 
+RETAIN_ORIGINAL = '__retain_original__'
+
 
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
@@ -174,6 +176,9 @@ def validate_decisions(review, decisions):
         if key not in needed or key in result:
             raise ServiceError('A source component is invalid or selected more than once.', 'invalid_transfer_match', 400)
         module, source = needed[key]
+        if row['targetComponentId'] == RETAIN_ORIGINAL:
+            result[key] = {'componentId': RETAIN_ORIGINAL, 'retainOriginal': True}
+            continue
         target = next((target for target in module['targets'] if target['componentId'] == row['targetComponentId']), None)
         if (target is None or source['type'] == 'unknown'
                 or (source['type'] != target['type'] and source.get('recommendedTargetId') != row['targetComponentId'])

@@ -37,9 +37,9 @@ describe('admin progress transfers', () => {
     expect(screen.getByText(/Old LMS: video; new LMS: reading/)).toBeVisible();
     const counts = within(screen.getByRole('region', { name: 'Component counts for New module' }));
     expect(counts.getByText('Matched from old LMS').parentElement).toHaveTextContent('0');
-    expect(counts.getByText('Completed components').parentElement).toHaveTextContent('1');
+    expect(counts.getByText('Completed components').parentElement).toHaveTextContent('2');
     const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm' });
-    expect(confirm).toBeDisabled();
+    expect(confirm).toBeEnabled();
     openChoices(choices);
     fireEvent.click(choices.getByRole('button', { name: /^Week 2/ }));
     expect(choices.getByText('Recommended')).toBeVisible();
@@ -52,10 +52,10 @@ describe('admin progress transfers', () => {
     expect(screen.getByText('Manual selection')).toBeInTheDocument();
     expect(api.approveTransferRequest).not.toHaveBeenCalled();
     fireEvent.click(choices.getByRole('button', { name: 'Clear match' }));
-    expect(confirm).toBeDisabled();
+    expect(confirm).toBeEnabled();
     fireEvent.click(screen.getByRole('button', { name: 'Reload component matches' }));
     await waitFor(() => expect(api.getTransferReview).toHaveBeenCalledTimes(2));
-    expect(confirm).toBeDisabled();
+    expect(confirm).toBeEnabled();
     expect(counts.getByText('Matched from old LMS').parentElement).toHaveTextContent('0');
   });
   it('restores request-local matches as editable selections without approving or awarding progress', async () => {
@@ -78,8 +78,8 @@ describe('admin progress transfers', () => {
     const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm' });
     expect(confirm).toBeEnabled();
     fireEvent.click(choices.getByRole('button', { name: 'Clear match' }));
-    expect(confirm).toBeDisabled();
-    expect(counts.getByText('Completed components').parentElement).toHaveTextContent('1');
+    expect(confirm).toBeEnabled();
+    expect(counts.getByText('Completed components').parentElement).toHaveTextContent('2');
     fireEvent.click(screen.getByRole('button', { name: 'Reload component matches' }));
     await waitFor(() => expect(confirm).toBeEnabled());
     expect(api.approveTransferRequest).not.toHaveBeenCalled();
@@ -131,7 +131,7 @@ describe('admin progress transfers', () => {
     const other = within(screen.getByRole('tablist', { name: 'Old LMS weeks in Second module' }));
     expect(other.getByRole('tab')).toHaveAttribute('aria-selected', 'true');
     expect(other.getByRole('tab')).toHaveTextContent('1/1 matched');
-    expect(screen.getByRole('button', { name: 'Confirm' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Confirm' })).toBeEnabled();
     expect(api.approveTransferRequest).not.toHaveBeenCalled();
   });
 
@@ -243,10 +243,10 @@ describe('admin progress transfers', () => {
     expect(confirm).toBeEnabled();
     expect(counts.getByText('Matched from old LMS').parentElement).toHaveTextContent('1');
     fireEvent.click(choices.getByRole('button', { name: 'Clear match' }));
-    expect(confirm).toBeDisabled();
+    expect(confirm).toBeEnabled();
     expect(screen.queryByRole('table', { name: 'Matched components review' })).not.toBeInTheDocument();
     expect(counts.getByText('Matched from old LMS').parentElement).toHaveTextContent('0');
-    expect(counts.getByText('Completed components').parentElement).toHaveTextContent('2');
+    expect(counts.getByText('Completed components').parentElement).toHaveTextContent('3');
     openChoices(choices);
     fireEvent.click(choices.getByRole('button', { name: /^Week 10 / }));
     fireEvent.click(choices.getByRole('radio', { name: /Budget planning/ }));
@@ -336,7 +336,7 @@ describe('admin progress transfers', () => {
     expect(first.getAllByRole('radio').map(option => (option as HTMLInputElement).value)).toEqual(['A', 'B']);
     expect(first.getByRole('radio', { name: /Recommended/ })).toHaveAttribute('value', 'A');
     expect(first.getByRole('radio', { name: /Recommended/ })).not.toBeChecked();
-    expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm' })).toBeDisabled();
+    expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm' })).toBeEnabled();
     expect(api.approveTransferRequest).not.toHaveBeenCalled();
     fireEvent.click(first.getByRole('radio', { name: /quiz · A/ }));
     expect(first.getByRole('button', { name: 'Choose component' })).toHaveTextContent(title);
@@ -469,7 +469,7 @@ describe('admin progress transfers', () => {
     expect(api.getTransferReview).not.toHaveBeenCalled();
   });
 
-  it('requires every manual match, prevents duplicate destinations and shows planned hours without changing actual credit', async () => {
+  it('retains originals until matched, prevents duplicate destinations and shows planned hours without changing actual credit', async () => {
     vi.mocked(api.getTransferRequests).mockResolvedValue({ requests: [request], nextOffset: null, csrfToken: 'csrf' });
     vi.mocked(api.getTransferReview).mockResolvedValue({ reviewToken: 'scoped-review', csrfToken: 'review-csrf', modules: [{
       moduleId: 'M1', courseRef: 'legacy:50', title: 'New module',
@@ -482,9 +482,9 @@ describe('admin progress transfers', () => {
     vi.mocked(api.approveTransferRequest).mockRejectedValue(new Error('Component matches changed.'));
     render(<MemoryRouter><TransferRequests /></MemoryRouter>);
     fireEvent.click(await screen.findByRole('button', { name: 'Review transfer' }));
-    expect(await screen.findByText(/2 completed old components need a match/)).toBeVisible();
+    expect(await screen.findByText(/All completed old components will be matched or kept/)).toBeVisible();
     const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm' });
-    expect(confirm).toBeDisabled();
+    expect(confirm).toBeEnabled();
     const first = within(screen.getByRole('group', { name: 'Match Original reading (material:7) in New module' }));
     expect(screen.queryByRole('group', { name: 'Match Another reading (material:8) in New module' })).not.toBeInTheDocument();
     const weeks = within(screen.getByRole('tablist', { name: 'Old LMS weeks in New module' }));
@@ -495,14 +495,14 @@ describe('admin progress transfers', () => {
     fireEvent.click(first.getByRole('radio', { name: /reading · A(?: |$)/ }));
     expect(screen.getByText(/New component planned hours: 1h 30m/)).toHaveTextContent('Actual transferred hours are unchanged.');
     expect(weeks.getByRole('tab', { name: /^Week 1 / })).toHaveTextContent('1/1 matched');
-    expect(confirm).toBeDisabled(); // An unvisited week still requires its match.
+    expect(confirm).toBeEnabled(); // The unvisited original remains complete for this learner.
     fireEvent.click(screen.getByRole('button', { name: 'Next unmatched week' }));
     expect(screen.getByRole('tabpanel', { name: 'New module: Week 2' })).toHaveFocus();
     const second = within(screen.getByRole('group', { name: 'Match Another reading (material:8) in New module' }));
     openChoices(second);
     fireEvent.click(second.getByRole('button', { name: /^Week 1/ }));
     expect(second.getByRole('radio', { name: /reading · A(?: |$)/ })).toBeDisabled();
-    expect(confirm).toBeDisabled();
+    expect(confirm).toBeEnabled();
     fireEvent.click(second.getByRole('radio', { name: /reading · B/ }));
     expect(weeks.getByRole('tab', { name: /^Week 2 / })).toHaveTextContent('1/1 matched');
     expect(confirm).toBeEnabled();
@@ -545,7 +545,7 @@ describe('admin progress transfers', () => {
     expect(choices.getByRole('button', { name: /^Week 2/ })).toHaveAttribute('aria-expanded', 'true');
   });
 
-  it('explains missing compatible components and keeps approval blocked', async () => {
+  it('keeps original content when no compatible component exists and submits its scoped decision', async () => {
     vi.mocked(api.getTransferRequests).mockResolvedValue({ requests: [request], nextOffset: null, csrfToken: 'csrf' });
     vi.mocked(api.getTransferReview).mockResolvedValue({ reviewToken: 'review', csrfToken: 'csrf', modules: [{
       moduleId: 'M1', courseRef: 'legacy:50', title: 'New module',
@@ -559,7 +559,14 @@ describe('admin progress transfers', () => {
     expect(choices.queryByRole('button', { name: /^Week 1/ })).not.toBeInTheDocument();
     expect(choices.queryByRole('radio')).not.toBeInTheDocument();
     expect(choices.getByRole('button', { name: 'Clear match' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Confirm' })).toBeDisabled();
+    expect(screen.getByText(/Keep original activity — completed/)).toBeVisible();
+    vi.mocked(api.approveTransferRequest).mockResolvedValue({ ...request, status: 'approved' });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(api.approveTransferRequest).toHaveBeenCalledExactlyOnceWith('R1', 'csrf', {
+      reviewToken: 'review', mappings: [{ moduleId: 'M1', sourceActivityRef: 'material:7', targetComponentId: '__retain_original__' }],
+    }));
+    expect(await screen.findByText(/Progress merged successfully/)).toBeVisible();
+    await waitFor(() => expect(api.getTransferRequests).toHaveBeenCalledTimes(2));
   });
 
   it('keeps confirmation disabled if matching cannot load and permits a retry', async () => {

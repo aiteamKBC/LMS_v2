@@ -9,7 +9,7 @@ export type SubjectCardSummary = { activityCount: number; completedActivityCount
 export type Subject = { card?: SubjectCardSummary; id: string; title: string; source: 'legacy' | 'current'; moduleId?: string | null; activities: SubjectEntry[]; recordedHistory?: boolean; catalogueProgress?: boolean; catalogueCount?: number; acceptedHours?: number; previousLearningFor?: string; importedCourseRef?: string; replacementCourseRef?: string; archivedActivities?: SubjectEntry[]; aggregateProgress?: number; transferredProgress?: number; transferPending?: boolean; demoProgress?: boolean; legacyProgressReference?: LegacyProgressReference };
 type BuilderSubject = { id: string; title: string };
 type ActivitySource = { module_id: string; group_id: number; activity_id: number };
-export type CoverMetadata = { covers: Record<string, string>; legacy_progress_references?: Record<string, LegacyProgressReference>; activity_dates?: Record<string, Schedule>; current_subjects?: BuilderSubject[]; builder_subjects?: Record<string, BuilderSubject>; activity_sources?: Record<string, ActivitySource>; previous_learning_groups?: Record<string, string>; imported_courses?: Record<string, string>; replacement_courses?: Record<string, string>; approved_transfers?: Record<string, string>; imported_continuations?: Record<string, { courseRef: string; afterDate: string; componentIds: string[] }>; module_credits?: Record<string, { progress: number; actualHours: number; transferredProgress?: number; transferPending?: boolean; demoProgress?: boolean }> };
+export type CoverMetadata = { covers: Record<string, string>; retained_activity_modules?: Record<string, string>; legacy_progress_references?: Record<string, LegacyProgressReference>; activity_dates?: Record<string, Schedule>; current_subjects?: BuilderSubject[]; builder_subjects?: Record<string, BuilderSubject>; activity_sources?: Record<string, ActivitySource>; previous_learning_groups?: Record<string, string>; imported_courses?: Record<string, string>; replacement_courses?: Record<string, string>; approved_transfers?: Record<string, string>; imported_continuations?: Record<string, { courseRef: string; afterDate: string; componentIds: string[] }>; module_credits?: Record<string, { progress: number; actualHours: number; transferredProgress?: number; transferPending?: boolean; demoProgress?: boolean }> };
 export type UnifiedLearningSummary = {
   subjects: Subject[];
   subjectCount: number;
@@ -131,6 +131,8 @@ export function subjectsFrom(data: LearningSummaryActivity | null, real: Learnin
   for (const [currentRef, oldRef] of Object.entries(approved)) {
     const current = subjects.get(currentRef);
     if (current?.source === 'current') {
+      const retained = subjects.get(oldRef)?.activities.filter(entry => metadata?.retained_activity_modules?.[entry.id] === currentRef) || [];
+      current.activities.push(...retained.filter(entry => !current.activities.some(existing => existing.id === entry.id)));
       subjects.set(currentRef, { ...current, importedCourseRef: undefined });
       subjects.delete(oldRef);
     }

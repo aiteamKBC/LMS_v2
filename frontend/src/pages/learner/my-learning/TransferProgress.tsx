@@ -51,7 +51,7 @@ function TransferDialog({ kind, learnerId, onRequested, onClose }: { kind: Learn
         <li>Your old progress percentage and recorded hours are saved as a historical record when you confirm.</li>
         <li>From that moment, additional progress on these old LMS modules will no longer count.</li>
         <li>An administrator must approve your request before the new modules appear.</li>
-        <li>After approval, matching activities already completed in the old LMS stay completed. Your existing completions in the new LMS are kept, and each component counts once.</li>
+        <li>After approval, matching activities already completed in the old LMS stay completed. Completed old activities without a match are kept inside your new module with their original content and completion, for you only. Your existing completions in the new LMS are kept, and each component counts once.</li>
         <li>Your new percentage is completed components ÷ total components in the new module. It may differ from your old percentage because the module contents can differ. Recorded hours are preserved.</li>
         <li>Your previous learning records and evidence are retained.</li>
       </ul>

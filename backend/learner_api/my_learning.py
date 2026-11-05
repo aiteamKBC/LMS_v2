@@ -289,6 +289,8 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
     progress_index = module_record_index(records,module_list) if search is None else None
     for ref, transfer in approved.items():
         if ref in by_id:
+            from .transfer_retained import retained_card_items
+            by_id[ref]['_items'].extend(retained_card_items(transfer, legacy[transfer['courseRef'][7:]]))
             by_id.pop(transfer['courseRef'], None)
     with projection_stage('module_hours'):
         progress = supplement_module_hours(_canonical_module_progress(records,module_list,record_index=progress_index), records, credits) if search is None else {}
@@ -686,6 +688,18 @@ def read_module(source, kind, owner, subject_id):
                         WHERE c.module_catalogue_id=ANY(%s) AND c.id=ANY(%s)
                           AND {visible_child_sql('c')} AND {visible_week_sql('w')}''', [scope_ids,candidate_ids])
                     continuation_weeks = [row[0] for row in cur.fetchall()]
+    from .transfer_retained import retained_sources
+    retained = retained_sources(approved.get(subject_id, {}))
+    if retained:
+        old_ref = approved[subject_id]['courseRef']
+        if old_ref not in owned:
+            raise ServiceError('The original course is no longer available to this learner.', 'module_not_found', 404)
+        activity = canonical.source_subjects(source.pk, summarize_activities, owner=owner, records=records,
+            include_totals=False, course_ids=[old_ref[7:]], module_ids=[])
+        rows = [{**row, 'completed': True} for row in activity['activities'] if row['activity_id'] in retained]
+        if {row['activity_id'] for row in rows} != set(retained):
+            raise ServiceError('Some retained original activities are unavailable.', 'retained_content_unavailable', 409)
+        activity.update(summarize_activities(rows))
     selected = copy(source)
     native_scope_ids = scope_ids if subject_id.startswith('current:') or continuation_weeks else []
     chosen_plan = [entry for entry in assigned if (entry.get('moduleId') in native_scope_ids
@@ -722,6 +736,8 @@ def read_module(source, kind, owner, subject_id):
     clean_metadata={k:{ref:value for ref,value in metadata[k].items() if ref in visible_refs}
         for k in ('covers','builder_subjects','imported_courses','replacement_courses','previous_learning_groups')}
     clean_metadata['current_subjects']=[m for m in metadata['current_subjects'] if m['id'] in native_scope_ids]
+    if retained:
+        clean_metadata['retained_activity_modules'] = {ident: subject_id for ident in retained}
     historical_ref = (approved.get(subject_id) or {}).get('courseRef') or links.get(subject_id) or subject_id
     historical = owned.get(historical_ref, {}).get('legacyProgressReference')
     if historical is not None:
@@ -744,11 +760,12 @@ def read_module(source, kind, owner, subject_id):
             ident = c.get('componentId') or f"quiz:{(c.get('quizMeta') or {}).get('quizId') or str(c.get('week')) + ':' + str(index)}"
             components.setdefault(ident, c)
         component_ids = {ident for ident, c in components.items() if native_done(c, detail)}
+        component_ids.update(retained)
         previous_ids = set(transfer['recordIds'])
         native_records = [record for record in records if str(record['id']) not in previous_ids]
         native_hours = supplement_module_hours(_canonical_module_progress(native_records, list(modules.values())), native_records, credits)
         clean_metadata['module_credits'][subject_id] = {
-            'progress': merged_percent(component_ids, len(components)), 'transferredProgress': transfer['percent'],
+            'progress': merged_percent(component_ids, len(components) + len(retained)), 'transferredProgress': transfer['percent'],
             'actualHours': round(transfer['hours'] + (native_hours.get(mid, {}).get('hours', {}).get('actual') or 0), 6)}
         if transfer.get('demoProgress'):
             clean_metadata['module_credits'][subject_id]['demoProgress'] = True

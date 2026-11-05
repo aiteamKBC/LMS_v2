@@ -7,6 +7,7 @@ import { useMyLearningSearch, useMyLearningCatalogue, useMyLearningModule, myLea
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import { invalidateLearnerReads } from '@/api/learnerRead';
 import { buildUnifiedLearningSummary } from './learningSummary';
+import { learningToday } from './subjectLearning';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import contractFixture from '@/test/myLearningFixtures.json';
 
@@ -33,6 +34,7 @@ const makeModule = (subject = 'current:M1', id = '7') => ({ subjectId: subject,
   schedule: { modules: [], moduleLinks: {}, generatedAt: '' }, sessions: [] });
 const urls = () => vi.mocked(fetch).mock.calls.map(([url]) => String(url));
 const reply = (data: unknown) => new Response(JSON.stringify(data));
+const shiftDate = (date: string, days: number) => { const value = new Date(`${date}T12:00:00Z`); value.setUTCDate(value.getUTCDate() + days); return value.toISOString().slice(0, 10); };
 function route(path = '/learner/my-learning/commercial/7') {
   return render(<StrictMode><MemoryRouter initialEntries={[path]}><Routes>
     <Route path="/learner/my-learning/:kind/:id" element={<MyLearningPage />} />
@@ -179,6 +181,30 @@ describe('compact My Learning route', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Old LMS' }));
     expect(screen.queryByRole('heading', { name: 'One' })).not.toBeInTheDocument();
     if (variant !== 'current-only') expect(screen.getByRole('heading', { name: 'Old' })).toBeVisible();
+  });
+
+  it('filters modules by current, previous and upcoming plan periods', async () => {
+    const today = learningToday();
+    const fixture = makeCatalogue();
+    fixture.modules = [
+      { ...fixture.modules[0], id: 'current:NOW', moduleId: 'NOW', title: 'Current module', planModule: { ...fixture.modules[0].planModule!, start_date: shiftDate(today, -2), end_date: shiftDate(today, 2) } },
+      { ...fixture.modules[0], id: 'current:PAST', moduleId: 'PAST', title: 'Finished module', planModule: { ...fixture.modules[0].planModule!, start_date: shiftDate(today, -10), end_date: shiftDate(today, -3) } },
+      { ...fixture.modules[0], id: 'current:FUTURE', moduleId: 'FUTURE', title: 'Future module', planModule: { ...fixture.modules[0].planModule!, start_date: shiftDate(today, 3), end_date: shiftDate(today, 10) } },
+      fixture.modules[1],
+    ];
+    fixture.summary.subjectCount = fixture.modules.length;
+    vi.mocked(fetch).mockImplementation(async input => String(input).includes('/certificates/') ? reply({ template: null, csrfToken: '' }) : reply(fixture));
+    route();
+    expect(await screen.findByRole('heading', { name: 'Current module' })).toBeVisible();
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Module timing' }), { target: { value: 'upcoming' } });
+    expect(screen.getByRole('heading', { name: 'Future module' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Current module' })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Module timing' }), { target: { value: 'previous' } });
+    expect(screen.getByRole('heading', { name: 'Finished module' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Old' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Current module' })).not.toBeInTheDocument();
   });
 
   it('decodes the production-generated shared JSON contracts and launches the selected reading', async () => {

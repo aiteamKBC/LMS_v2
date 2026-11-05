@@ -230,7 +230,29 @@
 .weekToggle:disabled { cursor: default; opacity: .7; }
 .weekOptions { display: grid; gap: 6px; padding: 8px; border-top: 1px solid #e7def2; }
 .matchRow .componentOption { display: flex; align-items: flex-start; gap: 8px; padding: 10px 8px; border: 1px solid transparent; border-radius: 6px; cursor: pointer; }
-.componentOption > input { flex-shrink: 0; margin-top: 4px; accent-color: #7446b7; }
+/* Keep single-choice keyboard behavior while showing a square check box. */
+.componentOption > input {
+  appearance: none;
+  flex-shrink: 0;
+  display: grid;
+  place-content: center;
+  width: 14px;
+  height: 14px;
+  margin-top: 4px;
+  border: 1px solid #9586a8;
+  border-radius: 3px;
+  background: #fff;
+}
+.componentOption > input:checked { background: #7446b7; border-color: #7446b7; }
+.componentOption > input:checked::before {
+  content: '';
+  width: 7px;
+  height: 4px;
+  margin-top: -2px;
+  border-left: 2px solid #fff;
+  border-bottom: 2px solid #fff;
+  transform: rotate(-45deg);
+}
 .componentOption > span { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
 .componentOption:has(input:checked) { background: #f7f3fc; border-color: #b59bd9; }
 .componentOption:has(input:disabled) { opacity: .65; cursor: default; }

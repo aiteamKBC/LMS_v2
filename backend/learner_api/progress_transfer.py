@@ -261,9 +261,14 @@ def approve_request(request_id, account, decisions=None):
             item['baselineCompletedIds'] = [c['componentId'] for c in components if c.get('componentId') and native_done(c, native)]
             item['baselinePercent'] = 100 * len(set(item['baselineCompletedIds'])) / len(components) if components else 0
             item['componentMatches'] = []
+            item['retainedSources'] = []
             for source_component in module['sources']:
                 ref = source_component['sourceActivityRef']
                 target = manual.get((item['moduleId'], ref))
+                if target and target.get('retainOriginal'):
+                    item['retainedSources'].append({key: source_component[key]
+                        for key in ('sourceActivityRef', 'title', 'week', 'type')})
+                    continue
                 if target:
                     matches[target['componentId']] = manual_completion(item, ref, target)
                 else:
@@ -275,6 +280,9 @@ def approve_request(request_id, account, decisions=None):
             item['matchedComponents'] = matches
             item['componentCounts'] = component_counts(module, matches)
             counts = item['componentCounts']
+            retained_count = len(item['retainedSources'])
+            counts['total'] += retained_count
+            counts['completed'] += retained_count
             item['mergedPercent'] = round(100 * counts['completed'] / counts['total'], 2) if counts['total'] else 0
             cursor.execute(f'UPDATE {store.ITEMS} SET snapshot=%s::jsonb WHERE request_id=%s AND enrolment_id=%s AND module_id=%s',
                 [store.dumps({key: value for key, value in item.items() if key not in ('requestId','status','requestedAt','approvedAt')}), request_id, pk, item['moduleId']])

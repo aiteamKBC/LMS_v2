@@ -6,7 +6,7 @@ import type { OverviewWeek } from '@/api/learnerOverview';
 import type { PlanSession } from '@/api/trainingPlanDashboard';
 import { formatSystemTimestamp } from '@/lib/format';
 import { sessionDay } from '@/pages/learner/training-plan-timeline/model';
-import { learningDate, learningHref, learningToday, subjectPercent } from './subjectLearning';
+import { learningDate, learningHref, learningToday, subjectPercent, type LearningModulePeriod } from './subjectLearning';
 import { DEFAULT_MODULE_COVER } from './moduleCover';
 import styles from './SubjectWorkspace.module.css';
 
@@ -60,16 +60,18 @@ export function LearningHero({ map = false }: { map?: boolean }) {
   </header>;
 }
 
-export function LearningCatalogue({ summary, search, onSearch, current, renderCard, onContinue, moduleStartDate, kind, learnerId, total, done, percent, deadlines = [], covers = {}, upcomingSessions = [], reviewMode = false, activityMatches = [], upcomingLinks, hasMoreUpcoming = false, onLoadUpcoming, transferAction }: {
+export function LearningCatalogue({ summary, search, onSearch, current, renderCard, onContinue, moduleStartDate, modulePeriod, kind, learnerId, total, done, percent, deadlines = [], covers = {}, upcomingSessions = [], reviewMode = false, activityMatches = [], upcomingLinks, hasMoreUpcoming = false, onLoadUpcoming, transferAction }: {
   summary: UnifiedLearningSummary; search: string; onSearch: (value: string) => void; current?: Subject;
   renderCard: (subject: Subject) => ReactNode; onContinue: (subject: Subject) => void;
   moduleStartDate: (subject: Subject) => string | null | undefined; kind?: string; learnerId?: string;
+  modulePeriod?: (subject: Subject) => LearningModulePeriod;
   total: number | string; done: number | string; percent: number | null;
   deadlines?: OverviewWeek['deadlines']; covers?: Record<string, string>; upcomingSessions?: PlanSession[]; reviewMode?: boolean;
   activityMatches?: string[]; upcomingLinks?: UpcomingLearningLink[]; hasMoreUpcoming?: boolean; onLoadUpcoming?: () => void;
   transferAction?: ReactNode;
 }) {
   const [filter, setFilter] = useState('all');
+  const [periodFilter, setPeriodFilter] = useState<'all' | Exclude<LearningModulePeriod, 'undated'>>('all');
   const [sourceFilter, setSourceFilter] = useState<'all' | Subject['source']>('all');
   const [sort, setSort] = useState('start');
   const [layout, setLayout] = useState('list');
@@ -79,6 +81,7 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
     const progress = subjectPercent(subject);
     return (!term || subject.title.toLocaleLowerCase().includes(term) || activityMatches.includes(subject.id) || subject.activities.some(a => a.title.toLocaleLowerCase().includes(term)))
       && (sourceFilter === 'all' || (subject.importedCourseRef || subject.replacementCourseRef ? 'legacy' : subject.source) === sourceFilter)
+      && (!modulePeriod || periodFilter === 'all' || modulePeriod(subject) === periodFilter)
       && (filter === 'all' || (filter === 'complete' ? progress === 100 : filter === 'new' ? progress === 0 : progress > 0 && progress < 100));
   }).sort((a, b) => {
     if (sort === 'name') return a.title.localeCompare(b.title);
@@ -92,7 +95,7 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
   });
   // Other explicitly grouped courses still retain their independent history.
   const displayed = [...new globalThis.Map(visible.map(subject => {
-    const group = sourceFilter === 'all' && subject.previousLearningFor;
+    const group = sourceFilter === 'all' && periodFilter === 'all' && subject.previousLearningFor;
     const target = group && summary.subjects.find(item => item.id === group);
     return target ? [target.id, target] as const : [subject.id, subject] as const;
   })).values()];
@@ -139,6 +142,7 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
         </div>
         {transferAction}
         <label className={styles.search}><Search size={18} aria-hidden="true" /><input aria-label="Search modules or activities" placeholder="Search subjects or activities…" value={search} onChange={e => onSearch(e.target.value)} /></label>
+        {modulePeriod && <label className={styles.selectLabel}>Module timing<select aria-label="Module timing" value={periodFilter} onChange={e => setPeriodFilter(e.target.value as typeof periodFilter)}><option value="all">All modules</option><option value="current">Current</option><option value="previous">Previous</option><option value="upcoming">Upcoming</option></select></label>}
         <label className={styles.selectLabel}>Status<select value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All modules</option><option value="started">In progress</option><option value="new">Not started</option><option value="complete">Completed</option></select></label>
         <label className={styles.selectLabel}>Sort by<select value={sort} onChange={e => setSort(e.target.value)}><option value="start">Module start date</option><option value="name">Subject name</option><option value="progress">Highest progress</option></select></label>
         <div className={styles.viewToggle} role="group" aria-label="Subject layout"><button type="button" aria-pressed={layout === 'list'} onClick={() => setLayout('list')}><List size={16} />List</button><button type="button" aria-pressed={layout === 'grid'} onClick={() => setLayout('grid')}><LayoutGrid size={16} />Grid</button></div>
@@ -146,14 +150,14 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
       <div className={styles.subjectHeading}><h2>Your subjects</h2><span>{summary.subjectCount} subjects · {listedTotal} activities{displayed.length !== summary.subjectCount ? ` · ${displayed.length} shown` : ''}</span></div>
       {displayed.length ? <div className={layout === 'grid' ? styles.grid : styles.list}>{displayed.map(subject => {
         const previous = sourceFilter === 'all' ? summary.subjects.filter(item => item.previousLearningFor === subject.id) : [];
-        return previous.length ? <section key={subject.id} aria-label={`${subject.title} learning record`} className="space-y-3 rounded-2xl border border-foreground-200 bg-white p-3">
+        return previous.length && periodFilter === 'all' ? <section key={subject.id} aria-label={`${subject.title} learning record`} className="space-y-3 rounded-2xl border border-foreground-200 bg-white p-3">
           <h3 className="text-sm font-semibold text-primary-700">Current learning plan</h3>{renderCard(subject)}
           <h3 className="text-sm font-semibold text-primary-700">Previous learning</h3>
           <p className="text-xs text-foreground-500">Your previous progress and hours are retained separately from the current plan.</p>
           {previous.map(renderCard)}
         </section> : renderCard(subject);
       })}</div>
-        : <div className={styles.empty}><BookOpen size={30} /><p>{summary.subjectCount ? 'No subjects or activities match your filters.' : 'Your subjects will appear here when they are assigned.'}</p>{summary.subjectCount > 0 && <button onClick={() => { onSearch(''); setSourceFilter('all'); setFilter('all'); }}>Clear filters</button>}</div>}
+        : <div className={styles.empty}><BookOpen size={30} /><p>{summary.subjectCount ? 'No subjects or activities match your filters.' : 'Your subjects will appear here when they are assigned.'}</p>{summary.subjectCount > 0 && <button onClick={() => { onSearch(''); setSourceFilter('all'); setPeriodFilter('all'); setFilter('all'); }}>Clear filters</button>}</div>}
     </div>
     <aside className={styles.catalogueAside} aria-label="Learning shortcuts">
       {continueSubject && <section className={styles.asidePanel}><div className={styles.asideHeading}><h2><BookOpen size={19} />Continue learning</h2><button type="button" className={styles.asideTextButton} onClick={() => onContinue(continueSubject)}>Open<ArrowRight size={14} /></button></div><div className={styles.continueSubject}><img src={covers[continueSubject.id] || DEFAULT_MODULE_COVER} alt="" loading="lazy" className={covers[continueSubject.id] ? undefined : styles.defaultCoverImage} /><div><strong>{continueSubject.title}</strong><p>{continueSubject.card?.completedActivityCount ?? continueSubject.activities.filter(item => item.completed).length} of {continueSubject.card?.activityCount ?? continueSubject.activities.length} activities</p><div className={styles.miniTrack}><span style={{ width: `${subjectPercent(continueSubject)}%` }} /></div></div><b>{subjectPercent(continueSubject)}%</b></div><button type="button" className={styles.primaryButton} onClick={() => onContinue(continueSubject)}>Continue learning<ArrowRight size={17} /></button></section>}

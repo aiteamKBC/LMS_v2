@@ -18,6 +18,20 @@ export const learningToday = () => new Date().toLocaleDateString('en-CA', { time
 export const learningDate = (date: string) => new Date(`${date.slice(0, 10)}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 export const subjectPercent = (subject: Subject) => subject.aggregateProgress ?? (subject.card ? subject.card.progress : subject.activities.length ? Math.round(subject.activities.filter(a => a.completed).length / subject.activities.length * 10000) / 100 : 0);
 
+export type LearningModulePeriod = 'current' | 'previous' | 'upcoming' | 'undated';
+
+/** Classify a catalogue module by its assigned teaching period. */
+export function learningModulePeriod(subject: Pick<Subject, 'source' | 'previousLearningFor'>,
+  startDate?: string | null, endDate?: string | null, today = learningToday()): LearningModulePeriod {
+  const start = dateKey(startDate);
+  const end = dateKey(endDate);
+  if (start && start > today) return 'upcoming';
+  if (end && end < today) return 'previous';
+  if (start && end && start <= today && end >= today) return 'current';
+  if (subject.source === 'legacy' || subject.previousLearningFor) return 'previous';
+  return 'undated';
+}
+
 /** Enrolment remains visible before any learning has started. */
 export function subjectLearningStatus(subject: Subject): 'Completed' | 'In progress' | 'Upcoming' {
   if (subject.card) return subject.card.status;

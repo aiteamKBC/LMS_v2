@@ -14,7 +14,7 @@ import { DEFAULT_MODULE_COVER } from './moduleCover';
 import { LearningMapHero, SubjectTimeline } from './SubjectTimeline';
 import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import { weekHolidayNotes } from '@/pages/learner/training-plan-timeline/model';
-import { nativeHref, certificateEligible, learningDate, learningDeadlines, learningPlanSelection, learningHref, nextLearningWeek, continuingLearningWeek, currentLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectOpeningActivity, subjectLearningStatus } from './subjectLearning';
+import { nativeHref, certificateEligible, learningDate, learningDeadlines, learningModulePeriod, learningPlanSelection, learningHref, nextLearningWeek, continuingLearningWeek, currentLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectOpeningActivity, subjectLearningStatus } from './subjectLearning';
 import type { LearningSchedule } from '@/api/learnerOverview';
 import type { PlanModule, PlanModuleProgress, PlanSession } from '@/api/trainingPlanDashboard';
 import { buildUnifiedLearningSummary, type SubjectEntry, type Subject, type CoverMetadata } from './learningSummary';
@@ -462,6 +462,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
       <LearningCatalogue summary={summary} search={search} onSearch={setSearch} current={currentSubject} total={total} done={done} percent={percent} kind={kind} learnerId={learnerId}
         deadlines={deadlines}
         moduleStartDate={subject => planModulesBySubject.get(subject.id)?.start_date}
+        modulePeriod={subject => { const planModule = planModulesBySubject.get(subject.id); return learningModulePeriod(subject, planModule?.start_date, planModule?.end_date); }}
         onContinue={subject => { setSearch(''); select(subject.id, 'current'); }}
         covers={covers} upcomingSessions={upcomingSessions}
         renderCard={subject => {

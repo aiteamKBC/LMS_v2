@@ -1,3 +1,4 @@
+import { RETAIN_ORIGINAL } from '@/api/progressTransferOptions';
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, ArrowRightLeft, CheckCircle2, Clock3, Eye, Info, Layers, RefreshCw } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -41,7 +42,15 @@ export function TransferRequests() {
     if (!requestId || requestStatus !== 'pending') return;
     const controller = new AbortController();
     void getTransferReview(requestId, controller.signal)
-      .then(value => { if (!controller.signal.aborted) { setReview(value); setMappings(suggestedMappings(value)); } })
+      .then(value => {
+        if (controller.signal.aborted) return;
+        setReview(value);
+        const suggested = suggestedMappings(value);
+        const originals = value.modules.flatMap(module => module.sources.filter(source =>
+          !source.automaticTargetId && !suggested.some(row => row.moduleId === module.moduleId && row.sourceActivityRef === source.sourceActivityRef))
+          .map(source => ({ moduleId: module.moduleId, sourceActivityRef: source.sourceActivityRef, targetComponentId: RETAIN_ORIGINAL })));
+        setMappings([...suggested, ...originals]);
+      })
       .catch(reason => { if (!controller.signal.aborted) setReviewError(reason instanceof Error ? reason.message : 'Could not load component matches.'); });
     return () => controller.abort();
   }, [requestId, requestStatus, reviewRefresh]);
@@ -108,6 +117,7 @@ export function TransferRequests() {
           ? <p>Old LMS progress has been frozen since the learner submitted the request. The table below records the old percentage and hours. After approval, the new percentage is based on completed components in the new module, including matched old completions and existing new completions counted once. It can differ from the old percentage because the modules may contain different components.</p>
           : <p>Approved {requestDate(selected.approvedAt)}. The table shows the old LMS percentage and hours saved before the merge, not the learner's current percentage.</p>}
         <ModuleTable request={selected} />
+        {selected.status === 'approved' && selected.modules.some(module => module.retainedSources?.length) && <section aria-label="Retained original activities"><h2>Original activities kept for this learner</h2>{selected.modules.map(module => module.retainedSources?.map(source => <p key={`${module.moduleId}:${source.sourceActivityRef}`}>{module.newTitle} · {source.week} · {source.title} — Complete</p>))}</section>}
         <p>Progress moves to the learner's assigned new LMS module; their group membership does not change. The old and new modules can have the same name. All components in the new module remain available for the learner to continue.</p>
         {selected.status === 'approved' && <section className={styles.matching} aria-label="Component counts at approval">
           <h2>Component counts at approval</h2>
@@ -153,9 +163,9 @@ function ComponentMatching({ review, mappings, disabled, onChange }: {
     <h2>Component matching</h2>
     <p role="status" className={unmatched ? styles.matchWarning : styles.guidance}>{unmatched
       ? `${unmatched} completed old ${unmatched === 1 ? 'component needs' : 'components need'} a match. Choose each destination below before confirming.`
-      : 'All completed old components have a match. Check the review list before confirming.'}</p>
+      : 'All completed old components will be matched or kept as original activities for this learner. Review before confirming.'}</p>
     <p>Only completed old components transfer. Unfinished old components are excluded. Similar names are suggested for your review; unclear matches need a manual choice. Existing new completions are kept, and shared completions count once. Actual transferred hours stay unchanged.</p>
-    <p>Saved matches and name matches are already selected for transfer. Review them before confirming. Open a component selector to browse by week; closing it keeps your match. Each destination can be used once.</p>
+    <p>Saved matches and name matches are already selected for transfer. Review them before confirming. Open a component selector to browse by week; closing it keeps your match. Each destination can be used once. Components without a selected match are kept with their original content and completion for this learner only, and count towards their new module progress.</p>
     {matched.length > 0 && <details className={styles.matchReview}>
       <summary>Matched components — quick review ({matched.length})</summary>
       <div className={styles.tableScroll} tabIndex={0} role="region" aria-label="Matched components review"><table className={styles.moduleTable} aria-label="Matched components review">
@@ -172,13 +182,14 @@ function ComponentMatching({ review, mappings, disabled, onChange }: {
       <ComponentCounts title={module.title} counts={previewComponentCounts(module, mappings)} preview />
       {!module.sources.length && <p>No individual completed activities were recorded in the old module. The new module keeps its existing completions; the old percentage and hours remain in the transfer record.</p>}
       <SourceWeekReview moduleTitle={module.title} sources={module.sources} disabled={disabled}
-        isMatched={source => Boolean(source.automaticTargetId || selectedTarget(module.moduleId, source.sourceActivityRef))}>
+        isMatched={source => Boolean(source.automaticTargetId || (selectedTarget(module.moduleId, source.sourceActivityRef) && selectedTarget(module.moduleId, source.sourceActivityRef) !== RETAIN_ORIGINAL))}>
         {sources => sources.map(source => {
         const value = mappings.find(mapping => mapping.moduleId === module.moduleId && mapping.sourceActivityRef === source.sourceActivityRef);
         const used = new Set([...module.sources.flatMap(row => row.automaticTargetId ? [row.automaticTargetId] : []),
           ...mappings.filter(mapping => mapping.moduleId === module.moduleId && mapping.sourceActivityRef !== source.sourceActivityRef).map(mapping => mapping.targetComponentId)]);
         const automatic = module.targets.find(target => target.componentId === source.automaticTargetId);
         const recommendation = module.targets.find(target => target.componentId === source.recommendedTargetId);
+        const keepOriginal = value?.targetComponentId === RETAIN_ORIGINAL;
         const manualTarget = module.targets.find(target => target.componentId === value?.targetComponentId);
         const savedMatch = Boolean(manualTarget && source.savedTargetId === manualTarget.componentId);
         const nameMatched = proposed.some(row => row.moduleId === module.moduleId && row.sourceActivityRef === source.sourceActivityRef && row.targetComponentId === value?.targetComponentId);
@@ -189,12 +200,14 @@ function ComponentMatching({ review, mappings, disabled, onChange }: {
             : <div>{recommendation && <small><strong>Recommended: {recommendation.title}</strong>{' '}
                 {recommendation.week || 'No week specified'}. Old LMS: {source.type}; new LMS: {recommendation.type}. Similar name; review the content and choose manually. This recommendation is not selected automatically.
               </small>}
+              {keepOriginal && <p className={styles.approvedBadge}>Keep original activity — completed, for this learner only</p>}
               {manualTarget && <span className={styles.approvedBadge}>{savedMatch ? 'Saved match — review' : nameMatched ? 'Matched by name — review' : 'Match selected'}</span>}
+              <button type="button" disabled={disabled} className={styles.secondaryButton} onClick={() => onChange([...mappings.filter(row => row.moduleId !== module.moduleId || row.sourceActivityRef !== source.sourceActivityRef), { moduleId: module.moduleId, sourceActivityRef: source.sourceActivityRef, targetComponentId: RETAIN_ORIGINAL }])}>Keep original activity</button>
               <WeekComponentChoices label={`Match ${source.title} (${source.sourceActivityRef}) in ${module.title}`}
-                candidates={candidates} selectedId={value?.targetComponentId ?? ''} suggestedId={suggestedId} used={used} disabled={disabled}
+                candidates={candidates} selectedId={keepOriginal ? '' : value?.targetComponentId ?? ''} suggestedId={suggestedId} used={used} disabled={disabled}
                 onChange={targetComponentId => onChange([...mappings.filter(mapping => mapping.moduleId !== module.moduleId || mapping.sourceActivityRef !== source.sourceActivityRef),
-                  ...(targetComponentId ? [{ moduleId: module.moduleId, sourceActivityRef: source.sourceActivityRef, targetComponentId }] : [])])} />
-              {!candidates.length && <small className={styles.error}>No compatible component is available. Check the source type or add the equivalent component to the new module, then reload matches.</small>}
+                  { moduleId: module.moduleId, sourceActivityRef: source.sourceActivityRef, targetComponentId: targetComponentId || RETAIN_ORIGINAL }])} />
+              {!candidates.length && <small className={styles.error}>No compatible component is available. Keep the original activity to preserve its content and completion.</small>}
               {manualTarget && <small>New component planned hours: {manualTarget.plannedHours == null ? 'Not specified' : formatHoursMinutes(manualTarget.plannedHours)}. Actual transferred hours are unchanged.</small>}
             </div>}
         </div>;

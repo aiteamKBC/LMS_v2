@@ -42,3 +42,9 @@ describe('component counts after transfer', () => {
       .toEqual({ total: 3, matched: 1, completed: 3, remaining: 0 });
   });
 });
+
+it('counts each retained original as an additional completed activity only in its destination module', () => {
+  const original = { moduleId: 'M1', sourceActivityRef: 'material:2', targetComponentId: '__retain_original__' };
+  expect(previewComponentCounts(module, [original, original, { ...original, moduleId: 'M2' }]))
+    .toEqual({ total: 4, matched: 1, completed: 2, remaining: 2 });
+});
