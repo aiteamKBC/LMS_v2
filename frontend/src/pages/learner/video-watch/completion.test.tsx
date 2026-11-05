@@ -4,13 +4,18 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
 import { submitComponentProgress, type ComponentProgressResponse } from '@/api/components';
-import { startTimeTracking, resumeTimeTracking } from '@/api/timeTracking';
+import { startTimeTracking, resumeTimeTracking, checkpointTimeTracking } from '@/api/timeTracking';
 import { submitVideoProgress, type VideoProgressResponse } from '@/api/videos';
 import { fetchEvidence } from '@/api/evidence';
-import { loadLearningReflectionSubmission } from '@/api/reflectionSubmission';
+import { loadLearningReflectionSubmission, saveLearningReflectionSubmission, type StoredLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import ComponentViewPage, { ComponentBody } from './page';
+import { LearnerProgrammeGate } from '@/components/feature/LearnerProgrammeGate';
 import { downloadReadingPdf } from './readingDownloads';
 const readingPdf = vi.hoisted(() => ({ getPage: vi.fn(), cleanup: vi.fn() }));
+const programmeRead = vi.hoisted(() => ({
+  real: {}, loading: false, loadError: '', refresh: vi.fn(),
+}));
+vi.mock('@/hooks/useLearnerSummaryParam', () => ({ useLearnerSummaryParam: () => programmeRead }));
 vi.mock('pdfjs-dist', () => ({
   GlobalWorkerOptions: {},
   getDocument: () => ({ promise: Promise.resolve({ numPages: 1, ...readingPdf }) }),
@@ -33,19 +38,22 @@ vi.mock('./readingDownloads', async () => ({
 
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn() }));
 vi.mock('@/api/components', () => ({ submitComponentProgress: vi.fn() }));
-vi.mock('@/api/timeTracking', () => ({ startTimeTracking: vi.fn(), resumeTimeTracking: vi.fn() }));
+vi.mock('@/api/timeTracking', () => ({ startTimeTracking: vi.fn(), resumeTimeTracking: vi.fn(), checkpointTimeTracking: vi.fn() }));
 vi.mock('@/api/videos', () => ({ submitVideoProgress: vi.fn() }));
 vi.mock('@/api/reflectionSubmission', () => ({ loadLearningReflectionSubmission: vi.fn(), saveLearningReflectionSubmission: vi.fn() }));
 vi.mock('@/api/evidence', () => ({
   fetchEvidence: vi.fn(), uploadEvidence: vi.fn(), getEvidenceDownloadUrl: vi.fn(), deleteEvidence: vi.fn(),
 }));
 vi.mock('@/hooks/useMyLearner', () => ({ rememberLearner: vi.fn() }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: session.account }, isInitialized: session.isInitialized }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: session.account }, isInitialized: session.isInitialized }) }));
 vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true, outsideWorkingHours: session.outsideWorkingHours, holidays: session.holidays, holidayCalendarReady: session.holidayCalendarReady, currentTimeLabel: 'Sunday, 14:02 BST' }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children, pageSubtitle }: { children: ReactNode; pageSubtitle: string }) => <main><p>{pageSubtitle}</p>{children}</main> }));
-vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: ({ questionFiles }: {
+vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: ({ questionFiles, onSubmitProgress }: {
   questionFiles?: { url: string; fileName: string }[];
-}) => <div>{questionFiles?.map(file => <span key={file.url} data-testid="assignment-instruction" data-url={file.url}>{file.fileName}</span>)}</div> }));
+  onSubmitProgress: (answers: { assignmentAnswer: string; whatYouLearned: string; businessImpact: string; timeTakenSeconds: number; timeEntrySource: 'input' }) => Promise<void>;
+}) => <div>{questionFiles?.map(file => <span key={file.url} data-testid="assignment-instruction" data-url={file.url}>{file.fileName}</span>)}
+  <button onClick={() => void onSubmitProgress({ assignmentAnswer: 'Work', whatYouLearned: 'Learning', businessImpact: 'Impact', timeTakenSeconds: 3600, timeEntrySource: 'input' })}>Submit synthetic assignment</button>
+</div> }));
 vi.mock('@/components/feature/SessionResults', () => ({
   SessionResults: ({ onRecordingWatchTimeChange, recordingDate, recordingsOnly }: {
     onRecordingWatchTimeChange?: (seconds: number) => void; recordingDate?: string; recordingsOnly?: boolean;
@@ -74,7 +82,7 @@ const detail = (done = false) => ({
 function Location() { return <span data-testid="location">{useLocation().pathname}</span>; }
 function mount(id = 'C1', kind = 'apprenticeship') {
   return render(<MemoryRouter initialEntries={[`/learner/component/${kind}/1/${id}`]}>
-    <Location /><Routes><Route path="/learner/component/:kind/:id/:componentId" element={<ComponentViewPage />} /></Routes>
+    <Location /><Routes><Route path="/learner/component/:kind/:id/:componentId" element={<LearnerProgrammeGate><ComponentViewPage /></LearnerProgrammeGate>} /></Routes>
   </MemoryRouter>);
 }
 
@@ -82,10 +90,13 @@ async function finish() {
   fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '20' } });
   fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
 }
 
 beforeEach(() => {
   vi.resetAllMocks();
+  programmeRead.loading = false;
+  programmeRead.loadError = '';
   Object.assign(session.account, { role: 'learner', subjectType: 'learner', subjectId: 1, learnerRecordId: null });
   session.isInitialized = true;
   session.outsideWorkingHours = true;
@@ -101,6 +112,32 @@ beforeEach(() => {
   vi.mocked(loadLearningReflectionSubmission).mockResolvedValue(null);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+it.each(['commercial', 'apprenticeship'])('opens the %s assignment when an ancillary summary request times out', async kind => {
+  programmeRead.loadError = 'Loading is taking longer than expected. Please try again.';
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [
+    { ...first, type: 'assignment', component: 'Assignment instructions', assignmentBrief: 'Prepare your assignment.' },
+  ] } as LearnerDetail);
+  mount('C1', kind);
+  expect(await screen.findByRole('button', { name: 'Submit synthetic assignment' })).toBeEnabled();
+  expect(fetchLearnerDetail).toHaveBeenCalledWith(kind, '1', { componentId: 'C1' });
+  expect(screen.queryByText(programmeRead.loadError)).toBeNull();
+});
+
+it.each(['commercial', 'apprenticeship'])('retries a failed %s activity read without reloading the browser', async kind => {
+  const assignment = { ...detail(), components: [
+    { ...first, type: 'assignment', component: 'Assignment instructions', assignmentBrief: 'Prepare your assignment.' },
+  ] } as LearnerDetail;
+  vi.mocked(fetchLearnerDetail)
+    .mockRejectedValueOnce(new Error('Loading is taking longer than expected. Please try again.'))
+    .mockResolvedValueOnce(assignment);
+  mount('C1', kind);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Loading is taking longer than expected.');
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(await screen.findByRole('button', { name: 'Submit synthetic assignment' })).toBeEnabled();
+  expect(fetchLearnerDetail).toHaveBeenCalledTimes(2);
+  expect(fetchLearnerDetail).toHaveBeenLastCalledWith(kind, '1', { componentId: 'C1' });
+});
 
 it.each(['commercial', 'apprenticeship'])('counts reading time only after the PDF page renders for %s learners', async kind => {
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
@@ -156,6 +193,18 @@ it.each(['commercial', 'apprenticeship'])('passes every instruction file to the 
   const instructions = await screen.findAllByTestId('assignment-instruction');
   expect(instructions.map(file => file.getAttribute('data-url'))).toEqual(files.map(file => file.url));
   expect(screen.queryByText('unrelated.pdf')).toBeNull();
+});
+
+it.each(['commercial', 'apprenticeship'])('submits %s assignment input hours separately from planned hours and the page timer', async kind => {
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [
+    { ...first, type: 'assignment', component: 'Assignment', expectedOtjh: 2 },
+  ] } as LearnerDetail);
+  mount('C1', kind);
+  await waitFor(() => expect(startTimeTracking).toHaveBeenCalled());
+  fireEvent.click(await screen.findByRole('button', { name: 'Submit synthetic assignment' }));
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({
+    timeTakenSeconds: 3600, timeEntrySource: 'input', reportedTime: '60 minutes', plannedOtjh: '2h',
+  })));
 });
 
 it('keeps direct audio tied to real playback events', () => {
@@ -227,8 +276,9 @@ it('lays out recording watch time, evidence, manual input, and Finish in one liv
   expect(screen.getByRole('timer')).toHaveAccessibleName('Time on this activity: 00 hours, 00 minutes, 37 seconds');
 });
 
-it('opens a dated recorded event without a placeholder video URL', async () => {
-  const event = { ...empty, componentId: 'EVENT', component: 'Recorded Event',
+it.each(['video', 'live_session'])('opens a dated recorded %s event without a placeholder video URL', async type => {
+  const event = { ...empty, type, componentId: 'EVENT', component: 'Recorded Event',
+    ...(type === 'live_session' ? { sessionDate: '2026-10-02' } : {}),
     recordingSeriesId: 'LIVE-1', recordingSessionNumber: 3, recordingDate: '2026-10-02' };
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [event] } as LearnerDetail);
   mount('EVENT');
@@ -236,6 +286,13 @@ it('opens a dated recorded event without a placeholder video URL', async () => {
   expect(recording).toHaveAttribute('data-recording-date', '2026-10-02');
   expect(recording).toHaveAttribute('data-recordings-only', 'true');
   expect(screen.queryByText('This video has no playable URL yet.')).not.toBeInTheDocument();
+});
+
+it('limits live-session recordings to the component date when no separate recording date is set', async () => {
+  const live = { ...first, sessionDate: '2026-10-28', teamsLiveSessionId: 'SERIES', teamsSessionNumber: 1 };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [live] } as LearnerDetail);
+  mount('C1');
+  expect(await screen.findByRole('button', { name: 'Simulate recording watch' })).toHaveAttribute('data-recording-date', '2026-10-28');
 });
 
 it.each(['commercial', 'apprenticeship'])('opens live session Finish before entering time for %s learners', async kind => {
@@ -254,6 +311,9 @@ it.each(['commercial', 'apprenticeship'])('opens live session Finish before ente
   fireEvent.change(within(dialog).getByLabelText('Minutes spent'), { target: { value: '5' } });
   expect(confirm).toBeEnabled();
   fireEvent.click(confirm);
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  expect(screen.getByRole('alertdialog')).toHaveTextContent('0 hours and 5 minutes');
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm time' }));
   await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({
     timeTakenSeconds: 300, timeEntrySource: 'input',
   })));
@@ -270,6 +330,8 @@ it.each(['reflect', 'skip'])('asks for missing live-session time before the %s r
   expect(screen.queryByRole('dialog', { name: 'Do you want to complete a reflection?' })).not.toBeInTheDocument();
   fireEvent.change(within(dialog).getByLabelText('Minutes spent'), { target: { value: '5' } });
   fireEvent.click(next);
+  expect(screen.queryByRole('dialog', { name: 'Do you want to complete a reflection?' })).not.toBeInTheDocument();
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
   const reflection = await screen.findByRole('dialog', { name: 'Do you want to complete a reflection?' });
   expect(submitComponentProgress).not.toHaveBeenCalled();
   if (choice === 'skip') {
@@ -290,28 +352,24 @@ it.each([
   { kind: 'commercial', reflectionRequired: true },
   { kind: 'apprenticeship', reflectionRequired: false },
   { kind: 'apprenticeship', reflectionRequired: true },
-])('keeps previous live-session time without new time for $kind (reflection: $reflectionRequired)', async ({ kind, reflectionRequired }) => {
+])('keeps previous live-session time when cancelling a time decision for $kind (reflection: $reflectionRequired)', async ({ kind, reflectionRequired }) => {
   vi.mocked(fetchLearnerDetail).mockResolvedValue({
     ...detail(true), components: [{ ...first, reflectionRequired }],
   } as unknown as LearnerDetail);
   mount('C1', kind);
   fireEvent.click(await screen.findByRole('button', { name: 'Record another attempt' }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Finish' }));
   const dialog = await screen.findByRole('dialog');
-  expect(within(dialog).getByRole('button', { name: reflectionRequired ? 'Continue' : 'Confirm' })).toBeDisabled();
-  fireEvent.click(within(dialog).getByRole('button', { name: /Previous attempt/ }));
-  expect(within(dialog).getByText('Save time').parentElement).toHaveTextContent('00:00:20');
-  expect(within(dialog).getByLabelText('Minutes spent')).toBeDisabled();
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+  expect(within(dialog).getByRole('button', { name: 'Continue' })).toBeDisabled();
+  expect(dialog).toHaveTextContent('00:00:20');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(screen.getByRole('status')).toHaveTextContent('00:00:20');
   expect(submitComponentProgress).not.toHaveBeenCalled();
 
   fireEvent.click(screen.getByRole('button', { name: 'Record another attempt' }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Finish' }));
   const nextAttempt = await screen.findByRole('dialog');
-  expect(within(nextAttempt).getByRole('button', { name: /Previous attempt/ })).toHaveAttribute('aria-pressed', 'false');
-  expect(within(nextAttempt).getByRole('button', { name: reflectionRequired ? 'Continue' : 'Confirm' })).toBeDisabled();
+  expect(within(nextAttempt).getAllByRole('radio').every(radio => !(radio as HTMLInputElement).checked)).toBe(true);
+  expect(within(nextAttempt).getByRole('button', { name: 'Continue' })).toBeDisabled();
 });
 
 it('retains live-session time on cancelling the prompt and restores keyboard focus', async () => {
@@ -423,6 +481,8 @@ it('lets the learner finish configured reflection content without a reflection',
   fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '20' } });
   fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
   fireEvent.click(await screen.findByRole('button', { name: 'No, finish without reflection' }));
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
 
   await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith(
     'C1', 'apprenticeship', '1', expect.objectContaining({ feedback: '', ksbs: [], skipReflection: true }),
@@ -432,6 +492,27 @@ it('lets the learner finish configured reflection content without a reflection',
   expect(screen.queryByRole('button', { name: 'Confirm' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: /Next activity:/ }));
   expect(screen.getByTestId('location')).toHaveTextContent('/C2');
+});
+
+it('returns to manual time when editing a skipped-reflection completion', async () => {
+  session.outsideWorkingHours = false;
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [{ ...first, reflectionRequired: true }] } as unknown as LearnerDetail);
+  mount();
+  fireEvent.change(await screen.findByLabelText('Hours spent'), { target: { value: '49' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'No, finish without reflection' }));
+  expect(await screen.findByRole('alertdialog')).toHaveTextContent('cannot exceed 8 hours');
+  fireEvent.click(screen.getByRole('button', { name: 'Edit time and try again' }));
+  await waitFor(() => expect(screen.getByLabelText('Hours spent')).toHaveFocus());
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText('Hours spent'), { target: { value: '4' } });
+  fireEvent.change(screen.getByLabelText('Minutes spent'), { target: { value: '54' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'No, finish without reflection' }));
+  expect(await screen.findByRole('alertdialog')).toHaveTextContent('4 hours and 54 minutes');
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm time' }));
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledExactlyOnceWith('C1', 'apprenticeship', '1',
+    expect.objectContaining({ timeTakenSeconds: 17640, timeEntrySource: 'input', skipReflection: true })));
 });
 
 it('keeps reflection optional for tutor-validated activities', async () => {
@@ -472,18 +553,98 @@ it('guards a double No click from creating duplicate completion requests', async
   const noButton = await screen.findByRole('button', { name: 'No, finish without reflection' });
   fireEvent.click(noButton);
   fireEvent.click(noButton);
-
-  expect(submitComponentProgress).toHaveBeenCalledTimes(1);
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledTimes(1));
   resolveCompletion?.({ record: { componentId: 'C1', timeTaken: '00:20' } } as Awaited<ReturnType<typeof submitComponentProgress>>);
 });
 
-async function openReadingConfirmation() {
+async function openReadingConfirmation(kind = 'apprenticeship') {
   const reading = { ...first, type: 'reading', component: 'Reading', content: '<p>Learning material</p>', description: 'Learning material' };
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
-  mount();
+  mount('C1', kind);
   fireEvent.click(await screen.findByRole('button', { name: 'Finish' }));
   await screen.findByRole('button', { name: 'Confirm' });
 }
+
+it.each(['commercial', 'apprenticeship'])('lets a %s learner correct 30 hours to 30 minutes before saving', async kind => {
+  await openReadingConfirmation(kind);
+  fireEvent.click(screen.getByRole('button', { name: /Input \(hours \/ minutes\)/ }));
+  expect(within(screen.getByRole('dialog')).getByLabelText('Hours spent')).toHaveAccessibleDescription('For 30 minutes: enter 0 in Hours and 30 in Minutes.');
+  expect(within(screen.getByRole('dialog')).getByLabelText('Minutes spent')).toHaveAccessibleDescription('For 30 minutes: enter 0 in Hours and 30 in Minutes.');
+  fireEvent.change(within(screen.getByRole('dialog')).getByLabelText('Hours spent'), { target: { value: '30' } });
+  expect(within(screen.getByRole('dialog')).getByText('Selected time: 30 hours and 0 minutes.')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+  const review = screen.getByRole('dialog', { name: 'Confirm reading completion?' });
+  expect(within(review).getByRole('alert')).toHaveTextContent('cannot exceed 8 hours');
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  const edit = within(review).getByRole('button', { name: 'Edit entered time' });
+  fireEvent.click(edit);
+
+  const dialog = screen.getByRole('dialog', { name: 'Confirm reading completion?' });
+  expect(within(dialog).getByLabelText('Hours spent')).toHaveValue('30');
+  await waitFor(() => expect(within(dialog).getByLabelText('Hours spent')).toHaveFocus());
+  fireEvent.change(within(dialog).getByLabelText('Hours spent'), { target: { value: '0' } });
+  fireEvent.change(within(dialog).getByLabelText('Minutes spent'), { target: { value: '30' } });
+  expect(within(dialog).getByText('Selected time: 0 hours and 30 minutes.')).toBeVisible();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+
+  expect(screen.getByRole('alertdialog')).toHaveAccessibleDescription(/You entered 0 hours and 30 minutes/);
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm time' }));
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({
+    timeTakenSeconds: 1800, timeEntrySource: 'input', reportedTime: '30 minutes',
+  })));
+  expect(submitComponentProgress).toHaveBeenCalledTimes(1);
+});
+
+it('keeps manual time and keyboard focus when escaping the review and cancelling completion', async () => {
+  await openReadingConfirmation();
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  const finishButton = screen.getByRole('button', { name: 'Finish' });
+  finishButton.focus();
+  fireEvent.click(finishButton);
+  fireEvent.click(screen.getByRole('button', { name: /Input/ }));
+  fireEvent.change(within(screen.getByRole('dialog')).getByLabelText('Minutes spent'), { target: { value: '1' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+  const review = screen.getByRole('alertdialog');
+  expect(review).toHaveTextContent('0 hours and 1 minute');
+  const edit = within(review).getByRole('button', { name: 'Edit time' });
+  const confirm = within(review).getByRole('button', { name: 'Confirm time' });
+  fireEvent.keyDown(edit, { key: 'Tab', shiftKey: true });
+  expect(confirm).toHaveFocus();
+  fireEvent.keyDown(confirm, { key: 'Tab' });
+  expect(edit).toHaveFocus();
+  fireEvent.keyDown(edit, { key: 'Escape' });
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  expect(within(screen.getByRole('dialog')).getByLabelText('Minutes spent')).toHaveValue('01');
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(finishButton).toHaveFocus();
+  fireEvent.click(finishButton);
+  expect(within(screen.getByRole('dialog')).getByLabelText('Minutes spent')).toHaveValue('01');
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+});
+
+it('saves explicitly confirmed hours once and disables review controls while saving', async () => {
+  let resolveCompletion!: (response: ComponentProgressResponse) => void;
+  vi.mocked(submitComponentProgress).mockImplementationOnce(() => new Promise(resolve => { resolveCompletion = resolve; }));
+  await openReadingConfirmation();
+  fireEvent.click(screen.getByRole('button', { name: /Input/ }));
+  fireEvent.change(within(screen.getByRole('dialog')).getByLabelText('Hours spent'), { target: { value: '8' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+  const confirm = screen.getByRole('button', { name: 'Confirm time' });
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  fireEvent.click(confirm);
+  fireEvent.click(confirm);
+  expect(confirm).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Edit time' })).toBeDisabled();
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({
+    timeTakenSeconds: 28800, timeEntrySource: 'input', reportedTime: '480 minutes',
+  })));
+  expect(submitComponentProgress).toHaveBeenCalledTimes(1);
+  await act(async () => resolveCompletion({ record: progress } as unknown as ComponentProgressResponse));
+});
 
 it('accepts hours and minutes entered in the completion popup and submits manual time', async () => {
   await openReadingConfirmation();
@@ -494,6 +655,9 @@ it('accepts hours and minutes entered in the completion popup and submits manual
   fireEvent.change(hours, { target: { value: '1' } });
   fireEvent.change(minutes, { target: { value: '30' } });
   fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  expect(screen.getByRole('alertdialog')).toHaveTextContent('1 hour and 30 minutes');
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm time' }));
   await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({
     timeTakenSeconds: 5400, timeEntrySource: 'input',
   })));
@@ -597,7 +761,7 @@ it('keeps a failed save open for retry without marking it complete', async () =>
   await finish();
   expect(await screen.findByText('Could not save progress')).toBeInTheDocument();
   expect(screen.queryByRole('status')).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Confirm' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Confirm time' })).toBeEnabled();
   expect(screen.getByTestId('location')).toHaveTextContent('/C1');
 });
 
@@ -710,6 +874,100 @@ it('revalidates a reward draft with the server instead of discarding it for devi
   expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ elapsedSeconds: 300, session: savedSession });
 });
 
+it('keeps an expired reward draft after a failed recovery and restores its original time on retry', async () => {
+  const key = 'learner_activity_timer:v1:apprenticeship:1:C1';
+  const old = { sessionId: 'EXPIRED', trackingToken: 'old-token', startedAt: '2026-01-01T00:00:00Z', countingMode: 'visible_page' as const, rewardTracking: true };
+  localStorage.setItem(key, JSON.stringify({ elapsedSeconds: 300, session: old }));
+  vi.mocked(resumeTimeTracking).mockRejectedValue(Object.assign(new Error('The activity timing session has expired.'), { code: 'expired_tracking_session' }));
+  vi.mocked(checkpointTimeTracking).mockRejectedValueOnce(new Error('offline')).mockResolvedValue({ ...old, persistent: true, savedSeconds: 300 });
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [{ ...first, type: 'podcast', component: 'Podcast', audioUrl: 'https://example.test/lesson.mp3' }] } as unknown as LearnerDetail);
+  mount();
+  const restart = await screen.findByRole('button', { name: 'Restore saved time' });
+  expect(startTimeTracking).not.toHaveBeenCalled();
+  fireEvent.click(restart);
+  await waitFor(() => expect(JSON.parse(localStorage.getItem(key)!).session.persistent).toBe(true));
+  expect(JSON.parse(localStorage.getItem(`${key}:expired:EXPIRED`)!)).toMatchObject({ session: old, elapsedSeconds: 300 });
+  expect(JSON.parse(localStorage.getItem(key)!).elapsedSeconds).toBe(300);
+  expect(JSON.parse(localStorage.getItem(key)!).session.sessionId).toBe('EXPIRED');
+  expect(startTimeTracking).not.toHaveBeenCalled();
+});
+
+it.each(['commercial', 'apprenticeship'])('restores a multi-day %s reading draft and confirms the same accumulated time', async kind => {
+  const key = `learner_activity_timer:v1:${kind}:1:C1`;
+  const old = { sessionId: 'DURABLE', trackingToken: 'same-signed-token', startedAt: '2026-01-01T00:00:00Z',
+    countingMode: 'visible_page' as const, persistent: true };
+  localStorage.setItem(key, JSON.stringify({ elapsedSeconds: 300, session: old }));
+  vi.mocked(checkpointTimeTracking).mockResolvedValue({ ...old, savedSeconds: 360 });
+  vi.spyOn(performance, 'now').mockReturnValue(0);
+  const reading = { ...first, type: 'reading', component: 'Reading', contentHtml: '<p>Synthetic reading</p>' };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
+  mount('C1', kind);
+  await screen.findByRole('timer', { name: 'Time on this activity: 00 hours, 06 minutes, 00 seconds' });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({
+    trackingToken: old.trackingToken, timeTakenSeconds: 360,
+  })));
+  expect(startTimeTracking).not.toHaveBeenCalled();
+});
+
+it('offers recovery inside the reflection popup and preserves the entered duration after an offline save', async () => {
+  session.outsideWorkingHours = false;
+  const persistent = { sessionId: 'OFFLINE', trackingToken: 'original-token', startedAt: new Date().toISOString(),
+    countingMode: 'visible_page' as const, persistent: true };
+  vi.mocked(startTimeTracking).mockResolvedValue(persistent);
+  vi.mocked(checkpointTimeTracking).mockRejectedValueOnce(new Error('Connection lost. Your draft is kept.'))
+    .mockImplementation(async value => ({ ...value, persistent: true, savedSeconds: 300 }));
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [{ ...first, reflectionRequired: true }] } as unknown as LearnerDetail);
+  mount();
+  fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '20' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Do you want to complete a reflection?' });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'No, finish without reflection' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
+  fireEvent.click(await within(dialog).findByRole('button', { name: 'Restore saved time' }));
+  await screen.findByText(/Your time has been restored/);
+  fireEvent.click(within(dialog).getByRole('button', { name: 'No, finish without reflection' }));
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({
+    trackingToken: 'original-token', timeTakenSeconds: 1200, timeEntrySource: 'input', skipReflection: true,
+  })));
+  expect(startTimeTracking).toHaveBeenCalledTimes(1);
+});
+
+it('keeps a review-required timing error visible without offering a misleading restore', async () => {
+  const message = 'Some time needs review. Your draft is kept. Please contact support before finishing.';
+  vi.mocked(submitComponentProgress).mockRejectedValueOnce(Object.assign(new Error(message), { code: 'observation_outside_timing_lease' }));
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [
+    { ...first, type: 'reading', reflectionRequired: true, contentHtml: '<p>Synthetic reading</p>' },
+  ] } as unknown as LearnerDetail);
+  mount();
+  fireEvent.click(await screen.findByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'No, finish without reflection' }));
+  expect(await screen.findByText(message)).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Restore saved time' })).not.toBeInTheDocument();
+  expect(localStorage.getItem('learner_activity_timer:v1:apprenticeship:1:C1')).not.toBeNull();
+});
+
+it('retries a persistent reading checkpoint on reconnect without erasing the draft', async () => {
+  const persistent = { sessionId: 'PERIODIC', trackingToken: 'signed', startedAt: new Date().toISOString(),
+    countingMode: 'visible_page' as const, persistent: true };
+  vi.mocked(startTimeTracking).mockResolvedValue(persistent);
+  vi.mocked(checkpointTimeTracking).mockRejectedValueOnce(new Error('offline'))
+    .mockImplementation(async (value, _activity, _id, _kind, _learner, seconds) => ({ ...value, savedSeconds: seconds }));
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [
+    { ...first, type: 'reading', contentHtml: '<p>Synthetic reading</p>' },
+  ] } as unknown as LearnerDetail);
+  mount();
+  await screen.findByText('Synthetic reading');
+  // Trigger the same sync path as the interval without changing the activity clock.
+  act(() => window.dispatchEvent(new Event('online')));
+  await screen.findByText(/Your draft is kept on this device.*offline/);
+  expect(JSON.parse(localStorage.getItem('learner_activity_timer:v1:apprenticeship:1:C1')!).session.sessionId).toBe('PERIODIC');
+  act(() => window.dispatchEvent(new Event('online')));
+  await waitFor(() => expect(screen.queryByText(/Your draft is kept on this device.*offline/)).not.toBeInTheDocument());
+  expect(checkpointTimeTracking).toHaveBeenCalledTimes(2);
+});
+
 
 it.each([
   { source: 'timer', seconds: 300, clock: '00:05:00', savedClock: '05:00' },
@@ -733,6 +991,7 @@ it.each([
   fireEvent.click(screen.getByRole('button', { name: source === 'timer' ? /Timer/ : /Input/ }));
   expect(screen.getByText('Save time').parentElement).toHaveTextContent(clock);
   fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+  if (source === 'input') fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
   await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({
     timeTakenSeconds: seconds, timeEntrySource: source, reportedTime: `${seconds / 60} minutes`, plannedOtjh: '14h',
   })));
@@ -753,6 +1012,30 @@ it('carries selected input time into the reflection instead of its fourteen plan
   fireEvent.click(await screen.findByRole('button', { name: 'OTJH' }));
   expect(screen.getByLabelText('Selected activity time')).toHaveValue('00:40:00');
   expect(screen.queryByLabelText('Actual time spent (hours)')).not.toBeInTheDocument();
+});
+
+it.each(['commercial', 'apprenticeship'])('uses the final lower reflection time when completing reading for %s', async kind => {
+  const reading = { ...first, type: 'reading', component: 'Reading', reflectionRequired: true, contentHtml: '<p>Synthetic reading</p>' };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({ status: 'draft', learningReflection: 'Learning '.repeat(100),
+    applicationType: 'apply_now', applicationText: 'Apply at work', selectedBenefits: ['Improved productivity'],
+    benefitExplanation: 'Help the team', dateCompleted: '2026-10-01', completedDuringPaidHours: 'yes',
+    otjhConfirmed: true, signedDeclaration: true } as StoredLearningReflectionSubmission);
+  vi.mocked(saveLearningReflectionSubmission).mockResolvedValue({ id: 'synthetic-draft', status: 'submitted_for_tutor_review' });
+  mount('C1', kind);
+  fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '90' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Yes, add reflection' }));
+  await waitFor(() => expect(screen.getByLabelText('Selected activity time')).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+  fireEvent.change(screen.getByLabelText('Selected activity time'), { target: { value: '00:15:00' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({
+    timeTakenSeconds: 900, reportedTime: '15 minutes', timeEntrySource: 'input',
+  })));
+  expect(saveLearningReflectionSubmission).toHaveBeenCalledWith(expect.objectContaining({ actualTimeHours: '0.25' }));
 });
 
 
@@ -840,6 +1123,7 @@ it.each(['timer', 'input'])('excludes muted video time while preserving the sele
   const confirm = await screen.findByRole('button', { name: 'Confirm' });
   expect(screen.getByText('Save time').parentElement).toHaveTextContent(source === 'timer' ? '00:00:05' : '00:40:00');
   fireEvent.click(confirm);
+  if (source === 'input') fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
   await waitFor(() => expect(submitVideoProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({
     timeTakenSeconds: seconds, timeEntrySource: source, trackingToken: 'token', reportedTime: `${seconds / 60} minutes`,
   })));
@@ -847,27 +1131,55 @@ it.each(['timer', 'input'])('excludes muted video time while preserving the sele
 });
 
 
-it.each(['previous', 'current'])('lets a learner choose the %s attempt duration without adding the times', async choice => {
+it.each([
+  { choice: 'correct', label: 'Correct recorded time', total: 1200 },
+  { choice: 'add', label: 'Add more learning time', total: 4800 },
+  { choice: 'retry', label: 'Record another attempt', total: 3600 },
+] as const)('applies $choice without losing the previous attempt or timer evidence', async ({ choice, label, total }) => {
   const reading = { ...first, type: 'reading', component: 'Reading', contentHtml: '<p>Learning material</p>' };
-  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(true), components: [reading] } as unknown as LearnerDetail);
+  const original = { ...progress, claimedSeconds: 3600, timeTrackingSource: 'signed:input', timeTaken: '60:00' };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(true), components: [reading], componentProgress: [original] } as unknown as LearnerDetail);
+  vi.mocked(submitComponentProgress).mockResolvedValue({ record: { ...original, countedSeconds: total } } as unknown as ComponentProgressResponse);
   mount();
   fireEvent.click(await screen.findByRole('button', { name: 'Record another attempt' }));
-  fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '2' } });
+  fireEvent.click(screen.getByRole('radio', { name: new RegExp('^' + label) }));
+  if (choice === 'correct') fireEvent.change(screen.getByRole('textbox', { name: 'Reason for time correction' }), { target: { value: 'I recorded the wrong duration.' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+  fireEvent.change(await screen.findByLabelText('Hours spent'), { target: { value: '0' } });
+  fireEvent.change(screen.getByLabelText('Minutes spent'), { target: { value: '20' } });
   fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
-  const previous = await screen.findByRole('button', { name: /Previous attempt/ });
-  expect(previous).toHaveTextContent('00:00:20');
-  const current = screen.getByRole('button', { name: /Current attempt/ });
-  expect(current).toHaveTextContent('00:02:00');
-  fireEvent.click(choice === 'previous' ? previous : current);
-  expect(screen.getByText('Save time').parentElement).toHaveTextContent(choice === 'previous' ? '00:00:20' : '00:02:00');
+  await screen.findByRole('dialog', { name: 'Confirm reading completion?' });
+  expect(screen.getByText('Save time').parentElement).toHaveTextContent(choice === 'correct' ? '00:20:00' : choice === 'add' ? '01:20:00' : '01:00:00');
   fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
-  if (choice === 'previous') {
-    expect(submitComponentProgress).not.toHaveBeenCalled();
-    expect(await screen.findByRole('status')).toHaveTextContent('00:00:20');
-    expect(screen.queryByRole('button', { name: 'Confirm' })).not.toBeInTheDocument();
-  } else {
-    await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({
-      timeTakenSeconds: 120, timeEntrySource: 'input', reportedTime: '2 minutes',
-    })));
-  }
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({
+    timeTakenSeconds: 1200, timeEntrySource: 'input', retakeTimeChoice: choice, retakePreviousSeconds: 3600,
+  })));
+  expect(original.claimedSeconds).toBe(3600);
+});
+
+it('guides a learner back to edit an addition above eight hours, then saves exactly eight once', async () => {
+  const reading = { ...first, type: 'reading', component: 'Reading', contentHtml: '<p>Learning material</p>' };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(true), components: [reading], componentProgress: [{ ...progress, timeTaken: '360:00' }] } as unknown as LearnerDetail);
+  mount();
+  fireEvent.click(await screen.findByRole('button', { name: 'Record another attempt' }));
+  fireEvent.click(screen.getByRole('radio', { name: /^Add more learning time/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+  fireEvent.change(await screen.findByLabelText('Hours spent'), { target: { value: '3' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Confirm reading completion?' });
+  expect(within(dialog).getByRole('alert')).toHaveTextContent('make 9 hours');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  expect(within(dialog).getByLabelText('Hours spent')).toHaveValue('03');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Edit entered time' }));
+  await waitFor(() => expect(within(dialog).getByLabelText('Hours spent')).toHaveFocus());
+  fireEvent.change(within(dialog).getByLabelText('Hours spent'), { target: { value: '2' } });
+  expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
+  expect(within(dialog).getByText('Save time').parentElement).toHaveTextContent('08:00:00');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledExactlyOnceWith('C1', 'apprenticeship', '1', expect.objectContaining({
+    timeTakenSeconds: 7200, retakeTimeChoice: 'add', retakePreviousSeconds: 21600,
+  })));
 });

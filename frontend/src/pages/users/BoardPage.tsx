@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast";
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchEnrolmentBoard, updateEnrolmentUser, deleteEnrolmentUser, finishEnrolment, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
 import { fetchCommercialBoard } from '@/api/commercialUsers';
@@ -12,7 +12,7 @@ import { fetchIlrDocument, issueIlrDocument, signIlrDocument, type IlrDocument }
 import { SignaturePad } from './wizard/steps/SignaturePad';
 import { LearnerHeaderDates } from './components/LearnerHeaderDates';
 import { FirstSessionReschedule } from './components/FirstSessionReschedule';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { renderIlrPdf, ilrFilename } from '@/lib/ilrDocumentPdf';
 import {
   fetchTrainingPlanDocument,
@@ -29,6 +29,7 @@ import {
 } from '@/api/writtenAgreement';
 import { renderWrittenAgreementPdf, writtenAgreementFilename } from '@/lib/writtenAgreementPdf';
 import { fetchLearnerCoach, updateLearnerCoach } from '@/api/coach';
+import { reviewHandoverMessage } from '@/api/reviewHandover';
 import { fetchCoachOptions, type CoachOption } from '@/api/staffUsers';
 
 /** Render the Written Agreement from its record and save it. */
@@ -263,6 +264,7 @@ function HeroCoach({ learnerId, fallbackOwner }: { learnerId: string; fallbackOw
       setVal(email);
       setSaved(email);
       setSavedName(next.coachName?.trim() || '');
+      setErr(reviewHandoverMessage(next.reviewHandover));
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Could not save');
     } finally {

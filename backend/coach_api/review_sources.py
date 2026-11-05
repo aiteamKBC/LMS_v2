@@ -6,7 +6,7 @@ local state; neither dates nor email addresses establish that relationship.
 from dataclasses import dataclass
 
 from django.db import DatabaseError
-from django.db.models import Q
+from django.db.models import BooleanField, Case, Q, Value, When
 
 from learner_api.student_activity_access import student_activity_available
 
@@ -35,6 +35,57 @@ def source_for_learner(source, profile):
     return resolve_review_source(getattr(source, "aptem_id", None), getattr(profile, "aptem_id", None))
 
 
+class ReviewCreationBlocked(Exception):
+    """A source boundary failure, before any Native Review write or Graph call."""
+
+    def __init__(self, policy):
+        super().__init__(policy["detail"])
+        self.policy = policy
+        self.code = policy["code"]
+
+
+def native_review_creation_policy(profile):
+    """Re-read the stable enrolment link; missing imports never decide identity."""
+    from learner_api.models import EnrolmentUser
+
+    try:
+        if profile is None:
+            raise DatabaseError("Review profile unavailable")
+        source = None
+        enrolment_id = getattr(profile, "enrolment_id", None)
+        if enrolment_id:
+            source = EnrolmentUser.all_learners.only("id", "aptem_id").filter(pk=enrolment_id).first()
+            if source is None:
+                raise DatabaseError("Review enrolment unavailable")
+        identity = source_for_learner(source, profile)
+    except DatabaseError:
+        return {"reviewSource": "unavailable", "canAddReview": False,
+                "code": "REVIEW_SOURCE_UNAVAILABLE",
+                "detail": "The learner's Review source could not be verified. Please try again."}
+    if identity.kind == "conflict":
+        return {"reviewSource": "conflict", "canAddReview": False,
+                "code": "REVIEW_IDENTITY_CONFLICT",
+                "detail": "The learner has conflicting Aptem identities. Review creation is unavailable."}
+    if identity.kind == "aptem":
+        return {"reviewSource": "aptem", "canAddReview": False,
+                "code": "APTEM_REVIEW_SOURCE_ONLY",
+                "detail": "This learner uses Aptem Reviews. Choose an imported Review; if none are available, refresh the Aptem source data."}
+    return {"reviewSource": "curriculum", "canAddReview": True}
+
+
+def require_native_review_creation(learner_id):
+    """Protect new instances/additions even when called without a calendar UI."""
+    from learner_api.models import LearnerProfile
+
+    try:
+        profile = LearnerProfile.objects.only("id", "enrolment_id", "aptem_id").filter(pk=learner_id).first()
+    except DatabaseError:
+        profile = None
+    policy = native_review_creation_policy(profile)
+    if not policy["canAddReview"]:
+        raise ReviewCreationBlocked(policy)
+
+
 def review_profile_for_source(source, profile=None):
     """Resolve without the general identity helper's opportunistic DB writes.
 
@@ -61,6 +112,47 @@ def review_profile_for_source(source, profile=None):
         profile = matches[0] if matches else None
     if source_for_learner(source, profile).kind == "conflict":
         raise ReviewIdentityConflict("Conflicting Aptem learner identities.")
+    return profile
+
+
+def meeting_profile(record):
+    """Resolve review attendance identity without mixing calendar ID namespaces.
+
+    The owner has already authorized the calendar record. A legacy learner-book
+    key qualifies its Enrolment identity; only the existing stable resolver may
+    translate that identity. Stored participant names/emails remain historical.
+    """
+    from learner_api.models import EnrolmentUser, LearnerProfile
+
+    owner = str(record.owner_email or '').strip().casefold()
+    if not owner or not record.learner_id:
+        return None
+    if record.review_instance_id:
+        from curriculum_api.review_instances import get_review_instance
+        instance = get_review_instance(record.review_instance_id)
+        if (not instance or instance.get('calendar_event_id') != record.pk
+                or instance.get('learner_id') != record.learner_id
+                or instance.get('review_template_id') != record.review_template_id
+                or str(instance.get('coach_email') or '').strip().casefold() != owner):
+            raise ReviewIdentityConflict('The Native Review meeting identity is inconsistent.')
+        return LearnerProfile.objects.filter(pk=instance['learner_id']).first()
+
+    parts = (record.idempotency_key or '').split(':')
+    if parts[0] == 'learner-book' and record.event_type in {'mcr', 'progress-review'}:
+        expected_family = 'mcm' if record.event_type == 'mcr' else 'progress-review'
+        if (len(parts) not in {5, 6} or parts[1] != expected_family
+                or parts[2] not in {'commercial', 'apprenticeship'} or not parts[3].isdigit()):
+            raise ReviewIdentityConflict('The legacy meeting identity cannot be verified.')
+        source = EnrolmentUser.all_learners.filter(pk=int(parts[3])).first()
+        if not source or source.learner_type != parts[2]:
+            raise ReviewIdentityConflict('The legacy meeting learner source is inconsistent.')
+        profile = review_profile_for_source(source)
+        if profile and record.learner_id not in {source.pk, profile.pk}:
+            raise ReviewIdentityConflict('The legacy meeting learner link is inconsistent.')
+    else:
+        profile = LearnerProfile.objects.filter(pk=record.learner_id).first()
+    if profile and str(profile.coach_email or '').strip().casefold() != owner:
+        raise ReviewIdentityConflict('The meeting fallback profile belongs to another coach.')
     return profile
 
 
@@ -115,10 +207,25 @@ def linked_overlay(event, overlays):
     return matches[0] if matches else None
 
 
-def linked_booking(event, records, overlay=None):
+def linked_booking(event, records, overlay=None, *, reconciliations=None):
     """Use durable keys, checking the ID space of legacy learner bookings."""
+    from . import reconciliation_links
+    records = list(records)
+    if reconciliations is None:
+        reconciliations = list(reconciliation_links.active_links(
+            calendar_event_id__in=[row.pk for row in records if row.review_instance_id],
+        ).select_related("overlay")) if any(row.review_instance_id for row in records) else []
+    explicit = {link.calendar_event_id: link for link in reconciliations
+                if reconciliation_links.event_matches(link, event)}
     matches = []
     for row in records:
+        if row.pk in explicit:
+            reconciliation_links.validate_record(explicit[row.pk], row)
+            if overlay and overlay.pk != explicit[row.pk].overlay_id:
+                raise ReviewIdentityConflict("The reconciled Review has a conflicting continuation.")
+            row._review_source_reconciliation_id = explicit[row.pk].pk
+            matches.append(row)
+            continue
         exact_key = row.event_key == event["eventKey"] or (overlay is not None and row.event_key == overlay.event_key)
         profile_owned = str(row.learner_id) == str(event.get("learnerId"))
         if exact_key and (not profile_owned or row.event_type != event["source"]
@@ -144,7 +251,8 @@ def linked_booking(event, records, overlay=None):
 
 
 def load_imported_links(events, *, records=None, compact=False):
-    from .models import CoachCalendarEvent, ImportedReviewInstance
+    from .models import CoachCalendarEvent, ImportedReviewInstance, MigratedReviewRevision
+    from .migrated_reviews import completed_lms_revisions
 
     if not events:
         return {}, {}
@@ -153,18 +261,42 @@ def load_imported_links(events, *, records=None, compact=False):
     keys = {event["eventKey"] for event in events}
     overlay_query = ImportedReviewInstance.objects.filter(learner_id__in=profile_ids).filter(
         Q(source_review_id__in=review_ids) | Q(event_key__in=keys))
+    # Select a boolean rather than the frozen form body for compact lists.
+    # The first array element must exist; an object with a literal "0" key
+    # is not a sections array (has_key uses an object key, not an array index).
+    overlay_query = overlay_query.annotate(_has_lms_form=Case(
+        When(Q(source_review_id__isnull=False, template_snapshot__sections__0__isnull=False)
+             & ~Q(template_snapshot__sections__has_key="0"), then=Value(True)),
+        default=Value(False), output_field=BooleanField()))
     if compact:
         overlay_query = overlay_query.only('id', 'learner_id', 'source_review_id', 'event_key', 'owner_email', 'status', 'completed_at')
     overlays = list(overlay_query)
+    corrections = {row.pk: row for row in overlays if row._has_lms_form
+                   and row.source_review_id and row.status in {"in-progress", "awaiting-signature"}}
+    completed_history = set()
+    if corrections:
+        # Proof is scoped to this overlay, source and learner. Fetch only the
+        # identifying values, never archived answers, signatures or PDF bytes.
+        revisions = completed_lms_revisions(MigratedReviewRevision.objects.filter(overlay_id__in=corrections))
+        for overlay_id, source_id, learner_id in revisions.values_list(
+                "overlay_id", "snapshot__source_review_id", "snapshot__learner_id").distinct():
+            row = corrections[overlay_id]
+            if source_id == row.source_review_id and learner_id == row.learner_id:
+                completed_history.add(overlay_id)
+    for row in overlays:
+        row._has_lms_completion_history = bool(row._has_lms_form and row.source_review_id and (
+            (row.status == "completed" and row.completed_at) or row.pk in completed_history))
     if records is None:
         enrolment_ids = {int(event["enrolmentId"]) for event in events if str(event.get("enrolmentId", "")).isdigit()}
         records = list(CoachCalendarEvent.objects.filter(
             Q(event_key__in=keys) | Q(learner_id__in=profile_ids | enrolment_ids,
                                      event_type__in={event["source"] for event in events})))
+    from .reconciliation_links import active_links
+    reconciliations = list(active_links(source_review_id__in=review_ids).select_related("overlay"))
     booking_map, overlay_map = {}, {}
     for event in events:
         overlay = linked_overlay(event, overlays)
-        booking_map[event["eventKey"]] = linked_booking(event, records, overlay)
+        booking_map[event["eventKey"]] = linked_booking(event, records, overlay, reconciliations=reconciliations)
         overlay_map[event["eventKey"]] = overlay
     return booking_map, overlay_map
 
@@ -173,10 +305,12 @@ def booking_for_imported_review(profile, review, overlay=None, *, lock=False):
     """Resolve the same durable appointment from a form or its occurrence."""
     from .models import CoachCalendarEvent
     from .migrated_reviews import booking_event_type, review_family
+    from .personal_support_booking import is_personal_support_plan
 
     event = {**imported_identity(review, profile.id),
              "eventKey": f"imported-review:{review['aptemReviewId']}",
-             "source": booking_event_type(review_family(review["type"])),
+             "source": ("progress-review" if is_personal_support_plan(review["type"])
+                        else booking_event_type(review_family(review["type"]))),
              **imported_learner_identity(profile)}
     if not event["source"]:
         return None
@@ -202,6 +336,15 @@ def booking_for_overlay(overlay, *, lock=False):
     if lock:
         query = query.select_for_update()
     current = list(query[:2])
+    from .reconciliation_links import active_links, validate_record
+    link = active_links(overlay_id=overlay.pk).select_related("overlay").first()
+    if link:
+        query = CoachCalendarEvent.objects.select_for_update() if lock else CoachCalendarEvent.objects
+        record = query.get(pk=link.calendar_event_id)
+        validate_record(link, record)
+        if any(row.pk != record.pk for row in current):
+            raise ReviewIdentityConflict("More than one booking matches the imported Review.")
+        return record
     if len(current) > 1:
         raise ReviewIdentityConflict("More than one booking matches the imported Review.")
     if current:
@@ -259,12 +402,21 @@ def apply_imported_state(event, record=None, overlay=None, *, compact=False):
     """Pure read adapter. Never changes source evidence or a meeting identity."""
     event = dict(event)
     from learner_api.review_history import _normalise_status
+    from .booking_reservations import review_occupies_slot
+    from .migrated_reviews import has_completed_lms_form
 
+    event["bookingReserved"] = review_occupies_slot(record)
     source_status = _normalise_status(event.get("sourceStatus") or event.get("status"))
-    historical = source_status == "completed" or bool(event.get("sourceCompletedDate"))
+    lms_history = bool(overlay and (
+        getattr(overlay, "_has_lms_completion_history", False)
+        or (not compact and has_completed_lms_form(overlay))))
+    historical = (source_status == "completed" or bool(event.get("sourceCompletedDate"))) and not lms_history
     effective = "completed" if historical else source_status
-    migrated = bool(not compact and not historical and overlay and overlay.source_review_id
-                    and isinstance(overlay.template_snapshot, dict) and overlay.template_snapshot.get("sections"))
+    has_form = bool(overlay and overlay.source_review_id and (
+        getattr(overlay, "_has_lms_form", False) or (not compact
+        and isinstance(overlay.template_snapshot, dict)
+        and isinstance(overlay.template_snapshot.get("sections"), list) and overlay.template_snapshot["sections"])))
+    migrated = has_form and not historical
     if record:
         # Pending/failed sync must not claim a successful external booking.
         verified = bool(record.sync_state == "synced" and record.graph_event_id
@@ -273,6 +425,7 @@ def apply_imported_state(event, record=None, overlay=None, *, compact=False):
             effective = record.status
         event.update({
             "calendarEventId": str(record.pk), "calendarEventKey": record.event_key,
+            "reconciledReview": bool(getattr(record, "_review_source_reconciliation_id", None) or event.get("reconciledReview")),
             "bookingStatus": record.status, "syncState": record.sync_state,
             "scheduledDate": record.scheduled_date.isoformat() if record.scheduled_date else None,
             "scheduledTime": record.scheduled_time.strftime("%H:%M") if record.scheduled_time else None,
@@ -281,6 +434,8 @@ def apply_imported_state(event, record=None, overlay=None, *, compact=False):
             "graphWebLink": (record.graph_web_link or "") if verified else "", "meetingProvider": record.meeting_provider or "",
             "coachName": record.owner_name or "", "coachEmail": record.owner_email or "",
             "invited": verified, "reviewResponses": {} if compact else record.review_responses or {},
+            # Keep editable learner notes separate from generated calendar copy.
+            "bookingNotes": "" if compact else record.notes or "",
         })
         if record.scheduled_date:
             event["date"] = record.scheduled_date.isoformat()
@@ -294,10 +449,25 @@ def apply_imported_state(event, record=None, overlay=None, *, compact=False):
         event["localStatus"] = local
         if overlay.completed_at:
             event["reviewCompletedAt"] = overlay.completed_at.isoformat()
+        elif lms_history:
+            event["reviewCompletedAt"] = None
     event.update({"status": effective, "effectiveLmsStatus": effective, "migratedForm": migrated})
     if migrated:
         event["hasReviewForm"] = True
         event["formEventKey"] = overlay.event_key
+    if not historical:
+        # An unbooked source occurrence follows the current assignment. An
+        # initialized form follows its stored owner, including blocked handovers.
+        current_owner = str(event.get('ownerEmail') or '').strip().casefold()
+        responsible = str(overlay.owner_email if overlay else
+                          record.owner_email if record else current_owner).strip().casefold()
+        if responsible and responsible == current_owner:
+            event['coachName'] = event.get('ownerName') or ''
+            event['coachEmail'] = responsible
+        elif overlay and (not record or record.owner_email.strip().casefold() != responsible):
+            # A source reviewer is not proof of the current overlay's owner.
+            event['coachName'] = responsible
+            event['coachEmail'] = responsible
     # A legacy booking may carry old native linkage, which is not the form for
     # this occurrence. Keep the stored row intact; expose the imported form.
     event["reviewInstanceId"] = None

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { SessionSyncJob } from '@/api/sessionResults';
+import { SessionSyncIssues } from './SessionSyncIssues';
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -38,17 +39,21 @@ export function SessionSyncStatus({ job }: { job?: SessionSyncJob | null }) {
     ? knownTotal ? `${formatBytes(transfer.bytesTransferred)} of ${formatBytes(transfer.totalBytes!)}`
       : `${formatBytes(transfer.bytesTransferred)} transferred · Total size not available`
     : '';
-  const message = failed ? job.last_error || 'Sync needs retry. Please request synchronization again.'
+  const message = failed ? 'Sync needs retry. Please request synchronization again.'
     : running ? 'Sync in progress. Attendance and files will appear as they are saved.'
       : complete ? 'Sync finished. Files not yet available from Teams will be checked again automatically.'
         : 'Sync queued. Waiting for processing to start.';
   const value = complete ? 100 : percent;
+  const explained = failed && Boolean(job.issues?.length || (!job.issues && job.last_error));
   return <div className={`space-y-3 px-4 py-4 text-sm ${failed ? 'bg-red-50 text-red-800' : complete ? 'bg-emerald-50' : 'bg-primary-50/60'}`}>
-    <p role={failed ? 'alert' : 'status'}>{message}</p>
-    <div className="flex flex-wrap items-center justify-between gap-2">
+    {explained
+      // Plain wording per failure category; the stored diagnostic sits under Technical details.
+      ? <div role="alert"><SessionSyncIssues job={job} filesReady={progress?.filesReady} totalFiles={progress?.totalFiles} /></div>
+      : <p role={failed ? 'alert' : 'status'}>{message}</p>}
+    {(!failed || value !== undefined) && <div className="flex flex-wrap items-center justify-between gap-2">
       <span className="font-semibold">{stage}{transfer ? ` · Session ${transfer.sessionNumber}` : ''}</span>
       {value !== undefined && <span className="font-semibold tabular-nums">{value}%{transferring ? phase === 'downloading' ? ' downloaded' : ' uploaded' : ''}</span>}
-    </div>
+    </div>}
     {(!failed || value !== undefined) && <div role="progressbar" aria-label={stage}
       aria-valuemin={0} aria-valuemax={100} aria-valuenow={value}
       aria-valuetext={[stage, size, stale ? 'No recent progress update' : ''].filter(Boolean).join('. ')}
@@ -58,7 +63,7 @@ export function SessionSyncStatus({ job }: { job?: SessionSyncJob | null }) {
     </div>}
     <div className="flex flex-wrap justify-between gap-2 text-xs text-foreground-600">
       {size && <span>{size}</span>}
-      {progress && progress.totalFiles > 0 && <span>{progress.filesReady} of {progress.totalFiles} discovered files saved</span>}
+      {progress && progress.totalFiles > 0 && !explained && <span>{progress.filesReady} of {progress.totalFiles} discovered files saved</span>}
       {running && <span>Updates automatically every 5 seconds</span>}
     </div>
     {stale && <p className="text-xs text-amber-800">No new transfer update for over a minute. These are the last reported values; completion is not confirmed.</p>}

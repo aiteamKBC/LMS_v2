@@ -153,6 +153,17 @@ def eligible_alternatives_by_occurrence(
     at=None,
     database: str = "enrolment",
 ) -> dict[str, list[dict]]:
+    return _alternatives_by_occurrence(original_occurrence_ids, at=at, database=database)
+
+
+def completed_alternatives_by_occurrence(original_occurrence_ids, *, at=None, database="enrolment"):
+    """Equivalent completed deliveries; scheduling alone grants no attendance."""
+    return _alternatives_by_occurrence(
+        original_occurrence_ids, at=at, database=database, completed=True,
+    )
+
+
+def _alternatives_by_occurrence(original_occurrence_ids, *, at=None, database="enrolment", completed=False):
     """``eligible_alternative_occurrences`` for many occurrences in a few queries.
 
     A learner's absence form lists every missed lecture with its alternatives;
@@ -188,7 +199,7 @@ def eligible_alternatives_by_occurrence(
         occurrence = occurrences.get(occurrence_id)
         session = sessions.get(occurrence.live_session_id) if occurrence else None
         module = first_module.get(str(session.module_catalogue_id)) if session else None
-        if _usable_module(module):
+        if _usable_module(module) and occurrence.session_number is not None:
             contexts[occurrence_id] = (occurrence, session, module)
     if not contexts:
         return result
@@ -216,11 +227,12 @@ def eligible_alternatives_by_occurrence(
 
     series_ids = {pair[1].id for series in matched.values() for pair in series.values()}
     numbers = {contexts[occurrence_id][0].session_number for occurrence_id in matched}
-    candidates = list(
-        LiveSessionOccurrence.objects.using(database)
-        .filter(live_session_id__in=list(series_ids), session_number__in=list(numbers), scheduled_start__gt=now)
-        .order_by("scheduled_start", "id")
+    candidates = LiveSessionOccurrence.objects.using(database).filter(
+        live_session_id__in=list(series_ids), session_number__in=list(numbers),
     )
+    candidates = list(candidates.filter(
+        **({"scheduled_end__lte": now} if completed else {"scheduled_start__gt": now})
+    ).order_by("scheduled_start", "id"))
     for occurrence_id, series in matched.items():
         original = contexts[occurrence_id][0]
         session_context = {pair[1].id: (group_id, pair[0]) for group_id, pair in series.items()}
@@ -233,6 +245,7 @@ def eligible_alternatives_by_occurrence(
                 continue
             start, end = _local(occurrence.scheduled_start), _local(occurrence.scheduled_end)
             result[occurrence_id].append({
+                **({"moduleCatalogueId": str(module.module_catalogue_id)} if completed else {}),
                 "id": occurrence.id,
                 "sessionId": f"teams:{occurrence.id}",
                 "title": f"{session.module_title or module.title or 'Live session'} — Session {occurrence.session_number}",

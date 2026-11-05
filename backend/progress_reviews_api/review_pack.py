@@ -441,11 +441,11 @@ def _build_progress_section(detail: dict, source, profile, metrics, period: Revi
 def _build_otj_section(source, profile, detail: dict, metrics, warnings: list) -> dict:
     """OTJ hours from dashboard_metrics.read_metrics, with the target rescaled
     and the RAG status derived as the coach caseload does
-    (coach_api.views.apply_canonical_learner_metrics). The learner profile's
-    snapshot is only the fallback when live metrics cannot be read."""
+    (coach_api.views.apply_canonical_learner_metrics). Missing current actuals
+    remain unavailable instead of substituting the profile's legacy cache."""
     from learner_api.learner_detail import otjh_status_from_variance
 
-    completed = _num(getattr(profile, "completed_hours", None))
+    completed = None
     target = _num(getattr(profile, "target_hours", None))
     planned = _num(getattr(profile, "planned_hours", None))
     minimum = _num(getattr(source, "minimum_required_hours", None))
@@ -460,6 +460,8 @@ def _build_otj_section(source, profile, detail: dict, metrics, warnings: list) -
         planned = canonical_plan
     if otjh.get("actual") is not None:
         completed = round(_num(otjh["actual"]), 1)
+    else:
+        warnings.append("Current accepted OTJ hours are unavailable.")
     if completed is not None and target:
         status = otjh_status_from_variance(completed - target)
 
@@ -807,7 +809,7 @@ def build_review_pack(
         metrics = read_metrics(source, kind)
     except Exception as exc:
         logger.warning("Progress review: learner metrics failed for learner %s: %s", learner_id, exc)
-        warnings.append("Live learner metrics could not be read; OTJ figures fall back to the profile snapshot.")
+        warnings.append("Live learner metrics could not be read; current completed OTJ hours are unavailable.")
         metrics = None
 
     learner_section = _build_learner_section(source, profile, detail, warnings)

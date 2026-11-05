@@ -1,7 +1,7 @@
 // A retryable queue of measured short intervals. Only the LMS can accept them
 // or award hours: this queue never creates points or formal OTJ records.
 const safeId = value => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,150}$/.test(value);
-const interval = value => value && Number.isSafeInteger(value.startOffsetMs) && Number.isSafeInteger(value.endOffsetMs) && value.startOffsetMs >= 0 && value.endOffsetMs > value.startOffsetMs && value.endOffsetMs-value.startOffsetMs <= 5000 && value.endOffsetMs <= 86400000;
+const interval = value => value && Number.isSafeInteger(value.startOffsetMs) && Number.isSafeInteger(value.endOffsetMs) && value.startOffsetMs >= 0 && value.endOffsetMs > value.startOffsetMs && value.endOffsetMs-value.startOffsetMs <= 5000;
 const ordered = list => Array.isArray(list) && list.length <= 90000 && list.every((item,i) => interval(item) && (!i || item.startOffsetMs >= list[i-1].endOffsetMs));
 export function newLmsObservations(sessionId) {
  if (!safeId(sessionId)) throw new Error('This timing session cannot be matched to the LMS.');
@@ -9,7 +9,7 @@ export function newLmsObservations(sessionId) {
 }
 export function readLmsObservations(value, sessionId) {
  if (value === undefined || value === null) return newLmsObservations(sessionId);
- if (!value || value.version!==1 || value.sessionId!==sessionId || !safeId(sessionId) || !Number.isSafeInteger(value.nextSequence) || value.nextSequence<1 || value.nextSequence>2147483647 || !Number.isSafeInteger(value.acknowledgedMilliseconds) || value.acknowledgedMilliseconds<0 || value.acknowledgedMilliseconds>86400000 || !Number.isSafeInteger(value.lastEndOffsetMs) || value.lastEndOffsetMs<0 || value.lastEndOffsetMs>86400000 || !ordered(value.pending)) throw new Error('The measured-time draft needs attention. Your answers are kept; start a new timed visit.');
+ if (!value || value.version!==1 || value.sessionId!==sessionId || !safeId(sessionId) || !Number.isSafeInteger(value.nextSequence) || value.nextSequence<1 || value.nextSequence>2147483647 || !Number.isSafeInteger(value.acknowledgedMilliseconds) || value.acknowledgedMilliseconds<0 || !Number.isSafeInteger(value.lastEndOffsetMs) || value.lastEndOffsetMs<0 || !ordered(value.pending)) throw new Error('The measured-time draft needs attention. Your answers are kept; retry syncing your time.');
  const flight=value.inFlight;
  if (flight && (flight.sequence!==value.nextSequence || flight.eventId!==sessionId+':'+value.nextSequence || !ordered(flight.intervals) || flight.intervals.length>120)) throw new Error('The saved timing request could not be confirmed. Your draft is kept.');
  const all=[...(flight?.intervals||[]),...value.pending];
@@ -25,9 +25,9 @@ export function appendLmsObservation(state, measuredInterval) {
  else pending.push({...measuredInterval});
  return {...state,pending,lastEndOffsetMs:measuredInterval.endOffsetMs};
 }
-export function prepareLmsObservationEvent(state) {
+export function prepareLmsObservationEvent(state, force = false) {
  if(state.inFlight) return state;
- if(!state.pending.length && state.nextSequence>1) return state;
+ if(!state.pending.length && state.nextSequence>1 && !force) return state;
  if(state.nextSequence>=2147483647) throw new Error('Start a new timed visit to continue recording.');
  return {...state,pending:state.pending.slice(120),inFlight:{eventId:state.sessionId+':'+state.nextSequence,sequence:state.nextSequence,intervals:state.pending.slice(0,120)}};
 }

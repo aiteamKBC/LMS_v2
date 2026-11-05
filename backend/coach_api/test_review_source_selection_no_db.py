@@ -101,7 +101,7 @@ class SharedReviewSourceResolverTests(SimpleTestCase):
     @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
     @patch("coach_api.views.fetch_aptem_review_events")
     @patch("coach_api.views.resolve_effective_aptem_ids", return_value=({1: 101}, set()))
-    def test_aptem_learner_without_imported_mcm_gets_curriculum_mcms_only(
+    def test_aptem_learner_without_imported_mcm_keeps_only_imported_reviews(
         self, _identities, fetch_aptem, _source_rows, _mcm_profiles, _templates, _anchor, _window,
         _programme, occurrences, build_event,
     ):
@@ -117,14 +117,12 @@ class SharedReviewSourceResolverTests(SimpleTestCase):
 
         result = views.resolve_coach_review_events("coach@example.invalid", "Coach", [learner(1)])
 
-        # Progress Reviews stay Aptem-only; only the Curriculum MCM is added.
-        self.assertEqual(result["events"], [
-            aptem_event,
-            {"eventKey": "review:1:template-1:1", "source": "mcr", "reviewSource": "curriculum"},
-        ])
-        self.assertEqual(build_event.call_count, 1)
+        # The source boundary now blocks MCM fallback as well as Progress Reviews.
+        self.assertEqual(result["events"], [aptem_event])
+        build_event.assert_not_called()
+        occurrences.assert_not_called()
         self.assertEqual(result["reviewGenerationIssues"], [])
-        self.assertEqual(result["sourceCounts"]["curriculumMcmFallbackLearners"], 1)
+        self.assertEqual(result["sourceCounts"]["curriculumMcmFallbackLearners"], 0)
         self.assertEqual(result["sourceCounts"]["curriculumLearners"], 0)
         self.assertEqual(result["aptemProfileIds"], {1})
 
@@ -133,16 +131,17 @@ class SharedReviewSourceResolverTests(SimpleTestCase):
     @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
     @patch("coach_api.views.fetch_aptem_review_events", return_value=([], set()))
     @patch("coach_api.views.resolve_effective_aptem_ids", return_value=({1: 101}, set()))
-    def test_unavailable_aptem_mcm_history_never_falls_back_to_curriculum(
+    def test_empty_aptem_source_never_checks_mcm_history_or_falls_back(
         self, _identities, _fetch_aptem, _source_rows, _mcm_profiles, curriculum_occurrences,
     ):
         result = views.resolve_coach_review_events("coach@example.invalid", "Coach", [learner(1)])
 
         self.assertEqual(result["events"], [])
         curriculum_occurrences.assert_not_called()
+        _mcm_profiles.assert_not_called()
         self.assertEqual(result["sourceCounts"]["curriculumMcmFallbackLearners"], 0)
         self.assertIn(
-            {"learnerId": "1", "code": "aptem_reviews_unavailable"},
+            {"learnerId": "1", "code": "aptem_source_missing"},
             result["reviewGenerationIssues"],
         )
 

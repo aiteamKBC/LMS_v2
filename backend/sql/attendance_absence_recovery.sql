@@ -18,7 +18,9 @@ ALTER TABLE "Coach".coach_absence_report
 -- reference column (alternative:OCC-...). It is deliberately not a coach
 -- calendar event, so the old unconditional FK rejected every valid alternative
 -- report. Catch-up ownership and availability are checked and locked by the
--- application before the report is inserted.
+-- application before a booking is linked to the report. A new catch-up report
+-- is saved first with a NULL booking reference; the following booking request
+-- fills it in, or leaves a visible report that the learner can retry.
 ALTER TABLE "Coach".coach_absence_report
   DROP CONSTRAINT IF EXISTS coach_absence_catchup_event_fk,
   DROP CONSTRAINT IF EXISTS coach_absence_recovery_valid;
@@ -27,9 +29,9 @@ ALTER TABLE "Coach".coach_absence_report
   ADD CONSTRAINT coach_absence_recovery_valid CHECK (
        (recovery_method IN ('', 'recorded') AND catchup_event_key IS NULL)
     OR (recovery_method = 'catch-up'
-        AND catchup_event_key IS NOT NULL
-        AND catchup_event_key <> ''
-        AND catchup_event_key NOT LIKE 'alternative:%')
+        AND (catchup_event_key IS NULL
+             OR (catchup_event_key <> ''
+                 AND catchup_event_key NOT LIKE 'alternative:%')))
     OR (recovery_method = 'alternative'
         AND catchup_event_key LIKE 'alternative:%'
         AND length(catchup_event_key) > length('alternative:'))

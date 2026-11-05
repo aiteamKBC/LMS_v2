@@ -1,21 +1,29 @@
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import type { MeetingAttendance } from '@/api/meetingAttendance';
+import { reviewAttendanceResult } from '@/lib/reviewAttendance';
 
-export type TimelineStatus = 'planned' | 'scheduled' | 'in-progress' | 'attended' | 'missed';
+export type TimelineStatus = 'planned' | 'scheduled' | 'in-progress' | 'awaiting-attendance' | 'awaiting-signature' | 'attended' | 'missed';
+
+const normalise = (value?: string | null) => (value || '').trim().toLowerCase().replace(/[ _]+/g, '-');
 
 /** Only the attendance sources can turn a booked meeting green or red. */
-export function reviewTimelineStatus(event: LearnerCalendarEvent, attendance?: MeetingAttendance): TimelineStatus {
-  if (attendance?.attendanceConfirmed || event.meetingOutcome === 'completed') return 'attended';
-  if (attendance?.missed || attendance?.absenceReported || event.meetingOutcome === 'ended') return 'missed';
-  const attendanceStatus = (attendance?.status || '').trim().toLowerCase().replace(/[ _]+/g, '-');
-  const eventBookingStatus = (event.bookingStatus || '').trim().toLowerCase().replace(/[ _]+/g, '-');
-  const eventStatus = event.status.trim().toLowerCase().replace(/[ _]+/g, '-');
+export function reviewTimelineStatus(event: LearnerCalendarEvent, attendance?: MeetingAttendance, reviewStatus?: string | null): TimelineStatus {
+  const outcome = reviewAttendanceResult(event, attendance);
+  if (outcome === 'attended' || outcome === 'missed') return outcome;
+  if (outcome === 'pending') return 'awaiting-attendance';
+  const attendanceStatus = normalise(attendance?.status);
+  const eventBookingStatus = normalise(event.bookingStatus);
+  const eventStatus = normalise(event.status);
   const bookingStatus = attendanceStatus || eventBookingStatus || eventStatus;
   if (['cancelled', 'deleted', 'superseded', 'failed', 'not-scheduled', 'planned', 'unknown'].includes(bookingStatus)) return 'planned';
+  const sources = [attendanceStatus, eventBookingStatus, eventStatus, normalise(reviewStatus)];
   // Attendance can lag the calendar row by one refresh. Preserve an explicit
   // in-progress state from either source instead of presenting it as merely
   // scheduled to the learner.
-  if ([attendanceStatus, eventBookingStatus, eventStatus].includes('in-progress')) return 'in-progress';
+  if (sources.includes('in-progress')) return 'in-progress';
+  // A review waiting for its signatures has already taken place. Leaving it in
+  // the scheduled tone made it read as a meeting that had not happened yet.
+  if (sources.includes('awaiting-signature')) return 'awaiting-signature';
   return event.scheduledDate ? 'scheduled' : 'planned';
 }
 
@@ -27,7 +35,7 @@ export function completedReviewTimelineStatus(
 ): TimelineStatus {
   if ([event.status, event.bookingStatus, attendance?.status, reviewStatus]
     .some(status => status?.trim().toLowerCase() === 'completed')) return 'attended';
-  if ([event.status, event.bookingStatus, attendance?.status, reviewStatus]
-    .some(status => status?.trim().toLowerCase().replace(/[ _]+/g, '-') === 'in-progress')) return 'in-progress';
-  return reviewTimelineStatus(event, attendance);
+  // The signature stage reaches the timeline through the shared reader, so
+  // verified attendance evidence still decides the attended and missed tones.
+  return reviewTimelineStatus(event, attendance, reviewStatus);
 }

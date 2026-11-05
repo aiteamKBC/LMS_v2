@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
-import { feedbackApi, type FeedbackAnalyticsData, type FeedbackAssignmentSource, type FeedbackForm, type FeedbackFormVersion, type FeedbackLearnerOption, type FeedbackRecipient, type FeedbackResponse } from '@/api/feedback';
+import { feedbackApi, type FeedbackAnalyticsData, type FeedbackAssignmentSource, type FeedbackForm, type FeedbackFormType, type FeedbackFormVersion, type FeedbackLearnerOption, type FeedbackRecipient, type FeedbackResponse } from '@/api/feedback';
+import { LectureQuestionAnalytics } from '@/features/feedback/LectureQuestionAnalytics';
+import { FeedbackDashboard } from '@/features/feedback/FeedbackDashboard';
+import { ThemedSelect, type ThemedSelectOption } from '@/components/feature/ThemedSelect';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { FormRenderer } from '@/features/feedback/FormRenderer';
-import { ExternalFeedbackCampaignManager } from '@/features/feedback/ExternalFeedbackCampaignManager';
 import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 
-type Tab = 'overview' | 'forms' | 'campaigns' | 'responses' | 'analytics';
+type Tab = 'overview' | 'forms' | 'responses' | 'analytics' | 'insights';
 const nav = roleNavMap.engagement;
 const button = 'rounded-lg px-3 py-2 text-xs font-semibold transition-colors';
 
@@ -53,25 +55,27 @@ export default function FeedbackPage() {
     } catch (error) { await Swal.fire({ icon: 'error', title: 'Action failed', text: error instanceof Error ? error.message : 'Unexpected error.' }); }
   }
 
-  async function openResponse(response: FeedbackResponse) {
+  async function openResponse(response: Pick<FeedbackResponse, 'id'>) {
     try { setViewing((await feedbackApi.response(response.id)).response); } catch (error) { void Swal.fire({ icon: 'error', title: 'Could not open response', text: error instanceof Error ? error.message : '' }); }
   }
 
   return <WorkspaceShell role="engagement" roleLabel={nav.label} navItems={nav.items} workspaceLabel={nav.workspaceLabel} pageTitle="Feedback" pageSubtitle="Create, assign, and analyse learner feedback forms" userName={operator.name} userRole={operator.role}>
     <div className="space-y-5 p-6">
+      {tab !== 'insights' && <>
       <div className="rounded-2xl bg-gradient-to-r from-[#541EA0] to-[#7C3AED] p-6 text-white shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-widest text-purple-200">Reports / Feedback</p><h1 className="mt-1 font-heading text-2xl font-bold !text-white">Feedback Forms</h1><p className="mt-1 max-w-2xl text-sm text-purple-100">Build flexible forms, assign them to learners, monitor completion, and review responses.</p></div><button onClick={() => navigate('/engagement/reports/feedback/create')} className="rounded-lg bg-white px-4 py-2.5 text-xs font-bold text-[#541EA0] shadow-sm">+ Create Feedback Form</button></div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[
         ['Total Forms', summary.totalForms, 'ri-file-list-3-line'], ['Published', summary.publishedForms, 'ri-send-plane-line'], ['Draft', summary.draftForms, 'ri-draft-line'], ['Responses', summary.totalResponses, 'ri-chat-check-line'],
       ].map(([label, value, icon]) => <div key={String(label)} className="rounded-xl border border-foreground-200/60 bg-background-50 p-4"><div className="flex items-center justify-between"><div><p className="text-xs text-foreground-500">{label}</p><p className="mt-1 text-2xl font-bold text-foreground-900">{value}</p></div><span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-50 text-primary-600"><i className={`${icon} text-lg`} /></span></div></div>)}</div>
-      <div className="flex gap-1 overflow-x-auto rounded-lg bg-background-100 p-1">{(['overview', 'forms', 'campaigns', 'responses', 'analytics'] as Tab[]).map(value => <button key={value} onClick={() => setTab(value)} className={`${button} whitespace-nowrap ${tab === value ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-600 hover:bg-white'}`}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div>
+      </>}
+      <div className="flex gap-1 overflow-x-auto rounded-lg bg-background-100 p-1">{(['overview', 'forms', 'responses', 'analytics', 'insights'] as Tab[]).map(value => <button key={value} onClick={() => setTab(value)} className={`${button} whitespace-nowrap ${tab === value ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-600 hover:bg-white'}`}>{value === 'insights' ? 'Feedback Insights' : value[0].toUpperCase() + value.slice(1)}</button>)}</div>
       {loading ? <div className="rounded-xl border bg-white p-10 text-center text-sm text-foreground-400">Loading feedback…</div> : <>
         {tab === 'overview' && <Overview analytics={analytics} forms={forms} onViewForms={() => setTab('forms')} />}
         {tab === 'forms' && <FormsTable forms={filtered} search={search} status={status} onSearch={setSearch} onStatus={setStatusFilter} onEdit={form => navigate(`/engagement/reports/feedback/forms/${form.id}/edit`)} onPreview={form => navigate(`/engagement/reports/feedback/forms/${form.id}/preview`)} onAssign={setAssigning} onViewRecipients={setRecipientForm} onViewVersions={setVersionForm} onResponses={() => setTab('responses')} onAction={action} />}
-        {tab === 'campaigns' && <ExternalFeedbackCampaignManager forms={forms} />}
         {tab === 'responses' && <ResponsesTable responses={responses} forms={forms} onOpen={response => void openResponse(response)} />}
-        {tab === 'analytics' && analytics && <AnalyticsView data={analytics} />}
+        {tab === 'analytics' && analytics && <AnalyticsView data={analytics} forms={forms} responses={responses} onViewResponse={id => void openResponse({ id })} />}
+        {tab === 'insights' && <FeedbackDashboard onViewResponse={id => void openResponse({ id })} />}
       </>}
     </div>
     {assigning && <AssignmentDialog form={assigning} onClose={() => setAssigning(null)} onAssigned={() => { setAssigning(null); void refresh(); }} />}
@@ -89,25 +93,124 @@ function FormsTable({ forms, search, status, onSearch, onStatus, onEdit, onPrevi
   return <div className="overflow-hidden rounded-xl border border-foreground-200/60 bg-background-50">
     <div className="flex flex-wrap gap-3 border-b border-background-200 p-4"><input value={search} onChange={e => onSearch(e.target.value)} placeholder="Search forms…" className="min-w-56 flex-1 rounded-lg border border-foreground-200 px-3 py-2 text-xs" /><select value={status} onChange={e => onStatus(e.target.value)} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs"><option value="all">All statuses</option><option value="draft">Draft</option><option value="published">Published</option><option value="closed">Closed</option></select></div>
     <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs"><thead className="bg-background-100 text-foreground-500"><tr>{['Form Name', 'Status', 'Assigned', 'Responses', 'Created', 'Last Updated', 'Actions'].map(x => <th key={x} className="px-4 py-3 font-semibold">{x}</th>)}</tr></thead><tbody className="divide-y divide-background-200">{forms.map(form => {
-      const versioned = ['post_lecture', 'information_session', 'commitment_meeting'].includes(form.formType);
-      const external = form.formType === 'information_session' || form.formType === 'commitment_meeting';
-      return <tr key={form.id}><td className="px-4 py-3 font-semibold text-foreground-900"><span>{form.title}</span>{versioned && <span className="ml-2 rounded-full bg-primary-50 px-2 py-0.5 text-[10px] text-primary-700">v{form.version}</span>}</td><td className="px-4 py-3"><Status status={form.status} /></td><td className="px-4 py-3">{external ? form.assignedCount : <button type="button" disabled={!form.assignedCount} onClick={() => onViewRecipients(form)} className="font-semibold text-primary-600 underline-offset-2 hover:underline disabled:text-foreground-400 disabled:no-underline">{form.assignedCount}</button>}</td><td className="px-4 py-3">{form.responseCount} / {form.assignedCount || '—'}</td><td className="px-4 py-3 text-foreground-500">{formatDate(form.createdAt)}</td><td className="px-4 py-3 text-foreground-500">{formatDate(form.updatedAt)}</td><td className="px-4 py-3"><div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-semibold"><button onClick={() => onEdit(form)} className="text-primary-600">Edit</button><button onClick={() => onPreview(form)} className="text-primary-600">Preview</button>{versioned && <button onClick={() => onViewVersions(form)} className="text-primary-600">Versions</button>}<button onClick={() => void onAction(form, 'duplicate')} className="text-primary-600">Duplicate</button>{form.formType === 'general' && <button disabled={form.status !== 'published'} onClick={() => onAssign(form)} className="text-primary-600 disabled:text-foreground-300">Assign</button>}{form.status === 'draft' && <button onClick={() => void onAction(form, 'publish')} className="text-emerald-600">Publish</button>}{form.status === 'published' && <><button onClick={() => void onAction(form, 'draft')} className="text-amber-600">Unpublish</button><button onClick={() => void onAction(form, 'close')} className="text-amber-700">Close</button></>}<button onClick={onResponses} className="text-primary-600">Responses</button><button onClick={() => void onAction(form, 'delete')} className="text-red-600">Delete</button></div></td></tr>;
+      const versioned = ['post_lecture', 'post_mcm_review', 'post_progress_review', 'post_progress_review_employer', 'mid_module', 'end_module'].includes(form.formType);
+      return <tr key={form.id}><td className="px-4 py-3 font-semibold text-foreground-900"><span>{form.title}</span>{versioned && <span className="ml-2 rounded-full bg-primary-50 px-2 py-0.5 text-[10px] text-primary-700">v{form.version}</span>}</td><td className="px-4 py-3"><Status status={form.status} /></td><td className="px-4 py-3"><button type="button" disabled={!form.assignedCount} onClick={() => onViewRecipients(form)} className="font-semibold text-primary-600 underline-offset-2 hover:underline disabled:text-foreground-400 disabled:no-underline">{form.assignedCount}</button></td><td className="px-4 py-3">{form.responseCount} / {form.assignedCount || '—'}</td><td className="px-4 py-3 text-foreground-500">{formatDate(form.createdAt)}</td><td className="px-4 py-3 text-foreground-500">{formatDate(form.updatedAt)}</td><td className="px-4 py-3"><div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-semibold"><button onClick={() => onEdit(form)} className="text-primary-600">Edit</button><button onClick={() => onPreview(form)} className="text-primary-600">Preview</button>{versioned && <button onClick={() => onViewVersions(form)} className="text-primary-600">Versions</button>}<button onClick={() => void onAction(form, 'duplicate')} className="text-primary-600">Duplicate</button>{form.formType === 'general' && <button disabled={form.status !== 'published'} onClick={() => onAssign(form)} className="text-primary-600 disabled:text-foreground-300">Assign</button>}{form.status === 'draft' && <button onClick={() => void onAction(form, 'publish')} className="text-emerald-600">Publish</button>}{form.status === 'published' && <><button onClick={() => void onAction(form, 'draft')} className="text-amber-600">Unpublish</button><button onClick={() => void onAction(form, 'close')} className="text-amber-700">Close</button></>}<button onClick={onResponses} className="text-primary-600">Responses</button><button onClick={() => void onAction(form, 'delete')} className="text-red-600">Delete</button></div></td></tr>;
     })}{!forms.length && <tr><td colSpan={7} className="p-10 text-center text-foreground-400">No feedback forms match these filters.</td></tr>}</tbody></table></div>
   </div>;
 }
 
 function ResponsesTable({ responses, forms, onOpen }: { responses: FeedbackResponse[]; forms: FeedbackForm[]; onOpen: (r: FeedbackResponse) => void }) {
-  const [formId, setFormId] = useState('all'); const [status, setStatus] = useState('all'); const [learner, setLearner] = useState(''); const [campaignType, setCampaignType] = useState('all');
-  const formTypes = new Map(forms.map(form => [form.id, form.formType]));
-  const responseType = (response: FeedbackResponse): FeedbackResponse['campaignType'] => {
-    const type = formTypes.get(response.formId);
-    return type === 'information_session' || type === 'commitment_meeting' ? type : undefined;
-  };
-  const filtered = responses.map(response => ({ ...response, campaignType: responseType(response) })).filter(r => (formId === 'all' || r.formId === Number(formId)) && (status === 'all' || r.status === status) && (campaignType === 'all' || r.campaignType === campaignType) && r.learnerName.toLowerCase().includes(learner.toLowerCase()));
-  return <div className="overflow-hidden rounded-xl border border-foreground-200/60 bg-background-50"><div className="flex flex-wrap gap-3 border-b p-4"><select value={formId} onChange={e => setFormId(e.target.value)} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All forms</option>{forms.map(f => <option key={f.id} value={f.id}>{f.title}</option>)}</select><select aria-label="Campaign type" value={campaignType} onChange={e => setCampaignType(e.target.value)} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All feedback types</option><option value="information_session">Information Session</option><option value="commitment_meeting">Commitment Meeting</option></select><select value={status} onChange={e => setStatus(e.target.value)} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All statuses</option><option value="in_progress">In progress</option><option value="completed">Completed</option></select><input value={learner} onChange={e => setLearner(e.target.value)} placeholder="Search respondent…" className="rounded-lg border px-3 py-2 text-xs" /></div><div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="bg-background-100 text-foreground-500"><tr>{['Form', 'Respondent', 'Campaign', 'Type', 'Status', 'Started', 'Submitted'].map(x => <th key={x} className="px-4 py-3">{x}</th>)}</tr></thead><tbody className="divide-y">{filtered.map(r => <tr key={r.id} onClick={() => onOpen(r)} className="cursor-pointer hover:bg-primary-50/40"><td className="px-4 py-3 font-semibold">{r.formTitle}</td><td className="px-4 py-3">{r.learnerName}</td><td className="px-4 py-3">{r.campaignName || r.programme || '—'}</td><td className="px-4 py-3">{r.campaignType === 'information_session' ? 'Information Session' : r.campaignType === 'commitment_meeting' ? 'Commitment Meeting' : 'Other'}</td><td className="px-4 py-3"><Status status={r.status} /></td><td className="px-4 py-3">{formatDate(r.startedAt)}</td><td className="px-4 py-3">{formatDate(r.submittedAt)}</td></tr>)}{!filtered.length && <tr><td colSpan={7} className="p-10 text-center text-foreground-400">No responses found.</td></tr>}</tbody></table></div></div>;
+  const [formId, setFormId] = useState('all'); const [status, setStatus] = useState('all'); const [learner, setLearner] = useState('');
+  const filtered = responses.filter(r => (formId === 'all' || r.formId === Number(formId)) && (status === 'all' || r.status === status) && r.learnerName.toLowerCase().includes(learner.toLowerCase()));
+  return <div className="overflow-hidden rounded-xl border border-foreground-200/60 bg-background-50"><div className="flex flex-wrap gap-3 border-b p-4"><select value={formId} onChange={e => setFormId(e.target.value)} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All forms</option>{forms.map(f => <option key={f.id} value={f.id}>{f.title}</option>)}</select><select value={status} onChange={e => setStatus(e.target.value)} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All statuses</option><option value="in_progress">In progress</option><option value="completed">Completed</option></select><input value={learner} onChange={e => setLearner(e.target.value)} placeholder="Search learner…" className="rounded-lg border px-3 py-2 text-xs" /></div><div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="bg-background-100 text-foreground-500"><tr>{['Form', 'Lecture', 'Lecture date', 'Tutor', 'Learner', 'Programme', 'Status', 'Started', 'Submitted'].map(x => <th key={x} className="px-4 py-3">{x}</th>)}</tr></thead><tbody className="divide-y">{filtered.map(r => <tr key={r.id} onClick={() => onOpen(r)} className="cursor-pointer hover:bg-primary-50/40"><td className="px-4 py-3 font-semibold">{r.formTitle}</td><td className="px-4 py-3">{r.formType === 'post_lecture' ? (r.sessionTitle || 'Lecture') : '-'}</td><td className="px-4 py-3">{r.formType === 'post_lecture' ? formatDate(r.sessionStartsAt) : '-'}</td><td className="px-4 py-3">{r.formType === 'post_lecture' ? (r.tutorName || 'Not recorded') : '-'}</td><td className="px-4 py-3">{r.learnerName}</td><td className="px-4 py-3">{r.programme || '—'}</td><td className="px-4 py-3"><Status status={r.status} /></td><td className="px-4 py-3">{formatDate(r.startedAt)}</td><td className="px-4 py-3">{formatDate(r.submittedAt)}</td></tr>)}{!filtered.length && <tr><td colSpan={9} className="p-10 text-center text-foreground-400">No responses found.</td></tr>}</tbody></table></div></div>;
 }
 
-function AnalyticsView({ data, compact = false }: { data: FeedbackAnalyticsData; compact?: boolean }) { return <div className={`rounded-xl border border-foreground-200/60 bg-background-50 p-5 ${compact ? '' : 'space-y-5'}`}><h2 className="mb-4 font-heading text-sm font-semibold text-foreground-900">Completion analytics</h2><div className="grid grid-cols-2 gap-3 lg:grid-cols-5">{[['Assigned', data.totalAssigned], ['Not Started', data.notStarted], ['In Progress', data.inProgress], ['Completed', data.completed], ['Completion', `${data.completionRate}%`]].map(([label, value]) => <div key={String(label)} className="rounded-lg bg-background-100 p-3"><p className="text-[10px] text-foreground-500">{label}</p><p className="mt-1 text-lg font-bold text-foreground-900">{value}</p></div>)}</div>{!compact && <div><h3 className="mb-2 text-xs font-semibold text-foreground-700">Average ratings</h3>{data.ratingAverages.map(rating => <div key={rating.questionId} className="mb-2 flex items-center justify-between rounded-lg border p-3 text-xs"><span>{rating.question}</span><strong className="text-primary-700">{rating.average} ({rating.responses})</strong></div>)}{!data.ratingAverages.length && <p className="text-xs text-foreground-400">No completed rating answers yet.</p>}</div>}</div>; }
+type AnalyticsFormType = 'all' | FeedbackFormType;
+
+const ANALYTICS_FORM_TYPES: ThemedSelectOption<AnalyticsFormType>[] = [
+  { value: 'all', label: 'All feedback types' },
+  { value: 'post_lecture', label: 'Live Sessions Feedback' },
+  { value: 'mid_module', label: 'Wellbeing' },
+  { value: 'end_module', label: 'End-module Feedback' },
+  { value: 'post_mcm_review', label: 'MCM Feedback' },
+  { value: 'post_progress_review', label: 'Progress Review Feedback' },
+  { value: 'post_progress_review_employer', label: 'Progress Review – Employer Feedback' },
+  { value: 'post_event', label: 'Event Feedback' },
+  { value: 'event_rsvp', label: 'Event RSVP' },
+  { value: 'general', label: 'General Feedback' },
+];
+
+function AnalyticsView({ data, forms = [], responses = [], compact = false, onViewResponse }: { data: FeedbackAnalyticsData; forms?: FeedbackForm[]; responses?: FeedbackResponse[]; compact?: boolean; onViewResponse?: (id: number) => void }) {
+  const [formType, setFormType] = useState<AnalyticsFormType>('all');
+  const [formId, setFormId] = useState('all');
+  const [scopedData, setScopedData] = useState(data);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState('');
+
+  const availableForms = useMemo(() => forms.filter(form => formType === 'all' || form.formType === formType), [formType, forms]);
+  const formOptions = useMemo<ThemedSelectOption<string>[]>(() => [
+    { value: 'all', label: 'All forms' },
+    ...availableForms.map(form => ({ value: String(form.id), label: form.title })),
+  ], [availableForms]);
+
+  useEffect(() => {
+    if (compact || (formType === 'all' && formId === 'all')) {
+      setScopedData(data);
+      setAnalyticsError('');
+      return undefined;
+    }
+    let active = true;
+    setAnalyticsLoading(true);
+    setAnalyticsError('');
+    const filters = formId !== 'all' ? { formId: Number(formId) } : { formType: formType as FeedbackFormType };
+    feedbackApi.analytics(filters).then(result => {
+      if (active) setScopedData(result.analytics);
+    }).catch(error => {
+      if (active) setAnalyticsError(error instanceof Error ? error.message : 'Could not load filtered analytics.');
+    }).finally(() => {
+      if (active) setAnalyticsLoading(false);
+    });
+    return () => { active = false; };
+  }, [compact, data, formId, formType]);
+
+  if (compact) return <AnalyticsKpis data={data} compact />;
+
+  const scopeForms = forms.filter(form => (formType === 'all' || form.formType === formType) && (formId === 'all' || form.id === Number(formId)));
+  const isLectureReport = formType === 'post_lecture' || (formId !== 'all' && scopeForms[0]?.formType === 'post_lecture');
+  const scopeFormIds = new Set(scopeForms.map(form => form.id));
+  const scopeResponses = responses.filter(response => scopeFormIds.has(response.formId));
+  const scopeLabel = formId !== 'all' ? scopeForms[0]?.title || 'Selected form' : formType !== 'all' ? ANALYTICS_FORM_TYPES.find(option => option.value === formType)?.label || 'Selected type' : 'All feedback';
+
+  return <div className="space-y-5">
+    <section className="overflow-hidden rounded-2xl border border-primary-100 bg-white shadow-sm">
+      <div className="bg-gradient-to-r from-[#4B197D] via-[#6024A8] to-[#7C3AED] px-5 py-5 text-white"><div className="flex items-center gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/20 bg-white/10 text-xl"><i className="ri-line-chart-line" /></span><div><h2 className="font-heading text-lg font-bold !text-white">Feedback Analytics</h2><p className="mt-0.5 text-xs text-purple-100">Monitor completion, response coverage and rating trends using submitted feedback.</p></div></div></div>
+      <div className="grid gap-3 border-t border-primary-100 bg-primary-50/40 p-4 md:grid-cols-2">
+        <div><p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-foreground-500">Feedback type</p><ThemedSelect<AnalyticsFormType> value={formType} options={ANALYTICS_FORM_TYPES} onChange={value => { setFormType(value); setFormId('all'); }} /></div>
+        <div><p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-foreground-500">Feedback form</p><ThemedSelect value={formId} options={formOptions} onChange={setFormId} /></div>
+      </div>
+    </section>
+
+    {analyticsError && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-medium text-rose-700">{analyticsError}</div>}
+    <div className={analyticsLoading ? 'pointer-events-none opacity-55' : ''} aria-busy={analyticsLoading}>
+      <AnalyticsKpis data={scopedData} />
+      {scopedData.questionMetrics && <LectureQuestionAnalytics key={`${formType}:${formId}`} data={scopedData} showLectures={isLectureReport} onViewResponse={onViewResponse} scope={{ ...(formId !== 'all' ? { formId: Number(formId) } : {}), ...(formType !== 'all' ? { formType } : {}) }} />}
+
+      <div className="mt-5">
+        <CompletionSplit data={scopedData} scopeLabel={scopeLabel} />
+      </div>
+
+      <RecentFeedback responses={scopeResponses} />
+    </div>
+  </div>;
+}
+
+function AnalyticsKpis({ data, compact = false }: { data: FeedbackAnalyticsData; compact?: boolean }) {
+  const cards = [
+    ['Assigned', data.totalAssigned, 'ri-file-list-3-line', 'bg-violet-50 text-violet-700'],
+    ['Not started', data.notStarted, 'ri-time-line', 'bg-slate-100 text-slate-600'],
+    ['In progress', data.inProgress, 'ri-loader-4-line', 'bg-amber-50 text-amber-700'],
+    ['Submitted', data.completed, 'ri-checkbox-circle-line', 'bg-emerald-50 text-emerald-700'],
+    ['Completion rate', `${data.completionRate}%`, 'ri-percent-line', 'bg-blue-50 text-blue-700'],
+  ] as const;
+  return <section aria-label="Feedback completion metrics" className={compact ? 'rounded-xl border border-foreground-200/60 bg-background-50 p-5' : ''}>{compact && <h2 className="mb-4 font-heading text-sm font-semibold text-foreground-900">Completion analytics</h2>}<div className="grid grid-cols-2 gap-3 lg:grid-cols-5">{cards.map(([label, value, icon, tone]) => <div key={label} className={`rounded-xl border border-foreground-200/60 p-4 ${compact ? 'bg-white' : 'bg-white shadow-sm'}`}><div className={`flex h-9 w-9 items-center justify-center rounded-lg text-lg ${tone}`}><i className={icon} /></div><p className="mt-3 text-2xl font-bold text-foreground-900">{value}</p><p className="mt-0.5 text-xs font-semibold text-foreground-500">{label}</p></div>)}</div></section>;
+}
+
+function CompletionSplit({ data, scopeLabel }: { data: FeedbackAnalyticsData; scopeLabel: string }) {
+  const total = Math.max(data.totalAssigned, 1);
+  const completed = data.completed / total * 100;
+  const progress = data.inProgress / total * 100;
+  const chart = { background: `conic-gradient(#16a34a 0 ${completed}%, #f59e0b ${completed}% ${completed + progress}%, #e2e8f0 ${completed + progress}% 100%)` };
+  return <section className="rounded-2xl border border-foreground-200/70 bg-white p-5 shadow-sm"><div><h3 className="font-heading text-sm font-bold text-foreground-900">Completion split</h3><p className="mt-0.5 text-[11px] text-foreground-500">{scopeLabel}</p></div><div className="mt-5 flex flex-col items-center gap-5 sm:flex-row sm:justify-center"><div className="relative h-36 w-36 shrink-0 rounded-full" style={chart}><div className="absolute inset-5 flex flex-col items-center justify-center rounded-full bg-white"><span className="text-2xl font-bold text-foreground-900">{data.totalAssigned}</span><span className="text-[10px] text-foreground-500">Assigned</span></div></div><div className="space-y-2 text-xs"><LegendDot color="bg-emerald-600" label="Submitted" value={data.completed} /><LegendDot color="bg-amber-500" label="In progress" value={data.inProgress} /><LegendDot color="bg-slate-300" label="Not started" value={data.notStarted} /></div></div></section>;
+}
+
+function LegendDot({ color, label, value }: { color: string; label: string; value: number }) { return <div className="grid grid-cols-[10px_90px_auto] items-center gap-2"><span className={`h-2.5 w-2.5 rounded-full ${color}`} /><span className="text-foreground-600">{label}</span><strong className="text-foreground-900">{value}</strong></div>; }
+
+function RecentFeedback({ responses }: { responses: FeedbackResponse[] }) {
+  const recent = [...responses].sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()).slice(0, 6);
+  return <section className="mt-5 overflow-hidden rounded-2xl border border-foreground-200/70 bg-white shadow-sm"><div className="border-b border-foreground-100 px-5 py-4"><h3 className="font-heading text-sm font-bold text-foreground-900">Recent responses</h3><p className="mt-0.5 text-[11px] text-foreground-500">Latest activity in the selected analytics scope.</p></div>{recent.length ? <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left text-xs"><thead className="bg-background-100 text-[10px] uppercase tracking-wide text-foreground-500"><tr><th className="px-5 py-3">Form</th><th className="px-5 py-3">Learner</th><th className="px-5 py-3">Programme</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Updated</th></tr></thead><tbody className="divide-y divide-foreground-100">{recent.map(response => <tr key={response.id}><td className="px-5 py-3 font-semibold text-foreground-800">{response.formTitle}</td><td className="px-5 py-3 text-foreground-600">{response.learnerName}</td><td className="px-5 py-3 text-foreground-600">{response.programme || '—'}</td><td className="px-5 py-3"><Status status={response.status} /></td><td className="px-5 py-3 text-foreground-500">{formatDate(response.updatedAt)}</td></tr>)}</tbody></table></div> : <EmptyAnalytics message="No responses in this selection yet." />}</section>;
+}
+
+function EmptyAnalytics({ message }: { message: string }) { return <div className="py-8 text-center text-xs text-foreground-400"><i className="ri-bar-chart-line mb-2 block text-2xl text-foreground-300" />{message}</div>; }
 
 function AssignmentDialog({ form, onClose, onAssigned }: { form: FeedbackForm; onClose: () => void; onAssigned: () => void }) {
   const [mode, setMode] = useState<'all_learners' | 'learner'>('learner'); const [learners, setLearners] = useState<FeedbackLearnerOption[]>([]); const [selected, setSelected] = useState<string[]>([]); const [search, setSearch] = useState('');
@@ -133,7 +236,7 @@ function VersionsDialog({ form, onClose, onPreview }: { form: FeedbackForm; onCl
   return <Modal title={`Version history — ${form.title}`} onClose={onClose}>
     <p className="mb-4 text-xs text-foreground-500">Each lecture remains linked to the exact form version learners received. Historical versions are read-only.</p>
     {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
-    {loading ? <p className="py-10 text-center text-sm text-foreground-400">Loading versions…</p> : <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[720px] text-left text-xs"><thead className="bg-background-100 text-foreground-500"><tr>{['Version', 'State', 'Status', 'Lectures', 'Assigned', 'Responses', 'Updated', 'Action'].map(label => <th key={label} className="px-3 py-2.5 font-semibold">{label}</th>)}</tr></thead><tbody className="divide-y">{versions.map(version => <tr key={version.id}><td className="px-3 py-3 font-bold text-foreground-900">v{version.version}</td><td className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${version.isCurrent ? 'bg-primary-100 text-primary-700' : 'bg-background-200 text-foreground-600'}`}>{version.isCurrent ? 'Current' : 'Historical'}</span></td><td className="px-3 py-3"><Status status={version.status} /></td><td className="px-3 py-3">{version.deliveryCount}</td><td className="px-3 py-3">{version.assignedCount}</td><td className="px-3 py-3">{version.responseCount} / {version.startedCount || '—'}</td><td className="px-3 py-3 text-foreground-500">{formatDate(version.updatedAt)}</td><td className="px-3 py-3"><button type="button" onClick={() => onPreview(version.id)} className="font-semibold text-primary-600">Preview</button></td></tr>)}{!versions.length && !error && <tr><td colSpan={8} className="p-10 text-center text-foreground-400">No versions found.</td></tr>}</tbody></table></div>}
+    {loading ? <p className="py-10 text-center text-sm text-foreground-400">Loading versions…</p> : <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[720px] text-left text-xs"><thead className="bg-background-100 text-foreground-500"><tr>{['Version', 'State', 'Status', 'Deliveries', 'Assigned', 'Responses', 'Updated', 'Action'].map(label => <th key={label} className="px-3 py-2.5 font-semibold">{label}</th>)}</tr></thead><tbody className="divide-y">{versions.map(version => <tr key={version.id}><td className="px-3 py-3 font-bold text-foreground-900">v{version.version}</td><td className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${version.isCurrent ? 'bg-primary-100 text-primary-700' : 'bg-background-200 text-foreground-600'}`}>{version.isCurrent ? 'Current' : 'Historical'}</span></td><td className="px-3 py-3"><Status status={version.status} /></td><td className="px-3 py-3">{version.deliveryCount}</td><td className="px-3 py-3">{version.assignedCount}</td><td className="px-3 py-3">{version.responseCount} / {version.startedCount || '—'}</td><td className="px-3 py-3 text-foreground-500">{formatDate(version.updatedAt)}</td><td className="px-3 py-3"><button type="button" onClick={() => onPreview(version.id)} className="font-semibold text-primary-600">Preview</button></td></tr>)}{!versions.length && !error && <tr><td colSpan={8} className="p-10 text-center text-foreground-400">No versions found.</td></tr>}</tbody></table></div>}
   </Modal>;
 }
 
@@ -170,9 +273,12 @@ function RecipientsDialog({ form, onClose }: { form: FeedbackForm; onClose: () =
   }, [form.id, page, search, sourceKey]);
   const pages = Math.max(Math.ceil(total / pageSize), 1);
   const isEvent = form.formType === 'post_event';
-  const contextHeading = isEvent ? 'Event' : form.formType === 'post_lecture' ? 'Lecture' : 'Assignment';
-  const recipientHeading = isEvent ? 'Attendee' : 'Learner';
-  return <Modal title={`${isEvent ? 'Assigned attendees' : 'Assigned learners'} — ${form.title}`} onClose={onClose}>
+  const isEmployer = form.formType === 'post_progress_review_employer';
+  const isReview = isEmployer || form.formType === 'post_mcm_review' || form.formType === 'post_progress_review';
+  const contextHeading = isEvent ? 'Event' : form.formType === 'post_lecture' ? 'Lecture' : isReview ? 'Review' : ['mid_module', 'end_module'].includes(form.formType) ? 'Module' : 'Assignment';
+  const recipientHeading = isEmployer ? 'Employer / Learner' : isEvent ? 'Attendee' : 'Learner';
+  return <Modal title={`${isEmployer ? 'Assigned employers' : isEvent ? 'Assigned attendees' : 'Assigned learners'} — ${form.title}`} onClose={onClose}>
+    {isEmployer && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">Each employer answers separately from the learner. Pending link means the employer profile or account needs to be linked before the request appears in their portal. The related learner is shown with each review.</p>}
     {sources.length > 0 && sources.some(source => source.type !== 'manual') && <div className="mb-3 rounded-xl border border-primary-100 bg-primary-50/40 p-3"><label htmlFor="feedback-source-filter" className="mb-1.5 block text-xs font-semibold text-foreground-700">{contextHeading}</label><select id="feedback-source-filter" aria-label={`Filter by ${contextHeading.toLowerCase()}`} value={sourceKey} onChange={event => { setSourceKey(event.target.value); setPage(1); }} className="w-full rounded-lg border border-foreground-200 bg-white px-3 py-2.5 text-xs text-foreground-800"><option value="">All {contextHeading.toLowerCase()}s ({sources.reduce((count, source) => count + source.assignedCount, 0)} assignments)</option>{sources.map(source => <option key={source.key} value={source.key}>{sourceOptionLabel(source)}</option>)}</select></div>}
     <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-foreground-500">{total} assignment{total === 1 ? '' : 's'}{sourceKey ? ` for this ${contextHeading.toLowerCase()}` : ''}. Each recipient keeps the source that assigned this form.</p><input aria-label="Search assigned learners" value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder={`Search name, email, programme or ${contextHeading.toLowerCase()}…`} className="min-w-64 rounded-lg border px-3 py-2 text-xs" /></div>
     {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
@@ -181,8 +287,38 @@ function RecipientsDialog({ form, onClose }: { form: FeedbackForm; onClose: () =
   </Modal>;
 }
 
-function ResponseDialog({ response, onClose }: { response: FeedbackResponse; onClose: () => void }) { return <Modal title="Feedback response" onClose={onClose}><div className="mb-4 grid grid-cols-3 gap-3 rounded-lg bg-background-100 p-3 text-xs"><div><span className="text-foreground-400">Learner</span><p className="font-semibold">{response.learnerName}</p></div><div><span className="text-foreground-400">Form</span><p className="font-semibold">{response.formTitle}</p></div><div><span className="text-foreground-400">Submitted</span><p className="font-semibold">{formatDate(response.submittedAt)}</p></div></div><FormRenderer sections={response.sections || []} answers={Object.fromEntries((response.sections || []).flatMap(s => s.questions.map(q => [String(q.id), q.answer ?? null])))} readOnly /></Modal>; }
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) { return <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true"><div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"><div className="mb-4 flex items-center justify-between"><h2 className="font-heading text-lg font-bold">{title}</h2><button onClick={onClose} aria-label="Close" className="text-xl text-foreground-400">×</button></div>{children}</div></div>; }
+function ResponseDialog({ response, onClose }: { response: FeedbackResponse; onClose: () => void }) {
+  const [downloading, setDownloading] = useState(false);
+  const download = async () => {
+    setDownloading(true);
+    try {
+      const { downloadFeedbackResponsePdf } = await import('@/features/feedback/feedbackResponsePdf');
+      await downloadFeedbackResponsePdf(response);
+    } catch {
+      await Swal.fire('Download failed', 'The feedback response PDF could not be prepared. Please try again.', 'error');
+    } finally {
+      setDownloading(false);
+    }
+  };
+  return <Modal title="Feedback response" onClose={onClose} hideClose>
+    <div className="mb-4 grid grid-cols-3 gap-3 rounded-lg bg-background-100 p-3 text-xs">
+      <div><span className="text-foreground-400">{response.formType === 'post_progress_review_employer' ? 'Employer' : 'Learner'}</span><p className="font-semibold">{response.learnerName}</p></div>
+      <div><span className="text-foreground-400">Form</span><p className="font-semibold">{response.formTitle}</p></div>
+      <div><span className="text-foreground-400">Submitted</span><p className="font-semibold">{formatDate(response.submittedAt)}</p></div>
+    </div>
+    {response.formType === 'post_lecture' && <div className="mb-4 grid gap-3 rounded-lg bg-background-100 p-3 text-xs sm:grid-cols-3">
+      <div><span className="text-foreground-400">Lecture</span><p className="font-semibold">{response.sessionTitle || 'Lecture'}</p></div>
+      <div><span className="text-foreground-400">Lecture date</span><p className="font-semibold">{formatDate(response.sessionStartsAt)}</p></div>
+      <div><span className="text-foreground-400">Tutor</span><p className="font-semibold">{response.tutorName || 'Not recorded'}</p></div>
+    </div>}
+    <FormRenderer sections={response.sections || []} answers={Object.fromEntries((response.sections || []).flatMap(s => s.questions.map(q => [String(q.id), q.answer ?? null])))} readOnly />
+    <div className="sticky bottom-4 z-10 ml-auto mt-5 flex w-fit justify-end gap-3">
+      <button type="button" disabled={downloading} onClick={() => void download()} className={`${button} inline-flex items-center gap-1.5 bg-primary-600 text-white shadow-sm hover:bg-primary-700 disabled:opacity-50`}><i className="ri-download-2-line" aria-hidden="true" />{downloading ? 'Preparing PDF...' : 'Export PDF'}</button>
+      <button type="button" onClick={onClose} className={`${button} border border-foreground-200 bg-white text-foreground-700 hover:bg-background-100`}>Back</button>
+    </div>
+  </Modal>;
+}
+function Modal({ title, onClose, hideClose = false, children }: { title: string; onClose: () => void; hideClose?: boolean; children: React.ReactNode }) { return <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true"><div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"><div className="mb-4 flex items-center justify-between gap-3"><h2 className="font-heading text-lg font-bold">{title}</h2>{!hideClose && <button onClick={onClose} aria-label="Close" className="text-xl text-foreground-400">×</button>}</div>{children}</div></div>; }
 function Status({ status }: { status: string }) { const styles = status === 'published' || status === 'completed' ? 'bg-emerald-100 text-emerald-700' : status === 'draft' || status === 'in_progress' ? 'bg-amber-100 text-amber-700' : 'bg-background-200 text-foreground-600'; return <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${styles}`}>{status.replace('_', ' ').replace(/\b\w/g, x => x.toUpperCase())}</span>; }
 function formatDate(value: string | null) { return value ? new Date(value).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'; }
 function formatDateTime(value: string) { return new Date(value).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }

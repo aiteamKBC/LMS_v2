@@ -40,3 +40,15 @@ class SharedLiveDeliveryTests(SimpleTestCase):
             self.assertEqual(read_shared_live_delivery([], ['C']), {})
             self.assertEqual(read_shared_live_delivery(['M'], []), {})
             connections.__getitem__.assert_not_called()
+
+    def test_a_new_pasted_link_requires_the_actual_occurrence_date_and_clock(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        occurrence = ('C', 'S', 'O', 1, datetime(2026, 10, 30, 9), datetime(2026, 10, 30, 11),
+                      'GMT Standard Time', 'https://teams.microsoft.com/original', 'unverified')
+        with patch('learner_api.shared_live_delivery.connections', {'enrolment': connection}):
+            for day, clock in [('2026-10-23', '09:00'), ('2026-10-30', '14:00')]:
+                cursor.fetchall.return_value = [(*occurrence, day, clock)]
+                self.assertEqual(read_shared_live_delivery(['M'], ['C']), {})
+            cursor.fetchall.return_value = [(*occurrence, '2026-10-30', '09:00')]
+            self.assertEqual(read_shared_live_delivery(['M'], ['C'])['C']['teamsOccurrenceId'], 'O')

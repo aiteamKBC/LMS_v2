@@ -61,7 +61,6 @@ export function QuizModal({ session, onClose, onComplete }: QuizModalProps) {
       setTimeRemaining(prev => {
         if (prev <= 1) {
           clearInterval(timer);
-          submitQuiz();
           return 0;
         }
         return prev - 1;
@@ -118,6 +117,11 @@ export function QuizModal({ session, onClose, onComplete }: QuizModalProps) {
     setPhase('result');
     onComplete(res);
   }, [session, answers, timeRemaining, onComplete]);
+
+  // Submit after the countdown update, using the latest answers and callbacks.
+  useEffect(() => {
+    if (phase === 'quiz' && timeRemaining <= 0) submitQuiz();
+  }, [phase, timeRemaining, submitQuiz]);
 
   const handleAnswer = (optionIndex: number) => {
     setAnswers(prev => {

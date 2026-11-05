@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { useAuth } from '@/hooks/useAuth';
-import { activeWorkspace, workspacesFor, type PortalWorkspace } from '@/lib/portalWorkspaces';
+import { activeWorkspace, grantedWorkspacesFor, workspacesFor, type PortalWorkspace } from '@/lib/portalWorkspaces';
 
 /* ═══════════════════════════════════════════════════════
    WORKSPACE SWITCHER — how an administrator changes section.
@@ -24,7 +24,7 @@ import { activeWorkspace, workspacesFor, type PortalWorkspace } from '@/lib/port
    was the demo-account concept, not this.)
    ═══════════════════════════════════════════════════════ */
 
-/** Only an administrator sees this: everyone else has exactly one workspace. */
+/** Administrators keep their launcher; other accounts switch between their grants. */
 export function WorkspaceSwitcher() {
   const { auth, isAdmin } = useAuth();
   const navigate = useNavigate();
@@ -34,20 +34,14 @@ export function WorkspaceSwitcher() {
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const current = activeWorkspace(pathname);
-  // Learner is offered only to somebody who has a record of their own, so the
-  // rendered list and the keyboard index below are built from the same array.
-  //
-  // Memoised on the two fields it actually depends on: workspacesFor returns a
-  // fresh array each call, and an unmemoised one re-ran the effect that seeds
-  // `highlighted` on every render -- which reset the keyboard selection back to
-  // the current workspace the moment an arrow key moved it.
-  const learnerRecordId = auth.account?.learnerRecordId ?? null;
-  const learnerRecordKind = auth.account?.learnerRecordKind ?? null;
+  // Keep the same array while navigating the menu with the keyboard. Staff
+  // destinations come from their session payload, never the admin launcher.
+  const account = auth.account;
   const workspaces = useMemo(
-    () => workspacesFor({ learnerRecordId, learnerRecordKind }),
-    [learnerRecordId, learnerRecordKind],
+    () => isAdmin ? workspacesFor(account ?? null) : grantedWorkspacesFor(account),
+    [isAdmin, account],
   );
+  const current = activeWorkspace(pathname, workspaces);
 
   useEffect(() => {
     if (!open) return;
@@ -93,7 +87,7 @@ export function WorkspaceSwitcher() {
     }
   };
 
-  if (!auth.isAuthenticated || !isAdmin) return null;
+  if (!auth.isAuthenticated || (!isAdmin && workspaces.length <= 1)) return null;
 
   return (
     <div className="kbc-workspace-switcher relative shrink-0" ref={rootRef} onKeyDown={handleKeyDown}>

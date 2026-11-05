@@ -14,7 +14,7 @@ from django.test import RequestFactory, SimpleTestCase
 from learner_api.tests_attendance_lectures import register_row
 from . import attendance_context as context, attendance_recent as recent
 from .attendance_loading import coach_attendance_context
-from .attendance_sessions import assigned_modules_by_source
+from .bulk_register import saved_modules_by_source as assigned_modules_by_source
 
 
 def profiles(count=4):
@@ -105,17 +105,16 @@ class AttendanceContextTests(SimpleTestCase):
             self.assertEqual(loader.call_count, 2)
 
     def test_module_mapping_keeps_source_identity_and_has_no_title_predicate(self):
-        with patch('coach_api.attendance_sessions.connections') as connections:
+        with patch('coach_api.bulk_register.connections') as connections:
             cursor = connections.__getitem__.return_value.cursor.return_value.__enter__.return_value
-            cursor.fetchall.return_value = [(901, 'm1'), (902, 'm2')]
+            cursor.fetchall.return_value = [(1, 'm1'), (2, 'm2')]
             self.assertEqual(assigned_modules_by_source(profiles(2)), {901: ['m1'], 902: ['m2']})
             sql, params = cursor.execute.call_args.args
-            self.assertIn('SELECT source.id,', sql)
-            self.assertIn('UNION', sql)
-            self.assertIn('WHERE id=ANY(%s)', sql)
-            self.assertIn('cm.module_catalogue_id=assigned.module_id', sql)
+            self.assertIn('SELECT DISTINCT learner_profile_id,module_catalogue_id', sql)
+            self.assertIn('FROM curriculum.live_session_learner_attendance', sql)
+            self.assertIn('WHERE learner_profile_id=ANY(%s)', sql)
             self.assertNotIn('title', sql)
-            self.assertEqual(set(params[0]), {901, 902})
+            self.assertEqual(set(params[0]), {1, 2})
 
 
 class RecentAttendanceTests(SimpleTestCase):

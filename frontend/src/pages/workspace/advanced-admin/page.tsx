@@ -4,7 +4,7 @@ import { Search } from 'lucide-react';
 import { advancedAdminLearners, type AdvancedAdminLearner } from '@/api/advancedAdmin';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 
 const nav = roleNavMap['advanced-admin'];
 

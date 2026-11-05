@@ -1,10 +1,32 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearAllCachedResources } from '@/api/cachedRequest';
 import type { ReactNode } from 'react';
 import type { CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
-import { ModuleStructureConflictError } from '../moduleAuthoringData';
+import { CurriculumRequestTimeout, ModuleStructureConflictError } from '../moduleAuthoringData';
+import { fieldKey, projectAvailable } from '../collaborationProtocol';
+import { CurriculumVideoUpload } from '@/pages/curriculum/shared/CurriculumVideoUpload';
+import { coachFetch } from '@/lib/coachFetch';
+
+const collaborationTest = vi.hoisted(() => ({ enabled: false, claim: vi.fn(async () => true) }));
+vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn(async () => new Response(
+  JSON.stringify({ enabled: true, saved: true, import: null }), { status: 200 },
+)) }));
+vi.mock('../useModuleCollaboration', async importOriginal => {
+  const original = await importOriginal<typeof import('../useModuleCollaboration')>();
+  return { useModuleCollaboration: (...args: Parameters<typeof original.useModuleCollaboration>) => {
+    const actual = original.useModuleCollaboration(...args);
+    return collaborationTest.enabled ? { ...actual, enabled: true, connected: true, members: [], leases: [],
+      claim: collaborationTest.claim, holder: () => '', saved: async () => {}, cancel: () => {},
+      prepare: async (base: Parameters<typeof projectAvailable>[0], draft: Parameters<typeof projectAvailable>[1]) => {
+        const key = fieldKey('week', draft.weekStructure[0].id, 'title');
+        return { module: projectAvailable(base, draft, [key]), blocked: [key], collaboration: { editorId: 'synthetic', proofs: {} } };
+      },
+    } : actual;
+  } };
+});
 
 /**
  * The authoring workspace saves itself.
@@ -54,12 +76,17 @@ vi.mock('@/pages/curriculum/week-builder/weekTemplateData', () => ({
 }));
 
 vi.mock('@/pages/curriculum/shared/components/weekAuthoringLazy', () => ({
-  ComponentEditor: () => null,
-  WeekComponentRail: ({ components, onChange }: {
-    components: Array<{ id: string }>;
+  ComponentEditor: ({ component, moduleId }: { component: { id: string; type: string; title: string; settings: Record<string, unknown> }; moduleId: string }) => component.type === 'video'
+    ? <CurriculumVideoUpload targetId={moduleId} componentId={component.id} title={component.title} source={String(component.settings.videoUrl || '')} /> : null,
+  WeekComponentRail: ({ components, onChange, onSelectId }: {
+    components: Array<{ id: string; title: string }>;
     onChange: (components: Array<{ id: string }>) => void;
+    onSelectId: (id: string) => void;
   }) => (
-    <button type="button" onClick={() => onChange([...components].reverse())}>Reorder components</button>
+    <>
+      <button type="button" onClick={() => onChange([...components].reverse())}>Reorder components</button>
+      {components.map(component => <button key={component.id} type="button" onClick={() => onSelectId(component.id)}>{component.title}</button>)}
+    </>
   ),
   WeekOverviewPanel: () => null,
 }));
@@ -67,12 +94,15 @@ vi.mock('@/pages/curriculum/shared/components/weekAuthoringLazy', () => ({
 vi.mock('../moduleAuthoringData', async importOriginal => ({
   ...(await importOriginal<typeof import('../moduleAuthoringData')>()),
   loadModuleStructure: (...args: unknown[]) => loadModuleStructure(...(args as [])),
+  loadModuleWeekSessionPlan: vi.fn(async () => null),
   saveModuleStructure: (...args: unknown[]) => saveModuleStructure(...(args as [])),
 }));
 
 const programmes = [
   { id: 'program-mm', sourceId: 'PROG-MM', name: 'Marketing Manager' },
 ] as CurriculumProgramme[];
+
+vi.mock('@/api/moduleCatalogueActivity', () => ({ fetchModuleCatalogueActivity: vi.fn(async () => Object.fromEntries(modules.map(module => [module.moduleCatalogueId!, { source: 'new_lms', startDate: '2000-01-01', lastLiveDate: '2099-12-31' }]))) }));
 
 const modules = [
   {
@@ -89,7 +119,7 @@ const modules = [
 // The workspace reads the signed-in account (it decides which learner preview
 // an admin is offered). Without this the page throws on its first line and
 // every case below fails before it has asserted anything about saving.
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ auth: { account: { role: 'curriculum' } } }),
 }));
 
@@ -184,9 +214,9 @@ function holdNextSave() {
   return { release };
 }
 
-async function openWorkspace() {
-  loadModuleStructure.mockResolvedValue(storedStructure());
-  const search = '?module=MOD-AUTOSAVE-1';
+async function openWorkspace(extraSearch = '', structure = storedStructure()) {
+  loadModuleStructure.mockResolvedValue(structure);
+  const search = `?module=MOD-AUTOSAVE-1${extraSearch}`;
   window.history.replaceState({}, '', `/curriculum/module-builder${search}`);
   const { default: ModuleBuilder } = await import('../page');
   render(
@@ -226,6 +256,10 @@ async function openWorkspaceSaving() {
 
 describe('Module Builder auto-save', { timeout: 25000 }, () => {
   beforeEach(() => {
+    vi.mocked(coachFetch).mockImplementation(async () => new Response(JSON.stringify({ enabled: true, saved: true, import: null }), { status: 200 }));
+    clearAllCachedResources();
+    collaborationTest.enabled = false;
+    collaborationTest.claim.mockClear();
     reload.mockClear();
     loadModuleStructure.mockClear();
     saveModuleStructure.mockClear();
@@ -237,6 +271,159 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
       revision += 1;
       return { ...module, structureRevision: `rev-${revision}` };
     });
+  });
+
+  it('opens module settings without requesting a reservation for the derived hours total', async () => {
+    collaborationTest.enabled = true;
+    await openWorkspace('&settings=1');
+    await userEvent.click(screen.getByLabelText('Total OTJH hours'));
+    expect(collaborationTest.claim).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByLabelText('Module title'));
+    expect(collaborationTest.claim).toHaveBeenCalledWith(fieldKey('module', 'MOD-AUTOSAVE-1', 'title'));
+  });
+
+  it('requests Bunny copying of the open video with the ordinary Save button', async () => {
+    const structure = storedStructure();
+    const video = structure.weekStructure[0].components[0];
+    video.type = 'video';
+    video.settings = { sourceType: 'YouTube', videoUrl: 'https://www.youtube.com/watch?v=abcdefghijk' };
+    await openWorkspace('', structure);
+    await userEvent.click(screen.getByText('First component'));
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1));
+    expect(saveModuleStructure.mock.calls[0][2]).toMatchObject({ source: 'manual', importVideoComponentIds: ['COMPONENT-1'] });
+  });
+
+  it('finishes the LMS Save while Bunny is still uploading, without claiming the copy is ready', async () => {
+    vi.mocked(coachFetch).mockImplementation(async () => new Response(JSON.stringify({ enabled: true, saved: true,
+      import: { id: 'copy', status: 'uploading', error: '' } }), { status: 200 }));
+    const structure = storedStructure();
+    structure.weekStructure[0].components[0].type = 'video';
+    await openWorkspace('', structure);
+    await userEvent.click(screen.getByText('First component'));
+    await screen.findByText('Uploading to Bunny');
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledOnce());
+    await waitFor(() => expect(saveState()).toBe('All changes saved'));
+    expect(screen.getByTestId('module-builder-save')).toBeEnabled();
+    expect(screen.getByText('Uploading to Bunny')).toBeInTheDocument();
+    expect(screen.queryByText('Stored on Bunny')).not.toBeInTheDocument();
+    expect(screen.queryByText('Save failed')).not.toBeInTheDocument();
+  });
+
+  it('confirms a timed-out write from a fresh read without sending it again', async () => {
+    saveModuleStructure.mockImplementationOnce(async (_id: string, sent: SavedModule) => {
+      loadModuleStructure.mockResolvedValue({ ...sent, structureRevision: 'committed' });
+      throw new CurriculumRequestTimeout();
+    });
+    const title = await openWorkspace();
+    await userEvent.type(title, '!');
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveState()).toBe('All changes saved'));
+    expect(loadModuleStructure).toHaveBeenLastCalledWith('MOD-AUTOSAVE-1', { skipCache: true });
+    expect(saveModuleStructure).toHaveBeenCalledOnce();
+    expect(title).toHaveValue('Week one!');
+    expect(screen.queryByText('Save failed')).not.toBeInTheDocument();
+    expect(screen.queryByText(/The response timed out/)).not.toBeInTheDocument();
+  });
+
+  it('keeps a timeout unconfirmed when the read still has the previous content', async () => {
+    saveModuleStructure.mockImplementationOnce(async (_id: string, sent: SavedModule) => {
+      const old = structuredClone(sent);
+      old.weekStructure[0].title = 'Week one';
+      loadModuleStructure.mockResolvedValue(old);
+      throw new CurriculumRequestTimeout();
+    });
+    const title = await openWorkspace();
+    await userEvent.type(title, '!');
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveState()).toBe('Save not confirmed - your changes are still here'));
+    expect(title).toHaveValue('Week one!');
+    expect(screen.getByText('Save not confirmed')).toBeInTheDocument();
+    expect(screen.queryByText('Save failed')).not.toBeInTheDocument();
+    expect(saveModuleStructure).toHaveBeenCalledOnce();
+  });
+
+  it('clears the old timeout notice when a later refresh confirms the saved content', async () => {
+    saveModuleStructure.mockImplementationOnce(async (_id: string, sent: SavedModule) => {
+      loadModuleStructure.mockRejectedValueOnce(new Error('Read temporarily unavailable'))
+        .mockResolvedValue({ ...sent, structureRevision: 'committed' });
+      throw new CurriculumRequestTimeout();
+    });
+    const title = await openWorkspace();
+    await userEvent.type(title, '!');
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveState()).toBe('Save not confirmed - your changes are still here'));
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(saveState()).toBe('All changes saved'));
+    expect(screen.queryByText('Save not confirmed')).not.toBeInTheDocument();
+    expect(screen.queryByText('Save failed')).not.toBeInTheDocument();
+    expect(title).toHaveValue('Week one!');
+    expect(saveModuleStructure).toHaveBeenCalledOnce();
+  });
+
+  it('preserves edits typed during the confirmation read and keeps them unsaved', async () => {
+    let release!: () => void;
+    saveModuleStructure.mockImplementationOnce(async (_id: string, sent: SavedModule) => {
+      loadModuleStructure.mockImplementationOnce(() => new Promise(resolve => {
+        release = () => resolve({ ...sent, structureRevision: 'committed' });
+      }));
+      throw new CurriculumRequestTimeout();
+    });
+    const title = await openWorkspace();
+    await userEvent.type(title, '!');
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveState()).toBe('Checking saved changes...'));
+    await userEvent.type(title, '?');
+    release();
+    await waitFor(() => expect(saveState()).toBe('Unsaved changes - press Save'));
+    expect(title).toHaveValue('Week one!?');
+    expect(screen.queryByText('Save failed')).not.toBeInTheDocument();
+    expect(saveModuleStructure).toHaveBeenCalledOnce();
+  });
+
+  it('saves a new video component before uploading its already selected MP4', async () => {
+    const structure = storedStructure();
+    structure.weekStructure[0].components[0].type = 'video';
+    const order: string[] = [];
+    vi.mocked(coachFetch).mockImplementation(async (_url, options) => {
+      if (options?.method === 'POST') {
+        order.push('upload');
+        return new Response(JSON.stringify({ savedSettings: { videoUrl: '/curriculum_api/curriculum/uploads/videos/module/M1/C1/hash.mp4', sourceType: 'HTML (MP4)' } }), { status: 202 });
+      }
+      return new Response(JSON.stringify({ enabled: true, saved: false, import: null }), { status: 200 });
+    });
+    saveModuleStructure.mockImplementationOnce(async (_id: string, module: SavedModule) => {
+      order.push('save');
+      return { ...module, structureRevision: 'rev-2' };
+    });
+    await openWorkspace('', structure);
+    await userEvent.click(screen.getByText('First component'));
+    const picker = screen.getByLabelText('Upload MP4 to LMS and Bunny');
+    expect(picker).toBeEnabled();
+    fireEvent.change(picker, { target: { files: [new File(['video'], 'new-video.mp4')] } });
+    expect(order).toEqual([]);
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(order).toEqual(['save', 'upload']));
+    await waitFor(() => expect(screen.queryByText(/new-video.mp4.*Selected/)).not.toBeInTheDocument());
+    expect(vi.mocked(coachFetch).mock.calls.find(([, options]) => options?.method === 'POST')?.[0])
+      .toBe('/curriculum_api/curriculum/videos/module/MOD-AUTOSAVE-1/COMPONENT-1/');
+    expect(saveModuleStructure).toHaveBeenCalledOnce();
+  });
+
+  it('saves an independent reorder while retaining a reserved title and unsaved navigation guard', async () => {
+    collaborationTest.enabled = true;
+    const title = await openWorkspace();
+    await userEvent.type(title, '!');
+    await userEvent.click(screen.getByRole('button', { name: 'Reorder components' }));
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1));
+    expect(saveCalls()[0][1].weekStructure[0].title).toBe('Week one');
+    expect(saveCalls()[0][1].weekStructure[0].components.map(c => c.id)).toEqual(['COMPONENT-2', 'COMPONENT-1']);
+    await waitFor(() => expect(title).toHaveValue('Week one!'));
+    expect(saveState()).toBe('Unsaved changes - press Save');
+    await userEvent.click(screen.getByRole('button', { name: 'Back to modules' }));
+    await waitFor(() => expect(swalFire).toHaveBeenCalled());
   });
 
   it('saves a week title without the Save button being pressed', async () => {

@@ -1,12 +1,12 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import QuizTakePage from './page';
 import { CompletionValidationError } from '@/lib/completionValidation';
 
 const mocks = vi.hoisted(() => ({
-  detail: vi.fn(), quiz: vi.fn(), start: vi.fn(), submit: vi.fn(),
-  generateReading: vi.fn(), completeReading: vi.fn(),
+  detail: vi.fn(), quiz: vi.fn(), start: vi.fn(), submit: vi.fn(), checkpoint: vi.fn(),
+  generateReading: vi.fn(), completeReading: vi.fn(), reflectionTimeSeconds: undefined as number | undefined,
 }));
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: mocks.detail }));
 vi.mock('@/api/quizzes', () => ({
@@ -15,13 +15,15 @@ vi.mock('@/api/quizzes', () => ({
   generateQuizReading: mocks.generateReading,
   completeQuizReading: mocks.completeReading,
 }));
-vi.mock('@/api/timeTracking', () => ({ startTimeTracking: mocks.start }));
+vi.mock('@/api/timeTracking', () => ({ startTimeTracking: mocks.start, checkpointTimeTracking: mocks.checkpoint }));
 vi.mock('@/hooks/useMyLearner', () => ({ rememberLearner: vi.fn() }));
 vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => ({ canProgress: true }) }));
 vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock('@/components/feature/ReflectionWindow', () => ({
-  ReflectionWindow: ({ onSubmit, onClose }: { onSubmit: (value: { ksbs: string[]; feedback: string; reportedTime: string }) => void; onClose?: () => void }) => <div>My Learning Evidence and Reflection<button onClick={onClose}>Close reflection</button><button onClick={() => onSubmit({ ksbs: ['K1'], feedback: 'Reflection', reportedTime: '1' })}>Submit reflection</button></div>,
+  ReflectionWindow: ({ onSubmit, onClose }: { onSubmit: (value: { ksbs: string[]; feedback: string; reportedTime: string; timeTakenSeconds?: number }) => void; onClose?: () => void }) => <div>My Learning Evidence and Reflection<button onClick={onClose}>Close reflection</button><button onClick={() => onSubmit({ ksbs: ['K1'], feedback: 'Reflection', reportedTime: '1', ...(mocks.reflectionTimeSeconds == null ? {} : { timeTakenSeconds: mocks.reflectionTimeSeconds }) })}>Submit reflection</button></div>,
+}));
+vi.mock('@/components/feature/ReflectionWindow.helpers', () => ({
   formatClock: (seconds: number) => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`,
 }));
 const detail = { modules: [], week: [], ksbs: [], componentProgress: [], videoProgress: [], quizAttempts: [], components: [{ quizMeta: { quizId: 1 }, reflectionRequired: false }] };
@@ -31,6 +33,7 @@ const renderPage = () => render(<MemoryRouter initialEntries={['/quiz/commercial
 describe('quiz requirements loading', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.reflectionTimeSeconds = undefined;
     mocks.quiz.mockResolvedValue({ id: 1, title: 'Campaign quiz', questions: [{ id: 1, text: 'Choose an outcome', points: 1, type: 'single_choice', answers: [{ id: 1, text: 'Measured outcome' }] }] });
     mocks.start.mockResolvedValue({ trackingToken: 'test', startedAt: '2026-09-13T00:00:00Z' });
     mocks.submit.mockImplementation(() => new Promise(() => {}));
@@ -74,6 +77,26 @@ describe('quiz requirements loading', () => {
     await act(async () => {});
     expect(mocks.submit).toHaveBeenCalledOnce();
     expect(screen.queryByText('Reflection form')).not.toBeInTheDocument();
+  });
+
+  it('keeps quiz answers and the original session when restoring an expired timer', async () => {
+    mocks.detail.mockResolvedValue(detail);
+    mocks.start.mockResolvedValueOnce({ sessionId: 'old-quiz', trackingToken: 'old', startedAt: '2026-01-01T00:00:00Z', countingMode: 'active_quiz' });
+    mocks.checkpoint.mockImplementation(async session => ({ ...session, persistent: true, savedSeconds: 300 }));
+    mocks.submit.mockRejectedValueOnce(new Error('The activity timing session has expired. Your answers and timing draft are kept.'));
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Finish/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore saved time' }));
+    await screen.findByText(/Your time has been restored/);
+    const archive = JSON.parse(localStorage.getItem('learner_quiz_timer:v1:commercial:501:1:expired:old-quiz')!);
+    expect(archive.session.trackingToken).toBe('old');
+    expect(archive.answers.answers).toEqual({ '1': 1 });
+    fireEvent.click(screen.getByRole('button', { name: /Finish/ }));
+    await act(async () => {});
+    expect(mocks.submit).toHaveBeenLastCalledWith(1, 'commercial', '501', expect.objectContaining({ trackingToken: 'old', answers: { '1': 1 }, timeTakenSeconds: 300 }));
+    expect(mocks.start).toHaveBeenCalledTimes(1);
   });
 
   it('retains verified previous completion and links the original result without creating an attempt', async () => {
@@ -252,6 +275,44 @@ describe('quiz requirements loading', () => {
     expect(await screen.findByText(/Quiz Passed/)).toBeVisible();
   });
 
+  it('passes corrected reflection time to quiz completion', async () => {
+    mocks.detail.mockResolvedValue({ ...detail, components: [{ quizMeta: { quizId: 1 }, reflectionRequired: true }] });
+    mocks.reflectionTimeSeconds = 120;
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Yes, add reflection' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit reflection' }));
+    expect(mocks.submit).toHaveBeenCalledWith(1, 'commercial', '501', expect.objectContaining({ timeTakenSeconds: 120 }));
+  });
+
+  it('keeps quiz answers and reflection while reducing an addition from nine hours to eight', async () => {
+    mocks.detail.mockResolvedValue({ ...detail, components: [{ quizMeta: { quizId: 1 }, reflectionRequired: true }],
+      quizAttempts: [{ kind: 'quiz', quizId: 1, passed: true, grade: 1, questions: [], attempt: 1,
+        claimedSeconds: 21600, verifiedSeconds: 10, timeTrackingSource: 'signed:input',
+        submittedAt: '2026-10-01T10:00:00Z', timeTaken: '360:00' }] });
+    mocks.reflectionTimeSeconds = 10800;
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: /Retake Quiz/ }));
+    fireEvent.click(screen.getByRole('radio', { name: /^Add more learning time/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Yes, add reflection' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit reflection' }));
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('make 9 hours');
+    expect(mocks.submit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit time and try again' }));
+    expect(screen.getByText('My Learning Evidence and Reflection')).toBeVisible();
+    mocks.reflectionTimeSeconds = 7200;
+    fireEvent.click(screen.getByRole('button', { name: 'Submit reflection' }));
+    await waitFor(() => expect(mocks.submit).toHaveBeenCalledWith(1, 'commercial', '501', expect.objectContaining({
+      retakeTimeChoice: 'add', retakePreviousSeconds: 21600, timeTakenSeconds: 7200, timeEntrySource: 'input', feedback: 'Reflection',
+      answers: { '1': 1 },
+    })));
+  });
+
   it('keeps reflection optional for tutor-validated quizzes', async () => {
     mocks.detail.mockResolvedValue({
       ...detail,
@@ -307,8 +368,17 @@ describe('quiz requirements loading', () => {
     expect(screen.getByText('Business outcome')).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: /Retake Quiz/ }));
+    expect(mocks.start).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('radio', { name: /^Record another attempt/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(mocks.start).toHaveBeenCalledOnce();
     expect(await screen.findByRole('button', { name: 'Finish Quiz' })).toBeVisible();
+    mocks.submit.mockResolvedValue({ passed: true, achievedScore: 1, totalScore: 1,
+      breakdown: [], attempt: { attempt: 3 } });
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    await act(async () => {});
+    expect(mocks.submit).toHaveBeenCalledWith(1, 'commercial', '501', expect.objectContaining({ retakeTimeChoice: 'retry', retakePreviousSeconds: 0 }));
   });
 
   it('starts signed timing when the AI reading opens and records it once on finish', async () => {
@@ -342,6 +412,9 @@ describe('quiz requirements loading', () => {
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Reading time (minutes)' }), { target: { value: '2.5' } });
     expect(screen.getByText('07:30')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(mocks.completeReading).not.toHaveBeenCalled();
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('2 minutes and 30 seconds');
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm time' }));
     expect(await screen.findByText(/05:00 added to actual time/)).toBeVisible();
     expect(mocks.completeReading).toHaveBeenCalledWith(1, 'commercial', '501', 2, 'test', 150, 'manual');
   });
@@ -375,7 +448,8 @@ describe('quiz submit working rules', () => {
     expect(screen.getByText(/Reason:/)).toBeVisible();
 
     fireEvent.change(screen.getByLabelText('Completion date'), { target: { value: '2026-01-15' } });
-    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14:30' } });
+    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14' } });
+    fireEvent.change(screen.getByLabelText('Completion minutes'), { target: { value: '30' } });
     fireEvent.click(screen.getByRole('button', { name: 'Final Submit' }));
     await act(async () => {});
 
@@ -397,7 +471,8 @@ describe('quiz submit working rules', () => {
 
     await answerAndFinish();
     fireEvent.change(await screen.findByLabelText('Completion date'), { target: { value: '2026-01-15' } });
-    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14:30' } });
+    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14' } });
+    fireEvent.change(screen.getByLabelText('Completion minutes'), { target: { value: '30' } });
     fireEvent.click(screen.getByRole('button', { name: 'Final Submit' }));
     await act(async () => {});
 
@@ -412,5 +487,21 @@ describe('quiz submit working rules', () => {
 
     expect(screen.queryByText('Please review your completion date and time')).not.toBeInTheDocument();
     expect(mocks.submit.mock.calls[0][3].declaredCompletedAt).toBeUndefined();
+  });
+
+  it('keeps a non-calendar save failure visible inside the completion dialog', async () => {
+    mocks.submit
+      .mockRejectedValueOnce(new CompletionValidationError('Sunday is not a working day.', 'weekend'))
+      .mockRejectedValueOnce(new Error('The saved activity time changed. Reload the activity and choose again. Your answers are kept.'));
+    await answerAndFinish();
+    const dialog = await screen.findByRole('dialog', { name: /review your completion date and time/i });
+    fireEvent.change(within(dialog).getByLabelText('Completion date'), { target: { value: '2026-10-30' } });
+    fireEvent.change(within(dialog).getByLabelText('Completion time'), { target: { value: '09' } });
+    fireEvent.change(within(dialog).getByLabelText('Completion minutes'), { target: { value: '16' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Final Submit' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('The saved activity time changed.');
+    expect(within(dialog).getByLabelText('Completion date')).toHaveValue('2026-10-30');
+    expect(within(dialog).getByLabelText('Completion time')).toHaveValue('09');
+    expect(within(dialog).getByLabelText('Completion minutes')).toHaveValue('16');
   });
 });

@@ -7,17 +7,21 @@ import type { CertificateTemplateSummary } from '@/api/learnerCertificates';
 import { learnerHeaderPlan } from '@/pages/workspace/learner/learnerHeaderPlan';
 import { dateKey, weekKey } from '@/pages/learner/training-plan-timeline/model';
 import { hasComponentContent } from '@/utils/learnerJourney';
+import { orderSourceWeeks } from './sourceWeekOrder';
+import { deliveryDateKey, deliveryWeekEnd, sessionDeliveryDate } from '@/lib/deliveryWeek';
 
 export type LearningWeek = { id: string; label: string; title: string; start: string | null; end: string | null; month?: string; activities: SubjectEntry[];
+  sourceSection?: boolean; sourceOrder?: number | null;
   /** The authored curriculum week (curriculum.weeks.id) this card stands for, when it has one. */
   weekId?: string };
 export const learningToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
 export const learningDate = (date: string) => new Date(`${date.slice(0, 10)}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
-export const subjectPercent = (subject: Subject) => subject.card ? subject.card.progress : subject.activities.length ? Math.round(subject.activities.filter(a => a.completed).length / subject.activities.length * 10000) / 100 : 0;
+export const subjectPercent = (subject: Subject) => subject.aggregateProgress ?? (subject.card ? subject.card.progress : subject.activities.length ? Math.round(subject.activities.filter(a => a.completed).length / subject.activities.length * 10000) / 100 : 0);
 
 /** Enrolment remains visible before any learning has started. */
 export function subjectLearningStatus(subject: Subject): 'Completed' | 'In progress' | 'Upcoming' {
   if (subject.card) return subject.card.status;
+  if (subject.aggregateProgress != null && subject.aggregateProgress > 0) return subject.aggregateProgress === 100 ? 'Completed' : 'In progress';
   if (subject.activities.length && subject.activities.every(activity => activity.completed)) return 'Completed';
   const started = subject.activities.some(activity => {
     const legacy = activity.legacy;
@@ -63,26 +67,102 @@ export function learningDeadlines(subjects: Subject[], today = learningToday()):
   return [...deadlines.values()].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
 }
 
-/** The delivery date identifies its Monday–Sunday week when the API omits the range. */
+/** Only teaching dates can anchor a delivery week; upload/evidence dates cannot. */
+function deliveryDate(entry: SubjectEntry) {
+  const source = entry.schedule.date_source;
+  if (entry.schedule.date_needs_review) return '';
+  if (['title', 'section_title', 'builder_section_title', 'builder_session', 'builder_week'].includes(source || '')) {
+    return dateKey(entry.schedule.date);
+  }
+  return dateKey(entry.native?.sessionDate);
+}
+
+/** Unscheduled history keeps its calendar placement without becoming a session. */
 function activityWeekRange(entry: SubjectEntry) {
-  const start = dateKey(entry.schedule.week_start) || weekKey(entry.schedule.date || '') || null;
+  const delivery = deliveryDate(entry);
+  const start = delivery || dateKey(entry.schedule.week_start) || weekKey(entry.schedule.date || '') || null;
   const lastDay = start ? new Date(`${start}T12:00:00Z`) : null;
   if (lastDay) lastDay.setUTCDate(lastDay.getUTCDate() + 6);
-  const end = dateKey(entry.schedule.week_end) || lastDay?.toISOString().slice(0, 10) || null;
+  const end = (!delivery && dateKey(entry.schedule.week_end)) || lastDay?.toISOString().slice(0, 10) || null;
   return { start, end };
+}
+
+/** Identity keeps materials together even when a reading or second session has another date. */
+function authoredWeekKey(entry: SubjectEntry) {
+  if (entry.legacy || ['introduction', 'extra_activity'].includes(entry.schedule.date_source || '')) return '';
+  const placement = entry.schedule.delivery_week;
+  const moduleId = entry.native?.moduleId || placement?.module_id;
+  const weekId = entry.native?.weekId || placement?.id;
+  return moduleId && weekId ? `week:${moduleId}:${weekId}` : '';
+}
+
+function authoredWeekRanges(activities: SubjectEntry[]) {
+  const entries = new Map<string, SubjectEntry[]>();
+  for (const entry of activities) {
+    const key = authoredWeekKey(entry);
+    if (key) {
+      if (!entries.has(key)) entries.set(key, []);
+      entries.get(key)!.push(entry);
+    }
+  }
+  const ranges = new Map<string, { start: string | null; end: string | null; month?: string }>();
+  for (const [key, rows] of entries) {
+    const declared = rows.map(row => row.schedule.delivery_week).find(week => week
+      && `week:${week.module_id}:${week.id}` === key);
+    const live = rows.filter(row => (row.native?.type || row.category).trim().toLowerCase().replace(/[\s-]+/g, '_') === 'live_session' && !row.native?.additionalMeeting)
+      .sort((a, b) => a.position - b.position)[0];
+    const start = (declared ? deliveryDateKey(declared.start) : '')
+      || (live && (sessionDeliveryDate(live.native || {}) || deliveryDate(live)))
+      || rows.filter(row => !row.native?.additionalMeeting).map(deliveryDate).find(Boolean) || null;
+    const months = [...new Set(rows.map(row => row.schedule.month).filter(Boolean))];
+    const lastDay = start ? deliveryWeekEnd(start) : null;
+    const declaredEnd = deliveryDateKey(declared?.end);
+    ranges.set(key, { start, end: start && lastDay && declaredEnd >= start && declaredEnd <= lastDay ? declaredEnd : lastDay,
+      month: start?.slice(0, 7) || (months.length === 1 ? months[0] : undefined) });
+  }
+  for (const [key, range] of ranges) {
+    if (!range.start || !range.end) continue;
+    const rows = entries.get(key)!;
+    const moduleId = rows[0].native?.moduleId || rows[0].schedule.delivery_week?.module_id;
+    const next = [...ranges].filter(([other, candidate]) => other !== key
+      && other.startsWith(`week:${moduleId}:`) && candidate.start && candidate.start > range.start!)
+      .map(([, candidate]) => candidate.start!).sort()[0];
+    if (next && next <= range.end) range.end = new Date(Date.parse(`${next}T12:00:00Z`) - 86400000).toISOString().slice(0, 10);
+  }
+  return ranges;
 }
 
 /** Calendar weeks remain one card even when their activities cross a month boundary. */
 export function subjectWeeks(subject: Subject): LearningWeek[] {
   const groups = new Map<string, LearningWeek>();
+  const authoredRanges = authoredWeekRanges(subject.activities);
+  const hasSections = subject.activities.some(entry => entry.legacy?.source_section);
+  const deliveryDays = [...new Set(subject.activities.map(deliveryDate).filter(Boolean))].sort();
   for (const entry of subject.activities) {
+    const section = entry.legacy?.source_section;
+    if (hasSections && entry.legacy) {
+      const key = section ? `section:${entry.legacy.group_id}:${section.id}` : 'unplaced';
+      const group: LearningWeek = groups.get(key) || { id: key, label: section?.title || 'Additional stored activities',
+        title: section?.title || 'Additional stored activities', start: null, end: null, activities: [],
+        sourceSection: true, sourceOrder: section?.order };
+      group.activities.push(entry);
+      groups.set(key, group);
+      continue;
+    }
     const source = entry.schedule.date_source;
     const special = source === 'introduction' ? 'introduction' : source === 'extra_activity' ? 'extra' : '';
-    const { start, end } = activityWeekRange(entry);
+    const authoredKey = authoredWeekKey(entry);
+    const { start, end: rangeEnd } = authoredRanges.get(authoredKey) || activityWeekRange(entry);
+    const nextDelivery = !authoredKey && deliveryDate(entry) && deliveryDays[deliveryDays.indexOf(start!) + 1];
+    // Start on the delivery day and stop before an earlier next session.
+    // Missing activity weeks must not stretch this week across a schedule gap.
+    const nextBoundary = nextDelivery ? new Date(Date.parse(`${nextDelivery}T12:00:00Z`) - 86400000).toISOString().slice(0, 10) : null;
+    const end = nextBoundary && rangeEnd && nextBoundary < rangeEnd ? nextBoundary : rangeEnd;
     const label = entry.week || entry.legacy?.section_title || '';
-    const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(entry.schedule.month || '') ? entry.schedule.month! : undefined;
+    const month = authoredRanges.get(authoredKey)?.month
+      || (/^\d{4}-(0[1-9]|1[0-2])$/.test(entry.schedule.month || '') ? entry.schedule.month! : undefined);
     const key = special === 'introduction' ? special : special === 'extra' ? `extra:${label}`
-      : start || entry.native?.weekId || (month ? `${month}:${label || 'activities'}` : label || 'undated');
+      : authoredKey || start || entry.native?.weekId || (month ? `${month}:${label || 'activities'}` : label || 'undated');
     const monthLabel = !special && !start && month
       ? new Date(`${month}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }) : '';
     const group = groups.get(key) || { id: key, label: special === 'introduction' ? 'Introduction' : special === 'extra' ? 'Extra activities' : monthLabel,
@@ -94,10 +174,36 @@ export function subjectWeeks(subject: Subject): LearningWeek[] {
     if (!special && end && (!group.end || end > group.end)) group.end = end;
     groups.set(key, group);
   }
+  for (const week of groups.values()) {
+    if (!week.sourceSection) continue;
+    const dates = [...new Set(week.activities.map(deliveryDate).filter(Boolean))].sort();
+    week.start = dates[0] || null;
+    if (week.start) {
+      const last = new Date(`${week.start}T12:00:00Z`);
+      last.setUTCDate(last.getUTCDate() + 6);
+      const next = deliveryDays.find(day => day > week.start!);
+      week.end = last.toISOString().slice(0, 10);
+      if (next && next <= week.end) week.end = new Date(Date.parse(`${next}T12:00:00Z`) - 86400000).toISOString().slice(0, 10);
+    }
+    // Upload months may place undated content, but never define a teaching week.
+    const months = [...new Set(week.activities.map(entry => entry.schedule.month)
+      .filter((month): month is string => !!month && /^\d{4}-\d{2}$/.test(month)))].sort();
+    week.month = week.start?.slice(0, 7) || (months.length === 1 ? months[0] : undefined);
+  }
   const rank = (week: LearningWeek) => week.id === 'introduction' ? -1 : week.id.startsWith('extra:') ? 2 : week.start || week.month ? 0 : 1;
+  const ordered = [...groups.values()].sort((a, b) => rank(a) - rank(b) || (a.month || a.start?.slice(0, 7) || '').localeCompare(b.month || b.start?.slice(0, 7) || '') || (a.start || a.id).localeCompare(b.start || b.id, undefined, { numeric: true }));
+  const sectionsByMonth = new Map<string, LearningWeek[]>();
+  for (const week of ordered.filter(week => week.sourceSection)) {
+    const month = week.month || 'undated';
+    sectionsByMonth.set(month, [...(sectionsByMonth.get(month) || []), week]);
+  }
+  for (const [month, weeks] of sectionsByMonth) sectionsByMonth.set(month, orderSourceWeeks(weeks));
   let number = 0;
-  return [...groups.values()].sort((a, b) => rank(a) - rank(b) || (a.start || a.month || a.id).localeCompare(b.start || b.month || b.id, undefined, { numeric: true }) || a.id.localeCompare(b.id, undefined, { numeric: true })).map(week => {
-    const activities = [...week.activities].sort((a, b) => (a.schedule.date || '').localeCompare(b.schedule.date || '') || a.position - b.position);
+  return ordered.map(original => {
+    const week = original.sourceSection ? sectionsByMonth.get(original.month || 'undated')!.shift()! : original;
+    const activities = [...week.activities].sort((a, b) => week.sourceSection
+      ? (a.legacy?.source_section?.component_order ?? a.position) - (b.legacy?.source_section?.component_order ?? b.position)
+      : (a.schedule.date || '').localeCompare(b.schedule.date || '') || a.position - b.position);
     const label = week.label || (week.id === 'undated' ? 'Undated activities' : (number++, /^week\s*\d+/i.exec(week.title)?.[0] || `Week ${number}`));
     const title = week.title && !/^week\s*\d+\s*$/i.test(week.title) ? week.title
       : activities.find(a => a.legacy?.section_title)?.legacy?.section_title || activities[0]?.title || 'Learning activities';
@@ -105,9 +211,21 @@ export function subjectWeeks(subject: Subject): LearningWeek[] {
   });
 }
 
+/** Keep old Monday-based bookmarks usable when they identify exactly one delivery week. */
+export function resolveSubjectWeek(weeks: LearningWeek[], requested?: string | null) {
+  const exact = weeks.find(week => week.id === requested);
+  if (exact || !requested) return exact;
+  const previous = weeks.filter(week => week.weekId === requested || week.activities.some(entry =>
+    (dateKey(entry.schedule.week_start) || weekKey(entry.schedule.date || '')) === requested || deliveryDate(entry) === requested));
+  return previous.length === 1 ? previous[0] : undefined;
+}
+
 /** Keep assigned weeks visible even before their materials have been published. */
 export function subjectMapWeeks(subject: Subject, real?: LearnerDetail | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null) {
   const weeks = subjectWeeks(subject);
+  // Before transfer, a stored source curriculum owns its sections; the new
+  // Builder plan must not append unrelated empty weeks to the old course.
+  if (subject.source === 'legacy' && subject.activities.some(entry => entry.legacy?.source_section)) return weeks;
   const moduleIds = new Set([
     subject.id.startsWith('current:') ? subject.id.slice(8) : '',
     metadata?.builder_subjects?.[subject.id]?.id, schedule?.moduleLinks?.[subject.id]?.id,
@@ -125,7 +243,7 @@ export function subjectMapWeeks(subject: Subject, real?: LearnerDetail | null, m
   return weeks;
 }
 
-/** Resolve Builder links before names, including courses merged with imported history. */
+/** Resolve verified Builder links to the catalogue currently visible to the learner. */
 export function resolveLearningSubject(subjects: Subject[], requested?: string | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null) {
   if (!requested) return undefined;
   const exact = subjects.find(s => s.id === requested);
@@ -133,9 +251,11 @@ export function resolveLearningSubject(subjects: Subject[], requested?: string |
   const unified = subjects.filter(s => s.replacementCourseRef === requested);
   if (unified.length === 1) return unified[0];
   const moduleId = requested.replace(/^current:/, '');
-  const importedCourse = metadata?.imported_courses?.[`current:${moduleId}`];
+  const importedCourse = metadata?.replacement_courses?.[`current:${moduleId}`] || metadata?.imported_courses?.[`current:${moduleId}`];
   const original = importedCourse && subjects.find(s => s.id === importedCourse && s.source === 'legacy');
   if (original) return original;
+  const approved = Object.entries(metadata?.approved_transfers || {}).filter(([, old]) => old === requested);
+  if (approved.length === 1) return subjects.find(s => s.id === approved[0][0]);
   const links = { ...metadata?.builder_subjects, ...schedule?.moduleLinks };
   const matches = subjects.filter(s => links[s.id]?.id === moduleId || s.moduleId === moduleId || s.activities.some(a => a.native?.moduleId === moduleId)
     || s.activities.some(a => a.legacy && Object.values(metadata?.activity_sources || {}).some(source => source.module_id === moduleId && source.group_id === a.legacy!.group_id)));
@@ -228,11 +348,13 @@ export function learningHref(view: 'catalogue' | 'map', kind?: string, learnerId
 
 export function groupSubjectActivities(activities: SubjectEntry[]) {
   const months = new Map<string, Map<string, SubjectEntry[]>>();
+  const authoredRanges = authoredWeekRanges(activities);
   for (const activity of activities) {
     const introduction = activity.schedule.date_source === 'introduction';
     const extra = activity.schedule.date_source === 'extra_activity';
-    const month = introduction ? 'introduction' : extra ? 'extra' : activity.schedule.month || activity.schedule.date?.slice(0, 7) || 'undated';
-    const week = extra ? activity.legacy?.section_title || activity.week || 'Additional activities' : activity.schedule.week_start || activity.week || 'undated';
+    const authoredKey = authoredWeekKey(activity);
+    const month = introduction ? 'introduction' : extra ? 'extra' : authoredRanges.get(authoredKey)?.month || activity.schedule.month || activity.schedule.date?.slice(0, 7) || 'undated';
+    const week = extra ? activity.legacy?.section_title || activity.week || 'Additional activities' : authoredKey || activity.schedule.week_start || activity.week || 'undated';
     if (!months.has(month)) months.set(month, new Map());
     const weeks = months.get(month)!;
     if (!weeks.has(week)) weeks.set(week, []);

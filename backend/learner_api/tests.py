@@ -19,6 +19,7 @@ from .active_users import (
     _fetch_ksb_items,
     _ksb_version_hash,
     _reported_minutes,
+    _resolve_programme_id,
     completed_hours_from_progress,
     component_reference_exists,
     component_reference_state,
@@ -871,6 +872,11 @@ class LearnerAttendanceEndpointTests(SimpleTestCase):
 
 
 class TeamsAttendanceSyncTests(SimpleTestCase):
+    def setUp(self):
+        shared = patch('curriculum_api.shared_session_register.shared_register_rows', return_value=[])
+        self.shared_rows = shared.start()
+        self.addCleanup(shared.stop)
+
     @patch('learner_api.teams_attendance.ensure_teams_attendance_reporting_columns')
     @patch('learner_api.teams_attendance._verified_occurrence_ids', return_value=[])
     @patch('learner_api.teams_attendance.fetch_verified_teams_attendance_rows', return_value=[])
@@ -909,6 +915,27 @@ class TeamsAttendanceSyncTests(SimpleTestCase):
         sql, params = cursor.execute.call_args.args
         self.assertIn('module_catalogue_id = ANY(%s)', sql)
         self.assertEqual(params, [['MOD-1'], []])
+
+    def test_shared_only_sync_persists_the_module_register_without_duplicate_rewards(self):
+        rows = [{'occurrence_id': 'O', 'module_catalogue_id': 'SHARED', 'learner_profile_id': 7}]
+        self.shared_rows.return_value = rows
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        with patch.object(teams_attendance_module, 'connections', {'default': connection}), \
+             patch.object(teams_attendance_module.router, 'db_for_write', return_value='default'), \
+             patch.object(teams_attendance_module, 'fetch_verified_teams_attendance_rows', return_value=[]), \
+             patch.object(teams_attendance_module, '_verified_occurrence_ids', return_value=[]), \
+             patch.object(teams_attendance_module.transaction, 'atomic', side_effect=lambda **kwargs: nullcontext()), \
+             patch.object(teams_attendance_module, 'upsert_live_session_register') as save, \
+             patch('engagement_api.feedback_delivery.reconcile_feedback_after_attendance_commit') as feedback, \
+             patch.object(teams_attendance_module, '_award_attendance_points') as award:
+            self.assertEqual(sync_verified_teams_attendance_reporting(module_refs=['SHARED']), 1)
+        save.assert_called_once_with(cursor, rows)
+        cursor.executemany.assert_not_called()  # Shared deliveries do not duplicate the legacy report.
+        award.assert_called_once_with([])
+        feedback.assert_called_once_with(['O'], using='default')
+        self.shared_rows.assert_called_once_with(database='default', module_refs=['SHARED'],
+                                                 learner_ids=None, learner_emails=None, all_learners=False)
 
 
 class LearnerQuizModuleMatchingTests(SimpleTestCase):
@@ -1445,6 +1472,62 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
             programme="Programme A",
             training_plan=[{"moduleId": "MOD-1"}],
         )
+
+
+class ResolveProgrammeIdTests(SimpleTestCase):
+    PLAN = [{"moduleId": "MOD-SAFEGUARDING"}, {"moduleId": "MOD-PCP"}]
+
+    def _resolve(self, cursor, programme):
+        connections = {"default": ScriptedConnection(cursor), "enrolment": ScriptedConnection(cursor)}
+        with patch.dict(active_users_connections, connections, clear=False):
+            return _resolve_programme_id(programme, training_plan=self.PLAN)
+
+    def test_shared_module_from_another_programme_does_not_win(self):
+        # The shared module's owner sorts first; the learner's own programme
+        # must still be chosen, or they are offered another standard's KSBs.
+        cursor = ScriptedCursor([[
+            ("PROG-MM-L6", "Marketing Manager Level 6"),
+            ("PROG-PCP-L6", "Project Controls Professional Level 6"),
+        ]])
+
+        result = self._resolve(cursor, "Project Controls Professional Level 6")
+
+        self.assertEqual(result, "PROG-PCP-L6")
+        self.assertEqual(len(cursor.queries), 1)
+
+    def test_programme_name_with_cohort_suffix_matches_its_module_owner(self):
+        cursor = ScriptedCursor([[
+            ("PROG-MM-L6", "Marketing Manager Level 6"),
+            ("PROG-PCP-L6", "Project Controls Professional Level 6"),
+        ]])
+
+        result = self._resolve(cursor, "Project Controls Professional Level 6 - Feb 2026")
+
+        self.assertEqual(result, "PROG-PCP-L6")
+
+    def test_single_module_owner_is_used_without_a_name_lookup(self):
+        cursor = ScriptedCursor([[("PROG-PCP-L6", "Project Controls Professional Level 6")]])
+
+        result = self._resolve(cursor, "Renamed Programme")
+
+        self.assertEqual(result, "PROG-PCP-L6")
+        self.assertEqual(len(cursor.queries), 1)
+
+    def test_unmatched_owners_fall_back_to_the_programme_name(self):
+        cursor = ScriptedCursor([
+            [("PROG-A", "Programme A"), ("PROG-B", "Programme B")],
+            [("PROG-C",)],
+        ])
+
+        self.assertEqual(self._resolve(cursor, "Programme C"), "PROG-C")
+
+    def test_first_module_owner_is_the_last_resort(self):
+        cursor = ScriptedCursor([
+            [("PROG-A", "Programme A"), ("PROG-B", "Programme B")],
+            [],
+        ])
+
+        self.assertEqual(self._resolve(cursor, "Unknown Programme"), "PROG-A")
 
 
 class LearnerOtjhTargetTests(SimpleTestCase):

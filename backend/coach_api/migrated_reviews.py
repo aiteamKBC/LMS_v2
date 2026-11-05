@@ -10,9 +10,13 @@ FAMILY_BY_SOURCE_TYPE = {
     "mcm": "MCM",
     "progress review": "PR",
     "progress review (+ skills radar)": "PR_SKILLS_RADAR",
+    "personal support plan": "PSP",
 }
 INITIAL_STATUSES = {"not-scheduled", "scheduled"}
 EDITABLE_STATUSES = {"not-scheduled", "scheduled", "in-progress"}
+# Work after scheduling does not require the optional Start transition.
+# Keep pre-booking drafts distinct from submission and legacy summary edits.
+SCHEDULED_WORK_STATUSES = frozenset({"scheduled", "in-progress"})
 
 # Supported by captured Aptem field metadata, option lists, and saved value shapes.
 FIELD_TYPES = {
@@ -22,12 +26,25 @@ FIELD_TYPES = {
 TEXT_ANSWER_LIMIT = 4000
 
 
+def text_answer_limit(definition, field):
+    """MCM's mapped Meeting Summary is unrestricted; other fields keep their limit."""
+    if ((definition.get('templateSource') or {}).get('family') == 'MCM'
+            and field.get('semanticKey') == 'meeting_summary'
+            and field.get('aptemType') in (1, 13)):
+        return None
+    return TEXT_ANSWER_LIMIT
+
+
 def meeting_summary_field(definition):
     """Resolve explicit metadata from a frozen migrated definition, never labels."""
     matches = []
 
     def visit(field, depth=0):
         if "semanticKey" in field:
+            if field['semanticKey'] == 'skills_radar':
+                if field.get('aptemType') != 11 or depth:
+                    raise ValueError('Skills Radar must be a top-level section marker.')
+                return
             if field["semanticKey"] != "meeting_summary":
                 raise ValueError("Unknown migrated field purpose.")
             if type(field.get("aptemType")) is not int or field["aptemType"] not in (1, 13):
@@ -55,6 +72,7 @@ def review_family(source_type):
 
 def booking_event_type(family):
     """Keep template families distinct while sharing existing calendar types."""
+    # PSP retains its separate coach-only booking policy.
     return {"MCM": "mcr", "PR": "progress-review", "PR_SKILLS_RADAR": "progress-review"}.get(family)
 
 
@@ -69,6 +87,51 @@ def programme_key(programme_id, programme_name):
 
 def source_is_completed(review):
     return review.get("status") == "completed" or bool(review.get("completedDate"))
+
+
+def has_completed_lms_form(overlay):
+    """A frozen LMS form remains readable if its source later becomes completed.
+
+    Callers still verify the source, learner and account link and enforce the
+    current lifecycle state before allowing edits, signatures or reopening.
+    """
+    snapshot = getattr(overlay, "template_snapshot", None)
+    return bool(
+        getattr(overlay, "source_review_id", None)
+        and getattr(overlay, "status", None) == "completed"
+        and getattr(overlay, "completed_at", None)
+        and isinstance(snapshot, dict)
+        and isinstance(snapshot.get("sections"), list)
+        and snapshot["sections"]
+    )
+
+
+def completed_lms_revisions(revisions):
+    """Revisions with a completed snapshot and a preserved signed document."""
+    return revisions.filter(
+        snapshot__status="completed", snapshot__completed_at__isnull=False,
+        pdf_sha256__gt="", pdf_bytes__isnull=False,
+    ).exclude(snapshot__completed_at=None)
+
+
+def has_lms_completion_history(overlay):
+    """Keep an authorized correction accessible after completed_at is cleared.
+
+    A real completed revision on this overlay proves its LMS history. A draft,
+    a revision counter or an imported Completed status alone does not.
+    """
+    if has_completed_lms_form(overlay):
+        return True
+    snapshot = getattr(overlay, "template_snapshot", None)
+    if (not getattr(overlay, "source_review_id", None)
+            or getattr(overlay, "status", None) not in {"in-progress", "awaiting-signature"}
+            or not isinstance(snapshot, dict)
+            or not isinstance(snapshot.get("sections"), list) or not snapshot["sections"]):
+        return False
+    revisions = getattr(overlay, "archived_revisions", None)
+    return bool(revisions is not None and completed_lms_revisions(revisions).filter(
+        snapshot__source_review_id=overlay.source_review_id, snapshot__learner_id=overlay.learner_id,
+    ).exists())
 
 
 def initial_local_status(source_status):
@@ -170,7 +233,7 @@ def validate_definition(definition):
     return definition
 
 
-def _render_field(field, answers, warnings):
+def _render_field(field, answers, warnings, answer_audit):
     aptem_type = field["aptemType"]
     field_type = FIELD_TYPES.get(aptem_type, "text_multiline")
     if aptem_type not in FIELD_TYPES:
@@ -180,7 +243,11 @@ def _render_field(field, answers, warnings):
         "aptemType": aptem_type,
         "description": field.get("description") or "",
         "options": field.get("options") or [],
+        "respondentRoles": field.get("respondentRoles") or [],
     }
+    if field.get('skillsRadar'):
+        configuration['skillsRadar'] = {**field['skillsRadar'],
+            'history': (answer_audit.get(field['key']) or {}).get('history', [])}
     if aptem_type not in FIELD_TYPES:
         configuration["typeWarning"] = "Unverified Aptem field type; using text entry."
     if "semanticKey" in field:
@@ -190,19 +257,21 @@ def _render_field(field, answers, warnings):
         "required": bool(field.get("mandatory")) and field_type != "title_description",
         "displayOrder": field.get("order", 0), "configuration": configuration,
         "parentFieldId": None, "conditionValue": None,
-        "answer": answers.get(field["key"]), "answeredBy": None, "answeredAt": None,
-        "yesFields": [_render_field(child, answers, warnings) for child in field.get("ifTrue", [])],
-        "noFields": [_render_field(child, answers, warnings) for child in field.get("ifFalse", [])],
+        "answer": answers.get(field["key"]),
+        "answeredBy": (answer_audit.get(field["key"]) or {}).get("actor"),
+        "answeredAt": (answer_audit.get(field["key"]) or {}).get("at"),
+        "yesFields": [_render_field(child, answers, warnings, answer_audit) for child in field.get("ifTrue", [])],
+        "noFields": [_render_field(child, answers, warnings, answer_audit) for child in field.get("ifFalse", [])],
     }
 
 
-def render_sections(definition, answers):
+def render_sections(definition, answers, *, answer_audit=None):
     validate_definition(definition)
     warnings = []
     sections = [{
         "id": section["key"], "title": section["title"], "estimatedMinutes": 0,
         "displayOrder": section.get("order", 0), "enabled": True,
-        "fields": [_render_field(field, answers, warnings) for field in section["fields"]],
+        "fields": [_render_field(field, answers, warnings, answer_audit or {}) for field in section["fields"]],
     } for section in definition["sections"]]
     return sections, warnings
 
@@ -244,8 +313,11 @@ def validate_answers(definition, answers, *, completing=False):
                 date.fromisoformat(value)
             except (TypeError, ValueError):
                 raise ValueError(f"{key} must be an ISO date.") from None
-        if kind in ("text", "text_multiline") and (not isinstance(value, str) or len(value) > TEXT_ANSWER_LIMIT):
-            raise ValueError(f"{key} must be text of at most {TEXT_ANSWER_LIMIT} characters.")
+        if kind in ("text", "text_multiline"):
+            limit = text_answer_limit(definition, field)
+            if not isinstance(value, str) or (limit is not None and len(value) > limit):
+                requirement = 'text' if limit is None else f'text of at most {limit} characters'
+                raise ValueError(f"{key} must be {requirement}.")
     if completing:
         missing = [key for key, field in visible.items()
                    if field.get("mandatory") and FIELD_TYPES.get(field["aptemType"]) != "title_description"

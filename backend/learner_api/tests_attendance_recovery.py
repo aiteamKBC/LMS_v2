@@ -123,7 +123,7 @@ class RecoverySubmissionTests(SimpleTestCase):
 
     def submit(self, validation):
         with patch('learner_api.absence_reports._source_learner', return_value=SOURCE), \
-             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=8000000000000000001), \
+             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=(8000000000000000001, 'lecture')), \
              patch('learner_api.absence_reports.learner_profile_for_source', return_value=MIRROR), \
              patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
              patch('learner_api.absence_reports._catchup_booking', side_effect=validation) as validate, \
@@ -166,7 +166,7 @@ class RecoverySubmissionTests(SimpleTestCase):
 
     def test_alternative_session_is_approved_without_coach_review(self):
         with patch('learner_api.absence_reports._source_learner', return_value=SOURCE), \
-             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=8000000000000000001), \
+             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=(8000000000000000001, 'lecture')), \
              patch('learner_api.absence_reports.learner_profile_for_source', return_value=MIRROR), \
              patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
              patch('learner_api.absence_reports.validate_alternative_occurrence', return_value={'id': 'target-occurrence'}) as validate, \

@@ -103,6 +103,7 @@ def _progress(learner):
 
 
 def _attempts(learner):
+    from .subject_timing import measured_seconds
     # This table may not be provisioned in installations without subject attempts.
     if not query('SELECT to_regclass(%s) AS table_name', ['"Learner".subject_activity_attempts'])[0]['table_name']:
         return []
@@ -112,6 +113,13 @@ def _attempts(learner):
         LEFT JOIN "Last_audit".groups g ON g.group_id=a.group_id
         WHERE a.enrolment_id=%s AND a.aptem_id=%s AND a.submitted_at IS NOT NULL
         ORDER BY a.submitted_at,a.id''', [learner['id'], learner.get('aptem_id')])
+    best = {}
+    for attempt in records:
+        definition = decoded(attempt['definition'], {})
+        seconds = measured_seconds(definition.get('studyTime'))
+        if attempt['completed'] and seconds is not None:
+            key = (attempt['group_id'], attempt['activity_id'], definition.get('catalogue_kind', 'material'))
+            best[key] = max(best.get(key, (-1, '')), (seconds, str(attempt['id'])))
     result = []
     for a in records:
         definition = decoded(a['definition'], {})
@@ -119,12 +127,23 @@ def _attempts(learner):
                     'status': 'Completed' if a['completed'] else 'Submitted',
                     'quiz_score': a['score_percent'], 'quiz_maximum_score': 100 if a['score_percent'] is not None else None,
                     'quiz_passed': a['passed'], 'quiz_attempt_number': None}]
-        # Attempt storage has no measured duration: never copy audited hours or
-        # manufacture elapsed time from the time between opening and submission.
-        result.append(row(f"subject:{a['id']}", a['submitted_at'], definition.get('title'),
+        timing = definition.get('studyTime') or {}
+        seconds = measured_seconds(timing)
+        key = (a['group_id'], a['activity_id'], definition.get('catalogue_kind', 'material'))
+        credited = seconds is not None and best.get(key) == (seconds, str(a['id']))
+        # Preserve untimed historical attempts as unavailable, never infer time
+        # from opening/submission dates or copy audited source hours.
+        result.append(row(f"subject:{a['id']}", timing.get('declaredCompletedAt') or a['submitted_at'], definition.get('title'),
                           'Quiz' if definition.get('catalogue_kind') == 'quiz' else
                           'Reading+Quiz' if definition.get('quiz') else 'Learning', results=results,
-                          group=a['group_name'], note='Submitted on this platform. No activity time was recorded.'))
+                          hours=seconds / 3600 if credited else 0 if seconds is not None else None,
+                          group=a['group_name'], note='Measured study time recorded on this platform.' if seconds is not None else
+                          'Submitted on this platform. No activity time was recorded.'))
+        if seconds is not None:
+            result[-1]['accepted'] = bool(a['completed'])
+            if not credited:
+                result[-1]['completion_note'] = ('Study time is saved in attempt history. Completed hours use '
+                    'the longest completed attempt for this activity, counted once.')
     return result
 
 

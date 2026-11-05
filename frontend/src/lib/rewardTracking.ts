@@ -3,6 +3,7 @@ import { synchronizeTimeTrackingClock } from '@/api/timeTracking';
 import { trackingOffsets, clearTrackingClock } from './trackingClock';
 import {newLmsObservations,readLmsObservations,appendLmsObservation,prepareLmsObservationEvent,confirmLmsObservationEvent} from './rewardObservations.mjs';
 const memory=new Map<string,any>();
+const flushing=new Map<string,Promise<void>>();
 const key=(session:TimeTrackingSession)=>'kbc-reward-intervals:v1:'+session.sessionId;
 function read(session:TimeTrackingSession){
  const saved=memory.get(key(session));
@@ -21,16 +22,22 @@ export function observeRewardInterval(session:TimeTrackingSession|null,start:num
  if(!Number.isFinite(start)||!Number.isFinite(end))return;
  const offsets=trackingOffsets(session,start,end);
  let from=offsets.start,to=offsets.end;
- if(to<=from||to>86400000)return;
+ if(to<=from||(!session.persistent && to>86400000))return;
  let value=read(session);from=Math.max(from,value.lastEndOffsetMs);
  while(from<to){const next=Math.min(from+5000,to);value=appendLmsObservation(value,{startOffsetMs:from,endOffsetMs:next});from=next;}
  save(session,value);
 }
-export async function flushRewardObservations(session:TimeTrackingSession,activityKind:TrackingActivityKind,activityId:string){
+export async function flushRewardObservations(session:TimeTrackingSession,activityKind:TrackingActivityKind,activityId:string,force=false){
+ const previous=flushing.get(session.sessionId);
+ const pending=(async()=>{if(previous)await previous.catch(()=>undefined);await flush(session,activityKind,activityId,force);})();
+ flushing.set(session.sessionId,pending);
+ try{await pending;}finally{if(flushing.get(session.sessionId)===pending)flushing.delete(session.sessionId);}
+}
+async function flush(session:TimeTrackingSession,activityKind:TrackingActivityKind,activityId:string,force:boolean){
  if(!session.rewardTracking)return;
  let value=read(session);
- while(value.pending.length||value.inFlight||value.nextSequence===1){
-  value=prepareLmsObservationEvent(value);save(session,value);
+ while(value.pending.length||value.inFlight||value.nextSequence===1||force){
+  value=prepareLmsObservationEvent(value,force);force=false;save(session,value);
   const request: RequestInit={method:'POST',credentials:'include',
    headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
    body:JSON.stringify({trackingToken:session.trackingToken,activityKind,activityId,...value.inFlight})};
@@ -46,8 +53,9 @@ export async function flushRewardObservations(session:TimeTrackingSession,activi
    response=await fetch('/learner_api/time-tracking/observations/',request);
    data=await response.json();
   }
-  if(!response.ok)throw new Error(data.error||'Your study time could not be confirmed. Please retry.');
-  value=confirmLmsObservationEvent(value,data);save(session,value);
+  if(!response.ok)throw Object.assign(new Error(data.error||'Your study time could not be confirmed. Please retry.'),{code:data.code});
+  // The timer may have appended more intervals while this request was in flight.
+  value=confirmLmsObservationEvent(read(session),data);save(session,value);
  }
 }
 export function clearRewardObservations(session:TimeTrackingSession|null){

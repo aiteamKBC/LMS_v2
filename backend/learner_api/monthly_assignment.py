@@ -93,7 +93,7 @@ def coaching_booking_bounds(month):
     start, end = month_bounds(month)
     if not start:
         return None, None
-    return end - timedelta(days=9), end + timedelta(days=5)
+    return start.replace(day=20), end + timedelta(days=5)
 
 
 def coaching_booking_windows(month):
@@ -159,17 +159,51 @@ def approved_evidence_ids(payload):
         return {str(row[0]) for row in cur.fetchall()}
 
 
+def coaching_meeting_booked(kind, learner_id, meeting_key):
+    """Verify the owned appointment for checks and topic inheritance, without writes."""
+    from .calendar import _learner_calendar_record, coaching_events_for_learner, SOURCE_MODELS
+    from coach_api.review_sources import review_profile_for_source, source_for_learner
+
+    booked_statuses = ("scheduled", "in-progress", "completed", "awaiting-signature")
+    record = _learner_calendar_record(kind, learner_id, meeting_key)
+    if record is not None:
+        return bool(record.event_type == "mcr" and record.scheduled_date and record.status in booked_statuses)
+
+    # Aptem can own a scheduled appointment without an LMS calendar row. The
+    # read-only calendar adapter already verifies its source/learner identity.
+    # Do not create a local booking just to satisfy assignment validation.
+    if not meeting_key.startswith("imported-review:"):
+        return False
+    model = SOURCE_MODELS.get(kind)
+    learner = model.all_learners.filter(pk=learner_id).first() if model else None
+    if learner is None:
+        return False
+    profile = review_profile_for_source(learner)
+    if profile is None or source_for_learner(learner, profile).kind != "aptem":
+        return False
+    events = coaching_events_for_learner(learner, profile, only_sources={"mcr"}, dates_only=True)
+    matches = [event for event in events if event.get("eventKey") == meeting_key]
+    if len(matches) != 1:
+        return False
+    event = matches[0]
+    return bool(
+        event.get("reviewSource") == "aptem" and event.get("source") == "mcr"
+        and str(event.get("learnerId")) == str(profile.id)
+        and event.get("scheduledDate") and event.get("status") in booked_statuses
+        and event.get("sourceStatus") in booked_statuses
+        # An unresolved local booking must not fall back to an older source status.
+        and not event.get("calendarEventKey")
+    )
+
+
 def booked_coaching(payload):
     if resubmission_booking_satisfied(payload):
         return True
-    from .calendar import _learner_calendar_record
     monthly = mapping(payload.get("monthlyAssignment"))
     # Any booked MCM counts, whatever its date; the month only has to be valid.
     if not month_bounds(monthly.get("month"))[0] or not text(monthly.get("meetingKey")):
         return False
-    record = _learner_calendar_record(payload.get("learnerKind"), int(payload.get("learnerId")), monthly["meetingKey"])
-    return bool(record and record.event_type == "mcr" and record.scheduled_date
-                and record.status in ("scheduled", "in-progress", "completed", "awaiting-signature"))
+    return coaching_meeting_booked(payload.get("learnerKind"), int(payload.get("learnerId")), monthly["meetingKey"])
 
 
 def resubmission_booking_satisfied(payload):
@@ -269,7 +303,7 @@ def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowe
         ("benefit", "Employer benefit confirmed and measurable outcomes described (20 words)", monthly.get("employerBenefit") is True and words(payload.get("businessImpact")) >= 20),
         ("impact", "Career, job and employer impacts: at least 20 words each", all(words(monthly.get(k)) >= 20 for k in ["careerImpact", "jobImpact", "employerImpact"])),
         ("action", "Action plan and EPA preparedness: at least 20 words each", all(words(monthly.get(k)) >= 20 for k in ["actionPlan", "epaPreparedness"])),
-        ("meeting", "Coaching meeting booked in the submission-month or next-month window (last ten days through the following 5th)", booked),
+        ("meeting", "Coaching meeting booked", booked),
         ("presentation", "MCM PowerPoint uploaded or generated and exported; presentation reviewed", valid_presentation(payload)),
     ]
     return [{"key": key, "label": label, "passed": bool(passed)} for key, label, passed in checks]
@@ -315,6 +349,11 @@ def export_presentation(request):
             if len(text(mapping(slide).get("body"))) > 12000:
                 raise ValueError(f"Slide {index}: split the content across more slides (maximum 12,000 characters per slide).")
         from .presentation_design import build_deck
+        from .compact_presentation import build_compact_deck, FORMAT
+        from .standard_mcm_presentation import build_standard_deck, FORMAT as STANDARD_FORMAT
+        presentation_format = mapping(payload.get("monthlyAssignment")).get("presentationFormat")
+        compact = presentation_format in (FORMAT, STANDARD_FORMAT)
+        renderer = build_standard_deck if presentation_format == STANDARD_FORMAT else build_compact_deck
         design = mapping(mapping(payload.get("monthlyAssignment")).get("presentationDesign"))
         if design and not design.get("evidenceId"):
             raise ValueError("This saved reference contains colours only. Upload the original PPTX again to use its full template, or choose the default KBC design.")
@@ -324,13 +363,13 @@ def export_presentation(request):
             try:
                 _, reference = load_owned_template(payload["learnerKind"], payload["learnerId"], design["evidenceId"])
                 extract_design(reference)
-                content = build_from_template(slides, reference, design)
+                content = renderer(slides, reference, design) if compact else build_from_template(slides, reference, design)
             except ValueError:
                 raise
             except Exception:
                 return JsonResponse({"error": "Could not load or apply the saved PowerPoint template. Try uploading it again."}, status=503)
         else:
-            content = build_deck(slides)
+            content = renderer(slides) if compact else build_deck(slides)
         response = HttpResponse(content, content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation")
         response["Content-Disposition"] = 'attachment; filename="monthly-assignment.pptx"'
         response["X-Presentation-Token"] = signing.dumps(presentation_fingerprint(payload), salt="monthly-assignment-pptx")
@@ -371,6 +410,17 @@ def complete_saved_assignment(kind, learner_id, component_id, record, save_progr
                 raise ValueError("Some monthly submission requirements changed. Your draft is safe; recheck before submitting.")
             # Use the reviewed claims, not all planned KSBs automatically.
             record["ksbs"] = [c["code"] for c in payload["monthlyAssignment"]["claims"]]
+            # Completion must use the same validated hours as the saved form.
+            # The page timer can be stale or cover only time spent online;
+            # keep its verification evidence separate from the learner's input.
+            seconds = round(float(payload["actualTimeHours"]) * 3600)
+            minutes, remainder = divmod(seconds, 60)
+            source = "timer" if ("timeEntries" not in payload["monthlyAssignment"]
+                                 and payload.get("assignmentTimeSource") == "timer") else "input"
+            tracking_source = record.get("timeTrackingSource", "assignment").rsplit(":", 1)[0]
+            record.update(claimedSeconds=seconds, reportedTime=f"{seconds / 60} minutes",
+                          timeTaken=f"{minutes:02d}:{remainder:02d}",
+                          timeTrackingSource=f"{tracking_source}:{source}")
             save_progress()
             lineage = _reflection_lineage(learner_id, component_id)
             payload.update(submissionMode="submit", qualityScore=100, qualityChecks=checks,

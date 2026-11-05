@@ -102,10 +102,16 @@ class AutomaticNameTests(unittest.TestCase):
         self.assertEqual(mapped['identityRule']['revision'], 0)
         self.assertEqual(raw['email'], '')
 
-    def test_similar_partial_and_reordered_names_remain_unmatched(self):
-        for name in ['Example G', 'Example', 'Guest Example', 'Example Guets']:
+    def test_requested_short_names_and_typos_match_but_reordering_does_not(self):
+        # The requested matching expansion changes these three outcomes.
+        # Retain every original example, including the unsupported reordering.
+        for name, expected in [('Example G', 'a@example.invalid'), ('Example', 'a@example.invalid'),
+                               ('Guest Example', ''), ('Example Guets', 'a@example.invalid')]:
             with self.subTest(name=name):
-                self.assertEqual(apply_reviewed_identities([record(name=name)], learners=self.learners)[0]['email'], '')
+                mapped = apply_reviewed_identities([record(name=name)], learners=self.learners)[0]
+                self.assertEqual(mapped['email'], expected)
+                if expected:
+                    self.assertTrue(mapped['identityRule']['automatic'])
 
     def test_duplicate_learner_names_require_review(self):
         learners = {**self.learners, 'b@example.invalid': {'name': 'Example Guest', 'learnerProfileId': 8}}
@@ -144,6 +150,100 @@ class AutomaticNameTests(unittest.TestCase):
             mapped = apply_reviewed_identities([{**record(), 'total_attendance_seconds': seconds}], learners=self.learners)
             roster = session_roster(set(self.learners), mapped, complete=complete)
             self.assertEqual(roster[0]['status'], expected)
+
+
+class ShortNameMatchingTests(unittest.TestCase):
+    learners = {
+        'e.morgan42@example.invalid': {'name': 'Eva Morgan', 'learnerProfileId': 7},
+        'noah.patel@example.invalid': {'name': 'Noah Patel', 'learnerProfileId': 8},
+    }
+
+    def test_first_second_and_abbreviated_names_and_email_local_part(self):
+        for name in ['eva (Unverified)', 'MORGAN', 'Eva M.', 'E. Morgan',
+                     'e.morgan42', 'emorgan', 'e_morgan', 'Eva Morgna', 'emogran']:
+            with self.subTest(name=name):
+                raw = record(name=name)
+                mapped = apply_reviewed_identities([raw], learners=self.learners)[0]
+                self.assertEqual(mapped['email'], 'e.morgan42@example.invalid')
+                self.assertTrue(mapped['identityRule']['automatic'])
+                self.assertEqual(raw['email'], '')
+                self.assertEqual(raw['display_name'], name)
+                roster = session_roster(set(self.learners), [mapped], complete=True)
+                self.assertEqual({row['email']: row['status'] for row in roster},
+                                 {'e.morgan42@example.invalid': 'present', 'noah.patel@example.invalid': 'absent'})
+
+    def test_typo_is_bounded_and_requires_an_informative_name(self):
+        for name in ['E M', 'E', 'eve', 'Ev', 'Eva Unknown', 'mrogn', 'Unknown Visitor', 'example.invalid']:
+            with self.subTest(name=name):
+                mapped = apply_reviewed_identities([record(name=name)], learners=self.learners)[0]
+                self.assertEqual(mapped['email'], '')
+
+    def test_first_second_local_part_and_typo_collisions_require_review(self):
+        for name, other_email, other_name in [
+            ('eva', 'other@example.invalid', 'Eva Patel'),
+            ('morgan', 'other@example.invalid', 'Noah Morgan'),
+            ('emorgan', 'emorgan99@example.invalid', 'Other Learner'),
+            ('eva', 'eva99@example.invalid', 'Other Learner'),
+            ('morgin', 'other@example.invalid', 'Noah Morgen'),
+        ]:
+            with self.subTest(name=name, other_name=other_name):
+                learners = {**self.learners, other_email: {'name': other_name, 'learnerProfileId': 9}}
+                mapped = apply_reviewed_identities([record(name=name)], learners=learners)[0]
+                self.assertEqual(mapped['email'], '')
+                self.assertTrue(mapped['identityAmbiguous'])
+                self.assertTrue(mapped['identityReviewRequired'])
+
+    def test_exact_full_name_has_priority_over_partial_or_typo_candidates(self):
+        learners = {**self.learners, 'other@example.invalid': {'name': 'Eva Morgen', 'learnerProfileId': 9}}
+        mapped = apply_reviewed_identities([record(name='Eva Morgan')], learners=learners)[0]
+        self.assertEqual(mapped['email'], 'e.morgan42@example.invalid')
+
+    def test_explicit_review_and_revocation_override_short_name_match(self):
+        for active in [True, False]:
+            with self.subTest(active=active):
+                mapped = apply_reviewed_identities([record(name='eva')], learners=self.learners,
+                    rules=[rule(identity_value='eva', active=active,
+                                canonical_email='noah.patel@example.invalid', learner_profile_id=8)])[0]
+                self.assertEqual(mapped['email'], 'noah.patel@example.invalid' if active else '')
+                self.assertEqual(mapped['identityReviewRequired'], not active)
+
+    def test_different_participants_cannot_claim_one_learner_via_short_names(self):
+        for other in [record('R2', 'G2', 'Morgan'),
+                      {**record('R2', 'G2', 'Different Name'), 'email': 'e.morgan42@example.invalid'},
+                      record('R2', 'G2', 'Eva Morgan')]:
+            with self.subTest(other=other['display_name']):
+                mapped = apply_reviewed_identities([record(name='Eva'), other], learners=self.learners)
+                self.assertEqual(mapped[0]['email'], '')
+                self.assertTrue(mapped[0]['identityReviewRequired'])
+                self.assertTrue(mapped[0]['identityAmbiguous'])
+                if other['display_name'] != 'Morgan':
+                    self.assertEqual(mapped[1]['email'], 'e.morgan42@example.invalid')
+                else:
+                    self.assertEqual(mapped[1]['email'], '')
+
+    def test_same_participant_reconnects_keep_one_presence_without_doubling_seconds(self):
+        mapped = apply_reviewed_identities([record(name='Eva'), record('R2', 'G1', 'Morgan')],
+                                          learners=self.learners)
+        person = session_roster({'e.morgan42@example.invalid'}, mapped, complete=True)[0]
+        self.assertEqual((person['status'], person['seconds']), ('present', 600))
+
+    def test_staff_and_existing_email_are_not_reassigned_by_short_name(self):
+        for role in ['organizer', 'presenter', 'coorganizer', 'co-organizer']:
+            mapped = apply_reviewed_identities([{**record(name='Eva'), 'role': role}], learners=self.learners)[0]
+            self.assertEqual(mapped['email'], '')
+        mapped = apply_reviewed_identities([{**record(name='Eva'), 'email': 'other@example.invalid'}],
+                                          learners=self.learners)[0]
+        self.assertEqual(mapped['email'], 'other@example.invalid')
+
+    def test_no_cross_roster_guess_or_invented_attendance(self):
+        mapped = apply_reviewed_identities([record(name='Eva')], learners={
+            'noah.patel@example.invalid': self.learners['noah.patel@example.invalid']})[0]
+        self.assertEqual(mapped['email'], '')
+        for seconds, complete, expected in [(180, True, 'absent'), (181, True, 'present'), (600, False, 'pending')]:
+            mapped = apply_reviewed_identities([{**record(name='Eva'), 'total_attendance_seconds': seconds}],
+                                              learners=self.learners)
+            person = session_roster({'e.morgan42@example.invalid'}, mapped, complete=complete)[0]
+            self.assertEqual(person['status'], expected)
 
 
 class CorrectionEndpointTests(unittest.TestCase):
@@ -331,6 +431,27 @@ class CorrectionEndpointTests(unittest.TestCase):
         self.reporting.sync_verified_teams_attendance_reporting.return_value = 0
         self.assertEqual(self.submit()['recalculation'], 'pending')
         self.assertEqual(len(self.writes()), 1)
+
+    def test_short_name_and_local_part_replace_stale_absence_without_writing_evidence(self):
+        self.roster[0].update(learner_name='Eva Morgan', learner_email='e.morgan42@example.invalid')
+        self.ns['apply_recovery'] = lambda rows: None
+        for name in ['eva (Unverified)', 'morgan', 'emorgan', 'Eva Morgna']:
+            with self.subTest(name=name):
+                raw = [record(name=name)]
+                saved = [{**learner, 'occurrence_id': 'O', 'attendance_status': 'absent', 'attended_seconds': 0}
+                         for learner in self.roster]
+                self.ns['read'].side_effect = [[{'id': 'O', 'session_number': 1, 'status': 'completed',
+                    'attendance_report_id': 'REPORT', 'actual_end': '2026-10-01T10:00Z',
+                    'scheduled_start': '2026-10-01T09:00Z', 'scheduled_end': '2026-10-01T10:00Z'}],
+                    raw, saved, [], []]
+                result = self.ns['result_rows']({'id': 'S', 'module_catalogue_id': 'M'})[0]
+                people = {row['email']: row for row in result['attendance']}
+                self.assertEqual(people['e.morgan42@example.invalid']['status'], 'present')
+                self.assertEqual(people['b@example.invalid']['status'], 'absent')
+                self.assertEqual(result['unmatchedAttendance'], [])
+                self.assertTrue(result['linkedIdentities'][0]['automatic'])
+                self.assertEqual(raw[0]['email'], '')
+                self.cursor.execute.assert_not_called()
 
     def test_collision_can_link_different_learner_and_disables_recurring_guess(self):
         self.rules = [rule()]

@@ -2,6 +2,8 @@ import { readLearnerJson, peekLearnerJson, invalidateLearnerReads } from './lear
 import type { LearnerKind } from './learnerDetail';
 import { invalidateWeeklyProgress } from './weeklyLearning';
 
+export type LegacyProgressReference = { percent: number; capturedAt: string };
+
 export interface StudentActivityItem {
   activity_id: string;
   source_activity_id: number;
@@ -9,6 +11,8 @@ export interface StudentActivityItem {
   can_open_material?: boolean;
   /** Exact owned parent material for an imported companion quiz. */
   source_material_activity_id?: string;
+  /** Original course section. Upload dates must not split or merge its contents. */
+  source_section?: { id: string; title: string; order: number | null; component_order: number | null };
   /** Canonical evidence links retained when several results share a component. */
   record_ids?: string[];
   group_id: number;
@@ -106,7 +110,7 @@ export interface StudentActivityResponse {
   verification_status?: 'verified' | 'unavailable';
   activity_sources?: Record<string, { module_id: string; group_id: number; activity_id: number }>;
   activity_source_issues?: Record<string, 'missing_source_component_id' | 'missing_group_id_activity_id' | 'ambiguous_lineage'>;
-  subjects?: { id: number; name: string; module_id?: string | null; catalogue_count?: number; accepted_hours?: number }[];
+  subjects?: { id: number; name: string; module_id?: string | null; catalogue_count?: number; accepted_hours?: number; legacyProgressReference?: LegacyProgressReference }[];
   covers?: Record<string, string>;
 }
 
@@ -123,6 +127,8 @@ export interface SubjectAttemptResult {
   score_percent: number | null;
   passed: boolean | null;
   completed: boolean;
+  study_time?: { startedAt: string; submittedAt: string; verifiedSeconds: number; declaredCompletedAt?: string | null;
+    selectedSeconds?: number; timeEntrySource?: 'timer' | 'input' };
 }
 
 export interface SubjectMaterial {
@@ -139,6 +145,7 @@ export interface SubjectMaterial {
   completed?: boolean;
   csrf_token: string;
   history: { id: string; score_percent: number | null; passed: boolean | null; completed: boolean;
+    study_time?: SubjectAttemptResult['study_time'];
     submitted_at: string; answers: Record<string, string[]>;
     answer_review?: { question: string; selected: string[]; correct: boolean }[] }[];
   historical: { score: number | null; maximum_score: number | null; passed: boolean | null;
@@ -155,7 +162,8 @@ export async function subjectRequest<T>(url: string, options: SubjectRequestOpti
   }
   const response = await fetch(url, { credentials: 'include', cache: 'no-store', ...options });
   const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(body?.error || `Request failed (${response.status})`);
+  if (!response.ok) throw Object.assign(new Error(body?.error || `Request failed (${response.status})`),
+    { status: response.status, validation: body?.validation });
   if (body == null) throw new Error('The server returned an invalid response.');
   const identity = new URL(url, window.location.origin).pathname.match(/^\/learner_api\/student-activity\/(commercial|apprenticeship)\/([^/]+)\//);
   if (identity) invalidateWeeklyProgress(identity[1] as LearnerKind, decodeURIComponent(identity[2]));

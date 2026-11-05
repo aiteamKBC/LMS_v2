@@ -294,6 +294,9 @@ def archive_series(series_id, *, lease_id=None, artifact_ids=None):
             status = getattr(failure, 'status_code', None) or getattr(getattr(failure, 'response', None), 'status_code', None)
             status_label = f', HTTP {status}' if isinstance(status, int) and 400 <= status < 600 else ''
             detail = ', temporary disk full' if isinstance(failure, OSError) and getattr(failure, 'errno', None) == 28 else ''
+            # Diagnostic facts only, in one fixed shape: session_sync_issues
+            # reads it back into a plain category (404, 403, storage, ...)
+            # and the staff screen words it, so old and new rows read alike.
             error = f"Could not archive {kind} {artifact['id']} during {phase} ({type(failure).__name__}{status_label}{detail}). Check worker logs and access."
             save_archive(artifact, name, state='failed', error=error)
             errors.append(error)

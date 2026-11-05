@@ -4,6 +4,7 @@ import { AppIcon } from './AppIcon';
 import { SessionAccountCheck } from './SessionAccountCheck';
 import { SessionRecordingPlayer } from './SessionRecordingPlayer';
 import { SessionSyncStatus } from './SessionSyncStatus';
+import { SessionSyncIssues } from './SessionSyncIssues';
 import { recordingDay } from './recordingDay';
 import { AttendanceCorrectionMenu, type AttendanceCorrectionAction } from './AttendanceCorrectionMenu';
 import { formatSystemTimestamp } from '@/lib/format';
@@ -205,7 +206,8 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
       ? <div className="m-4 rounded-lg border border-background-200 bg-background-50 p-4 text-sm text-foreground-700">
         <p>The recording and attendance for this session are saved.</p>
         <details className="mt-2"><summary className="cursor-pointer font-semibold">View background sync notice</summary>
-          <p className="mt-2">The last sync for this meeting series reported an issue: {saved.data.job.last_error || 'Some results need another sync.'}</p>
+          <p className="mt-2">The last sync for this meeting series reported an issue.{saved.data.job.last_error || saved.data.job.issues?.length ? '' : ' Some results need another sync.'}</p>
+          <div className="mt-2"><SessionSyncIssues job={saved.data.job} filesReady={saved.data.job.progress?.filesReady} totalFiles={saved.data.job.progress?.totalFiles} /></div>
         </details>
       </div>
       : <><p className="px-4 pt-3 text-xs font-semibold text-foreground-600">Sync status for the full meeting series</p><SessionSyncStatus job={saved.data.job} /></>)}

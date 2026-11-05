@@ -1,5 +1,5 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { RouteLoadingSkeleton } from './RouteLoadingSkeleton';
 import { homeRouteFor, mayAccessRoute } from '@/lib/routeAccess';
 import { OldOtjhGate } from '@/features/old-otjh/hooks';

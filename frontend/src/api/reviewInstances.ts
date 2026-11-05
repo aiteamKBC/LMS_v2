@@ -1,3 +1,4 @@
+import type { BookingCalendarRules } from './learnerCalendar';
 /**
  * Client for the Curriculum-driven Review instance API (see
  * backend/curriculum_api/review_instances.py + coach_api's
@@ -103,11 +104,12 @@ export interface ReviewProgressSnapshot {
   schemaVersion?: number;
   formulaVersion?: string;
   /** Source captured for newly calculated snapshots; absent on historical snapshots. */
-  actualHoursSource?: 'learner.completed_hours';
+  actualHoursSource?: 'learner.completed_hours' | 'canonical_learning.dashboard' | 'canonical.accepted_hours';
   calculatedFrom: string;
   calculatedAt: string;
   calculatedBy: string;
   weeksElapsed: number | null;
+  programmeTimeline?: { startDate: string; asOfDate: string; gatewayDate: string | null; endDate: string | null } | null;
   programmeProgress: ReviewProgressMetric;
   offTheJobHours: ReviewProgressMetric;
   /** Additive and optional so signed snapshots from before this contract keep
@@ -173,6 +175,12 @@ export interface ReviewInstanceFormDefinition {
   summaryOnly?: boolean;
   migratedForm?: boolean;
   answerVersion?: string;
+  bookingAdoptionVersion?: string;
+  reviewRevision?: number;
+  reopenHistory?: Array<{
+    number: number; reopenedAt: string; reasonCode: string; note: string;
+    reopenedBy: string; pdfAvailable: boolean;
+  }>;
   templateSync?: {
     status: 'working' | 'frozen' | 'conflict';
     upToDate: boolean | null;
@@ -192,12 +200,20 @@ export interface ReviewInstanceFormDefinition {
   noApprovedMigratedTemplate?: boolean;
   migratedPreviewError?: boolean;
   canInitialize?: boolean;
+  /** Server eligibility for the assigned coach's correction workflow. */
+  canReopen?: boolean;
   sourceStatus?: string;
   localStatus?: string | null;
+  bookingCalendar?: BookingCalendarRules;
   booking?: {
+    /** Aptem PSP appointments do not require an editable review form. */
+    formRequired?: boolean;
+    status?: string;
+    reserved?: boolean;
     booked: boolean;
     conflict: boolean;
     canAttach?: boolean;
+    canReschedule?: boolean;
     canBook: boolean;
     eventKey: string | null;
     scheduledDate: string | null;
@@ -206,6 +222,8 @@ export interface ReviewInstanceFormDefinition {
     meetingLink: string | null;
     syncState: string | null;
   };
+  /** Exact server-authorized Native Review calendar association. */
+  calendarMeeting?: { eventKey: string; source: string; status: string; meetingLink: string; graphWebLink: string };
   fieldWarnings?: { fieldKey: string; aptemType: number }[];
   pdf?: { available: boolean; reason: string; source?: string; originalAvailable?: boolean } | null;
   /** Progress Review only, and null until a coach calculates it. */
@@ -263,7 +281,9 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
       typeof data.code === 'string' ? `Code: ${data.code}` : '',
       typeof data.request_id === 'string' ? `Reference: ${data.request_id}` : '',
     ].filter(Boolean);
-    throw new Error(diagnostics.length ? `${message} (${diagnostics.join(' · ')})` : message);
+    throw Object.assign(new Error(diagnostics.length ? `${message} (${diagnostics.join(' · ')})` : message), {
+      status: response.status, code: typeof data.code === 'string' ? data.code : undefined,
+    });
   }
   return data as T;
 }
@@ -274,12 +294,16 @@ const migratedUrl = (instanceId: string) => `/coach_api/migrated-reviews/${encod
 export async function fetchMigratedReviewIntelligence(
   instanceId: string,
   signal?: AbortSignal,
-  options: { refresh?: boolean } = {},
+  options: { refresh?: boolean; generateSummary?: boolean } = {},
 ): Promise<CoachMeetingArtifactsResponse> {
   const path = options.refresh ? 'check-session' : 'intelligence';
   return readJsonResponse<CoachMeetingArtifactsResponse>(await coachFetch(`${migratedUrl(instanceId)}/${path}`, {
     signal,
     ...(options.refresh ? { method: 'POST' } : {}),
+    ...(options.refresh && options.generateSummary ? {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ generateSummary: true }),
+    } : {}),
   }));
 }
 
@@ -315,14 +339,16 @@ export async function submitMigratedReview(instanceId: string, answers: Record<s
   }));
 }
 
-export async function signMigratedReviewAsCoach(instanceId: string, signature: string) {
+export async function signMigratedReviewAsCoach(instanceId: string, signature: string, reviewRevision?: number) {
   return readJsonResponse<ReviewInstanceFormDefinition>(await coachFetch(`${migratedUrl(instanceId)}/coach-sign`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ signature }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ signature, reviewRevision }),
   }));
 }
 
-export async function completeMigratedReview(instanceId: string) {
-  return readJsonResponse<ReviewInstanceFormDefinition>(await coachFetch(`${migratedUrl(instanceId)}/complete`, { method: 'POST' }));
+export async function completeMigratedReview(instanceId: string, reviewRevision?: number) {
+  return readJsonResponse<ReviewInstanceFormDefinition>(await coachFetch(`${migratedUrl(instanceId)}/complete`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reviewRevision }),
+  }));
 }
 
 export async function generateMigratedReviewPdf(instanceId: string) {
@@ -378,12 +404,23 @@ export async function initializeMigratedReview(instanceId: string) {
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
 }
 
-export async function startMigratedReview(instanceId: string) {
+export async function startMigratedReview(instanceId: string, booking?: {
+  calendarEventKey: string; meetingLink?: string; scheduledDate?: string | null; scheduledTime?: string | null;
+}) {
   const response = await coachFetch(`${instanceUrl(instanceId)}/local-status`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status: 'in-progress' }),
+    body: JSON.stringify({ status: 'in-progress', ...booking }),
   });
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
+}
+
+export async function adoptMigratedReviewBooking(instanceId: string, signal?: AbortSignal, bookingAdoptionVersion?: string) {
+  return readJsonResponse<ReviewInstanceFormDefinition>(await coachFetch(`${instanceUrl(instanceId)}/adopt-booking`, {
+    method: 'POST', signal,
+    ...(bookingAdoptionVersion !== undefined ? {
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookingAdoptionVersion }),
+    } : {}),
+  }));
 }
 
 export async function bookMigratedReview(instanceId: string, slot: {
@@ -399,6 +436,26 @@ export async function bookMigratedReview(instanceId: string, slot: {
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.message || data.detail || 'The meeting could not be booked.');
+  }
+  return readJsonResponse<ReviewInstanceFormDefinition>(response);
+}
+
+export async function rescheduleMigratedReview(
+  instanceId: string,
+  slot: Parameters<typeof bookMigratedReview>[1],
+  booking: NonNullable<ReviewInstanceFormDefinition['booking']>,
+) {
+  const response = await coachFetch(`${instanceUrl(instanceId)}/book`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...slot, expectedBooking: {
+      scheduledDate: booking.scheduledDate,
+      scheduledTime: booking.scheduledTime,
+      durationMinutes: booking.durationMinutes,
+    } }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.message || data.detail || 'The meeting could not be rescheduled.');
   }
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
 }
@@ -485,6 +542,19 @@ export async function markReviewInstanceInProgressManually(
 
 export type ReviewReopenReasonCode = 'correction-required' | 'incorrect-answer' | 'signature-error' | 'other';
 
+export async function reopenMigratedReview(
+  instanceId: string,
+  params: { reasonCode: ReviewReopenReasonCode; note: string; answerVersion?: string },
+) {
+  return readJsonResponse<ReviewInstanceFormDefinition>(await coachFetch(`${migratedUrl(instanceId)}/reopen`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params),
+  }));
+}
+
+export async function downloadMigratedReviewRevision(instanceId: string, number: number) {
+  await saveReviewPdfResponse(await coachFetch(`${migratedUrl(instanceId)}/revisions/${number}/pdf`));
+}
+
 export async function reopenReviewInstance(
   instanceId: string,
   params: { reasonCode: ReviewReopenReasonCode; note?: string },
@@ -566,7 +636,20 @@ export async function fetchLearnerAdditionReviewTemplates(learnerId: number | st
     `/coach_api/coach/reviews/learner-additions/templates?learnerId=${encodeURIComponent(String(learnerId))}`,
     { signal },
   );
-  return readJsonResponse<{ learnerId: number; programmeId: string | null; templates: LearnerAdditionReviewTemplate[] }>(response);
+  return readJsonResponse<{ learnerId: number; programmeId: string | null; templates: LearnerAdditionReviewTemplate[]; reviewSource: 'curriculum' | 'aptem' | 'conflict' | 'unavailable'; canAddReview: boolean; detail?: string; code?: string }>(response);
+}
+
+export async function fetchCoachReviewSlots(
+  learnerId: number | string,
+  date: string,
+  durationMinutes: number,
+  options: { excludeEventKey?: string; signal?: AbortSignal } = {},
+): Promise<string[]> {
+  const query = new URLSearchParams({ learnerId: String(learnerId), date, durationMinutes: String(durationMinutes) });
+  if (options.excludeEventKey) query.set('excludeEventKey', options.excludeEventKey);
+  const response = await coachFetch(`/coach_api/coach/reviews/availability?${query}`, { signal: options.signal });
+  const result = await readJsonResponse<{ times?: string[] }>(response);
+  return Array.isArray(result.times) ? result.times : [];
 }
 
 /**

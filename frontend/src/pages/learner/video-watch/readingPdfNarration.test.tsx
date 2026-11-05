@@ -226,7 +226,7 @@ it('reports PDF text extraction errors and allows a retry', async () => {
   render(reading());
   await screen.findByText('Page 1 of 3');
   await startReading();
-  expect(screen.getByRole('alert')).toHaveTextContent('Could not read this content aloud');
+  expect(await screen.findByRole('alert')).toHaveTextContent('Could not read this content aloud');
   expect(speak).not.toHaveBeenCalled();
   await startReading();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();

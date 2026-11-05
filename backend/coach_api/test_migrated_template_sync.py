@@ -40,6 +40,15 @@ class DefinitionMergeTests(SimpleTestCase):
     def template(self, definition, family="MCM"):
         return SimpleNamespace(pk=1, scope="GLOBAL", programme_key="", name="Synthetic form", review_family=family, definition_json=definition)
 
+    def test_template_sync_keeps_a_long_mcm_summary(self):
+        definition = form(field('recap', 13, semanticKey='meeting_summary'), field('other'))
+        previous = snapshot_for(self.template(definition))
+        answers = {'recap': 'Saved summary.\n' * 1000, 'other': 'Keep this answer'}
+        definition['sections'][0]['fields'][0]['title'] = 'Updated summary label'
+        result = merge_snapshot(previous, answers, self.template(definition), 'MCM')
+        self.assertEqual(active_answers(result, answers), answers)
+        self.assertEqual(validate_answers(result, answers, completing=True), answers)
+
     def test_reordered_and_moved_fields_keep_typed_answers_and_latest_metadata(self):
         old = form(field("text"), field("long", 13), field("boolean", 2), field("date", 4), field("choice", 5, options=["A", "B"]))
         answers = {"text": "Saved words", "long": "Saved paragraph", "boolean": "yes", "date": "2026-10-04", "choice": "B"}
@@ -183,6 +192,11 @@ class WorkingSnapshotTests(TestCase):
             meeting_intelligence={"aiSummaryOriginal": {"overview": "Original"}, "summaryStatus": "edited", "transcriptArtifactId": "synthetic"})
         self.definition = {"migratedForm": True, "readOnly": False, "localStatus": "in-progress", "migratedProgrammeKey": "id:synthetic",
             "instance": {"id": self.overlay.event_key, "learnerId": 42}, "historicalReview": {"id": "7001", "type": SOURCE_TYPES["MCM"]}}
+        # A working booked review has a calendar row. Keep lifecycle tests on their
+        # synthetic booking instead of falling through to enrolment-source lookup.
+        self.meeting = CoachCalendarEvent.objects.create(event_key=self.overlay.event_key, owner_email=OWNER, learner_id=42,
+            event_type="mcr", target_date=date(2026, 10, 4), scheduled_date=date(2026, 10, 4), scheduled_time=time(10),
+            graph_event_id="synthetic-event", meeting_link="https://example.invalid/meeting", sync_state="synced", status="scheduled")
 
     def edit(self, definition=None):
         self.template.definition_json = definition or form(field("note", title="Updated label"), field("new"))
@@ -261,9 +275,7 @@ class WorkingSnapshotTests(TestCase):
     def test_start_revalidates_working_definition_without_changing_the_meeting(self):
         self.overlay.status = "scheduled"
         self.overlay.save()
-        meeting = CoachCalendarEvent.objects.create(event_key=self.overlay.event_key, owner_email=OWNER, learner_id=42,
-            event_type="mcr", target_date=date(2026, 10, 4), scheduled_date=date(2026, 10, 4), scheduled_time=time(10),
-            graph_event_id="synthetic-event", meeting_link="https://example.invalid/meeting", sync_state="synced", status="scheduled")
+        meeting = self.meeting
         self.edit()
         request = self.factory.post("/", data=json.dumps({"status": "in-progress"}), content_type="application/json")
         request.coach_email = OWNER

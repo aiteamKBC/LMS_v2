@@ -77,7 +77,11 @@ class KsbSourceReadTests(SimpleTestCase):
 
     def test_old_collection_contract_is_unchanged(self):
         payload = {'schema': 'curriculum', 'ksbSets': [{'ksbs': [{'activities': [1]}]}]}
-        with patch.object(views, 'get_cached_payload', return_value=payload) as fetch:
+        # Every set is built from one profile in this visibility, so a payload
+        # carrying a set implies a profile; with none the view answers [] without
+        # building the overview (see KsbSetsTests in test_shared_reads_no_db).
+        with patch.object(views, 'get_ksb_profile_rows', return_value=[{'id': 1, 'is_active': True}]), \
+                patch.object(views, 'get_cached_payload', return_value=payload) as fetch:
             response = views.curriculum_ksb_sets(RequestFactory().get('/ksb-sets/?visibility=all'))
         self.assertEqual(json.loads(response.content)['results'], payload['ksbSets'])
         self.assertTrue(fetch.call_args.kwargs['compact'])

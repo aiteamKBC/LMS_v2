@@ -9,10 +9,10 @@ from . import microsoft_sso as sso
 
 
 class StudentEntryRoutingTests(SimpleTestCase):
-    def callback(self, role, requested, download=None, staff_allowed=False):
+    def callback(self, role, requested, download=None, staff_allowed=False, intent=None):
         nonce = "test-browser-nonce"
         state = signing.dumps(
-            {"next": requested, "n": sso.hash_token(nonce), "download": download}, salt=sso.STATE_SALT,
+            {"next": requested, "n": sso.hash_token(nonce), "download": download, "intent": intent}, salt=sso.STATE_SALT,
         )
         request = RequestFactory().get("/login_api/microsoft/callback/", {
             "code": "test-code", "state": state,
@@ -57,6 +57,13 @@ class StudentEntryRoutingTests(SimpleTestCase):
         response = self.callback("learner", "https://evil.test", "android")
         self.assertEqual(response["Location"], "http://localhost:3000/login?download=android")
         self.assertIn("kbc_session", response.cookies)
+
+    def test_fixed_lecture_feedback_intent_returns_only_learners_to_feedback_entry(self):
+        self.assertEqual(
+            self.callback('learner', '//evil.test', intent='lecture-feedback')['Location'],
+            'http://localhost:3000/login?lectureFeedback=1',
+        )
+        self.assertEqual(self.callback('staff', '', intent='lecture-feedback')['Location'], 'http://localhost:3000/')
 
     def test_download_intent_cannot_redirect_other_roles_or_choose_a_url(self):
         for role, intent, destination in (

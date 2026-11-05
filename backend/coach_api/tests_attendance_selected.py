@@ -102,12 +102,14 @@ class EvidenceFixture:
             enrolment_id=900+i, coach_name='Synthetic coach', _caseload_source=SimpleNamespace(
                 id=900+i, username=f'Synthetic learner {i}', email=f'learner{i}@example.test', aptem_id=100+i))
             for i in range(1, count+1)]
-        self.modules = [SimpleNamespace(module_catalogue_id='module', title='Module', group_id='group', group_name='Group')]
-        self.sessions = [SimpleNamespace(id='series', module_catalogue_id='module', module_title='Module', attendees=[])]
+        self.modules = [SimpleNamespace(module_catalogue_id='module', title='Module', group_id='group', group_name='Group',
+                                       is_programme_deleted=False, programme_id=None, cohort_id=None)]
+        self.sessions = [SimpleNamespace(id='series', module_catalogue_id='module', module_title='Module', attendees=[],
+                                        status='active')]
         self.occurrences = [SimpleNamespace(id='occ', live_session_id='series', actual_start=self.start,
             actual_end=self.start+timedelta(hours=1), scheduled_start=self.start,
             scheduled_end=self.start+timedelta(hours=1), attendance_report_id='report', session_number=1,
-            artifacts_synced_at=self.now, updated_at=self.now)]
+            artifacts_synced_at=self.now, updated_at=self.now, status='active')]
         self.assignments = [SimpleNamespace(module_ref='module', learner__email=profile.email) for profile in self.profiles]
         self.attendance, self.absences, self.reports, self.adjustments = [], [], [], []
         self.confirmations = []
@@ -231,6 +233,11 @@ class EvidenceFixture:
 
 
 class SelectedAttendanceTests(SimpleTestCase):
+    def test_delivery_without_cohort_cannot_receive_automatic_parallel_credit(self):
+        with EvidenceFixture(2) as fixture:
+            result, _ = fixture.read()
+        self.assertEqual([row['status'] for row in result.values()], ['absent', 'absent'])
+
     def test_bounded_queries_for_four_and_forty_and_full_response_parity(self):
         counts = []
         for count in (4, 40):

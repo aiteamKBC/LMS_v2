@@ -37,6 +37,13 @@ class ReviewBookingStatusTests(unittest.TestCase):
         self.base = harness['AssignmentBookingTests']()
         self.base.setUp()
         self.addCleanup(self.base.doCleanups)
+        reconciliation_storage = patch.dict(sys.modules, {
+            'coach_api.reconciliation_links': SimpleNamespace(
+                for_calendar=Mock(return_value=None), require_schedulable=Mock(return_value=None),
+                records_for_key=Mock(return_value=[]), for_native=Mock(return_value=None)),
+        })
+        reconciliation_storage.start()
+        self.addCleanup(reconciliation_storage.stop)
         self.response = harness['Response']
         self.record = dict(
             pk=1, event_key=self.base.event['eventKey'], review_instance_id='INSTANCE-SYNTHETIC',
@@ -59,6 +66,10 @@ class ReviewBookingStatusTests(unittest.TestCase):
         self.manager = self.base.manager
         self.manager.get_or_create.side_effect = lambda **_: (self.read_record(), False)
         self.manager.select_for_update.return_value.get.side_effect = lambda **_: self.read_record()
+        self.manager.filter.return_value.first.side_effect = lambda: self.read_record()
+        self.manager.filter.return_value.exclude.return_value.exclude.return_value.first.side_effect = (
+            lambda: self.read_record() if self.record['review_instance_id'] and self.record['scheduled_date'] else None
+        )
         constants = {name: name.removeprefix('STATUS_').lower().replace('_', '-') for name in (
             'STATUS_NOT_SCHEDULED', 'STATUS_SCHEDULED', 'STATUS_IN_PROGRESS', 'STATUS_AWAITING_SIGNATURE',
             'STATUS_COMPLETED', 'STATUS_CANCELLED')}
@@ -84,6 +95,9 @@ class ReviewBookingStatusTests(unittest.TestCase):
         self.coach = self.base.coach
         self.coach.__dict__.update(
             CoachCalendarEvent=model, transaction=SimpleNamespace(atomic=self.atomic),
+            build_booked_calendar_event=Mock(side_effect=lambda record: dict(self.base.event, status=record.status)),
+            ReviewCreationBlocked=type('ReviewCreationBlocked', (Exception,), {}),
+            native_review_creation_policy=Mock(return_value={'canAddReview': True, 'reviewSource': 'curriculum'}),
             curriculum_review_instances=SimpleNamespace(**self.engine),
             clean_text=lambda value: str(value or '').strip(),
             clean_email=lambda value: str(value or '').strip().lower(),

@@ -15,6 +15,7 @@ from .attendance_lectures import (
     _component_for, build_lectures, lecture_register, lecture_totals,
     read_legacy_metadata, read_workspace, report_id, session_key,
     read_native_occurrences, read_native_components, ATTENDANCE_SOURCE_FIELDS,
+    _exclude_cancelled_kbc_mirrors,
 )
 from .attendance import _summarize_attendance
 from .attendance_mode import _payload, _manager, MAX_AGE, SALT, review_attendance_mode
@@ -64,6 +65,37 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertEqual(result['monthlyLog'], {'month': '2026-08', 'sourceRef': f"att:{row['session_id']}"})
         self.assertEqual(result['date'], '2026-09-01')
 
+    def test_cancelled_native_session_suppresses_one_stale_kbc_mirror(self):
+        legacy = register_row(
+            module_title='PMI-SP Scheduling Professional',
+            session_title='Lecture 3',
+            session_date=date(2026, 9, 30),
+        )
+        cancelled = [{
+            'module_title': 'PMI-SP Scheduling Professional',
+            'session_date': date(2026, 9, 30),
+            'session_number': 3,
+        }]
+        self.assertEqual(_exclude_cancelled_kbc_mirrors([legacy], [], cancelled), [])
+
+    def test_cancelled_native_session_does_not_suppress_when_an_active_match_exists(self):
+        legacy = register_row(
+            module_title='PMI-SP Scheduling Professional',
+            session_title='Lecture 3',
+            session_date=date(2026, 9, 30),
+        )
+        active = register_row(
+            source='microsoft-teams',
+            module_title='PMI-SP Scheduling Professional',
+            session_date=date(2026, 9, 30),
+        )
+        cancelled = [{
+            'module_title': 'PMI-SP Scheduling Professional',
+            'session_date': date(2026, 9, 30),
+            'session_number': 3,
+        }]
+        self.assertEqual(_exclude_cancelled_kbc_mirrors([legacy], [active], cancelled), [legacy])
+
     def test_native_monthly_log_link_uses_occurrence_and_stored_month(self):
         row = register_row(source='microsoft-teams', session_id='occ-8', module_catalogue_id=3,
                            scheduled_start=datetime(2026, 8, 31, 23, 30, tzinfo=datetime_timezone.utc))
@@ -87,6 +119,24 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertEqual(result['session_date'], date(2026, 9, 2))
         self.assertEqual(result['session_start_time'].strftime('%H:%M'), '00:30')
         self.assertEqual(result['scheduled_start'].tzinfo, datetime_timezone.utc)
+
+    def test_cancelled_native_session_is_visible_as_cancelled_and_not_counted(self):
+        source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
+        conn = MagicMock()
+        conn.cursor.return_value.__enter__.return_value.fetchall.return_value = [('business', 'Business')]
+        now = timezone.now()
+        raw = {'session_id': 'occ-cancelled', 'occurrence_id': 'occ-cancelled', 'live_session_id': 'live-1',
+               'scheduled_start': now - timedelta(hours=2), 'scheduled_end': now - timedelta(hours=1),
+               'updated_at': now, 'module_title': 'Business', 'module_catalogue_id': 'business',
+               'session_number': 5, 'occurrence_status': 'cancelled', 'live_session_status': 'active'}
+        with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
+             patch('learner_api.attendance_lectures.dict_rows', return_value=[raw]):
+            result = read_native_occurrences(source)
+        self.assertEqual(result[0]['attendance_status'], 'cancelled')
+        lecture = build_lectures(result, {}, [], [], 'commercial', 12)[0]
+        self.assertEqual(lecture['status'], 'cancelled')
+        self.assertFalse(lecture['counted'])
+        self.assertIsNone(lecture['catchupStatus'])
 
     def test_schedule_uses_current_module_assignment_without_stale_invitation_gate(self):
         conn = MagicMock()
@@ -252,6 +302,43 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertEqual(result[0]['module_catalogue_id'], 'destination-module')
         self.assertEqual(result[0]['attendance_status'], 'present')
 
+    def test_saved_live_register_outcome_overrides_teams_evidence(self):
+        now = timezone.now()
+        scheduled = register_row(
+            source='microsoft-teams', session_id='occ-1', occurrence_id='occ-1',
+            module_catalogue_id='module-1', live_session_id='live-1',
+            scheduled_start=now - timedelta(hours=2),
+            scheduled_end=now - timedelta(hours=1),
+            attendance_status='present', attendance_report_id='report-1',
+        )
+        evidence = {**scheduled, 'attendance_status': 'present', 'attended_seconds': 900}
+        manual = {**scheduled, 'source': 'live-register', 'attendance_status': 'absent',
+                  'attendance_report_id': '', 'updated_at': now}
+
+        result = lecture_register(
+            SimpleNamespace(id=12), records=[evidence, manual],
+            scheduled=[scheduled], apply_adjustments=False,
+        )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['attendance_status'], 'absent')
+        self.assertEqual(result[0]['source'], 'microsoft-teams')
+        self.assertEqual(result[0]['attendance_report_id'], 'report-1')
+
+    def test_saved_shared_outcome_cannot_be_replaced_by_the_source_register(self):
+        now = timezone.now()
+        native = register_row(source='microsoft-teams', session_id='occ', occurrence_id='occ',
+            module_catalogue_id='source', scheduled_start=now-timedelta(hours=2),
+            scheduled_end=now-timedelta(hours=1), attendance_status='present', attendance_report_id='report')
+        shared = {**native, 'session_id': 'occ:destination', 'occurrence_id': 'occ:destination',
+                  'module_catalogue_id': 'destination', 'attendance_source_occurrence_id': 'occ'}
+        records = [{**native, 'source': 'live-register'},
+                   {**shared, 'source': 'live-register', 'attendance_status': 'absent'}]
+        result = lecture_register(SimpleNamespace(id=12), records=records,
+                                  scheduled=[native, shared], apply_adjustments=False)
+        self.assertEqual({row['module_catalogue_id']: row['attendance_status'] for row in result},
+                         {'source': 'present', 'destination': 'absent'})
+
     def test_schedule_excludes_deleted_modules_and_superseded_or_failed_series_and_occurrences(self):
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value
@@ -262,8 +349,8 @@ class AttendanceLectureTests(SimpleTestCase):
         sql = cur.execute.call_args_list[1].args[0]
         self.assertIn('m.deleted_at IS NULL', sql)
         self.assertIn('NOT coalesce(m.is_programme_deleted,false)', sql)
-        for alias in ('s', 'o'):
-            self.assertIn(f"lower(btrim({alias}.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')", sql)
+        self.assertIn("lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')", sql)
+        self.assertIn("lower(btrim(o.status)) IN ('cancelled','canceled')", sql)
 
     def test_empty_plan_cannot_fall_back_to_all_teams_invitations(self):
         conn = MagicMock()
@@ -763,7 +850,7 @@ class AttendanceAbsenceTests(SimpleTestCase):
                                              'recordingTime': '18:00', 'recordingDurationMinutes': '60'})
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         with patch('learner_api.absence_reports._source_learner', return_value=source), \
-             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=8000000000000000001), \
+             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=(8000000000000000001, 'future')), \
              patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
              patch('learner_api.absence_reports.learner_profile_for_source', return_value=SimpleNamespace(id=99)), \
              patch('learner_api.absence_reports.record_reported_absence') as record_absence, \
@@ -804,7 +891,7 @@ class AttendanceAbsenceTests(SimpleTestCase):
                                              'recoveryMethod': 'catch-up', 'catchupPending': '1'})
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         with patch('learner_api.absence_reports._source_learner', return_value=source), \
-             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=8000000000000000001), \
+             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=(8000000000000000001, 'future')), \
              patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
              patch('learner_api.absence_reports.learner_profile_for_source', return_value=SimpleNamespace(id=99)), \
              patch('learner_api.absence_reports.record_reported_absence') as record_absence, \
@@ -834,7 +921,7 @@ class AttendanceAbsenceTests(SimpleTestCase):
                                              'recordingTime': '18:00'})
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         with patch('learner_api.absence_reports._source_learner', return_value=source), \
-             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=123), \
+             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=(123, '')), \
              patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
              patch('learner_api.absence_reports._serialize', side_effect=lambda report: {'id': report.id}), \
              patch('learner_api.absence_reports._send_after_commit') as notify:
@@ -862,7 +949,7 @@ class AttendanceAbsenceTests(SimpleTestCase):
                                              'recordingTime': '18:00'})
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         with patch('learner_api.absence_reports._source_learner', return_value=source), \
-             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=8000000000000000001), \
+             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=(8000000000000000001, 'occ-1')), \
              patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
              patch('learner_api.absence_reports.learner_profile_for_source', side_effect=profiles) as lookup, \
              patch('learner_api.absence_reports.record_reported_absence') as record_absence, \

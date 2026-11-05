@@ -196,19 +196,103 @@ class MigratedSummaryActionTests(TestCase):
         data = json.loads(response.content)
         self.assertTrue(data['partial'])
         self.assertEqual(data['summaryBinding']['generationStatus'], 'failed')
+        self.assertEqual(data['summaryBinding']['generationError']['code'], 'AI_SUMMARY_FAILED')
+        self.assertTrue(data['summaryBinding']['generationError']['requestId'])
         self.assertEqual(self.overlay.answers['recap'], 'Manual saved answer')
         self.assertNotIn('private provider exception', response.content.decode())
         self.assertEqual(self.save({'recap': 'Still editable'}).status_code, 200)
 
-    def test_oversized_summary_keeps_full_original_and_does_not_write_answer(self):
-        response, _ = self.upload(summary='X' * 4001)
+    def test_successful_upload_has_consistent_status_without_overwriting_teams_provenance(self):
+        self.overlay.meeting_intelligence = {
+            'summaryStatus': 'edited', 'summary': {'overview': 'Earlier coach wording'},
+        }
+        self.overlay.save()
+        self.upload()
+        data = json.loads(intelligence._response(self.overlay, self.calendar, self.snapshot).content)
+        self.assertEqual(data['summaryBinding']['generationStatus'], 'ready')
+        self.assertEqual(data['intelligence']['summaryStatus'], 'ready')
+        self.assertFalse(data['partial'])
+        # D03: keep the historical edit, but do not present an unproven cache as
+        # this call's summary. The independently uploaded suggestion stays ready.
+        self.assertIsNone(data['meetingSummary'])
+        self.assertIn('SUMMARY_SESSION_MISMATCH', data['intelligence']['errorCodes'])
+        self.assertEqual(self.overlay.meeting_intelligence['summary']['overview'], 'Earlier coach wording')
+        self.assertEqual(self.overlay.meeting_intelligence['summaryStatus'], 'edited')
+
+    def test_upload_success_supersedes_failure_diagnostics_and_preserves_saved_answer(self):
+        self.save({'recap': 'Keep coach wording'})
+        self.check(ai_error=RuntimeError('private provider exception'))
+        self.assertTrue(self.overlay.meeting_intelligence['summaryGeneration']['error'])
+        self.upload()
+        data = json.loads(intelligence._response(self.overlay, self.calendar, self.snapshot).content)
+        self.assertEqual(data['intelligence']['summaryStatus'], 'ready')
+        self.assertNotIn('AI_SUMMARY_FAILED', data['intelligence']['errorCodes'])
+        self.assertIsNone(data['intelligence']['generationError'])
+        self.assertNotIn('generationError', data['summaryBinding'])
+        self.assertFalse(data['partial'])
+        self.assertEqual(self.overlay.answers['recap'], 'Keep coach wording')
+
+    def test_new_check_without_transcript_does_not_repeat_old_generation_failure(self):
+        self.check(ai_error=RuntimeError('private provider exception'))
+        failed = json.loads(intelligence._response(self.overlay, self.calendar, self.snapshot).content)
+        self.assertTrue(failed['partial'])
+        self.assertEqual(failed['intelligence']['generationError']['code'], 'AI_SUMMARY_FAILED')
+        response, ai = self.check(transcript=None)
+        ai.assert_not_called()
+        data = json.loads(response.content)
+        self.assertEqual(data['summaryBinding']['generationStatus'], 'unavailable')
+        self.assertEqual(data['intelligence']['summaryStatus'], 'unavailable')
+        self.assertNotIn('AI_SUMMARY_FAILED', data['intelligence']['errorCodes'])
+        self.assertNotIn('generationError', data['summaryBinding'])
+
+    def test_older_uploaded_suggestion_is_presented_as_ready_without_a_data_rewrite(self):
+        self.upload()
+        state = deepcopy(self.overlay.meeting_intelligence)
+        state.pop('summaryGeneration')
+        self.overlay.meeting_intelligence = state
+        data = json.loads(intelligence._response(self.overlay, self.calendar, self.snapshot).content)
+        self.assertEqual(data['intelligence']['summaryStatus'], 'ready')
+        self.assertEqual(data['summaryBinding']['generationStatus'], 'ready')
+        self.assertEqual(self.overlay.meeting_intelligence, state)
+
+    def test_unbound_legacy_summary_retry_clears_failure_and_preserves_manual_edit_status(self):
+        self.overlay.template_snapshot['sections'][0]['fields'][0].pop('semanticKey')
+        self.overlay.save()
+        self.check(ai_error=RuntimeError('private provider exception'))
+        response, ai = self.check()
+        ai.assert_called_once()
+        data = json.loads(response.content)
+        self.assertEqual(data['intelligence']['summaryStatus'], 'ready')
+        self.assertNotIn('AI_SUMMARY_FAILED', data['intelligence']['errorCodes'])
+        self.assertIsNone(data['intelligence']['generationError'])
         self.assertNotIn('recap', self.overlay.answers)
-        self.assertEqual(json.loads(response.content)['summaryBinding']['status'], 'summary-too-long')
+        self.overlay.meeting_intelligence['summaryStatus'] = 'edited'
+        with patch.object(views, 'stored_coach_meeting_transcript_for_summary', return_value={
+                'artifactId': 'artifact-one', 'text': 'Synthetic transcript'}):
+            data = json.loads(intelligence._response(self.overlay, self.calendar, self.snapshot).content)
+        self.assertEqual(data['intelligence']['summaryStatus'], 'edited')
+        self.assertEqual(data['meetingSummary']['status'], 'edited')
+
+    def test_unbound_legacy_check_without_transcript_clears_previous_failure(self):
+        self.overlay.template_snapshot['sections'][0]['fields'][0].pop('semanticKey')
+        self.overlay.save()
+        self.check(ai_error=RuntimeError('private provider exception'))
+        response, ai = self.check(transcript=None)
+        ai.assert_not_called()
+        data = json.loads(response.content)
+        self.assertEqual(data['intelligence']['summaryStatus'], 'unavailable')
+        self.assertNotIn('AI_SUMMARY_FAILED', data['intelligence']['errorCodes'])
+        self.assertIsNone(data['intelligence']['generationError'])
+
+    def test_long_mcm_summary_populates_without_overwriting_a_coach_edit(self):
+        response, _ = self.upload(summary='X' * 4001)
+        self.assertEqual(self.overlay.answers['recap'], 'X' * 4001)
+        self.assertEqual(json.loads(response.content)['summaryBinding']['status'], 'populated')
         self.assertEqual(len(self.overlay.meeting_intelligence['aiSummaryOriginal']['overview']), 4001)
         self.save({'recap': 'Final coach answer'})
         response, _ = self.upload(summary='Y' * 4001)
         binding = json.loads(response.content)['summaryBinding']
-        self.assertTrue(binding['summaryTooLong'])
+        self.assertFalse(binding['summaryTooLong'])
         self.assertTrue(binding['replacementAvailable'])
         self.assertEqual(binding['suggestionText'], 'Y' * 4001)
         self.assertEqual(self.overlay.answers['recap'], 'Final coach answer')

@@ -360,6 +360,7 @@ def current_months(learner, signs=(), *, include_open=False, include_future=Fals
 
 def summary_data(learner, *, include_open=False, include_future=False, ensure_month=None):
     canonical_owner = learner.get('_canonical_profile')
+    unallocated = []
     if canonical_owner is not None:
         retained = {'months': []}
         records = canonical.entries_for(canonical_owner)
@@ -375,6 +376,9 @@ def summary_data(learner, *, include_open=False, include_future=False, ensure_mo
             )
         for item in canonical.rows_for(canonical_owner, records):
             month = item.get('reporting_month')
+            if not month:
+                unallocated.append({key: item.get(key) for key in
+                    ('id', 'title', 'actual_hours', 'actual_hours_recorded')})
             if month and allowed_month(month):
                 grouped[month].append(item)
         for month in {*targets, *(sign['report_month'] for sign in signs)}:
@@ -415,6 +419,7 @@ def summary_data(learner, *, include_open=False, include_future=False, ensure_mo
             'months': months, 'total_months': len(months),
             'completed_months': sum(m['status'] == 'complete' for m in months),
             'training_plan_totals': training_plan_totals,
+            'unallocated_activities': unallocated,
             'read_only': learner['_view_as']}
 
 
@@ -442,9 +447,19 @@ def detail_data(learner, month, *, include_open=False, include_future=False, dem
     report_profile = old_repo.report_profile(learner) if learner.get('aptem_id') and not consolidated else {
         'start_date': profile.get('start_date'), 'planned_end_date': profile.get('end_date'),
         'first_evidence_date': None if consolidated else sources.first_evidence_date(learner['id'])}
+    if consolidated:
+        # The journal header uses the same recorded learner date as the
+        # workspace, without changing programme dates used for calculations.
+        rows_for_date = old_repo.query('''SELECT "Learner_start_date" AS learner_start_date
+            FROM enrolment."Created_users" WHERE id = %s''', [learner['id']])
+        report_profile['start_date'] = (str(rows_for_date[0].get('learner_start_date') or '').strip() or None) if rows_for_date else None
     target = canonical.targets(learner['id']).get(month, 0 if journal_sources.enabled() else None) if consolidated else sources.monthly_target(learner, month)
-    return {**month_state(month, rows, signs, target, learner_id=learner['id']), 'rows': rows,
-            'profile': report_profile}
+    report = {**month_state(month, rows, signs, target, learner_id=learner['id']), 'rows': rows,
+              'profile': report_profile}
+    if consolidated:
+        from .manual_time_corrections import annotate
+        report = annotate(learner, report)
+    return report
 
 
 def _canonical_signature_scope(learner, owner):
@@ -517,12 +532,13 @@ def mirror_mcm_learner_signature(learner, month, signature, name):
                   AND review_confirmed IS TRUE LIMIT 1''', [owner['id'], month])
             if existing:
                 return {'status': 'already-synced', 'month': month}
-            old_repo.query('''INSERT INTO "Learner".learner_monthly_signatures
+            inserted = old_repo.query('''INSERT INTO "Learner".learner_monthly_signatures
                 (learner_id,report_month,signer_role,signer_name,review_confirmed,
                  signature_url,signature_data,capture_method,signed_at,snapshot_digest,
                  source_system,source_ref,source_learner_id,programme_key)
                 VALUES (%s,%s,'learner',%s,true,%s,%s,'mcm',now(),%s,'lms',%s,%s,%s)
-                ON CONFLICT (source_learner_id,programme_key,report_month,signer_role) DO NOTHING''',
+                ON CONFLICT (source_learner_id,programme_key,report_month,signer_role) DO NOTHING
+                RETURNING id''',
                 [owner['id'], month, signed_name, signature, capture, snapshot_digest, source_ref,
                  source_learner_id, programme_key])
         else:
@@ -533,12 +549,17 @@ def mirror_mcm_learner_signature(learner, month, signature, name):
                 [learner_key, month, VERSION])
             if existing:
                 return {'status': 'already-synced', 'month': month}
-            old_repo.query(f'''INSERT INTO {old_repo.SIGNOFFS}
+            inserted = old_repo.query(f'''INSERT INTO {old_repo.SIGNOFFS}
                 (learner_id,programme_key,report_month,signer_role,signer_name,
                  review_confirmed,signature_data,signed_at,snapshot_hash,audit_version)
                 VALUES (%s,%s,%s,'learner',%s,true,%s,now(),%s,%s)
-                ON CONFLICT (learner_id,programme_key,report_month,signer_role) DO NOTHING''',
+                ON CONFLICT (learner_id,programme_key,report_month,signer_role) DO NOTHING
+                RETURNING id''',
                 [learner_key, source_ref, month, signed_name, capture, snapshot_digest, VERSION])
+        if not inserted:
+            # An unconfirmed imported row can occupy the unique key. DO NOTHING
+            # preserves that record, but it is not a successful learner sign-off.
+            raise old.ServiceError('The Monthly Log signature was not saved. Please try again from Monthly Logs.')
 
     return {'status': 'synced', 'month': month, 'snapshot_digest': snapshot_digest}
 
@@ -569,6 +590,22 @@ def detail(request, learner_id, month):
 def content(request, learner_id, month, row_id):
     learner, _ = scope(request, learner_id)
     return content_response(learner, month, row_id)
+
+
+@endpoint('POST')
+def correct_manual_time(request, learner_id, month, progress_id):
+    learner, role = scope(request, learner_id)
+    valid_month(month)
+    try:
+        payload = json.loads(request.body)
+    except (TypeError, ValueError):
+        raise old.ServiceError('Supply a valid time correction.') from None
+    from .manual_time_corrections import correct
+    with transaction.atomic(using='enrolment'):
+        correction = correct(learner, role, request.login_account, month, progress_id, payload,
+                             authorize=lambda: scope(request, learner_id))
+        report = detail_data(learner, month, include_open=True)
+        return JsonResponse({'correction': correction, 'detail': report})
 
 
 def content_response(learner, month, row_id):

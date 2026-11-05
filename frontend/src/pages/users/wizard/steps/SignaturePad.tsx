@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import SignaturePadLib from 'signature_pad';
 import { LoaderCircle } from 'lucide-react';
 import { btnPrimary, btnSecondary } from '../../components/ui';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { fetchSavedSignature, saveSignature } from '@/api/savedSignature';
 
 /**

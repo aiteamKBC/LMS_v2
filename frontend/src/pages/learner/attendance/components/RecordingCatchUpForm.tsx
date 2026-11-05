@@ -1,8 +1,10 @@
 import { useState } from 'react';
+import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
 import { RECORDING_CATCH_UP_FORM } from '@/mocks/attendance';
 
 export default function RecordingCatchUpForm() {
   const [submitted, setSubmitted] = useState(false);
+  const { confirmTime, timeConfirmation } = useManualTimeConfirmation();
   const [formData, setFormData] = useState<Record<string, string>>({
     sessionTitle: RECORDING_CATCH_UP_FORM.defaults.sessionTitle,
     sessionDate: RECORDING_CATCH_UP_FORM.defaults.sessionDate,
@@ -14,10 +16,14 @@ export default function RecordingCatchUpForm() {
     reflection: '',
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const allFilled = RECORDING_CATCH_UP_FORM.fields.every(f => !f.required || formData[f.name]?.trim());
     if (!allFilled) return;
+    if (!await confirmTime(formData.timeSpent.trim())) {
+      requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[name="timeSpent"]')?.focus());
+      return;
+    }
     setSubmitted(true);
   };
 
@@ -43,6 +49,7 @@ export default function RecordingCatchUpForm() {
 
   return (
     <div>
+      {timeConfirmation}
       <div className="mb-5">
         <div className="flex items-center gap-2.5 mb-1">
           <span className="w-7 h-7 rounded-lg bg-accent-100 flex items-center justify-center">

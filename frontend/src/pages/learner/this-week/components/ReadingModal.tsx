@@ -64,6 +64,15 @@ export function ReadingModal({
 
   useEffect(() => { setMounted(true); }, []);
 
+  // ── Real Text-to-Speech ──
+  const stopTTS = useCallback(() => {
+    if (ttsSupported) {
+      window.speechSynthesis.cancel();
+      utteranceRef.current = null;
+    }
+  }, [ttsSupported]);
+
+
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden';
@@ -94,15 +103,8 @@ export function ReadingModal({
       document.body.style.overflow = '';
       stopTTS();
     };
-  }, [isOpen]);
+  }, [isOpen, stopTTS]);
 
-  // ── Real Text-to-Speech ──
-  const stopTTS = useCallback(() => {
-    if (ttsSupported) {
-      window.speechSynthesis.cancel();
-      utteranceRef.current = null;
-    }
-  }, [ttsSupported]);
 
   const speakSection = useCallback((sectionIndex: number) => {
     if (!ttsSupported) return;
@@ -157,7 +159,7 @@ export function ReadingModal({
       }, 200);
       setTimeout(() => speakSection(0), 400);
     }
-  }, [readAloud]);
+  }, [readAloud, speakSection, speakingSection]);
 
   useEffect(() => {
     return () => stopTTS();

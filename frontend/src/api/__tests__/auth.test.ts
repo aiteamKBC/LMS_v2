@@ -23,6 +23,7 @@ import {
   apiLogin,
   apiLogout,
   apiMe,
+  apiMicrosoftStart,
   apiResetPassword,
   describePasswordProblem,
   isOwnLearnerRecord,
@@ -74,6 +75,12 @@ function lastHeaders(): Record<string, string> {
 }
 
 describe('request plumbing', () => {
+  it('requests only the fixed lecture feedback destination for Microsoft sign-in', async () => {
+    fetchMock.mockResolvedValue(reply(200, { authorizationUrl: 'https://login.example.test/start' }));
+    await apiMicrosoftStart(undefined, 'lecture-feedback');
+    expect(fetchMock.mock.calls.at(-1)![0]).toBe('/login_api/microsoft/start/?intent=lecture-feedback');
+  });
+
   it('sends the session cookie and the CSRF header on every call', async () => {
     fetchMock.mockResolvedValue(reply(200, { user: ACCOUNT }));
     await apiLogin('admin@kbc.test', 'pw');

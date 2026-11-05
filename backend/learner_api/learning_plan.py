@@ -509,6 +509,22 @@ def _meetings(learner):
     from coach_api.views import resolve_curriculum_programme_id
     from curriculum_api import review_otjh
 
+    from coach_api.review_sources import source_for_learner, review_profile_for_source
+    if source_for_learner(learner, None).kind == "aptem":
+        from coach_api.migrated_otjh import planned_meetings
+        try:
+            profile = review_profile_for_source(learner)
+            if profile is None:
+                return [], "unavailable"
+            start, end = _parse_day(learner.start_date), _parse_day(learner.end_date)
+            if not start or not end:
+                return [], "no-dates"
+            rows = planned_meetings(profile, start, end)
+            return rows, "" if rows else "no-otjh-reviews"
+        except DatabaseError:
+            logger.exception("learning_plan: could not resolve migrated review hours")
+            return [], "unavailable"
+
     try:
         programme_id = resolve_curriculum_programme_id(_s(learner.programme))
     except Exception:

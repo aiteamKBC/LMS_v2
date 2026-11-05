@@ -327,8 +327,9 @@ def account_payload(account, *, subject=None):
             # Sent from here rather than duplicated in the SPA so the landing
             # route and the permission it reflects change in one place.
             access = access_for_staff(subject)
+            accesses = accesses_for_staff(subject)
             payload["access"] = access
-            if access == 'record-monitor':
+            if access == 'record-monitor' and not (accesses - {'record-monitor', 'advanced-admin'}):
                 payload['permissions'] = ['previous_records.view']
             # No grant: land them on the page that explains why and lets them
             # ask, rather than on a workspace that would refuse them anyway.
@@ -337,7 +338,6 @@ def account_payload(account, *, subject=None):
             # Every grant the account holds, in canonical order, with where each
             # one leads. `access`/`accessHome` above stay the PRIMARY — this is
             # what lets the workspace switcher offer the others.
-            accesses = accesses_for_staff(subject)
             payload["accesses"] = [
                 value for value in ACCESS_CHOICES if value in accesses
             ]

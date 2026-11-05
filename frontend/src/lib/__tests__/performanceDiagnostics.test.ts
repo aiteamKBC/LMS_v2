@@ -70,9 +70,10 @@ describe('performance diagnostics', () => {
 
   it('waits for DOM and API quiet before declaring the page stable', async () => {
     uninstall();
-    let notifyDomMutation: MutationCallback = () => undefined;
+    type DomMutationCallback = ConstructorParameters<typeof MutationObserver>[0];
+    let notifyDomMutation: DomMutationCallback = () => undefined;
     class TestMutationObserver {
-      constructor(callback: MutationCallback) { notifyDomMutation = callback; }
+      constructor(callback: DomMutationCallback) { notifyDomMutation = callback; }
       observe() {}
       disconnect() {}
       takeRecords(): MutationRecord[] { return []; }

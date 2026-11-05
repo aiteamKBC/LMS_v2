@@ -4,7 +4,8 @@ import type { ReactNode } from 'react';
 import { ArrowRight, CalendarDays, Clock3, GraduationCap, Layers3, Target, Users, type LucideIcon } from 'lucide-react';
 import { percent, type DisplayTimelineModule } from './model';
 import { CurriculumTimeline } from './CurriculumTimeline';
-import { dateLabel, hours, Meter, moduleStatus, State } from './presentation';
+import { Meter, State } from './presentation';
+import { dateLabel, hours, moduleStatus } from "./presentation.helpers";
 import styles from './trainingPlan.module.css';
 import layout from './TrainingPlanDetails.module.css';
 

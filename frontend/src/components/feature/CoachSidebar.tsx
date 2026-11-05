@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { ChevronDown, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { SidebarIcon, type SidebarNavItem } from './Sidebar';
 import { LEARNER_LOGO_URL, LEARNER_SIDEBAR_PATTERN_URL } from './learnerShellAssets';
 import styles from './CoachSidebar.module.css';

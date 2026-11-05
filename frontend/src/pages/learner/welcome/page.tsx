@@ -7,7 +7,7 @@ import SignaturePadLib from 'signature_pad';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { roleNavMap } from '@/mocks/navigation';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { syncLearnerStatus } from '@/hooks/useLearnerNavGate';
 import { isOnboardingStatus, ONBOARDING_ROUTE } from '@/hooks/useOnboardingRedirect';
 import { COUNTRY_OPTIONS, DEFAULT_COUNTRY } from '@/lib/countries';

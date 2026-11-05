@@ -9,11 +9,11 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 
 from curriculum_api.models import LiveSession, LiveSessionOccurrence, ModuleAuthoringModule
-from learner_api.attendance_lectures import attendance_read_contract, lecture_register
+from .bulk_register import learner_contract as attendance_read_contract, learner_rows as lecture_register
 from learner_api.attendance_rules import canonical_status
 from .auth import coach_access_required
 from .attendance_group import compact_recent
-from .attendance_sessions import assigned_module_ids
+from .bulk_register import saved_module_ids as assigned_module_ids
 from .validation import ValidationError
 from .models import CoachAttendanceSourceAdjustment
 
@@ -73,10 +73,11 @@ def current_row(profile, occurrence_id, lock=False):
     source = getattr(profile, '_caseload_source', None)
     if source is None:
         raise BulkError('Learner attendance source is no longer available.', 409)
-    rows = lecture_register(source, learner_profile_id=profile.id, apply_adjustments=False)
+    rows = lecture_register(source, learner_profile_id=profile.id, apply_adjustments=False,
+                            occurrence_id=occurrence_id, lock=lock)
     row = next((row for row in rows if row.get('source') == 'microsoft-teams' and str(row['session_id']) == occurrence_id), None)
     if row is None:
-        raise BulkError('Occurrence is no longer assigned to this learner.', 409)
+        raise BulkError('No saved attendance record is available for this learner and occurrence.', 409)
     query = CoachAttendanceSourceAdjustment.objects.filter(
         learner_id=profile.id, source='microsoft-teams', source_id=occurrence_id)
     adjustment = (query.select_for_update() if lock else query).first()

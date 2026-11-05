@@ -453,6 +453,13 @@ describe('Learner Case File design', () => {
     expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(8);
   });
 
+  it('explains an unavailable enrolment identity in review history', async () => {
+    mocks.data = { ...caseFileData, reviewGenerationIssues: [{ learnerId: '42', code: 'review_identity_unavailable' }] };
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&tab=reviews']}><LearnerCaseFile /></MemoryRouter>);
+    expect(await screen.findByText(/This learner's enrolment link could not be verified/)).toBeVisible();
+    expect(screen.getByText('Review History')).toBeVisible();
+  });
+
   it('keeps the KSB card absent and preserves unavailable canonical status', async () => {
     mocks.data = { ...caseFileData, ksbStatus: 'unavailable', ksbProgress: null, touchedKsbCodes: ['K1'] };
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);

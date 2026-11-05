@@ -14,15 +14,17 @@
  * Filtering is the only thing that moved to Review Type.
  */
 import {
+  buildReviewTypeLookup,
   isReviewFilterKey,
   reviewBucketFor,
   reviewTypeBuckets,
   type ReviewFilterKey,
   type ReviewTypeClassifiedEvent,
+  type ReviewTypeLookup,
 } from '@/lib/reviewTypeFilters';
 
 /** Fixed event-domain sources. */
-export type NonReviewSourceFilter = 'all' | 'live-session' | 'catch-up' | 'student-support' | 'other';
+export type NonReviewSourceFilter = 'all' | 'live-session' | 'catch-up' | 'student-support' | 'first-session' | 'lms-introduction' | 'gateway' | 'eligibility-review' | 'other';
 export type SourceFilter = NonReviewSourceFilter | ReviewFilterKey;
 
 /** What this module needs off a timetable event. The page's `TimetableEvent`
@@ -32,7 +34,7 @@ export interface CoachFilterableEvent extends ReviewTypeClassifiedEvent {
 }
 
 export const NON_REVIEW_SOURCE_FILTER_ORDER: NonReviewSourceFilter[] = [
-  'all', 'live-session', 'catch-up', 'student-support', 'other',
+  'all', 'live-session', 'catch-up', 'student-support', 'first-session', 'lms-introduction', 'gateway', 'eligibility-review', 'other',
 ];
 
 export const NON_REVIEW_SOURCE_FILTER_LABELS: Record<NonReviewSourceFilter, string> = {
@@ -40,6 +42,10 @@ export const NON_REVIEW_SOURCE_FILTER_LABELS: Record<NonReviewSourceFilter, stri
   'live-session': 'Live Sessions',
   'catch-up': 'Catch-up',
   'student-support': 'Support',
+  'first-session': 'First Session',
+  'lms-introduction': 'LMS Introduction',
+  gateway: 'Gateway Session',
+  'eligibility-review': 'Eligibility Review',
   other: 'Other',
 };
 
@@ -48,6 +54,10 @@ export const NON_REVIEW_SOURCE_FILTER_DOTS: Record<NonReviewSourceFilter, string
   'live-session': 'bg-violet-500',
   'catch-up': 'bg-red-500',
   'student-support': 'bg-blue-500',
+  'first-session': 'bg-indigo-500',
+  'lms-introduction': 'bg-emerald-500',
+  gateway: 'bg-violet-500',
+  'eligibility-review': 'bg-teal-500',
   other: 'bg-slate-500',
 };
 
@@ -85,7 +95,7 @@ export function filterForScheduleIntent(
 ): SourceFilter {
   if (isSourceFilterValue(intentSource)) return intentSource;
   const match = events.find((event) => event.source === intentSource);
-  return (match && reviewBucketFor(match)) || 'all';
+  return (match && reviewBucketFor(match, buildReviewTypeLookup(events))) || 'all';
 }
 
 export interface CoachSourceChip {
@@ -100,8 +110,7 @@ export interface CoachSourceChip {
 export function isSourceFilterValue(value?: string): value is SourceFilter {
   if (!value) return false;
   if (isReviewFilterKey(value)) return true;
-  return value === 'all' || value === 'live-session'
-    || value === 'catch-up' || value === 'student-support' || value === 'other';
+  return NON_REVIEW_SOURCE_FILTER_ORDER.includes(value as NonReviewSourceFilter);
 }
 
 /**
@@ -111,15 +120,16 @@ export function isSourceFilterValue(value?: string): value is SourceFilter {
  * by `source` -- so two templates of one type share a bucket, a renamed
  * template stays put, and a reclassified one moves.
  */
-export function eventMatchesSourceFilter(event: CoachFilterableEvent, source: SourceFilter): boolean {
+export function eventMatchesSourceFilter(event: CoachFilterableEvent, source: SourceFilter, lookup?: ReviewTypeLookup): boolean {
   if (source === 'all') return true;
-  if (isReviewFilterKey(source)) return reviewBucketFor(event) === source;
+  if (isReviewFilterKey(source)) return reviewBucketFor(event, lookup) === source;
   if (source === 'live-session') return event.source === 'live-session' || event.type === 'live-session';
   // A review event never answers to a non-review chip, whatever its legacy
   // routing source says.
   if (reviewBucketFor(event)) return false;
   if (source === 'student-support') return event.source === 'student-support' || event.type === 'welfare';
-  if (source === 'other') return event.source === 'other' && event.type !== 'welfare';
+  if (source === 'other') return event.type !== 'welfare' && event.type !== 'live-session'
+    && !NON_REVIEW_SOURCE_FILTER_ORDER.some(value => value !== 'other' && value === event.source);
   return event.source === source;
 }
 
@@ -151,6 +161,9 @@ export function buildCoachSourceChips(events: CoachFilterableEvent[]): CoachSour
     ...reviewChips,
     fixed('catch-up'),
     fixed('student-support'),
+    ...(['first-session', 'lms-introduction', 'gateway', 'eligibility-review'] as const)
+      .filter(source => events.some(event => eventMatchesSourceFilter(event, source)))
+      .map(fixed),
     fixed('other'),
   ];
 }
@@ -160,16 +173,17 @@ export function buildCoachSourceOptions<T extends CoachFilterableEvent>(
   loadedEvents: T[],
   visibleEvents: T[],
 ): Array<CoachSourceChip & { count: number }> {
+  const lookup = buildReviewTypeLookup(loadedEvents);
   return buildCoachSourceChips(loadedEvents).map((chip) => ({
     ...chip,
     count: chip.value === 'all'
       ? visibleEvents.length
-      : visibleEvents.filter((event) => eventMatchesSourceFilter(event, chip.value)).length,
+      : visibleEvents.filter((event) => eventMatchesSourceFilter(event, chip.value, lookup)).length,
   }));
 }
 
 /** Filter to one bucket. `all` keeps everything. */
-export function filterBySource<T extends CoachFilterableEvent>(events: T[], source: SourceFilter): T[] {
+export function filterBySource<T extends CoachFilterableEvent>(events: T[], source: SourceFilter, lookup = buildReviewTypeLookup(events)): T[] {
   if (source === 'all') return events;
-  return events.filter((event) => eventMatchesSourceFilter(event, source));
+  return events.filter((event) => eventMatchesSourceFilter(event, source, lookup));
 }

@@ -146,7 +146,9 @@ class ModuleCalendarLinkingTests(unittest.TestCase):
         })
 
         self.assertEqual(len(self.updates), 1)
-        self.assertEqual(self.updates[0][2], ['LIVE-COPY'])
+        self.assertEqual(self.updates[0][2], ['LIVE-COPY', 'MOD-COPY'])
+        self.assertIn('module_catalogue_id IS NULL', self.updates[0][1])
+        self.assertIn('module_catalogue_id = %s', self.updates[0][1])
 
     def test_legacy_partial_save_keeps_metadata_fallback(self):
         self.ns['link_live_session_series_to_module']('MOD-LEGACY', {
@@ -154,7 +156,7 @@ class ModuleCalendarLinkingTests(unittest.TestCase):
         })
 
         self.assertEqual(len(self.updates), 1)
-        self.assertEqual(self.updates[0][2], ['LIVE-LEGACY'])
+        self.assertEqual(self.updates[0][2], ['LIVE-LEGACY', 'MOD-LEGACY'])
 
 
 def visit(start, end):
@@ -168,7 +170,7 @@ class AuthoringIdentityTests(unittest.TestCase):
         self.ns['as_json_value'] = self.ns['json_value']
         tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8-sig'))
         names = {'BASE_COMPONENT_SETTINGS', 'COMPONENT_SETTINGS_SCHEMA', 'LEGACY_SETTING_KEYS',
-                 'LIVE_SESSION_TRACKING_SETTING_KEYS'}
+                 'LIVE_SESSION_TRACKING_SETTING_KEYS', 'RECORDING_SOURCE_SETTING_KEYS'}
         nodes = [node for node in tree.body if isinstance(node, ast.Assign)
                  and any(isinstance(target, ast.Name) and target.id in names for target in node.targets)]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), 'authoring-settings', 'exec'), self.ns)
@@ -396,7 +398,8 @@ class RegisterTests(unittest.TestCase):
         def __init__(self, **kwargs): pass
         def __or__(self, other): return self
 
-    def roster(self, records, *, assigned=True, invited=True, launched=False, complete=True, stored_attendees=None, recovery_guest=False):
+    def roster(self, records, *, assigned=True, invited=True, launched=False, complete=True, stored_attendees=None, recovery_guest=False,
+               display_name='Example Learner'):
         learner = types.SimpleNamespace(id=13, enrolment_id=7, full_name='Example Learner', email='a@example.invalid', coach_name='Coach')
         session = types.SimpleNamespace(id='S', module_catalogue_id='M', module_title='Module', attendees=['a@example.invalid'] if invited else [])
         if stored_attendees is not None:
@@ -433,7 +436,7 @@ class RegisterTests(unittest.TestCase):
              'LiveSessionOccurrence': types.SimpleNamespace(objects=self.Query(occurrences)),
              'LiveSessionAttendanceAlias': types.SimpleNamespace(objects=self.Query([])),
              'LiveSessionAttendance': types.SimpleNamespace(objects=self.Query([types.SimpleNamespace(id=f'ROW-{i}', occurrence_id='O1', graph_record_id=str(i),
-                display_name='Example Learner', email=email, role='attendee', raw_data={}, intervals=intervals, total_attendance_seconds=0) for i, (email, intervals) in enumerate(records)])),
+                display_name=display_name, email=email, role='attendee', raw_data={}, intervals=intervals, total_attendance_seconds=0) for i, (email, intervals) in enumerate(records)])),
             'ModuleAuthoringModule': types.SimpleNamespace(objects=self.Query([types.SimpleNamespace(module_catalogue_id='M', group_id='G', group_name='Group')]))}
         functions(ROOT.parent / 'learner_api/teams_attendance.py', {'_email', '_canonical_attendance_email', '_assigned_learner_emails_by_module',
             '_module_expected_emails', '_unique_exact_name_email', '_local_datetime', '_graph_datetime', '_attendance_interval_bounds',
@@ -479,12 +482,20 @@ class RegisterTests(unittest.TestCase):
         self.assertEqual([row['occurrence_id'] for row in rows], ['O1', 'O2'])
         self.assertEqual([row['attendance_status'] for row in rows], ['present', 'absent'])
 
+    def test_short_name_matches_in_reporting_without_changing_another_occurrence(self):
+        for name in ['Example (Unverified)', 'Learner', 'Example L', 'Examlpe Learner']:
+            with self.subTest(name=name):
+                rows = self.roster([('', [visit('00:00', '03:01')])], display_name=name)
+                self.assertEqual([row['occurrence_id'] for row in rows], ['O1', 'O2'])
+                self.assertEqual([row['attendance_status'] for row in rows], ['present', 'absent'])
+                self.assertEqual([row['attended_seconds'] for row in rows], [181, 0])
+
 
 class SharedSessionRosterQueryTests(unittest.TestCase):
     def test_shared_module_without_occurrences_uses_its_plan_roster(self):
         read = Mock(side_effect=[[], [{
             'id': 'SOURCE-O', 'attendance_report_id': 'R', 'actual_end': '2026-10-01',
-        }]])
+        }], []])
         effective = Mock(return_value=[{'source_occurrence_id': 'SOURCE-O', 'learner_profile_id': 33,
                                        'learner_email': 'destination@example.invalid'}])
         namespace = {'read': read, 'effective_module_register_rows': effective}
@@ -502,6 +513,9 @@ class SharedSessionRosterQueryTests(unittest.TestCase):
         self.assertNotIn('learner_training_plan_modules', query)
         self.assertEqual(params, ['DEST', ['SOURCE-O']])
         effective.assert_called_once_with('DEST', [{'id': 'SOURCE-O', 'attendance_report_id': 'R', 'actual_end': '2026-10-01'}])
+        saved_query, saved_params = read.call_args_list[2].args
+        self.assertIn('module_catalogue_id=%s', saved_query)
+        self.assertEqual(saved_params, ['DEST', ['SOURCE-O']])
 
 
 class KnownLearnerEmailTests(unittest.TestCase):
@@ -570,6 +584,7 @@ class EndpointTests(unittest.TestCase):
         self.ns['launch_expectations'] = lambda *args: (defaultdict(set), defaultdict(set))
         self.ns['start_requested_sync'] = Mock(return_value=True)
         self.ns['add_sync_progress'] = Mock()
+        self.ns['linked_session_items'] = Mock(return_value={})
         callbacks = []
 
         @contextmanager
@@ -1121,6 +1136,24 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(self.ns['read'].call_args.args[1], [['S']])
         self.cursor.execute.assert_not_called()
 
+    def test_module_index_names_each_session_by_its_linked_item(self):
+        self.ns['read'].side_effect = [[{'id': 'S', 'module_title': 'Example'}],
+            [{'id': 'O1', 'seriesId': 'S', 'sessionNumber': 1, 'startsAt': None, 'endsAt': None, 'syncedAt': None, 'reportReady': True, 'fileCount': 2},
+             {'id': 'O2', 'seriesId': 'S', 'sessionNumber': 2, 'startsAt': None, 'endsAt': None, 'syncedAt': None, 'reportReady': False, 'fileCount': 0}], []]
+        self.ns['linked_session_items'].return_value = {('S', 1): {'title': 'Week 01 | Join the LIVE session', 'week': None}}
+        response = self.ns['module_results'](self.req(), module_id='M')
+        sessions = response['series'][0]['sessions']
+        self.assertEqual([item['itemTitle'] for item in sessions], ['Week 01 | Join the LIVE session', None])
+        self.ns['linked_session_items'].assert_called_once_with(['S'])
+        # A failed name lookup never hides the sessions.
+        self.ns['read'].side_effect = [[{'id': 'S', 'module_title': 'Example'}],
+            [{'id': 'O1', 'seriesId': 'S', 'sessionNumber': 1, 'startsAt': None, 'endsAt': None, 'syncedAt': None, 'reportReady': True, 'fileCount': 2}], []]
+        self.ns['linked_session_items'].side_effect = self.ns['DatabaseError']('names unavailable')
+        self.ns['log'] = Mock()
+        response = self.ns['module_results'](self.req(), module_id='M')
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response['series'][0]['sessions'][0]['itemTitle'])
+
     def test_module_index_does_not_hide_other_database_failures(self):
         self.ns['read'].side_effect = [[{'id': 'S', 'module_title': 'Example'}], [], self.ns['DatabaseError']('Read failed')]
         with self.assertLogs('test', level='ERROR'):
@@ -1304,17 +1337,20 @@ class EndpointTests(unittest.TestCase):
             response = self.ns['learner_join'](self.req('learner'), kind='commercial', learner_id=7, series_id='S', session_number=1)
         self.assertJoinError(response, 'unavailable')
 
-    def learner_series(self, assigned, shared, series_row):
+    def learner_series(self, assigned, shared, series_row, additional=(), kind='commercial'):
         learner = types.SimpleNamespace(email='a@example.invalid')
         model = types.SimpleNamespace(all_learners=types.SimpleNamespace(
             filter=lambda **kwargs: types.SimpleNamespace(first=lambda: learner)))
-        detail = types.ModuleType('learner_api.learner_detail'); detail.SOURCE_MODELS = {'commercial': model}
+        detail = types.ModuleType('learner_api.learner_detail'); detail.SOURCE_MODELS = {kind: model}
         lectures = types.ModuleType('learner_api.attendance_lectures')
         lectures.read_assigned_modules = lambda source: [{'id': module_id} for module_id in assigned]
         lectures.shared_teams_sources = Mock(return_value=shared)
-        self.ns['read'].return_value = [series_row] if series_row else []
+        self.ns['read'].side_effect = lambda sql, params=(): (
+            [{'module_catalogue_id': module_id} for module_id in additional]
+            if "c.settings_json->>'extraTeamsLiveSessionId'=%s" in sql
+            else [series_row] if series_row else [])
         with patch.dict(sys.modules, {'learner_api.learner_detail': detail, 'learner_api.attendance_lectures': lectures}):
-            return self.ns['learner_series']('commercial', 7, 'S'), lectures.shared_teams_sources
+            return self.ns['learner_series'](kind, 7, 'S'), lectures.shared_teams_sources
 
     def test_learner_series_accepts_a_learner_on_a_shared_teams_duplicate(self):
         series = {'id': 'S', 'module_catalogue_id': 'SOURCE', 'status': 'Active'}
@@ -1331,6 +1367,111 @@ class EndpointTests(unittest.TestCase):
         self.assertIs(found, series)
         shared.assert_not_called()
         self.assertEqual(self.learner_series(['SOURCE'], {}, None)[0], (None, None))
+
+    def test_booked_shared_additional_meeting_is_limited_to_its_single_session(self):
+        series = {'id': 'S', 'module_catalogue_id': 'SOURCE', 'status': 'week-meeting',
+                  'meeting_type': 'week-additional', 'join_url': 'https://teams.example/masterclass'}
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind):
+                (learner, found), _ = self.learner_series(['ALIAS'], {}, series, additional=['ALIAS'], kind=kind)
+                self.assertIsNotNone(learner)
+                self.assertEqual(found, {**series, 'learner_shared_module_ids': ['ALIAS'],
+                                       'linked_session_numbers': {1}, 'additional_meeting_access': True})
+        self.assertEqual(self.learner_series(['OTHER'], {}, series)[0], (None, None))
+        regular = {**series, 'status': 'active', 'meeting_type': 'linked-external'}
+        self.assertEqual(self.learner_series(['ALIAS'], {}, regular, additional=['ALIAS'])[0], (None, None))
+
+    def test_booked_additional_results_keep_only_the_learners_own_attendance(self):
+        learner = types.SimpleNamespace(email=' A@EXAMPLE.invalid ')
+        series = {'id': 'S', 'learner_shared_module_ids': ['ALIAS'],
+                  'linked_session_numbers': {1}, 'additional_meeting_access': True}
+        self.ns['learner_series'] = Mock(return_value=(learner, series))
+        self.ns['result_rows'] = Mock(return_value=[{'attendance': [{'email': 'a@example.invalid'}]}])
+        recorded = types.ModuleType('learner_api.recorded_attendance')
+        recorded.saved_delivery_mode = Mock(return_value='live')
+        recorded.apply_recorded_attendance = Mock()
+        rules = types.ModuleType('learner_api.attendance_rules'); rules.attendance_outcome = Mock()
+        with patch.dict(sys.modules, {'learner_api.recorded_attendance': recorded, 'learner_api.attendance_rules': rules}):
+            response = self.ns['learner_results'](self.req('learner'), kind='commercial', learner_id=7, series_id='S', session_number=1)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['sessions'][0]['attendance'], [{'email': 'a@example.invalid'}])
+        self.ns['result_rows'].assert_called_once_with(series, session_number=1, email='a@example.invalid')
+        self.ns['result_rows'].reset_mock()
+        response = self.ns['learner_results'](self.req('learner'), kind='commercial', learner_id=7, series_id='S', session_number=2)
+        self.assertEqual(response.status_code, 404)
+        self.ns['result_rows'].assert_not_called()
+
+    def test_booked_additional_join_cannot_open_a_different_session(self):
+        self.ns['learner_series'] = Mock(return_value=(object(), {
+            'id': 'S', 'linked_session_numbers': {1}, 'additional_meeting_access': True}))
+        self.ns['read'].reset_mock()
+        response = self.ns['learner_join'](self.req('learner'), kind='commercial', learner_id=7, series_id='S', session_number=2)
+        self.assertJoinError(response, 'not-found')
+        self.ns['read'].assert_not_called()
+
+    def test_booked_additional_join_keeps_the_verified_oneoff_link(self):
+        response = self.join(series={'linked_session_numbers': {1}, 'additional_meeting_access': True},
+                             occurrence={'join_url': 'https://teams.microsoft.com/meet/masterclass'})
+        self.assertEqual(response['location'], 'https://teams.microsoft.com/meet/masterclass')
+        self.assertIn('live_session_join_launches', self.cursor.execute.call_args.args[0])
+
+    def test_booked_additional_content_does_not_grant_another_sessions_artifact(self):
+        access = types.ModuleType('curriculum_api.linked_recording_access')
+        access.linked_artifact_allowed = Mock(return_value=False)
+        series = {'id': 'S', 'linked_session_numbers': {1}, 'additional_meeting_access': True}
+        self.ns['learner_series'] = Mock(return_value=(object(), series))
+        self.ns['stored_content'] = Mock(return_value=Response({'url': 'https://storage.invalid/recording'}))
+        with patch.dict(sys.modules, {'curriculum_api.linked_recording_access': access}):
+            self.assertEqual(self.ns['learner_content'](self.req('learner'), kind='commercial', learner_id=7,
+                                                      series_id='S', artifact_id='OTHER').status_code, 404)
+            self.ns['stored_content'].assert_not_called()
+            access.linked_artifact_allowed.return_value = True
+            self.assertEqual(self.ns['learner_content'](self.req('learner'), kind='commercial', learner_id=7,
+                                                      series_id='S', artifact_id='OWN').status_code, 200)
+            self.ns['stored_content'].assert_called_once()
+
+    def test_linked_recording_grants_only_the_linked_sessions_and_never_join(self):
+        access = types.ModuleType('curriculum_api.linked_recording_access')
+        access.linked_session_numbers = Mock(return_value={3})
+        series = {'id': 'S', 'module_catalogue_id': 'MOD-B', 'status': 'active'}
+        self.ns['__package__'] = 'curriculum_api'
+        try:
+            with patch.dict(sys.modules, {'curriculum_api.linked_recording_access': access}):
+                # Join and every other caller keep the old rule: not assigned, not shared -> refused.
+                self.assertEqual(self.learner_series(['MOD-A'], {}, series)[0], (None, None))
+                access.linked_session_numbers.assert_not_called()
+                learner = types.SimpleNamespace(email='a@example.invalid')
+                model = types.SimpleNamespace(all_learners=types.SimpleNamespace(
+                    filter=lambda **kwargs: types.SimpleNamespace(first=lambda: learner)))
+                detail = types.ModuleType('learner_api.learner_detail'); detail.SOURCE_MODELS = {'commercial': model}
+                lectures = types.ModuleType('learner_api.attendance_lectures')
+                lectures.read_assigned_modules = lambda source: [{'id': 'MOD-A'}]
+                lectures.shared_teams_sources = Mock(return_value={})
+                self.ns['read'].return_value = [series]
+                with patch.dict(sys.modules, {'learner_api.learner_detail': detail, 'learner_api.attendance_lectures': lectures}):
+                    _, found = self.ns['learner_series']('commercial', 7, 'S', linked_recordings=True)
+                self.assertEqual(found, {**series, 'linked_session_numbers': {3}})
+                self.assertEqual(access.linked_session_numbers.call_args.args, ({'MOD-A'}, 'S'))
+        finally:
+            self.ns.pop('__package__', None)
+        self.ns['learner_series'] = Mock(return_value=(learner, found))
+        response = self.ns['learner_results'](self.req('learner'), kind='commercial', learner_id=7, series_id='S', session_number=2)
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(self.ns['learner_series'].call_args.kwargs, {'linked_recordings': True})
+        # The linked session itself: served, but never projected as the
+        # learner's own recorded attendance, even for a recorded-delivery learner.
+        recorded = types.ModuleType('learner_api.recorded_attendance')
+        recorded.saved_delivery_mode = Mock(return_value='lazy')
+        recorded.apply_recorded_attendance = Mock()
+        rules = types.ModuleType('learner_api.attendance_rules'); rules.attendance_outcome = Mock()
+        self.ns['result_rows'] = Mock(return_value=[{'id': 'OCC-3', 'attendance': [{'email': 'a@example.invalid', 'status': 'absent'}], 'artifacts': []}])
+        with patch.dict(sys.modules, {'learner_api.recorded_attendance': recorded, 'learner_api.attendance_rules': rules}):
+            response = self.ns['learner_results'](self.req('learner'), kind='commercial', learner_id=7, series_id='S', session_number=3)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content['sessions'][0]['attendanceMode'], 'live')
+        self.assertEqual(response.content['sessions'][0]['attendance'], [])
+        recorded.saved_delivery_mode.assert_not_called()
+        recorded.apply_recorded_attendance.assert_not_called()
 
     def test_reported_catchup_is_shown_without_changing_original_absence(self):
         self.ns['read'].return_value = [{
@@ -1711,6 +1852,17 @@ class ArchiveWorkerTests(unittest.TestCase):
         self.assertNotIn('synthetic private response', errors[0])
         self.storage.upload_blob.assert_not_called()
 
+    def test_missing_recording_is_stored_as_a_not_found_diagnostic(self):
+        from curriculum_api.session_sync_issues import parse_sync_error
+        errors, _ = self.archive(exists=False, http_status=404)
+
+        self.assertEqual(self.http.stream.call_count, 1)
+        self.assertIn('during downloading (HTTPStatusError, HTTP 404)', errors[0])
+        self.assertNotIn('synthetic private response', errors[0])
+        self.assertEqual(self.ns['save_archive'].call_args.kwargs['state'], 'failed')
+        issue = parse_sync_error(errors[0])
+        self.assertEqual((issue['category'], issue['fileType'], issue['httpStatus']), ('not_found', 'recording', 404))
+
     def test_reports_actual_download_bytes_then_upload_phase_without_invented_total(self):
         errors, _ = self.archive(exists=False)
         self.assertEqual(errors, [])
@@ -1871,6 +2023,40 @@ class ArchiveWorkerTests(unittest.TestCase):
         ns['archive_series'].assert_called_once_with('S', lease_id=cursor.execute.call_args_list[1].args[1][0])
         finish = next(call for call in cursor.execute.call_args_list if 'finished_at=now()' in call.args[0])
         self.assertEqual(finish.args[1][0], 'failed')
+
+    def test_archive_failure_can_recover_on_the_next_claimed_attempt(self):
+        command, ns, cursor = self.worker()
+        ns['archive_series'].side_effect = [['Recording transfer failed.'], []]
+
+        with self.assertRaises(RuntimeError) as retry:
+            command.handle(limit=1, scheduled=False, provision_container=False)
+        self.assertTrue(retry.exception.session_jobs_need_retry)
+        first_finish = cursor.execute.call_args_list[-1]
+        self.assertEqual(first_finish.args[1][0], 'failed')
+        ns['sync_post_lecture_feedback'].assert_not_called()
+
+        # Model the queue granting the same series a later, fresh lease.
+        cursor.fetchone.side_effect = [('S', True)]
+        command.handle(limit=1, scheduled=False, provision_container=False)
+        second_finish = cursor.execute.call_args_list[-1]
+        self.assertEqual(second_finish.args[1][:2], ['complete', ''])
+        self.assertNotEqual(first_finish.args[1][-1], second_finish.args[1][-1])
+        self.assertEqual(ns['archive_series'].call_count, 2)
+        ns['sync_post_lecture_feedback'].assert_called_once_with('S')
+
+    def test_unexpected_transfer_exception_preserves_a_retryable_failure(self):
+        command, ns, cursor = self.worker()
+        ns['archive_series'].side_effect = RuntimeError('private transport credentials')
+
+        with self.assertRaises(RuntimeError) as retry:
+            command.handle(limit=1, scheduled=False, provision_container=False)
+
+        self.assertTrue(retry.exception.session_jobs_need_retry)
+        finish = cursor.execute.call_args_list[-1]
+        self.assertEqual(finish.args[1][0], 'failed')
+        self.assertNotIn('private transport credentials', finish.args[1][1])
+        ns['sync_post_lecture_feedback'].assert_not_called()
+        ns['reconcile_component_links'].assert_not_called()
 
     def test_link_repair_error_keeps_archive_and_retries_job(self):
         command, ns, cursor = self.worker()

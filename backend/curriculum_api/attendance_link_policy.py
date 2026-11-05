@@ -1,4 +1,4 @@
-"""Reviewed and exact-name attendance matching; raw evidence is never edited."""
+"""Reviewed and roster-scoped attendance matching; raw evidence is never edited."""
 from collections import defaultdict
 import re
 
@@ -37,6 +37,72 @@ def ambiguous_guest_names(records):
     return {name for name, values in identities.items() if len(values) > 1}
 
 
+def _name_parts(value):
+    return tuple(re.findall(r'[^\W\d_]+', attendance_name_key(value)))
+
+
+def _one_typo(left, right):
+    """One insertion, deletion, substitution or adjacent transposition.
+
+    Short names need exact evidence: Eva must not become Eve by approximation.
+    """
+    if min(len(left), len(right)) < 4 or abs(len(left) - len(right)) > 1:
+        return False
+    if len(left) == len(right):
+        different = [index for index, pair in enumerate(zip(left, right)) if pair[0] != pair[1]]
+        return len(different) == 1 or (
+            len(different) == 2 and different[1] == different[0] + 1
+            and left[different[0]] == right[different[1]]
+            and left[different[1]] == right[different[0]])
+    short, long = sorted((left, right), key=len)
+    index = next((i for i, pair in enumerate(zip(short, long)) if pair[0] != pair[1]), len(short))
+    return short[index:] == long[index + 1:]
+
+
+def _parts_match(query, candidate, typo_budget):
+    """Match name parts in order, permitting initials alongside a real name."""
+    costs = {0: 0}
+    for part in candidate:
+        for used, cost in list(costs.items()):
+            if used == len(query):
+                continue
+            token = query[used]
+            if token == part or (len(token) == 1 and part.startswith(token)):
+                extra = 0
+            elif typo_budget and _one_typo(token, part):
+                extra = 1
+            else:
+                continue
+            if cost + extra <= typo_budget:
+                costs[used + 1] = min(costs.get(used + 1, 2), cost + extra)
+    return len(query) in costs
+
+
+def _automatic_candidates(value, full_names, alternatives):
+    """Full names win; otherwise require one candidate across all evidence.
+
+    Check exact name parts, initials and email local parts before considering
+    one typo. Domains and plus-address tags never identify a learner.
+    """
+    if value in full_names:
+        return full_names[value], False
+    query = _name_parts(value)
+    if not query or not any(len(part) > 1 for part in query):
+        return {}, True
+    compact = ''.join(query)
+    for budget in (0, 1):
+        matches = {}
+        for email, learner, names, local in alternatives:
+            joined_local = ''.join(local)
+            if (_parts_match(query, names, budget) or (local and (
+                    _parts_match(query, local, budget) or compact == joined_local
+                    or (budget and _one_typo(compact, joined_local))))):
+                matches[email] = learner
+        if matches:
+            return matches, True
+    return {}, True
+
+
 def apply_reviewed_identities(records, aliases=(), legacy_links=(), rules=(), *, learners=None):
     """Resolve staff decisions consistently for the register and reporting.
 
@@ -50,11 +116,19 @@ def apply_reviewed_identities(records, aliases=(), legacy_links=(), rules=(), *,
     rules = {(row['identity_kind'], row['identity_value']): row for row in rules}
     ambiguous = ambiguous_guest_names(records)
     candidates = defaultdict(dict)
+    alternatives = []
     for email, learner in (learners or {}).items():
         name_key = attendance_name_key(learner.get('name'))
         if name_key and email:
             candidates[name_key][email] = learner
+        if email:
+            local, separator, _domain = str(email).partition('@')
+            alternatives.append((email, learner, _name_parts(name_key),
+                                 _name_parts(local.split('+', 1)[0]) if separator else ()))
     result = []
+    expanded = []
+    claims = defaultdict(set)
+    cached_candidates = {}
     for source in records:
         row = dict(source)
         key = identity_key(row)
@@ -78,8 +152,11 @@ def apply_reviewed_identities(records, aliases=(), legacy_links=(), rules=(), *,
                 row['email'] = old['canonical_email']
                 row['identityRule'] = {**old, 'active': True, 'revision': 0,
                                        'identity_kind': key[0], 'identity_value': key[1]}
-            elif key[0] == 'guest_name' and str(row.get('role') or '').strip().casefold() in {'', 'attendee'}:
-                matches = candidates.get(key[1], {})
+            elif (key[0] == 'guest_name' and str(row.get('role') or '').strip().casefold() in {'', 'attendee'}
+                  and not attendance_bot(row)):
+                if key[1] not in cached_candidates:
+                    cached_candidates[key[1]] = _automatic_candidates(key[1], candidates, alternatives)
+                matches, extended = cached_candidates[key[1]]
                 if len(matches) == 1:
                     email, learner = next(iter(matches.items()))
                     row['email'] = email
@@ -89,10 +166,24 @@ def apply_reviewed_identities(records, aliases=(), legacy_links=(), rules=(), *,
                         'learner_profile_id': learner.get('learnerProfileId'),
                         'canonical_email': email, 'display_name': attendance_display_name(source),
                     }
+                    if extended:
+                        expanded.append(row)
                 elif len(matches) > 1:
                     row['identityReviewRequired'] = True
                     row['identityAmbiguous'] = True
+        if row.get('email') and not row['identityReviewRequired']:
+            _name, reported_id = attendance_identity(source)
+            participant = (('identity', reported_id) if reported_id else
+                           ('email', str(source['email']).strip().casefold()) if source.get('email') else
+                           record_key(source))
+            claims[str(row['email']).strip().casefold()].add(participant)
         result.append(row)
+    # Two distinct reported people must not collapse onto one learner just
+    # because one used a first name and the other a surname/local part.
+    # Keep explicit reviews and existing full-name/email decisions authoritative.
+    for row in expanded:
+        if len(claims[str(row['email']).strip().casefold()]) > 1:
+            row.update(email='', identityRule=None, identityReviewRequired=True, identityAmbiguous=True)
     return result
 
 

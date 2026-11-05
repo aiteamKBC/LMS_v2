@@ -1,13 +1,25 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { coachFetch } from '@/lib/coachFetch';
 import {
   WeekTemplateApiError,
   weekTemplateConflict,
   type WeekTemplate,
 } from '../weekTemplateData';
+
+vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn(async () => new Response(
+  JSON.stringify({ enabled: true, saved: true, import: null }), { status: 200 },
+)) }));
+
+// This suite tests saving the selected component, not rich-text formatting.
+vi.mock('@/pages/curriculum/module-builder/RichTextEditor', () => ({
+  RichTextDraft: ({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) => (
+    <textarea aria-label={label} value={value} onChange={event => onChange(event.target.value)} />
+  ),
+}));
 
 /**
  * Two people in the same week template, saving before either one polls.
@@ -63,7 +75,7 @@ describe('recognising a refused week template save', () => {
  */
 // The editor reads the signed-in account on its first line, and renders inside
 // the workspace chrome. Neither has anything to do with concurrency.
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ auth: { account: { role: 'curriculum' } } }),
 }));
 
@@ -160,6 +172,7 @@ function refusal(stored: WeekTemplate, currentRevision: string) {
 describe('week builder under a stale save', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(coachFetch).mockImplementation(async () => new Response(JSON.stringify({ enabled: true, saved: true, import: null }), { status: 200 }));
     fetchWeekTemplateDetail.mockResolvedValue(template());
   });
 
@@ -185,6 +198,61 @@ describe('week builder under a stale save', () => {
   async function editTitle(text: string) {
     await userEvent.type(screen.getByDisplayValue('Week one'), text);
   }
+
+  it('allows Save to request the selected unchanged video without replacing template components', async () => {
+    const initial = template({ components: [{ ...component('V1', 'Video lesson'), type: 'video',
+      settings: { sourceType: 'YouTube', videoUrl: 'https://www.youtube.com/watch?v=abcdefghijk' } }] });
+    updateWeekTemplate.mockResolvedValueOnce(initial);
+    await openEditor(initial);
+    await userEvent.click(screen.getByText('Video lesson'));
+    const save = screen.getByRole('button', { name: /^save$/i });
+    expect(save).toBeEnabled();
+    await userEvent.click(save);
+    await waitFor(() => expect(updateWeekTemplate).toHaveBeenCalledOnce());
+    expect(updateWeekTemplate.mock.calls[0][1]).toEqual({ expectedRevision: 'rev-10', importVideoComponentIds: ['V1'] });
+  });
+
+  it('retains the chosen file across inspector changes and uploads only after template Save succeeds', async () => {
+    const initial = template({ components: [
+      { ...component('V1', 'New video'), type: 'video' }, component('C1', 'Reading task'),
+    ] });
+    const order: string[] = [];
+    vi.mocked(coachFetch).mockImplementation(async (_url, options) => {
+      if (options?.method === 'POST') {
+        order.push('upload');
+        return new Response(JSON.stringify({ savedSettings: { videoUrl: '/curriculum_api/curriculum/uploads/videos/template/WT-1/V1/hash.mp4', sourceType: 'HTML (MP4)' } }), { status: 202 });
+      }
+      return new Response(JSON.stringify({ enabled: true, saved: false, import: null }), { status: 200 });
+    });
+    updateWeekTemplate.mockImplementationOnce(async () => { order.push('save'); return initial; });
+    await openEditor(initial);
+    await userEvent.click(screen.getByText('New video'));
+    const picker = screen.getByLabelText('Upload MP4 to LMS and Bunny');
+    expect(picker).toBeEnabled();
+    fireEvent.change(picker, { target: { files: [new File(['video'], 'new-video.mp4')] } });
+    expect(order).toEqual([]);
+    await userEvent.click(screen.getByText('Reading task'));
+    await userEvent.click(screen.getByText('New video'));
+    expect(screen.getByText(/new-video.mp4.*Selected/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(order).toEqual(['save', 'upload']));
+    await waitFor(() => expect(screen.queryByText(/new-video.mp4.*Selected/)).not.toBeInTheDocument());
+    expect(vi.mocked(coachFetch).mock.calls.find(([, options]) => options?.method === 'POST')?.[0])
+      .toBe('/curriculum_api/curriculum/videos/template/WT-1/V1/');
+  });
+
+  it('keeps the selected file without uploading when the component Save is refused', async () => {
+    const initial = template({ components: [{ ...component('V1', 'New video'), type: 'video' }] });
+    vi.mocked(coachFetch).mockImplementation(async () => new Response(JSON.stringify({ enabled: true, saved: false, import: null }), { status: 200 }));
+    updateWeekTemplate.mockRejectedValueOnce(new Error('Save refused'));
+    await openEditor(initial);
+    await userEvent.click(screen.getByText('New video'));
+    fireEvent.change(screen.getByLabelText('Upload MP4 to LMS and Bunny'), { target: { files: [new File(['video'], 'new-video.mp4')] } });
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(updateWeekTemplate).toHaveBeenCalledOnce());
+    expect(screen.getByText(/new-video.mp4.*Selected/)).toBeInTheDocument();
+    expect(vi.mocked(coachFetch).mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false);
+  });
 
   it('merges the other editor components in and saves once against their version', async () => {
     const theirs = template({

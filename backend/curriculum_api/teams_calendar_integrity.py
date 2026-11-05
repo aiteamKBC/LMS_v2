@@ -440,6 +440,44 @@ def run_not_delivery(occurrence, run_start, run_end, participants=None):
     return ''
 
 
+def off_schedule_runs(row, events):
+    """Teams calls on this session's link that were not this session, for the screens to say so.
+
+    The attendance sync ignores a call that finished before the session, began
+    long after it, or was one person checking the room, and logs it
+    (``note_premature_run``). Teams still shows that call as the meeting having
+    happened on its own day, so a person reading the LMS needs to see it too:
+    when it was, against when the session is, and that it counts for nothing.
+
+    Judged again against the session's CURRENT time -- a session moved onto
+    the day of an earlier call would no longer have it ignored -- and one entry
+    per call, however many workers logged it. A short test open is kept as it
+    was judged, since the participant count is not in the log. Returns a list
+    of ``{runStartUtc, runEndUtc, scheduledStartUtc, reason}``, oldest first.
+    """
+    number = int((row or {}).get('session_number') or 0)
+    found, seen = [], set()
+    for event in events or ():
+        if event.get('event_type') != EVENT_PREMATURE_RUN or int(event.get('session_number') or 0) != number:
+            continue
+        if clean(event.get('live_session_id')) and clean(row.get('live_session_id')) and \
+                clean(event.get('live_session_id')) != clean(row.get('live_session_id')):
+            continue
+        detail = event.get('detail') or {}
+        start, end = as_utc(detail.get('runStart')), as_utc(detail.get('runEnd'))
+        if end is None:
+            continue
+        logged = clean(detail.get('reason')) or RUN_BEFORE_SESSION
+        reason = run_not_delivery(row, start, end) or (RUN_TEST_OPEN if logged == RUN_TEST_OPEN else '')
+        key = (iso(start), iso(end))
+        if not reason or key in seen:
+            continue
+        seen.add(key)
+        found.append({'runStartUtc': iso(start), 'runEndUtc': iso(end),
+                      'scheduledStartUtc': iso(row.get('scheduled_start')), 'reason': reason})
+    return sorted(found, key=lambda item: item['runStartUtc'])
+
+
 def stored_run_is_delivery(occurrence):
     """Whether the run already saved on a completed session stands as its delivery."""
     if clean((occurrence or {}).get('status')).lower() != 'completed':
@@ -727,6 +765,8 @@ def classify_session(series, row, *, events, snapshot, checked_at, now):
         'lifecycle': lifecycle_state(row, now),
         'lifecycleIssues': issues,
         'auditIssues': audit_issues,
+        # Calls on this link that were not this session (a test, another day's use).
+        'offScheduleRuns': off_schedule_runs(row, events),
         'attribution': describe_attribution(creation) if kind == MEETING_STANDALONE else None,
         'resolution': {'type': resolution.get('event_type'), 'at': iso(resolution.get('created_at')),
                        'by': describe_attribution(resolution)['label']} if resolution else None,

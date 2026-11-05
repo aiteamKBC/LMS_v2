@@ -1,0 +1,22 @@
+.page { max-width: 1150px; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
+.page h1 { font-size: 1.8rem; font-weight: 700; }
+.page h2 { font-size: 1.2rem; font-weight: 650; }
+.page h3 { font-weight: 650; }
+.panel { border: 1px solid #dce3ed; border-radius: 16px; background: #fff; color: #18253c; padding: 24px; display: grid; gap: 12px; min-width: 0; }
+.filters { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 16px; }
+.fields { display: grid; gap: 20px; min-width: 0; }
+.panel label { display: grid; gap: 7px; font-size: .9rem; font-weight: 550; min-width: 0; }
+.panel input:not([type=checkbox]), .panel textarea, .panel select { border: 1px solid #bbc8db; border-radius: 8px; padding: 10px 12px; width: 100%; background: #fff; color: #18253c; min-width: 0; }
+.panel textarea { font-weight: 400; resize: vertical; }
+.panel .check { display: flex; align-items: flex-start; gap: 10px; }
+.check input { margin-top: 4px; flex: none; }
+.page button, .page a { border-radius: 8px; padding: 10px 14px; border: 1px solid #c7d4e7; color: #16499a; width: fit-content; font-weight: 600; }
+.page button:disabled { opacity: .5; cursor: not-allowed; }
+.page button:focus-visible, .page a:focus-visible, .panel input:focus-visible, .panel textarea:focus-visible, .panel select:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+.badge { background: #edf3ff; color: #17499c; padding: 4px 10px; border-radius: 20px; font-size: .8rem; font-weight: 650; }
+:global([data-theme="dark"]) .panel { background: #172238; color: #e4ecf8; border-color: #40506a; }
+:global([data-theme="dark"]) .panel input:not([type=checkbox]), :global([data-theme="dark"]) .panel textarea, :global([data-theme="dark"]) .panel select { background: #111b2d; color: #e4ecf8; border-color: #52627d; }
+:global([data-theme="dark"]) .page button, :global([data-theme="dark"]) .page a { color: #b6d1ff; }
+:global([data-theme="dark"]) .page button { background: #233554; border-color: #52627d; }
+@media (max-width: 650px) { .page { padding: 12px; } .panel { padding: 16px; } .filters { grid-template-columns: 1fr; } }

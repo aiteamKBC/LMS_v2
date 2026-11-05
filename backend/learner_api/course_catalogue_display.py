@@ -58,6 +58,7 @@ def read_export_placements(query, courses):
             section->>'section_order' AS section_order,section->>'section_title' AS section_title,
             material->>'source_component_id' AS component_id,
             material->>'component_kind' AS component_kind,material->>'post_type' AS post_type,
+            material->>'component_order' AS component_order,
             material->>'created_at_utc' AS original_created_at
         FROM exports CROSS JOIN LATERAL jsonb_array_elements(
             CASE WHEN jsonb_typeof(payload->'sections')='array'
@@ -70,6 +71,8 @@ def read_export_placements(query, courses):
 
 def catalogue_display_context(definitions, exports):
     """Use typed source IDs inside the owned course, never title matching."""
+    from .source_sections import section_metadata
+    original_sections = section_metadata(definitions, exports)
     owned = {str(item['source_course_ref']) for item in definitions}
     sections, placements, section_refs = defaultdict(dict), defaultdict(list), defaultdict(list)
     uploaded = defaultdict(set)
@@ -110,6 +113,8 @@ def catalogue_display_context(definitions, exports):
     for definition in definitions:
         item = dict(definition)
         course, ref = str(item['source_course_ref']), item['source_activity_id']
+        if (course, ref) in original_sections:
+            item['source_section'] = original_sections[(course, ref)]
         matches = list(placements.get((course, ref), []))
         # The retained catalogue also records section membership directly.
         # Attached quizzes need not appear as standalone export materials.
@@ -131,8 +136,10 @@ def catalogue_display_context(definitions, exports):
             schedule.update(date_source='section_needs_review', date_needs_review=True)
         else:
             schedule = section_schedule(title)
-        if schedule['date_source'] == 'undated':
-            schedule = activity_schedule(item.get('source_activity_title'))
+        if schedule['date_source'] in {'undated', 'partial_title_needs_review'}:
+            activity = activity_schedule(item.get('source_activity_title'))
+            if schedule['date_source'] == 'undated' or activity['date_source'] == 'title':
+                schedule = activity
         if schedule['date_source'] == 'undated':
             schedule['date_needs_review'] = True
         item['_display_schedule'] = schedule
@@ -168,11 +175,16 @@ def catalogue_display_context(definitions, exports):
                     item['source_section_title'] = item['source_section_title'] or parent['source_section_title']
                 if parent.get('material_available'):
                     item['source_material_activity_id'] = f'catalogue:{course}:material:{parent_id}'
+                if not item.get('source_section') and not str(item.get('source_section_ref') or '').strip('0') and parent.get('source_section'):
+                    item['source_section'] = dict(parent['source_section'])
+                elif not parent.get('source_section') and not str(parent.get('source_section_ref') or '').strip('0') and item.get('source_section'):
+                    parent['source_section'] = dict(item['source_section'])
     # Resolve companion quizzes before upload fallback, so a parent's authored
     # lecture date takes precedence over the quiz's original upload date.
     for item in enriched:
         days = item.pop('_original_upload_days')
-        if item['_display_schedule']['date_source'] == 'undated':
+        if (item['_display_schedule']['month'] == 'undated'
+                and item['_display_schedule']['date_source'] not in {'introduction', 'extra_activity'}):
             if len(days) == 1:
                 item['_display_schedule'] = activity_schedule('', original_created_at=next(iter(days)))
             elif len(days) > 1:
@@ -180,15 +192,47 @@ def catalogue_display_context(definitions, exports):
     return enriched
 
 
+def retain_learner_schedule(definition, record, *, completed):
+    """Keep execution evidence on this learner's projection, never the catalogue.
+
+    A saved submission/start is more specific than a reporting allocation. A
+    month-only record stays month-only; import/sync timestamps are not evidence.
+    """
+    day = next((value for field in ('submitted_at', 'started_at', 'reporting_started_at', 'reporting_ended_at')
+                if (value := original_upload_day(record.get(field)))), None)
+    month = day[:7] if day else str(record.get('reporting_month') or '')
+    if not re.fullmatch(r'20\d{2}-(?:0[1-9]|1[0-2])', month):
+        return
+    placement = activity_schedule('', stored_date=day)
+    placement.update(month=month, date_source='learner_activity_record', date_needs_review=False)
+    # Passing/completed evidence wins over a later failed attempt, while every
+    # record still contributes its original hours in the canonical aggregator.
+    rank = (bool(completed), day or month)
+    previous = definition.get('_learner_schedule')
+    if previous is None or rank > previous['rank']:
+        definition['_learner_schedule'] = {'rank': rank, 'placement': placement}
+
+
+def display_schedule(definition):
+    schedule = definition.get('_display_schedule')
+    if (schedule and schedule.get('month') == 'undated'
+            and schedule.get('date_source') not in {'introduction', 'extra_activity'}
+            and definition.get('_learner_schedule')):
+        return dict(definition['_learner_schedule']['placement'])
+    return schedule
+
+
 def apply_catalogue_display(items, definitions):
     by_id = {f"catalogue:{d['source_course_ref']}:{d['source_activity_id']}": d for d in definitions}
     for item in items:
         definition = by_id[item['activity_id']]
-        schedule = definition.get('_display_schedule')
-        # My Learning follows the course's schedule for every learner, including
-        # completed activities. Reporting months remain solely in the ledger.
+        schedule = display_schedule(definition)
+        # Lecture/upload dates stay shared. Only unresolved activities use this
+        # learner's execution month; the reporting ledger itself is untouched.
         if schedule:
             item.update(schedule)
         if definition.get('source_material_activity_id'):
             item['source_material_activity_id'] = definition['source_material_activity_id']
+        if definition.get('source_section'):
+            item['source_section'] = dict(definition['source_section'])
     return items

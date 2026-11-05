@@ -1,5 +1,6 @@
 """Dashboard regression tests: canonical reads mocked; database access forbidden."""
 import json
+import sqlite3
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -8,7 +9,90 @@ from django.test import RequestFactory, SimpleTestCase
 from . import dashboard_weekly as weekly, training_plan_dashboard as schedule, learner_detail
 
 
+class RecordedKsbMappingTests(SimpleTestCase):
+    def setUp(self):
+        self.db = sqlite3.connect(':memory:')
+        self.addCleanup(self.db.close)
+        self.db.row_factory = sqlite3.Row
+        self.db.create_function('btrim', 1, lambda value: value.strip() if value is not None else None)
+        self.db.executescript('''
+            ATTACH DATABASE ':memory:' AS Learner;
+            CREATE TABLE Learner.learner_progress_entries (
+                id INTEGER,learner_id INTEGER,component_ref TEXT,curriculum_component_ref TEXT,deleted_at TEXT);
+            CREATE TABLE Learner.learner_progress_ksbs (progress_id INTEGER,position INTEGER,ksb_code TEXT);
+            CREATE TABLE Learner.learner_progress_ksb_exclusions (progress_id INTEGER,position INTEGER,ksb_code TEXT,status TEXT);
+            INSERT INTO Learner.learner_progress_entries VALUES
+                (1,17,'C1',NULL,NULL),(2,18,'C1',NULL,NULL),(3,17,'C1',NULL,'deleted'),
+                (4,17,'OLD','C2',NULL),(5,17,'UNASSIGNED',NULL,NULL),(6,17,'C1','',NULL);
+            INSERT INTO Learner.learner_progress_ksbs VALUES
+                (1,0,' K1 '),(1,1,'S2'),(1,2,'k1'),(1,3,''),(1,4,NULL),
+                (2,0,'B9'),(3,0,'K9'),(4,0,'S3'),(5,0,'B1'),(6,0,'K8'),(6,1,'K7');
+            INSERT INTO Learner.learner_progress_ksb_exclusions VALUES
+                (6,0,'K8','excluded'),(6,1,'K7','released');
+        ''')
+
+    def query(self, sql, params):
+        # Execute the production filters/joins against isolated synthetic data.
+        sql = sql.replace('=ANY(%s)', ' IN (' + ','.join('?' for _ in params[1]) + ')').replace('%s', '?')
+        return [dict(row) for row in self.db.execute(sql, [params[0], *params[1]])]
+
+    def read(self, owner, components):
+        with patch.object(weekly.canonical_learning, 'query', side_effect=self.query), \
+             patch('learner_api.ksb_exclusions.exclusions_table_exists', return_value=True):
+            return weekly.recorded_ksbs({'id': owner}, components)
+
+    def test_only_owned_visible_links_appear_without_duplicates_or_excluded_codes(self):
+        self.assertEqual(self.read(17, ['C1', 'C2', 'EMPTY']), {'C1': ['K1', 'K7', 'S2'], 'C2': ['S3']})
+        self.assertEqual(self.read(18, ['C1', 'C2']), {'C1': ['B9']})
+
+    def test_canonical_component_destination_wins_over_old_reference(self):
+        self.assertEqual(self.read(17, ['OLD']), {})
+        self.assertEqual(self.read(17, ['C2']), {'C2': ['S3']})
+
+    def test_no_mapping_remains_empty_and_an_empty_week_does_not_query(self):
+        self.assertEqual(self.read(17, ['EMPTY']), {})
+        with patch.object(weekly.canonical_learning, 'query') as query:
+            self.assertEqual(weekly.recorded_ksbs({'id': 17}, []), {})
+            query.assert_not_called()
+
+    def test_read_failure_is_not_reported_as_no_mapping(self):
+        with patch.object(weekly.canonical_learning, 'query', side_effect=DatabaseError('offline')), \
+             patch.object(weekly.canonical_learning, '_ksb_not_excluded', return_value='1=1'):
+            with self.assertRaises(DatabaseError):
+                weekly.recorded_ksbs({'id': 17}, ['C1'])
+
+
 class DashboardWeeklyTests(SimpleTestCase):
+    def test_reflection_choices_are_scoped_and_do_not_promote_drafts_or_pending_work(self):
+        records = [
+            {'activity_id': 'C1', 'status': 'draft', 'ksb_codes': ['K1', 'K1', ' S2 ']},
+            {'activity_id': 'C1', 'status': 'submitted_for_tutor_review', 'ksb_codes': '["B1"]'},
+            {'activity_id': 'C1', 'status': 'accepted', 'ksb_codes': ['K3']},
+            {'activity_id': 'C2', 'status': 'accepted', 'ksb_codes': ['S4']},
+            {'activity_id': 'C2', 'status': 'draft', 'ksb_codes': []},
+            {'activity_id': 'C2', 'status': 'draft', 'ksb_codes': 'null'},
+        ]
+        for kind, enrolment in [('commercial', 265), ('apprenticeship', 266)]:
+            with self.subTest(kind=kind), patch.object(weekly.canonical_learning, 'query', return_value=records) as query:
+                result = weekly.reflection_ksbs({'enrolment_id': enrolment, 'learner_type': kind}, ['C1', 'C2'])
+            self.assertEqual(result['C1'], [
+                {'status': 'draft', 'codes': ['K1', 'S2']},
+                {'status': 'submitted_for_tutor_review', 'codes': ['B1']},
+                {'status': 'accepted', 'codes': ['K3']},
+            ])
+            self.assertEqual(result['C2'], [{'status': 'accepted', 'codes': ['S4']}])
+            sql, params = query.call_args.args
+            self.assertIn('learner_id=%s AND learner_kind=%s AND activity_id=ANY(%s)', sql)
+            self.assertIn(weekly.VISIBLE_SUBMISSION_SQL, sql)
+            self.assertEqual(params, [str(enrolment), kind, ['C1', 'C2']])
+
+    def test_empty_week_does_not_read_reflections_and_failures_remain_visible(self):
+        with patch.object(weekly.canonical_learning, 'query', side_effect=DatabaseError('offline')) as query:
+            self.assertEqual(weekly.reflection_ksbs({}, []), {})
+            query.assert_not_called()
+            with self.assertRaises(DatabaseError):
+                weekly.reflection_ksbs({'enrolment_id': 265, 'learner_type': 'commercial'}, ['C1'])
+
     def test_selected_quiz_metadata_and_question_availability_are_reused(self):
         component = ('Q1', 'W1', 'M1', 'quiz', 'Quiz', '', {}, None, 0, None, False, None, False)
         baseline_cursor = MagicMock()
@@ -74,7 +158,7 @@ class DashboardWeeklyTests(SimpleTestCase):
         self.assertEqual(read.call_args.args[1], 'M1:2')
         self.assertFalse(read.call_args.kwargs['include_weeks'])
 
-    def test_routing_loads_only_selected_week_without_progress_or_unrelated_quizzes(self):
+    def test_routing_loads_only_selected_week_without_attempt_bodies_or_unrelated_quizzes(self):
         navigation = {'id': 'M1:1', 'moduleId': 'M1', 'weekId': 'W1', 'kind': 'live-session', 'slotNumber': 1}
         selected = {'weekId': 'M1:1', 'activities': [{'id': 'C1', 'status': 'not-started', 'expectedHours': 2}], 'summary': {}, 'liveSession': None}
         source = SimpleNamespace(pk=265, programme='P')
@@ -82,12 +166,18 @@ class DashboardWeeklyTests(SimpleTestCase):
              patch.object(weekly, 'learner_profile_for_source', return_value=SimpleNamespace(pk=17, enrolment_id=265)), \
              patch.object(weekly, 'read_weekly_learning', return_value={'modules': [], 'weeks': [navigation], 'selectedWeek': selected}), \
              patch.object(weekly, '_resolve_from_master', return_value=([], [], [{'componentId': 'C1', 'type': 'reflection'}])) as routing, \
-             patch.object(weekly, '_apply_programme_assignment_template', side_effect=lambda rows, programme: rows):
+             patch.object(weekly, '_apply_programme_assignment_template', side_effect=lambda rows, programme: rows), \
+             patch.object(weekly, 'reflection_ksbs', return_value={'C1': [{'status': 'draft', 'codes': ['K1']}]}) as selections, \
+             patch.object(weekly, 'recorded_ksbs', return_value={'C1': ['S2']}) as recorded:
             result = weekly.read_dashboard_weekly(source, 265, module_id='M1', week_id='slot:M1:1')
         self.assertEqual(routing.call_args.kwargs['week_ids'], ['W1'])
         self.assertEqual(routing.call_args.kwargs['assigned_modules'], [{'moduleId': 'M1'}])
         self.assertEqual(result['selectedWeek']['activities'][0]['expectedHours'], 2)
         self.assertTrue(result['selectedWeek']['activities'][0]['contentAvailable'])
+        self.assertEqual(result['selectedWeek']['activities'][0]['reflectionKsbs'], [{'status': 'draft', 'codes': ['K1']}])
+        selections.assert_called_once_with({'id': 17}, ['C1'])
+        self.assertEqual(result['selectedWeek']['activities'][0]['recordedKsbCodes'], ['S2'])
+        recorded.assert_called_once_with({'id': 17}, ['C1'])
         self.assertNotIn('components', result)
 
     def test_repeated_authored_week_slots_have_distinct_request_ids(self):
@@ -124,7 +214,8 @@ class DashboardWeeklyTests(SimpleTestCase):
         weeks = [{'module': 'Module', 'moduleId': 'M1', 'week': 'Same title', 'weekId': wid} for wid in ('W1', 'W2')]
         cursor = MagicMock()
         cursor.fetchall.side_effect = [[('M1', 'Module', 'P', 'Programme')],
-            [(9, 'W1', 'Quiz', 4, 10, 'mins', 'P', 'Programme', 'Module')], [], []]
+            [(9, 'W1', 'Quiz', 4, 10, 'mins', 'P', 'Programme', 'Module')], [], [],
+            []]  # Independent quiz: no authored component or revision.
         connection = MagicMock()
         connection.cursor.return_value.__enter__.return_value = cursor
         with patch.object(learner_detail, 'connections', {'enrolment': connection}):

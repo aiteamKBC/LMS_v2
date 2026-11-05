@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import type { PlanModule, TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { barPosition, buildPlanModules, moduleVisualEnd } from './model';
-import { dateLabel } from './presentation';
+import { dateLabel } from "./presentation.helpers";
 import { ModuleTimeline } from './ModuleTimeline';
 
 /**

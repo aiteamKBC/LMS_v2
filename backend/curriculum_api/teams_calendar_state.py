@@ -1,4 +1,4 @@
-"""Read cancellations from Microsoft and report them; never cancels anything, never mails."""
+"""Read Microsoft cancellations and reconcile eligible local occurrences; never mail."""
 import json
 import time
 from contextlib import contextmanager
@@ -15,6 +15,11 @@ from .teams_cancellation_checks import CalendarStateError, cancellation_plan
 
 @contextmanager
 def calendar_reader():
+    from .teams_original_calendar import current_calendar
+    original = current_calendar()
+    if original:
+        yield original.read
+        return
     from coach_api.views import get_graph_settings, microsoft_graph_token
 
     settings = get_graph_settings()
@@ -28,14 +33,17 @@ def calendar_reader():
     # before the UI turns it into a generic 502.
     deadline = time.monotonic() + 60
     with httpx.Client(base_url=base + '/', headers={'Authorization': f'Bearer {token}'}, follow_redirects=False) as client:
-        def read(path):
+        def read(path, *, prefer=''):
+            if prefer not in ('', 'include-unknown-enum-members'):
+                raise ValueError('Unsupported Microsoft read preference.')
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise CalendarStateError('Calendar verification took too long. Retry; no cancellation changes were applied.')
             response = None
             for attempt in range(3):
                 try:
-                    response = client.get(path, timeout=min(15, remaining))
+                    kwargs = {'headers': {'Prefer': prefer}} if prefer else {}
+                    response = client.get(path, timeout=min(15, remaining), **kwargs)
                     break
                 except httpx.HTTPError:
                     # This is a read-only request. Retrying it cannot create a
@@ -107,36 +115,65 @@ def reconcile_calendar(live_id):
     series, rows, snapshot = load_calendar_state(live_id)
     if series.get('status') != 'active':
         return {'changed': False, 'seriesStatus': series.get('status'), 'cancelledSessions': [], 'errors': []}
+    from .teams_original_calendar import calendar_authorized, OriginalCalendarRequired, current_calendar
+    if series.get('meeting_type') == 'linked-external' and not calendar_authorized(live_id):
+        raise OriginalCalendarRequired('Verify the original calendar before checking its status.')
     if not rows:
         raise CalendarStateError('No stored sessions are available to verify this calendar.')
     signature = state_signature(series, rows)
     with calendar_reader() as read:
-        plan = cancellation_plan(series, rows, snapshot, read)
+        original = current_calendar()
+        plan = cancellation_plan(series, rows, snapshot, read, **({'original_prefix': original.original_prefix} if original else {}))
+    cancelled_ids = list(plan.get('cancelledIds') or [])
+    cancelled_sessions = sorted(
+        row.get('session_number') for row in rows
+        if row.get('id') in set(cancelled_ids) and row.get('session_number') is not None
+    )
+    changed = bool(cancelled_sessions)
     with transaction.atomic():
         current, current_rows, current_snapshot = load_calendar_state(live_id, lock=True)
         if state_signature(current, current_rows) != signature or current_snapshot != snapshot:
             raise CalendarStateError('This calendar changed during verification. Retry the status check.')
         with connection.cursor() as cursor:
-            # Never a cancellation. Only a person pressing Cancel in the LMS
-            # cancels a session or a calendar; what Microsoft shows cancelled --
-            # in Outlook, by anybody -- is reported for that person to record.
+            # A confirmed Microsoft cancellation is now applied to the local
+            # occurrence when it is still a scheduled, never-started session
+            # with no attendance report.  This is the same eligibility boundary
+            # used by an explicit LMS cancellation: historical attendance is
+            # never rewritten, while a learner cannot be marked absent for a
+            # meeting that Microsoft has already cancelled.
+            if cancelled_ids:
+                cursor.execute("""UPDATE curriculum.live_session_occurrences
+                                  SET status = 'cancelled', updated_at = %s
+                                  WHERE live_session_id = %s
+                                    AND id = ANY(%s)
+                                    AND status = 'scheduled'
+                                    AND actual_start IS NULL
+                                    AND COALESCE(attendance_report_id, '') = ''
+                                    AND COALESCE(participant_count, 0) = 0""",
+                               [datetime.now(timezone.utc), live_id, cancelled_ids])
+            # No Microsoft mutation or email is sent here. The status write is
+            # deliberately limited to rows whose cancellation is safe to apply.
             cursor.execute("""INSERT INTO curriculum.teams_calendar_sync_state (live_session_id, snapshot, checked_at)
                               VALUES (%s, %s::jsonb, %s)
                               ON CONFLICT (live_session_id) DO UPDATE
                               SET snapshot = EXCLUDED.snapshot, checked_at = EXCLUDED.checked_at""",
                            [live_id, json.dumps(plan['snapshot']), datetime.now(timezone.utc)])
-    # Read-only on Microsoft; this only notes that a check ran and what it found.
+    if changed:
+        from . import views as v
+        v.invalidate_curriculum_cache()
+    # Read-only on Microsoft; this records the verified result locally.
     from .teams_calendar_integrity import EVENT_VERIFIED, record_event
     record_event(live_id, EVENT_VERIFIED, module_catalogue_id=str(series.get('module_catalogue_id') or ''),
                  trigger='Calendar status check', outcome='attention' if plan['errors'] else 'success',
                  detail={'errors': plan['errors'][:20], 'unmatched': len(plan.get('unmatched') or []),
                          'leftovers': len(plan.get('leftovers') or [])})
-    return {'changed': False, 'seriesStatus': 'active', 'cancelledSessions': [],
-            # Cancelled in Microsoft, still scheduled here, and left that way.
-            'cancelledInMicrosoft': [row['session_number'] for row in rows if row['id'] in plan['cancelledIds']],
-            'seriesCancelledInMicrosoft': bool(plan['seriesCancelled']),
+    return {'changed': changed, 'seriesStatus': 'active', 'cancelledSessions': cancelled_sessions,
+            # Kept for older clients; sessions that were eligible are now
+            # recorded locally and therefore do not need a second manual action.
+            'cancelledInMicrosoft': [],
+            'seriesCancelledInMicrosoft': bool(plan['seriesCancelled']) and not changed,
             'errors': plan['errors'],
-            # Reported for a person to decide on; nothing here cancels them.
+            # Slots outside the plan remain report-only and are never changed.
             'leftovers': plan.get('leftovers') or []}
 
 
@@ -144,11 +181,14 @@ def reconcile_calendar(live_id):
 @require_role('admin', 'staff')
 @require_POST
 def sync_calendar_state(request, live_session_id):
+    from .teams_original_calendar import OriginalCalendarRequired, original_calendar_request
     try:
         result = reconcile_calendar(live_session_id)
         return JsonResponse(result, status=207 if result['errors'] else 200)
     except LookupError:
         return JsonResponse({'error': 'Calendar not found.'}, status=404)
+    except OriginalCalendarRequired:
+        return original_calendar_request(sync_calendar_state)(request, live_session_id)
     except CalendarStateError as exc:
         _note_failed_check(live_session_id, str(exc))
         return JsonResponse({'error': str(exc)}, status=409)

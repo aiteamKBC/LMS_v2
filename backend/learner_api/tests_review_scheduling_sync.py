@@ -103,6 +103,16 @@ class ReviewSchedulingSyncTestCase(LearnerReviewPageTestCase):
         self.factory = RequestFactory()
         self.learner = enrolment_row()
         self.mirror = profile_row()
+        self.mirror._caseload_source = self.learner
+        # Source identity is synthetic, just like the caseload/enrolment reads
+        # below. Keep the actual Native/Aptem policy active for the new guard.
+        for target, row in (
+            ('learner_api.models.LearnerProfile.objects.only', self.mirror),
+            ('learner_api.models.EnrolmentUser.all_learners.only', self.learner),
+        ):
+            identity = patch(target, return_value=FakeManager(row))
+            identity.start()
+            self.addCleanup(identity.stop)
         self.graph_calls = []
 
     # ------------------------------------------------------------- fixtures

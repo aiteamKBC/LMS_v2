@@ -219,6 +219,35 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(self.command.call_args.args, ('review_session_recordings',))
         self.connections.close_all.assert_called_once()
 
+    def test_worker_logs_counts_without_transport_output(self):
+        def command(*args, **kwargs):
+            kwargs['stdout'].write('private transport detail\nProcessed 3 session jobs; 0 need retry.\n')
+        self.command.side_effect = command
+        with self.assertLogs(self.runtime.log, level='INFO') as logs:
+            self.runtime.run_worker(scheduled=True)
+        self.assertIn('Processed 3 session jobs; 0 need retry.', '\n'.join(logs.output))
+        self.assertNotIn('private transport detail', '\n'.join(logs.output))
+        self.connections.close_all.assert_called_once()
+
+    def test_reviewer_logs_counts_even_when_checks_fail(self):
+        def command(*args, **kwargs):
+            kwargs['stdout'].write('Checked 4 saved recordings; 1 queued for repair; 2 need review.\n')
+            raise self.CommandError('private storage detail')
+        self.command.side_effect = command
+        with self.assertLogs(self.runtime.log, level='INFO') as logs:
+            self.runtime.run_reviewer()
+        self.assertIn('Checked 4 saved recordings; 1 queued for repair; 2 need review.', '\n'.join(logs.output))
+        self.assertNotIn('private storage detail', '\n'.join(logs.output))
+        self.connections.close_all.assert_called_once()
+
+    def test_summary_with_appended_private_text_is_not_logged(self):
+        def command(*args, **kwargs):
+            kwargs['stdout'].write('Processed 3 session jobs; 0 need retry. private detail\n')
+        self.command.side_effect = command
+        with patch.object(self.runtime.log, 'info') as info:
+            self.runtime.run_worker()
+        info.assert_not_called()
+
     def test_periodic_loop_recovers_from_worker_initialization_failure(self):
         self.runtime._stop = Mock()
         self.runtime._stop.is_set.side_effect = [False, False, True]

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fileProbe } from '../page';
+import { fileProbe } from "../page.helpers";
 
 describe('attachment type detection', () => {
   it('recognises a PDF filename on a protected extensionless URL', () => {

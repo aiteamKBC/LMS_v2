@@ -205,8 +205,17 @@ ITEM_FIELDS = (
 )
 
 
-def read_student_material(cursor, aptem_id, group_id, activity_id, *, include_source=False):
+def read_student_material(cursor, aptem_id, group_id, activity_id, *, include_source=False, demo_enrolment_id=None):
     # Membership must match BOTH activity and group for this learner.
+    identity_sql, identity = 'l.aptem_id = %s', aptem_id
+    if demo_enrolment_id is not None:
+        # Only explicitly provisioned rehearsals can use enrolment identity.
+        # All normal historical readers keep their Aptem gate.
+        identity_sql = '''l.enrolment_id = %s AND membership.enrolment_id=l.enrolment_id
+            AND membership.source_payload #>> '{demo_progress,kind}'='owner_requested_simulation'
+            AND membership.source_payload #>> '{demo_progress,enrolment_id}'=l.enrolment_id::text
+            AND membership.source_payload #>> '{demo_progress,course_ref}'=course.source_course_ref'''
+        identity = demo_enrolment_id
     cursor.execute('''
         SELECT l.full_name AS learner_name, l.email AS learner_email, a.title, a.video_iframe_url,
                a.reading_iframe_url, a.reading_text_body,
@@ -258,9 +267,9 @@ def read_student_material(cursor, aptem_id, group_id, activity_id, *, include_so
                      history.quiz_attempt_number DESC NULLS LAST,identity.id
             LIMIT 1
         ) r ON true
-        WHERE l.aptem_id = %s AND course.source_course_ref = %s::text AND catalogue.source_activity_id = %s
+        WHERE DEMO_IDENTITY_FILTER AND course.source_course_ref = %s::text AND catalogue.source_activity_id = %s
         LIMIT 2
-    ''', [activity_id, aptem_id, group_id, f'material:{activity_id}'])
+    '''.replace('DEMO_IDENTITY_FILTER', identity_sql), [activity_id, identity, group_id, f'material:{activity_id}'])
     rows = _dict_rows(cursor)
     if len(rows) != 1:
         return None

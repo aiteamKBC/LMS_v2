@@ -87,7 +87,11 @@ def learner_recording_watch(request, kind, learner_id, series_id, artifact_id):
 
 def _learner_recording(kind, learner_id, series_id, artifact_id):
     """(learner, artifact) for a recording the learner may play, or (learner, None)."""
-    learner, series = learner_series(kind, learner_id, series_id)
+    learner, series = learner_series(kind, learner_id, series_id, linked_recordings=True)
+    if series and 'linked_session_numbers' in series:
+        from .linked_recording_access import linked_artifact_allowed
+        if not linked_artifact_allowed(series, artifact_id):
+            return learner, None
     if not series:
         return learner, None
     siblings = read('''SELECT a.* FROM curriculum.live_session_artifacts a

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
 
 interface EvidenceFile {
   id: string;
@@ -65,6 +66,8 @@ export function EvidenceLoggingModal({
   const [mounted, setMounted] = useState(false);
   const [activeTab, setActiveTab] = useState<(typeof TABS)[number]['id']>('learning');
   const [submitted, setSubmitted] = useState(false);
+  const { confirmTime, timeConfirmation } = useManualTimeConfirmation();
+  const submittingTime = useRef(false);
 
   /* ── Tab 1: Learning ── */
   const [reflection, setReflection] = useState('');
@@ -233,7 +236,12 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
   };
 
   /* ── Submit ── */
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    if (submittingTime.current || !canSubmit) return;
+    submittingTime.current = true;
+    const confirmed = await confirmTime(Math.round(otjhActual * 60));
+    submittingTime.current = false;
+    if (!confirmed) { setActiveTab('otjh'); return; }
     onSubmit({
       reflection,
       ksbExplanations,
@@ -299,6 +307,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
 
   return createPortal(
     <>
+      {timeConfirmation}
       <div
         onClick={() => { if (!submitted) onClose(); }}
         className={`fixed inset-0 z-[60] bg-foreground-950/50 backdrop-blur-sm transition-opacity duration-300 ease-out ${

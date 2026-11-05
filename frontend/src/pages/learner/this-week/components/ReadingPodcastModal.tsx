@@ -67,6 +67,57 @@ export function ReadingPodcastModal({
     return () => { document.body.style.overflow = ''; };
   }, [isOpen]);
 
+  /* ── Reading scroll tracking ── */
+  const handleScroll = useCallback(() => {
+    if (!contentRef.current) return;
+    const el = contentRef.current;
+    const scrollPct = (el.scrollTop / (el.scrollHeight - el.clientHeight)) * 100;
+    setReadingProgress(Math.min(scrollPct, 100));
+    if (scrollPct >= 95) setArticleComplete(true);
+  }, []);
+
+  /* ── Podcast playback ── */
+  const updateChapterForTime = useCallback((time: number) => {
+    const ch = podcastData?.chapters;
+    if (ch) {
+      for (let c = ch.length - 1; c >= 0; c--) {
+        const startSecs = parseTimeString(ch[c].startTime);
+        if (time >= startSecs) {
+          setCurrentChapter(c);
+          break;
+        }
+      }
+    }
+  }, [podcastData?.chapters]);
+
+  const togglePodcast = useCallback(() => {
+    if (podcastComplete) {
+      setPodcastTime(0);
+      setCurrentChapter(0);
+      setPodcastComplete(false);
+    }
+    if (playing) {
+      if (podcastInterval.current) clearInterval(podcastInterval.current);
+      setPlaying(false);
+    } else {
+      setPlaying(true);
+      podcastInterval.current = setInterval(() => {
+        setPodcastTime(prev => {
+          const next = prev + 1;
+          if (next >= totalDuration) {
+            if (podcastInterval.current) clearInterval(podcastInterval.current);
+            setPlaying(false);
+            setPodcastComplete(true);
+            return totalDuration;
+          }
+          updateChapterForTime(next);
+          return next;
+        });
+      }, 1000);
+    }
+  }, [podcastComplete, playing, totalDuration, updateChapterForTime]);
+
+
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape' && isOpen) {
@@ -92,57 +143,8 @@ export function ReadingPodcastModal({
     }
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, showTools, mode, podcastTime, totalDuration]);
+  }, [isOpen, showTools, mode, podcastTime, totalDuration, togglePodcast, updateChapterForTime, onSaveProgress]);
 
-  /* ── Reading scroll tracking ── */
-  const handleScroll = useCallback(() => {
-    if (!contentRef.current) return;
-    const el = contentRef.current;
-    const scrollPct = (el.scrollTop / (el.scrollHeight - el.clientHeight)) * 100;
-    setReadingProgress(Math.min(scrollPct, 100));
-    if (scrollPct >= 95) setArticleComplete(true);
-  }, []);
-
-  /* ── Podcast playback ── */
-  const updateChapterForTime = (time: number) => {
-    const ch = podcastData?.chapters;
-    if (ch) {
-      for (let c = ch.length - 1; c >= 0; c--) {
-        const startSecs = parseTimeString(ch[c].startTime);
-        if (time >= startSecs) {
-          setCurrentChapter(c);
-          break;
-        }
-      }
-    }
-  };
-
-  const togglePodcast = () => {
-    if (podcastComplete) {
-      setPodcastTime(0);
-      setCurrentChapter(0);
-      setPodcastComplete(false);
-    }
-    if (playing) {
-      if (podcastInterval.current) clearInterval(podcastInterval.current);
-      setPlaying(false);
-    } else {
-      setPlaying(true);
-      podcastInterval.current = setInterval(() => {
-        setPodcastTime(prev => {
-          const next = prev + 1;
-          if (next >= totalDuration) {
-            if (podcastInterval.current) clearInterval(podcastInterval.current);
-            setPlaying(false);
-            setPodcastComplete(true);
-            return totalDuration;
-          }
-          updateChapterForTime(next);
-          return next;
-        });
-      }, 1000);
-    }
-  };
 
   const seekTo = (startTime: string) => {
     const newTime = parseTimeString(startTime);

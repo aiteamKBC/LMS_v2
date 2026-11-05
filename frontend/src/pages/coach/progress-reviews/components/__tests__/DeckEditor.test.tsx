@@ -35,6 +35,20 @@ beforeEach(() => {
 });
 
 describe('DeckEditor', () => {
+  it('saves learner-authored additional slides separately from generated data and preserves their notes', async () => {
+    fetchDeckEditableFields.mockResolvedValue({ ...FIELDS, manual_slides: [] });
+    saveDeckEdits.mockResolvedValue({ reviewId: 'run-with-manual-slide' });
+    const onSaved = vi.fn();
+    render(<DeckEditor reviewId="standard-run" title="Edit" onClose={vi.fn()} onSaved={onSaved} />);
+    fireEvent.click(await screen.findByRole('button', { name: /^Add slide$/ }));
+    fireEvent.change(screen.getByLabelText('Additional slide 1 title'), { target: { value: 'My additional example' } });
+    fireEvent.change(screen.getByLabelText('Additional slide 1 content'), { target: { value: 'My own additional workplace learning.' } });
+    fireEvent.change(screen.getByLabelText('Additional slide 1 speaker notes'), { target: { value: 'My complete personal account.' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save and regenerate/ }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith('run-with-manual-slide'));
+    expect(saveDeckEdits).toHaveBeenCalledWith('standard-run', expect.objectContaining({ manual_slides: [{ title: 'My additional example', body: 'My own additional workplace learning.', notes: 'My complete personal account.' }], attendance: FIELDS.attendance }));
+  });
+
   it('saves the corrected fields as a new version and hands back its id', async () => {
     fetchDeckEditableFields.mockResolvedValue(FIELDS);
     saveDeckEdits.mockResolvedValue({ reviewId: 'run-2' });

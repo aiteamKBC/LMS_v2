@@ -6,10 +6,10 @@ afterEach(() => {
 });
 
 describe('learner feedback navigation flag', () => {
-  it('hides feedback in production builds', async () => {
+  it('shows feedback in production builds', async () => {
     vi.stubEnv('DEV', false);
     const { roleNavMap } = await import('./navigation');
-    expect(roleNavMap.learner.items.some(item => item.href === '/learner/feedback')).toBe(false);
+    expect(roleNavMap.learner.items.some(item => item.href === '/learner/feedback')).toBe(true);
   });
 
   it('shows feedback automatically in local development', async () => {

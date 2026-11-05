@@ -7,13 +7,14 @@ import * as quizModel from '../src/lms-quiz-model.mjs';
 import * as choices from '../src/quiz-model.mjs';
 import * as meetings from '../src/lms-meetings-model.mjs';
 import * as observations from '../src/lms-observations.mjs';
+import * as audioAlternative from '../src/audio-alternative.mjs';
 const source=fs.readFileSync(new URL('../src/LmsActivity.tsx',import.meta.url),'utf8');
 const compiled=ts.transpileModule(source+'\nexport {LmsActivityBody};',{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.React,esModuleInterop:true}}).outputText;
-function harness({mode='audio',savedStore=new Map(),failSave=false,failRemove=false,failRefresh=false,sharedTiming=false,failTiming=false,failPersist=false,rewardObservationsSupported=undefined,questionImage=null}={}){
+function harness({mode='audio',savedStore=new Map(),failSave=false,failRemove=false,failRefresh=false,sharedTiming=false,failTiming=false,failPersist=false,rewardObservationsSupported=undefined,questionImage=null,alternativeYouTubeUrl=null}={}){
  let cursor=0,dirty=false,tree,now=0;const slots=[],effects=[],intervals=new Map(),calls=[],wall=Date.now();let intervalId=0;
  const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{const next=typeof value==='function'?value(slots[i]):value;if(!Object.is(slots[i],next)){slots[i]=next;dirty=true;}}];},useRef(initial){const i=cursor++;return slots[i]??={current:initial};},useEffect(effect,deps){const i=cursor++,old=effects[i];if(!old||deps.some((v,j)=>!Object.is(v,old.deps[j]))){old?.cleanup?.();effects[i]={effect,deps,run:true};}}};
  const React={...hooks,createElement:(type,props,...children)=>({type,props:{...props,children}}),Fragment:'Fragment'};
- const Activity={id:mode==='quiz'?'COMP-Q-UI':'COMP-A-UI',mode,title:'A learning activity',url:'https://kentbusinesscollege.org/verified.mp3',ksbs:['K1'],rewardObservationsSupported};
+ const Activity={id:mode==='quiz'?'COMP-Q-UI':'COMP-A-UI',mode,title:'A learning activity',url:'https://kentbusinesscollege.org/verified.mp3',ksbs:['K1'],rewardObservationsSupported,alternativeYouTubeUrl};
  const session={authenticated:true,user:{id:'42',accountId:'7',learnerKind:'apprenticeship'},capabilities:{timeObservations:sharedTiming}};
  const ownerKey=draftModel.lmsActivityDraftKey(session,Activity);
  const token={componentId:Activity.id,activityId:mode==='quiz'?'123':Activity.id,activityKind:mode==='quiz'?'quiz':'component',countingMode:mode==='quiz'?'active_quiz':'active_playback',trackingToken:'signed-activity-session',sessionId:'synthetic-session',startedAt:new Date(wall).toISOString()};
@@ -22,8 +23,8 @@ function harness({mode='audio',savedStore=new Map(),failSave=false,failRemove=fa
  const submit=async(id,body)=>{calls.push({kind:'submit',id,body});if(failSave)throw Object.assign(new Error('Working time must be reviewed.'),{status:409});const record={kind:mode==='quiz'?'quiz':'component',componentId:Activity.id,quizId:123,timeTrackingSessionId:token.sessionId,submittedAt:new Date().toISOString(),verifiedSeconds:body.timeTakenSeconds};return mode==='quiz'?{attempt:record,grade:1,achievedScore:2,totalScore:2,passed:true,breakdown:[]}:{record};};
  let acknowledgedMs=0;
  const client={async startLearning(){calls.push({kind:'start'});return token;},async quiz(){return rawQuiz;},submitQuiz:submit,completeActivity:submit,async recordObservations(body){calls.push({kind:'observations',body});if(failTiming)throw new Error('The timing request needs a retry.');const ms=body.intervals.reduce((n,x)=>n+x.endOffsetMs-x.startOffsetMs,0);acknowledgedMs+=ms;return{source:'lms',eventId:body.eventId,sessionId:token.sessionId,sequence:body.sequence,status:'pending',observedMilliseconds:ms,cumulativeObservedMilliseconds:acknowledgedMs,duplicate:false};}};
- const storage={async getItem(key){return savedStore.get(key)||null;},async setItem(key,value){if(failPersist)throw new Error('storage refused');savedStore.set(key,value);},async removeItem(key){if(failRemove)throw new Error('storage refused');savedStore.delete(key);}};
- const modules={'react':React,'react-native':{AppState:{currentState:'active',addEventListener:()=>({remove(){}})},Platform:{OS:'web'},Linking:{openURL:async()=>{}},Image:'Image',Pressable:'Pressable',Text:'Text',View:'View'},'@react-native-async-storage/async-storage':storage,'expo-speech-recognition':{useSpeechRecognitionEvent(){}},'./StandaloneMedia':{StandaloneMedia:'StandaloneMedia'},'./ActivityTimer':{ActivityTimer:'ActivityTimer'},'./StandaloneUI':Object.fromEntries(['Back','Btn','Busy','Card','Field','H','Notice','Txt'].map(x=>[x,x])),'./styles':{s:{}},'./voice':{stopVoice:async()=>{},requestDictation:async()=>false},'./quiz-model.mjs':choices,'./lms-quiz-model.mjs':quizModel,'./lms-activity-state.mjs':draftModel,'./lms-meetings-model.mjs':meetings,'./lms-observations.mjs':observations};
+ const storage={async getItem(key){return savedStore.get(key)||null;},async setItem(key,value){if(failPersist)throw new Error('storage refused');savedStore.set(key,value);calls.push({kind:'persist',key,value});},async removeItem(key){if(failRemove)throw new Error('storage refused');savedStore.delete(key);}};
+ const modules={'react':React,'react-native':{AppState:{currentState:'active',addEventListener:()=>({remove(){}})},Platform:{OS:'web'},Linking:{openURL:async url=>{calls.push({kind:'external',url});}},Image:'Image',Pressable:'Pressable',Text:'Text',View:'View'},'@react-native-async-storage/async-storage':storage,'expo-speech-recognition':{useSpeechRecognitionEvent(){}},'./StandaloneMedia':{StandaloneMedia:'StandaloneMedia'},'./ActivityTimer':{ActivityTimer:'ActivityTimer'},'./StandaloneUI':Object.fromEntries(['Back','Btn','Busy','Card','Field','H','Notice','Txt'].map(x=>[x,x])),'./styles':{s:{}},'./voice':{stopVoice:async()=>{},requestDictation:async()=>false},'./quiz-model.mjs':choices,'./lms-quiz-model.mjs':quizModel,'./lms-activity-state.mjs':draftModel,'./lms-meetings-model.mjs':meetings,'./lms-observations.mjs':observations,'./audio-alternative.mjs':audioAlternative};
  const mod={exports:{}};
  new Function('require','exports','globalThis','setInterval','clearInterval',compiled)(name=>{if(!modules[name])throw new Error(name);return modules[name];},mod.exports,{performance:{now:()=>now},document:{hidden:false,addEventListener(){},removeEventListener(){}}},fn=>{intervals.set(++intervalId,fn);return intervalId;},id=>intervals.delete(id));
  const props={client,session,activity:Activity,ownerKey,onBack(){calls.push({kind:'back'});},onSaved(){calls.push({kind:'saved'});if(failRefresh)throw new Error('refresh failed');}};
@@ -95,4 +96,37 @@ test('failed diagram load is explicit, blocks grading and offers a retry',async(
 test('unsupported diagram does not open a timed incomplete quiz',async()=>{
  const h=harness({mode:'quiz',questionImage:'data:image/svg+xml;base64,PHN2Zy8+'});await h.settle();
  assert.equal(h.calls.filter(call=>call.kind==='start').length,0);assert(!h.btn('Submit my answers'));assert(h.btn('Open quiz in the LMS'));await h.unmount();
+});
+
+
+test('YouTube alternative pauses the actual audio screen and persists measured time before leaving',async()=>{
+ const h=harness({alternativeYouTubeUrl:'https://youtu.be/r9u6U1SeDxs'});await h.settle();
+ await h.media(0,0);await h.media(1000,1);await h.media(2000,2);
+ const player=h.all().find(node=>node.type==='StandaloneMedia');
+ assert.equal(player.props.resource.url,'https://kentbusinesscollege.org/verified.mp3');
+ assert.equal(player.props.resource.id,'COMP-A-UI');assert.equal(player.props.active,true);
+ const before=h.calls.length;await h.press('Listen to this recording on YouTube');
+ const leaving=h.calls.slice(before);assert.equal(leaving.at(-1).kind,'external');
+ assert.equal(leaving.at(-1).url,'https://www.youtube.com/watch?v=r9u6U1SeDxs');
+ assert(leaving.slice(0,-1).some(call=>call.kind==='persist'));
+ assert.equal(h.all().find(node=>node.type==='StandaloneMedia').props.active,false);
+ const saved=JSON.parse(h.savedStore.get(h.ownerKey));assert.equal(saved.seconds,2);
+ assert.equal(h.calls.filter(call=>['submit','observations'].includes(call.kind)).length,0);
+ await h.media(7000,7);await h.press('I’ve finished · save to LMS');
+ assert.equal(h.calls.find(call=>call.kind==='submit').body.timeTakenSeconds,2,'external playback adds no LMS study time');
+ await h.unmount();
+});
+
+test('failed draft persistence blocks the actual screen external handoff and retains the audiobook',async()=>{
+ const h=harness({alternativeYouTubeUrl:'https://youtu.be/r9u6U1SeDxs',failPersist:true});await h.settle();
+ await h.press('Listen to this recording on YouTube');
+ assert.equal(h.calls.filter(call=>call.kind==='external').length,0);
+ assert.equal(h.all().find(node=>node.type==='StandaloneMedia').props.resource.url,'https://kentbusinesscollege.org/verified.mp3');
+ assert(h.btn('Continue this activity'));await h.unmount();
+});
+
+test('invalid or non-audio alternatives are not rendered by the actual screen',async()=>{
+ for(const options of [{alternativeYouTubeUrl:'https://youtube.com.evil.test/watch?v=r9u6U1SeDxs'},{mode:'video',alternativeYouTubeUrl:'https://youtu.be/r9u6U1SeDxs'}]){
+  const h=harness(options);await h.settle();assert(!h.btn('Listen to this recording on YouTube'));await h.unmount();
+ }
 });

@@ -383,3 +383,20 @@ class CombinedAttendanceTests(SimpleTestCase):
             self.assertEqual(len(combined_attendance_rows(source)), 0)
             self.assertEqual(len(combined_attendance_rows(source)), 1)
         self.assertEqual(old.call_count, 2)
+
+    def test_credit_projection_keeps_saved_register_outcome_over_teams(self):
+        source = SimpleNamespace(id=125, aptem_id=None, email='test@example.com')
+        saved = self.row(session_id='occ-1', occurrence_id='occ-1',
+                         attendance_status='absent', source='live-register')
+        teams = [self.row(session_id='occ-1', occurrence_id='occ-1'),
+                 self.row(session_id='occ-2', occurrence_id='occ-2')]
+        schedule = [{'session_id': 'occ-1'}]
+        with patch('learner_api.attendance._live_register_rows', return_value=[saved]), \
+             patch('learner_api.attendance.fetch_verified_teams_attendance_rows', return_value=teams) as fetch:
+            rows = combined_attendance_rows(source, credit_projection=True,
+                                            register_schedule=schedule)
+        fetch.assert_called_once_with(learner_emails=[source.email],
+                                      include_group_metadata=False,
+                                      register_schedule=schedule)
+        self.assertEqual({row['session_id']: row['attendance_status'] for row in rows},
+                         {'occ-1': 'absent', 'occ-2': 'present'})

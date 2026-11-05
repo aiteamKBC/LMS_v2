@@ -8,8 +8,8 @@ vi.mock('@/api/learnerRead', () => ({ readLearnerJson: vi.fn() }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 const props = { kind: 'commercial' as const, learnerId: '1', activityId: 'A1', status: 'submitted_for_tutor_review', submissionCount: 2 };
 const first = { number: 1, status: 'rejected', submittedAt: '2026-09-01T10:00:00Z', reviewedAt: '2026-09-02T10:00:00Z',
-  reviewedBy: 'Coach One', coachFeedback: 'Please add supporting evidence.', answer: 'Original answer' };
-const second = { ...first, number: 2, status: 'submitted_for_tutor_review', coachFeedback: '', reviewedAt: null, reviewedBy: '', answer: 'Revised answer' };
+  reviewedBy: 'Coach One', coachFeedback: 'Please add supporting evidence.', answer: 'Original answer', actualTimeHours: '0.5' };
+const second = { ...first, number: 2, status: 'submitted_for_tutor_review', coachFeedback: '', reviewedAt: null, reviewedBy: '', answer: 'Revised answer', actualTimeHours: '1.25' };
 
 it.each(['commercial', 'apprenticeship'] as const)('shows old rejection and new feedback separately for %s without expanding feedback', async kind => {
   vi.mocked(readLearnerJson).mockResolvedValueOnce({ submission: { submissionAttempts: [first, second] } });
@@ -19,16 +19,29 @@ it.each(['commercial', 'apprenticeship'] as const)('shows old rejection and new 
   expect(within(rejected).getByLabelText('Report for submission 1')).toBeVisible();
   expect(within(rejected).getByText(/Submitted:/)).toHaveTextContent('1 Sept 2026, 11:00');
   expect(within(rejected).getByText(first.coachFeedback)).toBeVisible();
+  expect(within(rejected).getByText('30 minutes')).toBeVisible();
   const pending = screen.getByRole('article', { name: 'Submission 2' });
   expect(within(pending).getByText(/Awaiting coach review/)).toBeVisible();
   expect(within(pending).getByLabelText('Report for submission 2')).toBeVisible();
   expect(within(pending).queryByText(first.coachFeedback)).toBeNull();
+  expect(within(pending).getByText('1 hour 15 minutes')).toBeVisible();
   expect(readLearnerJson).toHaveBeenCalledWith(expect.stringContaining(`learnerKind=${kind}&learnerId=1&activityType=assignment&activityId=A1`), expect.objectContaining({ revalidate: true }));
   vi.mocked(readLearnerJson).mockResolvedValueOnce({ submission: { submissionAttempts: [first, { ...second, status: 'accepted', coachFeedback: 'The revised evidence is sufficient.', reviewedBy: 'Coach Two' }] } });
   fireEvent.click(screen.getByRole('button', { name: 'Refresh submissions' }));
   expect(await screen.findByText('The revised evidence is sufficient.')).toBeVisible();
   expect(within(screen.getByRole('article', { name: 'Submission 1' })).getByText(first.coachFeedback)).toBeVisible();
   expect(within(screen.getByRole('article', { name: 'Submission 2' })).getByText('Accepted')).toBeVisible();
+});
+
+it.each([
+  ['1', '1 hour'], ['0', '0 hours'], ['10:32', '10 minutes 32 seconds'],
+  ['01:30:00', '1 hour 30 minutes'], [undefined, 'Not recorded'], [null, 'Not recorded'],
+  ['', 'Not recorded'], ['invalid', 'Not recorded'], ['-1', 'Not recorded'], ['1:90', 'Not recorded'],
+])('shows saved actual hours %s without substituting planned time', async (actualTimeHours, label) => {
+  vi.mocked(readLearnerJson).mockResolvedValueOnce({ submission: { submissionAttempts: [{ ...first, actualTimeHours }] } });
+  render(<AssignmentSubmissions {...props} />);
+  const attempt = await screen.findByRole('article', { name: 'Submission 1' });
+  expect(within(attempt).getByText(label!)).toBeVisible();
 });
 
 it('does not display the previous assignment response after switching assignments', async () => {

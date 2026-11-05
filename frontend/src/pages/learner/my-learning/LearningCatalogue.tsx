@@ -60,13 +60,14 @@ export function LearningHero({ map = false }: { map?: boolean }) {
   </header>;
 }
 
-export function LearningCatalogue({ summary, search, onSearch, current, renderCard, onContinue, moduleStartDate, kind, learnerId, total, done, percent, deadlines = [], covers = {}, upcomingSessions = [], reviewMode = false, activityMatches = [], upcomingLinks, hasMoreUpcoming = false, onLoadUpcoming }: {
+export function LearningCatalogue({ summary, search, onSearch, current, renderCard, onContinue, moduleStartDate, kind, learnerId, total, done, percent, deadlines = [], covers = {}, upcomingSessions = [], reviewMode = false, activityMatches = [], upcomingLinks, hasMoreUpcoming = false, onLoadUpcoming, transferAction }: {
   summary: UnifiedLearningSummary; search: string; onSearch: (value: string) => void; current?: Subject;
   renderCard: (subject: Subject) => ReactNode; onContinue: (subject: Subject) => void;
   moduleStartDate: (subject: Subject) => string | null | undefined; kind?: string; learnerId?: string;
   total: number | string; done: number | string; percent: number | null;
   deadlines?: OverviewWeek['deadlines']; covers?: Record<string, string>; upcomingSessions?: PlanSession[]; reviewMode?: boolean;
   activityMatches?: string[]; upcomingLinks?: UpcomingLearningLink[]; hasMoreUpcoming?: boolean; onLoadUpcoming?: () => void;
+  transferAction?: ReactNode;
 }) {
   const [filter, setFilter] = useState('all');
   const [sourceFilter, setSourceFilter] = useState<'all' | Subject['source']>('all');
@@ -136,6 +137,7 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
           <button type="button" role="tab" aria-selected={sourceFilter === 'current'} onClick={() => setSourceFilter('current')}>New LMS</button>
           <button type="button" role="tab" aria-selected={sourceFilter === 'legacy'} onClick={() => setSourceFilter('legacy')}>Old LMS</button>
         </div>
+        {transferAction}
         <label className={styles.search}><Search size={18} aria-hidden="true" /><input aria-label="Search modules or activities" placeholder="Search subjects or activities…" value={search} onChange={e => onSearch(e.target.value)} /></label>
         <label className={styles.selectLabel}>Status<select value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All modules</option><option value="started">In progress</option><option value="new">Not started</option><option value="complete">Completed</option></select></label>
         <label className={styles.selectLabel}>Sort by<select value={sort} onChange={e => setSort(e.target.value)}><option value="start">Module start date</option><option value="name">Subject name</option><option value="progress">Highest progress</option></select></label>

@@ -1,15 +1,14 @@
-"""Monthly-assignment flag and learner-facing titles, without a database or writes."""
+"""Assignment submission eligibility and legacy payloads, without database writes."""
 import json
 from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
-from django.db import DatabaseError
 from django.test import RequestFactory, SimpleTestCase
 
 from . import components
-from .assignment_settings import flagged_monthly, learner_title, monthly_assignment_required
+from .assignment_settings import flagged_monthly, learner_title
 from .learner_detail import _resolve_from_master
 from .time_tracking import issue_tracking_session
 
@@ -32,32 +31,6 @@ class AssignmentSettingTests(SimpleTestCase):
                 self.assertFalse(flagged_monthly({'isMonthlyAssignment': value}))
 
 
-class MonthlyAssignmentRequiredTests(SimpleTestCase):
-    def required(self, own_settings, flagged_elsewhere, plan=(MODULE,)):
-        connection = MagicMock()
-        cursor = connection.cursor.return_value.__enter__.return_value
-        cursor.fetchone.side_effect = [(own_settings,), (1,) if flagged_elsewhere else None]
-        with patch('learner_api.assignment_settings.connections', {'enrolment': connection}), \
-                patch('learner_api.learning_plan.effective_training_plan', return_value=list(plan)):
-            return monthly_assignment_required('COMP-1', SimpleNamespace(pk=1)), cursor
-
-    def test_every_assignment_is_monthly_until_one_is_flagged(self):
-        required, cursor = self.required({}, flagged_elsewhere=False)
-        self.assertTrue(required)
-        sql, params = cursor.execute.call_args.args
-        self.assertIn("isMonthlyAssignment", sql)
-        self.assertEqual(params, [['MOD-1']])
-
-    def test_once_any_assignment_is_flagged_only_flagged_ones_are_monthly(self):
-        self.assertFalse(self.required({}, flagged_elsewhere=True)[0])
-        self.assertTrue(self.required({'isMonthlyAssignment': True}, flagged_elsewhere=True)[0])
-
-    def test_a_plan_without_module_ids_and_a_failed_read_keep_the_original_requirement(self):
-        self.assertTrue(self.required({}, flagged_elsewhere=True, plan=[{'moduleTitle': 'Legacy'}])[0])
-        with patch('learner_api.learning_plan.effective_training_plan', side_effect=DatabaseError):
-            self.assertTrue(monthly_assignment_required('COMP-1', SimpleNamespace(pk=1)))
-
-
 class LearnerPayloadTests(SimpleTestCase):
     def resolve(self, settings):
         connection = MagicMock()
@@ -67,7 +40,8 @@ class LearnerPayloadTests(SimpleTestCase):
             [('W-1', 'MOD-1', 'Week 1', 1, 0)],
             [('C-1', 'W-1', 'MOD-1', 'assignment', 'Imported legacy title', '', settings,
               '', 0, [{'code': 'K1', 'weight': 1}], False, None, True)],
-            [],
+            [],  # Quiz links.
+            [],  # Authored KSB mappings.
         ]
         with patch('learner_api.learner_detail.connections', {'enrolment': connection}):
             return _resolve_from_master([], [], [], assigned_modules=[MODULE])[2][0]
@@ -84,16 +58,16 @@ class LearnerPayloadTests(SimpleTestCase):
 
 
 class AssignmentCompletionTests(SimpleTestCase):
-    def submit(self, *, monthly, form_ready=True):
+    def submit(self, *, kind='apprenticeship', form_ready=True, live_type='assignment', client_type='assignment'):
         now = datetime(2026, 1, 15, 12, tzinfo=timezone.utc)
         session = issue_tracking_session(
-            activity_kind='component', activity_id='COMP-A', learner_kind='apprenticeship',
+            activity_kind='component', activity_id='COMP-A', learner_kind=kind,
             learner_id='19', counting_mode='visible_page', issued_at=now - timedelta(seconds=600),
         )
         request = RequestFactory().post(
-            '/learner_api/components/COMP-A/complete/?kind=apprenticeship&learnerId=19',
+            f'/learner_api/components/COMP-A/complete/?kind={kind}&learnerId=19',
             data=json.dumps({'trackingToken': session['trackingToken'], 'timeTakenSeconds': 600,
-                             'timeEntrySource': 'input', 'componentType': 'assignment',
+                             'timeEntrySource': 'input', 'componentType': client_type,
                              'componentTitle': 'Month 1 assignment'}),
             content_type='application/json',
         )
@@ -105,16 +79,15 @@ class AssignmentCompletionTests(SimpleTestCase):
         with ExitStack() as stack:
             def mock(target, **kwargs):
                 return stack.enter_context(patch(target, **kwargs))
-            mock('learner_api.components.SOURCE_MODELS', new={'apprenticeship': model})
+            mock('learner_api.components.SOURCE_MODELS', new={kind: model})
             mock('learner_api.components.learner_profile_for_source', return_value=SimpleNamespace(training_plan_progress=[]))
             mock('learner_api.components.component_ksb_codes', return_value=['K1'])
             mock('learner_api.components.tracking_session_already_used', return_value=False)
-            mock('learner_api.components._component_meta', return_value=('assignment', 'Imported legacy title'))
+            mock('learner_api.components._component_meta', return_value=(live_type, 'Imported legacy title'))
             mock('learner_api.components._completion_criteria', return_value=(True, None))
             mock('learner_api.components.requires_tutor_validation', return_value=True)
-            mock('learner_api.assignment_settings.monthly_assignment_required', return_value=monthly)
             ready = mock('learner_api.components._assignment_form_ready', return_value=form_ready)
-            complete = mock('learner_api.monthly_assignment.complete_saved_assignment')
+            complete = mock('learner_api.monthly_assignment.complete_saved_assignment', side_effect=lambda _kind, _learner, _component, _record, save, **_kwargs: save())
             save = mock('learner_api.components.save_progress_record')
             queue = mock('learner_api.components.queue_for_marking')
             mock('learner_api.components.timezone.now', return_value=now)
@@ -122,23 +95,33 @@ class AssignmentCompletionTests(SimpleTestCase):
             response = view(request, 'COMP-A')
         return response, ready, complete, save, queue
 
-    def test_an_assignment_that_is_not_monthly_completes_like_any_activity(self):
-        response, ready, complete, save, queue = self.submit(monthly=False, form_ready=False)
-        self.assertEqual(response.status_code, 200, response.content)
-        ready.assert_not_called()
-        complete.assert_not_called()
-        save.assert_called_once()
-        context = queue.call_args.kwargs['context']
-        self.assertEqual(context['activityType'], 'activity')
-        self.assertEqual(context['activityTitle'], 'Month 1 assignment')
+    def test_every_assignment_requires_the_submission_even_if_the_client_changes_its_type(self):
+        for kind in ('commercial', 'apprenticeship'):
+            for client_type in ('assignment', 'reading'):
+                with self.subTest(kind=kind, client_type=client_type):
+                    response, ready, complete, save, queue = self.submit(kind=kind, client_type=client_type, form_ready=False)
+                    self.assertEqual(response.status_code, 409)
+                    ready.assert_called_once_with('COMP-A', kind, '19', '')
+                    complete.assert_not_called()
+                    save.assert_not_called()
+                    queue.assert_not_called()
 
-    def test_the_monthly_assignment_still_requires_the_eight_step_submission(self):
-        response, ready, complete, save, queue = self.submit(monthly=True, form_ready=False)
-        self.assertEqual(response.status_code, 409)
-        ready.assert_called_once()
-        save.assert_not_called()
-        queue.assert_not_called()
-        response, _ready, complete, save, queue = self.submit(monthly=True)
-        self.assertEqual(response.status_code, 200, response.content)
-        complete.assert_called_once()
-        self.assertEqual(queue.call_args.kwargs['context']['activityType'], 'assignment')
+    def test_ready_assignments_keep_the_saved_submission_and_assignment_marking_path(self):
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind):
+                response, ready, complete, save, queue = self.submit(kind=kind)
+                self.assertEqual(response.status_code, 200, response.content)
+                ready.assert_called_once()
+                complete.assert_called_once()
+                save.assert_called_once()
+                self.assertEqual(queue.call_args.kwargs['context']['activityType'], 'assignment')
+
+    def test_other_activity_types_keep_their_existing_completion_path(self):
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind):
+                response, ready, complete, save, queue = self.submit(kind=kind, live_type='reading', client_type='reading', form_ready=False)
+                self.assertEqual(response.status_code, 200, response.content)
+                ready.assert_not_called()
+                complete.assert_not_called()
+                save.assert_called_once()
+                self.assertEqual(queue.call_args.kwargs['context']['activityType'], 'reading')

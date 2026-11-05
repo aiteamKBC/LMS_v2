@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Outlet, Link, createRootRouteWithContext, useRouter } from "@tanstack/react-router";
+import { Outlet, createRootRouteWithContext, useRouter } from '@tanstack/react-router';
+import { AuditLink as Link } from '@/features/audit/auditNavigation';
 
 function NotFoundComponent() {
   return (

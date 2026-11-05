@@ -3,13 +3,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone as datetime_timezone
+import logging
+from secrets import SystemRandom
 
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
 from learner_api.models import EnrolmentUser
 
-from .models import FeedbackDelivery, FeedbackDeliveryRecipient, FeedbackForm
+from .models import FeedbackDelivery, FeedbackDeliveryQuestion, FeedbackDeliveryRecipient, FeedbackForm, FeedbackResponse
+from .feedback_delivery_guard import audit, is_creation_guard_rejection, rejected_form_id, tag_transaction
+
+
+_random = SystemRandom()
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -24,6 +31,7 @@ class LectureOccurrence:
     group_name: str = ''
     module_name: str = ''
     title: str = ''
+    tutor_name: str = ''
     starts_at: datetime | None = None
     ends_at: datetime | None = None
     attendance_source: str = 'attendance'
@@ -45,20 +53,95 @@ def _required(value, label):
     return cleaned
 
 
-def _form_for_occurrence(occurrence_key, module_id):
+def lecture_after_form_creation(form, starts_at):
+    """A form cannot be assigned to a lecture that started before it existed."""
+    return starts_at is not None and form.created_at is not None and starts_at >= form.created_at
+
+
+def _form_for_occurrence(occurrence_key, module_id, starts_at):
     """Pin an existing lecture to its original version, otherwise choose one current template."""
     existing = FeedbackDelivery.objects.select_related('form').filter(
         occurrence_key=occurrence_key,
     ).first()
     if existing:
-        return existing.form
-    available = FeedbackForm.objects.filter(
-        form_type='post_lecture', status='published', is_current=True,
-    )
-    return (
-        available.filter(delivery_scope='module', module_catalogue_id=module_id).order_by('-version', '-id').first()
-        or available.filter(delivery_scope='all_modules').order_by('-version', '-id').first()
-    )
+        form = existing.form
+    else:
+        available = FeedbackForm.objects.filter(
+            form_type='post_lecture', status='published', is_current=True,
+        )
+        form = (
+            available.filter(delivery_scope='module', module_catalogue_id=module_id).order_by('-version', '-id').first()
+            or available.filter(delivery_scope='all_modules').order_by('-version', '-id').first()
+        )
+    if form and not lecture_after_form_creation(form, starts_at):
+        audit('skipped', occurrence_key=occurrence_key, form=form, starts_at=starts_at,
+              reason='before_form_creation' if starts_at is not None else 'missing_lecture_start')
+        return None
+    return form
+
+
+def _pin_delivery_questions(delivery, form):
+    """Draw each section quota once; null quotas retain every bank question."""
+    selected = []
+    sections = list(form.sections.prefetch_related('questions').all())
+    previous_texts = set()
+    if any(section.questions_per_delivery is not None for section in sections):
+        previous = FeedbackDelivery.objects.filter(
+            module_catalogue_id=delivery.module_catalogue_id,
+            form__template_key=form.template_key,
+            question_set_pinned=True,
+            available_at__lte=delivery.available_at,
+        ).exclude(pk=delivery.pk).order_by('-available_at', '-id').first()
+        if previous:
+            previous_texts = {
+                item.question.question_text.strip().casefold()
+                for item in previous.selected_questions.select_related('question').all()
+            }
+    for section in sections:
+        questions = list(section.questions.all())
+        count = section.questions_per_delivery
+        if count is not None:
+            if count < 1 or count > len(questions):
+                raise ValueError(f'Question bank for "{section.title}" has fewer questions than its delivery count.')
+            fresh = [question for question in questions
+                     if question.question_text.strip().casefold() not in previous_texts]
+            chosen = _random.sample(fresh, min(count, len(fresh)))
+            if len(chosen) < count:
+                remaining = [question for question in questions if question not in chosen]
+                chosen += _random.sample(remaining, count - len(chosen))
+            questions = chosen
+        selected.extend(sorted(questions, key=lambda question: (question.sort_order, question.id)))
+    if not selected:
+        raise ValueError('Live Sessions Feedback needs at least one question.')
+    FeedbackDeliveryQuestion.objects.bulk_create([
+        FeedbackDeliveryQuestion(delivery=delivery, question=question, sort_order=index)
+        for index, question in enumerate(selected)
+    ])
+    delivery.question_set_pinned = True
+    delivery.save(update_fields=['question_set_pinned', 'updated_at'])
+
+
+def ensure_delivery_questions(delivery):
+    """Complete an unstarted bank delivery left by a pre-bank worker.
+
+    Lock the occurrence so simultaneous opens cannot draw different sets.
+    A response, including an autosaved draft, freezes the historical full
+    question set. Legacy forms without section quotas remain unchanged.
+    """
+    if delivery.question_set_pinned:
+        return False
+    with transaction.atomic():
+        stored = FeedbackDelivery.objects.select_for_update().select_related('form').get(pk=delivery.pk)
+        if stored.question_set_pinned:
+            delivery.question_set_pinned = True
+            return False
+        if not stored.form.sections.filter(questions_per_delivery__isnull=False).exists():
+            return False
+        if FeedbackResponse.objects.filter(delivery_id=stored.id).exists():
+            return False
+        _pin_delivery_questions(stored, stored.form)
+        delivery.question_set_pinned = True
+        return True
 
 
 def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=False):
@@ -68,6 +151,8 @@ def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=Fa
     cannot expose feedback early. Missing learner IDs are reported to the
     caller and never create orphan recipients. A corrected finalized register
     revokes removed recipients but keeps their historical responses intact.
+    Only lectures starting at or after the matched form version was created
+    qualify; a missing lecture start cannot establish eligibility.
     """
     if not attendance_finalized:
         raise ValueError('Attendance must be finalized before feedback is delivered.')
@@ -84,7 +169,7 @@ def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=Fa
         for item in EnrolmentUser.all_learners.filter(id__in=attendee_ids)
     }
     missing = [learner_id for learner_id in attendee_ids if learner_id not in learners]
-    form = _form_for_occurrence(occurrence_key, module_id)
+    form = _form_for_occurrence(occurrence_key, module_id, occurrence.starts_at)
     forms = [form] if form else []
     available_at = occurrence.ends_at or occurrence.starts_at or timezone.now()
     deliveries = []
@@ -92,27 +177,35 @@ def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=Fa
     revoked_count = 0
     with transaction.atomic():
         for form in forms:
-            delivery, _ = FeedbackDelivery.objects.update_or_create(
+            tag_transaction(connection)
+            audit('write_attempt', occurrence_key=occurrence_key, form=form, starts_at=occurrence.starts_at)
+            delivery_defaults = {
+                'form': form,
+                'attendance_source': _required(occurrence.attendance_source, 'Attendance source'),
+                'attendance_reference': str(occurrence.attendance_reference or '').strip(),
+                'programme_id': str(occurrence.programme_id or '').strip(),
+                'programme_name': str(occurrence.programme_name or '').strip(),
+                'cohort_id': str(occurrence.cohort_id or '').strip(),
+                'cohort_name': str(occurrence.cohort_name or '').strip(),
+                'group_id': str(occurrence.group_id or '').strip(),
+                'group_name': str(occurrence.group_name or '').strip(),
+                'module_catalogue_id': module_id,
+                'module_name': str(occurrence.module_name or '').strip(),
+                'session_title': str(occurrence.title or '').strip(),
+                'starts_at': occurrence.starts_at,
+                'ends_at': occurrence.ends_at,
+                'available_at': available_at,
+                'status': 'open',
+            }
+            delivery, created = FeedbackDelivery.objects.update_or_create(
                 occurrence_key=occurrence_key,
-                defaults={
-                    'form': form,
-                    'attendance_source': _required(occurrence.attendance_source, 'Attendance source'),
-                    'attendance_reference': str(occurrence.attendance_reference or '').strip(),
-                    'programme_id': str(occurrence.programme_id or '').strip(),
-                    'programme_name': str(occurrence.programme_name or '').strip(),
-                    'cohort_id': str(occurrence.cohort_id or '').strip(),
-                    'cohort_name': str(occurrence.cohort_name or '').strip(),
-                    'group_id': str(occurrence.group_id or '').strip(),
-                    'group_name': str(occurrence.group_name or '').strip(),
-                    'module_catalogue_id': module_id,
-                    'module_name': str(occurrence.module_name or '').strip(),
-                    'session_title': str(occurrence.title or '').strip(),
-                    'starts_at': occurrence.starts_at,
-                    'ends_at': occurrence.ends_at,
-                    'available_at': available_at,
-                    'status': 'open',
-                },
+                defaults=delivery_defaults,
+                create_defaults={**delivery_defaults, 'tutor_name': str(occurrence.tutor_name or '').strip()},
             )
+            if created:
+                _pin_delivery_questions(delivery, form)
+            else:
+                ensure_delivery_questions(delivery)
             deliveries.append(delivery.id)
             revoked_count += FeedbackDeliveryRecipient.objects.filter(
                 delivery=delivery, revoked_at__isnull=True,
@@ -130,6 +223,9 @@ def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=Fa
                     },
                 )
                 recipient_count += 1
+    if forms:
+        audit('created' if created else 'reconciled', occurrence_key=occurrence_key, form=form,
+              starts_at=occurrence.starts_at, delivery_id=delivery.id)
     return {
         'deliveryIds': deliveries,
         'formsMatched': len(forms),
@@ -144,6 +240,30 @@ def _aware_utc(value):
     if value is None or timezone.is_aware(value):
         return value
     return timezone.make_aware(value, datetime_timezone.utc)
+
+
+def reconcile_feedback_after_attendance_commit(occurrence_ids, *, using):
+    """Refresh only the saved lectures once their attendance transaction commits.
+
+    The existing reconciliation still checks finalization, form creation time
+    and learner identity, and retains the pinned form/question set. This hook
+    must not wait for unrelated recording/archive work or undo saved attendance
+    if feedback fails; the existing session worker remains the retry fallback.
+    """
+    ids = list(dict.fromkeys(str(value or '').strip() for value in occurrence_ids
+                            if str(value or '').strip()))
+    if not ids:
+        return
+
+    def reconcile():
+        try:
+            sync_post_lecture_feedback_from_attendance(occurrence_ids=ids)
+        except Exception as error:
+            # Driver messages may contain names, answers or connection details.
+            logger.warning('Live Sessions Feedback pending after attendance commit: %s occurrence(s), %s',
+                           len(ids), type(error).__name__)
+
+    transaction.on_commit(reconcile, using=using)
 
 
 def sync_post_lecture_feedback_from_attendance(*, live_session_ids=None, occurrence_ids=None):
@@ -177,6 +297,7 @@ def sync_post_lecture_feedback_from_attendance(*, live_session_ids=None, occurre
             SELECT a.occurrence_id,
                    a.module_catalogue_id,
                    coalesce(nullif(m.title, ''), nullif(s.module_title, ''), a.module_catalogue_id) AS module_title,
+                   coalesce(nullif(btrim(lecture_module.tutor_name), ''), '') AS lecture_tutor_name,
                    coalesce(p.programme_id::text, '') AS programme_id,
                    coalesce(nullif(p.name, ''), m.programme_name, '') AS programme_name,
                    coalesce(c.cohort_id::text, '') AS cohort_id,
@@ -195,6 +316,7 @@ def sync_post_lecture_feedback_from_attendance(*, live_session_ids=None, occurre
               JOIN curriculum.live_session_occurrences o ON o.id = a.occurrence_id
               JOIN curriculum.live_sessions s ON s.id = o.live_session_id
          LEFT JOIN curriculum.modules m ON m.module_catalogue_id = a.module_catalogue_id
+         LEFT JOIN curriculum.modules lecture_module ON lecture_module.module_catalogue_id = s.module_catalogue_id
          LEFT JOIN curriculum.groups g ON g.group_id = m.group_id
          LEFT JOIN curriculum.cohorts c ON c.cohort_id = g.cohort_id
          LEFT JOIN curriculum.programmes p ON p.programme_id = c.programme_id
@@ -225,38 +347,53 @@ def sync_post_lecture_feedback_from_attendance(*, live_session_ids=None, occurre
         ))
 
     results = []
+    rejected = 0
     for occurrence_id, bucket in grouped.items():
         row = bucket['row']
         title = str(row['module_title'] or '').strip()
         if row['session_number']:
             title = f'{title} - Session {row["session_number"]}'
-        results.append(sync_post_lecture_feedback(
-            LectureOccurrence(
-                key=occurrence_id,
-                module_catalogue_id=row['module_catalogue_id'],
-                programme_id=row['programme_id'],
-                programme_name=row['programme_name'],
-                cohort_id=row['cohort_id'],
-                cohort_name=row['cohort_name'],
-                group_id=row['group_id'],
-                group_name=row['group_name'],
-                module_name=row['module_title'],
-                title=title,
-                starts_at=_aware_utc(row['scheduled_start']),
-                ends_at=_aware_utc(row['session_end']),
-                attendance_source='curriculum.live_session_learner_attendance',
-                attendance_reference=str(row['attendance_report_id'] or '').strip(),
-            ),
-            bucket['attendees'],
-            attendance_finalized=True,
-        ))
+        try:
+            result = sync_post_lecture_feedback(
+                LectureOccurrence(
+                    key=occurrence_id,
+                    module_catalogue_id=row['module_catalogue_id'],
+                    programme_id=row['programme_id'],
+                    programme_name=row['programme_name'],
+                    cohort_id=row['cohort_id'],
+                    cohort_name=row['cohort_name'],
+                    group_id=row['group_id'],
+                    group_name=row['group_name'],
+                    module_name=row['module_title'],
+                    title=title,
+                    tutor_name=row.get('lecture_tutor_name') or '',
+                    starts_at=_aware_utc(row['scheduled_start']),
+                    ends_at=_aware_utc(row['session_end']),
+                    attendance_source='curriculum.live_session_learner_attendance',
+                    attendance_reference=str(row['attendance_report_id'] or '').strip(),
+                ),
+                bucket['attendees'],
+                attendance_finalized=True,
+            )
+        except IntegrityError as error:
+            # sync_post_lecture_feedback's atomic block has already rolled back.
+            # Catch only our named check; unrelated integrity failures stay errors.
+            if not is_creation_guard_rejection(error):
+                raise
+            rejected += 1
+            audit('database_rejected', occurrence_key=occurrence_id,
+                  form_id=rejected_form_id(error), starts_at=_aware_utc(row['scheduled_start']),
+                  reason='lecture_creation_guard')
+            continue
+        results.append(result)
 
     return {
         'rowsScanned': len(rows),
-        'occurrencesProcessed': len(results),
+        'occurrencesProcessed': len(results) + rejected,
         'formsMatched': sum(item['formsMatched'] for item in results),
         'recipientsMatched': sum(item['recipientsMatched'] for item in results),
         'recipientsRevoked': sum(item['recipientsRevoked'] for item in results),
         'unmatchedPresentAttendees': unmatched,
         'deliveryIds': [delivery_id for item in results for delivery_id in item['deliveryIds']],
+        'creationGuardRejected': rejected,
     }

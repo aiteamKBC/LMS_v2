@@ -7,9 +7,47 @@ import { dashboardOverviewFixture } from '@/test/dashboardOverviewFixture';
 import { useDashboardTabsData } from '../useDashboardTabsData';
 
 beforeEach(() => { clearAllCachedResources(); vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(dashboardOverviewFixture())))); });
-afterEach(() => { cleanup(); clearAllCachedResources(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); clearAllCachedResources(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const wrapper = ({ children }: { children: ReactNode }) => <StrictMode>{children}</StrictMode>;
 describe('compact Overview request lifecycle', () => {
+  it.each(['commercial', 'apprenticeship'] as const)('waits for a slow %s Overview without losing its modules or totals', async kind => {
+    vi.useFakeTimers();
+    let finish!: (value: Response) => void;
+    vi.mocked(fetch).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const { result } = renderHook(() => useDashboardTabsData(kind, '265', true, new Set(['overview'])), { wrapper });
+    // A measured full Overview completes after the generic 45-second deadline.
+    await act(async () => { await vi.advanceTimersByTimeAsync(61_000); });
+    expect(result.current.overview.loading).toBe(true);
+    expect(result.current.overview.error).toBe('');
+    expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(false);
+    const payload = dashboardOverviewFixture();
+    payload.modules.push(
+      { ...payload.modules[0], id: 'safeguarding', title: 'Safeguarding For Learners' },
+      { ...payload.modules[0], id: 'ksbs', title: 'Programme KSBs' },
+    );
+    await act(async () => finish(new Response(JSON.stringify(payload))));
+    expect(result.current.overview.payload).toEqual(payload);
+    expect(result.current.overview.loading).toBe(false);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds a stuck Overview at two minutes and reloads all its facts on retry', async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetch).mockImplementationOnce(() => new Promise(() => {}));
+    const { result } = renderHook(() => useDashboardTabsData('commercial', '265', true, new Set(['overview'])));
+    await act(async () => { await vi.advanceTimersByTimeAsync(119_999); });
+    expect(result.current.overview.loading).toBe(true);
+    expect(result.current.overview.error).toBe('');
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(result.current.overview.error).toMatch(/Loading is taking longer/);
+    expect(result.current.overview.payload).toBeNull();
+    expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(true);
+    await act(async () => result.current.overview.refresh());
+    expect(result.current.overview.payload).toEqual(dashboardOverviewFixture());
+    expect(result.current.overview.error).toBe('');
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it('retains a hidden snapshot, defers invalidations, and refreshes once on activation', async () => {
     const { result, rerender } = renderHook(({ active }) => useDashboardTabsData('commercial', '265', true, new Set(['overview']), active),
       { initialProps: { active: 'overview' }, wrapper });

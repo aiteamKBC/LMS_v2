@@ -30,8 +30,8 @@ vi.mock('@/api/engagement', () => ({
   fetchOverviewStats: (...args: unknown[]) => fetchOverviewStats(...args),
   fetchLearnerAnalytics: (...args: unknown[]) => fetchLearnerAnalytics(...args),
 }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => authValue() }));
-vi.mock('@/hooks/useToast', () => ({ useToast: () => toastSpies }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => authValue() }));
+vi.mock("@/hooks/useToast", () => ({ useToast: () => toastSpies }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));

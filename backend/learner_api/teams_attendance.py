@@ -31,8 +31,8 @@ def _email(value) -> str:
 def annotate_attendance_completion(components, learner_profile):
     """Read-only completion evidence, never an extra progress/hour ledger row.
 
-    Authoring requirements and the final learner register are authoritative.
-    Match stored occurrence identity, not titles, dates or client declarations.
+    Verified Teams evidence respects authoring requirements. An explicit staff
+    attendance decision also completes the activity, including those requirements.
     """
     clean = [{key: value for key, value in item.items()
               if key not in {'attendanceCompleted', 'attendanceCompletedAt'}} for item in components]
@@ -71,6 +71,13 @@ def annotate_attendance_completion(components, learner_profile):
               AND lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
         ''', [profile_id, list({item['componentId'] for item in candidates})])
         verified = {(str(cid), str(mid)): ended for cid, mid, ended in cursor.fetchall()}
+    from .manual_attendance_completion import read_manual_completion
+    manual = read_manual_completion(candidates, learner_profile)
+    for key, (present, ended) in manual.items():
+        if present:
+            verified[key] = ended
+        else:
+            verified.pop(key, None)
     for item in candidates:
         key = (str(item.get('componentId') or ''), str(item.get('moduleId') or ''))
         if key in verified:
@@ -266,6 +273,7 @@ def fetch_verified_teams_attendance_rows(
     verified_profile=None,
     include_group_metadata: bool = True,
     register_schedule=None,
+    parallel_delivery_guests=None,
 ) -> list[dict]:
     """Build real attendance from completed Microsoft Teams reports.
 
@@ -322,6 +330,12 @@ def fetch_verified_teams_attendance_rows(
     # attendance below, after deciding whether a full name is unique.
     approved_guests = approved_alternative_guests(database, None,
         **({'occurrence_ids': occurrence_ids} if occurrence_ids is not None else {}))
+    # Internal read-time projection only: callers resolve equivalent curriculum
+    # slots first. This does not enrol, invite, or persist guests in the series.
+    parallel_delivery_guests = parallel_delivery_guests or {}
+    approved_guests = {key: set(value) for key, value in approved_guests.items()}
+    for key, guests in parallel_delivery_guests.items():
+        approved_guests.setdefault(key, set()).update(guests)
     if register_schedule is not None and identity_learners_by_email is not None:
         # Register projection discards other occurrences, except independently
         # approved recovery guests. Keep all those alternatives and their full
@@ -414,7 +428,7 @@ def fetch_verified_teams_attendance_rows(
         matching_emails.update(assigned_by_module.get(str(session.module_catalogue_id or '').strip(), set()))
     for occurrence_id, session_id in occurrence_series.items():
         if session_id in sessions_by_id:
-            matching_emails.update(approved_guests[occurrence_id])
+            matching_emails.update(approved_guests.get(occurrence_id, set()))
     with projection_operation('attendance_profiles'):
         matching_learners = {
             _email(learner.email): learner
@@ -672,7 +686,8 @@ def fetch_verified_teams_attendance_rows(
                     "group_name": str(module.group_name or "").strip() if module else "",
                     "is_expected": email in occurrence_expected,
                     "eligibility_reason": (
-                        "approved_recovery_guest" if email in approved_guests[occurrence.id]
+                        "parallel_delivery_guest" if email in parallel_delivery_guests.get(occurrence.id, set())
+                        else "approved_recovery_guest" if email in approved_guests.get(occurrence.id, set())
                         else "module_assignment"
                     ),
                     "scheduled_start": occurrence.scheduled_start,
@@ -845,12 +860,15 @@ def sync_verified_teams_attendance_reporting(
         module_refs,
         all_learners=all_learners,
     )
+    from curriculum_api.shared_session_register import shared_register_rows
+    shared_rows = shared_register_rows(database=database, module_refs=module_refs,
+        learner_ids=learner_ids, learner_emails=learner_emails, all_learners=all_learners)
     occurrence_ids = (
         _verified_occurrence_ids(database, module_refs)
         if all_learners or module_refs
         else []
     )
-    if not rows and not occurrence_ids and not scoped_modules and not all_learners:
+    if not rows and not shared_rows and not occurrence_ids and not scoped_modules and not all_learners:
         return 0
 
     query = f"""
@@ -996,9 +1014,13 @@ def sync_verified_teams_attendance_reporting(
                 )
             if params:
                 cursor.executemany(query, params)
-            upsert_live_session_register(cursor, rows)
+            upsert_live_session_register(cursor, [*rows, *shared_rows])
+        from engagement_api.feedback_delivery import reconcile_feedback_after_attendance_commit
+        reconcile_feedback_after_attendance_commit(
+            [row['occurrence_id'] for row in [*rows, *shared_rows]], using=database,
+        )
     _award_attendance_points(rows)
-    return len(rows)
+    return len(rows) + len(shared_rows)
 
 
 def _award_attendance_points(rows):

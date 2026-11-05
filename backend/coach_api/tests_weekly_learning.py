@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 from django.test import SimpleTestCase, RequestFactory
 from .weekly_learning import read_weekly_learning, week_rows, activity_completion, progress_index, assignment_projection, derived_session, visible_week_rows
 from .case_file import case_file_section
+from learner_api.weekly_display import display_policies, display_weeks, default_week
 
 
 def selected_navigation(payload):
@@ -96,19 +97,25 @@ class WeeklyLearningTests(SimpleTestCase):
         self.assertEqual(report['newTopLevel'], ['modules', 'weeks', 'selectedWeek'])
         self.assertGreater(report['reductionPercent'], 90)
 
-    def projection(self, selection='M1:1', kind='commercial', future_report=False, records=None, duration='60', reader_options=None, session_only=False, fallback_ksbs=None, live_evidence=None):
+    def projection(self, selection='M1:1', kind='commercial', future_report=False, records=None, duration='60', reader_options=None, session_only=False, fallback_ksbs=None, live_evidence=None,
+                   display_policy=None, cohort_id='COHORT1', detail_week=None, empty_future=False):
         context = MagicMock()
-        context.source = SimpleNamespace(pk=201, email='learner@example.test', learner_type=kind)
+        context.source = SimpleNamespace(pk=201, email='learner@example.test', learner_type=kind, cohort_id=cohort_id)
         context.profile.progress_entries.filter.return_value.values.return_value = [
             {'kind': 'component', 'component_ref': 'C1', 'quiz_ref': None, 'passed': None, 'submitted_at': None}]
         cursor = MagicMock()
         cursor.fetchall.return_value = []
         module = {'id': 'M1', 'title': 'Synthetic module', 'start_date': date(2026, 10, 5), 'end_date': date(2026, 10, 18)}
+        if display_policy is not None:
+            module['source_weekly_display'] = [display_policy]
         slots = [{'slotNumber': index, 'sessionNumber': index, 'date': day, 'type': 'live-session', 'weekId': f'W{index}', 'weekTitle': f'Week {index}'}
                  for index, day in ((1, '2026-10-05'), (2, '2026-10-12'))]
         def spine(_modules, by_id, _counts, _authored, **kwargs):
             by_id['M1']['curriculumSlots'] = slots
-        selected = 2 if selection == 'M1:2' else 1
+        if empty_future:
+            slots.append({'slotNumber': 3, 'sessionNumber': 3, 'date': '2026-10-19',
+                          'type': 'live-session', 'weekId': 'W3', 'weekTitle': 'Week 3'})
+        selected = detail_week or (2 if selection == 'M1:2' else 1)
         datasets = [[module], [], [
             {'id': 'C1', 'week_id': 'W1', 'module_catalogue_id': 'M1', 'type': 'reading', 'quiz_id': None, 'is_quiz': False, 'has_content': True},
             {'id': 'C2', 'week_id': 'W2', 'module_catalogue_id': 'M1', 'type': 'reading', 'quiz_id': None, 'is_quiz': False, 'has_content': True}],
@@ -164,6 +171,68 @@ class WeeklyLearningTests(SimpleTestCase):
             connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
             payload = read_weekly_learning(context, selection, **(reader_options or {}))
         return payload, cursor, context
+
+    def test_source_display_opens_latest_content_and_omits_empty_authored_week(self):
+        policy = {'version': 1, 'mode': 'available-content', 'moduleId': 'M1',
+                  'cohortId': 'COHORT1', 'weekDates': {'W1': '2026-10-07', 'W2': '2026-10-21'}}
+        with patch('coach_api.weekly_learning.datetime', wraps=datetime) as clock:
+            clock.now.return_value = datetime(2026, 10, 27, 12, tzinfo=timezone.utc)
+            for kind in ('commercial', 'apprenticeship'):
+                payload, _, _ = self.projection(None, kind=kind, display_policy=policy, detail_week=2, empty_future=True)
+                self.assertEqual([week['weekId'] for week in payload['weeks']], ['W1', 'W2'])
+                self.assertEqual(payload['selectedWeek']['weekId'], 'M1:2')
+                self.assertEqual(selected_navigation(payload)['startDate'], '2026-10-21')
+                self.assertEqual(selected_navigation(payload)['endDate'], '2026-10-27')
+                self.assertEqual([activity['id'] for activity in payload['selectedWeek']['activities']], ['C2'])
+
+    def test_source_display_preserves_hours_progress_meetings_and_explicit_selection(self):
+        policy = {'version': 1, 'mode': 'available-content', 'moduleId': 'M1',
+                  'cohortId': 'COHORT1', 'weekDates': {'W1': '2026-10-07', 'W2': '2026-10-21'}}
+        for selection in ('M1:1', 'M1:2'):
+            baseline, _, _ = self.projection(selection)
+            changed, _, _ = self.projection(selection, display_policy=policy)
+            detail, _, _ = self.projection(selection, display_policy=policy,
+                reader_options={'include_weeks': False, 'module_id': 'M1', 'include_actions': True})
+            self.assertEqual(changed['selectedWeek'], baseline['selectedWeek'])
+            self.assertEqual(changed['selectedWeek'], detail['selectedWeek'])
+            self.assertEqual(selected_navigation(changed), selected_navigation(detail))
+            self.assertEqual(changed['selectedWeek']['weekId'], selection)
+        with self.assertRaises(LookupError):
+            self.projection('M1:3', display_policy=policy, empty_future=True)
+
+    def test_source_display_does_not_change_another_cohort(self):
+        policy = {'version': 1, 'mode': 'available-content', 'moduleId': 'M1',
+                  'cohortId': 'COHORT1', 'weekDates': {'W1': '2026-10-07'}}
+        before, _, _ = self.projection(empty_future=True)
+        after, _, _ = self.projection(display_policy=policy, cohort_id='COHORT2', empty_future=True)
+        self.assertEqual(before, after)
+        self.assertIn('W3', [week['weekId'] for week in after['weeks']])
+
+    def test_source_display_dates_allow_multiple_sections_per_day_without_mutating_facts(self):
+        from copy import deepcopy
+        weeks = [dict(id=f'M1:{i}', moduleId='M1', weekId=f'W{i}', slotNumber=i,
+                      startDate='2026-06-10', endDate='2026-06-16', status='past', totalActivities=1)
+                 for i in range(1, 5)]
+        original = deepcopy(weeks)
+        policy = {'weekDates': {'W1': '2026-06-09', 'W2': '2026-06-10',
+                                'W3': '2026-06-10', 'W4': '2026-07-01'}}
+        result = display_weeks(weeks, {'M1': policy}, '2026-06-10')
+        self.assertEqual(weeks, original)
+        self.assertEqual(result[0]['endDate'], '2026-06-09')
+        self.assertEqual(result[1]['endDate'], '2026-06-16')
+        self.assertEqual(result[1]['startDate'], result[2]['startDate'])
+        self.assertEqual(default_week(result, latest_available=True, today='2026-06-10')['weekId'], 'W3')
+        self.assertEqual(default_week(result, latest_available=True, today='2026-06-01')['weekId'], 'W1')
+        self.assertIsNone(default_week([], latest_available=True, today='2026-06-10'))
+
+    def test_source_display_rejects_ambiguous_or_invalid_configuration(self):
+        policy = {'version': 1, 'mode': 'available-content', 'moduleId': 'M1',
+                  'cohortId': 'COHORT1', 'weekDates': {'W1': '2026-06-10'}}
+        self.assertEqual(display_policies([{'id': 'M1', 'source_weekly_display': json.dumps([policy])}], 'COHORT1'), {'M1': policy})
+        for candidates in ([policy, policy], [{**policy, 'moduleId': 'OTHER'}],
+                           [{**policy, 'weekDates': {'W1': '2026-02-30'}}]):
+            with self.assertRaises(ValueError):
+                display_policies([{'id': 'M1', 'source_weekly_display': candidates}], 'COHORT1')
 
     def test_roles_have_identical_facts_and_reader_calls(self):
         from .weekly_contract import compact_weekly

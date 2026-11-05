@@ -274,6 +274,7 @@ export interface AimRow {
 }
 
 export interface EnrolmentBoard {
+  reviewHandover?: import('@/api/reviewHandover').ReviewHandover;
   user: {
     id: string;
     name: string;

@@ -3,7 +3,7 @@ import type { LearnerAttendance } from './learnerAttendance';
 import { peekLearnerJson, readLearnerJson } from './learnerRead';
 import { invalidateWeeklyProgress } from './weeklyLearning';
 
-export type LectureStatus = 'completed' | 'late' | 'absent' | 'upcoming' | 'in_progress' | 'pending' | 'unmarked' | 'awaiting_recording';
+export type LectureStatus = 'completed' | 'late' | 'absent' | 'cancelled' | 'upcoming' | 'in_progress' | 'pending' | 'unmarked' | 'awaiting_recording';
 export interface LectureActivity {
   id: string; title: string; type: string; completed: boolean;
   href?: string; groupId?: number; activityId?: number;

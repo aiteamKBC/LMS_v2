@@ -32,7 +32,8 @@ class ReadSet:
 
 
 class BottleneckReadParityTests(SimpleTestCase):
-    def attendance(self, optimized, status='present', *, reuse=False, recovery=False, extra=False):
+    def attendance(self, optimized, status='present', *, reuse=False, recovery=False, extra=False,
+                   parallel=False, seconds=181):
         reads = Counter()
         now = datetime(2026, 10, 1, 12, tzinfo=timezone.utc)
         profile = SimpleNamespace(id=9, enrolment_id=7, full_name='Synthetic Learner',
@@ -43,7 +44,7 @@ class BottleneckReadParityTests(SimpleTestCase):
             attendance_report_id='R1', artifacts_synced_at=now, updated_at=now)
         record = SimpleNamespace(id='A1', occurrence_id='O1', graph_record_id='G1',
             email=profile.email, display_name=profile.full_name, role='attendee', raw_data={},
-            total_attendance_seconds=181, intervals=[])
+            total_attendance_seconds=seconds, intervals=[])
         session_rows, occurrence_rows = [session], [occurrence]
         evidence_rows = [record] if status == 'present' else []
         guests = defaultdict(set)
@@ -80,7 +81,8 @@ class BottleneckReadParityTests(SimpleTestCase):
             stack.enter_context(patch.object(teams, '_attendance_review_rows', side_effect=counted('review_batch', ([],[]))))
             stack.enter_context(patch.object(teams, '_replaced_attendance_sources', side_effect=counted('replacement', {})))
             stack.enter_context(patch.object(teams, 'identity_rules', return_value=[]))
-            stack.enter_context(patch('learner_api.alternative_recovery.approved_alternative_guests', return_value=guests))
+            stack.enter_context(patch('learner_api.alternative_recovery.approved_alternative_guests',
+                                      return_value={} if parallel else guests))
             stack.enter_context(patch('learner_api.session_recovery.apply_recovery_to_rows', side_effect=lambda rows: rows))
             def match(rows, *args, **kwargs):
                 sets.setdefault('identity_rosters', []).append(kwargs['learners'])
@@ -88,11 +90,25 @@ class BottleneckReadParityTests(SimpleTestCase):
             stack.enter_context(patch.object(teams, 'apply_reviewed_identities', side_effect=match))
             stack.enter_context(patch.object(teams.timezone, 'now', return_value=now))
             options = {'verified_profile': profile, 'include_group_metadata': False} if optimized else {}
+            if parallel:
+                options['parallel_delivery_guests'] = guests
             if reuse:
                 options['register_schedule'] = [{'session_id':'O1', 'attendance_source_occurrence_id':'O1',
                                                   'attendance_report_id':'R1'}]
             result = teams.fetch_verified_teams_attendance_rows(learner_emails=[profile.email], **options)
         return result, reads, sets
+
+    def test_parallel_delivery_needs_no_approved_request_and_preserves_threshold(self):
+        for seconds, expected in ((180, 'absent'), (181, 'present')):
+            with self.subTest(seconds=seconds):
+                rows, _, sets = self.attendance(True, recovery=True, parallel=True, seconds=seconds)
+                alternative = next(row for row in rows if row['occurrence_id'] == 'ALT')
+                self.assertEqual(alternative['attendance_status'], expected)
+                self.assertEqual(alternative['eligibility_reason'], 'parallel_delivery_guest')
+                self.assertEqual(alternative['enrolment_id'], 7)
+                self.assertIn('learner@example.test', sets['identity_rosters'][-1])
+                original = next(row for row in rows if row['occurrence_id'] == 'O1')
+                self.assertEqual(original['eligibility_reason'], 'module_assignment')
 
     def test_attendance_outputs_equal_with_two_fewer_materialized_reads(self):
         for status in ('present', 'absent'):

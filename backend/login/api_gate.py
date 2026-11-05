@@ -151,6 +151,10 @@ RULES = (
     # reachable by every signed-in role so Learner, Employer and Tutor pages can
     # be measured without opening the rest of curriculum_api to those roles.
     ("/curriculum_api/performance/record/", ANY),
+    # Page activity is recorded for every workspace. Only the recorder is
+    # shared; reading the audit trail remains staff-only. The view derives
+    # the actor from the authenticated session, never from the posted body.
+    ("/curriculum_api/activity/record/", ANY),
     # Learner pages subscribe to curriculum changes too. This endpoint returns
     # only the shared counter for learners, never staff change paths.
     ("/curriculum_api/curriculum/cache-epoch/", LEARNER_AND_STAFF),
@@ -216,8 +220,6 @@ def rule_for(path):
     # keeping this narrow prefix public lets guests respond without opening any
     # other Engagement endpoint.
     if path.startswith('/engagement_api/feedback/public-event/'):
-        return None
-    if path.startswith('/engagement_api/feedback/public-session/'):
         return None
     if path.startswith('/engagement_api/feedback/public-rsvp/'):
         return None
@@ -320,17 +322,21 @@ def refusal_for(path, account, *, django_user_is_authenticated=False, method='GE
             '/login_api/me/', '/login_api/logout/', '/login_api/change-password/',
             '/login_api/forgot-password/', '/login_api/reset/',
             '/login_api/reset-password/', '/login_api/login/',
-            '/login_api/health/',
+            '/login_api/health/', '/login_api/announcements/',
         }
         if not path.startswith('/login_api/advanced-admin/') and path not in account_paths:
             return _forbidden(['advanced-admin'])
-    if account is not None and getattr(account, '_staff_access', None) == 'record-monitor':
+    if (account is not None and getattr(account, '_staff_access', None) == 'record-monitor'
+            and not (getattr(account, '_staff_accesses', frozenset())
+                     - {'record-monitor', 'advanced-admin'})):
         from old_otjh.gate import is_transition_path
-        # Applies to batch children too. Record endpoints enforce read-only
-        # methods and learner scope; authentication keeps its own handlers.
+        # Monitoring alone remains restricted, including batch children. Extra
+        # grants use the normal endpoint/ownership gates; previous-record
+        # endpoints still enforce their own read-only monitoring scope.
         if not is_transition_path(path) and path not in {
             '/login_api/me/', '/login_api/logout/', '/login_api/change-password/',
             '/login_api/login/', '/login_api/health/',
+            '/login_api/announcements/',
         }:
             return _forbidden(['previous_records.view'])
 

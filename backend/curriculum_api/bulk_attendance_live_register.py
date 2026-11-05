@@ -4,10 +4,11 @@ Reads never match learners by name or email: a learner reaches a KBC id only
 through the stable Aptem identity rule the coach dashboard uses
 (Created_users.aptem_id, then the profile copy).
 
-A saved correction changes only ``attendance_status``. The Teams attendance
-sync still owns this table and may recalculate the row on its next run.
+A saved correction also uses the existing staff correction ledger, so completion
+can distinguish manual attendance from provider evidence after a Teams sync.
 """
 import logging
+from datetime import datetime, time, timedelta
 
 from django.db import DatabaseError, connections, router, transaction
 from django.utils import timezone
@@ -15,7 +16,7 @@ from django.utils import timezone
 from learner_api.models import LearnerProfile
 
 from .bulk_attendance_live_policy import build_live_records
-from .models import LiveSession, LiveSessionLearnerAttendance, LiveSessionOccurrence
+from .models import LiveSession, LiveSessionLearnerAttendance, LiveSessionOccurrence, ModuleAuthoringModule
 from .session_results_policy import instant
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,11 @@ def read_live_register_records(kbc_id=None):
         .filter(id__in={row['live_session_id'] for row in rows})
         .values_list('id', 'module_title')
     )
+    module_titles = dict(ModuleAuthoringModule.objects.filter(
+        module_catalogue_id__in={row['module_catalogue_id'] for row in rows}
+    ).values_list('module_catalogue_id', 'title'))
+    for row in rows:
+        row['module_title'] = module_titles.get(row['module_catalogue_id'])
     from coach_api.views import resolve_effective_aptem_ids
 
     # Only the identity columns: the full profile rows take tens of seconds.
@@ -119,23 +125,54 @@ def read_live_register_or_warning(kbc_id=None):
         return {}, LIVE_REGISTER_WARNING
 
 
-def save_live_attendance(changes):
+def read_live_day_learner_ids(session_date):
+    """Read only saved register membership within the business calendar day."""
+    zone = timezone.get_current_timezone()
+    start = timezone.make_aware(datetime.combine(session_date, time.min), zone)
+    end = timezone.make_aware(datetime.combine(session_date + timedelta(days=1), time.min), zone)
+    occurrence_ids = LiveSessionOccurrence.objects.filter(
+        scheduled_start__gte=start, scheduled_start__lt=end,
+    ).values_list('id', flat=True)
+    profile_ids = list(LiveSessionLearnerAttendance.objects.filter(
+        occurrence_id__in=occurrence_ids,
+    ).values_list('learner_profile_id', flat=True).distinct())
+    profiles = list(LearnerProfile.objects.filter(id__in=profile_ids).only('id', 'enrolment_id', 'aptem_id'))
+    if not profiles:
+        return set()
+    from coach_api.views import resolve_effective_aptem_ids
+    identities, _conflicts = resolve_effective_aptem_ids(profiles)
+    return {str(identity) for identity in identities.values() if identity is not None}
+
+
+def save_live_attendance(changes, *, actor=''):
     """Apply {register row id: status}; returns the ids that were updated.
 
     Every id must exist, otherwise nothing is written.
     """
+    from coach_api.models import CoachAttendanceSourceAdjustment
+
     ids = list(changes)
-    with transaction.atomic(using=router.db_for_write(LiveSessionLearnerAttendance)):
-        existing = set(
+    database = router.db_for_write(LiveSessionLearnerAttendance)
+    with transaction.atomic(using=database):
+        rows = list(
             LiveSessionLearnerAttendance.objects.select_for_update()
-            .filter(id__in=ids).values_list('id', flat=True)
+                .filter(id__in=ids).values('id', 'learner_profile_id', 'occurrence_id', 'live_session_id', 'module_catalogue_id')
         )
-        missing = sorted(set(ids) - existing)
+        missing = sorted(set(ids) - {row['id'] for row in rows})
         if missing:
             raise LookupError(missing)
         now = timezone.now()
         for row_id, status in changes.items():
             LiveSessionLearnerAttendance.objects.filter(id=row_id).update(
                 attendance_status=status, updated_at=now,
+            )
+        owners = dict(LiveSession.objects.using(database).filter(
+            id__in={row['live_session_id'] for row in rows}).values_list('id', 'module_catalogue_id'))
+        for row in rows:
+            source_id = row['occurrence_id'] if owners.get(row['live_session_id']) == row['module_catalogue_id'] else f"{row['occurrence_id']}:{row['module_catalogue_id']}"
+            CoachAttendanceSourceAdjustment.objects.using(database).update_or_create(
+                learner_id=row['learner_profile_id'], source='microsoft-teams', source_id=source_id,
+                defaults={'status': changes[row['id']], 'is_deleted': False,
+                          'owner_email': actor, 'updated_by': actor},
             )
     return sorted(ids)

@@ -209,8 +209,10 @@ class CoachMeetingSummaryGenerationTests(SimpleTestCase):
         generate.assert_called_once_with(self.record, transcript_text)
         self.assertEqual(result["summary"]["overview"], generated_summary["overview"])
         upsert_params = cursor.execute.call_args_list[1].args[1]
-        self.assertEqual(json.loads(upsert_params[9]), generated_summary)
-        self.assertEqual(json.loads(upsert_params[10]), generated_summary)
+        from coach_api.migrated_session_scope import session_provenance
+        expected = {**generated_summary, '_lmsSession': session_provenance(self.record)}
+        self.assertEqual(json.loads(upsert_params[9]), expected)
+        self.assertEqual(json.loads(upsert_params[10]), expected)
         self.assertEqual(upsert_params[13], "ready")
         self.assertEqual(upsert_params[15], "")
 
@@ -221,10 +223,11 @@ class CoachMeetingSummaryRetryEndpointTests(SimpleTestCase):
             event_key="mcr:42:1:2026-09-19",
             owner_email="coach@example.test",
             event_type="mcr",
-            status="completed",
+            status="scheduled",
         )
-        request = RequestFactory().get(
-            "/coach_api/coach/timetable/events/mcr:42:1:2026-09-19/artifacts?refresh=1"
+        # Refresh is an explicit write; completed reviews remain read-only.
+        request = RequestFactory().post(
+            "/coach_api/coach/timetable/events/mcr:42:1:2026-09-19/artifacts"
         )
         request.coach_email = record.owner_email
         snapshot = {

@@ -8,7 +8,7 @@ import { AuditWorkspaceShell } from '@/features/audit/AuditWorkspaceShell';
 import { learnerNavigation } from '@/pages/workspace/advanced-admin/learnerNavigation';
 
 const { denied, viewer } = vi.hoisted(() => ({ denied: new Set<string>(), viewer: { isAdmin: false } }));
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({
     auth: { user: { fullName: 'Workspace User' }, roles: [] },
     isAdmin: viewer.isAdmin,
@@ -453,6 +453,27 @@ it('uses the learner-style collapsible navigation for Curriculum and keeps Quali
   expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('64px');
   expect(localStorage.getItem('kbc_curriculum_sidebar_collapsed')).toBe('true');
   expect(localStorage.getItem('kbc_learner_sidebar_collapsed')).toBeNull();
+});
+
+it.each([
+  '/engagement/reports/feedback',
+  '/engagement/reports/feedback/create',
+  '/engagement/reports/feedback/forms/42/edit',
+])('uses the most specific Feedback breadcrumb on %s', path => {
+  const config = roleNavMap.engagement;
+  render(
+    <MemoryRouter initialEntries={[path]}>
+      <WorkspaceShell role="engagement" roleLabel={config.label} navItems={config.items} workspaceLabel={config.workspaceLabel} pageTitle="Feedback">
+        <CurrentRoute />
+      </WorkspaceShell>
+    </MemoryRouter>,
+  );
+  const breadcrumb = screen.getByRole('navigation', { name: 'Breadcrumb' });
+
+  expect(within(breadcrumb).getByRole('link', { name: 'Engagement Command Centre' })).toBeVisible();
+  expect(within(breadcrumb).getByRole('link', { name: 'Reports' })).toBeVisible();
+  expect(within(breadcrumb).getByText('Feedback')).toBeVisible();
+  expect(within(breadcrumb).getAllByText('Reports')).toHaveLength(1);
 });
 
 it('closes the subsidebar when clicking the standalone page that is already active', () => {

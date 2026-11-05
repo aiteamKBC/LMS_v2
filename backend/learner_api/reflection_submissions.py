@@ -188,6 +188,10 @@ def _submit_reflection(request):
     learner_id = _text(payload.get("learnerId"))
     activity_type = _text(payload.get("activityType"))
     activity_id = _text(payload.get("activityId"))
+    if getattr(request, "coach_learner_action", False) and (
+        activity_type.lower() == "extra_activity" or activity_id.lower().startswith("extra:")
+    ):
+        return _error("Extra activities must be recorded by the learner. Coaches can review and approve submitted work.", 403)
     learning_reflection = _text(payload.get("learningReflection"))
     submission_mode = "draft" if _text(payload.get("submissionMode")).lower() == "draft" else "submit"
     if submission_mode == "submit":
@@ -273,6 +277,9 @@ def _submit_reflection(request):
         except (TypeError, ValueError, OverflowError):
             return _error("assignmentElapsedSeconds must be a non-negative number.")
     full_submission = dict(payload)
+    # KSB review requests and corrections are staff-owned audit metadata.
+    full_submission.pop('ksbReview', None)
+    full_submission.pop('coachCreation', None)
     full_submission.pop("selectAssignmentTopic", None)
     lineage = _reflection_lineage(learner_id, activity_id)
     if assignment_topic and submission_mode == "draft":
@@ -316,6 +323,8 @@ def _submit_reflection(request):
                     except (TypeError, ValueError):
                         stored = {}
                 stored = _dict(stored)
+                if stored.get('submissionOrigin') == 'coach' and activity_type == 'extra_activity':
+                    return _error('This activity was recorded by your coach and cannot be edited here.', 409)
                 imported = stored.get("submissionOrigin") == "imported_legacy"
                 full_submission["submissionOrigin"] = "imported_legacy" if imported else "learner"
                 if is_assignment_form and imported:
@@ -325,6 +334,12 @@ def _submit_reflection(request):
                         "This reflection has been accepted by the coach and can no longer be changed.",
                         409,
                     )
+                if not is_assignment_form and submission_mode == 'submit' and _list(payload.get('ksbCodes')):
+                    from .reflection_ksbs import programme_catalogue, checked_codes, KsbReviewError
+                    try:
+                        checked_codes(payload['ksbCodes'], programme_catalogue(learner_kind, learner_id))
+                    except KsbReviewError as exc:
+                        return _error(str(exc), exc.status)
                 if (
                     existing
                     and existing[0] == "submitted_for_tutor_review"
@@ -524,6 +539,7 @@ def get_reflection_submission(request):
         return _error("activityType and activityId must be provided together.")
 
     from .assignment_topics import topic_id, aggregate_statuses
+    from .submission_visibility import VISIBLE_SUBMISSION_SQL
     try:
         selected_topic = topic_id(request.GET.get("assignmentTopicId"))
     except ValueError as exc:
@@ -536,9 +552,10 @@ def get_reflection_submission(request):
             return classified_response(learner_kind, learner_id, activity_id)
         with connections["enrolment"].cursor() as cur:
             if activity_type == "assignment" and request.GET.get("view") == "topics":
-                cur.execute('''SELECT assignment_topic_id, status, full_submission, submitted_at
-                    FROM "Learner".learning_reflection_submissions
+                cur.execute(f'''SELECT assignment_topic_id, status, full_submission, submitted_at
+                    FROM "Learner".learning_reflection_submissions AS submission
                     WHERE learner_kind=%s AND learner_id=%s AND activity_type=\'assignment\' AND activity_id=%s
+                      AND {VISIBLE_SUBMISSION_SQL}
                     ORDER BY assignment_topic_id''', [learner_kind, learner_id, activity_id])
                 states = []
                 for identity, status, content, submitted_at in cur.fetchall():
@@ -550,11 +567,12 @@ def get_reflection_submission(request):
                 return JsonResponse({"topics": states})
             if not activity_type:
                 cur.execute(
-                    """
+                    f"""
                     select activity_type, activity_id, status,
                            full_submission -> 'assignmentAttemptHistory'
-                    from "Learner"."learning_reflection_submissions"
+                    from "Learner"."learning_reflection_submissions" AS submission
                     where learner_kind = %s and learner_id = %s
+                      and {VISIBLE_SUBMISSION_SQL}
                     """,
                     [learner_kind, learner_id],
                 )
@@ -565,15 +583,16 @@ def get_reflection_submission(request):
                 )
 
             cur.execute(
-                """
+                f"""
                 select id, status, full_submission, coach_feedback,
                        reviewed_by, reviewed_at, submitted_at
-                from "Learner"."learning_reflection_submissions"
+                from "Learner"."learning_reflection_submissions" AS submission
                 where learner_kind = %s
                   and learner_id = %s
                   and activity_type = %s
                   and activity_id = %s
                   and (%s::text IS NULL OR assignment_topic_id = %s)
+                  and {VISIBLE_SUBMISSION_SQL}
                 order by case status when \'accepted\' then 0 when \'submitted_for_tutor_review\' then 1 else 2 end, submitted_at desc
                 limit 1
                 """,

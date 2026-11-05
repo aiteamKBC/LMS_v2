@@ -16,6 +16,7 @@ const CONCURRENCY = 4;
 const keyOf = (row: UserListRow) => `${row.source}:${row.id}`;
 const kindOf = (row: UserListRow) => (row.source === 'commercial' ? 'commercial' : 'apprenticeship');
 const same = (a: string | undefined, b: string) => (a ?? '').trim().toLowerCase() === b.trim().toLowerCase();
+const MODE_FILTER_OPTIONS = ['Live Sessions', 'Recorded'];
 const distinct = (rows: UserListRow[], pick: (r: UserListRow) => string | undefined) =>
   Array.from(new Set(rows.map(pick).map((v) => (v ?? '').trim()).filter(Boolean))).sort();
 
@@ -24,6 +25,9 @@ function describeOutcome(requested: Mode, result: AttendanceMode): Outcome {
   if (result.mode !== requested) return { tone: 'error', message: 'Mode was not changed.' };
   return { tone: 'ok', message: requested === 'live' ? 'Live Sessions' : 'Recorded' };
 }
+
+/** Same rule as CurrentMode: no saved entry, or only a pending request, is Live Sessions. */
+const modeLabelOf = (saved: SavedAttendanceMode | undefined) => (saved?.mode === 'lazy' ? 'Recorded' : 'Live Sessions');
 
 /** The learner's mode as it stands now; no saved entry means Live Sessions. */
 function CurrentMode({ saved }: { saved: SavedAttendanceMode | undefined }) {
@@ -58,6 +62,7 @@ export function BulkAttendanceModeModal({ rows, onClose }: { rows: UserListRow[]
   const [cohort, setCohort] = useState('');
   const [group, setGroup] = useState('');
   const [search, setSearch] = useState('');
+  const [modeFilter, setModeFilter] = useState('');
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<Mode>('live');
@@ -102,8 +107,9 @@ export function BulkAttendanceModeModal({ rows, onClose }: { rows: UserListRow[]
       && (!programme || same(r.programme, programme))
       && (!cohort || same(r.cohort, cohort))
       && (!group || same(r.group, group))
+      && (!modeFilter || !modes || modeLabelOf(modes[r.id]) === modeFilter)
       && (!needle || r.name.toLowerCase().includes(needle)));
-  }, [learners, caseOwner, programme, cohort, group, search]);
+  }, [learners, caseOwner, programme, cohort, group, modeFilter, modes, search]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -187,11 +193,13 @@ export function BulkAttendanceModeModal({ rows, onClose }: { rows: UserListRow[]
   return (
     <Modal title="Bulk actions — attendance mode" onClose={running ? () => undefined : onClose} dismissible={!running} size="max-w-5xl" footer={footer}>
       <div className="space-y-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
           <Select label="Case owner" value={caseOwner} options={caseOwnerOptions} onChange={(v) => { setCaseOwner(v); resetPage(); }} />
           <Select label="Programme" value={programme} options={programmeOptions} onChange={changeProgramme} />
           <Select label="Cohort" value={cohort} options={cohortOptions} onChange={changeCohort} />
           <Select label="Group" value={group} options={groupOptions} onChange={(v) => { setGroup(v); resetPage(); }} />
+          {/* Disabled until the saved modes load, so the list never filters on a guess. */}
+          <Select label="Attendance mode" value={modeFilter} options={MODE_FILTER_OPTIONS} disabled={!modes} onChange={(v) => { setModeFilter(v); resetPage(); }} />
           <div>
             <label htmlFor="bulk-learner-search" className="mb-1 block text-[12px] font-semibold text-foreground-800">Learner name</label>
             <input id="bulk-learner-search" className={inputClass} placeholder="Search learners" value={search} onChange={(e) => { setSearch(e.target.value); resetPage(); }} />
@@ -263,12 +271,12 @@ export function BulkAttendanceModeModal({ rows, onClose }: { rows: UserListRow[]
   );
 }
 
-function Select({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (v: string) => void }) {
+function Select({ label, value, options, disabled, onChange }: { label: string; value: string; options: string[]; disabled?: boolean; onChange: (v: string) => void }) {
   const id = `bulk-${label.toLowerCase().replace(/\s+/g, '-')}`;
   return (
     <div>
       <label htmlFor={id} className="mb-1 block text-[12px] font-semibold text-foreground-800">{label}</label>
-      <select id={id} className={`${inputClass} cursor-pointer`} value={value} onChange={(e) => onChange(e.target.value)}>
+      <select id={id} className={`${inputClass} cursor-pointer disabled:cursor-not-allowed`} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
         <option value="">--All--</option>
         {options.map((o) => <option key={o} value={o}>{o}</option>)}
       </select>

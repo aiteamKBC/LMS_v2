@@ -51,6 +51,27 @@ function mount(overrides: Partial<CoachingHomeProps> = {}, search = '') {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('coaching learner navigation and actions', () => {
+  it.each(['curriculum', 'aptem'] as const)('shows missed in red in the %s timeline and selected card while the form stays in progress', reviewSource => {
+    const row = session('mcm-1', '2026-09-13', { status: 'in-progress', reviewSource, reviewAttendance: 'missed' });
+    mount({ sessions: [row], attendance: [attendance(row.id, { date: '2026-09-13', missed: true })] });
+    const timeline = within(screen.getByRole('region', { name: 'Monthly coaching programme timeline' }));
+    expect(timeline.getByRole('button', { name: /Missed/ }).closest('[data-status]')).toHaveAttribute('data-status', 'missed');
+    expect(screen.getByText('Meeting missed')).toBeInTheDocument();
+    expect(row.status).toBe('in-progress');
+  });
+
+  it('shows waiting instead of missed when the current attendance report has not arrived', () => {
+    mount({ sessions: [session('mcm-1', '2026-09-13', { status: 'in-progress', reviewAttendance: 'pending', meetingOutcome: 'ended' })],
+      attendance: [attendance('mcm-1', { date: '2026-09-13', missed: true })] });
+    expect(screen.getByText('Awaiting attendance report')).toBeInTheDocument();
+    expect(screen.queryByText('Meeting missed')).not.toBeInTheDocument();
+  });
+
+  it('can render the saved missed result while the separate attendance request is still loading', () => {
+    mount({ sessions: [session('mcm-1', '2026-09-13', { status: 'in-progress', reviewAttendance: 'missed' })] });
+    expect(screen.getByText('Meeting missed')).toBeInTheDocument();
+  });
+
   it('selects any timeline meeting in the summary card without opening its detail page', () => {
     const props = mount({ sessions: [
       session('attended', '2026-09-01'),
@@ -193,7 +214,7 @@ describe('coaching learner navigation and actions', () => {
     const next = session('next:2', '2026-10-28');
     mount({ sessions: [signedMeeting, next, session('far-future', '2027-01-01')], reviews: { 'summary:1': signatureDefinition() } });
     const timeline = within(screen.getByRole('region', { name: 'Monthly coaching programme timeline' }));
-    const september = timeline.getByRole('button', { name: /29 Sept 2026, Scheduled/ });
+    const september = timeline.getByRole('button', { name: /29 Sept 2026, Awaiting signatures/ });
     const october = timeline.getByRole('button', { name: /28 Oct 2026, Scheduled/ });
     expect(september).toHaveAttribute('aria-pressed', 'true');
     expect(october).toHaveAttribute('aria-pressed', 'false');

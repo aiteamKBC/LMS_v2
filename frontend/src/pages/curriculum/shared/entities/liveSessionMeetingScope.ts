@@ -26,7 +26,7 @@ const text = (value: unknown) => (value === null || value === undefined ? '' : S
  * scope reader, so their mirrored `liveSessionUrl` cannot be mistaken for the
  * module calendar here. */
 function hasTeamsMeetingLink(settings: Settings): boolean {
-  return Boolean(text(settings?.liveSessionUrl) || text(settings?.teamsMeetingUrl));
+  return Boolean(text(settings?.liveSessionLinkOverride) || text(settings?.liveSessionUrl) || text(settings?.teamsMeetingUrl));
 }
 
 /**
@@ -41,9 +41,18 @@ export function bookedOnModuleSeries(settings: Settings): boolean {
   return Boolean(text(settings?.teamsOccurrenceId) || Number(settings?.teamsSessionNumber || 0) > 0);
 }
 
-/** Whether any live session of a module is already booked on its own calendar. */
+/**
+ * Whether the module already has a main-calendar assignment. A pasted link
+ * establishes that context too, so a newly inserted blank week must choose
+ * which calendar to join. Only `bookedOnModuleSeries` confirms a booking.
+ */
 export function moduleHasBookedSeries(components: Array<{ settings?: Settings }>): boolean {
-  return components.some(component => bookedOnModuleSeries(component.settings));
+  return components.some(({ settings }) => {
+    if (text(settings?.extraTeamsMeetingUrl)) return false;
+    if (bookedOnModuleSeries(settings)) return true;
+    if (text(settings?.teamsMeetingScope).toLowerCase() === 'additional') return false;
+    return hasTeamsMeetingLink(settings);
+  });
 }
 
 /**
@@ -100,18 +109,27 @@ export function meetingScopeIsOpen(settings: Settings): boolean {
 export function liveSessionPlan(module: ModuleCatalogueItem | null, plan: ModuleWeekSessionPlan): ModuleWeekSessionPlan['sessions'] {
   if (!module?.weekStructure?.length) return plan.sessions || [];
   const selected: ModuleWeekSessionPlan['sessions'] = [];
+  // The Teams occurrence each booked session already is. Sent under its own
+  // number, so a week placed elsewhere never moves another week's meeting.
+  const bookedNumbers: Array<number | null> = [];
   const hasSeries = moduleHasBookedSeries((module.weekStructure || []).flatMap(
     week => (week.components || []).filter(component => component.type === 'live-session'),
   ));
-  let fallbackIndex = 0;
+  // Planned dates already given to a week. A date is sent once: when a module
+  // starts after its opening week's delivery day, week 1 has no calendar week
+  // of its own and falls back to the first date -- which week 2 then also
+  // matched by calendar week, sending two sessions on one day ("Session 2
+  // overlaps the previous session") and never the last date at all.
+  const used = new Set<ModuleWeekSessionPlan['sessions'][number]>();
   module.weekStructure.forEach(week => {
     const liveSessions = (week.components || []).filter(component => component.type === 'live-session');
     const liveCount = liveSessions.length;
     if (!liveCount) return;
-    const byWeek = (plan.sessions || []).filter(session => Number(session.weekNumber) === Number(week.weekNumber));
+    const byWeek = (plan.sessions || []).filter(session => Number(session.weekNumber) === Number(week.weekNumber) && !used.has(session));
     const candidates = byWeek.length
       ? byWeek.slice(0, liveCount)
-      : (plan.sessions || []).slice(fallbackIndex, fallbackIndex + liveCount);
+      : (plan.sessions || []).filter(session => !used.has(session)).slice(0, liveCount);
+    candidates.forEach(candidate => used.add(candidate));
     // A live session delivered by its own additional meeting -- or not yet
     // assigned to either calendar -- is not part of this calendar: it is not
     // shown among these dates, not counted among them, and not sent when they
@@ -119,10 +137,28 @@ export function liveSessionPlan(module: ModuleCatalogueItem | null, plan: Module
     // in order, so dropping one from the middle without consuming it would pull
     // every later session a slot early.
     candidates.forEach((candidate, index) => {
-      if (liveSessionMeetingScope(liveSessions[index]?.settings, hasSeries) !== 'main') return;
+      const settings = liveSessions[index]?.settings;
+      if (liveSessionMeetingScope(settings, hasSeries) !== 'main') return;
       selected.push(candidate);
+      const booked = Number(settings?.teamsSessionNumber || 0);
+      bookedNumbers.push(bookedOnModuleSeries(settings) && booked > 0 ? booked : null);
     });
-    fallbackIndex += candidates.length;
   });
-  return selected;
+  const taken = new Set(bookedNumbers.filter((value): value is number => value !== null));
+  if (!taken.size) return selected;
+  // A session not booked yet keeps the planner's number unless a booked one
+  // already owns it; then it takes the next number no session holds.
+  let next = Math.max(0, ...taken, ...selected.map(session => Number(session.sessionNumber) || 0));
+  return selected.map((session, index) => {
+    const booked = bookedNumbers[index];
+    if (booked !== null) return booked === session.sessionNumber ? session : { ...session, sessionNumber: booked };
+    const planned = Number(session.sessionNumber) || 0;
+    if (planned > 0 && !taken.has(planned)) {
+      taken.add(planned);
+      return session;
+    }
+    next += 1;
+    taken.add(next);
+    return { ...session, sessionNumber: next };
+  });
 }

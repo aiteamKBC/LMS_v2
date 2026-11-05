@@ -35,6 +35,8 @@ class LearnerDirectoryTests(SimpleTestCase):
         self.addCleanup(patch.stopall)
         patch.dict(os.environ, {'API_REQUIRE_AUTH': '1'}, clear=True).start()
         self.statuses = patch.object(directory, '_enrolment_statuses', return_value={}).start()
+        self.emails = patch.object(directory, '_enrolment_emails', return_value={}).start()
+        self.modes = patch.object(directory, '_enrolment_attendance_modes', return_value={}).start()
 
     def test_missing_source_is_reported(self):
         with patch.object(directory.psycopg, 'connect') as connect:
@@ -133,6 +135,62 @@ class LearnerDirectoryTests(SimpleTestCase):
             ('302', 'Active'), ('302', 'Withdrawn'),
             (None, 'Active'), ('303', ''),
         ]), {'301': 'Completed'})
+
+    def test_lms_email_is_added_only_when_it_differs_from_the_kbc_email(self):
+        learners = [
+            {'id': '301', 'email': 'personal@example.invalid'},
+            {'id': '302', 'email': 'Same@Example.invalid'},
+            {'id': '303', 'email': 'nobody@example.invalid'},
+        ]
+        result = directory.with_lms_emails(learners, {'301': 'work@example.invalid', '302': 'same@example.invalid'})
+        self.assertEqual(result[0]['lmsEmail'], 'work@example.invalid')
+        self.assertNotIn('lmsEmail', result[1])
+        self.assertNotIn('lmsEmail', result[2])
+
+    def test_enrolment_email_ignores_blank_ids_and_conflicting_emails(self):
+        self.assertEqual(directory.enrolment_email_by_aptem([
+            ('301', ' Work@Example.invalid '), ('302', 'a@example.invalid'), ('302', 'b@example.invalid'),
+            (None, 'x@example.invalid'), ('303', ''), ('304', 'c@example.invalid'), ('304', 'C@example.invalid'),
+        ]), {'301': 'work@example.invalid', '304': 'c@example.invalid'})
+
+    def test_attendance_mode_ignores_conflicting_aptem_links(self):
+        self.assertEqual(directory.attendance_mode_by_aptem([
+            ('301', 'lazy'), ('302', 'live'), ('302', 'lazy'),
+            ('303', 'unknown'), (None, 'lazy'),
+        ]), {'301': 'lazy', '303': 'live'})
+        self.assertEqual(directory.attendance_mode_by_email([
+            ('barry@example.invalid', 'lazy'), ('other@example.invalid', 'live'),
+            ('other@example.invalid', 'lazy'),
+        ]), {'barry@example.invalid': 'lazy'})
+
+    def test_directory_uses_email_when_aptem_mode_link_is_missing(self):
+        learners = [{'id': '301', 'email': 'barry@example.invalid'}]
+        result = directory.with_attendance_modes(learners, {
+            'byAptem': {}, 'byEmail': {'barry@example.invalid': 'lazy'},
+        })
+        self.assertEqual(result[0]['attendanceMode'], 'lazy')
+
+    def test_directory_defaults_missing_attendance_modes_to_live(self):
+        learners = [
+            {'id': '301', 'name': 'A', 'email': '', 'programme': '', 'group': '', 'endDate': '', 'kbcStatus': 'Active'},
+            {'id': '302', 'name': 'B', 'email': '', 'programme': '', 'group': '', 'endDate': '', 'kbcStatus': 'Active'},
+        ]
+        self.modes.return_value = {'302': 'lazy'}
+        with patch.object(directory, 'learner_directory_dsn', return_value='synthetic'), \
+             patch.object(directory, 'read_learners', return_value=learners):
+            payload = json.loads(directory.bulk_attendance_learners(self.factory.get(self.path)).content)
+        self.assertEqual([row['attendanceMode'] for row in payload['learners']], ['live', 'lazy'])
+
+    def test_unreadable_lms_emails_fall_back_to_kbc_email_with_a_warning(self):
+        from django.db import DatabaseError
+        self.emails.side_effect = DatabaseError('private-host')
+        with patch.object(directory, 'learner_directory_dsn', return_value='synthetic'),                 patch.object(directory, 'read_learners', return_value=[{'id': '301', 'email': 'a@example.invalid'}]):
+            response = directory.bulk_attendance_learners(self.factory.get(self.path))
+        payload = json.loads(response.content)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('lmsEmail', payload['learners'][0])
+        self.assertEqual(payload['warnings'], [directory.ENROLMENT_EMAIL_WARNING])
+        self.assertNotIn('private-host', response.content.decode())
 
     def test_endpoint_rejects_writes(self):
         with patch.object(directory, 'read_learners') as read:

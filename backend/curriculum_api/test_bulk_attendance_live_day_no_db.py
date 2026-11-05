@@ -43,14 +43,13 @@ class LiveAttendanceDayTests(unittest.TestCase):
             self.ns,
         )
 
-    def test_validates_only_kbc_ids_module_date_and_status_from_the_browser(self):
+    def test_validates_kbc_ids_module_date_status_and_optional_occurrence(self):
         payload = self.ns["parse_live_attendance_request"]({
             "learnerIds": ["42", "42", "43"],
             "moduleCatalogueId": "module-1",
             "date": "2026-10-17",
             "attendance": "present",
             "learnerProfileId": 999,
-            "occurrenceId": "client-controlled",
         })
         self.assertEqual(payload, {
             "learner_ids": ["42", "43"],
@@ -58,6 +57,12 @@ class LiveAttendanceDayTests(unittest.TestCase):
             "session_date": date(2026, 10, 17),
             "attendance": "present",
         })
+        selected = self.ns["parse_live_attendance_request"]({
+            "learnerIds": ["42"], "moduleCatalogueId": "module-1",
+            "date": "2026-10-17", "attendance": "absent",
+            "occurrenceId": "occ-2",
+        })
+        self.assertEqual(selected["occurrence_id"], "occ-2")
         with self.assertRaises(ValueError):
             self.ns["parse_live_attendance_request"]({
                 "learnerIds": ["not-a-kbc-id"], "moduleCatalogueId": "module-1",
@@ -76,6 +81,21 @@ class LiveAttendanceDayTests(unittest.TestCase):
         self.assertEqual(occurrence["id"], "live")
         with self.assertRaises(self.ns["LiveAttendanceTargetError"]):
             self.ns["matching_occurrence"]([], date(2026, 10, 17), lambda value: value.date())
+
+    def test_explicit_occurrence_must_still_match_the_requested_date(self):
+        occurrences = [
+            {"id": "first", "status": "scheduled", "scheduled_start": datetime(2026, 10, 17, tzinfo=timezone.utc)},
+            {"id": "second", "status": "scheduled", "scheduled_start": datetime(2026, 10, 17, 9, tzinfo=timezone.utc)},
+            {"id": "other-day", "status": "scheduled", "scheduled_start": datetime(2026, 10, 18, tzinfo=timezone.utc)},
+        ]
+        selected = self.ns["matching_occurrence"](
+            occurrences, date(2026, 10, 17), lambda value: value.date(), "second",
+        )
+        self.assertEqual(selected["id"], "second")
+        with self.assertRaises(self.ns["LiveAttendanceTargetError"]):
+            self.ns["matching_occurrence"](
+                occurrences, date(2026, 10, 17), lambda value: value.date(), "other-day",
+            )
 
     def test_manual_status_preserves_existing_teams_evidence(self):
         profile = SimpleNamespace(id=12, email="learner@example.invalid", full_name="Learner Example")

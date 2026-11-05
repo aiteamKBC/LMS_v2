@@ -257,6 +257,44 @@ class PersonalLearningTests(unittest.TestCase):
                     self.ns['learner_request'](self.request, self.account, self.context['id'])
         self.assertEqual(self.writes, 0)
 
+    def test_timing_checkpoint_keeps_personal_identity_and_original_token(self):
+        activity = types.ModuleType('learner_api.personal_learning_activities')
+        activity.handle_activity_request = Mock(return_value=None)
+        drafts = types.ModuleType('learner_api.timing_drafts')
+        drafts.checkpoint = Mock(return_value={'trackingToken': 'signed-personal', 'savedSeconds': 120})
+        self.request.GET = {'path': '/learner_api/time-tracking/checkpoint/'}
+        self.request.body = json.dumps({'trackingToken': 'signed-personal', 'activityKind': 'component',
+                                        'activityId': 'C1', 'elapsedSeconds': 120}).encode()
+        with patch.dict(sys.modules, {'learner_api.personal_learning_activities': activity,
+                                     'learner_api.timing_drafts': drafts}):
+            result = self.ns['learner_request'](self.request, self.account, self.context['id'])
+        self.assertEqual(result['savedSeconds'], 120)
+        drafts.checkpoint.assert_called_once_with('signed-personal', activity_kind='component',
+            activity_id='C1', learner_kind='personal', learner_id=self.context['id'], seconds=120)
+        self.assertEqual(self.writes, 0)
+
+    def test_timing_checkpoint_rejects_closed_unassigned_or_other_account_before_storage(self):
+        activity = types.ModuleType('learner_api.personal_learning_activities')
+        activity.handle_activity_request = Mock(return_value=None)
+        drafts = types.ModuleType('learner_api.timing_drafts')
+        drafts.checkpoint = Mock()
+        self.request.GET = {'path': '/learner_api/time-tracking/checkpoint/'}
+        with patch.dict(sys.modules, {'learner_api.personal_learning_activities': activity,
+                                     'learner_api.timing_drafts': drafts}):
+            for identity, component, blocked, error in [
+                (self.context['id'], 'OTHER', False, LookupError),
+                (self.context['id'], 'C1', True, PermissionError),
+                ('pl.8.study.MOD-A', 'C1', False, PermissionError),
+            ]:
+                with self.subTest(identity=identity, component=component, blocked=blocked):
+                    self.detail['learningAccess']['blocked'] = blocked
+                    self.request.body = json.dumps({'trackingToken': 'signed-personal',
+                        'activityKind': 'component', 'activityId': component, 'elapsedSeconds': 120}).encode()
+                    with self.assertRaises(error):
+                        self.ns['learner_request'](self.request, self.account, identity)
+        drafts.checkpoint.assert_not_called()
+        self.assertEqual(self.writes, 0)
+
     def activity_namespace(self):
         personal = types.ModuleType('learner_api.personal_learning')
         personal.__dict__.update(self.ns)
@@ -445,6 +483,78 @@ class PersonalLearningTests(unittest.TestCase):
         issued = self.ns['certificate'](self.context, self.account, self.detail, self.request, issue=True)
         self.assertTrue(issued['issued'])
         self.assertEqual(issued['certificate']['progressPercent'], 100)
+
+
+    def my_learning_namespace(self, cards=None):
+        """The personal My Learning adapter with its learner-side helpers stubbed."""
+        self.assembled = []
+        def assemble_cards(native, current, courses, definitions, done, started, hours, metadata, records, modules, credits, *, search=None):
+            self.assembled.append(dict(native=native, current=current, courses=courses, records=records, metadata=metadata, search=search))
+            if search is not None:
+                return [{'id': 'current:MOD-A', '_matches': any(search in c['component'].lower() for c in native['components'])}], {}
+            return copy.deepcopy(cards or [{'id': 'current:MOD-A', 'title': 'Module A', 'source': 'current', 'moduleId': 'MOD-A',
+                'activityCount': 1, 'completedActivityCount': 0, 'progress': 0, 'actualHours': 0}]), {
+                'current': {'subjects': 1, 'total': 1, 'completed': 0, 'percent': 0}, 'previous': {'subjects': 0, 'total': 0, 'completed': 0, 'percent': 0}, 'subjectCount': 1}
+        learning = types.ModuleType('learner_api.my_learning')
+        learning.assemble_cards = assemble_cards
+        learning.catalogue_module_rows = Mock(return_value={'MOD-A': {'id': 'MOD-A', 'title': 'Module A'}})
+        personal = types.ModuleType('learner_api.personal_learning')
+        personal.metadata = lambda detail, module: {'covers': {'current:MOD-A': '/cover.png'}, 'activity_dates': {'C1': {'date': '2026-09-01'}, 'OTHER': {}},
+            'builder_subjects': {'current:MOD-A': {'id': 'MOD-A', 'title': 'Module A'}}, 'current_subjects': [{'id': 'MOD-A', 'title': 'Module A'}]}
+        reads = types.ModuleType('learner_api.personal_learning_reads')
+        reads.learning_schedule = Mock(return_value={'modules': [], 'moduleLinks': {}, 'generatedAt': ''})
+        patcher = patch.dict(sys.modules, {'learner_api.my_learning': learning, 'learner_api.personal_learning': personal,
+            'learner_api.personal_learning_policy': policy, 'learner_api.personal_learning_reads': reads})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        ns = {'__package__': 'learner_api', 're': re, 'unquote': unquote, 'connections': self.ns['connections']}
+        functions('personal_learning_my_learning.py', ns)
+        return ns
+
+    def gateway_get(self, target, identity=None):
+        self.request.method = 'GET'
+        self.request.GET = {'path': target}
+        return self.ns['learner_request'](self.request, self.account, identity or self.context['id'])
+
+    def test_my_learning_catalogue_is_one_module_with_no_previous_learning_or_hours(self):
+        adapter = self.my_learning_namespace()
+        self.context = policy.context_for('pl.7.preview.MOD-A', self.account)
+        with patch.dict(sys.modules, {'learner_api.personal_learning_my_learning': types.SimpleNamespace(**adapter)}):
+            result = self.gateway_get('/learner_api/my-learning/commercial/pl.7.preview.MOD-A/')
+        self.assertEqual(result['learner'], {'id': 'pl.7.preview.MOD-A', 'kind': 'commercial', 'name': '', 'programme': 'Synthetic programme', 'cohort': '', 'group': ''})
+        self.assertEqual([card['id'] for card in result['modules']], ['current:MOD-A'])
+        self.assertNotIn('moduleId', result['modules'][0])
+        self.assertIsNone(result['modules'][0]['actualHours'])
+        self.assertEqual(result['modules'][0]['cover'], '/cover.png')
+        self.assertEqual((result['upcoming'], result['hasMoreUpcoming'], result['otjh']), ([], False, {'actual': None, 'planned': None}))
+        call = self.assembled[0]
+        self.assertEqual((call['courses'], call['records'], call['metadata']['progress_transfers'], call['metadata']['imported_courses']), ([], [], [], {}))
+        self.assertEqual(self.writes, 0)
+
+    def test_my_learning_subject_search_and_upcoming_stay_inside_the_course(self):
+        adapter = self.my_learning_namespace()
+        activity = types.ModuleType('learner_api.personal_learning_activities')
+        activity.handle_activity_request = Mock(return_value=None)
+        with patch.dict(sys.modules, {'learner_api.personal_learning_my_learning': types.SimpleNamespace(**adapter),
+                                      'learner_api.personal_learning_activities': activity}):
+            base = '/learner_api/my-learning/commercial/pl.7.study.MOD-A/'
+            for subject in ('modules/current%3AMOD-A/', 'modules/MOD-A/', 'modules/activity%3AC1/'):
+                result = self.gateway_get(base + subject)
+                self.assertEqual(result['subjectId'], 'current:MOD-A')
+                self.assertEqual(result['detail']['id'], 'pl.7.study.MOD-A')
+                self.assertEqual((result['activity'], result['sessions']), (None, []))
+                self.assertEqual(result['metadata']['activity_dates'], {'C1': {'date': '2026-09-01'}})
+            for subject in ('modules/current%3AMOD-B/', 'modules/activity%3AC9/', 'unknown/'):
+                with self.assertRaises(LookupError):
+                    self.gateway_get(base + subject)
+            self.assertEqual(self.gateway_get(base + 'search/?q=READ&offset=0'), {'matches': [{'id': 'current:MOD-A'}], 'nextOffset': None})
+            self.assertEqual(self.gateway_get(base + 'search/?q=missing'), {'matches': [], 'nextOffset': None})
+            with self.assertRaises(ValueError):
+                self.gateway_get(base + 'search/?q=x&offset=-1')
+            self.assertEqual(self.gateway_get(base + 'upcoming/'), {'upcoming': []})
+            with self.assertRaises(PermissionError):
+                self.gateway_get('/learner_api/my-learning/commercial/pl.8.study.MOD-A/')
+        self.assertEqual(self.writes, 0)
 
 
 if __name__ == '__main__':

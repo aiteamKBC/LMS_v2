@@ -14,8 +14,32 @@ describe('compact Overview chart parity', () => {
     const facts = dashboardOverviewFixture().modules[0];
     const legacy = { sessions: [], attendanceProgress: facts.attendance, done: facts.activities.completed,
       activityCount: facts.activities.total, actual: facts.hours.actual, detail: { total_otjh: facts.hours.planned }, ksbProgress: facts.ksb } as TimelineModule;
-    expect(overviewMeasures(facts)).toEqual(moduleMeasures(legacy, {} as TrainingPlanDashboard));
-    expect(overviewMeasures({ ...facts, attendance: null })).toEqual(moduleMeasures({ ...legacy, attendanceProgress: undefined } as TimelineModule, {} as TrainingPlanDashboard));
+    const planned = moduleMeasures(legacy, {} as TrainingPlanDashboard);
+    // Overview now uses recorded attendance; the other independent measures retain their rules.
+    expect(overviewMeasures(facts)).toEqual([
+      { ...planned[0], detail: '1 / 2 recorded sessions attended' }, ...planned.slice(1),
+    ]);
+    expect(overviewMeasures({ ...facts, attendance: null })).toEqual([
+      { label: 'Attendance', value: null, detail: 'No recorded attendance yet' }, ...planned.slice(1),
+    ]);
+  });
+  it('shows six of eight recorded sessions as 75% and updates for the selected module', () => {
+    const payload = dashboardOverviewFixture();
+    payload.modules[0].attendance = { attended: 6, total: 8 };
+    payload.modules.push({ ...payload.modules[0], id: 'current:M2', title: 'Other module',
+      attendance: { attended: 0, total: 2 } });
+    render(<MemoryRouter><OverviewCharts payload={payload} /></MemoryRouter>);
+    expect(screen.getByRole('img', { name: 'Attendance: 75%' })).toBeVisible();
+    expect(screen.getByText('6 / 8 recorded sessions attended')).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'current:M2' } });
+    expect(screen.getByRole('img', { name: 'Attendance: 0%' })).toBeVisible();
+    expect(screen.getByText('0 / 2 recorded sessions attended')).toBeInTheDocument();
+  });
+  it('matches Attendance rounding and does not turn an empty register into zero percent', () => {
+    const facts = dashboardOverviewFixture().modules[0];
+    expect(overviewMeasures({ ...facts, attendance: { attended: 2, total: 3 } })[0].value).toBe(67);
+    expect(overviewMeasures({ ...facts, attendance: { attended: 0, total: 0 } })[0])
+      .toEqual({ label: 'Attendance', value: null, detail: 'No recorded attendance yet' });
   });
   it('preserves browser locale duplicate ownership without transferring activity history or making another request', () => {
     const facts = dashboardOverviewFixture().modules[0];

@@ -17,7 +17,8 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from django.test import Client, TestCase
+from django.test import Client
+from .tests_support.transaction_cases import CoachTransactionTestCase
 
 from learner_api.models import StaffUser
 from login.identity import ensure_account
@@ -28,6 +29,10 @@ from .models import CoachAbsenceReport, CoachCalendarEvent
 
 
 COACH_ENDPOINTS = (
+    ("POST", "/coach_api/migrated-reviews/imported-review%3Asynthetic/reopen", {"reasonCode": "correction-required"}),
+    ("GET", "/coach_api/migrated-reviews/imported-review%3Asynthetic/revisions/1/pdf", None),
+    ("GET", "/coach_api/coach/reviews/imported-review%3Asynthetic/previous", None),
+    ("GET", "/coach_api/coach/reviews/synthetic-native/previous", None),
     ("POST", "/coach_api/migrated-reviews/imported-review%3Asynthetic/progress", {"progressVersion": "synthetic"}),
     ("GET", "/coach_api/coach/dashboard", None),
     ("GET", "/coach_api/coach/caseload", None),
@@ -76,15 +81,30 @@ COACH_ENDPOINTS = (
 )
 
 
-class CoachAuthorizationSecurityTests(TestCase):
+class CoachAuthorizationSecurityTests(CoachTransactionTestCase):
+    # Real middleware performs request connection cleanup; use autocommit as
+    # production requests do, with real persisted sessions on both aliases.
     databases = {"default", "enrolment"}
 
     def setUp(self):
+        from django.core.cache import cache
+        from .models import CoachDashboardSnapshot
+        cache.clear()
+        CoachDashboardSnapshot.objects.filter(owner_email__in=['coach-a@example.com', 'coach-b@example.com']).delete()
+        from read_models.models import ReadModel
+        ReadModel.objects.filter(model_key='coach.dashboard', scope_type='coach',
+                                 scope_id__in=['coach-a@example.com', 'coach-b@example.com']).delete()
         self.client = Client(SERVER_NAME="localhost")
         self._accounts: list[LoginAccount] = []
         self._staff: list[StaffUser] = []
 
     def tearDown(self):
+        from .models import CoachDashboardSnapshot
+        CoachDashboardSnapshot.objects.filter(owner_email__in=['coach-a@example.com', 'coach-b@example.com']).delete()
+        from read_models.models import ReadModel
+        ReadModel.objects.filter(model_key='coach.dashboard', scope_type='coach',
+                                 scope_id__in=['coach-a@example.com', 'coach-b@example.com']).delete()
+        CoachAbsenceReport.objects.filter(attendance_id=5001).delete()
         account_ids = [account.id for account in self._accounts]
         if account_ids:
             LoginSession.objects.filter(account_id__in=account_ids).delete()
@@ -147,6 +167,21 @@ class CoachAuthorizationSecurityTests(TestCase):
                 response = self._request(method, path, payload)
                 self.assertEqual(response.status_code, 403)
 
+    @patch("coach_api.migrated_previous.previous_review")
+    def test_imported_previous_context_uses_the_authenticated_coach(self, context):
+        from django.http import JsonResponse
+        context.return_value = JsonResponse({"available": False, "reason": "No earlier session."})
+        account = self._make_staff_account(email="context-coach@kbc.invalid", access="coach")
+        self._authenticate(account)
+        path = "/coach_api/coach/reviews/imported-review%3Asynthetic/previous"
+        response = self.client.get(path)
+        self.assertEqual(response.status_code, 200)
+        context.assert_called_once_with("context-coach@kbc.invalid", "imported-review:synthetic")
+        context.reset_mock()
+        response = self.client.get(path, {"ownerEmail": "other@kbc.invalid"})
+        self.assertEqual(response.status_code, 403)
+        context.assert_not_called()
+
     def test_removed_coach_message_routes_return_not_found(self):
         self.assertEqual(self.client.get("/coach_api/coach/messages").status_code, 404)
         self.assertEqual(self.client.get("/coach_api/coach/messages/101").status_code, 404)
@@ -156,6 +191,27 @@ class CoachAuthorizationSecurityTests(TestCase):
             ).status_code,
             404,
         )
+
+    @patch("coach_api.migrated_reopening_views._locked_overlay", return_value=None)
+    @patch("coach_api.migrated_reopening_views._coach_review")
+    def test_aptem_reopen_is_assigned_coach_only_including_admin_view_as(self, source, locked):
+        owner = self._make_staff_account(email="reopen-coach@kbc.invalid", access="coach")
+        source.return_value = (owner.email, {"migratedForm": True})
+        path = "/coach_api/migrated-reviews/imported-review%3Asynthetic/reopen"
+        payload = {"reasonCode": "correction-required", "answerVersion": "synthetic"}
+        self._authenticate(owner)
+        self.assertEqual(self._request("POST", path, payload).status_code, 409)
+        locked.assert_called_once()
+        locked.reset_mock()
+        for account in (
+            self._make_staff_account(email="other-reopen-coach@kbc.invalid", access="coach"),
+            self._make_non_staff_account(role="employer"),
+            self._make_staff_account(email="reopen-admin@kbc.invalid", access="super-admin"),
+        ):
+            self._authenticate(account)
+            self.assertEqual(self._request("POST", path, payload).status_code, 403)
+        self.assertEqual(self._request("POST", path + "?viewAsCoach=" + owner.email, payload).status_code, 403)
+        locked.assert_not_called()
 
     @patch("coach_api.views.coach_staff_display_name", return_value="Coach A")
     @patch("coach_api.views.collect_tracked_live_session_events", return_value=[])
@@ -387,7 +443,7 @@ class CoachAuthorizationSecurityTests(TestCase):
         "coach_api.views.collect_generated_timetable",
         return_value={"events": [], "summary": {}, "owner_name": "Coach A"},
     )
-    @patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[])
+    @patch("coach_api.views.fetch_caseload_learner_profiles", return_value=[])
     def test_super_admin_view_as_reads_the_named_coachs_workspace(
         self,
         profiles,

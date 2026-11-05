@@ -10,7 +10,7 @@ import { buildUnifiedLearningSummary } from './learningSummary';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import contractFixture from '@/test/myLearningFixtures.json';
 
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { role: 'staff', id: 1 } }, isInitialized: true }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: { role: 'staff', id: 1 } }, isInitialized: true }) }));
 vi.mock('@/hooks/useMyLearner', () => ({ useResolvedLearner: (kind: string, id: string) => ({ kind, id }) }));
 vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => ({ canProgress: false, showReadOnlyNotice: false }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
@@ -52,6 +52,62 @@ beforeEach(() => {
 afterEach(() => { clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('compact My Learning route', () => {
+  it.each([
+    ['commercial', false], ['commercial', true], ['apprenticeship', false], ['apprenticeship', true],
+  ] as const)('uses saved component completion inside the module and hides the old percentage (%s, completed=%s)', async (kind, completed) => {
+    const reference = { percent: 100, capturedAt: '2026-10-30T12:00:00+00:00' };
+    const catalogue = makeCatalogue(kind);
+    catalogue.modules[0].legacyProgressReference = reference;
+    const module = makeModule();
+    const detail = { ...module,
+      detail: { ...module.detail, componentProgress: completed ? [{ componentId: 'C1', kind: 'reading', passed: true }] : [] },
+      metadata: { ...module.metadata, legacy_progress_references: { 'current:M1': reference } } };
+    vi.mocked(fetch).mockImplementation(async input => reply(String(input).includes('/certificates/')
+      ? { template: null, csrfToken: '' } : String(input).includes('/modules/') ? detail : catalogue));
+    route(`/learner/my-learning/${kind}/7?subject=current%3AM1`);
+    const progress = within(await screen.findByRole('region', { name: 'Module progress' }));
+    expect(screen.queryByText(/Old LMS progress:/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Historical course progress')).not.toBeInTheDocument();
+    expect(progress.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', completed ? '100' : '0');
+    expect(progress.getByText(`${completed ? 1 : 0} of 1 completed`)).toBeVisible();
+  });
+
+  it.each(['commercial', 'apprenticeship'] as const)('shows each module cohort independently of the learner cohort (%s)', async kind => {
+    const catalogue = makeCatalogue(kind);
+    catalogue.learner.cohort = 'Account cohort';
+    catalogue.modules[0].planModule!.cohort_name = 'October 2026';
+    catalogue.modules.push({ ...catalogue.modules[0], id: 'current:M2', moduleId: 'M2', title: 'Two',
+      planModule: { ...catalogue.modules[0].planModule, cohort_name: 'February 2026' } });
+    vi.mocked(fetch).mockImplementation(async input => reply(String(input).includes('/certificates/')
+      ? { template: null, csrfToken: '' } : catalogue));
+    route(`/learner/my-learning/${kind}/7`);
+    await screen.findByRole('heading', { name: 'One' });
+    const cards = new Map(screen.getAllByRole('heading', { level: 3 }).map(heading => [heading.textContent, heading.closest('article')!]));
+    const card = (title: string) => cards.get(title)!;
+    expect(card('One')).toHaveTextContent('Cohort: October 2026');
+    expect(card('Two')).toHaveTextContent('Cohort: February 2026');
+    expect(card('Old')).toHaveTextContent('Cohort: Not available');
+    expect(card('One')).not.toHaveTextContent('Account cohort');
+    fireEvent.click(screen.getByRole('button', { name: 'Grid' }));
+    expect(within(card('One')).getByText('October 2026')).toBeVisible();
+    expect(within(card('Two')).getByText('February 2026')).toBeVisible();
+  });
+
+  it('retries a failed initial catalogue read and replaces the error with real subjects', async () => {
+    let failed = true;
+    vi.mocked(fetch).mockImplementation(async input => String(input).includes('/certificates/')
+      ? reply({ template: null, csrfToken: '' })
+      : failed ? new Response(JSON.stringify({ error: 'Could not load your learning. Please try again.' }), { status: 400 })
+        : reply(makeCatalogue()));
+    route();
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText('Could not load your learning. Please try again.')).toBeVisible();
+    failed = false;
+    fireEvent.click(within(alert).getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByRole('heading', { name: 'One' })).toBeVisible();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it.each(['commercial', 'apprenticeship'])('uses one catalogue read for %s and preserves the visible module UI', async kind => {
     route(`/learner/my-learning/${kind}/7`);
     await screen.findByRole('heading', { name: 'One' });

@@ -10,7 +10,7 @@ import {
   type CurriculumProgramme,
   type CurriculumStandard,
 } from '@/lib/curriculumApi';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast";
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 
 type KsbType = 'K' | 'S' | 'B';

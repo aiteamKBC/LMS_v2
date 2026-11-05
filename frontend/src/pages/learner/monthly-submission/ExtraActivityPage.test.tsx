@@ -3,6 +3,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { ExtraActivityForm } from './ExtraActivityPage';
+import { useAuth } from '@/hooks/useAuth';
+vi.mock('@/hooks/useAuth', () => ({ useAuth: vi.fn() }));
 import { loadLearningReflectionSubmission, saveLearningReflectionSubmission, type StoredLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import { checkMonthlyAssignment, emptyMonthlyAssignment } from '@/api/monthlyAssignment';
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</> }));
@@ -11,14 +13,47 @@ vi.mock('@/api/extraActivities', () => ({ useExtraActivities: () => ({ activitie
 vi.mock('@/api/reflectionSubmission', () => ({ loadLearningReflectionSubmission: vi.fn(), saveLearningReflectionSubmission: vi.fn() }));
 vi.mock('@/api/monthlyAssignment', async original => ({ ...await original<typeof import('@/api/monthlyAssignment')>(), checkMonthlyAssignment: vi.fn() }));
 vi.mock('@/api/evidence', () => ({ fetchEvidence: vi.fn().mockResolvedValue([]) }));
-vi.mock('@/components/feature/AssignmentEvidence', () => ({ AssignmentEvidence: () => <div>Evidence upload</div> }));
+vi.mock('@/components/feature/AssignmentEvidence', () => ({ AssignmentEvidence: ({ readOnly }: { readOnly: boolean }) => <button disabled={readOnly}>Evidence upload</button> }));
 vi.mock('@/hooks/useLearnerDetailParam', () => ({ useLearnerDetailParam: () => ({ real: { name: 'Example learner', programme: 'Example programme' } }) }));
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn().mockResolvedValue({ ksbs: [], activityFeed: [] }) }));
 vi.mock('@/api/learnerCalendar', () => ({ fetchLearnerCalendarEvents: vi.fn().mockResolvedValue({ events: [], bookingCalendar: { coveredYears: [2026], bankHolidays: [] } }) }));
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks(); });
 beforeEach(() => {
+  vi.mocked(useAuth).mockReturnValue({ auth: { account: null }, isInitialized: true } as ReturnType<typeof useAuth>);
   vi.mocked(saveLearningReflectionSubmission).mockResolvedValue({ id: 'record', status: 'submitted_for_tutor_review' });
   vi.mocked(checkMonthlyAssignment).mockResolvedValue(['title', 'answer', 'learning', 'evidence', 'ksbs', 'planned', 'declarations', 'hours'].map(key => ({ key, label: key, passed: true })));
+});
+
+it('shows coach provenance and prevents learner edits even if the review status changes', async () => {
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({ activityTitle: 'Coach activity', status: 'referred', submissionOrigin: 'coach',
+    coachCreation: { name: 'Actual Coach', addedAt: '', approvedAt: '', role: 'coach' }, monthlyAssignment: emptyMonthlyAssignment([], '2026-10'),
+  } as StoredLearningReflectionSubmission);
+  render(<MemoryRouter><ExtraActivityForm kind="apprenticeship" learnerId="7" savedId="extra:00000000-0000-4000-8000-000000000001" /></MemoryRouter>);
+  expect(await screen.findByRole('note')).toHaveTextContent('Added and originally approved by Actual Coach');
+  expect(screen.getByLabelText('Activity title')).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Save draft' })).toBeDisabled();
+  expect(saveLearningReflectionSubmission).not.toHaveBeenCalled();
+});
+
+it('returns to extra-activity hours without submitting or clearing the draft', async () => {
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({ activityTitle: 'Synthetic workshop', status: 'draft',
+    monthlyAssignment: { ...emptyMonthlyAssignment([], '2026-10'), timeEntries: [{ topic: 'Research', hours: '4.9', date: '2026-10-14' }] },
+  } as StoredLearningReflectionSubmission);
+  vi.mocked(saveLearningReflectionSubmission).mockResolvedValue({ id: 'record', status: 'draft' });
+  render(<MemoryRouter><ExtraActivityForm kind="commercial" learnerId="101" savedId="extra:00000000-0000-4000-8000-000000000001" /></MemoryRouter>);
+  await screen.findByDisplayValue('Synthetic workshop');
+  fireEvent.click(screen.getByRole('button', { name: '4. Quality checks' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Submit extra activity' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Submit extra activity' }));
+  expect(await screen.findByRole('alertdialog')).toHaveTextContent('4 hours and 54 minutes');
+  expect(saveLearningReflectionSubmission).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Edit time' }));
+  expect(await screen.findByLabelText('Hours 1')).toHaveValue(4.9);
+  expect(screen.getByLabelText('Topic 1')).toHaveValue('Research');
+  fireEvent.click(screen.getByRole('button', { name: '1. Activity answer' }));
+  expect(screen.getByLabelText('Activity title')).toHaveValue('Synthetic workshop');
+  expect(saveLearningReflectionSubmission).not.toHaveBeenCalled();
 });
 it('autosaves edits after a pause and saves newer edits made during an in-flight save', async () => {
   vi.useFakeTimers();
@@ -70,9 +105,12 @@ it.each(['commercial', 'apprenticeship'] as const)('submits four-step extra acti
   fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Submit extra activity' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Submit extra activity' }));
+  expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.some(([value]) => value.submissionMode === 'submit')).toBe(false);
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
   await screen.findByText(/Extra activity submitted/);
   expect(saveLearningReflectionSubmission).toHaveBeenCalledWith(expect.objectContaining({ learnerKind: kind, learnerId: '101', activityType: 'extra_activity', activityTitle: 'Industry workshop', submissionMode: 'submit', activityId: expect.stringMatching(/^extra:/) }));
   expect(screen.getByRole('button', { name: 'Save draft' })).toBeDisabled();
+  expect(screen.getByLabelText('Activity month')).toBeDisabled();
 });
 it('restores a rejected activity and requires a fresh quality check', async () => {
   vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({ activityTitle: 'Old workshop', status: 'rejected', assignmentAnswer: 'Old answer', monthlyAssignment: { ...emptyMonthlyAssignment([], '2026-09'), step: 3 } } as StoredLearningReflectionSubmission);
@@ -81,4 +119,88 @@ it('restores a rejected activity and requires a fresh quality check', async () =
   expect(screen.getByRole('button', { name: 'Submit extra activity' })).toBeDisabled();
   fireEvent.click(screen.getByRole('button', { name: '1. Activity answer' }));
   expect(screen.getByDisplayValue('Old answer')).toBeInTheDocument();
+  expect(screen.getByLabelText('Activity month')).toHaveValue('2026-09');
+});
+
+it.each(['commercial', 'apprenticeship'] as const)('defaults new %s activities to the UK month across a UTC month boundary', async kind => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-09-30T23:30:00Z'));
+  render(<MemoryRouter><ExtraActivityForm kind={kind} learnerId="101" savedId={null} /></MemoryRouter>);
+  await act(async () => {});
+  expect(screen.getByLabelText('Activity month')).toHaveValue('2026-10');
+});
+
+it.each(['2026-09', '2026-11'])('saves and submits an activity in the selected month %s', async month => {
+  vi.mocked(saveLearningReflectionSubmission).mockResolvedValueOnce({ id: 'record', status: 'draft' })
+    .mockResolvedValue({ id: 'record', status: 'submitted_for_tutor_review' });
+  render(<MemoryRouter><ExtraActivityForm kind="apprenticeship" learnerId="101" savedId={null} /></MemoryRouter>);
+  fireEvent.change(screen.getByLabelText('Activity title'), { target: { value: 'Learning workshop' } });
+  fireEvent.change(screen.getByLabelText('Activity month'), { target: { value: month } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+  await screen.findByText('Draft saved');
+  expect(saveLearningReflectionSubmission).toHaveBeenLastCalledWith(expect.objectContaining({
+    submissionMode: 'draft', monthlyAssignment: expect.objectContaining({ month }),
+  }));
+  fireEvent.click(screen.getByRole('button', { name: '4. Quality checks' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Submit extra activity' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Submit extra activity' }));
+  expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.some(([value]) => value.submissionMode === 'submit')).toBe(false);
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
+  await screen.findByText(new RegExp(`Extra activity submitted for ${month}`));
+  expect(saveLearningReflectionSubmission).toHaveBeenLastCalledWith(expect.objectContaining({
+    submissionMode: 'submit', monthlyAssignment: expect.objectContaining({ month }),
+  }));
+});
+
+it('preserves a saved draft month and time entries when selecting another month', async () => {
+  const entries = [{ topic: 'Workshop', hours: '1.25', date: '2026-09-29' }];
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({ activityTitle: 'Saved workshop', status: 'draft',
+    monthlyAssignment: { ...emptyMonthlyAssignment([], '2026-09'), timeEntries: entries } } as StoredLearningReflectionSubmission);
+  vi.mocked(saveLearningReflectionSubmission).mockResolvedValue({ id: 'record', status: 'draft' });
+  render(<MemoryRouter><ExtraActivityForm kind="commercial" learnerId="101" savedId="extra:00000000-0000-4000-8000-000000000001" /></MemoryRouter>);
+  await screen.findByDisplayValue('Saved workshop');
+  expect(screen.getByLabelText('Activity month')).toHaveValue('2026-09');
+  fireEvent.change(screen.getByLabelText('Activity month'), { target: { value: '2026-10' } });
+  expect(screen.getByRole('alert')).toHaveTextContent('Some activity dates are outside the selected month');
+  fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+  await screen.findByText('Draft saved');
+  expect(saveLearningReflectionSubmission).toHaveBeenLastCalledWith(expect.objectContaining({
+    actualTimeHours: '1.25', monthlyAssignment: expect.objectContaining({ month: '2026-10', timeEntries: entries }),
+  }));
+  fireEvent.click(screen.getByRole('button', { name: '3. KSBs & hours claimed' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Date 1' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Date 1' }));
+  expect(screen.getByRole('button', { name: '2026-10-01' })).toBeEnabled();
+  expect(screen.queryByRole('button', { name: '2026-09-29' })).toBeNull();
+});
+
+it('invalidates previous checks after changing the month and prevents saving an empty month', async () => {
+  render(<MemoryRouter><ExtraActivityForm kind="commercial" learnerId="101" savedId={null} /></MemoryRouter>);
+  fireEvent.click(screen.getByRole('button', { name: '4. Quality checks' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Submit extra activity' })).toBeEnabled());
+  fireEvent.change(screen.getByLabelText('Activity month'), { target: { value: '2026-08' } });
+  expect(screen.getByRole('button', { name: 'Submit extra activity' })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Activity month'), { target: { value: '' } });
+  expect(screen.getByRole('button', { name: 'Save draft' })).toBeDisabled();
+  expect(screen.getByRole('alert')).toHaveTextContent('Choose a valid activity month');
+});
+
+it.each(['apprenticeship', 'commercial'] as const)('prevents a coach adding or uploading an extra activity from a %s learner workspace', async kind => {
+  vi.mocked(useAuth).mockReturnValue({ auth: { account: { role: 'staff', subjectType: 'staff', subjectId: 3, access: 'coach', learnerRecordId: null } }, isInitialized: true } as ReturnType<typeof useAuth>);
+  render(<MemoryRouter><ExtraActivityForm kind={kind} learnerId="7" savedId={null} /></MemoryRouter>);
+  expect(screen.getByRole('note')).toHaveTextContent('Learners add their own extra activities and evidence');
+  expect(screen.getByLabelText('Activity title')).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Save draft' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: '2. Evidence & cross-referencing' }));
+  expect(screen.getByRole('button', { name: 'Evidence upload' })).toBeDisabled();
+  expect(saveLearningReflectionSubmission).not.toHaveBeenCalled();
+});
+
+it('keeps staff learning on their own linked learner record editable', () => {
+  vi.mocked(useAuth).mockReturnValue({ auth: { account: { role: 'staff', learnerRecordId: 7 } }, isInitialized: true } as ReturnType<typeof useAuth>);
+  render(<MemoryRouter><ExtraActivityForm kind="commercial" learnerId="7" savedId={null} /></MemoryRouter>);
+  expect(screen.getByLabelText('Activity title')).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled();
 });

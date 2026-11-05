@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
 import { AI_PRESENTATION, MONTHLY_COACHING_DASHBOARD } from '@/mocks/monthly-coaching';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast";
 import { DonutRing, HBar, ProgressGrid, DonutSplit, BarGroup, PulseDot } from './CinematicCharts';
 
 interface PresentationSlidesModalProps {

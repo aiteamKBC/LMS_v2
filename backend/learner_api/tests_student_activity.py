@@ -498,7 +498,8 @@ class SubjectBuilderCoverTests(SimpleTestCase):
             [],  # No imported origin for this assigned native module.
             [],  # No verified historical replacement for this learner.
         ]
-        with patch('learner_api.student_activity.connections') as connections, \
+        with patch('learner_api.progress_transfer.cover_transfer_metadata', return_value={}), \
+             patch('learner_api.student_activity.connections') as connections, \
              patch('learner_api.student_activity.subject_store.ready', return_value=True), \
              patch('learner_api.student_activity._effective_current_subjects', return_value=[
                  {'id': 'MOD-1', 'title': 'Renamed subject'},

@@ -1,11 +1,22 @@
 from django.urls import path
+from .migrated_reopening_views import reopen_review, coach_revision_pdf
 
 from .ai_marking import coach_marking_ai_feedback, coach_marking_ai_prompt
 from .csrf import coach_csrf_token
+from .recordings_api import coaching_recordings_calendar, coaching_recording_session, coaching_recording_content, coaching_recordings_learners, coaching_saved_evidence_download, coaching_saved_evidence_pdf
+from .recordings_quality_api import coaching_quality_suggestion
+from .quality_review_api import review_context, reviews, review_detail, review_image, review_document, review_attachment, review_evidence_file
+from .quality_form_api import quality_form, quality_forms
+from .recordings_link_api import coaching_linked_meeting
+from .completion_api import completion_notifications
 from .bulk_attendance import coach_bulk_attendance
+from .review_attendance_links import review_attendance_links
 from .attendance_loading import coach_attendance_options, coach_attendance_group, coach_attendance_session, coach_attendance_sessions, coach_attendance_context
 from . import personal_learning
 from . import monthly_logs
+from . import extra_activities
+from . import presentations
+from . import lms_support_tickets
 from .monthly_reports import coach_monthly_report_detail, coach_monthly_reports
 from .support_tickets import (
     coach_support_ticket_notes,
@@ -47,11 +58,13 @@ from .views import (
     coach_marking_queue,
     coach_imported_review_history,
     coach_monthly_activity,
+    coach_review_availability,
     coach_review_instance_answers,
     coach_review_instance_complete,
     coach_review_instance_progress,
     coach_review_instance_detail,
     coach_review_instance_initialize,
+    coach_review_instance_adopt_booking,
     coach_review_instance_book,
     coach_review_instance_local_status,
     coach_review_instance_previous,
@@ -74,6 +87,27 @@ from .views import (
 
 
 urlpatterns = [
+    path('coach/extra-activities', extra_activities.activities, name='coach-extra-activities'),
+    path('coach/extra-activities/learners', extra_activities.learners, name='coach-extra-activities-learners'),
+    path('coach/completion-notifications', completion_notifications, name='coach-completion-notifications'),
+    path('coaching-recordings/meetings/<str:identity>', coaching_linked_meeting, name='coaching-linked-meeting'),
+    path('coaching-recordings/quality/context', review_context, name='coaching-quality-context'),
+    path('coaching-recordings/quality/form', quality_form, name='coaching-quality-form'),
+    path('coaching-recordings/quality/forms', quality_forms, name='coaching-quality-forms'),
+    path('coaching-recordings/quality/reviews', reviews, name='coaching-quality-reviews'),
+    path('coaching-recordings/quality/reviews/<uuid:review_id>', review_detail, name='coaching-quality-detail'),
+    path('coaching-recordings/quality/reviews/<uuid:review_id>/pdf', review_document, name='coaching-quality-pdf'),
+    path('coaching-recordings/quality/reviews/<uuid:review_id>/documents/<int:version>', review_attachment, name='coaching-quality-attachment'),
+    path('coaching-recordings/quality/reviews/<uuid:review_id>/images', review_image, name='coaching-quality-images'),
+    path('coaching-recordings/quality/reviews/<uuid:review_id>/images/<uuid:image_id>', review_image, name='coaching-quality-image'),
+    path('coaching-recordings/quality/reviews/<uuid:review_id>/files', review_evidence_file, name='coaching-quality-files'),
+    path('coaching-recordings/quality/reviews/<uuid:review_id>/files/<uuid:file_id>', review_evidence_file, name='coaching-quality-file'),
+    path('coaching-recordings/calendar', coaching_recordings_calendar, name='coaching-recordings-calendar'),
+    path('coaching-recordings/learners', coaching_recordings_learners, name='coaching-recordings-learners'),
+    path('coaching-recordings/session', coaching_recording_session, name='coaching-recording-session'),
+    path('coaching-recordings/recording', coaching_recording_content, name='coaching-recording-content'),
+    path('coaching-recordings/evidence', coaching_saved_evidence_download, name='coaching-saved-evidence-download'),
+    path('coaching-recordings/pdf', coaching_saved_evidence_pdf, name='coaching-saved-evidence-pdf'),
     path('coach/monthly-logs/learners', monthly_logs.learners, name='coach-monthly-log-learners'),
     path('coach/monthly-logs/<int:learner_id>', monthly_logs.learner_year, name='coach-monthly-log-year'),
     path('coach/monthly-logs/<int:learner_id>/<str:month>', monthly_logs.learner_month, name='coach-monthly-log-month'),
@@ -88,14 +122,18 @@ urlpatterns = [
     path('migrated-reviews/<str:review_id>/summary', migrated_review_summary, name='migrated-review-summary'),
     path('migrated-reviews/<str:review_id>/summary/from-upload', migrated_review_summary_upload, name='migrated-review-summary-upload'),
     path('migrated-reviews/<str:review_id>/submit', migrated_review_submit, name='migrated-review-submit'),
+    path('migrated-reviews/<str:review_id>/reopen', reopen_review, name='migrated-review-reopen'),
+    path('migrated-reviews/<str:review_id>/revisions/<int:number>/pdf', coach_revision_pdf, name='migrated-review-revision-pdf'),
     path('migrated-reviews/<str:review_id>/coach-sign', migrated_review_coach_sign, name='migrated-review-coach-sign'),
     path('migrated-reviews/<str:review_id>/complete', migrated_review_complete, name='migrated-review-complete'),
     path('migrated-reviews/<str:review_id>/generate-pdf', migrated_review_generate_pdf, name='migrated-review-generate-pdf'),
     path('coach/personal-marking', personal_learning.marking),
     path('coach/personal-marking/<uuid:submission_id>', personal_learning.marking),
+    path('coach/personal-marking/<uuid:submission_id>/presentation', presentations.download, {'personal': True}, name='coach-personal-presentation'),
     path('coach/personal-marking/<uuid:submission_id>/evidence', personal_learning.evidence),
     path('coach/personal-marking/<uuid:submission_id>/evidence/<uuid:file_id>', personal_learning.evidence),
     path('csrf', coach_csrf_token, name='coach-csrf'),
+    path('coaching-recordings/quality', coaching_quality_suggestion, name='coaching-quality-suggestion'),
     path('coaches', coach_directory, name='coach-directory'),
     path('coaches/calendar', coach_directory_calendar, name='coach-directory-calendar'),
     path('coach/dashboard', coach_dashboard, name='coach-dashboard'),
@@ -131,11 +169,15 @@ urlpatterns = [
     path('coach/monthly-reports/<uuid:report_id>', coach_monthly_report_detail, name='coach-monthly-report-detail'),
     path('coach/monthly-reports', coach_monthly_reports, name='coach-monthly-reports'),
     path('coach/support-tickets', coach_support_tickets, name='coach-support-tickets'),
+    path('coach/lms-support-tickets', lms_support_tickets.collection),
+    path('coach/lms-support-tickets/<uuid:ticket_id>', lms_support_tickets.detail),
+    path('coach/lms-support-tickets/<uuid:ticket_id>/attachments/<uuid:attachment_id>', lms_support_tickets.attachment),
     path('coach/support-tickets/<int:ticket_id>/status', coach_support_ticket_status, name='coach-support-ticket-status'),
     path('coach/support-tickets/<int:ticket_id>/notes', coach_support_ticket_notes, name='coach-support-ticket-notes'),
     path('coach/support-tickets/<int:ticket_id>/wellbeing-report', coach_support_ticket_wellbeing_report, name='coach-support-ticket-wellbeing-report'),
     path('coach/marking-queue', coach_marking_queue, name='coach-marking-queue'),
     path('coach/marking-queue/<uuid:submission_id>', coach_marking_queue, name='coach-marking-submission'),
+    path('coach/marking-queue/<uuid:submission_id>/presentation', presentations.download, name='coach-submission-presentation'),
     path('coach/marking-queue/<uuid:submission_id>/ai-feedback', coach_marking_ai_feedback, name='coach-marking-ai-feedback'),
     path('coach/marking-queue/<uuid:submission_id>/ai-prompt', coach_marking_ai_prompt, name='coach-marking-ai-prompt'),
     path('coach/monthly-activity', coach_monthly_activity, name='coach-monthly-activity'),
@@ -145,12 +187,14 @@ urlpatterns = [
     path('coach/timetable/events/action', coach_timetable_event_action, name='coach-timetable-event-action'),
     path('coach/timetable/events/<str:event_key>/reminder', coach_meeting_reminder, name='coach-meeting-reminder'),
     path('coach/timetable/events/<str:event_key>/artifacts', coach_timetable_event_artifacts, name='coach-timetable-event-artifacts'),
+    path('coach/review-attendance/<str:event_key>/links', review_attendance_links, name='coach-review-attendance-links'),
     path('coach/timetable/events/<str:event_key>/artifacts/<str:artifact_type>/<str:artifact_id>/content', coach_timetable_event_artifact_content, name='coach-timetable-event-artifact-content'),
     path('coach/timetable/events/<str:event_key>/summary', coach_timetable_event_summary, name='coach-timetable-event-summary'),
     # Curriculum-driven Review instances: opening a scheduled MCM/Progress
     # Review, saving its answers, signing and completing it -- the question
     # set/signature rules were resolved by Curriculum, not hard-coded here.
     path('coach/reviews/open', coach_review_instance_for_event, name='coach-review-instance-open'),
+    path('coach/reviews/availability', coach_review_availability, name='coach-review-availability'),
     path('coach/reviews/learners/<int:learner_id>/aptem-reconciliation-preview',
          coach_aptem_review_reconciliation_preview, name='coach-aptem-review-reconciliation-preview'),
     # Learner-specific additional Reviews (coach "Create session" -> Review):
@@ -166,6 +210,7 @@ urlpatterns = [
     path('coach/reviews/learner-additions', coach_review_learner_additions_create, name='coach-review-learner-additions-create'),
     path('coach/reviews/<str:instance_id>', coach_review_instance_detail, name='coach-review-instance-detail'),
     path('coach/reviews/<str:instance_id>/initialize', coach_review_instance_initialize, name='coach-review-instance-initialize'),
+    path('coach/reviews/<str:instance_id>/adopt-booking', coach_review_instance_adopt_booking, name='coach-review-instance-adopt-booking'),
     path('coach/reviews/<str:instance_id>/book', coach_review_instance_book, name='coach-review-instance-book'),
     path('coach/reviews/<str:instance_id>/local-status', coach_review_instance_local_status, name='coach-review-instance-local-status'),
     path('coach/reviews/<str:instance_id>/previous', coach_review_instance_previous, name='coach-review-instance-previous'),

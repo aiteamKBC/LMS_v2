@@ -159,6 +159,8 @@
 .pdfZoom output { min-width: 42px; text-align: center; font-variant-numeric: tabular-nums; }
 .pdfStage { display: flex; justify-content: center; min-width: 0; }
 .pdfStage canvas { min-width: 0; flex-shrink: 1; box-shadow: 0 3px 16px #17324d1a; background: white; }
+.pdfScrollable { display: block; overflow-x: auto; overscroll-behavior-x: contain; }
+.pdfScrollable canvas { flex-shrink: 0; margin-inline: auto; }
 @media (max-width: 600px) { .pdfViewer { padding: 10px; } .pdfZoom { width: 100%; margin-left: 0; } }
 .extraPage { display: grid; gap: 24px; padding-bottom: 32px; color: #183652; }
 .extraHeader { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 24px; padding: 28px; border: 1px solid #d7e4f3; border-radius: 18px; background: linear-gradient(120deg, #edf5ff, #f2faf8); }
@@ -282,7 +284,7 @@
 .sectionHeading h2 { color: #271760; font-size: 17px; letter-spacing: -.2px; }
 .sectionHeading > span { color: #77738e; font-size: 11px; }
 .filterToolbar { display: grid; gap: 12px; margin: 0 0 16px; }
-.filterToolbar .statusFilters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; width: 100%; margin: 0; }
+.filterToolbar .statusFilters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; width: 100%; margin: 0; }
 .assignmentCount { color: #77738e; font-size: 11px; }
 .statusFilters button { width: 100%; min-height: 34px; min-width: 0; padding: 7px 10px; border-color: #e4e0ed; border-radius: 8px; color: #2d2360; font-size: 11px; }
 .statusFilters button[aria-pressed='true'] { border-color: var(--action-primary, #5b21b6); background: var(--action-primary, #5b21b6); color: #fff; }

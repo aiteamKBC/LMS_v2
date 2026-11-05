@@ -228,7 +228,7 @@ class MonthlyAssignmentTests(SimpleTestCase):
         record.scheduled_date = None
         self.assertFalse(booked_coaching(self.payload()))
         record.scheduled_date = date(2026, 10, 6)
-        self.assertEqual(coaching_booking_bounds("2026-12"), (date(2026, 12, 22), date(2027, 1, 5)))
+        self.assertEqual(coaching_booking_bounds("2026-12"), (date(2026, 12, 20), date(2027, 1, 5)))
         record.scheduled_date = date(2026, 9, 30)
         record.status = "cancelled"
         self.assertFalse(booked_coaching(self.payload()))
@@ -249,6 +249,116 @@ class MonthlyAssignmentTests(SimpleTestCase):
             payload["monthlyAssignment"]["slides"] = slides
             response = unwrap(export_presentation)(RequestFactory().post("/", data=json.dumps(payload), content_type="application/json"))
             self.assertEqual(response.status_code, 400)
+
+
+class ImportedCoachingBookingTests(SimpleTestCase):
+    """Imported appointments count without manufacturing an LMS/Teams booking."""
+
+    def setUp(self):
+        self.payload = {
+            "learnerKind": "commercial", "learnerId": "101", "activityId": "COMP-1",
+            "activityType": "assignment", "assignmentTopicId": "2",
+            "monthlyAssignment": {"month": "2026-10", "meetingKey": "imported-review:synthetic-mcm"},
+        }
+        self.source = SimpleNamespace(pk=101, aptem_id="500")
+        self.profile = SimpleNamespace(id=202, aptem_id=500)
+        self.event = {
+            "eventKey": "imported-review:synthetic-mcm", "learnerId": "202",
+            "source": "mcr", "reviewSource": "aptem", "sourceStatus": "scheduled",
+            "status": "scheduled", "scheduledDate": "2026-10-28", "scheduledTime": "09:30",
+            "calendarEventKey": None,
+        }
+        self.models = {kind: MagicMock() for kind in ("commercial", "apprenticeship")}
+        for model in self.models.values():
+            model.all_learners.filter.return_value.first.return_value = self.source
+        self.patch("learner_api.calendar.SOURCE_MODELS", self.models)
+        self.record = self.patch("learner_api.calendar._learner_calendar_record", return_value=None)
+        self.events = self.patch("learner_api.calendar.coaching_events_for_learner", return_value=[self.event])
+        self.profiles = self.patch("coach_api.review_sources.review_profile_for_source", return_value=self.profile)
+        self.patch("learner_api.monthly_assignment.resubmission_booking_satisfied", return_value=False)
+
+    def patch(self, target, *args, **kwargs):
+        patcher = patch(target, *args, **kwargs)
+        self.addCleanup(patcher.stop)
+        return patcher.start()
+
+    def test_owned_imported_appointments_count_for_both_learner_types(self):
+        for kind in self.models:
+            for status in ("scheduled", "in-progress", "completed", "awaiting-signature"):
+                with self.subTest(kind=kind, status=status):
+                    self.payload["learnerKind"] = kind
+                    self.event.update(status=status, sourceStatus=status)
+                    self.assertTrue(booked_coaching(self.payload))
+                    self.models[kind].all_learners.filter.assert_called_with(pk=101)
+                    self.events.assert_called_with(self.source, self.profile, only_sources={"mcr"}, dates_only=True)
+
+    def test_quality_check_accepts_the_same_imported_booking_as_the_calendar(self):
+        from .monthly_assignment import check_assignment
+        response = unwrap(check_assignment)(RequestFactory().post(
+            "/", data=json.dumps(self.payload), content_type="application/json"))
+        self.assertEqual(response.status_code, 200)
+        meeting = next(check for check in json.loads(response.content)["checks"] if check["key"] == "meeting")
+        self.assertTrue(meeting["passed"])
+
+    def test_imported_booking_is_shared_without_rewriting_the_original_topic(self):
+        from .assignment_topics import inherit_coaching_booking
+        rows = [("1", "submitted_for_tutor_review", deepcopy(self.payload))]
+        original = deepcopy(rows)
+        self.payload["monthlyAssignment"]["meetingKey"] = ""
+        inherit_coaching_booking(self.payload, rows)
+        self.assertEqual(self.payload["monthlyAssignment"]["meetingKey"], self.event["eventKey"])
+        self.assertEqual(rows, original)
+
+    def test_unbooked_cancelled_wrong_type_and_unowned_imports_do_not_count(self):
+        for changes in (
+            {"status": "not-scheduled"}, {"status": "cancelled"}, {"status": "pending"},
+            {"sourceStatus": "not-scheduled", "status": "in-progress"},
+            {"scheduledDate": None}, {"source": "progress-review"}, {"reviewSource": "curriculum"},
+            {"learnerId": "999"}, {"eventKey": "imported-review:another-mcm"},
+            {"calendarEventKey": "unresolved-local-booking"},
+        ):
+            with self.subTest(changes=changes):
+                self.events.return_value = [{**self.event, **changes}]
+                self.assertFalse(booked_coaching(self.payload))
+
+    def test_missing_or_ambiguous_import_does_not_count(self):
+        for events in ([], [self.event, self.event]):
+            with self.subTest(count=len(events)):
+                self.events.return_value = events
+                self.assertFalse(booked_coaching(self.payload))
+
+    def test_existing_invalid_local_booking_cannot_fall_back_to_imported_status(self):
+        for changes in ({"status": "cancelled"}, {"scheduled_date": None}, {"event_type": "review"}):
+            with self.subTest(changes=changes):
+                self.record.return_value = SimpleNamespace(**{
+                    "event_type": "mcr", "status": "scheduled", "scheduled_date": "2026-10-28", **changes})
+                self.assertFalse(booked_coaching(self.payload))
+        self.events.assert_not_called()
+
+    def test_missing_or_conflicting_source_identity_cannot_use_imported_booking(self):
+        for profile in (None, SimpleNamespace(id=202, aptem_id=999)):
+            with self.subTest(profile=profile):
+                self.profiles.return_value = profile
+                self.assertFalse(booked_coaching(self.payload))
+        self.models["commercial"].all_learners.filter.return_value.first.return_value = None
+        self.assertFalse(booked_coaching(self.payload))
+        self.events.assert_not_called()
+
+    def test_missing_month_or_key_does_not_count(self):
+        for changes in ({"month": "invalid"}, {"meetingKey": ""}, {"meetingKey": "missing-native-key"}):
+            with self.subTest(changes=changes):
+                payload = deepcopy(self.payload)
+                payload["monthlyAssignment"].update(changes)
+                self.assertFalse(booked_coaching(payload))
+        self.events.assert_not_called()
+
+    def test_source_failure_is_reported_instead_of_claiming_no_booking(self):
+        from django.db import DatabaseError
+        from .monthly_assignment import check_assignment
+        self.events.side_effect = DatabaseError("Synthetic read failure")
+        response = unwrap(check_assignment)(RequestFactory().post(
+            "/", data=json.dumps(self.payload), content_type="application/json"))
+        self.assertEqual(response.status_code, 503)
 
 
 class MonthlyDraftPersistenceTests(SimpleTestCase):
@@ -294,7 +404,7 @@ class MonthlyDraftPersistenceTests(SimpleTestCase):
     def test_progress_and_final_submission_share_transaction(self, connection_mock, atomic, lineage, checks):
         from .monthly_assignment import complete_saved_assignment
         cursor = connection_mock.__getitem__.return_value.cursor.return_value.__enter__.return_value
-        cursor.fetchone.return_value = ("submission-1", "draft", {"monthlyAssignment": {"claims": [{"code": "K1"}]}})
+        cursor.fetchone.return_value = ("submission-1", "draft", {"actualTimeHours": "1", "monthlyAssignment": {"claims": [{"code": "K1"}]}})
         save = MagicMock()
         record = {}
         complete_saved_assignment("commercial", "1", "C1", record, save)
@@ -311,7 +421,7 @@ class MonthlyDraftPersistenceTests(SimpleTestCase):
     def test_failed_progress_never_marks_assignment_submitted(self, connection_mock, atomic, checks):
         from .monthly_assignment import complete_saved_assignment
         cursor = connection_mock.__getitem__.return_value.cursor.return_value.__enter__.return_value
-        cursor.fetchone.return_value = ("submission-1", "draft", {"monthlyAssignment": {"claims": []}})
+        cursor.fetchone.return_value = ("submission-1", "draft", {"actualTimeHours": "1", "monthlyAssignment": {"claims": []}})
         with self.assertRaisesRegex(ValueError, "Progress failed"):
             complete_saved_assignment("commercial", "1", "C1", {}, MagicMock(side_effect=ValueError("Progress failed")))
         self.assertEqual(cursor.execute.call_count, 2)
@@ -322,9 +432,9 @@ class ExtendedCoachingWindowTests(SimpleTestCase):
         from datetime import date
         from .monthly_assignment import coaching_booking_windows
         self.assertEqual(coaching_booking_windows('2026-09'), [
-            (date(2026, 9, 21), date(2026, 10, 5)),
-            (date(2026, 10, 22), date(2026, 11, 5)),
+            (date(2026, 9, 20), date(2026, 10, 5)),
+            (date(2026, 10, 20), date(2026, 11, 5)),
         ])
         self.assertEqual(coaching_booking_windows('2026-12')[1],
-                         (date(2027, 1, 22), date(2027, 2, 5)))
+                         (date(2027, 1, 20), date(2027, 2, 5)))
         self.assertEqual(coaching_booking_windows('invalid'), [])

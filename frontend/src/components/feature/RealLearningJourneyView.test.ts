@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import type { JourneyComponent, JourneyModule } from '@/utils/learnerJourney';
-import { buildStations } from './RealLearningJourneyView';
+import { buildStations } from "./RealLearningJourneyView.helpers";
 
 function component(overrides: Partial<JourneyComponent> = {}): JourneyComponent {
   return {

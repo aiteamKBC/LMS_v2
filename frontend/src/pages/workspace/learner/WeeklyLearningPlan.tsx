@@ -5,6 +5,7 @@ import { BookOpen, CalendarDays, CalendarOff, ChevronLeft, ChevronRight, Clock3,
 import type { LearnerKind } from '@/api/learnerDetail';
 import type { WeeklyLearningDetail } from '@/api/weeklyLearning';
 import { selectedNavigation, studentWeekId } from '@/api/weeklyLearningContract';
+import type { ReflectionKsbSelection } from '@/api/weeklyLearningContract';
 import { useWeeklyLearning, useWeeklyLearningWeek } from '@/hooks/useWeeklyLearning';
 import type { CurriculumRow } from '@/pages/learner/training-plan-timeline/model';
 import { learningToday } from '@/pages/learner/my-learning/subjectLearning';
@@ -271,6 +272,8 @@ function WeeklyLearningPlanView({ kind, learnerId, canOpenActivities = true, act
                 : null}
             {<div hidden={!weekRead.data || !!weekRead.error}>
               <ActivitiesTableModern components={components} completedIds={completedIds} kind={kind} learnerId={learnerId}
+                reflectionKsbs={Object.fromEntries(canonicalDetail?.activities.map(activity => [activity.id, activity.reflectionKsbs ?? []]) ?? [])}
+                recordedKsbs={Object.fromEntries(canonicalDetail?.activities.map(activity => [activity.id, activity.recordedKsbCodes ?? []]) ?? [])}
                 week={selectedWeek.weekTitle} canOpenActivities={canOpenActivities} actualHours={actualHours} />
             </div>}
           </div>
@@ -446,10 +449,40 @@ function ActivitiesHeading({ count, controls }: { count: number; controls?: Reac
   </div>;
 }
 
-export const ActivitiesTableModern = memo(function ActivitiesTableModern({ components, completedIds, kind, learnerId, week, canOpenActivities, summaries, actualHours }: {
+export function ActivityKsbs({ mapped, reflections = [], recorded = [] }: {
+  mapped: string[]; reflections?: ReflectionKsbSelection[]; recorded?: string[];
+}) {
+  const statusLabels: Record<string, string> = {
+    draft: 'Draft', submitted_for_tutor_review: 'Awaiting tutor review', accepted: 'Accepted',
+    rejected: 'Rejected', referred: 'Referred', needs_revision: 'Needs revision',
+    partial: 'Partially accepted', escalated: 'Escalated', changes_requested: 'Changes requested',
+  };
+  const shown = new Set([...mapped, ...reflections.flatMap(selection => selection.codes)].map(code => code.trim().toUpperCase()));
+  const additionalRecorded = recorded.filter(code => !shown.has(code.trim().toUpperCase()));
+  return <div className="space-y-2 text-left">
+    <div role="group" aria-label="Curriculum KSBs">
+      <p className="mb-1 text-[10px] text-foreground-500">Curriculum</p>
+      <KsbChips codes={mapped} />
+    </div>
+    {reflections.filter(selection => selection.codes.length > 0).map(selection => (
+      <div role="group" aria-label={`Your reflection KSBs: ${statusLabels[selection.status] || selection.status}`} key={selection.status}>
+        <p className="mb-1 text-[10px] text-foreground-600">Your reflection · {statusLabels[selection.status] || selection.status}</p>
+        <KsbChips codes={selection.codes} />
+      </div>
+    ))}
+    {additionalRecorded.length > 0 && <div role="group" aria-label="Recorded KSBs">
+      <p className="mb-1 text-[10px] text-foreground-600">Recorded for you</p>
+      <KsbChips codes={additionalRecorded} />
+    </div>}
+  </div>;
+}
+
+export const ActivitiesTableModern = memo(function ActivitiesTableModern({ components, completedIds, kind, learnerId, week, canOpenActivities, summaries, actualHours, reflectionKsbs, recordedKsbs }: {
   components: JourneyComponent[]; completedIds: Set<string>; kind: LearnerKind; learnerId: string; week?: string;
   canOpenActivities: boolean;
   actualHours?: Record<string, number | null>;
+  reflectionKsbs?: Record<string, ReflectionKsbSelection[]>;
+  recordedKsbs?: Record<string, string[]>;
   summaries?: Record<string, { status: ActivityStatus; expectedTimeLabel: string; ksbCodes: string[] }>;
 }) {
   const [query, setQuery] = useState('');
@@ -544,7 +577,9 @@ export const ActivitiesTableModern = memo(function ActivitiesTableModern({ compo
                   <Clock3 size={12} className="text-foreground-400" aria-hidden="true" />{recordedHours == null ? '—' : formatHoursMinutes(recordedHours)}
                 </span>
               </td>
-              <td className="px-2 py-2 text-center align-middle"><div className="flex justify-center"><KsbChips codes={summaries?.[component.componentId || '']?.ksbCodes ?? activityKsbCodes(component)} /></div></td>
+              <td className="px-2 py-2 text-center align-middle"><ActivityKsbs
+                mapped={summaries?.[component.componentId || '']?.ksbCodes ?? activityKsbCodes(component)}
+                reflections={reflectionKsbs?.[component.componentId || '']} recorded={recordedKsbs?.[component.componentId || '']} /></td>
               <td className="px-2 py-2 text-center align-middle"><StatusBadge tone={STATUS_TONE[status]} label={STATUS_LABEL[status]} size="sm" showIcon={status === 'completed'} className="whitespace-nowrap text-[10px]" /></td>
               {canOpenActivities && <td className="px-2 py-2 text-center align-middle">
                 {href ? <Link to={href} className={cn(

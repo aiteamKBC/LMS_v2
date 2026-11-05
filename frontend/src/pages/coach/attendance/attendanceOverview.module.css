@@ -88,6 +88,13 @@
 .page .tableScroll th:last-child { border-radius: 0 7px 7px 0; }
 .page .tableScroll td { height: 46px; padding: 6px 12px; border-color: #f0eaf8; vertical-align: middle; }
 .emailText { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sessionScope { margin: 8px 0; padding: 10px 12px; border-left: 3px solid #7950b5; border-radius: 4px; background: #f7f3fe; color: #443357; font-size: 13px; line-height: 1.6; }
+.sessionAttendance { display: grid; justify-items: center; gap: 4px; }
+.sessionState { color: #706a87; font-size: 12px; }
+.unsaved { color: #80540b; font-size: 11px; }
+:global(html[data-theme="dark"]) .sessionScope { background: var(--coach-dark-soft); color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) .sessionState { color: var(--coach-dark-muted); }
+:global(html[data-theme="dark"]) .unsaved { color: #f0c474; }
 .page .tableScroll tbody tr { background: #fff; }
 .page .tableScroll tbody tr:nth-child(even) { background: #faf8ff; }
 .page .tableScroll tbody tr[data-selected=true] { background: #f1ebfc; }
@@ -97,7 +104,7 @@
 .page .emailColumn { width: 20%; }
 .page .programmeColumn { width: 12%; }
 .page .attendanceColumn { width: 14%; }
-.page .detailsColumn { width: 110px; }
+.page .detailsColumn { width: 180px; }
 .page .tableScroll td strong { font-weight: 600; }
 .page .tableScroll td select { width: 126px; height: 32px; padding: 0 8px; font-size: 12px; }
 .learnerIdentity { display: flex; align-items: center; gap: 7px; }

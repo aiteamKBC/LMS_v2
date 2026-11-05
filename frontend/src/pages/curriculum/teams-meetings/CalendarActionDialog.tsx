@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Modal } from '@/pages/users/components/Modal';
-import { naiveLocalFromUtc } from './createCalendarForm';
+import { naiveLocalFromUtc } from "./createCalendarForm.helpers";
 import { getCalendarTimeZone, zonedNaiveToUtcIso } from '../module-builder/moduleAuthoringData';
 import { calendarAction, type ActionReview, type ActionResult } from './calendarActions';
 import { submitChangeEmails, type ScheduleEmailStatus } from './scheduleEmail';

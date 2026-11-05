@@ -38,6 +38,7 @@ class MeetingScopeTests(unittest.TestCase):
     def test_a_saved_normal_meeting_link_is_an_assigned_module_calendar(self):
         self.assertEqual(self.scope({'liveSessionUrl': 'https://teams.invalid/normal'}, True), 'main')
         self.assertEqual(self.scope({'teamsMeetingUrl': 'https://teams.invalid/normal'}, True), 'main')
+        self.assertEqual(self.scope({'liveSessionLinkOverride': 'https://teams.invalid/normal'}, True), 'main')
         self.assertEqual(self.scope({
             'liveSessionUrl': 'https://teams.invalid/additional',
             'teamsMeetingScope': 'additional',
@@ -53,16 +54,23 @@ class MeetingScopeTests(unittest.TestCase):
         self.assertEqual(self.scope(None, False), 'main')
         self.assertEqual(self.scope({'teamsMeetingScope': 'nonsense'}, True), 'pending')
 
-    def test_a_module_has_a_series_once_any_live_session_is_booked(self):
+    def test_existing_main_link_requires_new_weeks_to_choose_even_without_a_booking(self):
         has = self.n['module_has_booked_series']
         self.assertFalse(has([{}, {'teamsMeetingScope': 'main'}]))
         self.assertTrue(has([{}, {'teamsOccurrenceId': 'OCC-1'}]))
-        self.assertFalse(has([{'liveSessionUrl': 'https://teams.invalid/normal'}]))
+        # Imported links establish the module calendar context; they do not
+        # claim a Microsoft occurrence, but new weeks must choose their owner.
+        for field in ('liveSessionUrl', 'teamsMeetingUrl', 'liveSessionLinkOverride'):
+            settings = {field: 'https://teams.invalid/normal'}
+            self.assertTrue(has([settings]))
+            self.assertEqual(self.scope({}, has([settings])), 'pending')
+            self.assertFalse(self.n['live_session_booked_on_module_calendar'](settings))
         self.assertFalse(has([{
             'liveSessionUrl': 'https://teams.invalid/additional',
             'extraTeamsMeetingUrl': 'https://teams.invalid/additional',
             'teamsMeetingScope': 'additional',
         }]))
+        self.assertFalse(has([{'teamsMeetingScope': 'additional', 'liveSessionUrl': 'https://teams.invalid/reserved'}]))
 
 
 class PreserveScopeOnSaveTests(unittest.TestCase):

@@ -1,5 +1,5 @@
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
-import { CHAT_ENABLED, LEARNER_FEEDBACK_ENABLED } from '@/lib/featureFlags';
+import { CHAT_ENABLED, LEARNER_FEEDBACK_ENABLED, LEARNER_POST_LECTURE_FEEDBACK_ENABLED } from '@/lib/featureFlags';
 import { inclusionLoginUrl } from '@/features/inclusion/navigation';
 
 const inclusionLoginHref = inclusionLoginUrl();
@@ -25,7 +25,7 @@ export const learnerNavItems: SidebarNavItem[] = [
   { id: 'learner-my-learning', label: 'My Learning', icon: 'ri-book-open-line', href: '/learner/my-learning', matchPaths: ['/learner/learning-plan'], badge: 1 },
 
   // Published forms explicitly assigned to the signed-in learner.
-  ...(LEARNER_FEEDBACK_ENABLED
+  ...(LEARNER_FEEDBACK_ENABLED || LEARNER_POST_LECTURE_FEEDBACK_ENABLED
     ? [{ id: 'learner-feedback', label: 'Feedback', icon: 'ri-survey-line', href: '/learner/feedback' }]
     : []),
 
@@ -37,6 +37,7 @@ export const learnerNavItems: SidebarNavItem[] = [
     href: '',
     children: [
       { id: 'learner-monthly-submission', label: 'Monthly Submission', icon: 'ri-file-upload-line', href: '/learner/monthly-submission' },
+      { id: 'learner-extra-activities', label: 'Extra activities', icon: 'ri-add-circle-line', href: '/learner/extra-activities' },
       { id: 'learner-monthly-logs', label: 'Monthly Logs', icon: 'ri-file-list-3-line', href: '/learner/monthly-logs', matchPaths: ['/learner/monthly-cycle'] },
       { id: 'learner-monthly-coaching', label: 'Monthly Coaching Meeting', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
       { id: 'learner-progress-reviews', label: 'Progress Review', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
@@ -99,6 +100,7 @@ export const coachNavItems: SidebarNavItem[] = [
       { id: 'coach-reviews', label: 'Review', icon: 'ri-file-list-3-line', href: '/coach/reviews' },
       { id: 'coach-catchup-queue', label: 'Catch-up Queue', icon: 'ri-refresh-line', href: '/coach/catchup-queue' },
       { id: 'coach-timetable', label: 'Calendar', icon: 'ri-calendar-schedule-line', href: '/coach/timetable' },
+      { id: 'coach-recordings', label: 'Meetings & Recordings', icon: 'ri-video-line', href: '/coach/recordings' },
     ],
   },
   {
@@ -113,6 +115,7 @@ export const coachNavItems: SidebarNavItem[] = [
     icon: 'ri-edit-line',
     href: '/coach/marking-queue',
   },
+  { id: 'coach-extra-activities', label: 'Extra activities', icon: 'ri-add-circle-line', href: '/coach/extra-activities' },
   {
     id: 'coach-monthly-logs',
     label: 'Monthly Logs',
@@ -122,6 +125,7 @@ export const coachNavItems: SidebarNavItem[] = [
   },
   { id: 'coach-inclusion', label: 'Inclusion Ticket System', icon: 'ri-heart-pulse-line', href: inclusionLoginHref, external: true },
   { id: 'coach-support-tickets', label: 'Support Tickets', icon: 'ri-lifebuoy-line', href: '/coach/support-tickets' },
+  { id: 'coach-info-source', label: 'Info Source', icon: 'ri-book-open-line', href: '/coach/info-source' },
 ];
 
 // ============================================================================
@@ -248,6 +252,12 @@ export const curriculumNavItems: SidebarNavItem[] = [
     ],
   },
   {
+    id: 'curriculum-coaching-recordings',
+    label: 'Coach Meetings & Recordings',
+    icon: 'ri-video-line',
+    href: '/curriculum/coaching-recordings',
+  },
+  {
     id: 'curriculum-bulk-attendance',
     label: 'Bulk Attendance',
     icon: 'ri-calendar-check-line',
@@ -262,7 +272,6 @@ export const curriculumNavItems: SidebarNavItem[] = [
       '/curriculum/week-builder',
       '/curriculum/free-courses',
       '/curriculum/standards',
-      '/curriculum/ksb-frameworks',
       '/curriculum/quiz-xml',
       '/curriculum/knowledge-base',
       '/curriculum/question-bank',
@@ -360,6 +369,7 @@ export const engagementNavItems: SidebarNavItem[] = [
  * live on the learner's own page (see BoardPage's Programme panel).
  */
 export const apprenticeNavItems: SidebarNavItem[] = [
+  { id: 'enrolment-progress-transfers', label: 'Transfer Progress', icon: 'ri-arrow-left-right-line', href: '/users/progress-transfers' },
   { id: 'apprenticeNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/users/coach-directory' },
   { id: 'apprenticeNavItems-first-sessions', label: 'First sessions', icon: 'ri-calendar-check-line', href: '/users/first-sessions' },
   { id: 'apprentice-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
@@ -370,6 +380,7 @@ export const apprenticeNavItems: SidebarNavItem[] = [
  * compliance workspace pages (ILR, evidence packs, funding risk, …) rely on.
  */
 export const enrolmentNavItems: SidebarNavItem[] = [
+  { id: 'enrolment-progress-transfers', label: 'Transfer Progress', icon: 'ri-arrow-left-right-line', href: '/users/progress-transfers' },
   { id: 'enrolmentNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/users/coach-directory' },
   { id: 'enrolmentNavItems-first-sessions', label: 'First sessions', icon: 'ri-calendar-check-line', href: '/users/first-sessions' },
   { id: 'enrolment-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
@@ -641,6 +652,7 @@ export const adminNavItems: SidebarNavItem[] = [
       { id: 'admin-evidence', label: 'Evidence', icon: 'ri-folder-shield-2-line', href: '/admin/evidence' },
       { id: 'admin-certificates', label: 'Certificates', icon: 'ri-award-line', href: '/workspace/admin/certificates' },
       { id: 'admin-notifications', label: 'Email Delivery', icon: 'ri-mail-send-line', href: '/admin/notifications' },
+      { id: 'admin-announcements', label: 'Announcements', icon: 'ri-megaphone-line', href: '/admin/announcements' },
       { id: 'admin-system', label: 'System Status', icon: 'ri-pulse-line', href: '/admin/system' },
     ],
   },

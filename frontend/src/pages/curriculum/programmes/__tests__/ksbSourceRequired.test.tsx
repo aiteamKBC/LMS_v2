@@ -1,3 +1,4 @@
+import { fetchAssignedLearners, fetchLearnerStatusCounts } from '@/api/assignedLearners';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -18,6 +19,11 @@ import { fetchCurriculumKsbSets, fetchCurriculumKsbSetSummaries, fetchCurriculum
  * standard yet can be parked on it; it is created the first time it is asked for
  * and reused after that — never one empty profile per programme.
  */
+
+vi.mock('@/api/assignedLearners', () => ({ fetchLearnerStatusCounts: vi.fn(async (_scope: string, ids: string[]) => Object.fromEntries(ids.map(id => [id, { total: 3, statuses: { active: 2, withdrawn: 1 } }]))), fetchAssignedLearners: vi.fn(async () => ({ scope: 'programme', id: 'PROG-MAPPED', status: 'active', total: 2, filteredTotal: 2, page: 1, pageSize: 25, learners: [
+  { id: 'A', name: 'Active One', email: 'active-one@example.invalid', status: 'active' },
+  { id: 'B', name: 'Active Two', email: 'active-two@example.invalid', status: 'active' },
+] })) }));
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -137,6 +143,8 @@ function cardFor(name: string) {
 
 describe('Programmes page — a programme with no usable KSB source', { timeout: 15000 }, () => {
   beforeEach(() => {
+    vi.mocked(fetchAssignedLearners).mockClear();
+    vi.mocked(fetchLearnerStatusCounts).mockClear();
     listedProgrammes = [withSource, withoutSource];
     ksbSets = [realProfile];
     createCurriculumProgramme.mockClear();
@@ -146,6 +154,21 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     vi.mocked(fetchCurriculumKsbSets).mockClear();
     vi.mocked(fetchCurriculumKsbSetSummaries).mockClear();
     vi.mocked(fetchCurriculumKsbSourceDefinitions).mockClear();
+  });
+
+  it('shows automatically loaded programme status counts while names wait for an explicit open', async () => {
+    listedProgrammes = [{ ...withSource, learners: 9 }];
+    await renderProgrammes();
+    const learners = await screen.findByRole('button', { name: 'Data Analyst: 2 active learners' });
+    expect(screen.getByRole('button', { name: 'Data Analyst: 1 withdrawn learners' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Data Analyst: 3 all statuses learners' })).toBeVisible();
+    expect(fetchLearnerStatusCounts).toHaveBeenCalledTimes(1);
+    expect(fetchAssignedLearners).not.toHaveBeenCalled();
+    await userEvent.click(learners);
+    await screen.findByText('Active One');
+    expect(learners).toHaveTextContent('2');
+    expect(fetchAssignedLearners).toHaveBeenCalledTimes(1);
+    expect(fetchAssignedLearners).toHaveBeenCalledWith(expect.objectContaining({ scope: 'programme', id: 'PROG-MAPPED' }), 'active', '', 1, expect.any(AbortSignal));
   });
 
   it('loads source summaries on mount and definitions only when that source is opened', async () => {
@@ -181,7 +204,7 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     expect(screen.queryByRole('button', { name: 'Close KSB profile' })).not.toBeInTheDocument();
   });
 
-  it('says so for the page, and parks the programme on the shared empty profile', async () => {
+  it('says so for the page, and offers only a real source', async () => {
     await renderProgrammes();
     expect(await screen.findByText('Test-Zyad')).toBeInTheDocument();
 
@@ -191,41 +214,11 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     expect(screen.getByText(/coverage stays at 0%/))
       .toHaveTextContent('Until a KSB source is applied and filled in');
 
-    await userEvent.click(screen.getByRole('button', { name: /Assign empty profile to Test-Zyad/ }));
-    await waitFor(() => expect(createCurriculumKsbFramework).toHaveBeenCalledTimes(1));
-
-    // One profile, shared. It carries no programme of its own, so the KSB
-    // Frameworks list does not grow a row per programme.
-    const [framework] = createCurriculumKsbFramework.mock.calls[0] as unknown as [{
-      name: string; programmeId?: string; ksbItems: unknown[];
-    }];
-    expect(framework.name).toBe('Empty KSB profile');
-    expect(framework.programmeId).toBeUndefined();
-    expect(framework.ksbItems).toEqual([]);
-
-    // …and it is applied through the ordinary path, so the programme is linked
-    // to it exactly as it would be to a real profile.
-    await waitFor(() => expect(updateCurriculumProgramme).toHaveBeenCalled());
-    const applied = updateCurriculumProgramme.mock.calls.at(-1) as unknown as [string, { ksbProfileSourceId: string }];
-    expect(applied[0]).toBe('PROG-BARE');
-    // Stored bare, the way every applied profile is: an id with no prefix reads
-    // as a profile, and only a standard carries one.
-    expect(applied[1].ksbProfileSourceId).toBe('KSBP-EMPTY');
-  });
-
-  // "Once" is the whole point: the second programme parked on it reuses the row.
-  it('creates the empty profile once and reuses it', async () => {
-    ksbSets = [realProfile, sharedEmptyProfile];
-    await renderProgrammes();
-    expect(await screen.findByText('Test-Zyad')).toBeInTheDocument();
-
-    await userEvent.click(await screen.findByRole('button', { name: /Assign empty profile to Test-Zyad/ }));
-    await waitFor(() => expect(updateCurriculumProgramme).toHaveBeenCalled());
+    // KSBs come from the GOV.UK standards: no manual profile is authored or
+    // parked from here.
+    expect(screen.queryByRole('button', { name: /Assign empty profile/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Author a KSB profile' })).not.toBeInTheDocument();
     expect(createCurriculumKsbFramework).not.toHaveBeenCalled();
-    const applied = updateCurriculumProgramme.mock.calls.at(-1) as unknown as [string, { ksbProfileSourceId: string }];
-    // Stored bare, the way every applied profile is: an id with no prefix reads
-    // as a profile, and only a standard carries one.
-    expect(applied[1].ksbProfileSourceId).toBe('KSBP-EMPTY');
   });
 
   it('still offers a real source instead of the placeholder', async () => {
@@ -270,7 +263,7 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     expect(card.getByText(/A placeholder with no KSB codes in it/)).toBeInTheDocument();
     // The placeholder is moved off, not filled in.
     expect(card.getByRole('button', { name: 'Choose a real KSB source for Parked Programme' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Author a KSB profile' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Author a KSB profile' })).not.toBeInTheDocument();
   });
 
   // Creating a programme writes no profile of its own — there is one, shared —
@@ -298,7 +291,10 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
 
     const sourceHeading = await screen.findByText('Apply KSB Source');
     const sourceModal = within(sourceHeading.closest('.fixed') as HTMLElement);
-    await userEvent.click(sourceModal.getByRole('button', { name: /Project Control Professional/ }));
+    // Only the GOV.UK standards are offered; the manual profile is not.
+    expect(sourceModal.queryByRole('button', { name: 'KSB profile' })).not.toBeInTheDocument();
+    expect(sourceModal.queryByRole('button', { name: /Project Control Professional/ })).not.toBeInTheDocument();
+    await userEvent.click(sourceModal.getByRole('button', { name: /Project controls professional/ }));
     await userEvent.click(sourceModal.getByRole('button', { name: 'Apply source' }));
 
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/curriculum/programmes/PROG-NEW?tab=cohorts'));

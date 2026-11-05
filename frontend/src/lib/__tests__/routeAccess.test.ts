@@ -46,7 +46,6 @@ describe('mayAccessRoute', () => {
       '/engagement/clubs',
       '/leadership/ofsted',
       '/finance/budgets',
-      '/support/ticket-queue',
       '/safeguarding/reports',
       '/training-plan/learner/12',
     ];
@@ -57,6 +56,16 @@ describe('mayAccessRoute', () => {
       expect(mayAccessRoute(path, as('staff')), path).toBe(true);
       expect(mayAccessRoute(path, as('admin')), path).toBe(true);
     }
+  });
+
+  it('limits the live support queue to administrators and explicitly granted support staff', () => {
+    const path = '/support/ticket-queue';
+    for (const role of ['learner', 'employer', 'staff'] as const) {
+      expect(mayAccessRoute(path, as(role))).toBe(false);
+    }
+    expect(mayAccessRoute(path, as('admin'))).toBe(true);
+    expect(mayAccessRoute(path, { role: 'staff', access: 'support' })).toBe(true);
+    expect(mayAccessRoute(path, { role: 'staff', access: 'coach', accessWorkspaces: [{ access: 'support', home: path }] })).toBe(true);
   });
 
   it('admits only the super-admin to the admin console', () => {
@@ -267,13 +276,30 @@ describe('choosing between several workspaces', () => {
     expect(isBareLearnerWorkspacePath('/workspace/learner?kind=commercial&id=510')).toBe(true);
   });
 
-  it('never offers a menu to a record monitor, who is pinned to /old-otjh', () => {
+  it('offers a record monitor their additional workspaces', () => {
     const account = {
       role: 'staff' as const, subjectId: 86, access: 'record-monitor',
       accessWorkspaces: [coach, tutor],
     };
+    expect(shouldChooseWorkspace(account)).toBe(true);
+    expect(postLoginRouteFor(account)).toBe(CHOOSE_WORKSPACE_ROUTE);
+    expect(mayAccessRoute('/workspace/coach', account)).toBe(true);
+    expect(mayAccessRoute('/workspace/admin', account)).toBe(false);
+  });
+
+  it('keeps Advanced Admin restricted even with extra grants', () => {
+    const account = { role: 'staff' as const, access: 'advanced-admin', subjectId: 86,
+      accessWorkspaces: [{ access: 'advanced-admin', home: '/workspace/advanced-admin' }, coach] };
     expect(shouldChooseWorkspace(account)).toBe(false);
-    expect(postLoginRouteFor(account)).toBe('/old-otjh/monitor');
+    expect(postLoginRouteFor(account)).toBe('/workspace/advanced-admin');
+    expect(mayAccessRoute('/workspace/coach', account)).toBe(false);
+  });
+
+  it('admits an additional monitoring grant but refuses ungranted monitoring', () => {
+    const account = { role: 'staff' as const, access: 'coach',
+      accessWorkspaces: [coach, { access: 'record-monitor', home: '/old-otjh/monitor' }] };
+    expect(mayAccessRoute('/old-otjh/monitor', account)).toBe(true);
+    expect(mayAccessRoute('/old-otjh/monitor', { ...account, accessWorkspaces: [coach] })).toBe(false);
   });
 
   it('lets every role reach the chooser itself', () => {

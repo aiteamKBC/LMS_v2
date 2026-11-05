@@ -9,6 +9,7 @@ import { recordPageView } from '@/lib/activityTrail';
 import { installActivityCapture } from '@/lib/activityCapture';
 import { recordPerformanceNavigation } from '@/lib/performanceDiagnostics';
 import { OldOtjhProvider } from '@/features/old-otjh/hooks';
+import { KeepAliveSlot, useKeptLocation } from './keepAlive';
 
 let navigateResolver: (navigate: ReturnType<typeof useNavigate>) => void;
 
@@ -32,9 +33,16 @@ function RouteLoadingFallback() {
 }
 
 export function AppRoutes() {
-  const element = useRoutes(routes);
+  const location = useLocation();
+  // A learner preview opened from an authoring page renders over it. The
+  // opener stays mounted and hidden, so returning resumes it instead of
+  // re-initialising it. The kept slot always takes an explicit location so
+  // its tree does not change shape when a preview starts or ends.
+  const kept = useKeptLocation(location);
+  const element = useRoutes(routes, kept ?? location);
+  const preview = useRoutes(routes, location);
   const navigate = useNavigate();
-  const { pathname } = useLocation();
+  const { pathname } = location;
   const { auth } = useAuth();
   useEffect(() => installLearnerRoutePreloading(routes), []);
 
@@ -75,9 +83,16 @@ export function AppRoutes() {
   // Reset only the error on navigation. A pathname key remounted Suspense and
   // the access gate on every click, discarding the current page while its next
   // chunk loads and making navigation look like a fresh application startup.
+  // The preview has its own boundaries: its chunk loading or failing must not
+  // suspend or tear down the page kept underneath it.
   return createElement(OldOtjhProvider, {
     key: auth.account?.id ?? 'signed-out',
-    children: createElement(RouteErrorBoundary, { resetKey: pathname },
-      createElement(Suspense, { fallback: createElement(RouteLoadingFallback) }, element)),
+    children: [
+      createElement(RouteErrorBoundary, { key: 'page', resetKey: kept ? kept.pathname : pathname },
+        createElement(Suspense, { fallback: createElement(RouteLoadingFallback) },
+          createElement(KeepAliveSlot, { hidden: !!kept }, element))),
+      kept ? createElement(RouteErrorBoundary, { key: 'preview', resetKey: pathname },
+        createElement(Suspense, { fallback: createElement(RouteLoadingFallback) }, preview)) : null,
+    ],
   });
 }

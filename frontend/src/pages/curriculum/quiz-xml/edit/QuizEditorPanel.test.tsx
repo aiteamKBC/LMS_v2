@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { QuizEditorPanel } from './QuizEditorPanel';
 import { AppIcon } from '@/components/feature/AppIcon';
 
-vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
+vi.mock("@/hooks/useToast", () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
 afterEach(() => vi.unstubAllGlobals());
 
 const types = ['single_choice', 'multiple_choice', 'true_false', 'matching', 'image_matching', 'keywords', 'fill_gap', 'ordering'];

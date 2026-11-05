@@ -7,8 +7,7 @@ from time import monotonic
 
 from django.utils import timezone
 
-from .attendance_recent import recent_attendance
-from .attendance_sessions import assigned_modules_by_source
+from .bulk_register import recent_attendance, saved_modules_by_source as assigned_modules_by_source
 from .attendance_timing import AttendanceTiming
 
 TTL = 60
