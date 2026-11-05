@@ -72,6 +72,91 @@ class ReviewAttendanceDisplayTests(SimpleTestCase):
         for fields in [dict(reviewSource='aptem'), dict(importedReviewType='Monthly Coaching Meeting')]:
             self.assertEqual(self.annotate([report], events=[{**self.event, 'calendarEventKey': 'native:7', **fields}]), 'pending')
 
+    def imported_event(self, review_type='Monthly Coaching Meeting'):
+        return {**self.event, 'calendarEventKey': self.record.event_key,
+                'reviewSource': 'aptem', 'importedReviewType': review_type}
+
+    def verified_report(self, seconds=0, **overrides):
+        report = self.report(seconds)
+        report.update(_lms_verified_online_meeting_id='meeting-7', _lms_graph_event_id='graph-7',
+                      _lms_booking_fingerprint=booking_fingerprint(self.record), **overrides)
+        return report
+
+    def test_imported_verified_report_outside_booked_hours_matches_form(self):
+        for review_type in ['Monthly Coaching Meeting', 'Progress Review', 'Progress Review (+ Skills Radar)']:
+            for hour in [13, 16]:
+                for seconds, expected in [(0, 'missed'), (600, 'attended')]:
+                    with self.subTest(review_type=review_type, hour=hour, seconds=seconds):
+                        report = self.verified_report(seconds, meetingStartDateTime=f'2026-11-02T{hour}:09:00Z',
+                                                       meetingEndDateTime=f'2026-11-02T{hour}:17:00Z')
+                        self.assertEqual(self.annotate([report], events=[self.imported_event(review_type)]), expected)
+
+    def test_imported_verified_report_preserves_duration_boundary(self):
+        for seconds, expected in [(1, 'missed'), (180, 'missed'), (181, 'attended')]:
+            with self.subTest(seconds=seconds):
+                self.assertEqual(self.annotate([self.verified_report(seconds)], events=[self.imported_event()]), expected)
+
+    def test_imported_conflicting_provider_identity_is_unavailable(self):
+        for fields in [dict(_lms_graph_event_id='other-event'), dict(meetingId='other-meeting')]:
+            report = self.verified_report(600)
+            report.update(fields)
+            with self.subTest(fields=fields):
+                self.assertEqual(self.annotate([report], events=[self.imported_event()]), 'unavailable')
+
+    def test_imported_conflicting_reports_are_not_combined(self):
+        first, second = self.verified_report(), self.verified_report(600)
+        self.assertEqual(self.annotate([first, second], events=[self.imported_event()]), 'unavailable')
+        second.update(id='report-2', _lms_verified_online_meeting_id='other-meeting')
+        self.assertEqual(self.annotate([first, second], events=[self.imported_event()]), 'unavailable')
+
+    def test_imported_duplicate_report_is_counted_once(self):
+        report = self.verified_report(120)
+        self.assertEqual(self.annotate([report, deepcopy(report)], events=[self.imported_event()]), 'missed')
+
+    def test_imported_unverified_rows_do_not_augment_verified_attendance(self):
+        report = self.report(600)
+        report['id'] = 'legacy-report'
+        self.assertEqual(self.annotate([self.verified_report(), report], events=[self.imported_event()]), 'missed')
+
+    def test_imported_other_participant_does_not_confirm_learner(self):
+        report = self.verified_report(600)
+        report['records'][0]['email'] = 'other@example.test'
+        self.assertEqual(self.annotate([report], events=[self.imported_event()]), 'missed')
+
+    def test_imported_reschedule_does_not_reuse_previous_call(self):
+        report = self.verified_report(600)
+        # Even a later refresh marking the old report with the current fingerprint
+        # must not let the old call confirm the replacement appointment.
+        self.record.scheduled_date = date(2026, 11, 3)
+        self.event['scheduledDate'] = '2026-11-03'
+        report['_lms_booking_fingerprint'] = booking_fingerprint(self.record)
+        self.now = datetime(2026, 11, 4, 12)
+        self.assertEqual(self.annotate([report], events=[self.imported_event()],
+                                      previous=[SimpleNamespace()]), 'pending')
+        fresh = self.verified_report(600, meetingStartDateTime='2026-11-03T14:15:00Z',
+                                     meetingEndDateTime='2026-11-03T14:25:00Z')
+        self.assertEqual(self.annotate([report, fresh], events=[self.imported_event()],
+                                      previous=[SimpleNamespace()]), 'attended')
+
+    def test_imported_previous_fingerprint_does_not_confirm_current_appointment(self):
+        report = self.verified_report(600)
+        report['_lms_booking_fingerprint'] = 'previous'
+        self.assertEqual(self.annotate([report], events=[self.imported_event()]), 'pending')
+
+    def test_imported_invalid_records_are_unavailable(self):
+        for records in [None, {}, ['invalid']]:
+            with self.subTest(records=records):
+                self.assertEqual(self.annotate([self.verified_report(records=records)],
+                                              events=[self.imported_event()]), 'unavailable')
+
+    def test_imported_failed_history_read_is_unavailable(self):
+        event = self.imported_event()
+        with patch.object(display, 'read_evidence', return_value=(
+                {self.record.event_key: self.record}, {self.record.event_key: [self.verified_report()]}, {})), \
+                patch('coach_api.review_rescheduling.previous_bookings', side_effect=DatabaseError('unavailable')):
+            display.annotate_review_attendance([event], now_local=self.now)
+        self.assertEqual(event['reviewAttendance'], 'unavailable')
+
     def test_failed_history_read_does_not_reuse_out_of_slot_report(self):
         report = self.report(600)
         report.update(meetingStartDateTime='2026-11-02T13:09:00Z',

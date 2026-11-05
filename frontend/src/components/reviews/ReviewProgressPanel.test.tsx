@@ -82,5 +82,21 @@ describe('ReviewProgressPanel reference visual contract', () => {
     render(<ReviewProgressPanel snapshot={snapshot({ ksbProgress: undefined })} canCalculate={false} calculating={false} onCalculate={vi.fn()} />);
     expect(screen.getByTestId('ksb-progress-unavailable')).toHaveTextContent('KSB progress was not available in this snapshot.');
   });
+
+  it('renders frozen Dashboard evidence points without changing the Review arithmetic or old labels', () => {
+    render(<ReviewProgressPanel snapshot={snapshot({
+      schemaVersion: 5,
+      formulaVersion: 'canonical_dashboard_metrics_and_scheduled_catalogue_v6',
+      actualHoursSource: 'canonical_learning.dashboard',
+      ksbProgress: { available: true, title: 'KSB evidence points', actual: 159, planned: 166,
+        actualPercent: 95.78, expectedPercent: 100, variancePercent: -4.22, varianceDirection: 'below' },
+      programmeProgress: metric(33.33, 83.33),
+    })} canCalculate={false} calculating={false} onCalculate={vi.fn()} />);
+    expect(screen.getByText('KSB evidence points')).toBeVisible();
+    expect(screen.getByText('96%')).toBeVisible();
+    expect(screen.getByText('4% Below')).toBeVisible();
+    expect(screen.getByText('50% Below')).toBeVisible();
+    expect(screen.getByRole('img', { name: 'Learning Plan Progress: 33%' })).toBeVisible();
+  });
 });
 

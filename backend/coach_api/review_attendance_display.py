@@ -62,7 +62,10 @@ def read_evidence(keys):
 
 
 def outcome(record, reports, links, *, native=False):
-    from .migrated_session_scope import booking_fingerprint, current_reports, report_window
+    from .migrated_session_scope import (
+        booking_fingerprint, current_reports, has_verified_meeting_evidence,
+        report_window, scope_snapshot,
+    )
     from .review_attendance_links import project_attendance
     from .views import build_coach_meeting_attendance_tracker
     if not record.learner_email:
@@ -75,7 +78,18 @@ def outcome(record, reports, links, *, native=False):
     reports = [report for report in reports
                if report.get('_lms_booking_fingerprint') in (None, '', fingerprint)]
     scoped = current_reports(record, {'attendanceReports': reports})
-    if native and len(scoped) != len(reports):
+    if not native and has_verified_meeting_evidence({'attendanceReports': reports}):
+        # Use the Imported form's verified meeting reader, including its stricter
+        # occurrence selection after rescheduling. Planned hours alone must not
+        # hide a report already accepted for this meeting by the form.
+        if any(not isinstance(report.get('records'), list)
+               or any(not isinstance(row, dict) for row in report['records']) for report in reports):
+            return 'unavailable'
+        snapshot = scope_snapshot(record, {'attendanceReports': reports}, meeting_scoped=True)
+        if snapshot.get('selectionError'):
+            return 'unavailable'
+        scoped = snapshot['attendanceReports']
+    elif native and len(scoped) != len(reports):
         # Match the Native form: a saved report belongs to this provider meeting
         # even if the call started outside its planned hours. Only a replacement
         # appointment needs the stricter window; never reuse its prior evidence.

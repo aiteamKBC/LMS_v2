@@ -1,5 +1,7 @@
 import { flattenReviewFields, type ReviewFieldDefinition, type ReviewSectionDefinition } from '@/api/reviewInstances';
 
+export const hasSkillsRadar = (section: ReviewSectionDefinition) => section.fields.some(field => Boolean(field.configuration.skillsRadar));
+
 
 export function fieldAnswered(field: ReviewFieldDefinition, answers: Record<string, unknown>) {
   const value = answers[field.id];

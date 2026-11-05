@@ -38,6 +38,13 @@ def review_pdf_data(overlay, signatures, *, learner_name, learner_email,
     snapshot = overlay.template_snapshot
     family = pdf_family(overlay, source_family)
     sections, _warnings = render_sections(snapshot, active_answers(snapshot, overlay.answers))
+    from .migrated_skills_radar import rating_status
+    for section in sections:
+        for field in section['fields']:
+            metadata = field['configuration'].get('skillsRadar') or {}
+            if metadata.get('kind') == 'coach':
+                goal = (overlay.answers or {}).get(field['id'].rsplit(':', 1)[0] + ':goal')
+                field['title'] += ' — ' + rating_status(field.get('answer'), goal)
     # Array order is the frozen form order, including legacy definitions whose
     # numeric order metadata is stale. Native continues using its own ordering.
     for index, section in enumerate(sections):

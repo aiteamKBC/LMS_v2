@@ -325,3 +325,267 @@ class ReviewRescheduleTests(TestCase):
         from .migrated_rescheduling import can_reschedule
         self.record.status = 'scheduled'
         self.assertTrue(can_reschedule(SimpleNamespace(status='scheduled'), self.record))
+
+    def imported_resources(self):
+        """A verified call ended before its booked slot; the learner was absent."""
+        from .migrated_session_scope import booking_fingerprint
+        self.record.review_instance_id = ''; self.record.review_template_id = ''
+        self.record.save()
+        self.overlay = SimpleNamespace(status='in-progress', meeting_intelligence={}, answers={'saved': 'draft'})
+        marker = {'_lms_graph_event_id': self.record.graph_event_id,
+                  '_lms_verified_online_meeting_id': 'online',
+                  '_lms_booking_fingerprint': booking_fingerprint(self.record)}
+        report = dict(id='old-report', meetingStartDateTime='2026-10-27T09:50:00Z',
+                      meetingEndDateTime='2026-10-27T09:58:00Z', records=[], **marker)
+        self.snapshot['attendanceReports'] = [report]
+        self.snapshot['attendance']['reports'] = [report]
+        self.snapshot['artifacts'] = [dict(artifact_type=kind, graph_artifact_id=f'old-{kind}',
+            call_id='old-call', created_datetime='2026-10-27T09:50:00Z', end_datetime='2026-10-27T09:58:00Z',
+            metadata=dict(marker)) for kind in ['recording', 'transcript']]
+        return deepcopy(self.snapshot)
+
+    def move_imported(self):
+        self.persist(overlay=self.overlay)
+        self.record.refresh_from_db()
+        self.record._reschedule_history_cache = None
+
+    def test_imported_archives_off_slot_media_without_copying_content_or_claim(self):
+        saved = self.imported_resources()
+        self.move_imported()
+        archive = ReviewBookingReschedule.objects.get()
+        self.assertEqual(archive.session_claim, {})
+        self.assertEqual([row['id'] for row in archive.evidence_manifest['reports']], ['old-report'])
+        self.assertEqual({row['id'] for row in archive.evidence_manifest['artifacts']},
+                         {'old-recording', 'old-transcript'})
+        self.assertNotIn('records', archive.evidence_manifest['reports'][0])
+        self.assertEqual(self.overlay.answers, {'saved': 'draft'})
+        self.assertEqual(self.record.status, 'in-progress')
+        self.assertEqual(self.snapshot, saved)
+        old = policy.historical_artifacts(self.record, self.snapshot)
+        self.assertEqual({row['graph_artifact_id'] for row in old}, {'old-recording', 'old-transcript'})
+        self.assertTrue(all(row['previous_session'] for row in old))
+        self.assertEqual({row['created_datetime'] for row in old}, {'2026-10-27T09:50:00Z'})
+
+    def test_imported_old_evidence_is_excluded_even_if_refreshed_into_new_slot(self):
+        from .migrated_session_scope import booking_fingerprint, scope_snapshot
+        from .review_attendance_display import outcome
+        self.imported_resources(); self.move_imported()
+        report = self.snapshot['attendanceReports'][0]
+        report.update(meetingStartDateTime='2026-11-03T10:00:00Z', meetingEndDateTime='2026-11-03T10:30:00Z',
+                      _lms_booking_fingerprint=booking_fingerprint(self.record),
+                      records=[{'email': self.record.learner_email, 'totalAttendanceSeconds': 600, 'attended': True}])
+        for artifact in self.snapshot['artifacts']:
+            artifact.update(created_datetime='2026-11-03T10:00:00Z', end_datetime='2026-11-03T10:30:00Z')
+            artifact['metadata']['_lms_booking_fingerprint'] = booking_fingerprint(self.record)
+        current = scope_snapshot(self.record, self.snapshot, meeting_scoped=True)
+        self.assertEqual(current['attendance']['reportCount'], 0)
+        self.assertEqual(current['artifacts'], [])
+        self.assertEqual(outcome(self.record, [report], []), 'pending')
+        self.assertEqual(len(policy.historical_artifacts(self.record, self.snapshot)), 2)
+
+    def test_imported_new_call_and_previous_call_remain_separate(self):
+        from .migrated_session_scope import scope_snapshot, stored_transcript_selection
+        self.imported_resources(); self.move_imported()
+        new = deepcopy(self.snapshot['artifacts'][1])
+        new.update(graph_artifact_id='new-transcript', call_id='new-call',
+                   created_datetime='2026-11-03T10:00:00Z', end_datetime='2026-11-03T10:20:00Z')
+        report = {**self.snapshot['attendanceReports'][0], 'id': 'new-report',
+                  'meetingStartDateTime': '2026-11-03T10:00:00Z', 'meetingEndDateTime': '2026-11-03T10:20:00Z'}
+        self.snapshot['artifacts'].append(new)
+        self.snapshot['attendanceReports'].append(report)
+        current = scope_snapshot(self.record, self.snapshot, meeting_scoped=True)
+        self.assertEqual([row['id'] for row in current['attendanceReports']], ['new-report'])
+        self.assertEqual([row['graph_artifact_id'] for row in current['artifacts']], ['new-transcript'])
+        self.assertEqual(stored_transcript_selection(self.record, self.snapshot, meeting_scoped=True)['artifactIds'],
+                         ['new-transcript'])
+        self.assertEqual({row['graph_artifact_id'] for row in policy.historical_artifacts(self.record, self.snapshot)},
+                         {'old-recording', 'old-transcript'})
+
+    def test_imported_late_segment_of_verified_old_call_is_historical_only(self):
+        from .migrated_session_scope import scope_snapshot
+        self.imported_resources(); self.move_imported()
+        segment = deepcopy(self.snapshot['artifacts'][1])
+        segment.update(graph_artifact_id='late-old-segment', created_datetime='2026-11-03T10:00:00Z',
+                       end_datetime='2026-11-03T10:20:00Z')
+        self.snapshot['artifacts'].append(segment)
+        self.assertEqual(scope_snapshot(self.record, self.snapshot, meeting_scoped=True)['artifacts'], [])
+        self.assertEqual(len(policy.historical_artifacts(self.record, self.snapshot)), 3)
+
+    def test_imported_historical_media_rejects_changed_provider_or_call(self):
+        saved = self.imported_resources(); self.move_imported()
+        for field, value in [('_lms_graph_event_id', 'other-event'),
+                             ('_lms_verified_online_meeting_id', 'other-meeting'), ('callId', 'other-call')]:
+            with self.subTest(field=field):
+                changed = deepcopy(saved)
+                for row in changed['artifacts']:
+                    row['metadata'][field] = value
+                self.assertEqual(policy.historical_artifacts(self.record, changed), [])
+        changed = deepcopy(saved)
+        for row in changed['artifacts']:
+            row['call_id'] = 'other-call'
+        self.assertEqual(policy.historical_artifacts(self.record, changed), [])
+
+    def test_imported_historical_evidence_cannot_cross_owner_learner_or_booking(self):
+        self.imported_resources(); self.move_imported()
+        for field, value in [('learner_id', 22), ('pk', 999), ('graph_event_id', 'other-event'),
+                             ('owner_email', 'other@example.invalid'), ('event_key', 'other-booking')]:
+            with self.subTest(field=field):
+                other = copy(self.record); setattr(other, field, value)
+                self.assertEqual(policy.historical_artifacts(other, self.snapshot), [])
+
+    def test_imported_tampered_manifest_never_falls_back_to_time_matching(self):
+        from .migrated_session_scope import scope_snapshot
+        self.imported_resources(); self.move_imported()
+        archive = ReviewBookingReschedule.objects.get()
+        archive.evidence_manifest['bookingFingerprint'] = 'another-booking'
+        archive.save(update_fields=['evidence_manifest'])
+        self.assertEqual(policy.historical_artifacts(self.record, self.snapshot), [])
+        current = scope_snapshot(self.record, self.snapshot, meeting_scoped=True)
+        self.assertEqual(current['artifacts'], [])
+        self.assertEqual(current['attendanceReports'], [])
+        self.assertEqual(current['selectionError'], 'MEETING_ARTIFACT_CONFLICT')
+
+    def test_imported_retry_keeps_one_immutable_manifest(self):
+        self.imported_resources(); self.move_imported()
+        original = ReviewBookingReschedule.objects.get().evidence_manifest
+        self.snapshot['artifacts'] = []
+        self.persist(overlay=self.overlay)
+        self.assertEqual(ReviewBookingReschedule.objects.count(), 1)
+        self.assertEqual(ReviewBookingReschedule.objects.get().evidence_manifest, original)
+
+    def test_imported_second_reschedule_keeps_first_resources_in_first_archive(self):
+        self.imported_resources(); self.move_imported()
+        first = ReviewBookingReschedule.objects.get().evidence_manifest
+        new = deepcopy(self.snapshot['artifacts'][0])
+        new.update(graph_artifact_id='second-recording', call_id='second-call',
+                   created_datetime='2026-11-03T09:50:00Z', end_datetime='2026-11-03T09:58:00Z')
+        self.snapshot['artifacts'].append(new)
+        candidate = copy(self.record); candidate.scheduled_date = date(2026, 11, 10)
+        views.persist_calendar_sync_reservation(candidate, coach_reschedule=True,
+            expected_booking=(self.record.scheduled_date, self.record.scheduled_time, 60), overlay=self.overlay,
+            review_event={'reviewSource': 'aptem'})
+        self.record.refresh_from_db(); self.record._reschedule_history_cache = None
+        archives = list(ReviewBookingReschedule.objects.order_by('pk'))
+        self.assertEqual(len(archives), 2)
+        self.assertEqual(archives[0].evidence_manifest, first)
+        self.assertEqual([row['id'] for row in archives[1].evidence_manifest['artifacts']], ['second-recording'])
+        self.assertEqual(len(policy.historical_artifacts(self.record, self.snapshot)), 3)
+
+    def test_imported_conflicting_saved_resources_block_before_any_booking_write(self):
+        self.imported_resources()
+        self.snapshot['artifacts'][0]['metadata']['_lms_graph_event_id'] = 'other-event'
+        with self.assertRaisesRegex(views.LearnerCalendarConflict, 'resources could not be verified'):
+            self.move_imported()
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.scheduled_date, self.original_slot[0])
+        self.assertEqual(ReviewBookingReschedule.objects.count(), 0)
+
+    def test_imported_busy_slot_rolls_back_manifest_with_booking(self):
+        self.imported_resources()
+        with patch.object(views, 'ensure_coach_booking_available', side_effect=views.LearnerCalendarConflict('Busy')):
+            with self.assertRaises(views.LearnerCalendarConflict):
+                self.move_imported()
+        self.assertEqual(ReviewBookingReschedule.objects.count(), 0)
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.scheduled_date, self.original_slot[0])
+
+    def test_native_does_not_capture_imported_evidence_manifest(self):
+        self.imported_resources()
+        self.record.review_instance_id = 'instance'; self.record.review_template_id = 'template'; self.record.save()
+        self.persist()
+        self.assertEqual(ReviewBookingReschedule.objects.get().evidence_manifest, {})
+
+    def test_manifest_migration_preserves_legacy_history_and_pre_migration_reads(self):
+        from importlib import import_module
+        from django.db.migrations.state import ModelState, ProjectState
+        self.persist(); self.record.refresh_from_db()
+        original = ReviewBookingReschedule.objects.get()
+        field = ReviewBookingReschedule._meta.get_field('evidence_manifest')
+        before = ProjectState()
+        model_state = ModelState.from_model(ReviewBookingReschedule)
+        del model_state.fields['evidence_manifest']
+        before.add_model(model_state)
+        operation = import_module('coach_api.migrations.0039_review_reschedule_evidence').Migration.operations[0]
+        after = before.clone(); operation.state_forwards('coach_api', after)
+        with connection.schema_editor() as editor:
+            editor.remove_field(ReviewBookingReschedule, field)
+        try:
+            self.record._reschedule_history_cache = None
+            history = policy.previous_bookings(self.record)
+            self.assertEqual(len(history), 1)
+            self.assertEqual(history[0].evidence_manifest, {})
+            candidate = copy(self.record); candidate.scheduled_date = date(2026, 11, 10)
+            with self.assertRaisesRegex(views.LearnerCalendarConflict, 'history is unavailable'):
+                policy.archive_booking(self.record, candidate)
+        finally:
+            with connection.schema_editor() as editor:
+                operation.database_forwards('coach_api', editor, before, after)
+        migrated = ReviewBookingReschedule.objects.get()
+        self.assertEqual(migrated.pk, original.pk)
+        self.assertEqual(migrated.booking_fingerprint, original.booking_fingerprint)
+        self.assertEqual(migrated.session_claim, original.session_claim)
+        self.assertEqual(migrated.evidence_manifest, {})
+        # An old application worker can still insert during the rollout; NULL
+        # means legacy history, not a fabricated evidence association.
+        legacy_model = before.apps.get_model('coach_api', 'ReviewBookingReschedule')
+        legacy = legacy_model.objects.create(calendar_event_id=self.record.pk, learner_id=self.record.learner_id,
+            event_key=self.record.event_key, graph_event_id=self.record.graph_event_id,
+            owner_email=self.record.owner_email, booking_fingerprint='legacy-worker',
+            scheduled_date=date(2026, 11, 3), scheduled_time=time(10), duration_minutes=60, session_claim={})
+        self.assertIsNone(ReviewBookingReschedule.objects.get(pk=legacy.pk).evidence_manifest)
+        self.record._reschedule_history_cache = None
+        self.assertEqual(policy.evidence_manifests(self.record, policy.previous_bookings(self.record)), [])
+
+    def test_imported_off_slot_previous_recording_and_transcript_use_existing_protected_routes(self):
+        self.imported_resources(); self.move_imported()
+        request = RequestFactory().get('/resource')
+        with patch('coach_api.recording_archive.archived_recording_url', return_value=None), \
+             patch('coach_api.imported_recording_playback.stream_imported_recording', return_value='protected-video') as stream, \
+             patch.object(views, 'stored_coach_meeting_transcript', return_value={
+                 'transcript_vtt': 'WEBVTT\n\nSynthetic transcript', 'transcript_content_type': 'text/vtt'}):
+            self.assertEqual(views.coach_meeting_artifact_content_response(request, self.record,
+                'imported-review:alias', 'recording', 'old-recording', imported_review=True), 'protected-video')
+            self.assertEqual(stream.call_args.args[3]['graph_artifact_id'], 'old-recording')
+            response = views.coach_meeting_artifact_content_response(request, self.record,
+                'imported-review:alias', 'transcript', 'old-transcript', imported_review=True)
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(b'Synthetic transcript', response.content)
+        self.assertIsNone(policy.historical_content(self.record, 'transcript', 'combined', self.snapshot))
+
+    def test_imported_check_session_refresh_keeps_history_and_generates_from_new_call_only(self):
+        from .test_check_session_resources import CheckSessionResourceTests, provider_error
+        self.imported_resources()
+        for row in self.snapshot['artifacts']:
+            row['metadata']['_lms_verified_online_meeting_id'] = 'synthetic-meeting'
+            if row['artifact_type'] == 'transcript':
+                row.update(transcript_text='OLD historical decision', transcript_vtt='WEBVTT\n\nOLD historical decision')
+        self.snapshot['attendanceReports'][0]['_lms_verified_online_meeting_id'] = 'synthetic-meeting'
+        self.move_imported()
+        self.record.sync_state = 'synced'; self.record.save(update_fields=['sync_state'])
+        manifest = deepcopy(ReviewBookingReschedule.objects.get().evidence_manifest)
+        # Reuse the existing fake Graph/storage transport with real archive rows.
+        resource = CheckSessionResourceTests('runTest'); resource.setUp()
+        resource.record = self.record
+        resource.overlay.event_key = self.record.event_key
+        resource.overlay.owner_email = self.record.owner_email
+        resource.overlay.learner_id = self.record.learner_id
+        resource.stored = deepcopy(self.snapshot)
+        resource.add_artifact('recording', 'new-recording', call='new-call',
+                              createdDateTime='2026-11-03T10:00:00Z', endDateTime='2026-11-03T10:20:00Z')
+        resource.add_artifact('transcript', 'new-transcript', call='new-call', body='NEW agreed actions',
+                              createdDateTime='2026-11-03T10:00:00Z', endDateTime='2026-11-03T10:20:00Z')
+        resource.add_report('new-report', meetingStartDateTime='2026-11-03T10:00:00Z',
+                            meetingEndDateTime='2026-11-03T10:20:00Z')
+        self.assertEqual(resource.call(generate=False), 200, resource.payload)
+        artifacts = {row['graph_artifact_id']: row for row in resource.payload['artifacts']}
+        self.assertEqual(set(artifacts), {'old-recording', 'old-transcript', 'new-recording', 'new-transcript'})
+        self.assertTrue(artifacts['old-recording']['previous_session'])
+        self.assertTrue(artifacts['old-transcript']['previous_session'])
+        self.assertFalse(artifacts['new-transcript'].get('previous_session', False))
+        self.assertEqual([row['id'] for row in resource.payload['attendance']['reports']], ['new-report'])
+        self.assertEqual(resource.call(generate=True), 200, resource.payload)
+        self.assertEqual(resource.ai_input, 'NEW agreed actions')
+        resource.collections['recordings'] = provider_error(503)
+        self.assertEqual(resource.call(generate=False), 207, resource.payload)
+        self.assertEqual({row['graph_artifact_id'] for row in resource.payload['artifacts']}, set(artifacts))
+        self.assertEqual(ReviewBookingReschedule.objects.get().evidence_manifest, manifest)

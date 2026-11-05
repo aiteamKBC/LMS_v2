@@ -18,20 +18,29 @@ def previous_bookings(record):
     cached = getattr(record, '_reschedule_history_cache', None)
     if cached and cached[0] == key:
         return cached[1]
+    query = ReviewBookingReschedule.objects.filter(
+        calendar_event_id=record.pk, learner_id=record.learner_id,
+        event_key=record.event_key, graph_event_id=record.graph_event_id,
+        owner_email__iexact=record.owner_email,
+    ).order_by('created_at', 'pk')
     try:
         with transaction.atomic():
-            rows = list(ReviewBookingReschedule.objects.filter(
-                calendar_event_id=record.pk, learner_id=record.learner_id,
-                event_key=record.event_key, graph_event_id=record.graph_event_id,
-                owner_email__iexact=record.owner_email,
-            ).order_by('created_at', 'pk'))
+            rows = list(query)
     except (ProgrammingError, OperationalError) as exc:
         # Rolling deployment: existing reviews remain readable before the new
         # additive migration. The new writer still refuses to lose history.
-        if (getattr(exc.__cause__, 'sqlstate', None) != '42P01'
-                and getattr(exc.__cause__, 'pgcode', None) != '42P01' and 'no such table' not in str(exc)):
+        code = getattr(exc.__cause__, 'sqlstate', None) or getattr(exc.__cause__, 'pgcode', None)
+        if code == '42P01' or 'no such table' in str(exc):
+            rows = []
+        elif (code == '42703' or 'no such column' in str(exc)) and 'evidence_manifest' in str(exc):
+            # The additive manifest migration may follow the application update.
+            # Read existing history as before; new writes still require the field.
+            with transaction.atomic():
+                rows = list(query.defer('evidence_manifest'))
+            for row in rows:
+                row.evidence_manifest = {}
+        else:
             raise
-        rows = []
     record._reschedule_history_cache = (key, rows)
     return rows
 
@@ -110,6 +119,16 @@ def archive_booking(record, candidate, *, overlay=None):
             from .views import LearnerCalendarConflict
             raise LearnerCalendarConflict('The saved session association changed. Reload the Review before rescheduling.') from None
         claim = bound.claim if bound else {}
+    manifest = {}
+    if overlay is not None:
+        from .review_reschedule_evidence import capture, EvidenceConflict
+        from .views import stored_coach_meeting_snapshot, LearnerCalendarConflict
+        try:
+            manifest = capture(record, stored_coach_meeting_snapshot(record),
+                               evidence_manifests(record, previous_bookings(record)))
+        except EvidenceConflict:
+            raise LearnerCalendarConflict(
+                'Previous meeting resources could not be verified. Retry before rescheduling.') from None
     try:
         with transaction.atomic():
             ReviewBookingReschedule.objects.get_or_create(
@@ -117,7 +136,8 @@ def archive_booking(record, candidate, *, overlay=None):
                 defaults=dict(learner_id=record.learner_id, event_key=record.event_key,
                               graph_event_id=record.graph_event_id, owner_email=record.owner_email,
                               scheduled_date=record.scheduled_date, scheduled_time=record.scheduled_time,
-                              duration_minutes=record.duration_minutes, session_claim=claim),
+                              duration_minutes=record.duration_minutes, session_claim=claim,
+                              evidence_manifest=manifest),
             )
     except (ProgrammingError, OperationalError):
         from .views import LearnerCalendarConflict
@@ -125,10 +145,29 @@ def archive_booking(record, candidate, *, overlay=None):
     record._reschedule_history_cache = None
 
 
+def evidence_manifests(record, attempts):
+    from .review_reschedule_evidence import validated_manifest
+    result = []
+    for attempt in attempts:
+        if getattr(attempt, 'evidence_manifest', {}) in ({}, None):
+            continue
+        result.append(validated_manifest(historical_record(record, attempt), attempt))
+    return result
+
+
 def current_evidence(record, snapshot):
     """Restrict reused meetings to their new slot; stored historical rows survive."""
-    if getattr(record, 'event_type', None) not in {'mcr', 'progress-review'} or not previous_bookings(record):
+    if getattr(record, 'event_type', None) not in {'mcr', 'progress-review'}:
         return snapshot
+    attempts = previous_bookings(record)
+    if not attempts:
+        return snapshot
+    from .review_reschedule_evidence import without_archived, EvidenceConflict
+    try:
+        snapshot = without_archived(snapshot, evidence_manifests(record, attempts))
+    except EvidenceConflict:
+        return {**snapshot, 'attendanceReports': [], 'artifacts': [],
+                'rescheduleSelectionError': 'MEETING_ARTIFACT_CONFLICT'}
     from .migrated_session_scope import current_reports, select_artifacts
     reports = current_reports(record, snapshot)
     artifacts, error = select_artifacts(record, {**snapshot, 'attendanceReports': reports})
@@ -139,18 +178,26 @@ def current_evidence(record, snapshot):
 def historical_artifacts(record, snapshot):
     """Same authorised booking/provider only, with each old slot independently scoped."""
     from .migrated_session_scope import scope_snapshot, has_verified_meeting_evidence, select_artifacts
+    from .review_reschedule_evidence import validated_manifest, archived_artifacts, EvidenceConflict
     result = []
     seen = set()
     for attempt in previous_bookings(record):
         previous = historical_record(record, attempt)
-        session = session_context_from_claim(previous, attempt.session_claim)
-        scoped = scope_snapshot(previous, snapshot, session=session, historical=True,
-                                meeting_scoped=has_verified_meeting_evidence(snapshot))
-        if scoped.get('selectionError'):
+        try:
+            manifest = validated_manifest(previous, attempt)
+        except EvidenceConflict:
             continue
-        artifacts, error = select_artifacts(previous, scoped, session=session)
-        if error:
-            continue
+        if manifest is not None:
+            artifacts = archived_artifacts(record, snapshot, manifest)
+        else:
+            session = session_context_from_claim(previous, attempt.session_claim)
+            scoped = scope_snapshot(previous, snapshot, session=session, historical=True,
+                                    meeting_scoped=has_verified_meeting_evidence(snapshot))
+            if scoped.get('selectionError'):
+                continue
+            artifacts, error = select_artifacts(previous, scoped, session=session)
+            if error:
+                continue
         for artifact in artifacts:
             if (artifact.get('metadata') or {}).get('_lms_graph_event_id') != record.graph_event_id:
                 continue

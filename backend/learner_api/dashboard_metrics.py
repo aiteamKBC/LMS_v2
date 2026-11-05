@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 _MISSING = object()
 
 
-def coach_otjh_target_to_date(source, otjh, *, owner=None):
+def coach_otjh_target_to_date(source, otjh, *, owner=None, as_of=None):
     from coach_api.selectors.otjh import learner_programme_window
     from coach_api.views import apply_otjh_to_date_metrics
     # Projection callers may reuse this source's already-verified SSOT owner.
@@ -38,7 +38,9 @@ def coach_otjh_target_to_date(source, otjh, *, owner=None):
     start, end = learner_programme_window(SimpleNamespace(**profile), source)
     data = {'otjhCompleted': otjh.get('actual'), 'otjhPlanned': otjh.get('planned')}
     data.update(otjhProgrammeStartDate=start, plannedEndDate=end)
-    return apply_otjh_to_date_metrics(data)['otjhTargetAsOfToday']
+    return apply_otjh_to_date_metrics(
+        data, **({'today': as_of} if as_of is not None else {}),
+    )['otjhTargetAsOfToday']
 
 
 def as_json(value, default):

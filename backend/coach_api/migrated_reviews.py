@@ -32,6 +32,10 @@ def meeting_summary_field(definition):
 
     def visit(field, depth=0):
         if "semanticKey" in field:
+            if field['semanticKey'] == 'skills_radar':
+                if field.get('aptemType') != 11 or depth:
+                    raise ValueError('Skills Radar must be a top-level section marker.')
+                return
             if field["semanticKey"] != "meeting_summary":
                 raise ValueError("Unknown migrated field purpose.")
             if type(field.get("aptemType")) is not int or field["aptemType"] not in (1, 13):
@@ -232,6 +236,9 @@ def _render_field(field, answers, warnings, answer_audit):
         "options": field.get("options") or [],
         "respondentRoles": field.get("respondentRoles") or [],
     }
+    if field.get('skillsRadar'):
+        configuration['skillsRadar'] = {**field['skillsRadar'],
+            'history': (answer_audit.get(field['key']) or {}).get('history', [])}
     if aptem_type not in FIELD_TYPES:
         configuration["typeWarning"] = "Unverified Aptem field type; using text entry."
     if "semanticKey" in field:

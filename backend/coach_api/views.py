@@ -16777,6 +16777,8 @@ def coach_review_instance_answers(request, instance_id):
                     if synchronize_definition_locked(imported, definition):
                         return JsonResponse({"detail": "The review template changed. Reopen the review to check its latest questions before saving. Your unsaved answers have been kept on screen.", "code": "template_sync_changed"}, status=409)
                     validate_migrated_answers(imported.template_snapshot, answers)
+                    from .migrated_skills_radar import check_role_edits
+                    check_role_edits(imported.template_snapshot, imported.answers or {}, answers, 'advisor')
                 except TemplateSyncConflict as exc:
                     return JsonResponse({"detail": str(exc), "templateSync": exc.response()}, status=409)
                 except AnswerConflict as exc:

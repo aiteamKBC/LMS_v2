@@ -158,6 +158,7 @@ class ReviewBookingReschedule(models.Model):
     scheduled_time = models.TimeField()
     duration_minutes = models.PositiveIntegerField()
     session_claim = models.JSONField(default=dict, blank=True)
+    evidence_manifest = models.JSONField(default=dict, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
